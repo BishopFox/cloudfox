@@ -1,0 +1,111 @@
+AWSTemplateFormatVersion: '2010-09-09'
+#
+
+# You can invoke CloudFormation and pass the principal ARN from a command line like this:
+# aws cloudformation create-stack \
+#  --capabilities CAPABILITY_IAM --capabilities CAPABILITY_NAMED_IAM \
+#  --template-body "file://cloudformation-create-role-to-assume-for-cloudfoxyaml" \
+#  --stack-name "CloudFoxExecRole" \
+#  --parameters "ParameterKey=AuthorizedARN,ParameterValue=arn:aws:iam::123456789012:role/role_name"
+#
+Description: | 
+  This template creates an AWS IAM Role with an inline policy and two AWS managed policies
+  attached. It sets the trust policy on that IAM Role to permit a named ARN in another AWS
+  account to assume that role. The role name and the ARN of the trusted user can all be passed
+  to the CloudFormation stack as parameters. Then you can run CloudFox with a command like:
+  ./cloudfox -p <profile> aws inventory
+Parameters:
+  AuthorizedARN:
+    Description: |
+      ARN of user who is authorized to assume the role that is created by this template.
+      E.g., arn:aws:iam::123456789012:role/role_name
+    Type: String
+  CloudFoxRoleName:
+    Description: |
+      Name of the IAM role that will have these policies attached. Default: CloudFoxExecRole
+    Type: String
+    Default: 'CloudFoxExecRole'
+
+Resources:
+  CloudFoxExecRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub ${AuthorizedARN}
+            Action: 'sts:AssumeRole'
+            ## In case MFA is required uncomment lines below 
+            # Condition:
+            #   Bool:
+            #     'aws:MultiFactorAuthPresent': true      
+      MaxSessionDuration: 43200
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/SecurityAudit'
+        - 'arn:aws:iam::aws:policy/job-function/ViewOnlyAccess'
+      RoleName: !Sub ${CloudFoxRoleName}
+      Policies: 
+        - PolicyName: CloudFoxExecRoleAdditionalViewPrivileges
+          PolicyDocument:
+            Version : '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - 'apigateway:GET'                
+                - 'apprunner:DescribeService'
+                - 'apprunner:ListServices'                
+                - 'cloudformation:ListStacks'
+                - 'cloudtrail:LookupEvents'
+                - 'cloudfront:ListDistributions'
+                - 'ec2:DescribeInstanceAttribute'
+                - 'ec2:DescribeInstances'
+                - 'ec2:DescribeRegions'
+                - 'ecr:DescribeImages'
+                - 'ecr:DescribeRepositories'
+                - 'ecs:DescribeTaskDefinition'
+                - 'ecs:ListTaskDefinitions'
+                - 'ecs:ListClusters'                
+                - 'ecs:ListTasks'
+                - 'elasticfilesystem:DescribeFileSystemPolicy'
+                - 'elasticfilesystem:DescribeFileSystems'
+                - 'elasticfilesystem:DescribeMountTargets'
+                - 'eks:DescribeCluster'
+                - 'eks:ListClusters'
+                - 'elasticloadbalancing:DescribeLoadBalancers'
+                - 'elasticloadbalancing:DescribeListeners'                            
+                - 'fsx:DescribeFileSystems'
+                - 'fsx:DescribeVolumes'
+                - 'grafana:ListWorkspaces'
+                - 'iam:GetAccountAuthorizationDetails'
+                - 'iam:ListAccessKeys'
+                - 'iam:ListUsers'
+                - 'iam:ListRoles'
+                - 'iam:SimulatePrincipalPolicy'
+                - 'lambda:GetFunctionUrlConfig'
+                - 'lambda:ListFunctions'                
+                - 'lightsail:GetContainerServices'
+                - 'lightsail:GetInstances'
+                - 'mq:DescribeBroker'
+                - 'mq:ListBrokers'
+                - 'es:DescribeDomain'
+                - 'es:ListDomainNames'
+                - 'rds:DescribeDBInstances'
+                - 'redshift:DescribeClusters'
+                - 'route53:ListHostedZones'
+                - 'route53:ListResourceRecordSets'
+                - 's3:GetBucketPolicyStatus'
+                - 's3:GetBucketWebsite'
+                - 's3:ListAllMyBuckets'
+                - 'ssm:DescribeParameters'
+                - 'sagemaker:ListProcessingJobs'
+                - 'sagemaker:DescribeProcessingJob'
+                - 'sagemaker:ListTransformJobs'
+                - 'sagemaker:DescribeTransformJob'
+                - 'sagemaker:ListTrainingJobs'
+                - 'sagemaker:DescribeTrainingJob'
+                - 'sagemaker:ListModels'
+                - 'sagemaker:DescribeModel'                
+                - 'secretsmanager:ListSecrets"
+              Resource: '*'

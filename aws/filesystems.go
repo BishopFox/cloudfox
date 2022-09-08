@@ -1,0 +1,468 @@
+package aws
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"sync"
+
+	"github.com/BishopFox/cloudfox/console"
+	"github.com/BishopFox/cloudfox/utils"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/efs"
+	"github.com/aws/aws-sdk-go-v2/service/fsx"
+	fsxTypes "github.com/aws/aws-sdk-go-v2/service/fsx/types"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/fatih/color"
+	"github.com/sirupsen/logrus"
+)
+
+var green = color.New(color.FgGreen).SprintFunc()
+
+type FilesystemsModule struct {
+	// General configuration data
+
+	EFSClient *efs.Client
+	FSxClient *fsx.Client
+
+	Caller       sts.GetCallerIdentityOutput
+	AWSRegions   []string
+	OutputFormat string
+	AWSProfile   string
+
+	// Main module data
+	Filesystems []FilesystemObject
+
+	Regions        [30]FilesystemObject
+	CommandCounter console.CommandCounter
+	// Used to store output data for pretty printing
+	output utils.OutputData2
+	modLog *logrus.Entry
+}
+
+type FilesystemObject struct {
+	AWSService  string
+	Region      string
+	Name        string
+	DnsName     string
+	IP          string
+	Policy      string
+	MountTarget string
+}
+
+func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirectory string, verbosity int) {
+	// These stuct values are used by the output module
+	m.output.Verbosity = verbosity
+	m.output.Directory = outputDirectory
+	m.output.CallingModule = "filesystems"
+	m.modLog = utils.TxtLogger.WithFields(logrus.Fields{
+		"module": m.output.CallingModule,
+	})
+	if m.AWSProfile == "" {
+		m.AWSProfile = fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), aws.ToString(m.Caller.UserId))
+	}
+	//populate region in the filesystems module struct
+	for i, region := range m.AWSRegions {
+		m.Regions[i].Region = region
+	}
+
+	fmt.Printf("[%s] Enumerating filesystems for account %s.\n", cyan(m.output.CallingModule), aws.ToString(m.Caller.Account))
+	fmt.Printf("[%s] Supported Services: EFS, FSx \n", cyan(m.output.CallingModule))
+
+	wg := new(sync.WaitGroup)
+
+	// Create a channel to signal the spinner aka task status goroutine to finish
+	spinnerDone := make(chan bool)
+	//fire up the the task status spinner/updated
+	go console.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
+
+	//create a channel to receive the objects
+	dataReceiver := make(chan FilesystemObject)
+
+	// Create a channel to signal to stop
+	receiverDone := make(chan bool)
+	go m.Receiver(dataReceiver, receiverDone)
+
+	//execute regional checks
+	for _, region := range m.AWSRegions {
+		wg.Add(1)
+		m.executeChecks(region, wg, dataReceiver)
+	}
+
+	wg.Wait()
+	// Send a message to the spinner goroutine to close the channel and stop
+	spinnerDone <- true
+	<-spinnerDone
+	// Send a message to the data receiver goroutine to close the channel and stop
+	receiverDone <- true
+	<-receiverDone
+
+	sort.Slice(m.Filesystems, func(i, j int) bool {
+		return m.Filesystems[i].AWSService < m.Filesystems[j].AWSService
+	})
+
+	m.output.Headers = []string{
+		"Service",
+		"Region",
+		"Name",
+		"DNS Name",
+		//"IP",
+		"Mount Target",
+		"Policy",
+	}
+
+	// Table rows
+	for i := range m.Filesystems {
+		m.output.Body = append(
+			m.output.Body,
+			[]string{
+				m.Filesystems[i].AWSService,
+				m.Filesystems[i].Region,
+				m.Filesystems[i].Name,
+				m.Filesystems[i].DnsName,
+				//m.Filesystems[i].IP,
+				m.Filesystems[i].MountTarget,
+				m.Filesystems[i].Policy,
+			},
+		)
+
+	}
+	if len(m.output.Body) > 0 {
+
+		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
+		//m.output.OutputSelector(outputFormat)
+		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		m.writeLoot(outputDirectory, verbosity)
+		fmt.Printf("[%s] %s filesystems found.\n", cyan(m.output.CallingModule), strconv.Itoa(len(m.output.Body)))
+
+	} else {
+		fmt.Printf("[%s] No filesystems found, skipping the creation of an output file.\n", cyan(m.output.CallingModule))
+	}
+
+}
+
+func (m *FilesystemsModule) Receiver(receiver chan FilesystemObject, receiverDone chan bool) {
+	defer close(receiverDone)
+	for {
+		select {
+		case data := <-receiver:
+			m.Filesystems = append(m.Filesystems, data)
+		case <-receiverDone:
+			receiverDone <- true
+			return
+		}
+	}
+}
+
+func (m *FilesystemsModule) executeChecks(r string, wg *sync.WaitGroup, dataReceiver chan FilesystemObject) {
+	defer wg.Done()
+	wg.Add(1)
+	go m.getEFSSharesPerRegion(r, wg, dataReceiver)
+	wg.Add(1)
+	go m.getFSxSharesPerRegion(r, wg, dataReceiver)
+}
+
+func (m *FilesystemsModule) writeLoot(outputDirectory string, verbosity int) {
+	path := filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile, "loot")
+	err := os.MkdirAll(path, os.ModePerm)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+	}
+	f := filepath.Join(path, "filesystems-mount-commands.txt")
+
+	var out string
+
+	for i := range m.Filesystems {
+		switch m.Filesystems[i].AWSService {
+		case "EFS":
+			out = out + fmt.Sprintf("##########  Mount instructions for %s - %s ##########\n", m.Filesystems[i].AWSService, m.Filesystems[i].Name)
+			out = out + fmt.Sprintf("mkdir -p /efs/%s/\n", m.Filesystems[i].MountTarget)
+			out = out + fmt.Sprintf("sudo mount -t nfs -o nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport %s:/ /efs/%s\n\n", m.Filesystems[i].DnsName, m.Filesystems[i].MountTarget)
+		case "FSx [LUSTRE]":
+			out = out + fmt.Sprintf("##########  Mount instructions for %s - %s ##########\n", m.Filesystems[i].AWSService, m.Filesystems[i].Name)
+			out = out + fmt.Sprintln("#sudo amazon-linux-extras install -y lustre2.10")
+			out = out + fmt.Sprintf("mkdir -p /fsx-lustre/%s/\n", m.Filesystems[i].MountTarget)
+			out = out + fmt.Sprintf("sudo mount -t lustre -o noatime,flock %s@tcp:/%s /fsx-lustre/%s/\n\n", m.Filesystems[i].DnsName, m.Filesystems[i].MountTarget, m.Filesystems[i].MountTarget)
+		case "FSx [OPENZFS]":
+			out = out + fmt.Sprintf("##########  Mount instructions for %s - %s ##########\n", m.Filesystems[i].AWSService, m.Filesystems[i].Name)
+			out = out + fmt.Sprintf("mkdir -p /fsx-openzfs%s\n", m.Filesystems[i].MountTarget)
+			out = out + fmt.Sprintf("sudo mount -t nfs -o nfsvers=4.1 %s:%s /fsx-openzfs%s\n\n", m.Filesystems[i].DnsName, m.Filesystems[i].MountTarget, m.Filesystems[i].MountTarget)
+		case "FSx [ONTAP]":
+			out = out + fmt.Sprintf("##########  Mount instructions for %s - %s ##########\n", m.Filesystems[i].AWSService, m.Filesystems[i].Name)
+			out = out + fmt.Sprintf("mkdir -p /fsx-ontap%s\n", m.Filesystems[i].MountTarget)
+			out = out + fmt.Sprintf("sudo mount -t nfs %s:%s /fsx-ontap%s\n\n", m.Filesystems[i].DnsName, m.Filesystems[i].MountTarget, m.Filesystems[i].MountTarget)
+		case "FSx [WINDOWS]":
+			out = out + fmt.Sprintf("##########  Mount instructions for %s - %s ##########\n", m.Filesystems[i].AWSService, m.Filesystems[i].Name)
+			out = out + fmt.Sprintf("crackmapexec smb %s --shares \n", m.Filesystems[i].DnsName)
+			out = out + fmt.Sprintf("# mkdir -p /fsx-windows/%s/SHARE-NAME\n", m.Filesystems[i].DnsName)
+			out = out + fmt.Sprintf("sudo mount -t cifs //%s/SHARE-NAME /fsx-windows/%s\n\n", m.Filesystems[i].DnsName, m.Filesystems[i].DnsName)
+		}
+
+	}
+
+	err = os.WriteFile(f, []byte(out), 0644)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+	}
+	fmt.Printf("[%s] Loot written to [%s]\n", cyan(m.output.CallingModule), f)
+	if verbosity > 2 {
+		fmt.Println()
+		fmt.Printf("[%s] %s \n", cyan(m.output.CallingModule), green("Use the commands below to try and mount the identified filesystems."))
+		fmt.Print(out)
+		fmt.Printf("[%s] %s \n\n", cyan(m.output.CallingModule), green("End of loot file."))
+	}
+
+}
+
+func (m *FilesystemsModule) getEFSSharesPerRegion(r string, wg *sync.WaitGroup, dataReceiver chan FilesystemObject) {
+	defer func() {
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+		wg.Done()
+
+	}()
+	m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
+	var PaginationMarker *string
+	var PaginationMarker2 *string
+
+	var policy string
+	// This for loop exits at the end dependeding on whether the output hits its last page (see pagination control block at the end of the loop).
+	for {
+		DescribeFileSystems, err := m.EFSClient.DescribeFileSystems(
+			context.TODO(),
+			&efs.DescribeFileSystemsInput{
+				Marker: PaginationMarker,
+			},
+			func(o *efs.Options) {
+				o.Region = r
+			},
+		)
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			break
+		}
+
+		for _, filesystem := range DescribeFileSystems.FileSystems {
+			name := filesystem.Name
+			id := filesystem.FileSystemId
+			//dnsName := fmt.Sprintf("%s.efs.%s.amazonaws.com", *id, r)
+
+			_, err := m.EFSClient.DescribeFileSystemPolicy(
+				context.TODO(),
+				&efs.DescribeFileSystemPolicyInput{
+					FileSystemId: id,
+				},
+				func(o *efs.Options) {
+					o.Region = r
+				},
+			)
+			if err != nil {
+				policy = "Default (No IAM auth)"
+			}
+
+			for {
+				DescribeMountTargets, err := m.EFSClient.DescribeMountTargets(
+					context.TODO(),
+					&efs.DescribeMountTargetsInput{
+						FileSystemId: id,
+						Marker:       PaginationMarker2,
+					},
+					func(o *efs.Options) {
+						o.Region = r
+					},
+				)
+				if err != nil {
+					m.modLog.Error(err.Error())
+					m.CommandCounter.Error++
+					break
+				}
+				for _, mountTarget := range DescribeMountTargets.MountTargets {
+					mountTargetId := mountTarget.MountTargetId
+					ip := *mountTarget.IpAddress
+					awsService := "EFS"
+
+					dataReceiver <- FilesystemObject{
+						AWSService:  awsService,
+						Region:      r,
+						Name:        aws.ToString(name),
+						DnsName:     ip,
+						Policy:      policy,
+						MountTarget: aws.ToString(mountTargetId),
+					}
+				}
+				if DescribeMountTargets.NextMarker != nil {
+					PaginationMarker2 = DescribeMountTargets.NextMarker
+				} else {
+					PaginationMarker2 = nil
+					break
+				}
+			}
+
+			//awsService := fmt.Sprintf("EFS [%s]", fsType)
+
+		}
+
+		// Pagination control. After the last page of output, the for loop exits.
+		if DescribeFileSystems.NextMarker != nil {
+			PaginationMarker = DescribeFileSystems.NextMarker
+		} else {
+			PaginationMarker = nil
+			break
+		}
+	}
+
+}
+
+func (m *FilesystemsModule) getFSxSharesPerRegion(r string, wg *sync.WaitGroup, dataReceiver chan FilesystemObject) {
+	defer func() {
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+		wg.Done()
+
+	}()
+	m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
+	var PaginationMarker *string
+	var PaginationMarker2 *string
+	var mountTargetId *string
+	var name string
+	var dnsName string
+
+	// This for loop exits at the end dependeding on whether the output hits its last page (see pagination control block at the end of the loop).
+	for {
+		DescribeFileSystems, err := m.FSxClient.DescribeFileSystems(
+			context.TODO(),
+			&fsx.DescribeFileSystemsInput{
+				NextToken: PaginationMarker,
+			},
+			func(o *fsx.Options) {
+				o.Region = r
+			},
+		)
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			break
+		}
+
+		for _, filesystem := range DescribeFileSystems.FileSystems {
+
+			// The name is in a tag so we have to do this to grab the value from the right tag
+			for _, tag := range filesystem.Tags {
+				if *tag.Key == "Name" {
+					name = aws.ToString(tag.Value)
+				}
+
+			}
+
+			fsType := filesystem.FileSystemType
+			id := *filesystem.FileSystemId
+			awsService := fmt.Sprintf("FSx [%s]", fsType)
+
+			// For Lustre and windows we get everything we need from the filesystem call.  For the other two we need to get volume info
+			switch fsType {
+			case "LUSTRE":
+				mountTargetId = filesystem.LustreConfiguration.MountName
+				dnsName = aws.ToString(filesystem.DNSName)
+				dataReceiver <- FilesystemObject{
+					AWSService:  awsService,
+					Region:      r,
+					Name:        name,
+					DnsName:     dnsName,
+					Policy:      "",
+					MountTarget: aws.ToString(mountTargetId),
+				}
+			case "WINDOWS":
+				//mountTargetId = filesystem.WindowsConfiguration.
+				dnsName = aws.ToString(filesystem.WindowsConfiguration.PreferredFileServerIp)
+				//dnsName = *&filesystem.WindowsConfiguration.PreferredFileServerIp
+				dataReceiver <- FilesystemObject{
+					AWSService:  awsService,
+					Region:      r,
+					Name:        name,
+					DnsName:     dnsName,
+					Policy:      "",
+					MountTarget: "",
+				}
+			}
+
+			// For OpenZFS and ONTAP, we need to get volume specific info
+			for {
+				DescribeVolumes, err := m.FSxClient.DescribeVolumes(
+					context.TODO(),
+					&fsx.DescribeVolumesInput{
+						Filters: []fsxTypes.VolumeFilter{
+							fsxTypes.VolumeFilter{
+								Name:   "file-system-id",
+								Values: []string{id},
+							}},
+						NextToken: PaginationMarker2,
+					},
+					func(o *fsx.Options) {
+						o.Region = r
+					},
+				)
+				if err != nil {
+					break
+				}
+				//				awsService := fmt.Sprintf("FSx [%s]", fsType)
+				for _, volume := range DescribeVolumes.Volumes {
+
+					switch fsType {
+					case "OPENZFS":
+						mountTargetId = volume.OpenZFSConfiguration.VolumePath
+						dnsName = aws.ToString(filesystem.DNSName)
+						dataReceiver <- FilesystemObject{
+							AWSService:  awsService,
+							Region:      r,
+							Name:        name,
+							DnsName:     dnsName,
+							Policy:      "",
+							MountTarget: aws.ToString(mountTargetId),
+						}
+					case "ONTAP":
+						mountTargetId = volume.OntapConfiguration.JunctionPath
+						dnsName = fmt.Sprintf("%s.%s.fsx.%s.amazonaws.com", aws.ToString(volume.OntapConfiguration.StorageVirtualMachineId), aws.ToString(volume.FileSystemId), r)
+						dataReceiver <- FilesystemObject{
+							AWSService:  awsService,
+							Region:      r,
+							Name:        name,
+							DnsName:     dnsName,
+							Policy:      "",
+							MountTarget: aws.ToString(mountTargetId),
+						}
+
+					}
+
+				}
+				if DescribeVolumes.NextToken != nil {
+					PaginationMarker2 = DescribeVolumes.NextToken
+				} else {
+					PaginationMarker2 = nil
+					break
+				}
+			}
+
+		}
+
+		// Pagination control. After the last page of output, the for loop exits.
+		if DescribeFileSystems.NextToken != nil {
+			PaginationMarker = DescribeFileSystems.NextToken
+		} else {
+			PaginationMarker = nil
+			break
+		}
+	}
+
+}
