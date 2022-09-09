@@ -29,7 +29,7 @@ For the full documentation please refer to our [wiki](https://github.com/BishopF
 | - | - |
 | AWS | 15 | 
 | Azure | 2 (under development) | 
-| GCP | Support Planned | 
+| Kubernetes | Support Planned | 
 
 
 # Install
