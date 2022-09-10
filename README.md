@@ -54,13 +54,16 @@ For the full documentation please refer to our [wiki](https://github.com/BishopF
 * Supports AWS profiles, AWS environment variables, or metadata retrieval (on an ec2 instance)
 * A principal with one recommended policies attached (described below)
 * Recommended attached policies: **`SecurityAudit` + [CloudFox custom policy](./misc/aws/cloudfox-policy.json)** 
-* Additional policy notes (as of 09/2022):    
- | Policy | Notes | 
- | [The cloudfox policy we created](./misc/aws/cloudfox-policy.json) | Has a complete list of every permission cloudfox uses and nothing else |
- |  `arn:aws:iam::aws:policy/SecurityAudit` | Covers most cloudfox checks but is missing newer services or permissions like apprunner:\*, grafana:\*, lambda:GetFunctionURL, lightsail:GetContainerServices |
- |  `arn:aws:iam::aws:policy/job-function/ViewOnlyAccess` | Covers most cloudfox checks but is missing newer services or permissions like AppRunner:\*, grafana:\*, lambda:GetFunctionURL, lightsail:GetContainerServices - and is also missing iam:SimulatePrincipalPolicy. 
- |  `arn:aws:iam::aws:policy/ReadOnlyAccess` | Only missing AppRunner, but also grants things like "s3:Get*" which can be overly permissive. |
- |  `arn:aws:iam::aws:policy/AdministratorAccess` | This will work just fine with CloudFox, but if you were given this level of access as a penetration tester, that should probably be a finding in itself :) |
+
+Additional policy notes (as of 09/2022):    
+
+| Policy | Notes | 
+| - | - |
+| [CloudFox custom policy](./misc/aws/cloudfox-policy.json) | Has a complete list of every permission cloudfox uses and nothing else |
+|  `arn:aws:iam::aws:policy/SecurityAudit` | Covers most cloudfox checks but is missing newer services or permissions like apprunner:\*, grafana:\*, lambda:GetFunctionURL, lightsail:GetContainerServices |
+|  `arn:aws:iam::aws:policy/job-function/ViewOnlyAccess` | Covers most cloudfox checks but is missing newer services or permissions like AppRunner:\*, grafana:\*, lambda:GetFunctionURL, lightsail:GetContainerServices - and is also missing iam:SimulatePrincipalPolicy. 
+|  `arn:aws:iam::aws:policy/ReadOnlyAccess` | Only missing AppRunner, but also grants things like "s3:Get*" which can be overly permissive. |
+|  `arn:aws:iam::aws:policy/AdministratorAccess` | This will work just fine with CloudFox, but if you were handed this level of access as a penetration tester, that should probably be a finding in itself :) |
 
 ### Azure
 * Viewer or similar permissions applied. 
@@ -102,6 +105,7 @@ For the full documentation please refer to our [wiki](https://github.com/BishopF
 # FAQ
 
 **How does CloudFox compare with ScoutSuite, Prowler, Steampipe's AWS Compliance Module, AWS Security Hub, etc.**
+
 CloudFox doesn't create any alerts or findings, and doesn't check your environment for compliance to a baseline or benchmark. Instead, it simply enables you to be more efficient during your manual penetration testing activities. If gives you the information you'll likely need to validate whether an attack path is possible or not. 
 
 **Why do I see errors in some CloudFox commands?**
