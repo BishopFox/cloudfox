@@ -28,8 +28,8 @@ For the full documentation please refer to our [wiki](https://github.com/BishopF
 | Provider| CloudFox Commands |
 | - | - |
 | AWS | 15 | 
-| Azure | 2 | 
-| GCP | Support Planned | 
+| Azure | 2 (under development) | 
+| GCP | Support Planned |
 | Kubernetes | Support Planned | 
 
 
@@ -109,11 +109,6 @@ CloudFox doesn't create any alerts or findings, and doesn't check your environme
 * You don't have permission - Another reason you might see errors if you don't have permissions to make calls that CloudFox is making. Either because the policy doesn't allow it (e.g., SecurityAudit doesn't allow all of the permissions CloudFox needs. Or, it might be an SCP that is blocking you.  
 
 You can always look in the ~/.cloudfox/cloudfox-error.log file to get more information on errors. 
-
-
-**I looked at the code. Why is it so bad?**
-So many reasons... but mainly, this was an excuse for both of us to learn golang. There's nothing like a burning desire to automate something when you want to learn a new language (or your first one for that matter). 
-
 
 # Prior work and other related projects 
 * [SmogCloud](https://github.com/BishopFox/smogcloud) - Inspiration for the `endpoints` command
