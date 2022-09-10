@@ -11,7 +11,7 @@ CloudFox helps you gain situational awareness in unfamiliar cloud environments. 
 * What endpoints/hostnames/IPs can I attack from an internal starting point (assumed breach within the VPC)?
 * What filesystems can I potentially mount from a compromised resource inside the VPC?
 
-## Quickstart
+## Quick Start
 CloudFox is modular (you can run one command at a time), but there is an aws `all-checks` command that will run the other aws commands for you with sane defaults: 
 
 `cloudfox aws --profile [profile-name] all-checks`
@@ -30,13 +30,14 @@ For the full documentation please refer to our [wiki](https://github.com/BishopF
 | AWS | 15 | 
 | Azure | 2 | 
 | GCP | Support Planned | 
+| Kubernetes | Support Planned | 
 
 
 # Install
 
 **Option 1:** Download the [latest binary release](https://github.com/BishopFox/cloudfox/releases) for your platform.
 
-**Option 2:** [Install Go](https://golang.org/doc/install), clone the cloudfox repository and compile from source
+**Option 2:** [Install Go](https://golang.org/doc/install), clone the CloudFox repository and compile from source
    ```
    # git clone https://github.com/BishopFox/cloudfox.git
    ...omitted for brevity...
@@ -51,14 +52,14 @@ For the full documentation please refer to our [wiki](https://github.com/BishopF
 ### AWS
 * AWS CLI installed
 * Supports AWS profiles, AWS environment variables, or metadata retrieval (on an ec2 instance)
-* A principal with one recommended policies attacehd (described below)
-* Reccommended attached policies: **`SecurityAudit` + [CloudFox custom policy](./misc/aws/cloudfox-policy.json)** 
+* A principal with one recommended policies attached (described below)
+* Recommended attached policies: **`SecurityAudit` + [CloudFox custom policy](./misc/aws/cloudfox-policy.json)** 
 * Additional policy notes (as of 09/2022):    
    * [The cloudfox policy we created](./misc/aws/cloudfox-policy.json) has a complete list of every permission cloudfox uses and nothing else 
-   * `arn:aws:iam::aws:policy/SecurityAudit` - Covers most cloudfox checks but is missing newer services or permissions like apprunner:\*, grafana:\*, lambda:GetFunctionURL, lightsail:GetContainerServices
-   *  `arn:aws:iam::aws:policy/job-function/ViewOnlyAccessetcchecks` - Covers most cloudfox checks but is missing newer services or permissions like AppRunner:\*, grafana:\*, lambda:GetFunctionURL, lightsail:GetContainerServices - and is also missing iam:SimulatePrincipalPolicy. 
-   *  `arn:aws:iam::aws:policy/ReadOnlyAccess` - Only missing AppRunner, but also grants things like "s3:Get*" which can be overly permissive. 
-   *  `arn:aws:iam::aws:policy/AdministratorAccess` - This will work just fine with CloudFox, but if you were given this level of access as a penetration tester, that should probably be a finding in itself :) 
+   * **`arn:aws:iam::aws:policy/SecurityAudit`** - Covers most cloudfox checks but is missing newer services or permissions like apprunner:\*, grafana:\*, lambda:GetFunctionURL, lightsail:GetContainerServices
+   *  **`arn:aws:iam::aws:policy/job-function/ViewOnlyAccess`** - Covers most cloudfox checks but is missing newer services or permissions like AppRunner:\*, grafana:\*, lambda:GetFunctionURL, lightsail:GetContainerServices - and is also missing iam:SimulatePrincipalPolicy. 
+   *  **`arn:aws:iam::aws:policy/ReadOnlyAccess`** - Only missing AppRunner, but also grants things like "s3:Get*" which can be overly permissive. 
+   *  **`arn:aws:iam::aws:policy/AdministratorAccess`** - This will work just fine with CloudFox, but if you were given this level of access as a penetration tester, that should probably be a finding in itself :) 
 
 ### Azure
 * Viewer or similar permissions applied. 
@@ -95,6 +96,23 @@ For the full documentation please refer to our [wiki](https://github.com/BishopF
 # TODO
 * AWS - Add support for GovCloud and China regions
 * AWS - Add support for hardcoded region (which would override the default of looking in every region)
+
+
+# FAQ
+
+**How does CloudFox compare with ScoutSuite, Prowler, Steampipe's AWS Compliance Module, AWS Security Hub, etc.**
+CloudFox doesn't create any alerts or findings, and doesn't check your environment for compliance to a baseline or benchmark. Instead, it simply enables you to be more efficient during your manual penetration testing activities. If gives you the information you'll likely need to validate whether an attack path is possible or not. 
+
+**Why do I see errors in some CloudFox commands?**
+
+* Services that don't exist in all regions - CloudFox currently makes the same API calls to every region. However, not all regions support all services. For instance, services like Appstream and AWS Grafana are only supported in a subset of the total regions.  In the future, we plan to make CloudFox aware of which services run in each region. 
+* You don't have permission - Another reason you might see errors if you don't have permissions to make calls that CloudFox is making. Either because the policy doesn't allow it (e.g., SecurityAudit doesn't allow all of the permissions CloudFox needs. Or, it might be an SCP that is blocking you.  
+
+You can always look in the ~/.cloudfox/cloudfox-error.log file to get more information on errors. 
+
+
+**I looked at the code. Why is it so bad?**
+So many reasons... but mainly, this was an excuse for both of us to learn golang. There's nothing like a burning desire to automate something when you want to learn a new language (or your first one for that matter). 
 
 
 # Prior work and other related projects 
