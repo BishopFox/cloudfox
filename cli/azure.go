@@ -7,8 +7,10 @@ import (
 )
 
 var (
-	AzOutputFormat string
-	AzCommands     = &cobra.Command{
+	AzOutputFormat    string
+	AzOutputDirectory string
+	AzVerbosity       int
+	AzCommands        = &cobra.Command{
 		Use:     "azure",
 		Aliases: []string{"az"},
 		Long: `
@@ -22,14 +24,14 @@ See \"Available Commands\" for Azure Modules`,
 
 	AzInstancesMapRGFilter string
 	AzInstancesMapCommand  = &cobra.Command{
-		Use:     "instances-map",
-		Aliases: []string{"instances"},
+		Use:     "instances",
+		Aliases: []string{"instances-map"},
 		Short:   `Enumerates compute instances for specified Resource Group`,
 		Long: `
 Enumerates compute instances for specified Resource Group`,
 		Run: func(cmd *cobra.Command, args []string) {
 			m := azure.InstancesMapModule{Scope: utils.AzGetScopeInformation()}
-			m.InstancesMap(AzOutputFormat, AzInstancesMapRGFilter)
+			m.InstancesMap(AzVerbosity, AzOutputFormat, AzOutputDirectory, AzInstancesMapRGFilter)
 		},
 	}
 	AzUserFilter     string
@@ -47,15 +49,16 @@ Display all role assignemts for all principals`,
 )
 
 func init() {
+	// Global flags for the Azure modules
+	AzCommands.PersistentFlags().StringVarP(&AzOutputFormat, "output", "o", "all", "[\"table\" | \"csv\" | \"all\" ]")
+	AzCommands.PersistentFlags().IntVarP(&AzVerbosity, "verbosity", "v", 1, "1 = Print control messages only\n2 = Print control messages, module output\n3 = Print control messages, module output, and loot file output\n")
+	AzCommands.PersistentFlags().StringVar(&AzOutputDirectory, "outdir", "cloudfox-output", "Output Directory ")
 
 	// Instances Map Module Flags
 	AzInstancesMapCommand.Flags().StringVarP(&AzInstancesMapRGFilter, "resource-group", "g", "all", "Name of Resource Group to query")
 
 	// RBAC Map Module Flags
 	AzRBACMapCommand.Flags().StringVarP(&AzUserFilter, "user", "u", "all", "Display name of user to query")
-
-	// Global flags for the AWS modules
-	AzCommands.PersistentFlags().StringVarP(&AzOutputFormat, "output", "o", "table", "[\"table\" | \"csv\"]")
 
 	AzCommands.AddCommand(AzInstancesMapCommand, AzRBACMapCommand)
 }

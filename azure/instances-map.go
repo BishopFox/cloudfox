@@ -8,9 +8,10 @@ import (
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/compute/mgmt/compute"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/network/mgmt/network"
 	"github.com/BishopFox/cloudfox/utils"
-	"github.com/alexeyco/simpletable"
 	"github.com/aws/smithy-go/ptr"
 )
+
+const callingModule = "instances"
 
 type InstancesMapModule struct {
 	// Tenants, Subs and RGs: map[TenantID]map[SubscriptionID][]ResourceGroups
@@ -35,7 +36,7 @@ type vmRelevantInformation struct {
 	externalIPs     []string
 }
 
-func (m *InstancesMapModule) InstancesMap(outputFormat string, resourceGroupFilter string) {
+func (m *InstancesMapModule) InstancesMap(verbosity int, outputFormat string, outputDirectory string, resourceGroupFilter string) {
 	for tenantID, subscriptionsMap := range m.Scope {
 		fmt.Printf("[*] Started tenant: %s\n", tenantID)
 		for subscriptionID := range subscriptionsMap {
@@ -47,25 +48,26 @@ func (m *InstancesMapModule) InstancesMap(outputFormat string, resourceGroupFilt
 
 	fmt.Printf("\n[*] Preparing output...\n\n")
 	// Prepare table headers
-	m.output.Headers = []*simpletable.Cell{
-		{Text: "RESOURCE_GROUP"},
-		{Text: "NAME"},
-		{Text: "OS"},
-		{Text: "ADMIN_USERNAME"},
-		{Text: "INTERNAL_IPS"},
-		{Text: "EXTERNAL_IPS"},
+	header := []string{
+		"RESOURCE_GROUP",
+		"NAME",
+		"OS",
+		"ADMIN_USERNAME",
+		"INTERNAL_IPS",
+		"EXTERNAL_IPS",
 	}
 	// Prepare table body
+	var body [][]string
 	for _, result := range m.results {
-		m.output.Body = append(
-			m.output.Body,
-			[]interface{}{
+		body = append(
+			body,
+			[]string{
 				result.resourceGroup,
 				result.name,
 				result.operatingSystem,
 				result.adminUsername,
-				result.internalIPs,
-				result.externalIPs,
+				strings.Join(result.internalIPs, ", "),
+				strings.Join(result.externalIPs, ", "),
 				//Use the format below if you don't like the array format on output
 				//strings.Join(result.internalIPs, ", "),
 				//strings.Join(result.externalIPs, ", "),
@@ -73,7 +75,16 @@ func (m *InstancesMapModule) InstancesMap(outputFormat string, resourceGroupFilt
 		)
 	}
 	// Pretty prints output
-	m.output.OutputSelector(outputFormat)
+	//m.output.OutputSelector(outputFormat)
+	utils.OutputSelector(
+		verbosity,
+		outputFormat,
+		header,
+		body,
+		outputDirectory,
+		"instances",
+		callingModule,
+	)
 }
 
 func (m *InstancesMapModule) setNecessaryClients(subscriptionID string) {
