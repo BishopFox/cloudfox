@@ -11,10 +11,6 @@ CloudFox helps you gain situational awareness in unfamiliar cloud environments. 
 * What endpoints/hostnames/IPs can I attack from an internal starting point (assumed breach within the VPC)?
 * What filesystems can I potentially mount from a compromised resource inside the VPC?
 
-## Release Binaries
-Download the [latest binary release](https://github.com/BishopFox/cloudfox/releases) for your platform.
-
-
 ## Quick Start
 CloudFox is modular (you can run one command at a time), but there is an aws `all-checks` command that will run the other aws commands for you with sane defaults: 
 
