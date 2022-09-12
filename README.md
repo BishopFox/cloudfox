@@ -28,7 +28,7 @@ For the full documentation please refer to our [wiki](https://github.com/BishopF
 | Provider| CloudFox Commands |
 | - | - |
 | AWS | 15 | 
-| Azure | 2 (alpha) | 
+| Azure | 2 (under development) | 
 | Kubernetes | Support Planned | 
 
 
