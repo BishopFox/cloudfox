@@ -8,15 +8,15 @@ import (
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/compute/mgmt/compute"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/network/mgmt/network"
 	"github.com/BishopFox/cloudfox/utils"
-	"github.com/alexeyco/simpletable"
 	"github.com/aws/smithy-go/ptr"
 )
+
+const instancesCallingModuleName = "instances"
 
 type InstancesMapModule struct {
 	// Tenants, Subs and RGs: map[TenantID]map[SubscriptionID][]ResourceGroups
 	Scope map[string]map[string][]string
-	// Used to store output data for pretty printing
-	output utils.OutputData
+
 	// This module queries 3 different resource types (Compute, NIC and PublicIP), thus 3 different clients.
 	computeClient  compute.VirtualMachinesClient
 	nicClient      network.InterfacesClient
@@ -35,7 +35,7 @@ type vmRelevantInformation struct {
 	externalIPs     []string
 }
 
-func (m *InstancesMapModule) InstancesMap(outputFormat string, resourceGroupFilter string) {
+func (m *InstancesMapModule) InstancesMap(verbosity int, outputFormat string, outputDirectory string, resourceGroupFilter string) {
 	for tenantID, subscriptionsMap := range m.Scope {
 		fmt.Printf("[*] Started tenant: %s\n", tenantID)
 		for subscriptionID := range subscriptionsMap {
@@ -47,25 +47,27 @@ func (m *InstancesMapModule) InstancesMap(outputFormat string, resourceGroupFilt
 
 	fmt.Printf("\n[*] Preparing output...\n\n")
 	// Prepare table headers
-	m.output.Headers = []*simpletable.Cell{
-		{Text: "RESOURCE_GROUP"},
-		{Text: "NAME"},
-		{Text: "OS"},
-		{Text: "ADMIN_USERNAME"},
-		{Text: "INTERNAL_IPS"},
-		{Text: "EXTERNAL_IPS"},
+	header := []string{
+		"RESOURCE_GROUP",
+		"NAME",
+		"OS",
+		"ADMIN_USERNAME",
+		"INTERNAL_IPS",
+		"EXTERNAL_IPS",
 	}
+
 	// Prepare table body
+	var body [][]string
 	for _, result := range m.results {
-		m.output.Body = append(
-			m.output.Body,
-			[]interface{}{
+		body = append(
+			body,
+			[]string{
 				result.resourceGroup,
 				result.name,
 				result.operatingSystem,
 				result.adminUsername,
-				result.internalIPs,
-				result.externalIPs,
+				strings.Join(result.internalIPs, ", "),
+				strings.Join(result.externalIPs, ", "),
 				//Use the format below if you don't like the array format on output
 				//strings.Join(result.internalIPs, ", "),
 				//strings.Join(result.externalIPs, ", "),
@@ -73,7 +75,16 @@ func (m *InstancesMapModule) InstancesMap(outputFormat string, resourceGroupFilt
 		)
 	}
 	// Pretty prints output
-	m.output.OutputSelector(outputFormat)
+	//m.output.OutputSelector(outputFormat)
+	utils.OutputSelector(
+		verbosity,
+		outputFormat,
+		header,
+		body,
+		outputDirectory,
+		"instances",
+		instancesCallingModuleName,
+	)
 }
 
 func (m *InstancesMapModule) setNecessaryClients(subscriptionID string) {
@@ -141,13 +152,20 @@ func (m *InstancesMapModule) getVMsDataPerResourceGroup(subscriptionID string, r
 				vmData.name = ptr.ToString(vm.Name)
 				vmData.adminUsername = ptr.ToString(vm.VirtualMachineProperties.OsProfile.AdminUsername)
 				vmData.operatingSystem = ptr.ToString(vm.VirtualMachineProperties.StorageProfile.ImageReference.Offer) + " " + ptr.ToString(vm.VirtualMachineProperties.StorageProfile.ImageReference.Sku)
-				for _, nic := range *vm.VirtualMachineProperties.NetworkProfile.NetworkInterfaces {
-					internalIP, externalIP := m.getNICInternalAndExternalIPs(nic, resourceGroup)
-					vmData.internalIPs = append(vmData.internalIPs, internalIP)
-					if externalIP != "" {
-						vmData.externalIPs = append(vmData.externalIPs, externalIP)
+
+				if vm.VirtualMachineProperties.NetworkProfile.NetworkInterfaces != nil {
+					for _, nic := range *vm.VirtualMachineProperties.NetworkProfile.NetworkInterfaces {
+						internalIP, externalIP := m.getNICInternalAndExternalIPs(nic, resourceGroup)
+						vmData.internalIPs = append(vmData.internalIPs, internalIP)
+						if externalIP != "" {
+							vmData.externalIPs = append(vmData.externalIPs, externalIP)
+						}
 					}
+				} else {
+					vmData.internalIPs = append(vmData.internalIPs, "Error: NICnotFound")
+					vmData.externalIPs = append(vmData.externalIPs, "Error: NICnotFound")
 				}
+
 				m.results = append(m.results, vmData)
 				vmData.internalIPs = nil
 				vmData.externalIPs = nil
@@ -162,7 +180,7 @@ func (m *InstancesMapModule) getNICInternalAndExternalIPs(nic compute.NetworkInt
 	NICName := strings.Split(ptr.ToString(nic.ID), "/")[len(strings.Split(ptr.ToString(nic.ID), "/"))-1]
 	NICExpanded, err := m.nicClient.Get(context.TODO(), resourceGroup, NICName, "")
 	if err != nil {
-		return "\n" + NICName + " not found", "\n" + NICName + "not found"
+		return "Error: NICnotFound", "Error: NICnotFound"
 	}
 
 	if NICExpanded.InterfacePropertiesFormat.IPConfigurations != nil {
