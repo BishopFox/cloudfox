@@ -3,6 +3,7 @@ package cli
 import (
 	"github.com/BishopFox/cloudfox/azure"
 	"github.com/BishopFox/cloudfox/utils"
+	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
 
@@ -30,6 +31,7 @@ See \"Available Commands\" for Azure Modules`,
 		Long: `
 Enumerates compute instances for specified Resource Group`,
 		Run: func(cmd *cobra.Command, args []string) {
+			color.Red("This subcommand is under development! Use at your own risk!")
 			m := azure.InstancesMapModule{Scope: utils.AzGetScopeInformation()}
 			m.InstancesMap(AzVerbosity, AzOutputFormat, AzOutputDirectory, AzInstancesMapRGFilter)
 		},
@@ -42,8 +44,9 @@ Enumerates compute instances for specified Resource Group`,
 		Long: `
 Display all role assignemts for all principals`,
 		Run: func(cmd *cobra.Command, args []string) {
+			color.Red("This subcommand is under development! Use at your own risk!")
 			m := azure.RBACMapModule{Scope: utils.AzGetScopeInformation()}
-			m.RBACMapModule(AzOutputFormat, AzUserFilter)
+			m.RBACMap(AzVerbosity, AzOutputFormat, AzOutputDirectory, AzUserFilter)
 		},
 	}
 )
