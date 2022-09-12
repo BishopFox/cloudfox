@@ -9,7 +9,6 @@ require (
 	github.com/Azure/go-autorest/autorest/azure/cli v0.4.4 // indirect
 	github.com/Azure/go-autorest/autorest/to v0.4.0 // indirect
 	github.com/Azure/go-autorest/autorest/validation v0.3.1 // indirect
-	github.com/alexeyco/simpletable v1.0.0
 	github.com/aquasecurity/table v1.8.0
 	github.com/aws/aws-sdk-go-v2 v1.16.11
 	github.com/aws/aws-sdk-go-v2/config v1.13.0

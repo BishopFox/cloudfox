@@ -8,9 +8,10 @@ import (
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/authorization/mgmt/authorization"
 	"github.com/Azure/azure-sdk-for-go/services/graphrbac/1.6/graphrbac"
 	"github.com/BishopFox/cloudfox/utils"
-	"github.com/alexeyco/simpletable"
 	"github.com/aws/smithy-go/ptr"
 )
+
+const RBACcallingModuleName = "rbac"
 
 type RBACMapModule struct {
 	// Tenants, Subs and RGs: map[TenantID]map[SubscriptionID][]ResourceGroups
@@ -20,31 +21,32 @@ type RBACMapModule struct {
 	Roles           map[string]roleDefinitionObject
 	RoleAssignments []roleAssignmentObject
 	// Used to store output data for pretty printing
-	output utils.OutputData
 }
 
-func (m *RBACMapModule) RBACMapModule(outputFormat string, userFilter string) {
+func (m *RBACMapModule) RBACMap(verbosity int, outputFormat string, outputDirectory string, userFilter string) {
 	m.getADUsers()
 	m.getRoleDefinitions()
 	m.getRoleAssignments()
-	m.printRoleAssginments(outputFormat, userFilter)
+	m.printRoleAssginments(verbosity, outputFormat, outputDirectory, userFilter)
 }
 
-func (m *RBACMapModule) printRoleAssginments(outputFormat string, userFilter string) {
+func (m *RBACMapModule) printRoleAssginments(verbosity int, outputFormat string, outputDirectory string, userFilter string) {
 	// Prepare table headers
-	m.output.Headers = []*simpletable.Cell{
-		{Text: "PRINCIPAL_NAME"},
-		{Text: "PRINCIPAL_ID"},
-		{Text: "PRINCIPAL_TYPE"},
-		{Text: "ROLE_NAME"},
-		{Text: "SCOPE_LEVEL"},
-		{Text: "SCOPE_NAME"},
+	header := []string{
+		"PRINCIPAL_NAME",
+		"PRINCIPAL_ID",
+		"PRINCIPAL_TYPE",
+		"ROLE_NAME",
+		"SCOPE_LEVEL",
+		"SCOPE_NAME",
 	}
+
+	// Prepare table body
+	var body [][]string
 	for _, result := range m.RoleAssignments {
 		if userFilter == "all" || userFilter == result.principalDisplayName {
-			m.output.Body = append(
-				m.output.Body,
-				[]interface{}{
+			body = append(
+				body, []string{
 					result.principalDisplayName,
 					result.principalID,
 					result.principalType,
@@ -56,7 +58,16 @@ func (m *RBACMapModule) printRoleAssginments(outputFormat string, userFilter str
 		}
 	}
 	// Pretty prints output
-	m.output.OutputSelector(outputFormat)
+	//m.output.OutputSelector(outputFormat)
+	utils.OutputSelector(
+		verbosity,
+		outputFormat,
+		header,
+		body,
+		outputDirectory,
+		"rbac",
+		RBACcallingModuleName,
+	)
 }
 
 type userObject struct {
