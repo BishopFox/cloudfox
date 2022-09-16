@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/apprunner"
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
@@ -65,6 +66,7 @@ type Inventory2Module struct {
 	GlueClient           *glue.Client
 	SNSClient            *sns.Client
 	SQSClient            *sqs.Client
+	DynamoDBClient       *dynamodb.Client
 
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
@@ -103,7 +105,7 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 	},
 	)
 	// def change this to build dynamically in the future.
-	m.services = []string{"total", "APIGateway RestAPIs", "APIGatewayv2 APIs", "AppRunner Services", "CloudFormation Stacks", "Cloudfront Distributions", "EC2 Instances", "ECS Tasks", "EKS Clusters", "ELB Load Balancers", "ELBv2 Load Balancers", "Glue Dev Endpoints", "Glue Jobs", "Grafana Workspaces", "Lambda Functions", "Lightsail Instances/Containers", "MQ Brokers", "OpenSearch DomainNames", "RDS DB Instances", "SecretsManager Secrets", "SNS Topics", "SQS Queues", "SSM Parameters"}
+	m.services = []string{"total", "APIGateway RestAPIs", "APIGatewayv2 APIs", "AppRunner Services", "CloudFormation Stacks", "Cloudfront Distributions", "DynamoDB Tables", "EC2 Instances", "ECS Tasks", "EKS Clusters", "ELB Load Balancers", "ELBv2 Load Balancers", "Glue Dev Endpoints", "Glue Jobs", "Grafana Workspaces", "Lambda Functions", "Lightsail Instances/Containers", "MQ Brokers", "OpenSearch DomainNames", "RDS DB Instances", "SecretsManager Secrets", "SNS Topics", "SQS Queues", "SSM Parameters"}
 	m.serviceMap = map[string]map[string]int{}
 	m.totalRegionCounts = map[string]int{}
 
@@ -121,7 +123,7 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 	}
 
 	fmt.Printf("[%s] Enumerating selected services in all regions for account %s.\n", cyan(m.output.CallingModule), aws.ToString(m.Caller.Account))
-	fmt.Printf("[%s] Supported Services: ApiGateway, ApiGatewayv2, AppRunner, CloudFormation, Cloudfront, EC2, ECS, EKS, \n", cyan(m.output.CallingModule))
+	fmt.Printf("[%s] Supported Services: ApiGateway, ApiGatewayv2, AppRunner, CloudFormation, Cloudfront, DynamoDB, EC2, ECS, EKS, \n", cyan(m.output.CallingModule))
 	fmt.Printf("[%s] \t\t\tELB, ELBv2, Glue, Grafana, IAM, Lambda, Lightsail, MQ, OpenSearch, RDS, S3, SecretsManager, SNS, SQS, SSM\n", cyan(m.output.CallingModule))
 
 	wg := new(sync.WaitGroup)
@@ -396,6 +398,10 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 	m.CommandCounter.Total++
 	wg.Add(1)
 	go m.getSQSQueuesPerRegion(r, wg, semaphore)
+
+	m.CommandCounter.Total++
+	wg.Add(1)
+	go m.getDynamoDBTablesPerRegion(r, wg, semaphore)
 }
 
 func (m *Inventory2Module) getLambdaFunctionsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
@@ -1537,6 +1543,46 @@ func (m *Inventory2Module) getSQSQueuesPerRegion(r string, wg *sync.WaitGroup, s
 			break
 		}
 	}
+}
+
+func (m *Inventory2Module) getDynamoDBTablesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+	var totalCountThisServiceThisRegion = 0
+	var service = "DynamoDB Tables"
+
+	ListTables, err := m.DynamoDBClient.ListTables(
+		context.TODO(),
+		&(dynamodb.ListTablesInput{}),
+		func(o *dynamodb.Options) {
+			o.Region = r
+		},
+	)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListTables.TableNames)
+
+	// No more pages, update the module's service map
+	m.mu.Lock()
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
 }
 
 // Global Resources

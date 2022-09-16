@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
 	"github.com/aws/aws-sdk-go-v2/service/cloudtrail"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
@@ -188,6 +189,7 @@ var (
 				GlueClient:           glue.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
 				SNSClient:            sns.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
 				SQSClient:            sqs.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
+				DynamoDBClient:       dynamodb.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
 
 				Caller:     utils.AWSWhoami(AWSProfile),
 				AWSRegions: AWSRegions,
@@ -500,6 +502,7 @@ var (
 			glueClient := glue.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
 			snsClient := sns.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
 			sqsClient := sqs.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
+			dynamodbClient := dynamodb.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
 
 			fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Getting a lay of the land, aka \"What regions is this account using?\""))
 			inventory2 := aws.Inventory2Module{
@@ -527,6 +530,7 @@ var (
 				GlueClient:           glueClient,
 				SNSClient:            snsClient,
 				SQSClient:            sqsClient,
+				DynamoDBClient:       dynamodbClient,
 
 				Caller:     utils.AWSWhoami(AWSProfile),
 				AWSRegions: AWSRegions,
