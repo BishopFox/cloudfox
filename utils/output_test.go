@@ -64,7 +64,7 @@ func TestOutputSelector(t *testing.T) {
 			outputType:        "csv",
 			outputDirectory:   "cloudfox-output",
 			fileNameExtension: ".csv",
-			callingModule:     "calling_module__6",
+			callingModule:     "calling_module_6",
 		},
 	}
 
