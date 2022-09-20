@@ -1385,7 +1385,7 @@ func (m *Inventory2Module) getGlueDevEndpointsPerRegion(r string, wg *sync.WaitG
 
 		// This next line is non-standard. For some reason this next token is an empty string instead of nil, so
 		// as a result we had to change the comparison.
-		if *ListDevEndpoints.NextToken != "" {
+		if aws.ToString(ListDevEndpoints.NextToken) != "" {
 			PaginationControl = ListDevEndpoints.NextToken
 		} else {
 			PaginationControl = nil
