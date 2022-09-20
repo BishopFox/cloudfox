@@ -9,6 +9,7 @@
                 "cloudformation:ListStacks",
                 "cloudtrail:LookupEvents",
                 "cloudfront:ListDistributions",
+                "dynamodb:ListTables",
                 "ec2:DescribeInstanceAttribute",
                 "ec2:DescribeInstances",
                 "ec2:DescribeRegions",
@@ -27,6 +28,8 @@
                 "elasticloadbalancing:DescribeListeners",                            
                 "fsx:DescribeFileSystems",
                 "fsx:DescribeVolumes",
+                "glue:ListDevEndpoints",
+                "glue:ListJobs",
                 "grafana:ListWorkspaces",
                 "iam:GetAccountAuthorizationDetails",
                 "iam:ListAccessKeys",
@@ -57,11 +60,14 @@
                 "sagemaker:DescribeTrainingJob",
                 "sagemaker:ListModels",
                 "sagemaker:DescribeModel",                
-                "secretsmanager:ListSecrets"
+                "secretsmanager:ListSecrets",
+                "sns:ListTopics",
+                "sqs:ListQueues"
+
             ],
             "Resource": "*",
             "Effect": "Allow",
-            "Sid": "AllowMoreReadForCloudFox"
+            "Sid": "AllowMoreReadForCloudFox-1.7.1"
         }
     ]
 }

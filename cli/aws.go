@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
 	"github.com/aws/aws-sdk-go-v2/service/cloudtrail"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
@@ -20,6 +21,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancing"
 	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	"github.com/aws/aws-sdk-go-v2/service/fsx"
+	"github.com/aws/aws-sdk-go-v2/service/glue"
 	"github.com/aws/aws-sdk-go-v2/service/grafana"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
@@ -32,6 +34,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sagemaker"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+	"github.com/aws/aws-sdk-go-v2/service/sns"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/fatih/color"
 	"github.com/kyokomi/emoji"
@@ -182,6 +186,10 @@ var (
 				CloudfrontClient:     cloudfront.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
 				AppRunnerClient:      apprunner.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
 				LightsailClient:      lightsail.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
+				GlueClient:           glue.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
+				SNSClient:            sns.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
+				SQSClient:            sqs.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
+				DynamoDBClient:       dynamodb.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
 
 				Caller:     utils.AWSWhoami(AWSProfile),
 				AWSRegions: AWSRegions,
@@ -491,6 +499,10 @@ var (
 			sagemakerClient := sagemaker.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
 			ecrClient := ecr.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
 			ssmClient := ssm.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
+			glueClient := glue.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
+			snsClient := sns.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
+			sqsClient := sqs.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
+			dynamodbClient := dynamodb.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
 
 			fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Getting a lay of the land, aka \"What regions is this account using?\""))
 			inventory2 := aws.Inventory2Module{
@@ -515,6 +527,10 @@ var (
 				CloudfrontClient:     cloudfrontClient,
 				AppRunnerClient:      appRunnerClient,
 				LightsailClient:      lightsailClient,
+				GlueClient:           glueClient,
+				SNSClient:            snsClient,
+				SQSClient:            sqsClient,
+				DynamoDBClient:       dynamodbClient,
 
 				Caller:     utils.AWSWhoami(AWSProfile),
 				AWSRegions: AWSRegions,
