@@ -26,6 +26,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/lightsail"
 	"github.com/aws/aws-sdk-go-v2/service/mq"
 	"github.com/aws/aws-sdk-go-v2/service/opensearch"
+	"github.com/aws/aws-sdk-go-v2/service/ram"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
 	"github.com/aws/aws-sdk-go-v2/service/redshift"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
@@ -431,26 +432,26 @@ var (
 		},
 	}
 
-	// RAMCommand = &cobra.Command{
-	// 	Use:   "ram",
-	// 	Short: "Enumerate cross-account shared resources",
-	// 	Long: "\nUse case examples:\n" +
-	// 		os.Args[0] + " aws ram --profile readonly_profile",
-	// 	PreRun: func(cmd *cobra.Command, args []string) {
-	// 		var caller = utils.AWSWhoami(AWSProfile)
-	// 		fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
-	// 	},
-	// 	Run: func(cmd *cobra.Command, args []string) {
-	// 		m := aws.RAMModule{
-	// 			RAMClient: ram.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
+	RAMCommand = &cobra.Command{
+		Use:   "ram",
+		Short: "Enumerate cross-account shared resources",
+		Long: "\nUse case examples:\n" +
+			os.Args[0] + " aws ram --profile readonly_profile",
+		PreRun: func(cmd *cobra.Command, args []string) {
+			var caller = utils.AWSWhoami(AWSProfile)
+			fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+		},
+		Run: func(cmd *cobra.Command, args []string) {
+			m := aws.RAMModule{
+				RAMClient: ram.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
 
-	// 			Caller:     utils.AWSWhoami(AWSProfile),
-	// 			AWSRegions: AWSRegions,
-	// 			AWSProfile: AWSProfile,
-	// 		}
-	// 		m.PrintRAM(AWSOutputFormat, AWSOutputDirectory, Verbosity)
-	// 	},
-	// }
+				Caller:     utils.AWSWhoami(AWSProfile),
+				AWSRegions: AWSRegions,
+				AWSProfile: AWSProfile,
+			}
+			m.PrintRAM(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		},
+	}
 
 	AllChecksCommand = &cobra.Command{
 
@@ -718,6 +719,7 @@ func init() {
 		FilesystemsCommand,
 		BucketsCommand,
 		PermissionsCommand,
+		RAMCommand,
 	)
 
 }
