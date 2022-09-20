@@ -1361,28 +1361,39 @@ func (m *Inventory2Module) getGlueDevEndpointsPerRegion(r string, wg *sync.WaitG
 	m.CommandCounter.Executing++
 	var totalCountThisServiceThisRegion = 0
 	var service = "Glue Dev Endpoints"
+	var PaginationControl *string
 
-	ListDevEndpoints, err := m.GlueClient.ListDevEndpoints(
-		context.TODO(),
-		&(glue.ListDevEndpointsInput{}),
-		func(o *glue.Options) {
-			o.Region = r
-		},
-	)
-	if err != nil {
-		m.modLog.Error(err.Error())
-		m.CommandCounter.Error++
-		return
+	for {
+		ListDevEndpoints, err := m.GlueClient.ListDevEndpoints(
+			context.TODO(),
+			&(glue.ListDevEndpointsInput{
+				NextToken: PaginationControl,
+			}),
+			func(o *glue.Options) {
+				o.Region = r
+			},
+		)
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			break
+		}
+
+		// Add this page of resources to the total count
+		totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListDevEndpoints.DevEndpointNames)
+
+		if *ListDevEndpoints.NextToken != "" {
+			PaginationControl = ListDevEndpoints.NextToken
+		} else {
+			PaginationControl = nil
+			m.mu.Lock()
+			m.serviceMap[service][r] = totalCountThisServiceThisRegion
+			m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+			m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+			m.mu.Unlock()
+			break
+		}
 	}
-
-	// Add this page of resources to the total count
-	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListDevEndpoints.DevEndpointNames)
-
-	m.mu.Lock()
-	m.serviceMap[service][r] = totalCountThisServiceThisRegion
-	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
-	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
-	m.mu.Unlock()
 }
 
 func (m *Inventory2Module) getGlueJobsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
