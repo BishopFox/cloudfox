@@ -1347,6 +1347,7 @@ func (m *Inventory2Module) getEcsTasksPerRegion(r string, wg *sync.WaitGroup, se
 }
 
 func (m *Inventory2Module) getGlueDevEndpointsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	// Don't use this method as a template for future ones. There is a one off in the way the NextToken is handled.
 	defer func() {
 		wg.Done()
 		m.CommandCounter.Executing--
@@ -1382,6 +1383,8 @@ func (m *Inventory2Module) getGlueDevEndpointsPerRegion(r string, wg *sync.WaitG
 		// Add this page of resources to the total count
 		totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListDevEndpoints.DevEndpointNames)
 
+		// This next line is non-standard. For some reason this next token is an empty string instead of nil, so
+		// as a result we had to change the comparison.
 		if *ListDevEndpoints.NextToken != "" {
 			PaginationControl = ListDevEndpoints.NextToken
 		} else {
