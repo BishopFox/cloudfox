@@ -67,7 +67,7 @@
             ],
             "Resource": "*",
             "Effect": "Allow",
-            "Sid": "AllowMoreReadForCloudFox-1.7.1"
+            "Sid": "AllowMoreReadForCloudFox171"
         }
     ]
 }
