@@ -16,11 +16,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/apprunner"
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancing"
 	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
+	"github.com/aws/aws-sdk-go-v2/service/glue"
 	"github.com/aws/aws-sdk-go-v2/service/grafana"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
@@ -31,6 +33,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/redshift"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+	"github.com/aws/aws-sdk-go-v2/service/sns"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/sirupsen/logrus"
@@ -59,6 +63,10 @@ type Inventory2Module struct {
 	CloudfrontClient     *cloudfront.Client
 	AppRunnerClient      *apprunner.Client
 	LightsailClient      *lightsail.Client
+	GlueClient           *glue.Client
+	SNSClient            *sns.Client
+	SQSClient            *sqs.Client
+	DynamoDBClient       *dynamodb.Client
 
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
@@ -97,7 +105,7 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 	},
 	)
 	// def change this to build dynamically in the future.
-	m.services = []string{"total", "APIGateway RestAPIs", "APIGatewayv2 APIs", "AppRunner Services", "CloudFormation Stacks", "Cloudfront Distributions", "EC2 Instances", "ECS Tasks", "EKS Clusters", "ELB Load Balancers", "ELBv2 Load Balancers", "Grafana Workspaces", "Lambda Functions", "Lightsail Instances/Containers", "MQ Brokers", "OpenSearch DomainNames", "RDS DB Instances", "SecretsManager Secrets", "SSM Parameters"}
+	m.services = []string{"total", "APIGateway RestAPIs", "APIGatewayv2 APIs", "AppRunner Services", "CloudFormation Stacks", "Cloudfront Distributions", "DynamoDB Tables", "EC2 Instances", "ECS Tasks", "EKS Clusters", "ELB Load Balancers", "ELBv2 Load Balancers", "Glue Dev Endpoints", "Glue Jobs", "Grafana Workspaces", "Lambda Functions", "Lightsail Instances/Containers", "MQ Brokers", "OpenSearch DomainNames", "RDS DB Instances", "SecretsManager Secrets", "SNS Topics", "SQS Queues", "SSM Parameters"}
 	m.serviceMap = map[string]map[string]int{}
 	m.totalRegionCounts = map[string]int{}
 
@@ -115,8 +123,8 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 	}
 
 	fmt.Printf("[%s] Enumerating selected services in all regions for account %s.\n", cyan(m.output.CallingModule), aws.ToString(m.Caller.Account))
-	fmt.Printf("[%s] Supported Services: ApiGateway, ApiGatewayv2, AppRunner, CloudFormation, Cloudfront, EC2, ECS, EKS, \n", cyan(m.output.CallingModule))
-	fmt.Printf("[%s] \t\t\tELB, ELBv2, Grafana, IAM, Lambda, Lightsail, MQ, OpenSearch, RDS, S3, SecretsManager, SSM\n", cyan(m.output.CallingModule))
+	fmt.Printf("[%s] Supported Services: ApiGateway, ApiGatewayv2, AppRunner, CloudFormation, Cloudfront, DynamoDB, EC2, ECS, EKS, \n", cyan(m.output.CallingModule))
+	fmt.Printf("[%s] \t\t\tELB, ELBv2, Glue, Grafana, IAM, Lambda, Lightsail, MQ, OpenSearch, RDS, S3, SecretsManager, SNS, SQS, SSM\n", cyan(m.output.CallingModule))
 
 	wg := new(sync.WaitGroup)
 	semaphore := make(chan struct{}, 50)
@@ -269,8 +277,6 @@ func (m *Inventory2Module) PrintGlobalResources(outputFormat string, outputDirec
 	//m.globalOutput.CallingModule = fmt.Sprintf("%s-global", m.globalOutput.CallingModule)
 	m.globalOutput.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 
-	
-
 	m.globalOutput.Headers = []string{
 		"Resource Type",
 		"Total",
@@ -377,6 +383,25 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 	wg.Add(1)
 	go m.getSSMParametersPerRegion(r, wg, semaphore)
 
+	m.CommandCounter.Total++
+	wg.Add(1)
+	go m.getGlueDevEndpointsPerRegion(r, wg, semaphore)
+
+	m.CommandCounter.Total++
+	wg.Add(1)
+	go m.getGlueJobsPerRegion(r, wg, semaphore)
+
+	m.CommandCounter.Total++
+	wg.Add(1)
+	go m.getSNSTopicsPerRegion(r, wg, semaphore)
+
+	m.CommandCounter.Total++
+	wg.Add(1)
+	go m.getSQSQueuesPerRegion(r, wg, semaphore)
+
+	m.CommandCounter.Total++
+	wg.Add(1)
+	go m.getDynamoDBTablesPerRegion(r, wg, semaphore)
 }
 
 func (m *Inventory2Module) getLambdaFunctionsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
@@ -1321,6 +1346,259 @@ func (m *Inventory2Module) getEcsTasksPerRegion(r string, wg *sync.WaitGroup, se
 	}
 }
 
+func (m *Inventory2Module) getGlueDevEndpointsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	// Don't use this method as a template for future ones. There is a one off in the way the NextToken is handled.
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+	var totalCountThisServiceThisRegion = 0
+	var service = "Glue Dev Endpoints"
+	var PaginationControl *string
+
+	for {
+		ListDevEndpoints, err := m.GlueClient.ListDevEndpoints(
+			context.TODO(),
+			&(glue.ListDevEndpointsInput{
+				NextToken: PaginationControl,
+			}),
+			func(o *glue.Options) {
+				o.Region = r
+			},
+		)
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			break
+		}
+
+		// Add this page of resources to the total count
+		totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListDevEndpoints.DevEndpointNames)
+
+		// This next line is non-standard. For some reason this next token is an empty string instead of nil, so
+		// as a result we had to change the comparison.
+		if aws.ToString(ListDevEndpoints.NextToken) != "" {
+			PaginationControl = ListDevEndpoints.NextToken
+		} else {
+			PaginationControl = nil
+			m.mu.Lock()
+			m.serviceMap[service][r] = totalCountThisServiceThisRegion
+			m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+			m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+			m.mu.Unlock()
+			break
+		}
+	}
+}
+
+func (m *Inventory2Module) getGlueJobsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
+	var PaginationControl *string
+	var totalCountThisServiceThisRegion = 0
+	var service = "Glue Jobs"
+
+	for {
+		m.modLog.Info(fmt.Sprintf("Getting jobs %v\n", PaginationControl))
+		ListJobs, err := m.GlueClient.ListJobs(
+			context.TODO(),
+			&(glue.ListJobsInput{
+				NextToken: PaginationControl,
+			}),
+			func(o *glue.Options) {
+				o.Region = r
+			},
+		)
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			break
+		}
+
+		// Add this page of resources to the total count
+		totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListJobs.JobNames)
+
+		// The "NextToken" value is nil when there's no more data to return.
+		if ListJobs.NextToken != nil {
+			PaginationControl = ListJobs.NextToken
+		} else {
+			PaginationControl = nil
+			// No more pages, update the module's service map
+			m.mu.Lock()
+			m.serviceMap[service][r] = totalCountThisServiceThisRegion
+			m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+			m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+			m.mu.Unlock()
+			break
+		}
+	}
+}
+
+func (m *Inventory2Module) getSNSTopicsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
+	var PaginationControl *string
+	var totalCountThisServiceThisRegion = 0
+	var service = "SNS Topics"
+
+	for {
+		ListTopics, err := m.SNSClient.ListTopics(
+			context.TODO(),
+			&(sns.ListTopicsInput{
+				NextToken: PaginationControl,
+			}),
+			func(o *sns.Options) {
+				o.Region = r
+			},
+		)
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			break
+		}
+
+		// Add this page of resources to the total count
+		totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListTopics.Topics)
+
+		// The "NextToken" value is nil when there's no more data to return.
+		if ListTopics.NextToken != nil {
+			PaginationControl = ListTopics.NextToken
+		} else {
+			PaginationControl = nil
+			// No more pages, update the module's service map
+			m.mu.Lock()
+			m.serviceMap[service][r] = totalCountThisServiceThisRegion
+			m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+			m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+			m.mu.Unlock()
+			break
+		}
+	}
+}
+
+func (m *Inventory2Module) getSQSQueuesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
+	var PaginationControl *string
+	var totalCountThisServiceThisRegion = 0
+	var service = "SQS Queues"
+
+	for {
+		ListQueues, err := m.SQSClient.ListQueues(
+			context.TODO(),
+			&(sqs.ListQueuesInput{
+				NextToken: PaginationControl,
+			}),
+			func(o *sqs.Options) {
+				o.Region = r
+			},
+		)
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			break
+		}
+
+		// Add this page of resources to the total count
+		totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListQueues.QueueUrls)
+
+		// The "NextToken" value is nil when there's no more data to return.
+		if ListQueues.NextToken != nil {
+			PaginationControl = ListQueues.NextToken
+		} else {
+			PaginationControl = nil
+			// No more pages, update the module's service map
+			m.mu.Lock()
+			m.serviceMap[service][r] = totalCountThisServiceThisRegion
+			m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+			m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+			m.mu.Unlock()
+			break
+		}
+	}
+}
+
+func (m *Inventory2Module) getDynamoDBTablesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+	var totalCountThisServiceThisRegion = 0
+	var service = "DynamoDB Tables"
+
+	ListTables, err := m.DynamoDBClient.ListTables(
+		context.TODO(),
+		&(dynamodb.ListTablesInput{}),
+		func(o *dynamodb.Options) {
+			o.Region = r
+		},
+	)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListTables.TableNames)
+
+	// No more pages, update the module's service map
+	m.mu.Lock()
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
+}
+
 // Global Resources
 
 func (m *Inventory2Module) getBuckets(verbosity int, dataReceiver chan GlobalResourceCount2) {
@@ -1468,7 +1746,7 @@ func (m *Inventory2Module) PrintTotalResources(outputFormat string) {
 		}
 	}
 
-	for i, _ := range m.GlobalResourceCounts {
+	for i := range m.GlobalResourceCounts {
 		totalResources = totalResources + m.GlobalResourceCounts[i].count
 	}
 	fmt.Printf("[%s] %d resources enumerated in the services we looked at. This is NOT the total number of resources in the account.\n", cyan(m.output.CallingModule), totalResources)
