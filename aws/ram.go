@@ -88,10 +88,7 @@ func (m *RAMModule) PrintRAM(outputFormat string, outputDirectory string, verbos
 		"Service",
 		"Region",
 		"Name",
-		"URI",
-		"PushedAt",
-		"ImageTags",
-		"ImageSize",
+		"Owner",		
 	}
 
 	// Table rows

@@ -351,6 +351,7 @@ var (
 				Caller:          utils.AWSWhoami(AWSProfile),
 				AWSRegions:      AWSRegions,
 				AWSProfile:      AWSProfile,
+				Goroutines:      Goroutines,
 				ECSClient:       ecs.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
 				AppRunnerClient: apprunner.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
 				LambdaClient:    lambda.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
@@ -616,12 +617,12 @@ var (
 			fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Looking for secrets hidden between the seat cushions."))
 
 			ec2UserData := aws.InstancesModule{
-				EC2Client:  ec2Client,
-				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSRegions: AWSRegions,
-
+				EC2Client:              ec2Client,
+				Caller:                 utils.AWSWhoami(AWSProfile),
+				AWSRegions:             AWSRegions,
 				UserDataAttributesOnly: true,
 				AWSProfile:             AWSProfile,
+				Goroutines:             Goroutines,
 			}
 			ec2UserData.Instances(InstancesFilter, AWSOutputFormat, AWSOutputDirectory, Verbosity)
 			envsMod := aws.EnvsModule{
@@ -629,6 +630,7 @@ var (
 				Caller:          utils.AWSWhoami(AWSProfile),
 				AWSRegions:      AWSRegions,
 				AWSProfile:      AWSProfile,
+				Goroutines:      Goroutines,
 				ECSClient:       ecsClient,
 				AppRunnerClient: appRunnerClient,
 				LambdaClient:    lambdaClient,

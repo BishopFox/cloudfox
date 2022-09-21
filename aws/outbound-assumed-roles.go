@@ -131,6 +131,8 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputFor
 	fmt.Printf("[%s] Going back through %d days of cloudtrail events. (This command can be pretty slow, FYI)\n", cyan(m.output.CallingModule), days)
 
 	wg := new(sync.WaitGroup)
+	semaphore := make(chan struct{}, m.Goroutines)
+
 
 	// Create a channel to signal the spinner aka task status goroutine to finish
 	spinnerDone := make(chan bool)
@@ -147,7 +149,7 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputFor
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
 		m.CommandCounter.Pending++
-		go m.executeChecks(region, wg, dataReceiver)
+		go m.executeChecks(region, wg, semaphore, dataReceiver)
 
 	}
 
@@ -214,17 +216,25 @@ func (m *OutboundAssumedRolesModule) Receiver(receiver chan OutboundAssumeRoleEn
 	}
 }
 
-func (m *OutboundAssumedRolesModule) executeChecks(r string, wg *sync.WaitGroup, dataReceiver chan OutboundAssumeRoleEntry) {
+func (m *OutboundAssumedRolesModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan OutboundAssumeRoleEntry) {
 	defer wg.Done()
+
 	m.CommandCounter.Total++
-	m.CommandCounter.Pending--
-	m.CommandCounter.Executing++
-	m.getAssumeRoleLogEntriesPerRegion(r, dataReceiver)
-	m.CommandCounter.Executing--
-	m.CommandCounter.Complete++
+	m.getAssumeRoleLogEntriesPerRegion(r, wg, semaphore, dataReceiver)
+
 }
 
-func (m *OutboundAssumedRolesModule) getAssumeRoleLogEntriesPerRegion(r string, dataReceiver chan OutboundAssumeRoleEntry) {
+func (m *OutboundAssumedRolesModule) getAssumeRoleLogEntriesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan OutboundAssumeRoleEntry) {
+	defer func() {
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+		wg.Done()
+
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
 	var PaginationControl *string
 	//var LookupAttributes []types.LookupAttributes

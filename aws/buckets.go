@@ -57,6 +57,8 @@ func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string
 	fmt.Printf("[%s] Enumerating buckets for account %s.\n", cyan(m.output.CallingModule), aws.ToString(m.Caller.Account))
 
 	wg := new(sync.WaitGroup)
+	semaphore := make(chan struct{}, m.Goroutines)
+
 
 	// Create a channel to signal the spinner aka task status goroutine to finish
 	spinnerDone := make(chan bool)
@@ -72,7 +74,7 @@ func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string
 
 	wg.Add(1)
 	m.CommandCounter.Pending++
-	go m.executeChecks(wg, dataReceiver)
+	go m.executeChecks(wg, semaphore, dataReceiver)
 
 	wg.Wait()
 	// Send a message to the spinner goroutine to close the channel and stop
@@ -123,12 +125,12 @@ func (m *BucketsModule) Receiver(receiver chan Bucket, receiverDone chan bool) {
 	}
 }
 
-func (m *BucketsModule) executeChecks(wg *sync.WaitGroup, dataReceiver chan Bucket) {
+func (m *BucketsModule) executeChecks(wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Bucket) {
 	defer wg.Done()
+
 	m.CommandCounter.Total++
-	m.CommandCounter.Pending--
-	m.CommandCounter.Executing++
-	m.getBuckets(m.output.Verbosity, dataReceiver)
+	wg.Add(1)
+	m.getBuckets(m.output.Verbosity, wg, semaphore, dataReceiver)
 	m.CommandCounter.Executing--
 	m.CommandCounter.Complete++
 }
@@ -177,7 +179,17 @@ func (m *BucketsModule) writeLoot(outputDirectory string, verbosity int, profile
 
 }
 
-func (m *BucketsModule) getBuckets(verbosity int, dataReceiver chan Bucket) {
+func (m *BucketsModule) getBuckets(verbosity int, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Bucket) {
+	defer func() {
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+		wg.Done()
+
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
 	var r string = "Global"
 	var name string

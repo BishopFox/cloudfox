@@ -1750,5 +1750,5 @@ func (m *Inventory2Module) PrintTotalResources(outputFormat string) {
 	for i := range m.GlobalResourceCounts {
 		totalResources = totalResources + m.GlobalResourceCounts[i].count
 	}
-	fmt.Printf("[%s] %d resources enumerated in the services we looked at. This is NOT the total number of resources in the account.\n", cyan(m.output.CallingModule), totalResources)
+	fmt.Printf("[%s] %d resources found in the services we looked at. This is NOT the total number of resources in the account.\n", cyan(m.output.CallingModule), totalResources)
 }

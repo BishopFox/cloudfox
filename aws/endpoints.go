@@ -170,7 +170,7 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 		//m.output.OutputSelector(outputFormat)
 		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
 		m.writeLoot(outputDirectory, verbosity)
-		fmt.Printf("[%s] %s endpoints enumerated.\n", cyan(m.output.CallingModule), strconv.Itoa(len(m.output.Body)))
+		fmt.Printf("[%s] %s endpoints found.\n", cyan(m.output.CallingModule), strconv.Itoa(len(m.output.Body)))
 	} else {
 		fmt.Printf("[%s] No endpoints found, skipping the creation of an output file.\n", cyan(m.output.CallingModule))
 	}
