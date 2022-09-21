@@ -24,6 +24,7 @@ type RoleTrustsModule struct {
 	IAMClient      iam.ListRolesAPIClient
 	Caller         sts.GetCallerIdentityOutput
 	AWSProfile     string
+	Goroutines     int
 	CommandCounter console.CommandCounter
 
 	// Main module data

@@ -55,6 +55,7 @@ type EndpointsModule struct {
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
 	OutputFormat string
+	Goroutines   int
 	AWSProfile   string
 
 	// Main module data
@@ -95,7 +96,7 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 	fmt.Printf("[%s] \t\t\tLambda, MQ, OpenSearch, Redshift, RDS\n", cyan(m.output.CallingModule))
 
 	wg := new(sync.WaitGroup)
-	semaphore := make(chan struct{}, 50)
+	semaphore := make(chan struct{}, m.Goroutines)
 	// Create a channel to signal the spinner aka task status goroutine to finish
 	spinnerDone := make(chan bool)
 	//fire up the the task status spinner/updated

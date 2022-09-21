@@ -21,6 +21,7 @@ type AccessKeysModule struct {
 	Caller         sts.GetCallerIdentityOutput
 	AWSProfile     string
 	OutputFormat   string
+	Goroutines     int
 	CommandCounter console.CommandCounter
 
 	// Main module data

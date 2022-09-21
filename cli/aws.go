@@ -52,6 +52,7 @@ var (
 	AWSProfile         string
 	AWSOutputFormat    string
 	AWSOutputDirectory string
+	Goroutines         int
 	Verbosity          int
 	AWSCommands        = &cobra.Command{
 		Use:   "aws",
@@ -78,7 +79,8 @@ var (
 			m := aws.RoleTrustsModule{
 				IAMClient:  iam.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
 				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSProfile: AWSProfile}
+				AWSProfile: AWSProfile,
+				Goroutines: Goroutines}
 			m.PrintRoleTrusts(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 		},
 	}
@@ -101,6 +103,7 @@ var (
 				IAMClient:  iam.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
 				Caller:     utils.AWSWhoami(AWSProfile),
 				AWSProfile: AWSProfile,
+				Goroutines: Goroutines,
 			}
 			m.PrintAccessKeys(AccessKeysFilter, AWSOutputFormat, AWSOutputDirectory, Verbosity)
 		},
@@ -122,6 +125,7 @@ var (
 				S3Client:   s3.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
 				Caller:     utils.AWSWhoami(AWSProfile),
 				AWSProfile: AWSProfile,
+				Goroutines: Goroutines,
 			}
 			m.PrintBuckets(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
@@ -195,6 +199,7 @@ var (
 				Caller:     utils.AWSWhoami(AWSProfile),
 				AWSRegions: AWSRegions,
 				AWSProfile: AWSProfile,
+				Goroutines: Goroutines,
 			}
 			m.PrintInventoryPerRegion(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 		},
@@ -231,6 +236,7 @@ var (
 				Caller:     utils.AWSWhoami(AWSProfile),
 				AWSRegions: AWSRegions,
 				AWSProfile: AWSProfile,
+				Goroutines: Goroutines,
 			}
 			m.PrintEndpoints(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 		},
@@ -254,6 +260,7 @@ var (
 				Caller:     utils.AWSWhoami(AWSProfile),
 				AWSRegions: AWSRegions,
 				AWSProfile: AWSProfile,
+				Goroutines: Goroutines,
 			}
 			m.PrintSecrets(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 		},
@@ -276,6 +283,7 @@ var (
 				Caller:     utils.AWSWhoami(AWSProfile),
 				AWSRegions: AWSRegions,
 				AWSProfile: AWSProfile,
+				Goroutines: Goroutines,
 			}
 			m.PrintRoute53(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 		},
@@ -298,6 +306,7 @@ var (
 				Caller:     utils.AWSWhoami(AWSProfile),
 				AWSRegions: AWSRegions,
 				AWSProfile: AWSProfile,
+				Goroutines: Goroutines,
 			}
 			m.PrintECR(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 		},
@@ -320,6 +329,7 @@ var (
 				Caller:     utils.AWSWhoami(AWSProfile),
 				AWSRegions: AWSRegions,
 				AWSProfile: AWSProfile,
+				Goroutines: Goroutines,
 			}
 			m.PrintOutboundRoleTrusts(OutboundAssumedRolesDays, AWSOutputFormat, AWSOutputDirectory, Verbosity)
 		},
@@ -366,6 +376,7 @@ var (
 				IAMClient:  iam.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
 				Caller:     utils.AWSWhoami(AWSProfile),
 				AWSProfile: AWSProfile,
+				Goroutines: Goroutines,
 			}
 			m.PrintIamPrincipals(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 		},
@@ -388,6 +399,7 @@ var (
 				IAMClient:  iam.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
 				Caller:     utils.AWSWhoami(AWSProfile),
 				AWSProfile: AWSProfile,
+				Goroutines: Goroutines,
 			}
 			m.PrintIamPermissions(AWSOutputFormat, AWSOutputDirectory, Verbosity, PermissionsPrincipal)
 		},
@@ -412,6 +424,7 @@ var (
 
 				Caller:     utils.AWSWhoami(AWSProfile),
 				AWSProfile: AWSProfile,
+				Goroutines: Goroutines,
 			}
 			m.PrintIamSimulator(SimulatorPrincipal, SimulatorAction, SimulatorResource, AWSOutputFormat, AWSOutputDirectory, Verbosity)
 		},
@@ -434,6 +447,7 @@ var (
 
 				Caller:     utils.AWSWhoami(AWSProfile),
 				AWSProfile: AWSProfile,
+				Goroutines: Goroutines,
 				AWSRegions: AWSRegions,
 			}
 			filesystems.PrintFilesystems(AWSOutputFormat, AWSOutputDirectory, Verbosity)
@@ -456,6 +470,7 @@ var (
 				Caller:     utils.AWSWhoami(AWSProfile),
 				AWSRegions: AWSRegions,
 				AWSProfile: AWSProfile,
+				Goroutines: Goroutines,
 			}
 			m.PrintRAM(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 		},
@@ -536,6 +551,7 @@ var (
 				Caller:     utils.AWSWhoami(AWSProfile),
 				AWSRegions: AWSRegions,
 				AWSProfile: AWSProfile,
+				Goroutines: Goroutines,
 			}
 			inventory2.PrintInventoryPerRegion(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 			//time.Sleep(time.Second * 5)
@@ -557,6 +573,7 @@ var (
 				Caller:     utils.AWSWhoami(AWSProfile),
 				AWSRegions: AWSRegions,
 				AWSProfile: AWSProfile,
+				Goroutines: Goroutines,
 			}
 			route53.PrintRoute53(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
@@ -565,6 +582,7 @@ var (
 				FSxClient:  fsxClient,
 				Caller:     utils.AWSWhoami(AWSProfile),
 				AWSProfile: AWSProfile,
+				Goroutines: Goroutines,
 				AWSRegions: AWSRegions,
 			}
 			filesystems.PrintFilesystems(AWSOutputFormat, AWSOutputDirectory, Verbosity)
@@ -590,6 +608,7 @@ var (
 				Caller:     utils.AWSWhoami(AWSProfile),
 				AWSRegions: AWSRegions,
 				AWSProfile: AWSProfile,
+				Goroutines: Goroutines,
 			}
 
 			endpoints.PrintEndpoints(AWSOutputFormat, AWSOutputDirectory, Verbosity)
@@ -626,6 +645,7 @@ var (
 				S3Client:   s3Client,
 				Caller:     utils.AWSWhoami(AWSProfile),
 				AWSProfile: AWSProfile,
+				Goroutines: Goroutines,
 			}
 			buckets.PrintBuckets(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
@@ -634,6 +654,7 @@ var (
 				Caller:     utils.AWSWhoami(AWSProfile),
 				AWSRegions: AWSRegions,
 				AWSProfile: AWSProfile,
+				Goroutines: Goroutines,
 			}
 			ecr.PrintECR(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
@@ -644,6 +665,7 @@ var (
 				Caller:     utils.AWSWhoami(AWSProfile),
 				AWSRegions: AWSRegions,
 				AWSProfile: AWSProfile,
+				Goroutines: Goroutines,
 			}
 			secrets.PrintSecrets(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
@@ -653,30 +675,35 @@ var (
 				IAMClient:  iamClient,
 				Caller:     utils.AWSWhoami(AWSProfile),
 				AWSProfile: AWSProfile,
+				Goroutines: Goroutines,
 			}
 			principals.PrintIamPrincipals(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 			permissions := aws.IamPermissionsModule{
 				IAMClient:  iamClient,
 				Caller:     utils.AWSWhoami(AWSProfile),
 				AWSProfile: AWSProfile,
+				Goroutines: Goroutines,
 			}
 			permissions.PrintIamPermissions(AWSOutputFormat, AWSOutputDirectory, Verbosity, PermissionsPrincipal)
 			accessKeys := aws.AccessKeysModule{
 				IAMClient:  iam.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
 				Caller:     utils.AWSWhoami(AWSProfile),
 				AWSProfile: AWSProfile,
+				Goroutines: Goroutines,
 			}
 			accessKeys.PrintAccessKeys(AccessKeysFilter, AWSOutputFormat, AWSOutputDirectory, Verbosity)
 			inboundRoleTrusts := aws.RoleTrustsModule{
 				IAMClient:  iamClient,
 				Caller:     utils.AWSWhoami(AWSProfile),
 				AWSProfile: AWSProfile,
+				Goroutines: Goroutines,
 			}
 			inboundRoleTrusts.PrintRoleTrusts(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 			iamSimulator := aws.IamSimulatorModule{
 				IAMClient:  iamClient,
 				Caller:     utils.AWSWhoami(AWSProfile),
 				AWSProfile: AWSProfile,
+				Goroutines: Goroutines,
 			}
 			iamSimulator.PrintIamSimulator(SimulatorPrincipal, SimulatorAction, SimulatorResource, AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
@@ -717,6 +744,7 @@ func init() {
 	AWSCommands.PersistentFlags().StringVarP(&AWSOutputFormat, "output", "o", "all", "[\"table\" | \"csv\" | \"all\" ]")
 	AWSCommands.PersistentFlags().IntVarP(&Verbosity, "verbosity", "v", 1, "1 = Print control messages only\n2 = Print control messages, module output\n3 = Print control messages, module output, and loot file output\n")
 	AWSCommands.PersistentFlags().StringVar(&AWSOutputDirectory, "outdir", ".", "Output Directory ")
+	AWSCommands.PersistentFlags().IntVarP(&Goroutines, "max-goroutines", "g", 30, "Maximum number of concurrent goroutines")
 
 	AWSCommands.AddCommand(
 		AllChecksCommand,
