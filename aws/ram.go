@@ -88,7 +88,7 @@ func (m *RAMModule) PrintRAM(outputFormat string, outputDirectory string, verbos
 		"Service",
 		"Region",
 		"Name",
-		"Owner",		
+		"Owner",
 	}
 
 	// Table rows

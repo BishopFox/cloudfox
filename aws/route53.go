@@ -25,7 +25,7 @@ type Route53Module struct {
 	Caller         sts.GetCallerIdentityOutput
 	AWSRegions     []string
 	OutputFormat   string
-	Goroutines   int
+	Goroutines     int
 	AWSProfile     string
 	CommandCounter console.CommandCounter
 

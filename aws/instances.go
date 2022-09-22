@@ -25,7 +25,7 @@ type InstancesModule struct {
 	Caller                 sts.GetCallerIdentityOutput
 	AWSRegions             []string
 	OutputFormat           string
-	Goroutines   int
+	Goroutines             int
 	UserDataAttributesOnly bool
 	AWSProfile             string
 

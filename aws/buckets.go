@@ -59,7 +59,6 @@ func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string
 	wg := new(sync.WaitGroup)
 	semaphore := make(chan struct{}, m.Goroutines)
 
-
 	// Create a channel to signal the spinner aka task status goroutine to finish
 	spinnerDone := make(chan bool)
 	//fire up the the task status spinner/updated
