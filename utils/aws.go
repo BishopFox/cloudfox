@@ -1,10 +1,12 @@
 package utils
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
@@ -14,11 +16,13 @@ import (
 	"github.com/aws/smithy-go/ptr"
 	"github.com/kyokomi/emoji"
 	"github.com/sirupsen/logrus"
+	"github.com/spf13/afero"
 )
 
 var (
 	TxtLoggerName = "root"
 	TxtLogger     = txtLogger()
+	UtilsFs       = afero.NewOsFs()
 )
 
 func AWSConfigFileLoader(AWSProfile string) aws.Config {
@@ -34,7 +38,7 @@ func AWSConfigFileLoader(AWSProfile string) aws.Config {
 
 	_, err = cfg.Credentials.Retrieve(context.TODO())
 	if err != nil {
-		fmt.Printf("[%s] Error retrieving credentials from the specified profile, environment variables, or the instance metadata service.\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")))
+		fmt.Printf("[%s] Error retrieving credentials from the specified profile %s, environment variables, or the instance metadata service.\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), AWSProfile)
 		log.Fatalf("Could not retrieve the specified profile name %s", err)
 
 	}
@@ -102,4 +106,47 @@ func txtLogger() *logrus.Logger {
 	//txtLogger.SetReportCaller(true)
 
 	return txtLogger
+}
+
+func CheckErr(e error, msg string) {
+	if e != nil {
+		log.Fatalf("[-] Error %s", msg)
+	}
+}
+
+func GetAllAWSProfiles() []string {
+	credentialsFile, err := UtilsFs.Open(config.DefaultSharedCredentialsFilename())
+	CheckErr(err, "could not open default AWS credentials file")
+	defer credentialsFile.Close()
+	var AWSProfiles []string
+	scanner := bufio.NewScanner(credentialsFile)
+	scanner.Split(bufio.ScanLines)
+	for scanner.Scan() {
+		text := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(text, "[") && strings.HasSuffix(text, "]") {
+			text = strings.TrimPrefix(text, "[")
+			text = strings.TrimSuffix(text, "]")
+			AWSProfiles = append(AWSProfiles, text)
+		}
+	}
+	return AWSProfiles
+}
+
+func GetSelectedAWSProfiles(AWSProfilesListPath string) []string {
+	AWSProfilesListFile, err := UtilsFs.Open(AWSProfilesListPath)
+	CheckErr(err, "could not open AWS profiles list file.")
+	defer AWSProfilesListFile.Close()
+	var AWSProfiles []string
+	scanner := bufio.NewScanner(AWSProfilesListFile)
+	scanner.Split(bufio.ScanLines)
+	for scanner.Scan() {
+		profile := strings.TrimSpace(scanner.Text())
+		if len(profile) != 0 {
+			AWSProfiles = append(AWSProfiles, profile)
+		}
+	}
+	if len(AWSProfiles) == 0 {
+		log.Fatalf("[-] Error: given file of AWS profiles is empty")
+	}
+	return AWSProfiles
 }

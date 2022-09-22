@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"log"
 	"os"
 
 	"github.com/BishopFox/cloudfox/aws"
@@ -35,7 +36,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/fatih/color"
 	"github.com/kyokomi/emoji"
-
 	"github.com/spf13/cobra"
 )
 
@@ -45,6 +45,9 @@ var (
 	green      = color.New(color.FgGreen).SprintFunc()
 
 	AWSProfile         string
+	AWSProfilesList    string
+	AWSAllProfiles     bool
+	AWSProfiles        []string
 	AWSOutputFormat    string
 	AWSOutputDirectory string
 	Verbosity          int
@@ -66,15 +69,19 @@ var (
 			"Map all role trusts for caller's account:\n" +
 			os.Args[0] + " aws role-trusts\n",
 		PreRun: func(cmd *cobra.Command, args []string) {
-			var caller = utils.AWSWhoami(AWSProfile)
-			fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			for _, profile := range AWSProfiles {
+				var caller = utils.AWSWhoami(profile)
+				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			}
 		},
 		Run: func(cmd *cobra.Command, args []string) {
-			m := aws.RoleTrustsModule{
-				IAMClient:  iam.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSProfile: AWSProfile}
-			m.PrintRoleTrusts(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+			for _, profile := range AWSProfiles {
+				m := aws.RoleTrustsModule{
+					IAMClient:  iam.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					Caller:     utils.AWSWhoami(profile),
+					AWSProfile: profile}
+				m.PrintRoleTrusts(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+			}
 		},
 	}
 
@@ -88,16 +95,20 @@ var (
 			os.Args[0] + " aws access-keys --profile test_account" +
 			os.Args[0] + " aws access-keys --filter access_key_id --profile readonly_profile",
 		PreRun: func(cmd *cobra.Command, args []string) {
-			var caller = utils.AWSWhoami(AWSProfile)
-			fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			for _, profile := range AWSProfiles {
+				var caller = utils.AWSWhoami(profile)
+				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			}
 		},
 		Run: func(cmd *cobra.Command, args []string) {
-			m := aws.AccessKeysModule{
-				IAMClient:  iam.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSProfile: AWSProfile,
+			for _, profile := range AWSProfiles {
+				m := aws.AccessKeysModule{
+					IAMClient:  iam.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					Caller:     utils.AWSWhoami(profile),
+					AWSProfile: profile,
+				}
+				m.PrintAccessKeys(AccessKeysFilter, AWSOutputFormat, AWSOutputDirectory, Verbosity)
 			}
-			m.PrintAccessKeys(AccessKeysFilter, AWSOutputFormat, AWSOutputDirectory, Verbosity)
 		},
 	}
 
@@ -109,17 +120,20 @@ var (
 			"List all buckets create a file with pre-populated aws s3 commands:\n" +
 			os.Args[0] + " aws buckets --profile test_account",
 		PreRun: func(cmd *cobra.Command, args []string) {
-			var caller = utils.AWSWhoami(AWSProfile)
-			fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			for _, profile := range AWSProfiles {
+				var caller = utils.AWSWhoami(profile)
+				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			}
 		},
 		Run: func(cmd *cobra.Command, args []string) {
-			m := aws.BucketsModule{
-				S3Client:   s3.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSProfile: AWSProfile,
+			for _, profile := range AWSProfiles {
+				m := aws.BucketsModule{
+					S3Client:   s3.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					Caller:     utils.AWSWhoami(profile),
+					AWSProfile: profile,
+				}
+				m.PrintBuckets(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 			}
-			m.PrintBuckets(AWSOutputFormat, AWSOutputDirectory, Verbosity)
-
 		},
 	}
 
@@ -133,20 +147,23 @@ var (
 		Long: "\nUse case examples:\n" +
 			os.Args[0] + " aws instances --profile readonly_profile",
 		PreRun: func(cmd *cobra.Command, args []string) {
-			var caller = utils.AWSWhoami(AWSProfile)
-			fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			for _, profile := range AWSProfiles {
+				var caller = utils.AWSWhoami(profile)
+				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			}
 		},
 		Run: func(cmd *cobra.Command, args []string) {
+			for _, profile := range AWSProfiles {
+				m := aws.InstancesModule{
+					EC2Client:  ec2.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					Caller:     utils.AWSWhoami(profile),
+					AWSRegions: AWSRegions,
 
-			m := aws.InstancesModule{
-				EC2Client:  ec2.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSRegions: AWSRegions,
-
-				UserDataAttributesOnly: InstanceMapUserDataAttributesOnly,
-				AWSProfile:             AWSProfile,
+					UserDataAttributesOnly: InstanceMapUserDataAttributesOnly,
+					AWSProfile:             profile,
+				}
+				m.Instances(InstancesFilter, AWSOutputFormat, AWSOutputDirectory, Verbosity)
 			}
-			m.Instances(InstancesFilter, AWSOutputFormat, AWSOutputDirectory, Verbosity)
 		},
 	}
 
@@ -156,38 +173,42 @@ var (
 		Long: "\nUse case examples:\n" +
 			os.Args[0] + " aws inventory --profile readonly_profile",
 		PreRun: func(cmd *cobra.Command, args []string) {
-			var caller = utils.AWSWhoami(AWSProfile)
-			fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			for _, profile := range AWSProfiles {
+				var caller = utils.AWSWhoami(profile)
+				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			}
 		},
 		Run: func(cmd *cobra.Command, args []string) {
-			m := aws.Inventory2Module{
-				EC2Client:            ec2.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				ECSClient:            ecs.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				EKSClient:            eks.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				S3Client:             s3.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				LambdaClient:         lambda.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				CloudFormationClient: cloudformation.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				SecretsManagerClient: secretsmanager.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				SSMClient:            ssm.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				RDSClient:            rds.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				APIGatewayv2Client:   apigatewayv2.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				ELBClient:            elasticloadbalancing.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				ELBv2Client:          elasticloadbalancingv2.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				IAMClient:            iam.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				MQClient:             mq.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				OpenSearchClient:     opensearch.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				GrafanaClient:        grafana.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				APIGatewayClient:     apigateway.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				RedshiftClient:       redshift.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				CloudfrontClient:     cloudfront.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				AppRunnerClient:      apprunner.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				LightsailClient:      lightsail.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
+			for _, profile := range AWSProfiles {
+				m := aws.Inventory2Module{
+					EC2Client:            ec2.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					ECSClient:            ecs.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					EKSClient:            eks.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					S3Client:             s3.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					LambdaClient:         lambda.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					CloudFormationClient: cloudformation.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					SecretsManagerClient: secretsmanager.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					SSMClient:            ssm.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					RDSClient:            rds.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					APIGatewayv2Client:   apigatewayv2.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					ELBClient:            elasticloadbalancing.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					ELBv2Client:          elasticloadbalancingv2.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					IAMClient:            iam.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					MQClient:             mq.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					OpenSearchClient:     opensearch.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					GrafanaClient:        grafana.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					APIGatewayClient:     apigateway.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					RedshiftClient:       redshift.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					CloudfrontClient:     cloudfront.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					AppRunnerClient:      apprunner.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					LightsailClient:      lightsail.NewFromConfig(utils.AWSConfigFileLoader(profile)),
 
-				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSRegions: AWSRegions,
-				AWSProfile: AWSProfile,
+					Caller:     utils.AWSWhoami(profile),
+					AWSRegions: AWSRegions,
+					AWSProfile: profile,
+				}
+				m.PrintInventoryPerRegion(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 			}
-			m.PrintInventoryPerRegion(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 		},
 	}
 
@@ -198,32 +219,36 @@ var (
 		Long: "\nUse case examples:\n" +
 			os.Args[0] + " aws endpoints --profile readonly_profile",
 		PreRun: func(cmd *cobra.Command, args []string) {
-			var caller = utils.AWSWhoami(AWSProfile)
-			fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			for _, profile := range AWSProfiles {
+				var caller = utils.AWSWhoami(profile)
+				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			}
 		},
 		Run: func(cmd *cobra.Command, args []string) {
-			m := aws.EndpointsModule{
-				EKSClient:          eks.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				LambdaClient:       lambda.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				MQClient:           mq.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				OpenSearchClient:   opensearch.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				GrafanaClient:      grafana.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				ELBClient:          elasticloadbalancing.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				APIGatewayClient:   apigateway.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				ELBv2Client:        elasticloadbalancingv2.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				APIGatewayv2Client: apigatewayv2.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				RDSClient:          rds.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				RedshiftClient:     redshift.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				S3Client:           s3.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				CloudfrontClient:   cloudfront.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				AppRunnerClient:    apprunner.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				LightsailClient:    lightsail.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
+			for _, profile := range AWSProfiles {
+				m := aws.EndpointsModule{
+					EKSClient:          eks.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					LambdaClient:       lambda.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					MQClient:           mq.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					OpenSearchClient:   opensearch.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					GrafanaClient:      grafana.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					ELBClient:          elasticloadbalancing.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					APIGatewayClient:   apigateway.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					ELBv2Client:        elasticloadbalancingv2.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					APIGatewayv2Client: apigatewayv2.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					RDSClient:          rds.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					RedshiftClient:     redshift.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					S3Client:           s3.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					CloudfrontClient:   cloudfront.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					AppRunnerClient:    apprunner.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					LightsailClient:    lightsail.NewFromConfig(utils.AWSConfigFileLoader(profile)),
 
-				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSRegions: AWSRegions,
-				AWSProfile: AWSProfile,
+					Caller:     utils.AWSWhoami(profile),
+					AWSRegions: AWSRegions,
+					AWSProfile: profile,
+				}
+				m.PrintEndpoints(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 			}
-			m.PrintEndpoints(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 		},
 	}
 
@@ -234,19 +259,23 @@ var (
 		Long: "\nUse case examples:\n" +
 			os.Args[0] + " aws secrets --profile readonly_profile",
 		PreRun: func(cmd *cobra.Command, args []string) {
-			var caller = utils.AWSWhoami(AWSProfile)
-			fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			for _, profile := range AWSProfiles {
+				var caller = utils.AWSWhoami(profile)
+				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			}
 		},
 		Run: func(cmd *cobra.Command, args []string) {
-			m := aws.SecretsModule{
-				SecretsManagerClient: secretsmanager.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				SSMClient:            ssm.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
+			for _, profile := range AWSProfiles {
+				m := aws.SecretsModule{
+					SecretsManagerClient: secretsmanager.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					SSMClient:            ssm.NewFromConfig(utils.AWSConfigFileLoader(profile)),
 
-				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSRegions: AWSRegions,
-				AWSProfile: AWSProfile,
+					Caller:     utils.AWSWhoami(profile),
+					AWSRegions: AWSRegions,
+					AWSProfile: profile,
+				}
+				m.PrintSecrets(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 			}
-			m.PrintSecrets(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 		},
 	}
 
@@ -257,18 +286,22 @@ var (
 		Long: "\nUse case examples:\n" +
 			os.Args[0] + " aws route53 --profile readonly_profile",
 		PreRun: func(cmd *cobra.Command, args []string) {
-			var caller = utils.AWSWhoami(AWSProfile)
-			fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			for _, profile := range AWSProfiles {
+				var caller = utils.AWSWhoami(profile)
+				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			}
 		},
 		Run: func(cmd *cobra.Command, args []string) {
-			m := aws.Route53Module{
-				Route53Client: route53.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
+			for _, profile := range AWSProfiles {
+				m := aws.Route53Module{
+					Route53Client: route53.NewFromConfig(utils.AWSConfigFileLoader(profile)),
 
-				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSRegions: AWSRegions,
-				AWSProfile: AWSProfile,
+					Caller:     utils.AWSWhoami(profile),
+					AWSRegions: AWSRegions,
+					AWSProfile: profile,
+				}
+				m.PrintRoute53(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 			}
-			m.PrintRoute53(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 		},
 	}
 
@@ -279,18 +312,22 @@ var (
 		Long: "\nUse case examples:\n" +
 			os.Args[0] + " aws ecr --profile readonly_profile",
 		PreRun: func(cmd *cobra.Command, args []string) {
-			var caller = utils.AWSWhoami(AWSProfile)
-			fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			for _, profile := range AWSProfiles {
+				var caller = utils.AWSWhoami(profile)
+				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			}
 		},
 		Run: func(cmd *cobra.Command, args []string) {
-			m := aws.ECRModule{
-				ECRClient: ecr.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
+			for _, profile := range AWSProfiles {
+				m := aws.ECRModule{
+					ECRClient: ecr.NewFromConfig(utils.AWSConfigFileLoader(profile)),
 
-				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSRegions: AWSRegions,
-				AWSProfile: AWSProfile,
+					Caller:     utils.AWSWhoami(profile),
+					AWSRegions: AWSRegions,
+					AWSProfile: profile,
+				}
+				m.PrintECR(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 			}
-			m.PrintECR(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 		},
 	}
 	OutboundAssumedRolesDays    int
@@ -301,18 +338,22 @@ var (
 		Long: "\nUse case examples:\n" +
 			os.Args[0] + " aws outbound-assumed-roles --profile readonly_profile",
 		PreRun: func(cmd *cobra.Command, args []string) {
-			var caller = utils.AWSWhoami(AWSProfile)
-			fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			for _, profile := range AWSProfiles {
+				var caller = utils.AWSWhoami(profile)
+				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			}
 		},
 		Run: func(cmd *cobra.Command, args []string) {
-			m := aws.OutboundAssumedRolesModule{
-				CloudTrailClient: cloudtrail.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
+			for _, profile := range AWSProfiles {
+				m := aws.OutboundAssumedRolesModule{
+					CloudTrailClient: cloudtrail.NewFromConfig(utils.AWSConfigFileLoader(profile)),
 
-				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSRegions: AWSRegions,
-				AWSProfile: AWSProfile,
+					Caller:     utils.AWSWhoami(profile),
+					AWSRegions: AWSRegions,
+					AWSProfile: profile,
+				}
+				m.PrintOutboundRoleTrusts(OutboundAssumedRolesDays, AWSOutputFormat, AWSOutputDirectory, Verbosity)
 			}
-			m.PrintOutboundRoleTrusts(OutboundAssumedRolesDays, AWSOutputFormat, AWSOutputDirectory, Verbosity)
 		},
 	}
 
@@ -323,22 +364,26 @@ var (
 		Long: "\nUse case examples:\n" +
 			os.Args[0] + " aws env-vars --profile readonly_profile",
 		PreRun: func(cmd *cobra.Command, args []string) {
-			var caller = utils.AWSWhoami(AWSProfile)
-			fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			for _, profile := range AWSProfiles {
+				var caller = utils.AWSWhoami(profile)
+				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			}
 		},
 		Run: func(cmd *cobra.Command, args []string) {
-			m := aws.EnvsModule{
+			for _, profile := range AWSProfiles {
+				m := aws.EnvsModule{
 
-				Caller:          utils.AWSWhoami(AWSProfile),
-				AWSRegions:      AWSRegions,
-				AWSProfile:      AWSProfile,
-				ECSClient:       ecs.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				AppRunnerClient: apprunner.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				LambdaClient:    lambda.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				LightsailClient: lightsail.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				SagemakerClient: sagemaker.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
+					Caller:          utils.AWSWhoami(profile),
+					AWSRegions:      AWSRegions,
+					AWSProfile:      profile,
+					ECSClient:       ecs.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					AppRunnerClient: apprunner.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					LambdaClient:    lambda.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					LightsailClient: lightsail.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					SagemakerClient: sagemaker.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+				}
+				m.PrintEnvs(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 			}
-			m.PrintEnvs(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 		},
 	}
 
@@ -349,16 +394,20 @@ var (
 		Long: "\nUse case examples:\n" +
 			os.Args[0] + " aws principals --profile readonly_profile",
 		PreRun: func(cmd *cobra.Command, args []string) {
-			var caller = utils.AWSWhoami(AWSProfile)
-			fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			for _, profile := range AWSProfiles {
+				var caller = utils.AWSWhoami(profile)
+				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			}
 		},
 		Run: func(cmd *cobra.Command, args []string) {
-			m := aws.IamPrincipalsModule{
-				IAMClient:  iam.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSProfile: AWSProfile,
+			for _, profile := range AWSProfiles {
+				m := aws.IamPrincipalsModule{
+					IAMClient:  iam.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					Caller:     utils.AWSWhoami(profile),
+					AWSProfile: profile,
+				}
+				m.PrintIamPrincipals(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 			}
-			m.PrintIamPrincipals(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 		},
 	}
 
@@ -371,16 +420,20 @@ var (
 			os.Args[0] + " aws permissions --profile profile\n" +
 			os.Args[0] + " aws permissions --profile profile --principal arn:aws:iam::111111111111:role/test123",
 		PreRun: func(cmd *cobra.Command, args []string) {
-			var caller = utils.AWSWhoami(AWSProfile)
-			fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			for _, profile := range AWSProfiles {
+				var caller = utils.AWSWhoami(profile)
+				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			}
 		},
 		Run: func(cmd *cobra.Command, args []string) {
-			m := aws.IamPermissionsModule{
-				IAMClient:  iam.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSProfile: AWSProfile,
+			for _, profile := range AWSProfiles {
+				m := aws.IamPermissionsModule{
+					IAMClient:  iam.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					Caller:     utils.AWSWhoami(profile),
+					AWSProfile: profile,
+				}
+				m.PrintIamPermissions(AWSOutputFormat, AWSOutputDirectory, Verbosity, PermissionsPrincipal)
 			}
-			m.PrintIamPermissions(AWSOutputFormat, AWSOutputDirectory, Verbosity, PermissionsPrincipal)
 		},
 	}
 
@@ -394,17 +447,21 @@ var (
 		Long: "\nUse case examples:\n" +
 			os.Args[0] + " aws iam-simulator --profile readonly_profile",
 		PreRun: func(cmd *cobra.Command, args []string) {
-			var caller = utils.AWSWhoami(AWSProfile)
-			fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			for _, profile := range AWSProfiles {
+				var caller = utils.AWSWhoami(profile)
+				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			}
 		},
 		Run: func(cmd *cobra.Command, args []string) {
-			m := aws.IamSimulatorModule{
-				IAMClient: iam.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
+			for _, profile := range AWSProfiles {
+				m := aws.IamSimulatorModule{
+					IAMClient: iam.NewFromConfig(utils.AWSConfigFileLoader(profile)),
 
-				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSProfile: AWSProfile,
+					Caller:     utils.AWSWhoami(profile),
+					AWSProfile: profile,
+				}
+				m.PrintIamSimulator(SimulatorPrincipal, SimulatorAction, SimulatorResource, AWSOutputFormat, AWSOutputDirectory, Verbosity)
 			}
-			m.PrintIamSimulator(SimulatorPrincipal, SimulatorAction, SimulatorResource, AWSOutputFormat, AWSOutputDirectory, Verbosity)
 		},
 	}
 
@@ -415,19 +472,23 @@ var (
 		Long: "\nUse case examples:\n" +
 			os.Args[0] + " aws filesystems --profile readonly_profile",
 		PreRun: func(cmd *cobra.Command, args []string) {
-			var caller = utils.AWSWhoami(AWSProfile)
-			fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			for _, profile := range AWSProfiles {
+				var caller = utils.AWSWhoami(profile)
+				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			}
 		},
 		Run: func(cmd *cobra.Command, args []string) {
-			filesystems := aws.FilesystemsModule{
-				EFSClient: efs.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				FSxClient: fsx.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
+			for _, profile := range AWSProfiles {
+				filesystems := aws.FilesystemsModule{
+					EFSClient: efs.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					FSxClient: fsx.NewFromConfig(utils.AWSConfigFileLoader(profile)),
 
-				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSProfile: AWSProfile,
-				AWSRegions: AWSRegions,
+					Caller:     utils.AWSWhoami(profile),
+					AWSProfile: profile,
+					AWSRegions: AWSRegions,
+				}
+				filesystems.PrintFilesystems(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 			}
-			filesystems.PrintFilesystems(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 		},
 	}
 
@@ -458,219 +519,222 @@ var (
 		Aliases: []string{"allchecks", "all"},
 		Short:   "Run all of the other checks (excluding outbound-assumed-roles)",
 		Long: "\nUse case examples:\n" +
-			os.Args[0] + " aws all-checks --profile readonly_profile",
+			os.Args[0] + " aws all-checks --profile readonly_profile", //TODO add examples? os.Args[0] + " aws all-checks --profiles profiles.txt, os.Args[0] + " aws all-checks --all-profiles""
 		PreRun: func(cmd *cobra.Command, args []string) {
-			var caller = utils.AWSWhoami(AWSProfile)
-			fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			for _, profile := range AWSProfiles {
+				var caller = utils.AWSWhoami(profile)
+				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			}
 		},
 		Run: func(cmd *cobra.Command, args []string) {
+			for _, profile := range AWSProfiles {
+				ec2Client := ec2.NewFromConfig(utils.AWSConfigFileLoader(profile))
+				eksClient := eks.NewFromConfig(utils.AWSConfigFileLoader(profile))
+				s3Client := s3.NewFromConfig(utils.AWSConfigFileLoader(profile))
+				lambdaClient := lambda.NewFromConfig(utils.AWSConfigFileLoader(profile))
+				cloudFormationClient := cloudformation.NewFromConfig(utils.AWSConfigFileLoader(profile))
+				secretsManagerClient := secretsmanager.NewFromConfig(utils.AWSConfigFileLoader(profile))
+				rdsClient := rds.NewFromConfig(utils.AWSConfigFileLoader(profile))
+				apiGatewayv2Client := apigatewayv2.NewFromConfig(utils.AWSConfigFileLoader(profile))
+				apiGatewayClient := apigateway.NewFromConfig(utils.AWSConfigFileLoader(profile))
+				elbClient := elasticloadbalancing.NewFromConfig(utils.AWSConfigFileLoader(profile))
+				elbv2Client := elasticloadbalancingv2.NewFromConfig(utils.AWSConfigFileLoader(profile))
+				iamClient := iam.NewFromConfig(utils.AWSConfigFileLoader(profile))
+				mqClient := mq.NewFromConfig(utils.AWSConfigFileLoader(profile))
+				openSearchClient := opensearch.NewFromConfig(utils.AWSConfigFileLoader(profile))
+				grafanaClient := grafana.NewFromConfig(utils.AWSConfigFileLoader(profile))
+				redshiftClient := redshift.NewFromConfig(utils.AWSConfigFileLoader(profile))
+				cloudfrontClient := cloudfront.NewFromConfig(utils.AWSConfigFileLoader(profile))
+				appRunnerClient := apprunner.NewFromConfig(utils.AWSConfigFileLoader(profile))
+				lightsailClient := lightsail.NewFromConfig(utils.AWSConfigFileLoader(profile))
+				route53Client := route53.NewFromConfig(utils.AWSConfigFileLoader(profile))
+				efsClient := efs.NewFromConfig(utils.AWSConfigFileLoader(profile))
+				fsxClient := fsx.NewFromConfig(utils.AWSConfigFileLoader(profile))
+				ecsClient := ecs.NewFromConfig(utils.AWSConfigFileLoader(profile))
+				sagemakerClient := sagemaker.NewFromConfig(utils.AWSConfigFileLoader(profile))
+				ecrClient := ecr.NewFromConfig(utils.AWSConfigFileLoader(profile))
+				ssmClient := ssm.NewFromConfig(utils.AWSConfigFileLoader(profile))
 
-			ec2Client := ec2.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
-			eksClient := eks.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
-			s3Client := s3.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
-			lambdaClient := lambda.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
-			cloudFormationClient := cloudformation.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
-			secretsManagerClient := secretsmanager.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
-			rdsClient := rds.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
-			apiGatewayv2Client := apigatewayv2.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
-			apiGatewayClient := apigateway.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
-			elbClient := elasticloadbalancing.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
-			elbv2Client := elasticloadbalancingv2.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
-			iamClient := iam.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
-			mqClient := mq.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
-			openSearchClient := opensearch.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
-			grafanaClient := grafana.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
-			redshiftClient := redshift.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
-			cloudfrontClient := cloudfront.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
-			appRunnerClient := apprunner.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
-			lightsailClient := lightsail.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
-			route53Client := route53.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
-			efsClient := efs.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
-			fsxClient := fsx.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
-			ecsClient := ecs.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
-			sagemakerClient := sagemaker.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
-			ecrClient := ecr.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
-			ssmClient := ssm.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile))
+				fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Getting a lay of the land, aka \"What regions is this account using?\""))
+				inventory2 := aws.Inventory2Module{
+					EC2Client:            ec2Client,
+					ECSClient:            ecsClient,
+					EKSClient:            eksClient,
+					S3Client:             s3Client,
+					LambdaClient:         lambdaClient,
+					CloudFormationClient: cloudFormationClient,
+					SecretsManagerClient: secretsManagerClient,
+					SSMClient:            ssmClient,
+					RDSClient:            rdsClient,
+					APIGatewayv2Client:   apiGatewayv2Client,
+					APIGatewayClient:     apiGatewayClient,
+					ELBClient:            elbClient,
+					ELBv2Client:          elbv2Client,
+					IAMClient:            iamClient,
+					MQClient:             mqClient,
+					OpenSearchClient:     openSearchClient,
+					GrafanaClient:        grafanaClient,
+					RedshiftClient:       redshiftClient,
+					CloudfrontClient:     cloudfrontClient,
+					AppRunnerClient:      appRunnerClient,
+					LightsailClient:      lightsailClient,
 
-			fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Getting a lay of the land, aka \"What regions is this account using?\""))
-			inventory2 := aws.Inventory2Module{
-				EC2Client:            ec2Client,
-				ECSClient:            ecsClient,
-				EKSClient:            eksClient,
-				S3Client:             s3Client,
-				LambdaClient:         lambdaClient,
-				CloudFormationClient: cloudFormationClient,
-				SecretsManagerClient: secretsManagerClient,
-				SSMClient:            ssmClient,
-				RDSClient:            rdsClient,
-				APIGatewayv2Client:   apiGatewayv2Client,
-				APIGatewayClient:     apiGatewayClient,
-				ELBClient:            elbClient,
-				ELBv2Client:          elbv2Client,
-				IAMClient:            iamClient,
-				MQClient:             mqClient,
-				OpenSearchClient:     openSearchClient,
-				GrafanaClient:        grafanaClient,
-				RedshiftClient:       redshiftClient,
-				CloudfrontClient:     cloudfrontClient,
-				AppRunnerClient:      appRunnerClient,
-				LightsailClient:      lightsailClient,
+					Caller:     utils.AWSWhoami(profile),
+					AWSRegions: AWSRegions,
+					AWSProfile: profile,
+				}
+				inventory2.PrintInventoryPerRegion(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+				//time.Sleep(time.Second * 5)
+				// Service and endpoint enum section
+				fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Gathering the info you'll want for your application & service enumeration needs."))
 
-				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSRegions: AWSRegions,
-				AWSProfile: AWSProfile,
+				instances := aws.InstancesModule{
+					EC2Client:  ec2Client,
+					Caller:     utils.AWSWhoami(profile),
+					AWSRegions: AWSRegions,
+
+					UserDataAttributesOnly: false,
+					AWSProfile:             profile,
+				}
+				instances.Instances(InstancesFilter, AWSOutputFormat, AWSOutputDirectory, Verbosity)
+				route53 := aws.Route53Module{
+					Route53Client: route53Client,
+
+					Caller:     utils.AWSWhoami(profile),
+					AWSRegions: AWSRegions,
+					AWSProfile: profile,
+				}
+				route53.PrintRoute53(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+
+				filesystems := aws.FilesystemsModule{
+					EFSClient:  efsClient,
+					FSxClient:  fsxClient,
+					Caller:     utils.AWSWhoami(profile),
+					AWSProfile: profile,
+					AWSRegions: AWSRegions,
+				}
+				filesystems.PrintFilesystems(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+
+				endpoints := aws.EndpointsModule{
+
+					EKSClient:          eksClient,
+					S3Client:           s3Client,
+					LambdaClient:       lambdaClient,
+					RDSClient:          rdsClient,
+					APIGatewayv2Client: apiGatewayv2Client,
+					APIGatewayClient:   apiGatewayClient,
+					ELBClient:          elbClient,
+					ELBv2Client:        elbv2Client,
+					MQClient:           mqClient,
+					OpenSearchClient:   openSearchClient,
+					GrafanaClient:      grafanaClient,
+					RedshiftClient:     redshiftClient,
+					CloudfrontClient:   cloudfrontClient,
+					AppRunnerClient:    appRunnerClient,
+					LightsailClient:    lightsailClient,
+
+					Caller:     utils.AWSWhoami(profile),
+					AWSRegions: AWSRegions,
+					AWSProfile: profile,
+				}
+
+				endpoints.PrintEndpoints(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+				// Secrets section
+				fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Looking for secrets hidden between the seat cushions."))
+
+				ec2UserData := aws.InstancesModule{
+					EC2Client:  ec2Client,
+					Caller:     utils.AWSWhoami(profile),
+					AWSRegions: AWSRegions,
+
+					UserDataAttributesOnly: true,
+					AWSProfile:             profile,
+				}
+				ec2UserData.Instances(InstancesFilter, AWSOutputFormat, AWSOutputDirectory, Verbosity)
+				envsMod := aws.EnvsModule{
+
+					Caller:          utils.AWSWhoami(profile),
+					AWSRegions:      AWSRegions,
+					AWSProfile:      profile,
+					ECSClient:       ecsClient,
+					AppRunnerClient: appRunnerClient,
+					LambdaClient:    lambdaClient,
+					LightsailClient: lightsailClient,
+					SagemakerClient: sagemakerClient,
+				}
+				envsMod.PrintEnvs(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+
+				// CPT Enum
+				//fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Gathering some other info that is often useful."))
+				fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Arming you with the data you'll need for privesc quests."))
+
+				buckets := aws.BucketsModule{
+					S3Client:   s3Client,
+					Caller:     utils.AWSWhoami(profile),
+					AWSProfile: profile,
+				}
+				buckets.PrintBuckets(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+
+				ecr := aws.ECRModule{
+					ECRClient:  ecrClient,
+					Caller:     utils.AWSWhoami(profile),
+					AWSRegions: AWSRegions,
+					AWSProfile: profile,
+				}
+				ecr.PrintECR(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+
+				secrets := aws.SecretsModule{
+					SecretsManagerClient: secretsManagerClient,
+					SSMClient:            ssmClient,
+
+					Caller:     utils.AWSWhoami(profile),
+					AWSRegions: AWSRegions,
+					AWSProfile: profile,
+				}
+				secrets.PrintSecrets(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+
+				// IAM privesc section
+				fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("IAM is complicated. Complicated usually means misconfigurations. You'll want to pay attention here."))
+				principals := aws.IamPrincipalsModule{
+					IAMClient:  iamClient,
+					Caller:     utils.AWSWhoami(profile),
+					AWSProfile: profile,
+				}
+				principals.PrintIamPrincipals(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+				permissions := aws.IamPermissionsModule{
+					IAMClient:  iamClient,
+					Caller:     utils.AWSWhoami(profile),
+					AWSProfile: profile,
+				}
+				permissions.PrintIamPermissions(AWSOutputFormat, AWSOutputDirectory, Verbosity, PermissionsPrincipal)
+				accessKeys := aws.AccessKeysModule{
+					IAMClient:  iam.NewFromConfig(utils.AWSConfigFileLoader(profile)),
+					Caller:     utils.AWSWhoami(profile),
+					AWSProfile: profile,
+				}
+				accessKeys.PrintAccessKeys(AccessKeysFilter, AWSOutputFormat, AWSOutputDirectory, Verbosity)
+				inboundRoleTrusts := aws.RoleTrustsModule{
+					IAMClient:  iamClient,
+					Caller:     utils.AWSWhoami(profile),
+					AWSProfile: profile,
+				}
+				inboundRoleTrusts.PrintRoleTrusts(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+				iamSimulator := aws.IamSimulatorModule{
+					IAMClient:  iamClient,
+					Caller:     utils.AWSWhoami(profile),
+					AWSProfile: profile,
+				}
+				iamSimulator.PrintIamSimulator(SimulatorPrincipal, SimulatorAction, SimulatorResource, AWSOutputFormat, AWSOutputDirectory, Verbosity)
+
+				fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("That's it! Check your output files for situational awareness and check your loot files for next steps."))
+				fmt.Printf("[%s] %s\n\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("FYI, we skipped the outbound-assumed-roles module in all-checks (really long run time). Make sure to try it out manually."))
 			}
-			inventory2.PrintInventoryPerRegion(AWSOutputFormat, AWSOutputDirectory, Verbosity)
-			//time.Sleep(time.Second * 5)
-			// Service and endpoint enum section
-			fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Gathering the info you'll want for your application & service enumeration needs."))
-
-			instances := aws.InstancesModule{
-				EC2Client:  ec2Client,
-				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSRegions: AWSRegions,
-
-				UserDataAttributesOnly: false,
-				AWSProfile:             AWSProfile,
-			}
-			instances.Instances(InstancesFilter, AWSOutputFormat, AWSOutputDirectory, Verbosity)
-			route53 := aws.Route53Module{
-				Route53Client: route53Client,
-
-				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSRegions: AWSRegions,
-				AWSProfile: AWSProfile,
-			}
-			route53.PrintRoute53(AWSOutputFormat, AWSOutputDirectory, Verbosity)
-
-			filesystems := aws.FilesystemsModule{
-				EFSClient:  efsClient,
-				FSxClient:  fsxClient,
-				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSProfile: AWSProfile,
-				AWSRegions: AWSRegions,
-			}
-			filesystems.PrintFilesystems(AWSOutputFormat, AWSOutputDirectory, Verbosity)
-
-			endpoints := aws.EndpointsModule{
-
-				EKSClient:          eksClient,
-				S3Client:           s3Client,
-				LambdaClient:       lambdaClient,
-				RDSClient:          rdsClient,
-				APIGatewayv2Client: apiGatewayv2Client,
-				APIGatewayClient:   apiGatewayClient,
-				ELBClient:          elbClient,
-				ELBv2Client:        elbv2Client,
-				MQClient:           mqClient,
-				OpenSearchClient:   openSearchClient,
-				GrafanaClient:      grafanaClient,
-				RedshiftClient:     redshiftClient,
-				CloudfrontClient:   cloudfrontClient,
-				AppRunnerClient:    appRunnerClient,
-				LightsailClient:    lightsailClient,
-
-				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSRegions: AWSRegions,
-				AWSProfile: AWSProfile,
-			}
-
-			endpoints.PrintEndpoints(AWSOutputFormat, AWSOutputDirectory, Verbosity)
-			// Secrets section
-			fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Looking for secrets hidden between the seat cushions."))
-
-			ec2UserData := aws.InstancesModule{
-				EC2Client:  ec2Client,
-				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSRegions: AWSRegions,
-
-				UserDataAttributesOnly: true,
-				AWSProfile:             AWSProfile,
-			}
-			ec2UserData.Instances(InstancesFilter, AWSOutputFormat, AWSOutputDirectory, Verbosity)
-			envsMod := aws.EnvsModule{
-
-				Caller:          utils.AWSWhoami(AWSProfile),
-				AWSRegions:      AWSRegions,
-				AWSProfile:      AWSProfile,
-				ECSClient:       ecsClient,
-				AppRunnerClient: appRunnerClient,
-				LambdaClient:    lambdaClient,
-				LightsailClient: lightsailClient,
-				SagemakerClient: sagemakerClient,
-			}
-			envsMod.PrintEnvs(AWSOutputFormat, AWSOutputDirectory, Verbosity)
-
-			// CPT Enum
-			//fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Gathering some other info that is often useful."))
-			fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Arming you with the data you'll need for privesc quests."))
-
-			buckets := aws.BucketsModule{
-				S3Client:   s3Client,
-				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSProfile: AWSProfile,
-			}
-			buckets.PrintBuckets(AWSOutputFormat, AWSOutputDirectory, Verbosity)
-
-			ecr := aws.ECRModule{
-				ECRClient:  ecrClient,
-				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSRegions: AWSRegions,
-				AWSProfile: AWSProfile,
-			}
-			ecr.PrintECR(AWSOutputFormat, AWSOutputDirectory, Verbosity)
-
-			secrets := aws.SecretsModule{
-				SecretsManagerClient: secretsManagerClient,
-				SSMClient:            ssmClient,
-
-				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSRegions: AWSRegions,
-				AWSProfile: AWSProfile,
-			}
-			secrets.PrintSecrets(AWSOutputFormat, AWSOutputDirectory, Verbosity)
-
-			// IAM privesc section
-			fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("IAM is complicated. Complicated usually means misconfigurations. You'll want to pay attention here."))
-			principals := aws.IamPrincipalsModule{
-				IAMClient:  iamClient,
-				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSProfile: AWSProfile,
-			}
-			principals.PrintIamPrincipals(AWSOutputFormat, AWSOutputDirectory, Verbosity)
-			permissions := aws.IamPermissionsModule{
-				IAMClient:  iamClient,
-				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSProfile: AWSProfile,
-			}
-			permissions.PrintIamPermissions(AWSOutputFormat, AWSOutputDirectory, Verbosity, PermissionsPrincipal)
-			accessKeys := aws.AccessKeysModule{
-				IAMClient:  iam.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile)),
-				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSProfile: AWSProfile,
-			}
-			accessKeys.PrintAccessKeys(AccessKeysFilter, AWSOutputFormat, AWSOutputDirectory, Verbosity)
-			inboundRoleTrusts := aws.RoleTrustsModule{
-				IAMClient:  iamClient,
-				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSProfile: AWSProfile,
-			}
-			inboundRoleTrusts.PrintRoleTrusts(AWSOutputFormat, AWSOutputDirectory, Verbosity)
-			iamSimulator := aws.IamSimulatorModule{
-				IAMClient:  iamClient,
-				Caller:     utils.AWSWhoami(AWSProfile),
-				AWSProfile: AWSProfile,
-			}
-			iamSimulator.PrintIamSimulator(SimulatorPrincipal, SimulatorAction, SimulatorResource, AWSOutputFormat, AWSOutputDirectory, Verbosity)
-
-			fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("That's it! Check your output files for situational awareness and check your loot files for next steps."))
-			fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("FYI, we skipped the outbound-assumed-roles module in all-checks (really long run time). Make sure to try it out manually."))
 		},
 	}
 )
 
 func init() {
-
+	cobra.OnInitialize(initAWSProfiles)
 	// Principal Trusts Module Flags
 	RoleTrustCommand.Flags().StringVarP(&RoleTrustFilter, "filter", "t", "all", "[AccountNumber | PrincipalARN | PrincipalName | ServiceName]")
 
@@ -697,6 +761,8 @@ func init() {
 
 	// Global flags for the AWS modules
 	AWSCommands.PersistentFlags().StringVarP(&AWSProfile, "profile", "p", "", "AWS CLI Profile Name")
+	AWSCommands.PersistentFlags().StringVarP(&AWSProfilesList, "profiles-list", "l", "", "List of AWS CLI profile names")
+	AWSCommands.PersistentFlags().BoolVarP(&AWSAllProfiles, "all-profiles", "a", false, "Use all AWS CLI profiles in AWS credentials file")
 	AWSCommands.PersistentFlags().StringVarP(&AWSOutputFormat, "output", "o", "all", "[\"table\" | \"csv\" | \"all\" ]")
 	AWSCommands.PersistentFlags().IntVarP(&Verbosity, "verbosity", "v", 1, "1 = Print control messages only\n2 = Print control messages, module output\n3 = Print control messages, module output, and loot file output\n")
 	AWSCommands.PersistentFlags().StringVar(&AWSOutputDirectory, "outdir", ".", "Output Directory ")
@@ -720,4 +786,20 @@ func init() {
 		PermissionsCommand,
 	)
 
+}
+
+func initAWSProfiles() {
+	// Ensure only one profile setting is chosen. If
+	if AWSProfile != "" && AWSProfilesList != "" || AWSProfile != "" && AWSAllProfiles || AWSProfilesList != "" && AWSAllProfiles {
+		log.Fatalf("[-] Error specifying AWS profiles. Choose only one of -p/--profile, -a/--all-profiles, -l/--profiles-list. Exiting...")
+	} else if AWSProfile != "" {
+		AWSProfiles = append(AWSProfiles, AWSProfile)
+	} else if AWSProfilesList != "" {
+		// Written like so to enable testing while still being readable
+		AWSProfiles = utils.GetSelectedAWSProfiles(AWSProfilesList)
+	} else if AWSAllProfiles {
+		AWSProfiles = utils.GetAllAWSProfiles()
+	} else {
+		AWSProfiles = append(AWSProfiles, "default")
+	}
 }
