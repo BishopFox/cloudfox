@@ -64,7 +64,6 @@ func (m *ECRModule) PrintECR(outputFormat string, outputDirectory string, verbos
 	wg := new(sync.WaitGroup)
 	semaphore := make(chan struct{}, m.Goroutines)
 
-
 	// Create a channel to signal the spinner aka task status goroutine to finish
 	spinnerDone := make(chan bool)
 	//fire up the the task status spinner/updated
@@ -133,12 +132,10 @@ func (m *ECRModule) PrintECR(outputFormat string, outputDirectory string, verbos
 
 func (m *ECRModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Repository) {
 	defer wg.Done()
+
 	m.CommandCounter.Total++
-	m.CommandCounter.Pending--
-	m.CommandCounter.Executing++
+	wg.Add(1)
 	m.getECRRecordsPerRegion(r, wg, semaphore, dataReceiver)
-	m.CommandCounter.Executing--
-	m.CommandCounter.Complete++
 }
 
 func (m *ECRModule) Receiver(receiver chan Repository, receiverDone chan bool) {
