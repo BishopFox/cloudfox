@@ -59,9 +59,9 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-		m.AWSProfile = fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), aws.ToString(m.Caller.UserId))
-	}
 
+		m.AWSProfile = utils.BuildAWSPath(m.Caller)
+	}
 	// regions, errtemp := m.EC2Client.DescribeRegions(
 	// 	context.TODO(),
 	// 	&ec2.DescribeRegionsInput{})
@@ -171,7 +171,7 @@ func (m *InstancesModule) printInstancesUserDataAttributesOnly(outputFormat stri
 			}
 		}
 	}
-	if len(m.MappedInstances) > 0 {
+	if (len(m.MappedInstances) > 0) && (userDataOut != "=============================================\n") {
 		if m.output.Verbosity > 1 {
 			fmt.Printf("%s", userDataOut)
 		}
@@ -181,6 +181,8 @@ func (m *InstancesModule) printInstancesUserDataAttributesOnly(outputFormat stri
 			m.CommandCounter.Error++
 		}
 		fmt.Printf("[%s] Loot written to [%s]\n", cyan(m.output.CallingModule), userDataFileName)
+	} else {
+		fmt.Printf("[%s] No user data found, skipping the creation of an output file\n", cyan(m.output.CallingModule))
 	}
 }
 

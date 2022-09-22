@@ -111,7 +111,8 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 	m.totalRegionCounts = map[string]int{}
 
 	if m.AWSProfile == "" {
-		m.AWSProfile = fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), aws.ToString(m.Caller.UserId))
+
+		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
 
 	//initialize servicemap and total

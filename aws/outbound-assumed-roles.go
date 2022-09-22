@@ -122,9 +122,9 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputFor
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-		m.AWSProfile = fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), aws.ToString(m.Caller.UserId))
-	}
 
+		m.AWSProfile = utils.BuildAWSPath(m.Caller)
+	}
 	m.Days = days
 
 	fmt.Printf("[%s] Enumerating outbound assumed role entries in cloudtrail for account %s.\n", cyan(m.output.CallingModule), aws.ToString(m.Caller.Account))

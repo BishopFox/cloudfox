@@ -55,7 +55,8 @@ func (m *Route53Module) PrintRoute53(outputFormat string, outputDirectory string
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-		m.AWSProfile = fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), aws.ToString(m.Caller.UserId))
+
+		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
 
 	fmt.Printf("[%s] Enumerating Route53 for account %s.\n", cyan(m.output.CallingModule), aws.ToString(m.Caller.Account))

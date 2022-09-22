@@ -49,7 +49,8 @@ func (m *RAMModule) PrintRAM(outputFormat string, outputDirectory string, verbos
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-		m.AWSProfile = fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), aws.ToString(m.Caller.UserId))
+
+		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
 
 	fmt.Printf("[%s] Enumerating shared resources for account %s.\n", cyan(m.output.CallingModule), aws.ToString(m.Caller.Account))

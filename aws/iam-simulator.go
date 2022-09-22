@@ -85,9 +85,9 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 	var pmapperOutFileName string
 
 	if m.AWSProfile == "" {
-		m.AWSProfile = fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), aws.ToString(m.Caller.UserId))
-	}
 
+		m.AWSProfile = utils.BuildAWSPath(m.Caller)
+	}
 	wg := new(sync.WaitGroup)
 	// Create a channel to signal the spinner aka task status goroutine to finish
 	spinnerDone := make(chan bool)
