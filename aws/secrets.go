@@ -53,7 +53,6 @@ func (m *SecretsModule) PrintSecrets(outputFormat string, outputDirectory string
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-
 		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
 

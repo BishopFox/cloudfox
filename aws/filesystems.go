@@ -63,7 +63,6 @@ func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirector
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-
 		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
 	//populate region in the filesystems module struct

@@ -92,7 +92,6 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputFormat string, outputDi
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-
 		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
 	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)

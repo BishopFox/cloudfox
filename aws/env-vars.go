@@ -72,7 +72,6 @@ func (m *EnvsModule) PrintEnvs(outputFormat string, outputDirectory string, verb
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-
 		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
 

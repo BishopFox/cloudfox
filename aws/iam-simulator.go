@@ -85,7 +85,6 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 	var pmapperOutFileName string
 
 	if m.AWSProfile == "" {
-
 		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
 	wg := new(sync.WaitGroup)

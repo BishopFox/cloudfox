@@ -72,7 +72,6 @@ func (m *IamPrincipalsModule) PrintIamPrincipals(outputFormat string, outputDire
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-
 		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
 

@@ -59,7 +59,6 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-
 		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
 	// regions, errtemp := m.EC2Client.DescribeRegions(

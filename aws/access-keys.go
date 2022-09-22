@@ -48,7 +48,6 @@ func (m *AccessKeysModule) PrintAccessKeys(filter string, outputFormat string, o
 	)
 
 	if m.AWSProfile == "" {
-
 		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
 

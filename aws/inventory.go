@@ -111,7 +111,6 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 	m.totalRegionCounts = map[string]int{}
 
 	if m.AWSProfile == "" {
-
 		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
 

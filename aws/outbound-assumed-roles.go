@@ -122,7 +122,6 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputFor
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-
 		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
 	m.Days = days

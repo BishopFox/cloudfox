@@ -52,7 +52,6 @@ func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string
 	})
 
 	if m.AWSProfile == "" {
-
 		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
 

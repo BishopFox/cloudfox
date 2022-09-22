@@ -56,7 +56,6 @@ func (m *ECRModule) PrintECR(outputFormat string, outputDirectory string, verbos
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-
 		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
 

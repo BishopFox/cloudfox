@@ -88,7 +88,6 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-
 		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
 
