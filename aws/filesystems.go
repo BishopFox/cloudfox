@@ -31,6 +31,7 @@ type FilesystemsModule struct {
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
 	OutputFormat string
+	Goroutines   int
 	AWSProfile   string
 
 	// Main module data
@@ -73,6 +74,7 @@ func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirector
 	fmt.Printf("[%s] Supported Services: EFS, FSx \n", cyan(m.output.CallingModule))
 
 	wg := new(sync.WaitGroup)
+	semaphore := make(chan struct{}, m.Goroutines)
 
 	// Create a channel to signal the spinner aka task status goroutine to finish
 	spinnerDone := make(chan bool)
@@ -89,7 +91,7 @@ func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirector
 	//execute regional checks
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
-		m.executeChecks(region, wg, dataReceiver)
+		m.executeChecks(region, wg, semaphore, dataReceiver)
 	}
 
 	wg.Wait()
@@ -157,12 +159,12 @@ func (m *FilesystemsModule) Receiver(receiver chan FilesystemObject, receiverDon
 	}
 }
 
-func (m *FilesystemsModule) executeChecks(r string, wg *sync.WaitGroup, dataReceiver chan FilesystemObject) {
+func (m *FilesystemsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan FilesystemObject) {
 	defer wg.Done()
 	wg.Add(1)
-	go m.getEFSSharesPerRegion(r, wg, dataReceiver)
+	go m.getEFSSharesPerRegion(r, wg, semaphore, dataReceiver)
 	wg.Add(1)
-	go m.getFSxSharesPerRegion(r, wg, dataReceiver)
+	go m.getFSxSharesPerRegion(r, wg, semaphore, dataReceiver)
 }
 
 func (m *FilesystemsModule) writeLoot(outputDirectory string, verbosity int) {
@@ -219,7 +221,7 @@ func (m *FilesystemsModule) writeLoot(outputDirectory string, verbosity int) {
 
 }
 
-func (m *FilesystemsModule) getEFSSharesPerRegion(r string, wg *sync.WaitGroup, dataReceiver chan FilesystemObject) {
+func (m *FilesystemsModule) getEFSSharesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan FilesystemObject) {
 	defer func() {
 		m.CommandCounter.Executing--
 		m.CommandCounter.Complete++
@@ -322,7 +324,7 @@ func (m *FilesystemsModule) getEFSSharesPerRegion(r string, wg *sync.WaitGroup, 
 
 }
 
-func (m *FilesystemsModule) getFSxSharesPerRegion(r string, wg *sync.WaitGroup, dataReceiver chan FilesystemObject) {
+func (m *FilesystemsModule) getFSxSharesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan FilesystemObject) {
 	defer func() {
 		m.CommandCounter.Executing--
 		m.CommandCounter.Complete++

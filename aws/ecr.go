@@ -26,6 +26,7 @@ type ECRModule struct {
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
 	OutputFormat string
+	Goroutines   int
 	AWSProfile   string
 
 	// Main module data
@@ -61,6 +62,7 @@ func (m *ECRModule) PrintECR(outputFormat string, outputDirectory string, verbos
 	fmt.Printf("[%s] Enumerating container repositories for account %s.\n", cyan(m.output.CallingModule), aws.ToString(m.Caller.Account))
 
 	wg := new(sync.WaitGroup)
+	semaphore := make(chan struct{}, m.Goroutines)
 
 	// Create a channel to signal the spinner aka task status goroutine to finish
 	spinnerDone := make(chan bool)
@@ -77,7 +79,7 @@ func (m *ECRModule) PrintECR(outputFormat string, outputDirectory string, verbos
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
 		m.CommandCounter.Pending++
-		go m.executeChecks(region, wg, dataReceiver)
+		go m.executeChecks(region, wg, semaphore, dataReceiver)
 
 	}
 
@@ -128,14 +130,12 @@ func (m *ECRModule) PrintECR(outputFormat string, outputDirectory string, verbos
 
 }
 
-func (m *ECRModule) executeChecks(r string, wg *sync.WaitGroup, dataReceiver chan Repository) {
+func (m *ECRModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Repository) {
 	defer wg.Done()
+
 	m.CommandCounter.Total++
-	m.CommandCounter.Pending--
-	m.CommandCounter.Executing++
-	m.getECRRecordsPerRegion(r, dataReceiver)
-	m.CommandCounter.Executing--
-	m.CommandCounter.Complete++
+	wg.Add(1)
+	m.getECRRecordsPerRegion(r, wg, semaphore, dataReceiver)
 }
 
 func (m *ECRModule) Receiver(receiver chan Repository, receiverDone chan bool) {
@@ -197,7 +197,17 @@ func (m *ECRModule) writeLoot(outputDirectory string, verbosity int) {
 
 }
 
-func (m *ECRModule) getECRRecordsPerRegion(r string, dataReceiver chan Repository) {
+func (m *ECRModule) getECRRecordsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Repository) {
+	defer func() {
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+		wg.Done()
+
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
 	var PaginationControl *string
 	var PaginationControl2 *string

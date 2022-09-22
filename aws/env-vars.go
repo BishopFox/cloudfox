@@ -37,6 +37,7 @@ type EnvsModule struct {
 	AWSRegions   []string
 	AWSProfile   string
 	OutputFormat string
+	Goroutines   int
 
 	// Service Clients
 	ECSClient       *ecs.Client
@@ -78,7 +79,7 @@ func (m *EnvsModule) PrintEnvs(outputFormat string, outputDirectory string, verb
 	fmt.Printf("[%s] Supported Services: App Runner, Elastic Container Service, Lambda, Lightsail Containers, Sagemaker \n", cyan(m.output.CallingModule))
 
 	wg := new(sync.WaitGroup)
-	semaphore := make(chan struct{}, 50)
+	semaphore := make(chan struct{}, m.Goroutines)
 
 	// Create a channel to signal the spinner aka task status goroutine to finish
 	spinnerDone := make(chan bool)

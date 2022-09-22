@@ -71,6 +71,7 @@ type Inventory2Module struct {
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
 	OutputFormat string
+	Goroutines   int
 	AWSProfile   string
 
 	// Main module data
@@ -127,7 +128,7 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 	fmt.Printf("[%s] \t\t\tELB, ELBv2, Glue, Grafana, IAM, Lambda, Lightsail, MQ, OpenSearch, RDS, S3, SecretsManager, SNS, SQS, SSM\n", cyan(m.output.CallingModule))
 
 	wg := new(sync.WaitGroup)
-	semaphore := make(chan struct{}, 50)
+	semaphore := make(chan struct{}, m.Goroutines)
 
 	// Create a channel to signal the spinner aka task status goroutine to finish
 	spinnerDone := make(chan bool)
@@ -1749,5 +1750,5 @@ func (m *Inventory2Module) PrintTotalResources(outputFormat string) {
 	for i := range m.GlobalResourceCounts {
 		totalResources = totalResources + m.GlobalResourceCounts[i].count
 	}
-	fmt.Printf("[%s] %d resources enumerated in the services we looked at. This is NOT the total number of resources in the account.\n", cyan(m.output.CallingModule), totalResources)
+	fmt.Printf("[%s] %d resources found in the services we looked at. This is NOT the total number of resources in the account.\n", cyan(m.output.CallingModule), totalResources)
 }

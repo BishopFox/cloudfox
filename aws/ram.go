@@ -22,6 +22,7 @@ type RAMModule struct {
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
 	OutputFormat string
+	Goroutines   int
 	AWSProfile   string
 
 	// Main module data
@@ -87,10 +88,7 @@ func (m *RAMModule) PrintRAM(outputFormat string, outputDirectory string, verbos
 		"Service",
 		"Region",
 		"Name",
-		"URI",
-		"PushedAt",
-		"ImageTags",
-		"ImageSize",
+		"Owner",
 	}
 
 	// Table rows
