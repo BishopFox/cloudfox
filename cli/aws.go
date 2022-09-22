@@ -764,7 +764,7 @@ func init() {
 		FilesystemsCommand,
 		BucketsCommand,
 		PermissionsCommand,
-		RAMCommand,
+		//RAMCommand,
 	)
 
 }
