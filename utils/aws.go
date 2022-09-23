@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
@@ -42,10 +43,8 @@ func AWSConfigFileLoader(AWSProfile string) aws.Config {
 }
 
 func AWSWhoami(awsProfile string) sts.GetCallerIdentityOutput {
-
 	// Connects to STS and checks caller identity. Same as running "aws sts get-caller-identity"
 	//fmt.Printf("[%s] Retrieving caller's identity\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)))
-
 	STSService := sts.NewFromConfig(AWSConfigFileLoader(awsProfile))
 	CallerIdentity, err := STSService.GetCallerIdentity(context.TODO(), &sts.GetCallerIdentityInput{})
 	if err != nil {
@@ -102,4 +101,20 @@ func txtLogger() *logrus.Logger {
 	//txtLogger.SetReportCaller(true)
 
 	return txtLogger
+}
+
+func removeBadPathChars(receivedPath *string) string {
+	var path string
+	var bannedPathChars *regexp.Regexp = regexp.MustCompile(`[<>:"'|?*]`)
+	path = bannedPathChars.ReplaceAllString(aws.ToString(receivedPath), "_")
+
+	return path
+
+}
+
+func BuildAWSPath(Caller sts.GetCallerIdentityOutput) string {
+	var callerAccount = removeBadPathChars(Caller.Account)
+	var callerUserID = removeBadPathChars(Caller.UserId)
+
+	return fmt.Sprintf("%s-%s", callerAccount, callerUserID)
 }

@@ -53,7 +53,7 @@ func (m *SecretsModule) PrintSecrets(outputFormat string, outputDirectory string
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-		m.AWSProfile = fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), aws.ToString(m.Caller.UserId))
+		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
 
 	fmt.Printf("[%s] Enumerating secrets for account %s.\n", cyan(m.output.CallingModule), aws.ToString(m.Caller.Account))
@@ -115,7 +115,7 @@ func (m *SecretsModule) PrintSecrets(outputFormat string, outputDirectory string
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
 		utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		m.writeLoot(outputDirectory, verbosity)
+		m.writeLoot(m.output.FilePath, verbosity)
 		fmt.Printf("[%s] %s secrets found.\n", cyan(m.output.CallingModule), strconv.Itoa(len(m.output.Body)))
 
 	} else {
@@ -151,7 +151,7 @@ func (m *SecretsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore ch
 }
 
 func (m *SecretsModule) writeLoot(outputDirectory string, verbosity int) {
-	path := filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile, "loot")
+	path := filepath.Join(outputDirectory, "loot")
 	err := os.MkdirAll(path, os.ModePerm)
 	if err != nil {
 		m.modLog.Error(err.Error())
