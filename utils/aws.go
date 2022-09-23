@@ -134,7 +134,7 @@ func GetAllAWSProfiles() []string {
 
 func GetSelectedAWSProfiles(AWSProfilesListPath string) []string {
 	AWSProfilesListFile, err := UtilsFs.Open(AWSProfilesListPath)
-	CheckErr(err, "could not open AWS profiles list file.")
+	CheckErr(err, fmt.Sprintf("could not open given file %s", AWSProfilesListPath))
 	defer AWSProfilesListFile.Close()
 	var AWSProfiles []string
 	scanner := bufio.NewScanner(AWSProfilesListFile)
@@ -144,9 +144,6 @@ func GetSelectedAWSProfiles(AWSProfilesListPath string) []string {
 		if len(profile) != 0 {
 			AWSProfiles = append(AWSProfiles, profile)
 		}
-	}
-	if len(AWSProfiles) == 0 {
-		log.Fatalf("[-] Error: given file of AWS profiles is empty")
 	}
 	return AWSProfiles
 }

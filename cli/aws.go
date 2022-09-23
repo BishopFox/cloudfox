@@ -789,9 +789,9 @@ func init() {
 }
 
 func initAWSProfiles() {
-	// Ensure only one profile setting is chosen. If
+	// Ensure only one profile setting is chosen
 	if AWSProfile != "" && AWSProfilesList != "" || AWSProfile != "" && AWSAllProfiles || AWSProfilesList != "" && AWSAllProfiles {
-		log.Fatalf("[-] Error specifying AWS profiles. Choose only one of -p/--profile, -a/--all-profiles, -l/--profiles-list. Exiting...")
+		log.Fatalf("[-] Error specifying AWS profiles. Choose only one of -p/--profile, -a/--all-profiles, -l/--profiles-listv")
 	} else if AWSProfile != "" {
 		AWSProfiles = append(AWSProfiles, AWSProfile)
 	} else if AWSProfilesList != "" {
