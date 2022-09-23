@@ -122,7 +122,7 @@ func (m *ECRModule) PrintECR(outputFormat string, outputDirectory string, verbos
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
 		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		m.writeLoot(outputDirectory, verbosity)
+		m.writeLoot(m.output.FilePath, verbosity)
 		fmt.Printf("[%s] %s repositories found.\n", cyan(m.output.CallingModule), strconv.Itoa(len(m.output.Body)))
 	} else {
 		fmt.Printf("[%s] No repositories found, skipping the creation of an output file.\n", cyan(m.output.CallingModule))
@@ -152,7 +152,7 @@ func (m *ECRModule) Receiver(receiver chan Repository, receiverDone chan bool) {
 }
 
 func (m *ECRModule) writeLoot(outputDirectory string, verbosity int) {
-	path := filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile, "loot")
+	path := filepath.Join(outputDirectory, "loot")
 	err := os.MkdirAll(path, os.ModePerm)
 	if err != nil {
 		m.modLog.Error(err.Error())

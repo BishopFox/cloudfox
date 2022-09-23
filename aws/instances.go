@@ -142,7 +142,6 @@ func (m *InstancesModule) printInstancesUserDataAttributesOnly(outputFormat stri
 
 	m.output.CallingModule = "instance-userdata"
 	path := filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile, "loot")
-
 	err := os.MkdirAll(path, os.ModePerm)
 	if err != nil {
 		m.modLog.Error(err.Error())
@@ -221,7 +220,7 @@ func (m *InstancesModule) printGeneralInstanceData(outputFormat string, outputDi
 		////m.output.OutputSelector(outputFormat)
 		utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
 
-		m.writeLoot(outputDirectory)
+		m.writeLoot(m.output.FilePath)
 		fmt.Printf("[%s] %s instances found.\n", cyan(m.output.CallingModule), strconv.Itoa(len(m.output.Body)))
 
 	} else {
@@ -230,7 +229,7 @@ func (m *InstancesModule) printGeneralInstanceData(outputFormat string, outputDi
 }
 
 func (m *InstancesModule) writeLoot(outputDirectory string) {
-	path := filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile, "loot")
+	path := filepath.Join(outputDirectory, "loot")
 	err := os.MkdirAll(path, os.ModePerm)
 	if err != nil {
 		m.modLog.Error(err.Error())
