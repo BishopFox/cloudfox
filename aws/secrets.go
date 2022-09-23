@@ -25,6 +25,7 @@ type SecretsModule struct {
 	Caller     sts.GetCallerIdentityOutput
 	AWSRegions []string
 	AWSProfile string
+	Goroutines int
 
 	// Main module data
 	Secrets []Secret
@@ -59,11 +60,12 @@ func (m *SecretsModule) PrintSecrets(outputFormat string, outputDirectory string
 	fmt.Printf("[%s] Supported Services: SecretsManager, SSM Parameters\n", cyan(m.output.CallingModule))
 
 	wg := new(sync.WaitGroup)
+	semaphore := make(chan struct{}, m.Goroutines)
 
 	// Create a channel to signal the spinner aka task status goroutine to finish
 	spinnerDone := make(chan bool)
 	//fire up the the task status spinner/updated
-	go console.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "regions")
+	go console.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
 
 	//create a channel to receive the objects
 	dataReceiver := make(chan Secret)
@@ -75,7 +77,7 @@ func (m *SecretsModule) PrintSecrets(outputFormat string, outputDirectory string
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
 		m.CommandCounter.Pending++
-		go m.executeChecks(region, wg, dataReceiver)
+		go m.executeChecks(region, wg, semaphore, dataReceiver)
 	}
 
 	wg.Wait()
@@ -135,15 +137,17 @@ func (m *SecretsModule) Receiver(receiver chan Secret, receiverDone chan bool) {
 	}
 }
 
-func (m *SecretsModule) executeChecks(r string, wg *sync.WaitGroup, dataReceiver chan Secret) {
+func (m *SecretsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Secret) {
 	defer wg.Done()
+
 	m.CommandCounter.Total++
-	m.CommandCounter.Pending--
-	m.CommandCounter.Executing++
-	m.getSecretsManagerSecretsPerRegion(r, dataReceiver)
-	m.getSSMParametersPerRegion(r, dataReceiver)
-	m.CommandCounter.Executing--
-	m.CommandCounter.Complete++
+	wg.Add(1)
+	go m.getSecretsManagerSecretsPerRegion(r, wg, semaphore, dataReceiver)
+
+	m.CommandCounter.Total++
+	wg.Add(1)
+	go m.getSSMParametersPerRegion(r, wg, semaphore, dataReceiver)
+
 }
 
 func (m *SecretsModule) writeLoot(outputDirectory string, verbosity int) {
@@ -189,7 +193,20 @@ func (m *SecretsModule) writeLoot(outputDirectory string, verbosity int) {
 
 }
 
-func (m *SecretsModule) getSecretsManagerSecretsPerRegion(r string, dataReceiver chan Secret) {
+func (m *SecretsModule) getSecretsManagerSecretsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Secret) {
+	defer func() {
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+		wg.Done()
+
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
 	var PaginationControl *string
 	for {
@@ -234,7 +251,20 @@ func (m *SecretsModule) getSecretsManagerSecretsPerRegion(r string, dataReceiver
 	}
 }
 
-func (m *SecretsModule) getSSMParametersPerRegion(r string, dataReceiver chan Secret) {
+func (m *SecretsModule) getSSMParametersPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Secret) {
+	defer func() {
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+		wg.Done()
+
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
 	var PaginationControl *string
 
