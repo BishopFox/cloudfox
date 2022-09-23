@@ -29,7 +29,7 @@ func TestGetAllAWSProfiles(t *testing.T) {
 		caseName       string
 	}{
 		{[]byte(""), []string{}, "empty file"},
-		{[]byte("[xyz]\naws_access_key=abc\naws_secret_access_key=123\n[123]"), []string{"xyz", "123"}, "expected format"},
+		{[]byte("[default]\naws_access_key=abc\naws_secret_access_key=123\n[123]\naws_access_key=abc\naws_secret_access_key=123"), []string{"default", "123"}, "expected format"},
 	}
 	credentialsFile := config.DefaultSharedCredentialsFilename()
 	for _, test := range tests {

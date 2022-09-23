@@ -85,9 +85,8 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 	var pmapperOutFileName string
 
 	if m.AWSProfile == "" {
-		m.AWSProfile = fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), aws.ToString(m.Caller.UserId))
+		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
-
 	wg := new(sync.WaitGroup)
 	// Create a channel to signal the spinner aka task status goroutine to finish
 	spinnerDone := make(chan bool)
@@ -126,7 +125,7 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 			m.getIAMUsers(wg, actionList, resource, dataReceiver)
 			wg.Add(1)
 			m.getIAMRoles(wg, actionList, resource, dataReceiver)
-			pmapperOutFileName = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile, "loot", fmt.Sprintf("pmapper-output-%s.txt", action))
+			pmapperOutFileName = filepath.Join(m.output.FullFilename, "loot", fmt.Sprintf("pmapper-output-%s.txt", action))
 			pmapperCommands = append(pmapperCommands, fmt.Sprintf("pmapper --profile %s query \"who can do %s with %s\" | tee %s\n", m.AWSProfile, action, resource, pmapperOutFileName))
 		} else {
 			// Both --principal and --action are empty. Run in default mode!
@@ -134,7 +133,7 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 			m.output.FullFilename = m.output.CallingModule
 			m.executeChecks(wg, resource, dataReceiver)
 			for _, action := range defaultActionNames {
-				pmapperOutFileName = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile, "loot", fmt.Sprintf("pmapper-output-%s.txt", action))
+				pmapperOutFileName = filepath.Join(m.output.FullFilename, "loot", fmt.Sprintf("pmapper-output-%s.txt", action))
 				pmapperCommands = append(pmapperCommands, fmt.Sprintf("pmapper --profile %s query \"who can do %s with %s\" | tee %s\n", m.AWSProfile, action, resource, pmapperOutFileName))
 			}
 
@@ -176,14 +175,14 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 
 	}
 	if len(m.output.Body) > 0 {
-		//m.output.OutputSelector(outputFormat)
+		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
 		fmt.Printf("[%s] We suggest running the pmapper commands in the loot file to get the same information but taking privesc paths into account.\n", cyan(m.output.CallingModule))
 		// fmt.Printf("[%s]\t\tpmapper --profile %s graph create\n", cyan(m.output.CallingModule), m.AWSProfile)
 		// for _, line := range pmapperCommands {
 		// 	fmt.Printf("[%s]\t\t%s", cyan(m.output.CallingModule), line)
 		// }
-		m.writeLoot(outputDirectory, verbosity, pmapperCommands)
+		m.writeLoot(m.output.FilePath, verbosity, pmapperCommands)
 
 	} else if principal != "" || action != "" {
 		fmt.Printf("[%s] No allowed permissions identified, skipping the creation of an output file.\n", cyan(m.output.CallingModule))
@@ -192,7 +191,7 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 }
 
 func (m *IamSimulatorModule) writeLoot(outputDirectory string, verbosity int, pmapperCommands []string) {
-	path := filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile, "loot")
+	path := filepath.Join(outputDirectory, "loot")
 	err := os.MkdirAll(path, os.ModePerm)
 	if err != nil {
 		m.modLog.Error(err.Error())

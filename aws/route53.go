@@ -55,7 +55,7 @@ func (m *Route53Module) PrintRoute53(outputFormat string, outputDirectory string
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-		m.AWSProfile = fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), aws.ToString(m.Caller.UserId))
+		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
 
 	fmt.Printf("[%s] Enumerating Route53 for account %s.\n", cyan(m.output.CallingModule), aws.ToString(m.Caller.Account))
@@ -89,7 +89,7 @@ func (m *Route53Module) PrintRoute53(outputFormat string, outputDirectory string
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
 		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		m.writeLoot(outputDirectory, verbosity)
+		m.writeLoot(m.output.FilePath, verbosity)
 		fmt.Printf("[%s] %s DNS records found.\n", cyan(m.output.CallingModule), strconv.Itoa(len(m.output.Body)))
 
 	} else {
@@ -99,7 +99,7 @@ func (m *Route53Module) PrintRoute53(outputFormat string, outputDirectory string
 }
 
 func (m *Route53Module) writeLoot(outputDirectory string, verbosity int) {
-	path := filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile, "loot")
+	path := filepath.Join(outputDirectory, "loot")
 	err := os.MkdirAll(path, os.ModePerm)
 	if err != nil {
 		m.modLog.Error(err.Error())

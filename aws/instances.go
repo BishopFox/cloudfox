@@ -59,9 +59,8 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-		m.AWSProfile = fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), aws.ToString(m.Caller.UserId))
+		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
-
 	// regions, errtemp := m.EC2Client.DescribeRegions(
 	// 	context.TODO(),
 	// 	&ec2.DescribeRegionsInput{})
@@ -143,7 +142,6 @@ func (m *InstancesModule) printInstancesUserDataAttributesOnly(outputFormat stri
 
 	m.output.CallingModule = "instance-userdata"
 	path := filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile, "loot")
-
 	err := os.MkdirAll(path, os.ModePerm)
 	if err != nil {
 		m.modLog.Error(err.Error())
@@ -171,7 +169,8 @@ func (m *InstancesModule) printInstancesUserDataAttributesOnly(outputFormat stri
 			}
 		}
 	}
-	if len(m.MappedInstances) > 0 {
+	// only create a file if if there is at least one instance AND at least one instance had user-data.
+	if (len(m.MappedInstances) > 0) && (userDataOut != "=============================================\n") {
 		if m.output.Verbosity > 1 {
 			fmt.Printf("%s", userDataOut)
 		}
@@ -181,6 +180,8 @@ func (m *InstancesModule) printInstancesUserDataAttributesOnly(outputFormat stri
 			m.CommandCounter.Error++
 		}
 		fmt.Printf("[%s] Loot written to [%s]\n", cyan(m.output.CallingModule), userDataFileName)
+	} else {
+		fmt.Printf("[%s] No user data found, skipping the creation of an output file\n", cyan(m.output.CallingModule))
 	}
 }
 
@@ -219,7 +220,7 @@ func (m *InstancesModule) printGeneralInstanceData(outputFormat string, outputDi
 		////m.output.OutputSelector(outputFormat)
 		utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
 
-		m.writeLoot(outputDirectory)
+		m.writeLoot(m.output.FilePath)
 		fmt.Printf("[%s] %s instances found.\n", cyan(m.output.CallingModule), strconv.Itoa(len(m.output.Body)))
 
 	} else {
@@ -228,7 +229,7 @@ func (m *InstancesModule) printGeneralInstanceData(outputFormat string, outputDi
 }
 
 func (m *InstancesModule) writeLoot(outputDirectory string) {
-	path := filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile, "loot")
+	path := filepath.Join(outputDirectory, "loot")
 	err := os.MkdirAll(path, os.ModePerm)
 	if err != nil {
 		m.modLog.Error(err.Error())
