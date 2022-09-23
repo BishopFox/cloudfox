@@ -170,6 +170,7 @@ func (m *InstancesModule) printInstancesUserDataAttributesOnly(outputFormat stri
 			}
 		}
 	}
+	// only create a file if if there is at least one instance AND at least one instance had user-data.
 	if (len(m.MappedInstances) > 0) && (userDataOut != "=============================================\n") {
 		if m.output.Verbosity > 1 {
 			fmt.Printf("%s", userDataOut)

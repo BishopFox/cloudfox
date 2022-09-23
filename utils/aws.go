@@ -103,19 +103,18 @@ func txtLogger() *logrus.Logger {
 	return txtLogger
 }
 
-func removeBadPathChars(_String *string) string {
-	var _path string
-	var bannedPathChars *regexp.Regexp
-	bannedPathChars = regexp.MustCompile(`[<>:"'|?*]`)
-	_path = bannedPathChars.ReplaceAllString(aws.ToString(_String), "_")
+func removeBadPathChars(receivedPath *string) string {
+	var path string
+	var bannedPathChars *regexp.Regexp = regexp.MustCompile(`[<>:"'|?*]`)
+	path = bannedPathChars.ReplaceAllString(aws.ToString(receivedPath), "_")
 
-	return _path
+	return path
 
 }
 
 func BuildAWSPath(Caller sts.GetCallerIdentityOutput) string {
-	var _CallerAccount = removeBadPathChars(Caller.Account)
-	var _CallerUserID = removeBadPathChars(Caller.UserId)
+	var callerAccount = removeBadPathChars(Caller.Account)
+	var callerUserID = removeBadPathChars(Caller.UserId)
 
-	return fmt.Sprintf("%s-%s", _CallerAccount, _CallerUserID)
+	return fmt.Sprintf("%s-%s", callerAccount, callerUserID)
 }
