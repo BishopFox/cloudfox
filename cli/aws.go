@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
 	"github.com/aws/aws-sdk-go-v2/service/cloudtrail"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
@@ -21,6 +22,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancing"
 	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	"github.com/aws/aws-sdk-go-v2/service/fsx"
+	"github.com/aws/aws-sdk-go-v2/service/glue"
 	"github.com/aws/aws-sdk-go-v2/service/grafana"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
@@ -33,6 +35,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sagemaker"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+	"github.com/aws/aws-sdk-go-v2/service/sns"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/fatih/color"
 	"github.com/kyokomi/emoji"
@@ -209,6 +213,10 @@ var (
 					CloudfrontClient:     cloudfront.NewFromConfig(AWSConfig),
 					AppRunnerClient:      apprunner.NewFromConfig(AWSConfig),
 					LightsailClient:      lightsail.NewFromConfig(AWSConfig),
+					GlueClient:           glue.NewFromConfig(AWSConfig),
+					SNSClient:            sns.NewFromConfig(AWSConfig),
+					SQSClient:            sqs.NewFromConfig(AWSConfig),
+					DynamoDBClient:       dynamodb.NewFromConfig(AWSConfig),
 
 					Caller:     Caller,
 					AWSRegions: AWSRegions,
@@ -628,7 +636,7 @@ var (
 				//time.Sleep(time.Second * 5)
 				// Service and endpoint enum section
 				fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Gathering the info you'll want for your application & service enumeration needs."))
-
+				fmt.Printf("We are here!")
 				instances := aws.InstancesModule{
 					EC2Client:  ec2Client,
 					Caller:     Caller,
