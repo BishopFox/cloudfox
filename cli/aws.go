@@ -310,6 +310,31 @@ var (
 			m.PrintECR(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 		},
 	}
+
+	CloudformationCommand = &cobra.Command{
+		Use:     "cloudformation",
+		Aliases: []string{"cf", "cfstacks", "stacks"},
+		Short:   "Enumerate Cloudformation stacks. Get a loot file with stack details. Look for secrets.",
+		Long: "\nUse case examples:\n" +
+			os.Args[0] + " aws ecr --profile readonly_profile",
+		PreRun: func(cmd *cobra.Command, args []string) {
+			var caller = utils.AWSWhoami(AWSProfile)
+			fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+		},
+		Run: func(cmd *cobra.Command, args []string) {
+			var AWSConfig = utils.AWSConfigFileLoader(AWSProfile)
+			var Caller = utils.AWSWhoami(AWSProfile)
+			m := aws.CloudformationModule{
+				CloudFormationClient: cloudformation.NewFromConfig(AWSConfig),
+				Caller:               Caller,
+				AWSRegions:           AWSRegions,
+				AWSProfile:           AWSProfile,
+				Goroutines:           Goroutines,
+			}
+			m.PrintCloudformationStacks(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		},
+	}
+
 	OutboundAssumedRolesDays    int
 	OutboundAssumedRolesCommand = &cobra.Command{
 		Use:     "outbound-assumed-roles",
@@ -764,6 +789,7 @@ func init() {
 		FilesystemsCommand,
 		BucketsCommand,
 		PermissionsCommand,
+		CloudformationCommand,
 		//RAMCommand,
 	)
 
