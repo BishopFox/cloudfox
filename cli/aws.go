@@ -52,6 +52,7 @@ var (
 	AWSProfilesList    string
 	AWSAllProfiles     bool
 	AWSProfiles        []string
+	AWSConfirm         bool
 	AWSOutputFormat    string
 	AWSOutputDirectory string
 	Goroutines         int
@@ -823,8 +824,9 @@ func init() {
 
 	// Global flags for the AWS modules
 	AWSCommands.PersistentFlags().StringVarP(&AWSProfile, "profile", "p", "", "AWS CLI Profile Name")
-	AWSCommands.PersistentFlags().StringVarP(&AWSProfilesList, "profiles-list", "l", "", "File containing a AWS CLI profile names seperated by newlines")
+	AWSCommands.PersistentFlags().StringVarP(&AWSProfilesList, "profiles-list", "l", "", "File containing a AWS CLI profile names separated by newlines")
 	AWSCommands.PersistentFlags().BoolVarP(&AWSAllProfiles, "all-profiles", "a", false, "Use all AWS CLI profiles in AWS credentials file")
+	AWSCommands.PersistentFlags().BoolVarP(&AWSConfirm, "yes", "y", false, "Non-interactive mode (like apt/yum)")
 	AWSCommands.PersistentFlags().StringVarP(&AWSOutputFormat, "output", "o", "all", "[\"table\" | \"csv\" | \"all\" ]")
 	AWSCommands.PersistentFlags().IntVarP(&Verbosity, "verbosity", "v", 1, "1 = Print control messages only\n2 = Print control messages, module output\n3 = Print control messages, module output, and loot file output\n")
 	AWSCommands.PersistentFlags().StringVar(&AWSOutputDirectory, "outdir", ".", "Output Directory ")
@@ -862,7 +864,7 @@ func initAWSProfiles() {
 		// Written like so to enable testing while still being readable
 		AWSProfiles = utils.GetSelectedAWSProfiles(AWSProfilesList)
 	} else if AWSAllProfiles {
-		AWSProfiles = utils.GetAllAWSProfiles()
+		AWSProfiles = utils.GetAllAWSProfiles(AWSConfirm)
 	} else {
 		AWSProfiles = append(AWSProfiles, "")
 	}

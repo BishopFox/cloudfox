@@ -113,7 +113,7 @@ func CheckErr(e error, msg string) {
 	}
 }
 
-func GetAllAWSProfiles() []string {
+func GetAllAWSProfiles(AWSConfirm bool) []string {
 	credentialsFile, err := UtilsFs.Open(config.DefaultSharedCredentialsFilename())
 	CheckErr(err, "could not open default AWS credentials file")
 	defer credentialsFile.Close()
@@ -128,7 +128,31 @@ func GetAllAWSProfiles() []string {
 			AWSProfiles = append(AWSProfiles, text)
 		}
 	}
+	if !AWSConfirm {
+		result := ConfirmSelectedProfiles(AWSProfiles)
+		fmt.Println(result)
+		if !result {
+			os.Exit(1)
+		}
+	}
 	return AWSProfiles
+
+}
+
+func ConfirmSelectedProfiles(AWSProfiles []string) bool {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Println("Identified profiles:\n")
+	for _, profile := range AWSProfiles {
+		fmt.Println(profile)
+	}
+	fmt.Printf("Are you sure you'd like to run this command against the [%d] listed profiles? (Y\\n)", len(AWSProfiles))
+	text, _ := reader.ReadString('\n')
+	switch text {
+	case "\n", "Y\n", "y\n":
+		return true
+	}
+	return false
+
 }
 
 func GetSelectedAWSProfiles(AWSProfilesListPath string) []string {
@@ -143,6 +167,11 @@ func GetSelectedAWSProfiles(AWSProfilesListPath string) []string {
 		if len(profile) != 0 {
 			AWSProfiles = append(AWSProfiles, profile)
 		}
+	}
+	result := ConfirmSelectedProfiles(AWSProfiles)
+	fmt.Println(result)
+	if !result {
+		os.Exit(1)
 	}
 	return AWSProfiles
 }
