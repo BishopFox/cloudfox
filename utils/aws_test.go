@@ -26,19 +26,20 @@ func TestGetAllAWSProfiles(t *testing.T) {
 	var tests = []struct {
 		fileData       []byte
 		expectedOutput []string
+		AWSConfirm     bool
 		caseName       string
 	}{
-		{[]byte(""), []string{}, "empty file"},
-		{[]byte("[default]\naws_access_key=abc\naws_secret_access_key=123\n[123]\naws_access_key=abc\naws_secret_access_key=123"), []string{"default", "123"}, "expected format"},
+		{[]byte(""), []string{}, true, "empty file"},
+		{[]byte("[default]\naws_access_key=abc\naws_secret_access_key=123\n[123]\naws_access_key=abc\naws_secret_access_key=123"), []string{"default", "123"}, true, "expected format"},
 	}
 	credentialsFile := config.DefaultSharedCredentialsFilename()
 	for _, test := range tests {
 		fmt.Printf("[*] Testing %s\n", test.caseName)
 		UtilsFs.Create(credentialsFile)
 		afero.WriteFile(UtilsFs, credentialsFile, test.fileData, 0755)
-		output := GetAllAWSProfiles()
+		output := GetAllAWSProfiles(test.AWSConfirm)
 		if !compareSlice(output, test.expectedOutput) {
-			t.Errorf("Test Failed: %v inputted, %v expected, recieved: %v", test.fileData, test.expectedOutput, output)
+			t.Errorf("Test Failed: %v inputted, %v expected, received: %v", test.fileData, test.expectedOutput, output)
 		}
 	}
 
@@ -52,12 +53,13 @@ func TestGetSelectedAWSProfiles(t *testing.T) {
 	var tests = []struct {
 		fileData       []byte
 		expectedOutput []string
+		AWSConfirm     bool
 		caseName       string
 	}{
-		{[]byte(""), []string{}, "empty file"},
-		{[]byte("abcd\r\nxyz\t\n123\r\t"), []string{"abcd", "xyz", "123"}, "special characters \\r \\n \\t"},
-		{[]byte("qwerty\nxyz\n456\n\n\n"), []string{"qwerty", "xyz", "456"}, "extra new lines at the end"},
-		{[]byte("nmhj\nyuioy\n098"), []string{"nmhj", "yuioy", "098"}, "expected format"},
+		{[]byte(""), []string{}, true, "empty file"},
+		{[]byte("abcd\r\nxyz\t\n123\r\t"), []string{"abcd", "xyz", "123"}, true, "special characters \\r \\n \\t"},
+		{[]byte("qwerty\nxyz\n456\n\n\n"), []string{"qwerty", "xyz", "456"}, true, "extra new lines at the end"},
+		{[]byte("nmhj\nyuioy\n098"), []string{"nmhj", "yuioy", "098"}, true, "expected format"},
 	}
 	for _, test := range tests {
 		fmt.Printf("[*] Testing %s\n", test.caseName)
