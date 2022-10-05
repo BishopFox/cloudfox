@@ -50,8 +50,9 @@ func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string
 	m.modLog = utils.TxtLogger.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
+
 	if m.AWSProfile == "" {
-		m.AWSProfile = fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), aws.ToString(m.Caller.UserId))
+		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
 
 	fmt.Printf("[%s] Enumerating buckets for account %s.\n", cyan(m.output.CallingModule), aws.ToString(m.Caller.Account))
@@ -102,7 +103,7 @@ func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		////m.output.OutputSelector(outputFormat)
 		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		m.writeLoot(outputDirectory, verbosity, m.AWSProfile)
+		m.writeLoot(m.output.FilePath, verbosity, m.AWSProfile)
 		fmt.Printf("[%s] %s buckets found.\n", cyan(m.output.CallingModule), strconv.Itoa(len(m.output.Body)))
 
 	} else {
@@ -135,7 +136,7 @@ func (m *BucketsModule) executeChecks(wg *sync.WaitGroup, semaphore chan struct{
 }
 
 func (m *BucketsModule) writeLoot(outputDirectory string, verbosity int, profile string) {
-	path := filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile, "loot")
+	path := filepath.Join(outputDirectory, "loot")
 	err := os.MkdirAll(path, os.ModePerm)
 	if err != nil {
 		m.modLog.Error(err.Error())
