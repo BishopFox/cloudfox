@@ -708,6 +708,10 @@ var (
 				sagemakerClient := sagemaker.NewFromConfig(AWSConfig)
 				ecrClient := ecr.NewFromConfig(AWSConfig)
 				ssmClient := ssm.NewFromConfig(AWSConfig)
+				glueClient := glue.NewFromConfig(AWSConfig)
+				snsClient := sns.NewFromConfig(AWSConfig)
+				sqsClient := sqs.NewFromConfig(AWSConfig)
+				dynamodbClient := dynamodb.NewFromConfig(AWSConfig)
 
 				fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Getting a lay of the land, aka \"What regions is this account using?\""))
 				inventory2 := aws.Inventory2Module{
@@ -732,6 +736,10 @@ var (
 					CloudfrontClient:     cloudfrontClient,
 					AppRunnerClient:      appRunnerClient,
 					LightsailClient:      lightsailClient,
+					GlueClient:           glueClient,
+					SNSClient:            snsClient,
+					SQSClient:            sqsClient,
+					DynamoDBClient:       dynamodbClient,
 
 					Caller:     *Caller,
 					AWSRegions: AWSRegions,
