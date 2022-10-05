@@ -33,7 +33,9 @@ func TestGetAllAWSProfiles(t *testing.T) {
 		{[]byte("[default]\naws_access_key=abc\naws_secret_access_key=123\n[123]\naws_access_key=abc\naws_secret_access_key=123"), []string{"default", "123"}, true, "expected format"},
 	}
 	credentialsFile := config.DefaultSharedCredentialsFilename()
+
 	for _, test := range tests {
+		UtilsFs = afero.NewMemMapFs()
 		fmt.Printf("[*] Testing %s\n", test.caseName)
 		UtilsFs.Create(credentialsFile)
 		afero.WriteFile(UtilsFs, credentialsFile, test.fileData, 0755)
@@ -61,7 +63,9 @@ func TestGetSelectedAWSProfiles(t *testing.T) {
 		{[]byte("qwerty\nxyz\n456\n\n\n"), []string{"qwerty", "xyz", "456"}, true, "extra new lines at the end"},
 		{[]byte("nmhj\nyuioy\n098"), []string{"nmhj", "yuioy", "098"}, true, "expected format"},
 	}
+
 	for _, test := range tests {
+		UtilsFs = afero.NewMemMapFs()
 		fmt.Printf("[*] Testing %s\n", test.caseName)
 		UtilsFs.Create("/tmp/myfile.txt")
 		afero.WriteFile(UtilsFs, "/tmp/myfile.txt", test.fileData, 0755)
