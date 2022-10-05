@@ -52,6 +52,7 @@ For the full documentation please refer to our [wiki](https://github.com/BishopF
 ### AWS
 * AWS CLI installed
 * Supports AWS profiles, AWS environment variables, or metadata retrieval (on an ec2 instance)
+   * To run commands on multiple profiles at once, you can specify the path to a file with a list of profile names seperated by a new line using the `-l` flag or pass all stored profiles with the `-a` flag.
 * A principal with one recommended policies attached (described below)
 * Recommended attached policies: **`SecurityAudit` + [CloudFox custom policy](./misc/aws/cloudfox-policy.json)** 
 
