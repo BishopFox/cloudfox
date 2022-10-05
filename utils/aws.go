@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"regexp"
 	"strings"
@@ -109,7 +108,7 @@ func txtLogger() *logrus.Logger {
 
 func CheckErr(e error, msg string) {
 	if e != nil {
-		log.Printf("[-] Error %s", msg)
+		TxtLogger.Printf("[-] Error %s", msg)
 	}
 }
 
@@ -117,6 +116,11 @@ func GetAllAWSProfiles(AWSConfirm bool) []string {
 	credentialsFile, err := UtilsFs.Open(config.DefaultSharedCredentialsFilename())
 	CheckErr(err, "could not open default AWS credentials file")
 	defer credentialsFile.Close()
+
+	configFile, err := UtilsFs.Open(config.DefaultSharedConfigFilename())
+	CheckErr(err, "could not open default AWS credentials file")
+	defer configFile.Close()
+
 	var AWSProfiles []string
 	scanner := bufio.NewScanner(credentialsFile)
 	scanner.Split(bufio.ScanLines)
@@ -125,9 +129,25 @@ func GetAllAWSProfiles(AWSConfirm bool) []string {
 		if strings.HasPrefix(text, "[") && strings.HasSuffix(text, "]") {
 			text = strings.TrimPrefix(text, "[")
 			text = strings.TrimSuffix(text, "]")
-			AWSProfiles = append(AWSProfiles, text)
+			if !Contains(text, AWSProfiles) {
+				AWSProfiles = append(AWSProfiles, text)
+			}
 		}
 	}
+	scanner2 := bufio.NewScanner(configFile)
+	scanner2.Split(bufio.ScanLines)
+	for scanner2.Scan() {
+		text := strings.TrimSpace(scanner2.Text())
+		if strings.HasPrefix(text, "[") && strings.HasSuffix(text, "]") {
+			text = strings.TrimPrefix(text, "[profile ")
+			text = strings.TrimPrefix(text, "[")
+			text = strings.TrimSuffix(text, "]")
+			if !Contains(text, AWSProfiles) {
+				AWSProfiles = append(AWSProfiles, text)
+			}
+		}
+	}
+
 	if !AWSConfirm {
 		result := ConfirmSelectedProfiles(AWSProfiles)
 		if !result {
