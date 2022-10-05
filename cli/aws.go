@@ -425,20 +425,30 @@ var (
 		Long: "\nUse case examples:\n" +
 			os.Args[0] + " aws ecr --profile readonly_profile",
 		PreRun: func(cmd *cobra.Command, args []string) {
-			var caller = utils.AWSWhoami(AWSProfile)
-			fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			for _, profile := range AWSProfiles {
+				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+				if err != nil {
+					continue
+				}
+				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			}
 		},
 		Run: func(cmd *cobra.Command, args []string) {
-			var AWSConfig = utils.AWSConfigFileLoader(AWSProfile)
-			var Caller = utils.AWSWhoami(AWSProfile)
-			m := aws.CloudformationModule{
-				CloudFormationClient: cloudformation.NewFromConfig(AWSConfig),
-				Caller:               Caller,
-				AWSRegions:           AWSRegions,
-				AWSProfile:           AWSProfile,
-				Goroutines:           Goroutines,
+			for _, profile := range AWSProfiles {
+				var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
+				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+				if err != nil {
+					continue
+				}
+				m := aws.CloudformationModule{
+					CloudFormationClient: cloudformation.NewFromConfig(AWSConfig),
+					Caller:               *caller,
+					AWSRegions:           AWSRegions,
+					AWSProfile:           AWSProfile,
+					Goroutines:           Goroutines,
+				}
+				m.PrintCloudformationStacks(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 			}
-			m.PrintCloudformationStacks(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 		},
 	}
 
