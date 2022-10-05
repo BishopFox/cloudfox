@@ -37,7 +37,7 @@ func AWSConfigFileLoader(AWSProfile string, version string) aws.Config {
 
 	_, err = cfg.Credentials.Retrieve(context.TODO())
 	if err != nil {
-		fmt.Printf("[%s] Error retrieving credentials from the specified profile %s, environment variables, or the instance metadata service.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), AWSProfile)
+		fmt.Printf("[%s] Error retrieving credentials from the [%s] profile, environment variables, or the instance metadata service.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), AWSProfile)
 		TxtLogger.Printf("Could not retrieve the specified profile name %s", err)
 
 	}
@@ -50,7 +50,7 @@ func AWSWhoami(awsProfile string, version string) (*sts.GetCallerIdentityOutput,
 	STSService := sts.NewFromConfig(AWSConfigFileLoader(awsProfile, version))
 	CallerIdentity, err := STSService.GetCallerIdentity(context.TODO(), &sts.GetCallerIdentityInput{})
 	if err != nil {
-		fmt.Printf("[%s] Could not get caller's identity for profile [%s]\n\nError: %s\n\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), awsProfile, err)
+		fmt.Printf("[%s] Could not get caller's identity for the [%s] profile\n\nError: %s\n\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), awsProfile, err)
 		TxtLogger.Printf("Could not get caller's identity: %s", err)
 		return CallerIdentity, err
 
