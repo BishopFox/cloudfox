@@ -60,15 +60,6 @@ var (
 	AWSCommands        = &cobra.Command{
 		Use:   "aws",
 		Short: "See \"Available Commands\" for AWS Modules",
-		PreRun: func(cmd *cobra.Command, args []string) {
-			for _, profile := range AWSProfiles {
-				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
-				if err != nil {
-					continue
-				}
-				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
-			}
-		},
 		Run: func(cmd *cobra.Command, args []string) {
 			cmd.Help()
 		},
