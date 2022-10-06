@@ -31,6 +31,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/opensearch"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
 	"github.com/aws/aws-sdk-go-v2/service/redshift"
+	"github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sagemaker"
@@ -448,6 +449,40 @@ var (
 					Goroutines:           Goroutines,
 				}
 				m.PrintCloudformationStacks(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+			}
+		},
+	}
+
+	TagsCommand = &cobra.Command{
+		Use:     "tags",
+		Aliases: []string{"tag"},
+		Short:   "Enumerate resources with tags.",
+		Long: "\nUse case examples:\n" +
+			os.Args[0] + " aws tags --profile readonly_profile",
+		PreRun: func(cmd *cobra.Command, args []string) {
+			for _, profile := range AWSProfiles {
+				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+				if err != nil {
+					continue
+				}
+				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			}
+		},
+		Run: func(cmd *cobra.Command, args []string) {
+			for _, profile := range AWSProfiles {
+				var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
+				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+				if err != nil {
+					continue
+				}
+				m := aws.TagsModule{
+					ResourceGroupsTaggingApiClient: resourcegroupstaggingapi.NewFromConfig(AWSConfig),
+					Caller:                         *caller,
+					AWSRegions:                     AWSRegions,
+					AWSProfile:                     AWSProfile,
+					Goroutines:                     Goroutines,
+				}
+				m.PrintTags(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 			}
 		},
 	}
@@ -999,6 +1034,7 @@ func init() {
 		PermissionsCommand,
 		CloudformationCommand,
 		//RAMCommand,
+		TagsCommand,
 	)
 
 }

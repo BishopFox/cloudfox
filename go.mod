@@ -37,6 +37,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ram v1.16.15
 	github.com/aws/aws-sdk-go-v2/service/rds v1.16.0
 	github.com/aws/aws-sdk-go-v2/service/redshift v1.25.0
+	github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi v1.13.19
 	github.com/aws/aws-sdk-go-v2/service/route53 v1.20.5
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.24.0
 	github.com/aws/aws-sdk-go-v2/service/sagemaker v1.32.1
