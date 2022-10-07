@@ -487,6 +487,40 @@ var (
 		},
 	}
 
+	LambdasCommand = &cobra.Command{
+		Use:     "lambda",
+		Aliases: []string{"lambdas", "functions"},
+		Short:   "Enumerate lambdas.",
+		Long: "\nUse case examples:\n" +
+			os.Args[0] + " aws lambda --profile readonly_profile",
+		PreRun: func(cmd *cobra.Command, args []string) {
+			for _, profile := range AWSProfiles {
+				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+				if err != nil {
+					continue
+				}
+				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			}
+		},
+		Run: func(cmd *cobra.Command, args []string) {
+			for _, profile := range AWSProfiles {
+				var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
+				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+				if err != nil {
+					continue
+				}
+				m := aws.LambdasModule{
+					LambdaClient: lambda.NewFromConfig(AWSConfig),
+					Caller:       *caller,
+					AWSRegions:   AWSRegions,
+					AWSProfile:   AWSProfile,
+					Goroutines:   Goroutines,
+				}
+				m.PrintLambdas(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+			}
+		},
+	}
+
 	OutboundAssumedRolesDays    int
 	OutboundAssumedRolesCommand = &cobra.Command{
 		Use:     "outbound-assumed-roles",
@@ -1035,6 +1069,7 @@ func init() {
 		CloudformationCommand,
 		//RAMCommand,
 		TagsCommand,
+		LambdasCommand,
 	)
 
 }
