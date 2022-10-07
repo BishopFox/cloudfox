@@ -216,7 +216,7 @@ func (m *OutboundAssumedRolesModule) Receiver(receiver chan OutboundAssumeRoleEn
 
 func (m *OutboundAssumedRolesModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan OutboundAssumeRoleEntry) {
 	defer wg.Done()
-
+	wg.Add(1)
 	m.CommandCounter.Total++
 	m.getAssumeRoleLogEntriesPerRegion(r, wg, semaphore, dataReceiver)
 
