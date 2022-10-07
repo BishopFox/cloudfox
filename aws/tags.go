@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"sync"
 
 	"github.com/BishopFox/cloudfox/console"
 	"github.com/BishopFox/cloudfox/utils"
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/arn"
 	"github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/sirupsen/logrus"
@@ -95,6 +97,10 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 		"Key",
 		"Value",
 	}
+
+	sort.Slice(m.Tags, func(i, j int) bool {
+		return m.Tags[i].AWSService < m.Tags[j].AWSService
+	})
 
 	// Table rows
 	for i := range m.Tags {
@@ -232,17 +238,21 @@ func (m *TagsModule) getTagsPerRegion(r string, wg *sync.WaitGroup, semaphore ch
 			m.CommandCounter.Error++
 			break
 		}
-		//var stackOutputs []types.Output
+		//var parsedArn types.Arn
 		for _, resource := range GetResources.ResourceTagMappingList {
 			resourceArn := aws.ToString(resource.ResourceARN)
+			parsedArn, err := arn.Parse(resourceArn)
+			if err != nil {
+				break
+			}
 
 			for _, tag := range resource.Tags {
 				key := aws.ToString(tag.Key)
 				value := aws.ToString(tag.Value)
 
 				dataReceiver <- Tag{
-					AWSService: "Tag",
-					Name:       resourceArn,
+					AWSService: parsedArn.Service,
+					Name:       parsedArn.Resource,
 					Region:     r,
 					Type:       "",
 					Key:        key,
@@ -253,8 +263,6 @@ func (m *TagsModule) getTagsPerRegion(r string, wg *sync.WaitGroup, semaphore ch
 
 		}
 
-		// The "NextToken" value is nil when there's no more data to return.
-		//if GetResources.PaginationToken != nil {
 		if aws.ToString(GetResources.PaginationToken) != "" {
 			PaginationControl = GetResources.PaginationToken
 		} else {
