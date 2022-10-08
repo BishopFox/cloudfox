@@ -123,10 +123,22 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
 		//m.writeLoot(m.output.FilePath, verbosity)
 		fmt.Printf("[%s] %s tags found.\n", cyan(m.output.CallingModule), strconv.Itoa(len(m.output.Body)))
+		count := m.countUniqueResourcesWithTags()
+		fmt.Printf("[%s] %d unique resources with tags found.\n", cyan(m.output.CallingModule), count)
 	} else {
 		fmt.Printf("[%s] No tags found, skipping the creation of an output file.\n", cyan(m.output.CallingModule))
 	}
 
+}
+
+func (m *TagsModule) countUniqueResourcesWithTags() int {
+	var uniqueResources []string
+	for i := range m.Tags {
+		if !utils.Contains(m.Tags[i].Name, uniqueResources) {
+			uniqueResources = append(uniqueResources, m.Tags[i].Name)
+		}
+	}
+	return len(uniqueResources)
 }
 
 func (m *TagsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Tag) {
@@ -149,65 +161,6 @@ func (m *TagsModule) Receiver(receiver chan Tag, receiverDone chan bool) {
 		}
 	}
 }
-
-// func (m *TagsModule) writeLoot(outputDirectory string, verbosity int) {
-// 	path := filepath.Join(outputDirectory, "loot")
-// 	err := os.MkdirAll(path, os.ModePerm)
-// 	if err != nil {
-// 		m.modLog.Error(err.Error())
-// 		m.CommandCounter.Error++
-// 	}
-// 	pullFile := filepath.Join(path, "cloudformation-data.txt")
-
-// 	var out string
-// 	out = out + fmt.Sprintln("#############################################")
-// 	out = out + fmt.Sprintln("# Look for secrets. Use something like trufflehog")
-// 	out = out + fmt.Sprintln("#############################################")
-// 	out = out + fmt.Sprintln("")
-
-// 	for _, stack := range m.CFStacks {
-// 		out = out + fmt.Sprintf("=============================================\n")
-// 		out = out + fmt.Sprintf("Stack Name: %s\n\n", stack.Name)
-// 		out = out + fmt.Sprintf("Stack Outputs:\n\n")
-// 		for _, output := range stack.Outputs {
-// 			outputDescription := aws.ToString(output.Description)
-// 			outputExport := aws.ToString(output.ExportName)
-// 			outputKey := aws.ToString(output.OutputKey)
-// 			outputValue := aws.ToString(output.OutputValue)
-// 			out = out + fmt.Sprintf("Stack Output Description: %s\n", outputDescription)
-// 			out = out + fmt.Sprintf("Stack Output Name: %s\n", outputExport)
-// 			out = out + fmt.Sprintf("Stack Output Key: %s\n", outputKey)
-// 			out = out + fmt.Sprintf("Stack Output Value: %s\n\n", outputValue)
-// 		}
-// 		out = out + fmt.Sprintf("Stack Parameters:\n\n")
-// 		for _, param := range stack.Parameters {
-// 			paramKey := aws.ToString(param.ParameterKey)
-// 			paramValue := aws.ToString(param.ParameterValue)
-// 			out = out + fmt.Sprintf("Stack Parameter Key: %s\n", paramKey)
-// 			out = out + fmt.Sprintf("Stack Parameter Value: %s\n\n", paramValue)
-// 		}
-// 		//out = out + fmt.Sprintf("Stack Parameters:\n %s\n", stack.Parameters)
-// 		out = out + fmt.Sprintf("Stack Template:\n %s\n", stack.Template)
-// 		out = out + fmt.Sprintf("=============================================\n")
-
-// 	}
-// 	err = os.WriteFile(pullFile, []byte(out), 0644)
-// 	if err != nil {
-// 		m.modLog.Error(err.Error())
-// 		m.CommandCounter.Error++
-// 	}
-
-// 	if verbosity > 2 {
-// 		fmt.Println()
-// 		fmt.Printf("[%s] %s \n", cyan(m.output.CallingModule), green("Look for secrets. Use something like trufflehog"))
-// 		fmt.Print(out)
-// 		fmt.Printf("[%s] %s \n", cyan(m.output.CallingModule), green("Look for secrets. Use something like trufflehog"))
-// 		fmt.Printf("[%s] %s \n\n", cyan(m.output.CallingModule), green("End of loot file."))
-// 	}
-
-// 	fmt.Printf("[%s] Loot written to [%s]\n", cyan(m.output.CallingModule), pullFile)
-
-// }
 
 func (m *TagsModule) getTagsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Tag) {
 	defer func() {

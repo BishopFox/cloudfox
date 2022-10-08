@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -120,7 +121,7 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//m.writeLoot(m.output.FilePath, verbosity)
+		m.writeLoot(m.output.FilePath, verbosity)
 		fmt.Printf("[%s] %s lambdas found.\n", cyan(m.output.CallingModule), strconv.Itoa(len(m.output.Body)))
 	} else {
 		fmt.Printf("[%s] No lambdas found, skipping the creation of an output file.\n", cyan(m.output.CallingModule))
@@ -149,64 +150,50 @@ func (m *LambdasModule) Receiver(receiver chan Lambda, receiverDone chan bool) {
 	}
 }
 
-// func (m *LambdasModule) writeLoot(outputDirectory string, verbosity int) {
-// 	path := filepath.Join(outputDirectory, "loot")
-// 	err := os.MkdirAll(path, os.ModePerm)
-// 	if err != nil {
-// 		m.modLog.Error(err.Error())
-// 		m.CommandCounter.Error++
-// 	}
-// 	pullFile := filepath.Join(path, "cloudformation-data.txt")
+func (m *LambdasModule) writeLoot(outputDirectory string, verbosity int) {
+	path := filepath.Join(outputDirectory, "loot")
+	err := os.MkdirAll(path, os.ModePerm)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+	}
+	pullFile := filepath.Join(path, "lambda-get-function-commands.txt")
 
-// 	var out string
-// 	out = out + fmt.Sprintln("#############################################")
-// 	out = out + fmt.Sprintln("# Look for secrets. Use something like trufflehog")
-// 	out = out + fmt.Sprintln("#############################################")
-// 	out = out + fmt.Sprintln("")
+	var out string
+	out = out + fmt.Sprintln("#############################################")
+	out = out + fmt.Sprintln("# The profile you will use to perform these commands is most likely not the profile you used to run CloudFox")
+	out = out + fmt.Sprintln("# Set the $profile environment variable to the profile you are going to use to inspect the buckets.")
+	out = out + fmt.Sprintln("# E.g., export profile=dev-prod.")
+	out = out + fmt.Sprintln("#############################################")
+	out = out + fmt.Sprintln("")
 
-// 	for _, stack := range m.CFStacks {
-// 		out = out + fmt.Sprintf("=============================================\n")
-// 		out = out + fmt.Sprintf("Stack Name: %s\n\n", stack.Name)
-// 		out = out + fmt.Sprintf("Stack Outputs:\n\n")
-// 		for _, output := range stack.Outputs {
-// 			outputDescription := aws.ToString(output.Description)
-// 			outputExport := aws.ToString(output.ExportName)
-// 			outputKey := aws.ToString(output.OutputKey)
-// 			outputValue := aws.ToString(output.OutputValue)
-// 			out = out + fmt.Sprintf("Stack Output Description: %s\n", outputDescription)
-// 			out = out + fmt.Sprintf("Stack Output Name: %s\n", outputExport)
-// 			out = out + fmt.Sprintf("Stack Output Key: %s\n", outputKey)
-// 			out = out + fmt.Sprintf("Stack Output Value: %s\n\n", outputValue)
-// 		}
-// 		out = out + fmt.Sprintf("Stack Parameters:\n\n")
-// 		for _, param := range stack.Parameters {
-// 			paramKey := aws.ToString(param.ParameterKey)
-// 			paramValue := aws.ToString(param.ParameterValue)
-// 			out = out + fmt.Sprintf("Stack Parameter Key: %s\n", paramKey)
-// 			out = out + fmt.Sprintf("Stack Parameter Value: %s\n\n", paramValue)
-// 		}
-// 		//out = out + fmt.Sprintf("Stack Parameters:\n %s\n", stack.Parameters)
-// 		out = out + fmt.Sprintf("Stack Template:\n %s\n", stack.Template)
-// 		out = out + fmt.Sprintf("=============================================\n")
+	for _, function := range m.Lambdas {
+		out = out + fmt.Sprintf("=============================================\n")
+		out = out + fmt.Sprintf("# Lambda Name: %s\n\n", function.Name)
+		out = out + "# Get function metadata including download location\n"
+		out = out + fmt.Sprintf("aws --profile $profile --region %s lambda get-function --function-name %s\n", function.Name)
+		out = out + "# Download function code to to disk (requires jq and curl) \n"
+		out = out + fmt.Sprintf("mkdir -p ./lambdas/%s\n", function.Name)
+		out = out + fmt.Sprintf("url=`aws --profile $profile lambda get-function --region %s --function-name %s | jq .Code.Location | sed s/\"//g` && curl \"$url\" -o ./lambdas/%s.zip\n", function.Region, function.Name, function.Name)
 
-// 	}
-// 	err = os.WriteFile(pullFile, []byte(out), 0644)
-// 	if err != nil {
-// 		m.modLog.Error(err.Error())
-// 		m.CommandCounter.Error++
-// 	}
+	}
+	err = os.WriteFile(pullFile, []byte(out), 0644)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+	}
 
-// 	if verbosity > 2 {
-// 		fmt.Println()
-// 		fmt.Printf("[%s] %s \n", cyan(m.output.CallingModule), green("Look for secrets. Use something like trufflehog"))
-// 		fmt.Print(out)
-// 		fmt.Printf("[%s] %s \n", cyan(m.output.CallingModule), green("Look for secrets. Use something like trufflehog"))
-// 		fmt.Printf("[%s] %s \n\n", cyan(m.output.CallingModule), green("End of loot file."))
-// 	}
+	if verbosity > 2 {
+		fmt.Println()
+		fmt.Printf("[%s] %s \n\n", cyan(m.output.CallingModule), green("Beginning of loot file."))
 
-// 	fmt.Printf("[%s] Loot written to [%s]\n", cyan(m.output.CallingModule), pullFile)
+		fmt.Print(out)
+		fmt.Printf("[%s] %s \n\n", cyan(m.output.CallingModule), green("End of loot file."))
+	}
 
-// }
+	fmt.Printf("[%s] Loot written to [%s]\n", cyan(m.output.CallingModule), pullFile)
+
+}
 
 func (m *LambdasModule) getLambdasPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Lambda) {
 	defer func() {
