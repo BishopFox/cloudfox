@@ -113,33 +113,6 @@ type ListAPIClientInterface interface {
 	List(ctx context.Context, resourceGroupName string) (result compute.VirtualMachineListResultPage, err error)
 }
 
-func (m *InstancesMapModule) getVMsDataPerResourceGroupV2(resourceGroup string) {
-	var vmData vmRelevantInformation
-	for page, err := m.computeClient.List(context.TODO(), resourceGroup); page.NotDone(); page.Next() {
-		if err != nil {
-			fmt.Printf("[-] Could not enumerate resource group %s. Skipping it. %s\n", resourceGroup, err)
-		} else {
-			for _, vm := range page.Values() {
-				vmData.subscriptionID = ""
-				vmData.resourceGroup = resourceGroup
-				vmData.name = ptr.ToString(vm.Name)
-				vmData.adminUsername = ptr.ToString(vm.VirtualMachineProperties.OsProfile.AdminUsername)
-				vmData.operatingSystem = ptr.ToString(vm.VirtualMachineProperties.StorageProfile.ImageReference.Offer) + " " + ptr.ToString(vm.VirtualMachineProperties.StorageProfile.ImageReference.Sku)
-				for _, nic := range *vm.VirtualMachineProperties.NetworkProfile.NetworkInterfaces {
-					internalIP, externalIP := m.getNICInternalAndExternalIPs(nic, resourceGroup)
-					vmData.internalIPs = append(vmData.internalIPs, internalIP)
-					if externalIP != "" {
-						vmData.externalIPs = append(vmData.externalIPs, externalIP)
-					}
-				}
-				m.results = append(m.results, vmData)
-				vmData.internalIPs = nil
-				vmData.externalIPs = nil
-			}
-		}
-	}
-}
-
 func (m *InstancesMapModule) getVMsDataPerResourceGroup(subscriptionID string, resourceGroup string) {
 	var vmData vmRelevantInformation
 	for page, err := m.computeClient.List(context.TODO(), resourceGroup); page.NotDone(); page.Next() {
