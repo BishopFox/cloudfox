@@ -2,12 +2,15 @@ package azure
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/BishopFox/cloudfox/utils"
 	"github.com/aws/smithy-go/ptr"
 )
 
-func ListSubscriptions() ([]string, error) {
+var ListSubscriptions = listSubscriptions
+
+func listSubscriptions() ([]string, error) {
 	var subs []string
 	subsClient, err := utils.GetSubscriptionsClient()
 	if err != nil {
@@ -24,7 +27,9 @@ func ListSubscriptions() ([]string, error) {
 	return subs, nil
 }
 
-func ListResourceGroups(subscription string) ([]string, error) {
+var ListResourceGroups = listResourceGroups
+
+func listResourceGroups(subscription string) ([]string, error) {
 	var resourceGroups []string
 	rgClient, err := utils.GetResourceGroupsClient(subscription)
 	if err != nil {
@@ -41,4 +46,30 @@ func ListResourceGroups(subscription string) ([]string, error) {
 		}
 	}
 	return resourceGroups, nil
+}
+
+func PrintAvailableScope() (map[int]string, error) {
+	fmt.Println("Fetching available resource groups from your Azure CLI session...")
+	fmt.Println()
+
+	var index int
+	menu := make(map[int]string)
+
+	subs, err := ListSubscriptions()
+	if err != nil {
+		return menu, err
+	}
+	for _, sub := range subs {
+		fmt.Printf("Subscription: %s\n", sub)
+		rgs, err := ListResourceGroups(sub)
+		if err != nil {
+			return menu, err
+		}
+		for _, rg := range rgs {
+			index++
+			fmt.Printf("[%d] RG: %s\n", index, rg)
+			menu[index] = rg
+		}
+	}
+	return menu, nil
 }
