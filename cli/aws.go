@@ -445,7 +445,7 @@ var (
 					CloudFormationClient: cloudformation.NewFromConfig(AWSConfig),
 					Caller:               *caller,
 					AWSRegions:           AWSRegions,
-					AWSProfile:           AWSProfile,
+					AWSProfile:           profile,
 					Goroutines:           Goroutines,
 				}
 				m.PrintCloudformationStacks(AWSOutputFormat, AWSOutputDirectory, Verbosity)
@@ -479,7 +479,7 @@ var (
 					ResourceGroupsTaggingApiClient: resourcegroupstaggingapi.NewFromConfig(AWSConfig),
 					Caller:                         *caller,
 					AWSRegions:                     AWSRegions,
-					AWSProfile:                     AWSProfile,
+					AWSProfile:                     profile,
 					Goroutines:                     Goroutines,
 				}
 				m.PrintTags(AWSOutputFormat, AWSOutputDirectory, Verbosity)
@@ -511,9 +511,10 @@ var (
 				}
 				m := aws.LambdasModule{
 					LambdaClient: lambda.NewFromConfig(AWSConfig),
+					IAMClient:    iam.NewFromConfig(AWSConfig),
 					Caller:       *caller,
 					AWSRegions:   AWSRegions,
-					AWSProfile:   AWSProfile,
+					AWSProfile:   profile,
 					Goroutines:   Goroutines,
 				}
 				m.PrintLambdas(AWSOutputFormat, AWSOutputDirectory, Verbosity)
@@ -756,7 +757,7 @@ var (
 
 	// 			Caller:     utils.AWSWhoami(AWSProfile),
 	// 			AWSRegions: AWSRegions,
-	// 			AWSProfile: AWSProfile,
+	// 			AWSProfile: profile,
 	// 			Goroutines: Goroutines,
 	// 		}
 	// 		m.PrintRAM(AWSOutputFormat, AWSOutputDirectory, Verbosity)

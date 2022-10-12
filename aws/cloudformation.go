@@ -50,7 +50,7 @@ func (m *CloudformationModule) PrintCloudformationStacks(outputFormat string, ou
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "cloudformation"
-	m.modLog = utils.TxtLogger.WithFields(logrus.Fields{
+	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {

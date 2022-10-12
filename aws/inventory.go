@@ -101,7 +101,7 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "inventory"
-	m.modLog = utils.TxtLogger.WithFields(logrus.Fields{
+	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
 		"module": "inventory",
 	},
 	)

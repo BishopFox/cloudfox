@@ -88,7 +88,7 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputFormat string, outputDi
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "permissions"
 	m.output.FullFilename = m.output.CallingModule
-	m.modLog = utils.TxtLogger.WithFields(logrus.Fields{
+	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {

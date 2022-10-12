@@ -118,7 +118,7 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputFor
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "outbound-assumed-roles"
-	m.modLog = utils.TxtLogger.WithFields(logrus.Fields{
+	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {

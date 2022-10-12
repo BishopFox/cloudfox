@@ -51,7 +51,7 @@ func (m *Route53Module) PrintRoute53(outputFormat string, outputDirectory string
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "route53"
-	m.modLog = utils.TxtLogger.WithFields(logrus.Fields{
+	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {

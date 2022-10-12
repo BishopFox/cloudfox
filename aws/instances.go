@@ -55,7 +55,7 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "instances"
-	m.modLog = utils.TxtLogger.WithFields(logrus.Fields{
+	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {

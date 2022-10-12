@@ -61,14 +61,8 @@ var (
 		"apprunner:DescribeService",
 		"ec2:DescribeInstanceAttributeInput",
 	}
-	adminActionNames = []string{
-		"iam:PutUserPolicy",
-		"iam:AttachUserPolicy",
-		"iam:PutRolePolicy",
-		"iam:AttachRolePolicy",
-		"secretsmanager:GetSecretValue",
-		"ssm:GetDocument",
-	}
+	TxtLoggerName = "root"
+	TxtLogger     = utils.TxtLogger()
 )
 
 func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, resource string, outputFormat string, outputDirectory string, verbosity int) {
@@ -76,7 +70,7 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "iam-simulator"
-	m.modLog = utils.TxtLogger.WithFields(logrus.Fields{
+	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
@@ -252,7 +246,6 @@ func (m *IamSimulatorModule) getIAMUsers(wg *sync.WaitGroup, actions []string, r
 	m.CommandCounter.Executing++
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
 	var PaginationControl *string
-	var adminCheckResult bool
 
 	for {
 		ListUsers, err := m.IAMClient.ListUsers(
@@ -270,8 +263,16 @@ func (m *IamSimulatorModule) getIAMUsers(wg *sync.WaitGroup, actions []string, r
 		for _, user := range ListUsers.Users {
 			//name := user.UserName
 			principal := user.Arn
-			adminCheckResult = m.policySimulatorAdminCheck(principal, adminActionNames, resource, dataReceiver)
-			if !adminCheckResult {
+			adminCheckResult := m.isPrincipalAnAdmin(principal)
+			if adminCheckResult {
+				query := fmt.Sprintf("Appears to be an administrator")
+				dataReceiver <- SimulatorResult{
+					AWSService: "IAM",
+					Principal:  aws.ToString(principal),
+					Query:      query,
+					Decision:   "",
+				}
+			} else {
 				m.getPolicySimulatorResult(principal, actions, resource, dataReceiver)
 			}
 
@@ -299,7 +300,6 @@ func (m *IamSimulatorModule) getIAMRoles(wg *sync.WaitGroup, actions []string, r
 	m.CommandCounter.Executing++
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
 	var PaginationControl *string
-	var adminCheckResult bool
 
 	for {
 		ListRoles, err := m.IAMClient.ListRoles(
@@ -317,8 +317,16 @@ func (m *IamSimulatorModule) getIAMRoles(wg *sync.WaitGroup, actions []string, r
 		for _, role := range ListRoles.Roles {
 			//name := user.UserName
 			principal := role.Arn
-			adminCheckResult = m.policySimulatorAdminCheck(principal, adminActionNames, resource, dataReceiver)
-			if !adminCheckResult {
+			adminCheckResult := m.isPrincipalAnAdmin(principal)
+			if adminCheckResult {
+				query := fmt.Sprintf("Appears to be an administrator")
+				dataReceiver <- SimulatorResult{
+					AWSService: "IAM",
+					Principal:  aws.ToString(principal),
+					Query:      query,
+					Decision:   "",
+				}
+			} else {
 				m.getPolicySimulatorResult(principal, actions, resource, dataReceiver)
 			}
 
@@ -386,25 +394,34 @@ func (m *IamSimulatorModule) getPolicySimulatorResult(principal *string, actionN
 	}
 }
 
-func (m *IamSimulatorModule) policySimulatorAdminCheck(principal *string, actionNames []string, resource string, dataReceiver chan SimulatorResult) bool {
+func (m *IamSimulatorModule) isPrincipalAnAdmin(principal *string) bool {
 	var PaginationControl2 *string
 	var resourceArns []string
-	resourceArns = append(resourceArns, resource)
-
+	resourceArns = append(resourceArns, "*")
+	var adminActionNames = []string{
+		"iam:PutUserPolicy",
+		"iam:AttachUserPolicy",
+		"iam:PutRolePolicy",
+		"iam:AttachRolePolicy",
+		"secretsmanager:GetSecretValue",
+		"ssm:GetDocument",
+	}
 	for {
 		SimulatePrincipalPolicy, err := m.IAMClient.SimulatePrincipalPolicy(
 			context.TODO(),
 			&iam.SimulatePrincipalPolicyInput{
 				Marker:          PaginationControl2,
-				ActionNames:     actionNames,
+				ActionNames:     adminActionNames,
 				PolicySourceArn: principal,
 				ResourceArns:    resourceArns,
 			},
 		)
 		if err != nil {
-			m.modLog.Error(err.Error())
+			//m.modLog.Error(err.Error())
+			TxtLogger.Println(err.Error())
 			m.CommandCounter.Error++
-			m.modLog.Error(fmt.Sprintf("Failed admin check on %s\n\n", aws.ToString(principal)))
+			//m.modLog.Error(fmt.Sprintf("Failed admin check on %s\n\n", aws.ToString(principal)))
+			TxtLogger.Printf("Failed admin check on %s\n\n", aws.ToString(principal))
 			return false
 		}
 
@@ -428,14 +445,5 @@ func (m *IamSimulatorModule) policySimulatorAdminCheck(principal *string, action
 			break
 		}
 	}
-
-	query := fmt.Sprintf("Appears to be an administrator")
-	dataReceiver <- SimulatorResult{
-		AWSService: "IAM",
-		Principal:  aws.ToString(principal),
-		Query:      query,
-		Decision:   "",
-	}
-
 	return true
 }

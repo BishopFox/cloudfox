@@ -20,7 +20,7 @@ import (
 
 var (
 	TxtLoggerName = "root"
-	TxtLogger     = txtLogger()
+	TxtLog        = TxtLogger()
 	UtilsFs       = afero.NewOsFs()
 )
 
@@ -32,13 +32,13 @@ func AWSConfigFileLoader(AWSProfile string, version string) aws.Config {
 		}))
 	if err != nil {
 		fmt.Println(err)
-		TxtLogger.Println(err)
+		TxtLog.Println(err)
 	}
 
 	_, err = cfg.Credentials.Retrieve(context.TODO())
 	if err != nil {
 		fmt.Printf("[%s] Error retrieving credentials from the [%s] profile, environment variables, or the instance metadata service.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), AWSProfile)
-		TxtLogger.Printf("Could not retrieve the specified profile name %s", err)
+		TxtLog.Printf("Could not retrieve the specified profile name %s", err)
 
 	}
 	return cfg
@@ -51,7 +51,7 @@ func AWSWhoami(awsProfile string, version string) (*sts.GetCallerIdentityOutput,
 	CallerIdentity, err := STSService.GetCallerIdentity(context.TODO(), &sts.GetCallerIdentityInput{})
 	if err != nil {
 		fmt.Printf("[%s] Could not get caller's identity for the [%s] profile\n\nError: %s\n\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), awsProfile, err)
-		TxtLogger.Printf("Could not get caller's identity: %s", err)
+		TxtLog.Printf("Could not get caller's identity: %s", err)
 		return CallerIdentity, err
 
 	}
@@ -93,7 +93,7 @@ func AWSWhoami(awsProfile string, version string) (*sts.GetCallerIdentityOutput,
 // }
 
 // txtLogger - Returns the txt logger
-func txtLogger() *logrus.Logger {
+func TxtLogger() *logrus.Logger {
 	txtLogger := logrus.New()
 	txtFile, err := os.OpenFile(fmt.Sprintf("%s/cloudfox-error.log", ptr.ToString(GetLogDirPath())), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -108,7 +108,7 @@ func txtLogger() *logrus.Logger {
 
 func CheckErr(e error, msg string) {
 	if e != nil {
-		TxtLogger.Printf("[-] Error %s", msg)
+		TxtLog.Printf("[-] Error %s", msg)
 	}
 }
 
