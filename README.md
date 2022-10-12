@@ -11,6 +11,10 @@ CloudFox helps you gain situational awareness in unfamiliar cloud environments. 
 * What endpoints/hostnames/IPs can I attack from an internal starting point (assumed breach within the VPC)?
 * What filesystems can I potentially mount from a compromised resource inside the VPC?
 
+[Intro Blog](https://bishopfox.com/blog/introducing-cloudfox)
+[Intro Video](https://www.youtube.com/watch?v=ReWoUgpUuiQ)
+[Tool Talk Video](https://youtu.be/KKsYfL5uVU4?t=360) 
+
 ## Quick Start
 CloudFox is modular (you can run one command at a time), but there is an aws `all-checks` command that will run the other aws commands for you with sane defaults: 
 
@@ -18,7 +22,11 @@ CloudFox is modular (you can run one command at a time), but there is an aws `al
 
 ![](/.github/images/cloudfox-output.png)
 
-CloudFox is designed to be executed by a principal with limited read-only permissions, but it's purpose is to help you find attack paths that can be exploited in simulated compromise scenarios (aka, objective based penetration testing). 
+### White Box Enumeration
+CloudFox was designed to be executed by a principal with limited read-only permissions, but it's purpose is to help you find attack paths that can be exploited in simulated compromise scenarios (aka, objective based penetration testing). 
+
+### Black Box Enumeration 
+CloudFox can be with "found" credentials, similar to how you would use [weirdAAL](https://github.com/carnal0wnage/weirdAAL) or [enumerate-iam](https://github.com/andresriancho/enumerate-iam). Checks that fail, do so silently, so any data returned means your "found" creds have the access needed to retrieve it.   
 
 For the full documentation please refer to our [wiki](https://github.com/BishopFox/CloudFox/wiki).
 
