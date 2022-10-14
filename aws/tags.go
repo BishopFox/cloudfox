@@ -60,7 +60,7 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
 
-	fmt.Printf("[%s] Enumerating tags for account %s.\n", cyan(m.output.CallingModule), aws.ToString(m.Caller.Account))
+	fmt.Printf("[%s][%s] Enumerating tags for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 
 	wg := new(sync.WaitGroup)
 	semaphore := make(chan struct{}, m.Goroutines)
@@ -128,11 +128,11 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
 		//m.writeLoot(m.output.FilePath, verbosity)
-		fmt.Printf("[%s] %s tags found.\n", cyan(m.output.CallingModule), strconv.Itoa(len(m.output.Body)))
+		fmt.Printf("[%s][%s] %s tags found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 		count := m.countUniqueResourcesWithTags()
-		fmt.Printf("[%s] %d unique resources with tags found.\n", cyan(m.output.CallingModule), count)
+		fmt.Printf("[%s][%s] %d unique resources with tags found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), count)
 	} else {
-		fmt.Printf("[%s] No tags found, skipping the creation of an output file.\n", cyan(m.output.CallingModule))
+		fmt.Printf("[%s][%s] No tags found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
 
 }

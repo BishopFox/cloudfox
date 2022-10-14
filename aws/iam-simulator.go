@@ -98,21 +98,21 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 	if principal != "" {
 		if action != "" {
 			// The user specified a specific --principal and a specific --action
-			fmt.Printf("[%s] Checking to see if %s can do %s.\n", cyan(m.output.CallingModule), principal, action)
+			fmt.Printf("[%s][%s] Checking to see if %s can do %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), principal, action)
 			m.output.FullFilename = filepath.Join(fmt.Sprintf("%s-custom-%s", m.output.CallingModule, strconv.FormatInt((time.Now().Unix()), 10)))
 			actionList = append(actionList, action)
 			m.getPolicySimulatorResult((&principal), actionList, resource, dataReceiver)
 
 		} else {
 			// The user specified a specific --principal, but --action was empty
-			fmt.Printf("[%s] Checking to see if %s can do any actions of interest.\n", cyan(m.output.CallingModule), principal)
+			fmt.Printf("[%s][%s] Checking to see if %s can do any actions of interest.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), principal)
 			m.output.FullFilename = filepath.Join(fmt.Sprintf("%s-custom-%s", m.output.CallingModule, strconv.FormatInt((time.Now().Unix()), 10)))
 			m.getPolicySimulatorResult((&principal), defaultActionNames, resource, dataReceiver)
 		}
 	} else {
 		if action != "" {
 			// The did not specify a specific --principal, but they did specify an --action
-			fmt.Printf("[%s] Checking to see if any principal can do %s.\n", cyan(m.output.CallingModule), action)
+			fmt.Printf("[%s][%s] Checking to see if any principal can do %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), action)
 			m.output.FullFilename = filepath.Join(fmt.Sprintf("%s-custom-%s", m.output.CallingModule, strconv.FormatInt((time.Now().Unix()), 10)))
 			actionList = append(actionList, action)
 			wg.Add(1)
@@ -123,7 +123,7 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 			pmapperCommands = append(pmapperCommands, fmt.Sprintf("pmapper --profile %s query \"who can do %s with %s\" | tee %s\n", m.AWSProfile, action, resource, pmapperOutFileName))
 		} else {
 			// Both --principal and --action are empty. Run in default mode!
-			fmt.Printf("[%s] Running multiple iam-simulator queries for account %s. (This command can be pretty slow, FYI)\n", cyan(m.output.CallingModule), aws.ToString(m.Caller.Account))
+			fmt.Printf("[%s][%s] Running multiple iam-simulator queries for account %s. (This command can be pretty slow, FYI)\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 			m.output.FullFilename = m.output.CallingModule
 			m.executeChecks(wg, resource, dataReceiver)
 			for _, action := range defaultActionNames {
@@ -171,15 +171,15 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
-		fmt.Printf("[%s] We suggest running the pmapper commands in the loot file to get the same information but taking privesc paths into account.\n", cyan(m.output.CallingModule))
-		// fmt.Printf("[%s]\t\tpmapper --profile %s graph create\n", cyan(m.output.CallingModule), m.AWSProfile)
+		fmt.Printf("[%s][%s] We suggest running the pmapper commands in the loot file to get the same information but taking privesc paths into account.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+		// fmt.Printf("[%s]\t\tpmapper --profile %s graph create\n", cyan(m.output.CallingModule),  cyan(m.AWSProfile), m.AWSProfile)
 		// for _, line := range pmapperCommands {
-		// 	fmt.Printf("[%s]\t\t%s", cyan(m.output.CallingModule), line)
+		// 	fmt.Printf("[%s]\t\t%s", cyan(m.output.CallingModule),  cyan(m.AWSProfile), line)
 		// }
 		m.writeLoot(m.output.FilePath, verbosity, pmapperCommands)
 
 	} else if principal != "" || action != "" {
-		fmt.Printf("[%s] No allowed permissions identified, skipping the creation of an output file.\n", cyan(m.output.CallingModule))
+		fmt.Printf("[%s][%s] No allowed permissions identified, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
 
 }
@@ -206,12 +206,12 @@ func (m *IamSimulatorModule) writeLoot(outputDirectory string, verbosity int, pm
 
 	if verbosity > 2 {
 		fmt.Println()
-		fmt.Printf("[%s] %s \n", cyan(m.output.CallingModule), green("We suggest running these pmapper commands in the loot file to get the same information but taking privesc paths into account."))
+		fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("We suggest running these pmapper commands in the loot file to get the same information but taking privesc paths into account."))
 		fmt.Print(out)
-		fmt.Printf("[%s] %s \n\n", cyan(m.output.CallingModule), green("End of loot file."))
+		fmt.Printf("[%s][%s] %s \n\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("End of loot file."))
 	}
 
-	fmt.Printf("[%s] Loot written to [%s]\n", cyan(m.output.CallingModule), outFile)
+	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), outFile)
 
 }
 

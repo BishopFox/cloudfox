@@ -58,7 +58,7 @@ func (m *Route53Module) PrintRoute53(outputFormat string, outputDirectory string
 		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
 
-	fmt.Printf("[%s] Enumerating Route53 for account %s.\n", cyan(m.output.CallingModule), aws.ToString(m.Caller.Account))
+	fmt.Printf("[%s][%s] Enumerating Route53 for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 
 	m.getRoute53Records()
 
@@ -90,10 +90,10 @@ func (m *Route53Module) PrintRoute53(outputFormat string, outputDirectory string
 		//m.output.OutputSelector(outputFormat)
 		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
 		m.writeLoot(m.output.FilePath, verbosity)
-		fmt.Printf("[%s] %s DNS records found.\n", cyan(m.output.CallingModule), strconv.Itoa(len(m.output.Body)))
+		fmt.Printf("[%s][%s] %s DNS records found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {
-		fmt.Printf("[%s] No DNS records found, skipping the creation of an output file.\n", cyan(m.output.CallingModule))
+		fmt.Printf("[%s][%s] No DNS records found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
 
 }
@@ -132,13 +132,13 @@ func (m *Route53Module) writeLoot(outputDirectory string, verbosity int) {
 	if verbosity > 2 {
 		if len(route53APublicRecords) > 0 {
 			fmt.Println()
-			fmt.Printf("[%s] %s \n", cyan(m.output.CallingModule), green("Feed these public zone A records into nmap and something like gowitness or aquatone."))
+			fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("Feed these public zone A records into nmap and something like gowitness or aquatone."))
 			fmt.Print(route53APublicRecords)
-			fmt.Printf("[%s] %s \n", cyan(m.output.CallingModule), green("End of loot file."))
+			fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("End of loot file."))
 		}
 	}
 
-	fmt.Printf("[%s] Loot written to [%s]\n", cyan(m.output.CallingModule), route53ARecordsPublicZonesFileName)
+	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), route53ARecordsPublicZonesFileName)
 
 	err = os.WriteFile(route53ARecordsPrivateZonesFileName, []byte(route53APrivateRecords), 0644)
 	if err != nil {
@@ -150,13 +150,13 @@ func (m *Route53Module) writeLoot(outputDirectory string, verbosity int) {
 	if verbosity > 2 {
 		if len(route53APrivateRecords) > 0 {
 			fmt.Println()
-			fmt.Printf("[%s] %s \n", cyan(m.output.CallingModule), green("Feed these private zone A records into nmap and something like gowitness or aquatone."))
+			fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("Feed these private zone A records into nmap and something like gowitness or aquatone."))
 			fmt.Print(route53APrivateRecords)
-			fmt.Printf("[%s] %s \n", cyan(m.output.CallingModule), green("End of loot file."))
+			fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("End of loot file."))
 		}
 	}
 
-	fmt.Printf("[%s] Loot written to [%s]\n", cyan(m.output.CallingModule), route53ARecordsPrivateZonesFileName)
+	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), route53ARecordsPrivateZonesFileName)
 
 }
 

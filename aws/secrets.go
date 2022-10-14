@@ -56,8 +56,8 @@ func (m *SecretsModule) PrintSecrets(outputFormat string, outputDirectory string
 		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
 
-	fmt.Printf("[%s] Enumerating secrets for account %s.\n", cyan(m.output.CallingModule), aws.ToString(m.Caller.Account))
-	fmt.Printf("[%s] Supported Services: SecretsManager, SSM Parameters\n", cyan(m.output.CallingModule))
+	fmt.Printf("[%s][%s] Enumerating secrets for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
+	fmt.Printf("[%s][%s] Supported Services: SecretsManager, SSM Parameters\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 
 	wg := new(sync.WaitGroup)
 	semaphore := make(chan struct{}, m.Goroutines)
@@ -116,10 +116,10 @@ func (m *SecretsModule) PrintSecrets(outputFormat string, outputDirectory string
 		//m.output.OutputSelector(outputFormat)
 		utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
 		m.writeLoot(m.output.FilePath, verbosity)
-		fmt.Printf("[%s] %s secrets found.\n", cyan(m.output.CallingModule), strconv.Itoa(len(m.output.Body)))
+		fmt.Printf("[%s][%s] %s secrets found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {
-		fmt.Printf("[%s] No secrets found, skipping the creation of an output file.\n", cyan(m.output.CallingModule))
+		fmt.Printf("[%s][%s] No secrets found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
 
 }
@@ -183,13 +183,13 @@ func (m *SecretsModule) writeLoot(outputDirectory string, verbosity int) {
 
 	if verbosity > 2 {
 		fmt.Println()
-		fmt.Printf("[%s] %s \n\n", cyan(m.output.CallingModule), green("Use the commands below to retrieve the secrets that look interesting"))
+		fmt.Printf("[%s][%s] %s \n\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("Use the commands below to retrieve the secrets that look interesting"))
 
 		fmt.Print(out)
-		fmt.Printf("[%s] %s \n\n", cyan(m.output.CallingModule), green("End of loot file."))
+		fmt.Printf("[%s][%s] %s \n\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("End of loot file."))
 	}
 
-	fmt.Printf("[%s] Loot written to [%s]\n", cyan(m.output.CallingModule), pullFile)
+	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), pullFile)
 
 }
 

@@ -123,9 +123,9 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 		}
 	}
 
-	fmt.Printf("[%s] Enumerating selected services in all regions for account %s.\n", cyan(m.output.CallingModule), aws.ToString(m.Caller.Account))
-	fmt.Printf("[%s] Supported Services: ApiGateway, ApiGatewayv2, AppRunner, CloudFormation, Cloudfront, DynamoDB, EC2, ECS, EKS, \n", cyan(m.output.CallingModule))
-	fmt.Printf("[%s] \t\t\tELB, ELBv2, Glue, Grafana, IAM, Lambda, Lightsail, MQ, OpenSearch, RDS, S3, SecretsManager, SNS, SQS, SSM\n", cyan(m.output.CallingModule))
+	fmt.Printf("[%s][%s] Enumerating selected services in all regions for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
+	fmt.Printf("[%s][%s] Supported Services: ApiGateway, ApiGatewayv2, AppRunner, CloudFormation, Cloudfront, DynamoDB, EC2, ECS, EKS, \n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	fmt.Printf("[%s][%s] \t\t\tELB, ELBv2, Glue, Grafana, IAM, Lambda, Lightsail, MQ, OpenSearch, RDS, S3, SecretsManager, SNS, SQS, SSM\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 
 	wg := new(sync.WaitGroup)
 	semaphore := make(chan struct{}, m.Goroutines)
@@ -257,7 +257,7 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 		m.PrintGlobalResources(outputFormat, outputDirectory, verbosity, dataReceiver)
 		m.PrintTotalResources(outputFormat)
 	} else {
-		fmt.Printf("[%s] No resources identified, skipping the creation of an output file.\n", cyan(m.output.CallingModule))
+		fmt.Printf("[%s][%s] No resources identified, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
 
 	// Send a message to the data receiver goroutine to close the channel and stop
@@ -1750,5 +1750,5 @@ func (m *Inventory2Module) PrintTotalResources(outputFormat string) {
 	for i := range m.GlobalResourceCounts {
 		totalResources = totalResources + m.GlobalResourceCounts[i].count
 	}
-	fmt.Printf("[%s] %d resources found in the services we looked at. This is NOT the total number of resources in the account.\n", cyan(m.output.CallingModule), totalResources)
+	fmt.Printf("[%s][%s] %d resources found in the services we looked at. This is NOT the total number of resources in the account.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), totalResources)
 }
