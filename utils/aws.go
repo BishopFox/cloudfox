@@ -113,37 +113,41 @@ func CheckErr(e error, msg string) {
 }
 
 func GetAllAWSProfiles(AWSConfirm bool) []string {
+	var AWSProfiles []string
+
 	credentialsFile, err := UtilsFs.Open(config.DefaultSharedCredentialsFilename())
 	CheckErr(err, "could not open default AWS credentials file")
-	defer credentialsFile.Close()
-
-	configFile, err := UtilsFs.Open(config.DefaultSharedConfigFilename())
-	CheckErr(err, "could not open default AWS credentials file")
-	defer configFile.Close()
-
-	var AWSProfiles []string
-	scanner := bufio.NewScanner(credentialsFile)
-	scanner.Split(bufio.ScanLines)
-	for scanner.Scan() {
-		text := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(text, "[") && strings.HasSuffix(text, "]") {
-			text = strings.TrimPrefix(text, "[")
-			text = strings.TrimSuffix(text, "]")
-			if !Contains(text, AWSProfiles) {
-				AWSProfiles = append(AWSProfiles, text)
+	if err == nil {
+		defer credentialsFile.Close()
+		scanner := bufio.NewScanner(credentialsFile)
+		scanner.Split(bufio.ScanLines)
+		for scanner.Scan() {
+			text := strings.TrimSpace(scanner.Text())
+			if strings.HasPrefix(text, "[") && strings.HasSuffix(text, "]") {
+				text = strings.TrimPrefix(text, "[")
+				text = strings.TrimSuffix(text, "]")
+				if !Contains(text, AWSProfiles) {
+					AWSProfiles = append(AWSProfiles, text)
+				}
 			}
 		}
 	}
-	scanner2 := bufio.NewScanner(configFile)
-	scanner2.Split(bufio.ScanLines)
-	for scanner2.Scan() {
-		text := strings.TrimSpace(scanner2.Text())
-		if strings.HasPrefix(text, "[") && strings.HasSuffix(text, "]") {
-			text = strings.TrimPrefix(text, "[profile ")
-			text = strings.TrimPrefix(text, "[")
-			text = strings.TrimSuffix(text, "]")
-			if !Contains(text, AWSProfiles) {
-				AWSProfiles = append(AWSProfiles, text)
+
+	configFile, err := UtilsFs.Open(config.DefaultSharedConfigFilename())
+	CheckErr(err, "could not open default AWS credentials file")
+	if err == nil {
+		defer configFile.Close()
+		scanner2 := bufio.NewScanner(configFile)
+		scanner2.Split(bufio.ScanLines)
+		for scanner2.Scan() {
+			text := strings.TrimSpace(scanner2.Text())
+			if strings.HasPrefix(text, "[") && strings.HasSuffix(text, "]") {
+				text = strings.TrimPrefix(text, "[profile ")
+				text = strings.TrimPrefix(text, "[")
+				text = strings.TrimSuffix(text, "]")
+				if !Contains(text, AWSProfiles) {
+					AWSProfiles = append(AWSProfiles, text)
+				}
 			}
 		}
 	}
