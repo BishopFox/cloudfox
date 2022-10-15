@@ -3,222 +3,164 @@ package azure
 import (
 	"fmt"
 	"log"
+	"strings"
 	"testing"
 
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/compute/mgmt/compute"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/network/mgmt/network"
+	"github.com/BishopFox/cloudfox/utils"
 	"github.com/aws/smithy-go/ptr"
 )
 
 func TestGetComputeRelevantData(t *testing.T) {
-	getComputeVMsPerResourceGroupM = func(subscriptionID, resourceGroup string) []compute.VirtualMachine {
-		return []compute.VirtualMachine{
-			{
-				Name:                     nil,
-				ID:                       nil,
-				Location:                 nil,
-				VirtualMachineProperties: nil,
-				Identity:                 nil,
+	var subtests = []struct {
+		name                          string
+		expectedBody                  [][]string
+		getComputeVMsPerResourceGroup func(subscriptionID string, resourceGroup string) []compute.VirtualMachine
+		getIPs                        func(subscriptionID string, resourceGroup string, vm compute.VirtualMachine) ([]string, []string)
+	}{
+		{
+			name: "subtest 1",
+			expectedBody: [][]string{
+				{"TestVM1", "vm_id_1", "us-west-2", "admin", "192.168.0.1", "72.88.100.1"},
+				{"TestVM2", "vm_id_2", "us-west-2", "admin", "192.168.0.2", "72.88.100.2"},
+				{"TestVM3", "vm_id_3", "us-west-2", "admin", "192.168.0.3", "72.88.100.3"},
 			},
-			{
-				Name:     ptr.String("TestVM1_AAAAAAAAAAAAAAAAAAAA"),
-				ID:       ptr.String("id-1234"),
-				Location: ptr.String("us-east1"),
-				VirtualMachineProperties: &compute.VirtualMachineProperties{
-					OsProfile: &compute.OSProfile{
-						ComputerName:  ptr.String("HOME1"),
-						AdminUsername: ptr.String("admin"),
-						AdminPassword: ptr.String(""),
-						// Equivalent of User Data in AWS
-						// CustomData:    ptr.String(""),
-					},
-					NetworkProfile: &compute.NetworkProfile{
-						NetworkInterfaces: nil,
-					},
-				},
-				Identity: &compute.VirtualMachineIdentity{
-					PrincipalID: ptr.String("11111111-1111-1111-1111-111111111112"),
-					TenantID:    ptr.String("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaaa"),
-				},
-			},
-			{
-				Name:     ptr.String("TestVM2"),
-				ID:       ptr.String("id-5678"),
-				Location: ptr.String("us-west-1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
-				VirtualMachineProperties: &compute.VirtualMachineProperties{
-					OsProfile: &compute.OSProfile{
-						ComputerName:  ptr.String("LAB1"),
-						AdminUsername: ptr.String("admin"),
-						AdminPassword: ptr.String(""),
-					},
-					NetworkProfile: &compute.NetworkProfile{
-						NetworkInterfaces: &[]compute.NetworkInterfaceReference{
-							{ID: nil},
-							{ID: nil},
+			getComputeVMsPerResourceGroup: func(subscriptionID, resourceGroup string) []compute.VirtualMachine {
+				return []compute.VirtualMachine{
+					{
+						Name:     ptr.String("TestVM1"),
+						ID:       ptr.String("vm_id_1"),
+						Location: ptr.String("us-west-2"),
+						VirtualMachineProperties: &compute.VirtualMachineProperties{
+							OsProfile: &compute.OSProfile{
+								AdminUsername: ptr.String("admin"),
+							},
 						},
 					},
-				},
-				Identity: &compute.VirtualMachineIdentity{
-					PrincipalID: ptr.String("11111111-1111-1111-1111-111111111113"),
-					TenantID:    ptr.String("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
-				},
-			},
-			{
-				Name:     ptr.String("TestVM3"),
-				ID:       ptr.String("id-9101112"),
-				Location: ptr.String("us-west-2"),
-				VirtualMachineProperties: &compute.VirtualMachineProperties{
-					OsProfile: &compute.OSProfile{
-						ComputerName:  ptr.String("DATACENTER1"),
-						AdminUsername: ptr.String("admin_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
-						AdminPassword: ptr.String(""),
-					},
-					NetworkProfile: &compute.NetworkProfile{
-						NetworkInterfaces: &[]compute.NetworkInterfaceReference{
-							{ID: ptr.String("/subscriptions/4cedc5dd-e3ad-468d-bf66-32e31bdb9148/resourceGroups/1-1d656534-playground-sandbox/providers/Microsoft.Network/networkInterfaces/test1391_z1")},
-							{ID: nil},
+					{
+						Name:     ptr.String("TestVM2"),
+						ID:       ptr.String("vm_id_2"),
+						Location: ptr.String("us-west-2"),
+						VirtualMachineProperties: &compute.VirtualMachineProperties{
+							OsProfile: &compute.OSProfile{
+								AdminUsername: ptr.String("admin"),
+							},
 						},
 					},
-				},
-				Identity: &compute.VirtualMachineIdentity{
-					PrincipalID: ptr.String("11111111-1111-1111-1111-111111111113"),
-					TenantID:    ptr.String("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
-				},
+					{
+						Name:     ptr.String("TestVM3"),
+						ID:       ptr.String("vm_id_3"),
+						Location: ptr.String("us-west-2"),
+						VirtualMachineProperties: &compute.VirtualMachineProperties{
+							OsProfile: &compute.OSProfile{
+								AdminUsername: ptr.String("admin"),
+							},
+						},
+					},
+				}
 			},
+			getIPs: func(subscriptionID, resourceGroup string, vm compute.VirtualMachine) ([]string, []string) {
+				switch ptr.ToString(vm.Name) {
+				case "TestVM1":
+					return []string{"192.168.0.1"}, []string{"72.88.100.1"}
+				case "TestVM2":
+					return []string{"192.168.0.2"}, []string{"72.88.100.2"}
+				case "TestVM3":
+					return []string{"192.168.0.3"}, []string{"72.88.100.3"}
+				default:
+					return nil, nil
+				}
+			},
+		},
+	}
+	fmt.Println()
+	log.Println("executing GetComputeRelevantData tests")
+	for _, subtest := range subtests {
+		getComputeVMsPerResourceGroupM = subtest.getComputeVMsPerResourceGroup
+		getIPsM = subtest.getIPs
+
+		header, body := GetComputeRelevantData("subID", "rg1")
+		for rowIndex, row := range body {
+			for columIndex := range row {
+				if body[rowIndex][columIndex] != subtest.expectedBody[rowIndex][columIndex] {
+					log.Fatalf("[%s] Public IP mismatch: got %s, expected: %s", subtest.name, body[rowIndex][columIndex], subtest.expectedBody[rowIndex][columIndex])
+				}
+			}
 		}
+
+		utils.MockFileSystem(true)
+		utils.OutputSelector(2, "table", header, body, ".", "test.txt", "instances")
 	}
-	GetNICdetailsM = func(subscriptionID string, resourceGroup string, nic compute.NetworkInterfaceReference) (network.Interface, error) {
-		return network.Interface{
-			InterfacePropertiesFormat: &network.InterfacePropertiesFormat{
-				IPConfigurations: &[]network.InterfaceIPConfiguration{
-					{
-						InterfaceIPConfigurationPropertiesFormat: &network.InterfaceIPConfigurationPropertiesFormat{
-							PrivateIPAddress: ptr.String("192.168.0.1"),
-							PublicIPAddress:  &network.PublicIPAddress{ID: nil},
-						},
-					},
-					{
-						InterfaceIPConfigurationPropertiesFormat: &network.InterfaceIPConfigurationPropertiesFormat{
-							PrivateIPAddress: ptr.String("192.168.0.1"),
-							PublicIPAddress:  nil,
-						},
-					},
-					{
-						InterfaceIPConfigurationPropertiesFormat: &network.InterfaceIPConfigurationPropertiesFormat{
-							PrivateIPAddress: ptr.String("192.168.0.1"),
-							PublicIPAddress:  &network.PublicIPAddress{ID: ptr.String("172.10.10.50")},
-						},
-					},
-					{
-						InterfaceIPConfigurationPropertiesFormat: nil,
-					},
-					{
-						InterfaceIPConfigurationPropertiesFormat: &network.InterfaceIPConfigurationPropertiesFormat{
-							PrivateIPAddress: nil,
-							PublicIPAddress:  nil,
-						},
-					},
-				},
-			},
-		}, nil
-	}
+	fmt.Println()
 }
 
 func TestGetIPs(t *testing.T) {
-	subtests := []struct {
-		name string
-		vm   compute.VirtualMachine
+	var subtests = []struct {
+		name               string
+		expectedPublicIPs  []string
+		expectedPrivateIPs []string
+		vm                 compute.VirtualMachine
+		getNICdetails      func(subscriptionID, resourceGroup string, nicReference compute.NetworkInterfaceReference) (network.Interface, error)
+		getPublicIP        func(subscriptionID, resourceGroup string, ip network.InterfaceIPConfiguration) (string, error)
 	}{
 		{
-			name: "Sub test 1",
+			name:               "subtest 1",
+			expectedPrivateIPs: []string{"192.168.0.1"},
+			expectedPublicIPs:  []string{"72.88.100.1"},
 			vm: compute.VirtualMachine{
-				Name:                     nil,
-				ID:                       nil,
-				Location:                 nil,
-				VirtualMachineProperties: nil,
-				Identity:                 nil,
-			},
-		},
-		{
-			name: "Sub test 2",
-			vm: compute.VirtualMachine{
-				Name:     ptr.String("TestVM1_AAAAAAAAAAAAAAAAAAAA"),
-				ID:       ptr.String("id-1234"),
-				Location: ptr.String("us-east1"),
+				Name: ptr.String("TestVM1"),
 				VirtualMachineProperties: &compute.VirtualMachineProperties{
-					OsProfile: &compute.OSProfile{
-						ComputerName:  ptr.String("HOME1"),
-						AdminUsername: ptr.String("admin"),
-						AdminPassword: ptr.String(""),
-						// Equivalent of User Data in AWS
-						// CustomData:    ptr.String(""),
-					},
-					NetworkProfile: &compute.NetworkProfile{
-						NetworkInterfaces: nil,
-					},
-				},
-				Identity: &compute.VirtualMachineIdentity{
-					PrincipalID: ptr.String("11111111-1111-1111-1111-111111111112"),
-					TenantID:    ptr.String("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaaa"),
-				},
-			},
-		},
-		{
-			name: "Sub test 3",
-			vm: compute.VirtualMachine{
-				Name:     ptr.String("TestVM2"),
-				ID:       ptr.String("id-5678"),
-				Location: ptr.String("us-west-1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
-				VirtualMachineProperties: &compute.VirtualMachineProperties{
-					OsProfile: &compute.OSProfile{
-						ComputerName:  ptr.String("LAB1"),
-						AdminUsername: ptr.String("admin"),
-						AdminPassword: ptr.String(""),
-					},
 					NetworkProfile: &compute.NetworkProfile{
 						NetworkInterfaces: &[]compute.NetworkInterfaceReference{
-							{ID: nil},
-							{ID: nil},
+							{
+								ID: ptr.String("/subscriptions/subid/resourceGroups/rg1//providers/Microsoft.Network/networkInterfaces/NetworkInterface1"),
+							},
 						},
 					},
 				},
-				Identity: &compute.VirtualMachineIdentity{
-					PrincipalID: ptr.String("11111111-1111-1111-1111-111111111113"),
-					TenantID:    ptr.String("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
-				},
 			},
-		},
-		{
-			name: "Sub test 4",
-			vm: compute.VirtualMachine{
-				Name:     ptr.String("TestVM3"),
-				ID:       ptr.String("id-9101112"),
-				Location: ptr.String("us-west-2"),
-				VirtualMachineProperties: &compute.VirtualMachineProperties{
-					OsProfile: &compute.OSProfile{
-						ComputerName:  ptr.String("DATACENTER1"),
-						AdminUsername: ptr.String("admin_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
-						AdminPassword: ptr.String(""),
-					},
-					NetworkProfile: &compute.NetworkProfile{
-						NetworkInterfaces: &[]compute.NetworkInterfaceReference{
-							{ID: ptr.String("/subscriptions/4cedc5dd-e3ad-468d-bf66-32e31bdb9148/resourceGroups/1-1d656534-playground-sandbox/providers/Microsoft.Network/networkInterfaces/test1391_z1")},
-							{ID: nil},
+			getNICdetails: func(subscriptionID, resourceGroup string, nicReference compute.NetworkInterfaceReference) (network.Interface, error) {
+				return network.Interface{
+					ID: ptr.String("/subscriptions/subid/resourceGroups/rg1//providers/Microsoft.Network/networkInterfaces/NetworkInterface1"),
+					InterfacePropertiesFormat: &network.InterfacePropertiesFormat{
+						IPConfigurations: &[]network.InterfaceIPConfiguration{
+							{
+								InterfaceIPConfigurationPropertiesFormat: &network.InterfaceIPConfigurationPropertiesFormat{
+									PrivateIPAddress: ptr.String("192.168.0.1"),
+									PublicIPAddress: &network.PublicIPAddress{
+										ID: ptr.String("/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/publicIPAddresses/PublicIpAddress1A"),
+									},
+								},
+							},
 						},
 					},
-				},
-				Identity: &compute.VirtualMachineIdentity{
-					PrincipalID: ptr.String("11111111-1111-1111-1111-111111111113"),
-					TenantID:    ptr.String("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
-				},
+				}, nil
+			},
+			getPublicIP: func(subscriptionID, resourceGroup string, ip network.InterfaceIPConfiguration) (string, error) {
+				return "72.88.100.1", nil
 			},
 		},
 	}
+	log.Println("executing getIPs tests")
 	for _, subtest := range subtests {
 		t.Run(subtest.name, func(t *testing.T) {
-			log.Println(subtest.name)
-			internalIPs, externalIPs := getIPs("SUB", "RG", subtest.vm)
-			fmt.Println(internalIPs, externalIPs)
+			getNICdetailsM = subtest.getNICdetails
+			getPublicIPM = subtest.getPublicIP
+			privateIPs, publicIPs := getIPs("subID", "rg1", subtest.vm)
+			for i := range privateIPs {
+				if privateIPs[i] != subtest.expectedPrivateIPs[i] {
+					log.Fatalf("[%s] Private IP mismatch: got %s, expected: %s", subtest.name, privateIPs[i], subtest.expectedPrivateIPs[i])
+				}
+			}
+			for i := range publicIPs {
+				if publicIPs[i] != subtest.expectedPublicIPs[i] {
+					log.Fatalf("[%s] Public IP mismatch: got %s, expected: %s", subtest.name, publicIPs[i], subtest.expectedPublicIPs[i])
+				}
+			}
+			log.Printf("[%s] Public IPs match: %s", subtest.name, strings.Join(subtest.expectedPublicIPs, ", "))
+			log.Printf("[%s] Private IPs match: %s", subtest.name, strings.Join(subtest.expectedPrivateIPs, ", "))
+			fmt.Println()
 		})
 	}
 }

@@ -2,6 +2,7 @@ package azure
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"strings"
 
@@ -11,50 +12,30 @@ import (
 	"github.com/aws/smithy-go/ptr"
 )
 
-/*
-func() (table.Row, []table.Row)
-header := table.Row{"Name", "Location", "Admin User Name"}
-var body []table.Row
-
-body = append(
-			body,
-			table.Row{
-				ptr.ToString(vm.Name),
-				ptr.ToString(vm.Location),
-				ptr.ToString(vm.VirtualMachineProperties.OsProfile.AdminUsername),
-			},
-		)
-return header, body
-*/
-
-type ComputeRelevantData struct {
-	Name          string
-	Id            string
-	Location      string
-	AdminUsername string
-	PrivateIPs    string
-	PublicIPs     string
-}
-
-func GetComputeRelevantData(subscriptionID string, resourceGroup string) []ComputeRelevantData {
-	var results []ComputeRelevantData
+func GetComputeRelevantData(subscriptionID string, resourceGroup string) ([]string, [][]string) {
+	header := []string{"Name", "ID", "Location", "Admin Username", "Private IP", "Public IP"}
+	var body [][]string
 
 	for _, vm := range getComputeVMsPerResourceGroupM(subscriptionID, resourceGroup) {
 		var adminUsername string
 		if vm.VirtualMachineProperties != nil && vm.OsProfile != nil {
 			adminUsername = ptr.ToString(vm.OsProfile.AdminUsername)
 		}
-		privateIPs, publicIPs := getIPs(subscriptionID, resourceGroup, vm)
-		results = append(results, ComputeRelevantData{
-			Name:          ptr.ToString(vm.Name),
-			Id:            ptr.ToString(vm.ID),
-			Location:      ptr.ToString(vm.Location),
-			AdminUsername: adminUsername,
-			PrivateIPs:    strings.Join(privateIPs, "\n"),
-			PublicIPs:     strings.Join(publicIPs, "\n"),
-		})
+		privateIPs, publicIPs := getIPsM(subscriptionID, resourceGroup, vm)
+
+		body = append(
+			body,
+			[]string{
+				ptr.ToString(vm.Name),
+				ptr.ToString(vm.ID),
+				ptr.ToString(vm.Location),
+				adminUsername,
+				strings.Join(privateIPs, "\n"),
+				strings.Join(publicIPs, "\n"),
+			},
+		)
 	}
-	return results
+	return header, body
 }
 
 var getComputeVMsPerResourceGroupM = getComputeVMsPerResourceGroup
@@ -75,13 +56,35 @@ func getComputeVMsPerResourceGroup(subscriptionID string, resourceGroup string) 
 	return vms
 }
 
-var GetNICdetailsM = getNICdetails
+var getIPsM = getIPs
 
 func getIPs(subscriptionID string, resourceGroup string, vm compute.VirtualMachine) ([]string, []string) {
-	// Cross reference NIC with IP addresses here
+	var privateIPs, publicIPs []string
 
-	return []string{"1.1.1.1", "2.2.2.2"}, []string{"3.3.3.3", "4.4.4.4"}
+	if vm.VirtualMachineProperties.NetworkProfile.NetworkInterfaces != nil {
+		for _, nicReference := range *vm.VirtualMachineProperties.NetworkProfile.NetworkInterfaces {
+			nic, err := getNICdetailsM(subscriptionID, resourceGroup, nicReference)
+			if err != nil {
+				return []string{"nicNotFound"}, []string{"nicNotFound"}
+			}
+			if nic.InterfacePropertiesFormat.IPConfigurations != nil {
+				for _, ip := range *nic.InterfacePropertiesFormat.IPConfigurations {
+					privateIPs = append(privateIPs, ptr.ToString(ip.InterfaceIPConfigurationPropertiesFormat.PrivateIPAddress))
+
+					publicIP, err := getPublicIPM(subscriptionID, resourceGroup, ip)
+					if err != nil {
+						// error handling placeholder
+					} else {
+						publicIPs = append(publicIPs, publicIP)
+					}
+				}
+			}
+		}
+	}
+	return privateIPs, publicIPs
 }
+
+var getNICdetailsM = getNICdetails
 
 func getNICdetails(subscriptionID string, resourceGroup string, nicReference compute.NetworkInterfaceReference) (network.Interface, error) {
 	client := utils.GetNICClient(subscriptionID)
@@ -95,22 +98,16 @@ func getNICdetails(subscriptionID string, resourceGroup string, nicReference com
 	return nic, nil
 }
 
-var GetPublicIPM = getPublicIP
+var getPublicIPM = getPublicIP
 
-func getPublicIP(subscriptionID string, resourceGroup string, ipConfig *[]network.InterfaceIPConfiguration) []string {
+func getPublicIP(subscriptionID string, resourceGroup string, ip network.InterfaceIPConfiguration) (string, error) {
 	client := utils.GetPublicIPclient(subscriptionID)
-	var results []string
-	if ipConfig == nil {
-		return results
+	publicIPID := ptr.ToString(ip.InterfaceIPConfigurationPropertiesFormat.PublicIPAddress.ID)
+	publicIPName := strings.Split(publicIPID, "/")[len(strings.Split(publicIPID, "/"))-1]
+	fmt.Println(publicIPName)
+	publicIPExpanded, err := client.Get(context.TODO(), resourceGroup, publicIPName, "")
+	if err != nil {
+		return "", nil
 	}
-
-	for _, ip := range *ipConfig {
-		publicIPID := ptr.ToString(ip.InterfaceIPConfigurationPropertiesFormat.PublicIPAddress.ID)
-		publicIPName := strings.Split(publicIPID, "/")[len(strings.Split(publicIPID, "/"))-1]
-		publicIPProperties, err := client.Get(context.TODO(), resourceGroup, publicIPName, "")
-		if err == nil {
-			results = append(results, ptr.ToString(publicIPProperties.PublicIPAddressPropertiesFormat.IPAddress))
-		}
-	}
-	return results
+	return ptr.ToString(publicIPExpanded.PublicIPAddressPropertiesFormat.IPAddress), nil
 }

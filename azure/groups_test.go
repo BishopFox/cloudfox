@@ -9,6 +9,7 @@ import (
 )
 
 func TestListSubscriptions(t *testing.T) {
+	t.Skip()
 	subs, err := ListSubscriptions()
 	if err != nil {
 		log.Fatal(err)
@@ -21,6 +22,7 @@ func TestListSubscriptions(t *testing.T) {
 }
 
 func TestListResourceGroups(t *testing.T) {
+	t.Skip()
 	subscription := "11111111-1111-1111-1111-11111111"
 	rgs, err := ListResourceGroups(subscription)
 	if err != nil {
@@ -34,6 +36,7 @@ func TestListResourceGroups(t *testing.T) {
 }
 
 func TestPrintAvailableScope(t *testing.T) {
+	t.Skip()
 	subtests := []struct {
 		name               string
 		ListSubscriptions  func() ([]string, error)
@@ -77,6 +80,7 @@ func TestPrintAvailableScope(t *testing.T) {
 }
 
 func TestScopeSelection(t *testing.T) {
+	t.Skip()
 	subtests := []struct {
 		name               string
 		ListSubscriptions  func() ([]string, error)

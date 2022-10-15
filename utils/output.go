@@ -12,7 +12,6 @@ import (
 	"github.com/aws/smithy-go/ptr"
 	"github.com/fatih/color"
 	"github.com/spf13/afero"
-	"golang.org/x/term"
 )
 
 // Used for file system mocking with Afero library. Set:
@@ -90,6 +89,8 @@ func OutputSelector(verbosity int, outputType string, header []string, body [][]
 
 }
 
+/*
+Commenting because this function is unused by the code
 func printCSVtoScreen(header []string, body [][]string) {
 	csvWriter := csv.NewWriter(os.Stdout)
 	csvWriter.Write(header)
@@ -98,6 +99,7 @@ func printCSVtoScreen(header []string, body [][]string) {
 	}
 	csvWriter.Flush()
 }
+*/
 
 func printCSVtoFile(header []string, body [][]string, outputFile afero.File) {
 	csvWriter := csv.NewWriter(outputFile)
@@ -133,6 +135,8 @@ func printTableToScreen(header []string, body [][]string) {
 	t.Render()
 }
 
+/*
+Commenting because this function is unused by the code
 func getTerminalWidth() (int, error) {
 	terminalFileDescriptor := int(os.Stdout.Fd())
 	if term.IsTerminal(terminalFileDescriptor) {
@@ -144,6 +148,7 @@ func getTerminalWidth() (int, error) {
 	}
 	return 0, fmt.Errorf("invalid terminal")
 }
+*/
 
 // The Afero library enables file system mocking:
 // fileSystem = afero.NewOsFs() if not unit testing (real file system) OR
@@ -170,4 +175,13 @@ func createOutputFile(outputDirectory *string, fileName *string, outputType stri
 	}
 	//fmt.Printf("[%s] Creating output file: %s\n", cyan(callingModule), outputFile.Name())
 	return outputFile
+}
+
+func MockFileSystem(switcher bool) {
+	if switcher {
+		fmt.Println("Using mocked file system")
+		fileSystem = afero.NewMemMapFs()
+	} else {
+		fmt.Println("Using OS file system. Make sure to clean up your disk!")
+	}
 }
