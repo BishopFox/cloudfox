@@ -50,14 +50,14 @@ func (m *CloudformationModule) PrintCloudformationStacks(outputFormat string, ou
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "cloudformation"
-	m.modLog = utils.TxtLogger.WithFields(logrus.Fields{
+	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
 		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
 
-	fmt.Printf("[%s] Enumerating cloudformation stacks for account %s.\n", cyan(m.output.CallingModule), aws.ToString(m.Caller.Account))
+	fmt.Printf("[%s][%s] Enumerating cloudformation stacks for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 
 	wg := new(sync.WaitGroup)
 	semaphore := make(chan struct{}, m.Goroutines)
@@ -132,9 +132,9 @@ func (m *CloudformationModule) PrintCloudformationStacks(outputFormat string, ou
 		//m.output.OutputSelector(outputFormat)
 		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
 		m.writeLoot(m.output.FilePath, verbosity)
-		fmt.Printf("[%s] %s cloudformation stacks found.\n", cyan(m.output.CallingModule), strconv.Itoa(len(m.output.Body)))
+		fmt.Printf("[%s][%s] %s cloudformation stacks found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 	} else {
-		fmt.Printf("[%s] No cloudformation stacks found, skipping the creation of an output file.\n", cyan(m.output.CallingModule))
+		fmt.Printf("[%s][%s] No cloudformation stacks found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
 
 }
@@ -209,13 +209,13 @@ func (m *CloudformationModule) writeLoot(outputDirectory string, verbosity int) 
 
 	if verbosity > 2 {
 		fmt.Println()
-		fmt.Printf("[%s] %s \n", cyan(m.output.CallingModule), green("Look for secrets. Use something like trufflehog"))
+		fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("Look for secrets. Use something like trufflehog"))
 		fmt.Print(out)
-		fmt.Printf("[%s] %s \n", cyan(m.output.CallingModule), green("Look for secrets. Use something like trufflehog"))
-		fmt.Printf("[%s] %s \n\n", cyan(m.output.CallingModule), green("End of loot file."))
+		fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("Look for secrets. Use something like trufflehog"))
+		fmt.Printf("[%s][%s] %s \n\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("End of loot file."))
 	}
 
-	fmt.Printf("[%s] Loot written to [%s]\n", cyan(m.output.CallingModule), pullFile)
+	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), pullFile)
 
 }
 

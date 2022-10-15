@@ -12,6 +12,7 @@ import (
 	"github.com/BishopFox/cloudfox/console"
 	"github.com/BishopFox/cloudfox/utils"
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/sirupsen/logrus"
@@ -20,6 +21,7 @@ import (
 type LambdasModule struct {
 	// General configuration data
 	LambdaClient *lambda.Client
+	IAMClient    *iam.Client
 
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
@@ -41,6 +43,7 @@ type Lambda struct {
 	Type       string
 	Name       string
 	Role       string
+	Admin      string
 	Public     string
 }
 
@@ -49,14 +52,14 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "lambdas"
-	m.modLog = utils.TxtLogger.WithFields(logrus.Fields{
+	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
 		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
 
-	fmt.Printf("[%s] Enumerating lambdas for account %s.\n", cyan(m.output.CallingModule), aws.ToString(m.Caller.Account))
+	fmt.Printf("[%s][%s] Enumerating lambdas for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 
 	wg := new(sync.WaitGroup)
 	semaphore := make(chan struct{}, m.Goroutines)
@@ -95,6 +98,7 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 		//"Type",
 		"Resource Arn",
 		"Role",
+		"isAdminRole?",
 		"Public",
 	}
 
@@ -113,6 +117,7 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 				//m.Lambdas[i].Type,
 				m.Lambdas[i].Name,
 				m.Lambdas[i].Role,
+				m.Lambdas[i].Admin,
 				m.Lambdas[i].Public,
 			},
 		)
@@ -122,9 +127,9 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
 		m.writeLoot(m.output.FilePath, verbosity)
-		fmt.Printf("[%s] %s lambdas found.\n", cyan(m.output.CallingModule), strconv.Itoa(len(m.output.Body)))
+		fmt.Printf("[%s][%s] %s lambdas found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 	} else {
-		fmt.Printf("[%s] No lambdas found, skipping the creation of an output file.\n", cyan(m.output.CallingModule))
+		fmt.Printf("[%s][%s] No lambdas found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
 
 }
@@ -185,13 +190,13 @@ func (m *LambdasModule) writeLoot(outputDirectory string, verbosity int) {
 
 	if verbosity > 2 {
 		fmt.Println()
-		fmt.Printf("[%s] %s \n\n", cyan(m.output.CallingModule), green("Beginning of loot file."))
+		fmt.Printf("[%s][%s] %s \n\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("Beginning of loot file."))
 
 		fmt.Print(out)
-		fmt.Printf("[%s] %s \n\n", cyan(m.output.CallingModule), green("End of loot file."))
+		fmt.Printf("[%s][%s] %s \n\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("End of loot file."))
 	}
 
-	fmt.Printf("[%s] Loot written to [%s]\n", cyan(m.output.CallingModule), pullFile)
+	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), pullFile)
 
 }
 
@@ -208,6 +213,7 @@ func (m *LambdasModule) getLambdasPerRegion(r string, wg *sync.WaitGroup, semaph
 	}()
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
 	var PaginationControl *string
+	var adminRole string = ""
 
 	for {
 		ListFunctions, err := m.LambdaClient.ListFunctions(
@@ -229,6 +235,14 @@ func (m *LambdasModule) getLambdasPerRegion(r string, wg *sync.WaitGroup, semaph
 			//arn := aws.ToString(function.FunctionArn)
 			name := aws.ToString(function.FunctionName)
 			role := aws.ToString(function.Role)
+			if function.Role != nil {
+				isRoleAdmin := m.isRoleAdmin(function.Role)
+				if isRoleAdmin {
+					adminRole = "YES"
+				} else {
+					adminRole = "No"
+				}
+			}
 
 			dataReceiver <- Lambda{
 				AWSService: "Lambda",
@@ -236,6 +250,7 @@ func (m *LambdasModule) getLambdasPerRegion(r string, wg *sync.WaitGroup, semaph
 				Region:     r,
 				Type:       "",
 				Role:       role,
+				Admin:      adminRole,
 				Public:     "",
 			}
 
@@ -248,4 +263,21 @@ func (m *LambdasModule) getLambdasPerRegion(r string, wg *sync.WaitGroup, semaph
 			break
 		}
 	}
+}
+
+func (m *LambdasModule) isRoleAdmin(principal *string) bool {
+	iamSimMod := IamSimulatorModule{
+		IAMClient:  m.IAMClient,
+		Caller:     m.Caller,
+		AWSProfile: m.AWSProfile,
+		Goroutines: m.Goroutines,
+	}
+
+	adminCheckResult := iamSimMod.isPrincipalAnAdmin(principal)
+	if adminCheckResult {
+		return true
+	} else {
+		return false
+	}
+
 }

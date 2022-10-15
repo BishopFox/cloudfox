@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/BishopFox/cloudfox/console"
@@ -28,8 +29,10 @@ type TagsModule struct {
 	AWSProfile   string
 
 	// Main module data
-	Tags           []Tag
-	CommandCounter console.CommandCounter
+	Tags               []Tag
+	CommandCounter     console.CommandCounter
+	ResourceTypeCounts map[string]int
+
 	// Used to store output data for pretty printing
 	output utils.OutputData2
 	modLog *logrus.Entry
@@ -38,8 +41,9 @@ type TagsModule struct {
 type Tag struct {
 	AWSService string
 	Region     string
-	Type       string
+	Arn        string
 	Name       string
+	Type       string
 	Key        string
 	Value      string
 }
@@ -49,14 +53,14 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "tags"
-	m.modLog = utils.TxtLogger.WithFields(logrus.Fields{
+	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
 		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
 
-	fmt.Printf("[%s] Enumerating tags for account %s.\n", cyan(m.output.CallingModule), aws.ToString(m.Caller.Account))
+	fmt.Printf("[%s][%s] Enumerating tags for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 
 	wg := new(sync.WaitGroup)
 	semaphore := make(chan struct{}, m.Goroutines)
@@ -92,8 +96,9 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 	m.output.Headers = []string{
 		"Service",
 		"Region",
-		//"Type",
-		"Resource Arn",
+		"Type",
+		//"Name",
+		//"Resource Arn",
 		"Key",
 		"Value",
 	}
@@ -110,8 +115,9 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 			[]string{
 				m.Tags[i].AWSService,
 				m.Tags[i].Region,
-				//m.Tags[i].Type,
-				m.Tags[i].Name,
+				m.Tags[i].Type,
+				//m.Tags[i].Arn,
+				//m.Tags[i].Name,
 				m.Tags[i].Key,
 				m.Tags[i].Value,
 			},
@@ -122,11 +128,11 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
 		//m.writeLoot(m.output.FilePath, verbosity)
-		fmt.Printf("[%s] %s tags found.\n", cyan(m.output.CallingModule), strconv.Itoa(len(m.output.Body)))
+		fmt.Printf("[%s][%s] %s tags found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 		count := m.countUniqueResourcesWithTags()
-		fmt.Printf("[%s] %d unique resources with tags found.\n", cyan(m.output.CallingModule), count)
+		fmt.Printf("[%s][%s] %d unique resources with tags found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), count)
 	} else {
-		fmt.Printf("[%s] No tags found, skipping the creation of an output file.\n", cyan(m.output.CallingModule))
+		fmt.Printf("[%s][%s] No tags found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
 
 }
@@ -138,8 +144,35 @@ func (m *TagsModule) countUniqueResourcesWithTags() int {
 			uniqueResources = append(uniqueResources, m.Tags[i].Name)
 		}
 	}
+	//
 	return len(uniqueResources)
 }
+
+// func (m *TagsModule) createTagsSummary() {
+// 	var serviceMap map[string]map[string]int
+// 	// var services []string
+// 	// var totalRegionCounts map[string]int
+
+// 	var uniqueResources []string
+// 	var uniqueServiceTypes []string
+
+// 	for i := range m.Tags {
+// 		if !utils.Contains(m.Tags[i].Name, uniqueResources) {
+// 			uniqueResources = append(uniqueResources, m.serviceMap[m.Tags[i].Name][m.])
+// 		}
+
+// 		if !utils.Contains(fmt.Sprintf("%s %s", m.Tags[i].AWSService, m.Tags[i].Type), uniqueServiceTypes) {
+// 			uniqueServiceTypes = append(uniqueServiceTypes, fmt.Sprintf("%s %s", m.Tags[i].AWSService, m.Tags[i].Type))
+// 		}
+
+// 	}
+
+// 	for j, resource := range uniqueResources {
+// 		for k, ServiceType := range uniqueServiceTypes {
+// 			if fmt.Sprintf("%s %s", resource[j].AWSService, m.Tags[i].Type). == ServiceType[k]
+// 		}
+// 	}
+// }
 
 func (m *TagsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Tag) {
 	defer wg.Done()
@@ -193,8 +226,16 @@ func (m *TagsModule) getTagsPerRegion(r string, wg *sync.WaitGroup, semaphore ch
 		}
 		//var parsedArn types.Arn
 		for _, resource := range GetResources.ResourceTagMappingList {
+			var resourceType string
 			resourceArn := aws.ToString(resource.ResourceARN)
 			parsedArn, err := arn.Parse(resourceArn)
+			if parsedArn.Service != "s3" {
+				resourceType = strings.Split(parsedArn.Resource, ":")[0]
+				resourceType = strings.Split(resourceType, "/")[0]
+			} else {
+				resourceType = "bucket"
+			}
+			//resourceName := strings.Split(parsedArn.Resource, ":")[]
 			if err != nil {
 				break
 			}
@@ -205,9 +246,10 @@ func (m *TagsModule) getTagsPerRegion(r string, wg *sync.WaitGroup, semaphore ch
 
 				dataReceiver <- Tag{
 					AWSService: parsedArn.Service,
+					Arn:        resourceArn,
 					Name:       parsedArn.Resource,
 					Region:     r,
-					Type:       "",
+					Type:       resourceType,
 					Key:        key,
 					Value:      value,
 				}

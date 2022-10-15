@@ -55,7 +55,7 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "instances"
-	m.modLog = utils.TxtLogger.WithFields(logrus.Fields{
+	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
@@ -81,7 +81,7 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 	}
 
 	//Connects to EC2 service and maps instances
-	fmt.Printf("[%s] Enumerating EC2 instances in all regions for account %s\n", cyan(m.output.CallingModule), aws.ToString(m.Caller.Account))
+	fmt.Printf("[%s][%s] Enumerating EC2 instances in all regions for account %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 
 	wg := new(sync.WaitGroup)
 
@@ -179,9 +179,9 @@ func (m *InstancesModule) printInstancesUserDataAttributesOnly(outputFormat stri
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
 		}
-		fmt.Printf("[%s] Loot written to [%s]\n", cyan(m.output.CallingModule), userDataFileName)
+		fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), userDataFileName)
 	} else {
-		fmt.Printf("[%s] No user data found, skipping the creation of an output file\n", cyan(m.output.CallingModule))
+		fmt.Printf("[%s][%s] No user data found, skipping the creation of an output file\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
 }
 
@@ -221,10 +221,10 @@ func (m *InstancesModule) printGeneralInstanceData(outputFormat string, outputDi
 		utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
 
 		m.writeLoot(m.output.FilePath)
-		fmt.Printf("[%s] %s instances found.\n", cyan(m.output.CallingModule), strconv.Itoa(len(m.output.Body)))
+		fmt.Printf("[%s][%s] %s instances found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {
-		fmt.Printf("[%s] No instances found, skipping the creation of an output file.\n", cyan(m.output.CallingModule))
+		fmt.Printf("[%s][%s] No instances found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
 }
 
@@ -261,8 +261,8 @@ func (m *InstancesModule) writeLoot(outputDirectory string) {
 		m.CommandCounter.Error++
 	}
 
-	fmt.Printf("[%s] Loot written to [%s]\n", cyan(m.output.CallingModule), privateIPsFilename)
-	fmt.Printf("[%s] Loot written to [%s]\n", cyan(m.output.CallingModule), publicIPsFilename)
+	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), privateIPsFilename)
+	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), publicIPsFilename)
 
 }
 
