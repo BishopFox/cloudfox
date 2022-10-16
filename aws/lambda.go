@@ -214,6 +214,7 @@ func (m *LambdasModule) getLambdasPerRegion(r string, wg *sync.WaitGroup, semaph
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
 	var PaginationControl *string
 	var adminRole string = ""
+	localAdminMap := make(map[string]bool)
 
 	for {
 		ListFunctions, err := m.LambdaClient.ListFunctions(
@@ -236,11 +237,24 @@ func (m *LambdasModule) getLambdasPerRegion(r string, wg *sync.WaitGroup, semaph
 			name := aws.ToString(function.FunctionName)
 			role := aws.ToString(function.Role)
 			if function.Role != nil {
-				isRoleAdmin := m.isRoleAdmin(function.Role)
-				if isRoleAdmin {
-					adminRole = "YES"
+				// If we've seen the function before, skip the isRoleAdmin function and just pull the value from the localAdminMap
+				if val, ok := localAdminMap[role]; ok {
+					if val {
+						// we've seen it before and it's an admin
+						adminRole = "YES"
+					} else {
+						// we've seen it before and it's NOT an admin
+						adminRole = "No"
+					}
 				} else {
-					adminRole = "No"
+					isRoleAdmin := m.isRoleAdmin(function.Role)
+					if isRoleAdmin {
+						adminRole = "YES"
+						localAdminMap[role] = true
+					} else {
+						adminRole = "No"
+						localAdminMap[role] = false
+					}
 				}
 			}
 
@@ -274,6 +288,7 @@ func (m *LambdasModule) isRoleAdmin(principal *string) bool {
 	}
 
 	adminCheckResult := iamSimMod.isPrincipalAnAdmin(principal)
+
 	if adminCheckResult {
 		return true
 	} else {
