@@ -194,7 +194,9 @@ var (
 					continue
 				}
 				m := aws.InstancesModule{
-					EC2Client:  ec2.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+					EC2Client: ec2.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+					IAMClient: iam.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+
 					Caller:     *caller,
 					AWSRegions: AWSRegions,
 
@@ -858,6 +860,7 @@ var (
 				fmt.Printf("We are here!")
 				instances := aws.InstancesModule{
 					EC2Client:  ec2Client,
+					IAMClient:  iamClient,
 					Caller:     *Caller,
 					AWSRegions: AWSRegions,
 
