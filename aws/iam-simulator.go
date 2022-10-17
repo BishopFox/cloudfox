@@ -61,11 +61,11 @@ var (
 		"apprunner:DescribeService",
 		"ec2:DescribeInstanceAttributeInput",
 	}
-	TxtLoggerName = "root"
-	TxtLogger     = utils.TxtLogger()
+	TxtLogger = utils.TxtLogger()
 )
 
 func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, resource string, outputFormat string, outputDirectory string, verbosity int) {
+
 	// These stuct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
@@ -77,6 +77,10 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 	var actionList []string
 	var pmapperCommands []string
 	var pmapperOutFileName string
+
+	m.modLog.Error("modlog error")
+	TxtLogger.Error("txtlogger error")
+	os.Exit(1)
 
 	if m.AWSProfile == "" {
 		m.AWSProfile = utils.BuildAWSPath(m.Caller)
