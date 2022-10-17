@@ -190,7 +190,8 @@ func (m *InstancesModule) printGeneralInstanceData(outputFormat string, outputDi
 	m.output.Headers = []string{
 		//"ID",
 		"Name",
-		"Arn",
+		//"Arn",
+		"ID",
 		"Zone",
 		"State",
 		"External IP",
@@ -206,7 +207,8 @@ func (m *InstancesModule) printGeneralInstanceData(outputFormat string, outputDi
 			[]string{
 				//instance.ID,
 				instance.Name,
-				instance.Arn,
+				//instance.Arn,
+				instance.ID,
 				instance.AvailabilityZone,
 				instance.State,
 				instance.ExternalIP,
@@ -355,7 +357,7 @@ func (m *InstancesModule) loadInstanceData(instance types.Instance, region strin
 	var name string = ""
 	var adminRole string = ""
 	localAdminMap := make(map[string]bool)
-	var roleName string = ""
+	var roleArn string = ""
 
 	// The name is in a tag so we have to do this to grab the value from the right tag
 	for _, tag := range instance.Tags {
@@ -365,7 +367,7 @@ func (m *InstancesModule) loadInstanceData(instance types.Instance, region strin
 
 	}
 
-	arn := fmt.Sprintf("arn:aws:ec2:%s:%s:instance/%s", region, aws.ToString(accountId), aws.ToString(instance.InstanceId))
+	//arn := fmt.Sprintf("arn:aws:ec2:%s:%s:instance/%s", region, aws.ToString(accountId), aws.ToString(instance.InstanceId))
 
 	if instance.PublicIpAddress == nil {
 		externalIP = "NoExternalIP"
@@ -383,7 +385,7 @@ func (m *InstancesModule) loadInstanceData(instance types.Instance, region strin
 
 		if roles, ok := m.InstanceProfileToRolesMap[profileID]; ok {
 			for _, role := range roles {
-				roleName = aws.ToString(role.RoleName)
+				roleArn = aws.ToString(role.Arn)
 				if role.Arn != nil {
 					// If we've seen the function before, skip the isRoleAdmin function and just pull the value from the localAdminMap
 					roleArn := aws.ToString(role.Arn)
@@ -415,13 +417,14 @@ func (m *InstancesModule) loadInstanceData(instance types.Instance, region strin
 	dataReceiver <- MappedInstance{
 		aws.ToString(instance.InstanceId),
 		aws.ToString(&name),
-		arn,
+		//arn,
+		aws.ToString(instance.InstanceId),
 		aws.ToString(instance.Placement.AvailabilityZone),
 		string(instance.State.Name),
 		externalIP,
 		aws.ToString(instance.PrivateIpAddress),
 		profile,
-		roleName,
+		roleArn,
 		region,
 		adminRole,
 	}
