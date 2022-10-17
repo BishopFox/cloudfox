@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strconv"
-	"strings"
 
 	"github.com/BishopFox/cloudfox/utils"
 	"github.com/aws/smithy-go/ptr"
@@ -70,10 +68,11 @@ func PrintAvailableScope() (map[int]string, error) {
 	return menu, nil
 }
 
+var getAvailableScopeM = getAvailableScope
+
 func getAvailableScope() map[int]string {
 	var index int
 	menu := make(map[int]string)
-
 	subs, err := ListSubscriptions()
 	if err != nil {
 		log.Fatalf("error getting available scope from Azure CLI: %s", err)
@@ -89,17 +88,4 @@ func getAvailableScope() map[int]string {
 		}
 	}
 	return menu
-}
-
-func ScopeSelection(userInput string) []string {
-	menu := getAvailableScope()
-	var scope []string
-	for _, input := range strings.Split(userInput, ",") {
-		inputInt, err := strconv.Atoi(input)
-		if err != nil {
-			log.Fatalf("error during scope selection: %s", err)
-		}
-		scope = append(scope, menu[int(inputInt)])
-	}
-	return scope
 }

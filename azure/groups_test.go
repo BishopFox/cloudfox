@@ -3,8 +3,11 @@ package azure
 import (
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/BishopFox/cloudfox/utils"
 )
 
 func TestListSubscriptions(t *testing.T) {
@@ -90,79 +93,74 @@ func TestGetAvailableScope(t *testing.T) {
 }
 
 func TestScopeSelection(t *testing.T) {
-	t.Skip()
+	//t.Skip()
 	subtests := []struct {
-		name               string
-		ListSubscriptions  func() ([]string, error)
-		ListResourceGroups func(subscription string) ([]string, error)
-		userInput          string
-		expectedResult     []string
+		name              string
+		getAvailableScope func() map[int]string
+		userInput         string
+		expectedResult    []string
 	}{
 		{
-			name: "SubTest 1",
-			ListSubscriptions: func() ([]string, error) {
-				return []string{
-					"AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
-					"BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB",
-					"CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCC",
-				}, nil
-			},
-			ListResourceGroups: func(s string) ([]string, error) {
-				switch s {
-				case "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA":
-					return []string{"A1", "A2", "A3"}, nil
-				case "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB":
-					return []string{"B4", "B5", "B6"}, nil
-				case "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCC":
-					return []string{"C7", "C8", "C9"}, nil
+			name: "subtest 1",
+			getAvailableScope: func() map[int]string {
+				return map[int]string{
+					1: "A1",
+					2: "A2",
+					3: "B3",
+					4: "B4",
+					5: "C5",
+					6: "C6",
 				}
-				return []string{}, fmt.Errorf("no resource groups found for subscription: %s", s)
 			},
-			userInput:      "2,3,8",
-			expectedResult: []string{"A2", "A3", "C8"},
-		},
-		{
-			name: "SubTest 2",
-			ListSubscriptions: func() ([]string, error) {
-				return []string{
-					"AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
-					"BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB",
-					"CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCC",
-				}, nil
-			},
-			ListResourceGroups: func(s string) ([]string, error) {
-				switch s {
-				case "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA":
-					return []string{"A1", "A2", "A3"}, nil
-				case "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB":
-					return []string{"B4", "B5", "B6"}, nil
-				case "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCC":
-					return []string{"C7", "C8", "C9"}, nil
-				}
-				return []string{}, fmt.Errorf("no resource groups found for subscription: %s", s)
-			},
-			userInput:      "1",
-			expectedResult: []string{"A1"},
+			userInput:      "2,3,6",
+			expectedResult: []string{"A2", "B3", "C6"},
 		},
 	}
 	fmt.Println()
 	fmt.Println("[test case] scopeSelection")
 	for _, subtest := range subtests {
 		t.Run(subtest.name, func(t *testing.T) {
-			ListSubscriptions = subtest.ListSubscriptions
-			ListResourceGroups = subtest.ListResourceGroups
-			results := ScopeSelection(subtest.userInput)
-			for i, r := range results {
-				if r != subtest.expectedResult[i] {
-					log.Fatalf(
-						"[%s] expected result: %s, got %s",
-						subtest.name,
-						strings.Join(subtest.expectedResult, ","),
-						strings.Join(results, ","),
-					)
+			getAvailableScopeM = subtest.getAvailableScope
+			scope := ScopeSelection(subtest.userInput)
+			for i, selection := range scope {
+				if selection != subtest.expectedResult[i] {
+					log.Fatalf("[%s] expected %s, got %s", subtest.name, subtest.expectedResult[i], selection)
 				}
 			}
-			log.Printf("[%s] mocked user input of %s matches expected selection\n", subtest.name, subtest.userInput)
+			log.Printf("[%s] simulated user input of %s matches expected selection of %s", subtest.name, subtest.userInput, strings.Join(subtest.expectedResult, ","))
 		})
 	}
+}
+
+func ScopeSelection(userInput string) []string {
+	menu := getAvailableScopeM()
+	var tableBody [][]string
+	for rgID, rgName := range menu {
+		tableBody = append(tableBody, []string{strconv.Itoa(rgID), rgName})
+		/*
+			TO-DO:
+			Figure out how to sort the table body by the first element.
+			Here's some example code:
+
+			func (m *RoleTrustsModule) sortTrustsTablePerTrustedPrincipal() {
+				sort.Slice(
+					m.output.Body,
+					func(i int, j int) bool {
+						return m.output.Body[i][1] < m.output.Body[j][1]
+					},
+				)
+			}
+		*/
+	}
+	utils.PrintTableToScreen([]string{"Number", "Resource Group Name"}, tableBody)
+
+	var scope []string
+	for _, input := range strings.Split(userInput, ",") {
+		inputInt, err := strconv.Atoi(input)
+		if err != nil {
+			log.Fatalf("error during scope selection: %s", err)
+		}
+		scope = append(scope, menu[int(inputInt)])
+	}
+	return scope
 }

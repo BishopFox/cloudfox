@@ -41,9 +41,9 @@ func OutputSelector(verbosity int, outputType string, header []string, body [][]
 
 	switch verbosity {
 	case 2:
-		printTableToScreen(header, body)
+		PrintTableToScreen(header, body)
 	case 3:
-		printTableToScreen(header, body)
+		PrintTableToScreen(header, body)
 		// Add writeLootToScreen function here
 	}
 	switch outputType {
@@ -120,7 +120,7 @@ func printTableToFile(header []string, body [][]string, outputFile afero.File) {
 	t.Render()
 }
 
-func printTableToScreen(header []string, body [][]string) {
+func PrintTableToScreen(header []string, body [][]string) {
 	t := table.New(os.Stdout)
 	// ColumnMaxWidth needs to be set as a large value so the table doesn't wrap.
 	// If the table wraps it's hard to grep the output from the terminal.
