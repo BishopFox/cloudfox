@@ -75,7 +75,7 @@ func TestGetComputeRelevantData(t *testing.T) {
 		},
 	}
 	fmt.Println()
-	log.Println("executing GetComputeRelevantData tests")
+	fmt.Println("[test case] GetComputeRelevantData")
 	for _, subtest := range subtests {
 		getComputeVMsPerResourceGroupM = subtest.getComputeVMsPerResourceGroup
 		getIPsM = subtest.getIPs
@@ -142,7 +142,8 @@ func TestGetIPs(t *testing.T) {
 			},
 		},
 	}
-	log.Println("executing getIPs tests")
+	fmt.Println()
+	fmt.Println("[test case] getIPs")
 	for _, subtest := range subtests {
 		t.Run(subtest.name, func(t *testing.T) {
 			getNICdetailsM = subtest.getNICdetails

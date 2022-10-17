@@ -3,7 +3,6 @@ package azure
 import (
 	"fmt"
 	"log"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -35,15 +34,24 @@ func TestListResourceGroups(t *testing.T) {
 	fmt.Println()
 }
 
-func TestPrintAvailableScope(t *testing.T) {
-	t.Skip()
+func TestGetAvailableScope(t *testing.T) {
+	// t.Skip()
 	subtests := []struct {
 		name               string
+		expectedMenu       map[int]string
 		ListSubscriptions  func() ([]string, error)
 		ListResourceGroups func(subscription string) ([]string, error)
 	}{
 		{
-			name: "SubTest: multiple subs, multiple resource groups",
+			name: "subtest 1",
+			expectedMenu: map[int]string{
+				1: "A1",
+				2: "A2",
+				3: "B3",
+				4: "B4",
+				5: "C5",
+				6: "C6",
+			},
 			ListSubscriptions: func() ([]string, error) {
 				return []string{
 					"AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
@@ -54,29 +62,31 @@ func TestPrintAvailableScope(t *testing.T) {
 			ListResourceGroups: func(s string) ([]string, error) {
 				switch s {
 				case "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA":
-					return []string{"A1", "A2", "A3"}, nil
+					return []string{"A1", "A2"}, nil
 				case "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB":
-					return []string{"B1", "B2", "B3"}, nil
+					return []string{"B3", "B4"}, nil
 				case "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCC":
-					return []string{"C1", "C2", "C3"}, nil
+					return []string{"C5", "C6"}, nil
 				}
 				return []string{}, fmt.Errorf("no resource groups found for subscription: %s", s)
 			},
 		},
 	}
+	fmt.Println()
+	fmt.Println("[test case] getAvailableScope")
 	for _, subtest := range subtests {
 		t.Run(subtest.name, func(t *testing.T) {
-			log.Println(subtest.name)
 			ListSubscriptions = subtest.ListSubscriptions
 			ListResourceGroups = subtest.ListResourceGroups
-			menu, err := PrintAvailableScope()
-			if err != nil {
-				log.Println(err)
+			menu := getAvailableScope()
+			for i, expected := range subtest.expectedMenu {
+				if menu[i] != expected {
+					log.Fatalf("[%s] expected result: %s, got %s", subtest.name, menu[i], expected)
+				}
 			}
-			log.Println(menu)
-			fmt.Println()
 		})
 	}
+	fmt.Println()
 }
 
 func TestScopeSelection(t *testing.T) {
@@ -135,43 +145,24 @@ func TestScopeSelection(t *testing.T) {
 			expectedResult: []string{"A1"},
 		},
 	}
+	fmt.Println()
+	fmt.Println("[test case] scopeSelection")
 	for _, subtest := range subtests {
 		t.Run(subtest.name, func(t *testing.T) {
-			log.Println(subtest.name)
 			ListSubscriptions = subtest.ListSubscriptions
 			ListResourceGroups = subtest.ListResourceGroups
-			results, err := ScopeSelection(subtest.userInput)
-			if err != nil {
-				log.Println(err)
-			}
+			results := ScopeSelection(subtest.userInput)
 			for i, r := range results {
 				if r != subtest.expectedResult[i] {
 					log.Fatalf(
-						"Expected result: %s, got %s",
+						"[%s] expected result: %s, got %s",
+						subtest.name,
 						strings.Join(subtest.expectedResult, ","),
 						strings.Join(results, ","),
 					)
 				}
 			}
-			log.Printf("Mocked user input: %s", subtest.userInput)
-			log.Printf("Matches expected result of: %s", strings.Join(results, ","))
-			fmt.Println()
+			log.Printf("[%s] mocked user input of %s matches expected selection\n", subtest.name, subtest.userInput)
 		})
 	}
-}
-
-func ScopeSelection(userInput string) ([]string, error) {
-	menu, err := PrintAvailableScope()
-	if err != nil {
-		log.Println(err)
-	}
-	var scope []string
-	for _, input := range strings.Split(userInput, ",") {
-		inputInt, err := strconv.Atoi(input)
-		if err != nil {
-			return scope, err
-		}
-		scope = append(scope, menu[int(inputInt)])
-	}
-	return scope, nil
 }
