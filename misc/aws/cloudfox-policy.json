@@ -5,7 +5,9 @@
             "Action": [
                 "apigateway:GET",                
                 "apprunner:DescribeService",
-                "apprunner:ListServices",                
+                "apprunner:ListServices",
+                "cloudformation:DescribeStacks",
+                "cloudformation:GetTemplate",
                 "cloudformation:ListStacks",
                 "cloudtrail:LookupEvents",
                 "cloudfront:ListDistributions",
@@ -44,6 +46,8 @@
                 "mq:ListBrokers",
                 "es:DescribeDomain",
                 "es:ListDomainNames",
+                "ram:GetResourceShares",
+                "ram:ListResources",
                 "rds:DescribeDBInstances",
                 "redshift:DescribeClusters",
                 "route53:ListHostedZones",
@@ -62,12 +66,13 @@
                 "sagemaker:DescribeModel",                
                 "secretsmanager:ListSecrets",
                 "sns:ListTopics",
-                "sqs:ListQueues"
+                "sqs:ListQueues",
+                "tag:GetResources"
 
             ],
             "Resource": "*",
             "Effect": "Allow",
-            "Sid": "AllowMoreReadForCloudFox171"
+            "Sid": "AllowMoreReadForCloudFox180"
         }
     ]
 }
