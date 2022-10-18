@@ -409,7 +409,6 @@ func (m *InstancesModule) loadInstanceData(instance types.Instance, region strin
 					}
 				}
 
-				//fmt.Printf(("id: %s, \t role: %s\n"), profileID, aws.ToString(role.RoleName))
 			}
 		}
 
