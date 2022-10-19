@@ -148,6 +148,8 @@ func (m *TagsModule) countUniqueResourcesWithTags() int {
 	return len(uniqueResources)
 }
 
+// TODO: Make summary table
+
 // func (m *TagsModule) createTagsSummary() {
 // 	var serviceMap map[string]map[string]int
 // 	// var services []string

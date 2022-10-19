@@ -29,6 +29,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/lightsail"
 	"github.com/aws/aws-sdk-go-v2/service/mq"
 	"github.com/aws/aws-sdk-go-v2/service/opensearch"
+	"github.com/aws/aws-sdk-go-v2/service/ram"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
 	"github.com/aws/aws-sdk-go-v2/service/redshift"
 	"github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi"
@@ -63,41 +64,6 @@ var (
 		Short: "See \"Available Commands\" for AWS Modules",
 		Run: func(cmd *cobra.Command, args []string) {
 			cmd.Help()
-		},
-	}
-
-	// The filter is set to "all" when the flag "--filter" is not used
-	RoleTrustFilter  string
-	RoleTrustCommand = &cobra.Command{
-		Use:     "role-trusts",
-		Aliases: []string{"roletrusts", "role-trust"},
-		Short:   "Enumerate all role trusts",
-		Long: "\nUse case examples:\n" +
-			"Map all role trusts for caller's account:\n" +
-			os.Args[0] + " aws role-trusts\n",
-		PreRun: func(cmd *cobra.Command, args []string) {
-			for _, profile := range AWSProfiles {
-				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
-				if err != nil {
-					continue
-				}
-				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
-			}
-		},
-		Run: func(cmd *cobra.Command, args []string) {
-			for _, profile := range AWSProfiles {
-				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
-				if err != nil {
-					continue
-				}
-				m := aws.RoleTrustsModule{
-					IAMClient:  iam.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
-					Caller:     *caller,
-					AWSProfile: profile,
-					Goroutines: Goroutines,
-				}
-				m.PrintRoleTrusts(AWSOutputFormat, AWSOutputDirectory, Verbosity)
-			}
 		},
 	}
 
@@ -169,48 +135,12 @@ var (
 		},
 	}
 
-	// This filter could be an instance ID or a TXT file with instance IDs separated by a new line.
-	InstancesFilter                   string
-	InstanceMapUserDataAttributesOnly bool
-	InstancesCommand                  = &cobra.Command{
-		Use:     "instances",
-		Aliases: []string{"instance"},
-		Short:   "Enumerate all instances along with assigned IPs, profiles, and user-data",
+	CloudformationCommand = &cobra.Command{
+		Use:     "cloudformation",
+		Aliases: []string{"cf", "cfstacks", "stacks"},
+		Short:   "Enumerate Cloudformation stacks. Get a loot file with stack details. Look for secrets.",
 		Long: "\nUse case examples:\n" +
-			os.Args[0] + " aws instances --profile readonly_profile",
-		PreRun: func(cmd *cobra.Command, args []string) {
-			for _, profile := range AWSProfiles {
-				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
-				if err != nil {
-					continue
-				}
-				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
-			}
-		},
-		Run: func(cmd *cobra.Command, args []string) {
-			for _, profile := range AWSProfiles {
-				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
-				if err != nil {
-					continue
-				}
-				m := aws.InstancesModule{
-					EC2Client:  ec2.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
-					Caller:     *caller,
-					AWSRegions: AWSRegions,
-
-					UserDataAttributesOnly: InstanceMapUserDataAttributesOnly,
-					AWSProfile:             profile,
-				}
-				m.Instances(InstancesFilter, AWSOutputFormat, AWSOutputDirectory, Verbosity)
-			}
-		},
-	}
-
-	InventoryCommand = &cobra.Command{
-		Use:   "inventory",
-		Short: "Gain a rough understanding of size of the account and preferred regions",
-		Long: "\nUse case examples:\n" +
-			os.Args[0] + " aws inventory --profile readonly_profile",
+			os.Args[0] + " aws ecr --profile readonly_profile",
 		PreRun: func(cmd *cobra.Command, args []string) {
 			for _, profile := range AWSProfiles {
 				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
@@ -227,159 +157,14 @@ var (
 				if err != nil {
 					continue
 				}
-				m := aws.Inventory2Module{
-					EC2Client:            ec2.NewFromConfig(AWSConfig),
-					ECSClient:            ecs.NewFromConfig(AWSConfig),
-					EKSClient:            eks.NewFromConfig(AWSConfig),
-					S3Client:             s3.NewFromConfig(AWSConfig),
-					LambdaClient:         lambda.NewFromConfig(AWSConfig),
+				m := aws.CloudformationModule{
 					CloudFormationClient: cloudformation.NewFromConfig(AWSConfig),
-					SecretsManagerClient: secretsmanager.NewFromConfig(AWSConfig),
-					SSMClient:            ssm.NewFromConfig(AWSConfig),
-					RDSClient:            rds.NewFromConfig(AWSConfig),
-					APIGatewayv2Client:   apigatewayv2.NewFromConfig(AWSConfig),
-					ELBClient:            elasticloadbalancing.NewFromConfig(AWSConfig),
-					ELBv2Client:          elasticloadbalancingv2.NewFromConfig(AWSConfig),
-					IAMClient:            iam.NewFromConfig(AWSConfig),
-					MQClient:             mq.NewFromConfig(AWSConfig),
-					OpenSearchClient:     opensearch.NewFromConfig(AWSConfig),
-					GrafanaClient:        grafana.NewFromConfig(AWSConfig),
-					APIGatewayClient:     apigateway.NewFromConfig(AWSConfig),
-					RedshiftClient:       redshift.NewFromConfig(AWSConfig),
-					CloudfrontClient:     cloudfront.NewFromConfig(AWSConfig),
-					AppRunnerClient:      apprunner.NewFromConfig(AWSConfig),
-					LightsailClient:      lightsail.NewFromConfig(AWSConfig),
-					GlueClient:           glue.NewFromConfig(AWSConfig),
-					SNSClient:            sns.NewFromConfig(AWSConfig),
-					SQSClient:            sqs.NewFromConfig(AWSConfig),
-					DynamoDBClient:       dynamodb.NewFromConfig(AWSConfig),
-
-					Caller:     *caller,
-					AWSRegions: AWSRegions,
-					AWSProfile: profile,
-					Goroutines: Goroutines,
+					Caller:               *caller,
+					AWSRegions:           AWSRegions,
+					AWSProfile:           profile,
+					Goroutines:           Goroutines,
 				}
-				m.PrintInventoryPerRegion(AWSOutputFormat, AWSOutputDirectory, Verbosity)
-			}
-		},
-	}
-
-	EndpointsCommand = &cobra.Command{
-		Use:     "endpoints",
-		Aliases: []string{"endpoint"},
-		Short:   "Enumerates endpoints from various services. Get a loot file with http endpoints to scan.",
-		Long: "\nUse case examples:\n" +
-			os.Args[0] + " aws endpoints --profile readonly_profile",
-		PreRun: func(cmd *cobra.Command, args []string) {
-			for _, profile := range AWSProfiles {
-				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
-				if err != nil {
-					continue
-				}
-				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
-			}
-		},
-		Run: func(cmd *cobra.Command, args []string) {
-			for _, profile := range AWSProfiles {
-				var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
-				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
-				if err != nil {
-					continue
-				}
-				m := aws.EndpointsModule{
-					EKSClient:          eks.NewFromConfig(AWSConfig),
-					LambdaClient:       lambda.NewFromConfig(AWSConfig),
-					MQClient:           mq.NewFromConfig(AWSConfig),
-					OpenSearchClient:   opensearch.NewFromConfig(AWSConfig),
-					GrafanaClient:      grafana.NewFromConfig(AWSConfig),
-					ELBClient:          elasticloadbalancing.NewFromConfig(AWSConfig),
-					APIGatewayClient:   apigateway.NewFromConfig(AWSConfig),
-					ELBv2Client:        elasticloadbalancingv2.NewFromConfig(AWSConfig),
-					APIGatewayv2Client: apigatewayv2.NewFromConfig(AWSConfig),
-					RDSClient:          rds.NewFromConfig(AWSConfig),
-					RedshiftClient:     redshift.NewFromConfig(AWSConfig),
-					S3Client:           s3.NewFromConfig(AWSConfig),
-					CloudfrontClient:   cloudfront.NewFromConfig(AWSConfig),
-					AppRunnerClient:    apprunner.NewFromConfig(AWSConfig),
-					LightsailClient:    lightsail.NewFromConfig(AWSConfig),
-
-					Caller:     *caller,
-					AWSRegions: AWSRegions,
-					AWSProfile: profile,
-					Goroutines: Goroutines,
-				}
-				m.PrintEndpoints(AWSOutputFormat, AWSOutputDirectory, Verbosity)
-			}
-		},
-	}
-
-	SecretsCommand = &cobra.Command{
-		Use:     "secrets",
-		Aliases: []string{"secret"},
-		Short:   "Enumerate secrets from secrets manager and SSM",
-		Long: "\nUse case examples:\n" +
-			os.Args[0] + " aws secrets --profile readonly_profile",
-		PreRun: func(cmd *cobra.Command, args []string) {
-			for _, profile := range AWSProfiles {
-				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
-				if err != nil {
-					continue
-				}
-				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
-			}
-		},
-		Run: func(cmd *cobra.Command, args []string) {
-			for _, profile := range AWSProfiles {
-				var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
-				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
-				if err != nil {
-					continue
-				}
-				m := aws.SecretsModule{
-					SecretsManagerClient: secretsmanager.NewFromConfig(AWSConfig),
-					SSMClient:            ssm.NewFromConfig(AWSConfig),
-
-					Caller:     *caller,
-					AWSRegions: AWSRegions,
-					AWSProfile: profile,
-					Goroutines: Goroutines,
-				}
-				m.PrintSecrets(AWSOutputFormat, AWSOutputDirectory, Verbosity)
-			}
-		},
-	}
-
-	Route53Command = &cobra.Command{
-		Use:     "route53",
-		Aliases: []string{"dns", "route", "routes"},
-		Short:   "Enumerate all records from all zones managed by route53. Get a loot file with A records you can scan",
-		Long: "\nUse case examples:\n" +
-			os.Args[0] + " aws route53 --profile readonly_profile",
-		PreRun: func(cmd *cobra.Command, args []string) {
-			for _, profile := range AWSProfiles {
-				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
-				if err != nil {
-					continue
-				}
-				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
-			}
-		},
-		Run: func(cmd *cobra.Command, args []string) {
-			for _, profile := range AWSProfiles {
-				var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
-				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
-				if err != nil {
-					continue
-				}
-				m := aws.Route53Module{
-					Route53Client: route53.NewFromConfig(AWSConfig),
-
-					Caller:     *caller,
-					AWSRegions: AWSRegions,
-					AWSProfile: profile,
-					Goroutines: Goroutines,
-				}
-				m.PrintRoute53(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+				m.PrintCloudformationStacks(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 			}
 		},
 	}
@@ -419,12 +204,12 @@ var (
 		},
 	}
 
-	CloudformationCommand = &cobra.Command{
-		Use:     "cloudformation",
-		Aliases: []string{"cf", "cfstacks", "stacks"},
-		Short:   "Enumerate Cloudformation stacks. Get a loot file with stack details. Look for secrets.",
+	EndpointsCommand = &cobra.Command{
+		Use:     "endpoints",
+		Aliases: []string{"endpoint"},
+		Short:   "Enumerates endpoints from various services. Get a loot file with http endpoints to scan.",
 		Long: "\nUse case examples:\n" +
-			os.Args[0] + " aws ecr --profile readonly_profile",
+			os.Args[0] + " aws endpoints --profile readonly_profile",
 		PreRun: func(cmd *cobra.Command, args []string) {
 			for _, profile := range AWSProfiles {
 				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
@@ -441,24 +226,39 @@ var (
 				if err != nil {
 					continue
 				}
-				m := aws.CloudformationModule{
-					CloudFormationClient: cloudformation.NewFromConfig(AWSConfig),
-					Caller:               *caller,
-					AWSRegions:           AWSRegions,
-					AWSProfile:           profile,
-					Goroutines:           Goroutines,
+				m := aws.EndpointsModule{
+					APIGatewayClient:   apigateway.NewFromConfig(AWSConfig),
+					APIGatewayv2Client: apigatewayv2.NewFromConfig(AWSConfig),
+					AppRunnerClient:    apprunner.NewFromConfig(AWSConfig),
+					CloudfrontClient:   cloudfront.NewFromConfig(AWSConfig),
+					EKSClient:          eks.NewFromConfig(AWSConfig),
+					ELBClient:          elasticloadbalancing.NewFromConfig(AWSConfig),
+					ELBv2Client:        elasticloadbalancingv2.NewFromConfig(AWSConfig),
+					GrafanaClient:      grafana.NewFromConfig(AWSConfig),
+					LambdaClient:       lambda.NewFromConfig(AWSConfig),
+					LightsailClient:    lightsail.NewFromConfig(AWSConfig),
+					MQClient:           mq.NewFromConfig(AWSConfig),
+					OpenSearchClient:   opensearch.NewFromConfig(AWSConfig),
+					RDSClient:          rds.NewFromConfig(AWSConfig),
+					RedshiftClient:     redshift.NewFromConfig(AWSConfig),
+					S3Client:           s3.NewFromConfig(AWSConfig),
+
+					Caller:     *caller,
+					AWSRegions: AWSRegions,
+					AWSProfile: profile,
+					Goroutines: Goroutines,
 				}
-				m.PrintCloudformationStacks(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+				m.PrintEndpoints(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 			}
 		},
 	}
 
-	TagsCommand = &cobra.Command{
-		Use:     "tags",
-		Aliases: []string{"tag"},
-		Short:   "Enumerate resources with tags.",
+	EnvsCommand = &cobra.Command{
+		Use:     "env-vars",
+		Aliases: []string{"envs", "envvars", "env"},
+		Short:   "Enumerate the environment variables from mutliple services that have them",
 		Long: "\nUse case examples:\n" +
-			os.Args[0] + " aws tags --profile readonly_profile",
+			os.Args[0] + " aws env-vars --profile readonly_profile",
 		PreRun: func(cmd *cobra.Command, args []string) {
 			for _, profile := range AWSProfiles {
 				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
@@ -475,14 +275,187 @@ var (
 				if err != nil {
 					continue
 				}
-				m := aws.TagsModule{
-					ResourceGroupsTaggingApiClient: resourcegroupstaggingapi.NewFromConfig(AWSConfig),
-					Caller:                         *caller,
-					AWSRegions:                     AWSRegions,
-					AWSProfile:                     profile,
-					Goroutines:                     Goroutines,
+				m := aws.EnvsModule{
+
+					Caller:          *caller,
+					AWSRegions:      AWSRegions,
+					AWSProfile:      profile,
+					ECSClient:       ecs.NewFromConfig(AWSConfig),
+					AppRunnerClient: apprunner.NewFromConfig(AWSConfig),
+					LambdaClient:    lambda.NewFromConfig(AWSConfig),
+					LightsailClient: lightsail.NewFromConfig(AWSConfig),
+					SagemakerClient: sagemaker.NewFromConfig(AWSConfig),
 				}
-				m.PrintTags(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+				m.PrintEnvs(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+			}
+		},
+	}
+
+	FilesystemsCommand = &cobra.Command{
+		Use:     "filesystems",
+		Aliases: []string{"filesystem"},
+		Short:   "Enumerate the EFS and FSx filesystems. Get a loot file with mount commands",
+		Long: "\nUse case examples:\n" +
+			os.Args[0] + " aws filesystems --profile readonly_profile",
+		PreRun: func(cmd *cobra.Command, args []string) {
+			for _, profile := range AWSProfiles {
+				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+				if err != nil {
+					continue
+				}
+				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			}
+		},
+		Run: func(cmd *cobra.Command, args []string) {
+			for _, profile := range AWSProfiles {
+				var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
+				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+				if err != nil {
+					continue
+				}
+				filesystems := aws.FilesystemsModule{
+					EFSClient: efs.NewFromConfig(AWSConfig),
+					FSxClient: fsx.NewFromConfig(AWSConfig),
+
+					Caller:     *caller,
+					AWSProfile: profile,
+					Goroutines: Goroutines,
+					AWSRegions: AWSRegions,
+				}
+				filesystems.PrintFilesystems(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+			}
+		},
+	}
+
+	SimulatorResource   string
+	SimulatorAction     string
+	SimulatorPrincipal  string
+	IamSimulatorCommand = &cobra.Command{
+		Use:     "iam-simulator",
+		Aliases: []string{"iamsimulator", "simulator"},
+		Short:   "Wrapper around the AWS IAM Simulate Principal Policy command",
+		Long: "\nUse case examples:\n" +
+			os.Args[0] + " aws iam-simulator --profile readonly_profile",
+		PreRun: func(cmd *cobra.Command, args []string) {
+			for _, profile := range AWSProfiles {
+				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+				if err != nil {
+					continue
+				}
+				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			}
+		},
+		Run: func(cmd *cobra.Command, args []string) {
+			for _, profile := range AWSProfiles {
+				var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
+				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+				if err != nil {
+					continue
+				}
+				m := aws.IamSimulatorModule{
+					IAMClient:  iam.NewFromConfig(AWSConfig),
+					Caller:     *caller,
+					AWSProfile: profile,
+					Goroutines: Goroutines,
+				}
+				m.PrintIamSimulator(SimulatorPrincipal, SimulatorAction, SimulatorResource, AWSOutputFormat, AWSOutputDirectory, Verbosity)
+			}
+		},
+	}
+
+	// This filter could be an instance ID or a TXT file with instance IDs separated by a new line.
+	InstancesFilter                   string
+	InstanceMapUserDataAttributesOnly bool
+	InstancesCommand                  = &cobra.Command{
+		Use:     "instances",
+		Aliases: []string{"instance"},
+		Short:   "Enumerate all instances along with assigned IPs, profiles, and user-data",
+		Long: "\nUse case examples:\n" +
+			os.Args[0] + " aws instances --profile readonly_profile",
+		PreRun: func(cmd *cobra.Command, args []string) {
+			for _, profile := range AWSProfiles {
+				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+				if err != nil {
+					continue
+				}
+				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			}
+		},
+		Run: func(cmd *cobra.Command, args []string) {
+			for _, profile := range AWSProfiles {
+				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+				if err != nil {
+					continue
+				}
+				m := aws.InstancesModule{
+					EC2Client: ec2.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+					IAMClient: iam.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+
+					Caller:     *caller,
+					AWSRegions: AWSRegions,
+
+					UserDataAttributesOnly: InstanceMapUserDataAttributesOnly,
+					AWSProfile:             profile,
+				}
+				m.Instances(InstancesFilter, AWSOutputFormat, AWSOutputDirectory, Verbosity)
+			}
+		},
+	}
+
+	InventoryCommand = &cobra.Command{
+		Use:   "inventory",
+		Short: "Gain a rough understanding of size of the account and preferred regions",
+		Long: "\nUse case examples:\n" +
+			os.Args[0] + " aws inventory --profile readonly_profile",
+		PreRun: func(cmd *cobra.Command, args []string) {
+			for _, profile := range AWSProfiles {
+				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+				if err != nil {
+					continue
+				}
+				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			}
+		},
+		Run: func(cmd *cobra.Command, args []string) {
+			for _, profile := range AWSProfiles {
+				var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
+				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+				if err != nil {
+					continue
+				}
+				m := aws.Inventory2Module{
+					APIGatewayClient:     apigateway.NewFromConfig(AWSConfig),
+					APIGatewayv2Client:   apigatewayv2.NewFromConfig(AWSConfig),
+					AppRunnerClient:      apprunner.NewFromConfig(AWSConfig),
+					CloudFormationClient: cloudformation.NewFromConfig(AWSConfig),
+					CloudfrontClient:     cloudfront.NewFromConfig(AWSConfig),
+					DynamoDBClient:       dynamodb.NewFromConfig(AWSConfig),
+					EC2Client:            ec2.NewFromConfig(AWSConfig),
+					ECSClient:            ecs.NewFromConfig(AWSConfig),
+					EKSClient:            eks.NewFromConfig(AWSConfig),
+					ELBClient:            elasticloadbalancing.NewFromConfig(AWSConfig),
+					ELBv2Client:          elasticloadbalancingv2.NewFromConfig(AWSConfig),
+					GlueClient:           glue.NewFromConfig(AWSConfig),
+					GrafanaClient:        grafana.NewFromConfig(AWSConfig),
+					IAMClient:            iam.NewFromConfig(AWSConfig),
+					LambdaClient:         lambda.NewFromConfig(AWSConfig),
+					LightsailClient:      lightsail.NewFromConfig(AWSConfig),
+					MQClient:             mq.NewFromConfig(AWSConfig),
+					OpenSearchClient:     opensearch.NewFromConfig(AWSConfig),
+					RDSClient:            rds.NewFromConfig(AWSConfig),
+					RedshiftClient:       redshift.NewFromConfig(AWSConfig),
+					S3Client:             s3.NewFromConfig(AWSConfig),
+					SecretsManagerClient: secretsmanager.NewFromConfig(AWSConfig),
+					SNSClient:            sns.NewFromConfig(AWSConfig),
+					SQSClient:            sqs.NewFromConfig(AWSConfig),
+					SSMClient:            ssm.NewFromConfig(AWSConfig),
+
+					Caller:     *caller,
+					AWSRegions: AWSRegions,
+					AWSProfile: profile,
+					Goroutines: Goroutines,
+				}
+				m.PrintInventoryPerRegion(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 			}
 		},
 	}
@@ -558,12 +531,14 @@ var (
 		},
 	}
 
-	EnvsCommand = &cobra.Command{
-		Use:     "env-vars",
-		Aliases: []string{"envs", "envvars", "env"},
-		Short:   "Enumerate the environment variables from mutliple services that have them",
+	PermissionsPrincipal string
+	PermissionsCommand   = &cobra.Command{
+		Use:     "permissions",
+		Aliases: []string{"perms", "permission"},
+		Short:   "Enumerate IAM permissions per principal",
 		Long: "\nUse case examples:\n" +
-			os.Args[0] + " aws env-vars --profile readonly_profile",
+			os.Args[0] + " aws permissions --profile profile\n" +
+			os.Args[0] + " aws permissions --profile profile --principal arn:aws:iam::111111111111:role/test123",
 		PreRun: func(cmd *cobra.Command, args []string) {
 			for _, profile := range AWSProfiles {
 				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
@@ -580,18 +555,13 @@ var (
 				if err != nil {
 					continue
 				}
-				m := aws.EnvsModule{
-
-					Caller:          *caller,
-					AWSRegions:      AWSRegions,
-					AWSProfile:      profile,
-					ECSClient:       ecs.NewFromConfig(AWSConfig),
-					AppRunnerClient: apprunner.NewFromConfig(AWSConfig),
-					LambdaClient:    lambda.NewFromConfig(AWSConfig),
-					LightsailClient: lightsail.NewFromConfig(AWSConfig),
-					SagemakerClient: sagemaker.NewFromConfig(AWSConfig),
+				m := aws.IamPermissionsModule{
+					IAMClient:  iam.NewFromConfig(AWSConfig),
+					Caller:     *caller,
+					AWSProfile: profile,
+					Goroutines: Goroutines,
 				}
-				m.PrintEnvs(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+				m.PrintIamPermissions(AWSOutputFormat, AWSOutputDirectory, Verbosity, PermissionsPrincipal)
 			}
 		},
 	}
@@ -629,14 +599,11 @@ var (
 		},
 	}
 
-	PermissionsPrincipal string
-	PermissionsCommand   = &cobra.Command{
-		Use:     "permissions",
-		Aliases: []string{"perms", "permission"},
-		Short:   "Enumerate IAM permissions per principal",
+	RAMCommand = &cobra.Command{
+		Use:   "ram",
+		Short: "Enumerate cross-account shared resources",
 		Long: "\nUse case examples:\n" +
-			os.Args[0] + " aws permissions --profile profile\n" +
-			os.Args[0] + " aws permissions --profile profile --principal arn:aws:iam::111111111111:role/test123",
+			os.Args[0] + " aws ram --profile readonly_profile",
 		PreRun: func(cmd *cobra.Command, args []string) {
 			for _, profile := range AWSProfiles {
 				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
@@ -653,116 +620,158 @@ var (
 				if err != nil {
 					continue
 				}
-				m := aws.IamPermissionsModule{
-					IAMClient:  iam.NewFromConfig(AWSConfig),
-					Caller:     *caller,
-					AWSProfile: profile,
-					Goroutines: Goroutines,
-				}
-				m.PrintIamPermissions(AWSOutputFormat, AWSOutputDirectory, Verbosity, PermissionsPrincipal)
-			}
-		},
-	}
-
-	SimulatorResource   string
-	SimulatorAction     string
-	SimulatorPrincipal  string
-	IamSimulatorCommand = &cobra.Command{
-		Use:     "iam-simulator",
-		Aliases: []string{"iamsimulator", "simulator"},
-		Short:   "Wrapper around the AWS IAM Simulate Principal Policy command",
-		Long: "\nUse case examples:\n" +
-			os.Args[0] + " aws iam-simulator --profile readonly_profile",
-		PreRun: func(cmd *cobra.Command, args []string) {
-			for _, profile := range AWSProfiles {
-				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
-				if err != nil {
-					continue
-				}
-				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
-			}
-		},
-		Run: func(cmd *cobra.Command, args []string) {
-			for _, profile := range AWSProfiles {
-				var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
-				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
-				if err != nil {
-					continue
-				}
-				m := aws.IamSimulatorModule{
-					IAMClient: iam.NewFromConfig(AWSConfig),
-
-					Caller:     *caller,
-					AWSProfile: profile,
-					Goroutines: Goroutines,
-				}
-				m.PrintIamSimulator(SimulatorPrincipal, SimulatorAction, SimulatorResource, AWSOutputFormat, AWSOutputDirectory, Verbosity)
-			}
-		},
-	}
-
-	FilesystemsCommand = &cobra.Command{
-		Use:     "filesystems",
-		Aliases: []string{"filesystem"},
-		Short:   "Enumerate the EFS and FSx filesystems. Get a loot file with mount commands",
-		Long: "\nUse case examples:\n" +
-			os.Args[0] + " aws filesystems --profile readonly_profile",
-		PreRun: func(cmd *cobra.Command, args []string) {
-			for _, profile := range AWSProfiles {
-				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
-				if err != nil {
-					continue
-				}
-				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
-			}
-		},
-		Run: func(cmd *cobra.Command, args []string) {
-			for _, profile := range AWSProfiles {
-				var AWSConfig = utils.AWSConfigFileLoader(AWSProfile, cmd.Root().Version)
-				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
-				if err != nil {
-					continue
-				}
-				filesystems := aws.FilesystemsModule{
-					EFSClient: efs.NewFromConfig(AWSConfig),
-					FSxClient: fsx.NewFromConfig(AWSConfig),
-
+				ram := aws.RAMModule{
+					RAMClient:  ram.NewFromConfig(AWSConfig),
 					Caller:     *caller,
 					AWSProfile: profile,
 					Goroutines: Goroutines,
 					AWSRegions: AWSRegions,
 				}
-				filesystems.PrintFilesystems(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+				ram.PrintRAM(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+
 			}
 		},
 	}
 
-	// RAMCommand = &cobra.Command{
-	// 	Use:   "ram",
-	// 	Short: "Enumerate cross-account shared resources",
-	// 	Long: "\nUse case examples:\n" +
-	// 		os.Args[0] + " aws ram --profile readonly_profile",
-	// PreRun: func(cmd *cobra.Command, args []string) {
-	// 	for _, profile := range AWSProfiles {
-	// 		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
-	// 		if err != nil {
-	// 			continue
-	// 		}
-	// 		fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
-	// 	}
-	// },
-	// 	Run: func(cmd *cobra.Command, args []string) {
-	// 		m := aws.RAMModule{
-	// 			RAMClient: ram.NewFromConfig(utils.AWSConfigFileLoader(AWSProfile, cmd.Root().Version)),
+	// The filter is set to "all" when the flag "--filter" is not used
+	RoleTrustFilter  string
+	RoleTrustCommand = &cobra.Command{
+		Use:     "role-trusts",
+		Aliases: []string{"roletrusts", "role-trust"},
+		Short:   "Enumerate all role trusts",
+		Long: "\nUse case examples:\n" +
+			"Map all role trusts for caller's account:\n" +
+			os.Args[0] + " aws role-trusts\n",
+		PreRun: func(cmd *cobra.Command, args []string) {
+			for _, profile := range AWSProfiles {
+				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+				if err != nil {
+					continue
+				}
+				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			}
+		},
+		Run: func(cmd *cobra.Command, args []string) {
+			for _, profile := range AWSProfiles {
+				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+				if err != nil {
+					continue
+				}
+				m := aws.RoleTrustsModule{
+					IAMClient:  iam.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+					Caller:     *caller,
+					AWSProfile: profile,
+					Goroutines: Goroutines,
+				}
+				m.PrintRoleTrusts(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+			}
+		},
+	}
 
-	// 			Caller:     utils.AWSWhoami(AWSProfile),
-	// 			AWSRegions: AWSRegions,
-	// 			AWSProfile: profile,
-	// 			Goroutines: Goroutines,
-	// 		}
-	// 		m.PrintRAM(AWSOutputFormat, AWSOutputDirectory, Verbosity)
-	// 	},
-	// }
+	Route53Command = &cobra.Command{
+		Use:     "route53",
+		Aliases: []string{"dns", "route", "routes"},
+		Short:   "Enumerate all records from all zones managed by route53. Get a loot file with A records you can scan",
+		Long: "\nUse case examples:\n" +
+			os.Args[0] + " aws route53 --profile readonly_profile",
+		PreRun: func(cmd *cobra.Command, args []string) {
+			for _, profile := range AWSProfiles {
+				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+				if err != nil {
+					continue
+				}
+				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			}
+		},
+		Run: func(cmd *cobra.Command, args []string) {
+			for _, profile := range AWSProfiles {
+				var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
+				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+				if err != nil {
+					continue
+				}
+				m := aws.Route53Module{
+					Route53Client: route53.NewFromConfig(AWSConfig),
+
+					Caller:     *caller,
+					AWSRegions: AWSRegions,
+					AWSProfile: profile,
+					Goroutines: Goroutines,
+				}
+				m.PrintRoute53(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+			}
+		},
+	}
+
+	SecretsCommand = &cobra.Command{
+		Use:     "secrets",
+		Aliases: []string{"secret"},
+		Short:   "Enumerate secrets from secrets manager and SSM",
+		Long: "\nUse case examples:\n" +
+			os.Args[0] + " aws secrets --profile readonly_profile",
+		PreRun: func(cmd *cobra.Command, args []string) {
+			for _, profile := range AWSProfiles {
+				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+				if err != nil {
+					continue
+				}
+				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			}
+		},
+		Run: func(cmd *cobra.Command, args []string) {
+			for _, profile := range AWSProfiles {
+				var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
+				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+				if err != nil {
+					continue
+				}
+				m := aws.SecretsModule{
+					SecretsManagerClient: secretsmanager.NewFromConfig(AWSConfig),
+					SSMClient:            ssm.NewFromConfig(AWSConfig),
+
+					Caller:     *caller,
+					AWSRegions: AWSRegions,
+					AWSProfile: profile,
+					Goroutines: Goroutines,
+				}
+				m.PrintSecrets(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+			}
+		},
+	}
+
+	TagsCommand = &cobra.Command{
+		Use:     "tags",
+		Aliases: []string{"tag"},
+		Short:   "Enumerate resources with tags.",
+		Long: "\nUse case examples:\n" +
+			os.Args[0] + " aws tags --profile readonly_profile",
+		PreRun: func(cmd *cobra.Command, args []string) {
+			for _, profile := range AWSProfiles {
+				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+				if err != nil {
+					continue
+				}
+				fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+			}
+		},
+		Run: func(cmd *cobra.Command, args []string) {
+			for _, profile := range AWSProfiles {
+				var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
+				caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+				if err != nil {
+					continue
+				}
+				m := aws.TagsModule{
+					ResourceGroupsTaggingApiClient: resourcegroupstaggingapi.NewFromConfig(AWSConfig),
+					Caller:                         *caller,
+					AWSRegions:                     AWSRegions,
+					AWSProfile:                     profile,
+					Goroutines:                     Goroutines,
+				}
+				m.PrintTags(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+			}
+		},
+	}
 
 	AllChecksCommand = &cobra.Command{
 
@@ -787,64 +796,67 @@ var (
 				if err != nil {
 					continue
 				}
-				ec2Client := ec2.NewFromConfig(AWSConfig)
-				eksClient := eks.NewFromConfig(AWSConfig)
-				s3Client := s3.NewFromConfig(AWSConfig)
-				lambdaClient := lambda.NewFromConfig(AWSConfig)
-				cloudFormationClient := cloudformation.NewFromConfig(AWSConfig)
-				secretsManagerClient := secretsmanager.NewFromConfig(AWSConfig)
-				rdsClient := rds.NewFromConfig(AWSConfig)
-				apiGatewayv2Client := apigatewayv2.NewFromConfig(AWSConfig)
+
 				apiGatewayClient := apigateway.NewFromConfig(AWSConfig)
+				apiGatewayv2Client := apigatewayv2.NewFromConfig(AWSConfig)
+				appRunnerClient := apprunner.NewFromConfig(AWSConfig)
+				cloudFormationClient := cloudformation.NewFromConfig(AWSConfig)
+				cloudfrontClient := cloudfront.NewFromConfig(AWSConfig)
+				dynamodbClient := dynamodb.NewFromConfig(AWSConfig)
+				ec2Client := ec2.NewFromConfig(AWSConfig)
+				ecrClient := ecr.NewFromConfig(AWSConfig)
+				ecsClient := ecs.NewFromConfig(AWSConfig)
+				efsClient := efs.NewFromConfig(AWSConfig)
+				eksClient := eks.NewFromConfig(AWSConfig)
 				elbClient := elasticloadbalancing.NewFromConfig(AWSConfig)
 				elbv2Client := elasticloadbalancingv2.NewFromConfig(AWSConfig)
+				fsxClient := fsx.NewFromConfig(AWSConfig)
+				glueClient := glue.NewFromConfig(AWSConfig)
+				grafanaClient := grafana.NewFromConfig(AWSConfig)
 				iamClient := iam.NewFromConfig(AWSConfig)
+				lambdaClient := lambda.NewFromConfig(AWSConfig)
+				lightsailClient := lightsail.NewFromConfig(AWSConfig)
 				mqClient := mq.NewFromConfig(AWSConfig)
 				openSearchClient := opensearch.NewFromConfig(AWSConfig)
-				grafanaClient := grafana.NewFromConfig(AWSConfig)
+				ramClient := ram.NewFromConfig(AWSConfig)
+				rdsClient := rds.NewFromConfig(AWSConfig)
 				redshiftClient := redshift.NewFromConfig(AWSConfig)
-				cloudfrontClient := cloudfront.NewFromConfig(AWSConfig)
-				appRunnerClient := apprunner.NewFromConfig(AWSConfig)
-				lightsailClient := lightsail.NewFromConfig(AWSConfig)
+				resourceClient := resourcegroupstaggingapi.NewFromConfig(AWSConfig)
 				route53Client := route53.NewFromConfig(AWSConfig)
-				efsClient := efs.NewFromConfig(AWSConfig)
-				fsxClient := fsx.NewFromConfig(AWSConfig)
-				ecsClient := ecs.NewFromConfig(AWSConfig)
+				s3Client := s3.NewFromConfig(AWSConfig)
 				sagemakerClient := sagemaker.NewFromConfig(AWSConfig)
-				ecrClient := ecr.NewFromConfig(AWSConfig)
-				ssmClient := ssm.NewFromConfig(AWSConfig)
-				glueClient := glue.NewFromConfig(AWSConfig)
+				secretsManagerClient := secretsmanager.NewFromConfig(AWSConfig)
 				snsClient := sns.NewFromConfig(AWSConfig)
 				sqsClient := sqs.NewFromConfig(AWSConfig)
-				dynamodbClient := dynamodb.NewFromConfig(AWSConfig)
+				ssmClient := ssm.NewFromConfig(AWSConfig)
 
 				fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Getting a lay of the land, aka \"What regions is this account using?\""))
 				inventory2 := aws.Inventory2Module{
+					APIGatewayClient:     apiGatewayClient,
+					APIGatewayv2Client:   apiGatewayv2Client,
+					AppRunnerClient:      appRunnerClient,
+					CloudFormationClient: cloudFormationClient,
+					CloudfrontClient:     cloudfrontClient,
+					DynamoDBClient:       dynamodbClient,
 					EC2Client:            ec2Client,
 					ECSClient:            ecsClient,
 					EKSClient:            eksClient,
-					S3Client:             s3Client,
-					LambdaClient:         lambdaClient,
-					CloudFormationClient: cloudFormationClient,
-					SecretsManagerClient: secretsManagerClient,
-					SSMClient:            ssmClient,
-					RDSClient:            rdsClient,
-					APIGatewayv2Client:   apiGatewayv2Client,
-					APIGatewayClient:     apiGatewayClient,
 					ELBClient:            elbClient,
 					ELBv2Client:          elbv2Client,
+					GlueClient:           glueClient,
+					GrafanaClient:        grafanaClient,
 					IAMClient:            iamClient,
+					LambdaClient:         lambdaClient,
+					LightsailClient:      lightsailClient,
 					MQClient:             mqClient,
 					OpenSearchClient:     openSearchClient,
-					GrafanaClient:        grafanaClient,
+					RDSClient:            rdsClient,
 					RedshiftClient:       redshiftClient,
-					CloudfrontClient:     cloudfrontClient,
-					AppRunnerClient:      appRunnerClient,
-					LightsailClient:      lightsailClient,
-					GlueClient:           glueClient,
+					S3Client:             s3Client,
+					SecretsManagerClient: secretsManagerClient,
 					SNSClient:            snsClient,
 					SQSClient:            sqsClient,
-					DynamoDBClient:       dynamodbClient,
+					SSMClient:            ssmClient,
 
 					Caller:     *Caller,
 					AWSRegions: AWSRegions,
@@ -852,12 +864,22 @@ var (
 					Goroutines: Goroutines,
 				}
 				inventory2.PrintInventoryPerRegion(AWSOutputFormat, AWSOutputDirectory, Verbosity)
-				//time.Sleep(time.Second * 5)
+
+				tagsMod := aws.TagsModule{
+					ResourceGroupsTaggingApiClient: resourceClient,
+					Caller:                         *Caller,
+					AWSRegions:                     AWSRegions,
+					AWSProfile:                     profile,
+					Goroutines:                     Goroutines,
+				}
+				tagsMod.PrintTags(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+
 				// Service and endpoint enum section
 				fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Gathering the info you'll want for your application & service enumeration needs."))
 				fmt.Printf("We are here!")
 				instances := aws.InstancesModule{
 					EC2Client:  ec2Client,
+					IAMClient:  iamClient,
 					Caller:     *Caller,
 					AWSRegions: AWSRegions,
 
@@ -873,6 +895,17 @@ var (
 					AWSProfile: profile,
 					Goroutines: Goroutines,
 				}
+
+				lambdasMod := aws.LambdasModule{
+					LambdaClient: lambdaClient,
+					IAMClient:    iamClient,
+					Caller:       *Caller,
+					AWSRegions:   AWSRegions,
+					AWSProfile:   profile,
+					Goroutines:   Goroutines,
+				}
+				lambdasMod.PrintLambdas(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+
 				route53.PrintRoute53(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
 				filesystems := aws.FilesystemsModule{
@@ -915,6 +948,7 @@ var (
 
 				ec2UserData := aws.InstancesModule{
 					EC2Client:  ec2Client,
+					IAMClient:  iamClient,
 					Caller:     *Caller,
 					AWSRegions: AWSRegions,
 
@@ -936,6 +970,15 @@ var (
 					Goroutines:      Goroutines,
 				}
 				envsMod.PrintEnvs(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+
+				cfMod := aws.CloudformationModule{
+					CloudFormationClient: cloudFormationClient,
+					Caller:               *Caller,
+					AWSRegions:           AWSRegions,
+					AWSProfile:           profile,
+					Goroutines:           Goroutines,
+				}
+				cfMod.PrintCloudformationStacks(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
 				// CPT Enum
 				//fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Gathering some other info that is often useful."))
@@ -969,6 +1012,15 @@ var (
 				}
 				secrets.PrintSecrets(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
+				ram := aws.RAMModule{
+					RAMClient:  ramClient,
+					Caller:     *Caller,
+					AWSProfile: profile,
+					Goroutines: Goroutines,
+					AWSRegions: AWSRegions,
+				}
+				ram.PrintRAM(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+
 				// IAM privesc section
 				fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("IAM is complicated. Complicated usually means misconfigurations. You'll want to pay attention here."))
 				principals := aws.IamPrincipalsModule{
@@ -992,13 +1044,13 @@ var (
 					Goroutines: Goroutines,
 				}
 				accessKeys.PrintAccessKeys(AccessKeysFilter, AWSOutputFormat, AWSOutputDirectory, Verbosity)
-				inboundRoleTrusts := aws.RoleTrustsModule{
+				roleTrusts := aws.RoleTrustsModule{
 					IAMClient:  iamClient,
 					Caller:     *Caller,
 					AWSProfile: profile,
 					Goroutines: Goroutines,
 				}
-				inboundRoleTrusts.PrintRoleTrusts(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+				roleTrusts.PrintRoleTrusts(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 				iamSimulator := aws.IamSimulatorModule{
 					IAMClient:  iamClient,
 					Caller:     *Caller,
@@ -1068,7 +1120,7 @@ func init() {
 		BucketsCommand,
 		PermissionsCommand,
 		CloudformationCommand,
-		//RAMCommand,
+		RAMCommand,
 		TagsCommand,
 		LambdasCommand,
 	)

@@ -78,10 +78,6 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 	var pmapperCommands []string
 	var pmapperOutFileName string
 
-	m.modLog.Error("modlog error")
-	TxtLogger.Error("txtlogger error")
-	os.Exit(1)
-
 	if m.AWSProfile == "" {
 		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
