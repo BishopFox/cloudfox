@@ -42,7 +42,7 @@ func (m *AccessKeysModule) PrintAccessKeys(filter string, outputFormat string, o
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "access-keys"
-	m.modLog = utils.TxtLogger.WithFields(logrus.Fields{
+	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	},
 	)
@@ -51,7 +51,7 @@ func (m *AccessKeysModule) PrintAccessKeys(filter string, outputFormat string, o
 		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
 
-	fmt.Printf("[%s] Mapping user access keys for account: %s.\n", cyan(m.output.CallingModule), aws.ToString(m.Caller.Account))
+	fmt.Printf("[%s][%s] Mapping user access keys for account: %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 	m.getAccessKeysForAllUsers()
 
 	// Variables used to draw table output
@@ -76,17 +76,17 @@ func (m *AccessKeysModule) PrintAccessKeys(filter string, outputFormat string, o
 	if len(m.output.Body) > 0 {
 
 		// Pretty prints output
-		fmt.Printf("[%s] Only active access keys are shown.\n", cyan(m.output.CallingModule))
-		//fmt.Printf("[%s] Preparing output.\n\n")
+		fmt.Printf("[%s][%s] Only active access keys are shown.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+		//fmt.Printf("[%s][%s] Preparing output.\n\n")
 
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
 		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
 
 		m.writeLoot(m.output.FilePath, verbosity)
-		fmt.Printf("[%s] %s access keys found.\n", cyan(m.output.CallingModule), strconv.Itoa(len(m.output.Body)))
+		fmt.Printf("[%s][%s] %s access keys found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 	} else {
-		fmt.Printf("[%s] No  access keys found, skipping the creation of an output file.\n", cyan(m.output.CallingModule))
+		fmt.Printf("[%s][%s] No  access keys found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 
 	}
 }
@@ -109,7 +109,7 @@ func (m *AccessKeysModule) writeLoot(outputDirectory string, verbosity int) {
 	if err != nil {
 		m.modLog.Error(err.Error())
 	}
-	fmt.Printf("[%s] Loot written to [%s]\n", cyan(m.output.CallingModule), f)
+	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), f)
 
 }
 

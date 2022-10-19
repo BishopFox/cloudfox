@@ -84,16 +84,16 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "endpoints"
-	m.modLog = utils.TxtLogger.WithFields(logrus.Fields{
+	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
 		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
 
-	fmt.Printf("[%s] Enumerating endpoints for account %s.\n", cyan(m.output.CallingModule), aws.ToString(m.Caller.Account))
-	fmt.Printf("[%s] Supported Services: App Runner, APIGateway, ApiGatewayV2, Cloudfront, EKS, ELB, ELBv2, Grafana, \n", cyan(m.output.CallingModule))
-	fmt.Printf("[%s] \t\t\tLambda, MQ, OpenSearch, Redshift, RDS\n", cyan(m.output.CallingModule))
+	fmt.Printf("[%s][%s] Enumerating endpoints for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
+	fmt.Printf("[%s][%s] Supported Services: App Runner, APIGateway, ApiGatewayV2, Cloudfront, EKS, ELB, ELBv2, Grafana, \n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	fmt.Printf("[%s][%s] \t\t\tLambda, MQ, OpenSearch, Redshift, RDS\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 
 	wg := new(sync.WaitGroup)
 	semaphore := make(chan struct{}, m.Goroutines)
@@ -170,9 +170,9 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 		//m.output.OutputSelector(outputFormat)
 		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
 		m.writeLoot(m.output.FilePath, verbosity)
-		fmt.Printf("[%s] %s endpoints found.\n", cyan(m.output.CallingModule), strconv.Itoa(len(m.output.Body)))
+		fmt.Printf("[%s][%s] %s endpoints found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 	} else {
-		fmt.Printf("[%s] No endpoints found, skipping the creation of an output file.\n", cyan(m.output.CallingModule))
+		fmt.Printf("[%s][%s] No endpoints found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
 
 	// This works great to print errors out after the module but i'm not really sure i want that.
@@ -180,7 +180,7 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 	// 	return m.Errors[i] < m.Errors[j]
 	// })
 	// for _, e := range m.Errors {
-	// 	fmt.Printf("[%s] %s\n", cyan(m.output.CallingModule), e)
+	// 	fmt.Printf("[%s][%s] %s\n", cyan(m.output.CallingModule),  cyan(m.AWSProfile), e)
 	// }
 
 }
@@ -284,12 +284,12 @@ func (m *EndpointsModule) writeLoot(outputDirectory string, verbosity int) {
 
 	if verbosity > 2 {
 		fmt.Println()
-		fmt.Printf("[%s] %s \n", cyan(m.output.CallingModule), green("Feed this endpoints into nmap and something like gowitness/aquatone for screenshots."))
+		fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("Feed this endpoints into nmap and something like gowitness/aquatone for screenshots."))
 		fmt.Print(out)
-		fmt.Printf("[%s] %s \n\n", cyan(m.output.CallingModule), green("End of loot file."))
+		fmt.Printf("[%s][%s] %s \n\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("End of loot file."))
 	}
 
-	fmt.Printf("[%s] Loot written to [%s]\n", cyan(m.output.CallingModule), f)
+	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), f)
 
 }
 

@@ -20,7 +20,7 @@ import (
 
 var (
 	TxtLoggerName = "root"
-	TxtLogger     = txtLogger()
+	TxtLog        = TxtLogger()
 	UtilsFs       = afero.NewOsFs()
 )
 
@@ -32,13 +32,13 @@ func AWSConfigFileLoader(AWSProfile string, version string) aws.Config {
 		}))
 	if err != nil {
 		fmt.Println(err)
-		TxtLogger.Println(err)
+		TxtLog.Println(err)
 	}
 
 	_, err = cfg.Credentials.Retrieve(context.TODO())
 	if err != nil {
-		fmt.Printf("[%s] Error retrieving credentials from the [%s] profile, environment variables, or the instance metadata service.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), AWSProfile)
-		TxtLogger.Printf("Could not retrieve the specified profile name %s", err)
+		fmt.Printf("[%s][%s] Error retrieving credentials from environment variables, or the instance metadata service.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), cyan(AWSProfile))
+		TxtLog.Printf("Could not retrieve the specified profile name %s", err)
 
 	}
 	return cfg
@@ -50,8 +50,8 @@ func AWSWhoami(awsProfile string, version string) (*sts.GetCallerIdentityOutput,
 	STSService := sts.NewFromConfig(AWSConfigFileLoader(awsProfile, version))
 	CallerIdentity, err := STSService.GetCallerIdentity(context.TODO(), &sts.GetCallerIdentityInput{})
 	if err != nil {
-		fmt.Printf("[%s] Could not get caller's identity for the [%s] profile\n\nError: %s\n\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), awsProfile, err)
-		TxtLogger.Printf("Could not get caller's identity: %s", err)
+		fmt.Printf("[%s][%s] Could not get caller's identity\n\nError: %s\n\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), cyan(awsProfile), err)
+		TxtLog.Printf("Could not get caller's identity: %s", err)
 		return CallerIdentity, err
 
 	}
@@ -93,7 +93,7 @@ func AWSWhoami(awsProfile string, version string) (*sts.GetCallerIdentityOutput,
 // }
 
 // txtLogger - Returns the txt logger
-func txtLogger() *logrus.Logger {
+func TxtLogger() *logrus.Logger {
 	txtLogger := logrus.New()
 	txtFile, err := os.OpenFile(fmt.Sprintf("%s/cloudfox-error.log", ptr.ToString(GetLogDirPath())), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -108,42 +108,46 @@ func txtLogger() *logrus.Logger {
 
 func CheckErr(e error, msg string) {
 	if e != nil {
-		TxtLogger.Printf("[-] Error %s", msg)
+		TxtLog.Printf("[-] Error %s", msg)
 	}
 }
 
 func GetAllAWSProfiles(AWSConfirm bool) []string {
+	var AWSProfiles []string
+
 	credentialsFile, err := UtilsFs.Open(config.DefaultSharedCredentialsFilename())
 	CheckErr(err, "could not open default AWS credentials file")
-	defer credentialsFile.Close()
-
-	configFile, err := UtilsFs.Open(config.DefaultSharedConfigFilename())
-	CheckErr(err, "could not open default AWS credentials file")
-	defer configFile.Close()
-
-	var AWSProfiles []string
-	scanner := bufio.NewScanner(credentialsFile)
-	scanner.Split(bufio.ScanLines)
-	for scanner.Scan() {
-		text := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(text, "[") && strings.HasSuffix(text, "]") {
-			text = strings.TrimPrefix(text, "[")
-			text = strings.TrimSuffix(text, "]")
-			if !Contains(text, AWSProfiles) {
-				AWSProfiles = append(AWSProfiles, text)
+	if err == nil {
+		defer credentialsFile.Close()
+		scanner := bufio.NewScanner(credentialsFile)
+		scanner.Split(bufio.ScanLines)
+		for scanner.Scan() {
+			text := strings.TrimSpace(scanner.Text())
+			if strings.HasPrefix(text, "[") && strings.HasSuffix(text, "]") {
+				text = strings.TrimPrefix(text, "[")
+				text = strings.TrimSuffix(text, "]")
+				if !Contains(text, AWSProfiles) {
+					AWSProfiles = append(AWSProfiles, text)
+				}
 			}
 		}
 	}
-	scanner2 := bufio.NewScanner(configFile)
-	scanner2.Split(bufio.ScanLines)
-	for scanner2.Scan() {
-		text := strings.TrimSpace(scanner2.Text())
-		if strings.HasPrefix(text, "[") && strings.HasSuffix(text, "]") {
-			text = strings.TrimPrefix(text, "[profile ")
-			text = strings.TrimPrefix(text, "[")
-			text = strings.TrimSuffix(text, "]")
-			if !Contains(text, AWSProfiles) {
-				AWSProfiles = append(AWSProfiles, text)
+
+	configFile, err := UtilsFs.Open(config.DefaultSharedConfigFilename())
+	CheckErr(err, "could not open default AWS credentials file")
+	if err == nil {
+		defer configFile.Close()
+		scanner2 := bufio.NewScanner(configFile)
+		scanner2.Split(bufio.ScanLines)
+		for scanner2.Scan() {
+			text := strings.TrimSpace(scanner2.Text())
+			if strings.HasPrefix(text, "[") && strings.HasSuffix(text, "]") {
+				text = strings.TrimPrefix(text, "[profile ")
+				text = strings.TrimPrefix(text, "[")
+				text = strings.TrimSuffix(text, "]")
+				if !Contains(text, AWSProfiles) {
+					AWSProfiles = append(AWSProfiles, text)
+				}
 			}
 		}
 	}
@@ -177,6 +181,10 @@ func ConfirmSelectedProfiles(AWSProfiles []string) bool {
 func GetSelectedAWSProfiles(AWSProfilesListPath string) []string {
 	AWSProfilesListFile, err := UtilsFs.Open(AWSProfilesListPath)
 	CheckErr(err, fmt.Sprintf("could not open given file %s", AWSProfilesListPath))
+	if err != nil {
+		fmt.Printf("\nError loading profiles. Could not open file at location[%s]\n", AWSProfilesListPath)
+		os.Exit(1)
+	}
 	defer AWSProfilesListFile.Close()
 	var AWSProfiles []string
 	scanner := bufio.NewScanner(AWSProfilesListFile)

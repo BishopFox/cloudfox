@@ -61,22 +61,16 @@ var (
 		"apprunner:DescribeService",
 		"ec2:DescribeInstanceAttributeInput",
 	}
-	adminActionNames = []string{
-		"iam:PutUserPolicy",
-		"iam:AttachUserPolicy",
-		"iam:PutRolePolicy",
-		"iam:AttachRolePolicy",
-		"secretsmanager:GetSecretValue",
-		"ssm:GetDocument",
-	}
+	TxtLogger = utils.TxtLogger()
 )
 
 func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, resource string, outputFormat string, outputDirectory string, verbosity int) {
+
 	// These stuct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "iam-simulator"
-	m.modLog = utils.TxtLogger.WithFields(logrus.Fields{
+	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
@@ -104,21 +98,21 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 	if principal != "" {
 		if action != "" {
 			// The user specified a specific --principal and a specific --action
-			fmt.Printf("[%s] Checking to see if %s can do %s.\n", cyan(m.output.CallingModule), principal, action)
+			fmt.Printf("[%s][%s] Checking to see if %s can do %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), principal, action)
 			m.output.FullFilename = filepath.Join(fmt.Sprintf("%s-custom-%s", m.output.CallingModule, strconv.FormatInt((time.Now().Unix()), 10)))
 			actionList = append(actionList, action)
 			m.getPolicySimulatorResult((&principal), actionList, resource, dataReceiver)
 
 		} else {
 			// The user specified a specific --principal, but --action was empty
-			fmt.Printf("[%s] Checking to see if %s can do any actions of interest.\n", cyan(m.output.CallingModule), principal)
+			fmt.Printf("[%s][%s] Checking to see if %s can do any actions of interest.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), principal)
 			m.output.FullFilename = filepath.Join(fmt.Sprintf("%s-custom-%s", m.output.CallingModule, strconv.FormatInt((time.Now().Unix()), 10)))
 			m.getPolicySimulatorResult((&principal), defaultActionNames, resource, dataReceiver)
 		}
 	} else {
 		if action != "" {
 			// The did not specify a specific --principal, but they did specify an --action
-			fmt.Printf("[%s] Checking to see if any principal can do %s.\n", cyan(m.output.CallingModule), action)
+			fmt.Printf("[%s][%s] Checking to see if any principal can do %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), action)
 			m.output.FullFilename = filepath.Join(fmt.Sprintf("%s-custom-%s", m.output.CallingModule, strconv.FormatInt((time.Now().Unix()), 10)))
 			actionList = append(actionList, action)
 			wg.Add(1)
@@ -129,7 +123,7 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 			pmapperCommands = append(pmapperCommands, fmt.Sprintf("pmapper --profile %s query \"who can do %s with %s\" | tee %s\n", m.AWSProfile, action, resource, pmapperOutFileName))
 		} else {
 			// Both --principal and --action are empty. Run in default mode!
-			fmt.Printf("[%s] Running multiple iam-simulator queries for account %s. (This command can be pretty slow, FYI)\n", cyan(m.output.CallingModule), aws.ToString(m.Caller.Account))
+			fmt.Printf("[%s][%s] Running multiple iam-simulator queries for account %s. (This command can be pretty slow, FYI)\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 			m.output.FullFilename = m.output.CallingModule
 			m.executeChecks(wg, resource, dataReceiver)
 			for _, action := range defaultActionNames {
@@ -177,15 +171,15 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
-		fmt.Printf("[%s] We suggest running the pmapper commands in the loot file to get the same information but taking privesc paths into account.\n", cyan(m.output.CallingModule))
-		// fmt.Printf("[%s]\t\tpmapper --profile %s graph create\n", cyan(m.output.CallingModule), m.AWSProfile)
+		fmt.Printf("[%s][%s] We suggest running the pmapper commands in the loot file to get the same information but taking privesc paths into account.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+		// fmt.Printf("[%s]\t\tpmapper --profile %s graph create\n", cyan(m.output.CallingModule),  cyan(m.AWSProfile), m.AWSProfile)
 		// for _, line := range pmapperCommands {
-		// 	fmt.Printf("[%s]\t\t%s", cyan(m.output.CallingModule), line)
+		// 	fmt.Printf("[%s]\t\t%s", cyan(m.output.CallingModule),  cyan(m.AWSProfile), line)
 		// }
 		m.writeLoot(m.output.FilePath, verbosity, pmapperCommands)
 
 	} else if principal != "" || action != "" {
-		fmt.Printf("[%s] No allowed permissions identified, skipping the creation of an output file.\n", cyan(m.output.CallingModule))
+		fmt.Printf("[%s][%s] No allowed permissions identified, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
 
 }
@@ -212,12 +206,12 @@ func (m *IamSimulatorModule) writeLoot(outputDirectory string, verbosity int, pm
 
 	if verbosity > 2 {
 		fmt.Println()
-		fmt.Printf("[%s] %s \n", cyan(m.output.CallingModule), green("We suggest running these pmapper commands in the loot file to get the same information but taking privesc paths into account."))
+		fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("We suggest running these pmapper commands in the loot file to get the same information but taking privesc paths into account."))
 		fmt.Print(out)
-		fmt.Printf("[%s] %s \n\n", cyan(m.output.CallingModule), green("End of loot file."))
+		fmt.Printf("[%s][%s] %s \n\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("End of loot file."))
 	}
 
-	fmt.Printf("[%s] Loot written to [%s]\n", cyan(m.output.CallingModule), outFile)
+	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), outFile)
 
 }
 
@@ -252,7 +246,6 @@ func (m *IamSimulatorModule) getIAMUsers(wg *sync.WaitGroup, actions []string, r
 	m.CommandCounter.Executing++
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
 	var PaginationControl *string
-	var adminCheckResult bool
 
 	for {
 		ListUsers, err := m.IAMClient.ListUsers(
@@ -270,8 +263,16 @@ func (m *IamSimulatorModule) getIAMUsers(wg *sync.WaitGroup, actions []string, r
 		for _, user := range ListUsers.Users {
 			//name := user.UserName
 			principal := user.Arn
-			adminCheckResult = m.policySimulatorAdminCheck(principal, adminActionNames, resource, dataReceiver)
-			if !adminCheckResult {
+			adminCheckResult := m.isPrincipalAnAdmin(principal)
+			if adminCheckResult {
+				query := fmt.Sprintf("Appears to be an administrator")
+				dataReceiver <- SimulatorResult{
+					AWSService: "IAM",
+					Principal:  aws.ToString(principal),
+					Query:      query,
+					Decision:   "",
+				}
+			} else {
 				m.getPolicySimulatorResult(principal, actions, resource, dataReceiver)
 			}
 
@@ -299,7 +300,6 @@ func (m *IamSimulatorModule) getIAMRoles(wg *sync.WaitGroup, actions []string, r
 	m.CommandCounter.Executing++
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
 	var PaginationControl *string
-	var adminCheckResult bool
 
 	for {
 		ListRoles, err := m.IAMClient.ListRoles(
@@ -317,8 +317,16 @@ func (m *IamSimulatorModule) getIAMRoles(wg *sync.WaitGroup, actions []string, r
 		for _, role := range ListRoles.Roles {
 			//name := user.UserName
 			principal := role.Arn
-			adminCheckResult = m.policySimulatorAdminCheck(principal, adminActionNames, resource, dataReceiver)
-			if !adminCheckResult {
+			adminCheckResult := m.isPrincipalAnAdmin(principal)
+			if adminCheckResult {
+				query := fmt.Sprintf("Appears to be an administrator")
+				dataReceiver <- SimulatorResult{
+					AWSService: "IAM",
+					Principal:  aws.ToString(principal),
+					Query:      query,
+					Decision:   "",
+				}
+			} else {
 				m.getPolicySimulatorResult(principal, actions, resource, dataReceiver)
 			}
 
@@ -386,25 +394,34 @@ func (m *IamSimulatorModule) getPolicySimulatorResult(principal *string, actionN
 	}
 }
 
-func (m *IamSimulatorModule) policySimulatorAdminCheck(principal *string, actionNames []string, resource string, dataReceiver chan SimulatorResult) bool {
+func (m *IamSimulatorModule) isPrincipalAnAdmin(principal *string) bool {
 	var PaginationControl2 *string
 	var resourceArns []string
-	resourceArns = append(resourceArns, resource)
-
+	resourceArns = append(resourceArns, "*")
+	var adminActionNames = []string{
+		"iam:PutUserPolicy",
+		"iam:AttachUserPolicy",
+		"iam:PutRolePolicy",
+		"iam:AttachRolePolicy",
+		"secretsmanager:GetSecretValue",
+		"ssm:GetDocument",
+	}
 	for {
 		SimulatePrincipalPolicy, err := m.IAMClient.SimulatePrincipalPolicy(
 			context.TODO(),
 			&iam.SimulatePrincipalPolicyInput{
 				Marker:          PaginationControl2,
-				ActionNames:     actionNames,
+				ActionNames:     adminActionNames,
 				PolicySourceArn: principal,
 				ResourceArns:    resourceArns,
 			},
 		)
 		if err != nil {
-			m.modLog.Error(err.Error())
+			//m.modLog.Error(err.Error())
+			TxtLogger.Println(err.Error())
 			m.CommandCounter.Error++
-			m.modLog.Error(fmt.Sprintf("Failed admin check on %s\n\n", aws.ToString(principal)))
+			//m.modLog.Error(fmt.Sprintf("Failed admin check on %s\n\n", aws.ToString(principal)))
+			TxtLogger.Printf("Failed admin check on %s\n\n", aws.ToString(principal))
 			return false
 		}
 
@@ -428,14 +445,5 @@ func (m *IamSimulatorModule) policySimulatorAdminCheck(principal *string, action
 			break
 		}
 	}
-
-	query := fmt.Sprintf("Appears to be an administrator")
-	dataReceiver <- SimulatorResult{
-		AWSService: "IAM",
-		Principal:  aws.ToString(principal),
-		Query:      query,
-		Decision:   "",
-	}
-
 	return true
 }

@@ -68,15 +68,15 @@ func (m *EnvsModule) PrintEnvs(outputFormat string, outputDirectory string, verb
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "env-vars"
-	m.modLog = utils.TxtLogger.WithFields(logrus.Fields{
+	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
 		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
 
-	fmt.Printf("[%s] Enumerating environment variables in all regions for account %s.\n", cyan(m.output.CallingModule), aws.ToString(m.Caller.Account))
-	fmt.Printf("[%s] Supported Services: App Runner, Elastic Container Service, Lambda, Lightsail Containers, Sagemaker \n", cyan(m.output.CallingModule))
+	fmt.Printf("[%s][%s] Enumerating environment variables in all regions for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
+	fmt.Printf("[%s][%s] Supported Services: App Runner, Elastic Container Service, Lambda, Lightsail Containers, Sagemaker \n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 
 	wg := new(sync.WaitGroup)
 	semaphore := make(chan struct{}, m.Goroutines)
@@ -138,10 +138,10 @@ func (m *EnvsModule) PrintEnvs(outputFormat string, outputDirectory string, verb
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
 		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		fmt.Printf("[%s] %s environment variables found.\n", cyan(m.output.CallingModule), strconv.Itoa(len(m.output.Body)))
+		fmt.Printf("[%s][%s] %s environment variables found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {
-		fmt.Printf("[%s] No environment variables found, skipping the creation of an output file.\n", cyan(m.output.CallingModule))
+		fmt.Printf("[%s][%s] No environment variables found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
 }
 

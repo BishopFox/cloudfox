@@ -52,14 +52,14 @@ func (m *ECRModule) PrintECR(outputFormat string, outputDirectory string, verbos
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "ecr"
-	m.modLog = utils.TxtLogger.WithFields(logrus.Fields{
+	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
 		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
 
-	fmt.Printf("[%s] Enumerating container repositories for account %s.\n", cyan(m.output.CallingModule), aws.ToString(m.Caller.Account))
+	fmt.Printf("[%s][%s] Enumerating container repositories for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 
 	wg := new(sync.WaitGroup)
 	semaphore := make(chan struct{}, m.Goroutines)
@@ -123,9 +123,9 @@ func (m *ECRModule) PrintECR(outputFormat string, outputDirectory string, verbos
 		//m.output.OutputSelector(outputFormat)
 		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
 		m.writeLoot(m.output.FilePath, verbosity)
-		fmt.Printf("[%s] %s repositories found.\n", cyan(m.output.CallingModule), strconv.Itoa(len(m.output.Body)))
+		fmt.Printf("[%s][%s] %s repositories found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 	} else {
-		fmt.Printf("[%s] No repositories found, skipping the creation of an output file.\n", cyan(m.output.CallingModule))
+		fmt.Printf("[%s][%s] No repositories found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
 
 }
@@ -186,14 +186,14 @@ func (m *ECRModule) writeLoot(outputDirectory string, verbosity int) {
 
 	if verbosity > 2 {
 		fmt.Println()
-		fmt.Printf("[%s] %s \n", cyan(m.output.CallingModule), green("Use the commands below to authenticate to ECR and download the images that look interesting"))
-		fmt.Printf("[%s] %s \n\n", cyan(m.output.CallingModule), green("You will need the ecr:GetAuthorizationToken on the registry to authenticate and this is not part of the SecurityAudit permissions policy"))
+		fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("Use the commands below to authenticate to ECR and download the images that look interesting"))
+		fmt.Printf("[%s][%s] %s \n\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("You will need the ecr:GetAuthorizationToken on the registry to authenticate and this is not part of the SecurityAudit permissions policy"))
 
 		fmt.Print(out)
-		fmt.Printf("[%s] %s \n\n", cyan(m.output.CallingModule), green("End of loot file."))
+		fmt.Printf("[%s][%s] %s \n\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("End of loot file."))
 	}
 
-	fmt.Printf("[%s] Loot written to [%s]\n", cyan(m.output.CallingModule), pullFile)
+	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), pullFile)
 
 }
 

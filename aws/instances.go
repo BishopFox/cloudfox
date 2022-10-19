@@ -15,19 +15,23 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/aws-sdk-go-v2/service/iam"
+	iamTypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/sirupsen/logrus"
 )
 
 type InstancesModule struct {
 	// General configuration data
-	EC2Client              *ec2.Client
-	Caller                 sts.GetCallerIdentityOutput
-	AWSRegions             []string
-	OutputFormat           string
-	Goroutines             int
-	UserDataAttributesOnly bool
-	AWSProfile             string
+	EC2Client                 *ec2.Client
+	IAMClient                 *iam.Client
+	Caller                    sts.GetCallerIdentityOutput
+	AWSRegions                []string
+	OutputFormat              string
+	Goroutines                int
+	UserDataAttributesOnly    bool
+	AWSProfile                string
+	InstanceProfileToRolesMap map[string][]iamTypes.Role
 
 	// Module's Results
 	MappedInstances []MappedInstance
@@ -47,7 +51,9 @@ type MappedInstance struct {
 	ExternalIP       string
 	PrivateIP        string
 	Profile          string
+	Role             string
 	Region           string
+	Admin            string
 }
 
 func (m *InstancesModule) Instances(filter string, outputFormat string, outputDirectory string, verbosity int) {
@@ -55,22 +61,15 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "instances"
-	m.modLog = utils.TxtLogger.WithFields(logrus.Fields{
+	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
 		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
-	// regions, errtemp := m.EC2Client.DescribeRegions(
-	// 	context.TODO(),
-	// 	&ec2.DescribeRegionsInput{})
 
-	// if errtemp != nil {
-	// 	m.modLog.Error(errtemp.Error())
-	// }
-	// for _, reg := range regions.Regions {
-	// 	fmt.Println(*reg.RegionName)
-	// }
+	// Populate the instance profile to roles map. You can't use getInstanceProfile by name, so the only way to do this is to
+	// list all of the profiles, save the data, and then do the lookup yourself.
 
 	// Parses the type of filter being used (file with instances or single instance id)
 	var instancesToSearch []string
@@ -81,7 +80,7 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 	}
 
 	//Connects to EC2 service and maps instances
-	fmt.Printf("[%s] Enumerating EC2 instances in all regions for account %s\n", cyan(m.output.CallingModule), aws.ToString(m.Caller.Account))
+	fmt.Printf("[%s][%s] Enumerating EC2 instances in all regions for account %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 
 	wg := new(sync.WaitGroup)
 
@@ -96,7 +95,7 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 	// Create a channel to signal to stop
 	receiverDone := make(chan bool)
 	go m.Receiver(dataReceiver, receiverDone)
-
+	m.getRolesFromInstanceProfiles()
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
 		m.CommandCounter.Pending++
@@ -179,9 +178,9 @@ func (m *InstancesModule) printInstancesUserDataAttributesOnly(outputFormat stri
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
 		}
-		fmt.Printf("[%s] Loot written to [%s]\n", cyan(m.output.CallingModule), userDataFileName)
+		fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), userDataFileName)
 	} else {
-		fmt.Printf("[%s] No user data found, skipping the creation of an output file\n", cyan(m.output.CallingModule))
+		fmt.Printf("[%s][%s] No user data found, skipping the creation of an output file\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
 }
 
@@ -191,12 +190,14 @@ func (m *InstancesModule) printGeneralInstanceData(outputFormat string, outputDi
 	m.output.Headers = []string{
 		//"ID",
 		"Name",
-		"Arn",
+		//"Arn",
+		"ID",
 		"Zone",
 		"State",
 		"External IP",
 		"Internal IP",
-		"Profile",
+		"Role",
+		"isAdminRole?",
 	}
 	//Table rows
 	for _, instance := range m.MappedInstances {
@@ -206,12 +207,14 @@ func (m *InstancesModule) printGeneralInstanceData(outputFormat string, outputDi
 			[]string{
 				//instance.ID,
 				instance.Name,
-				instance.Arn,
+				//instance.Arn,
+				instance.ID,
 				instance.AvailabilityZone,
 				instance.State,
 				instance.ExternalIP,
 				instance.PrivateIP,
-				instance.Profile,
+				instance.Role,
+				instance.Admin,
 			},
 		)
 	}
@@ -221,10 +224,10 @@ func (m *InstancesModule) printGeneralInstanceData(outputFormat string, outputDi
 		utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
 
 		m.writeLoot(m.output.FilePath)
-		fmt.Printf("[%s] %s instances found.\n", cyan(m.output.CallingModule), strconv.Itoa(len(m.output.Body)))
+		fmt.Printf("[%s][%s] %s instances found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {
-		fmt.Printf("[%s] No instances found, skipping the creation of an output file.\n", cyan(m.output.CallingModule))
+		fmt.Printf("[%s][%s] No instances found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
 }
 
@@ -261,8 +264,8 @@ func (m *InstancesModule) writeLoot(outputDirectory string) {
 		m.CommandCounter.Error++
 	}
 
-	fmt.Printf("[%s] Loot written to [%s]\n", cyan(m.output.CallingModule), privateIPsFilename)
-	fmt.Printf("[%s] Loot written to [%s]\n", cyan(m.output.CallingModule), publicIPsFilename)
+	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), privateIPsFilename)
+	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), publicIPsFilename)
 
 }
 
@@ -352,6 +355,9 @@ func (m *InstancesModule) loadInstanceData(instance types.Instance, region strin
 	var profile string
 	var externalIP string
 	var name string = ""
+	var adminRole string = ""
+	localAdminMap := make(map[string]bool)
+	var roleArn string = ""
 
 	// The name is in a tag so we have to do this to grab the value from the right tag
 	for _, tag := range instance.Tags {
@@ -361,15 +367,7 @@ func (m *InstancesModule) loadInstanceData(instance types.Instance, region strin
 
 	}
 
-	arn := fmt.Sprintf("arn:aws:ec2:%s:%s:instance/%s", region, aws.ToString(accountId), aws.ToString(instance.InstanceId))
-
-	if instance.IamInstanceProfile == nil {
-		profile = "NoInstanceProfile"
-	} else {
-		// This returns only the role name without the preceding forward slash.
-		profileARN := aws.ToString(instance.IamInstanceProfile.Arn)
-		profile = strings.Split(profileARN, "/")[len(strings.Split(profileARN, "/"))-1]
-	}
+	//arn := fmt.Sprintf("arn:aws:ec2:%s:%s:instance/%s", region, aws.ToString(accountId), aws.ToString(instance.InstanceId))
 
 	if instance.PublicIpAddress == nil {
 		externalIP = "NoExternalIP"
@@ -377,16 +375,109 @@ func (m *InstancesModule) loadInstanceData(instance types.Instance, region strin
 		externalIP = aws.ToString(instance.PublicIpAddress)
 	}
 
+	if instance.IamInstanceProfile == nil {
+		profile = "NoInstanceProfile"
+	} else {
+		// This returns only the role name without the preceding forward slash.
+		profileARN := aws.ToString(instance.IamInstanceProfile.Arn)
+		profileID := aws.ToString(instance.IamInstanceProfile.Id)
+		profile = strings.Split(profileARN, "/")[len(strings.Split(profileARN, "/"))-1]
+
+		if roles, ok := m.InstanceProfileToRolesMap[profileID]; ok {
+			for _, role := range roles {
+				roleArn = aws.ToString(role.Arn)
+				if role.Arn != nil {
+					// If we've seen the function before, skip the isRoleAdmin function and just pull the value from the localAdminMap
+					roleArn := aws.ToString(role.Arn)
+					if val, ok := localAdminMap[roleArn]; ok {
+						if val {
+							// we've seen it before and it's an admin
+							adminRole = "YES"
+						} else {
+							// we've seen it before and it's NOT an admin
+							adminRole = "No"
+						}
+					} else {
+						isRoleAdmin := m.isRoleAdmin(role.Arn)
+						if isRoleAdmin {
+							adminRole = "YES"
+							localAdminMap[roleArn] = true
+						} else {
+							adminRole = "No"
+							localAdminMap[roleArn] = false
+						}
+					}
+				}
+
+			}
+		}
+
+	}
 	dataReceiver <- MappedInstance{
 		aws.ToString(instance.InstanceId),
 		aws.ToString(&name),
-		arn,
+		//arn,
+		aws.ToString(instance.InstanceId),
 		aws.ToString(instance.Placement.AvailabilityZone),
 		string(instance.State.Name),
 		externalIP,
 		aws.ToString(instance.PrivateIpAddress),
 		profile,
+		roleArn,
 		region,
+		adminRole,
 	}
 
+}
+
+func (m *InstancesModule) isRoleAdmin(principal *string) bool {
+	iamSimMod := IamSimulatorModule{
+		IAMClient:  m.IAMClient,
+		Caller:     m.Caller,
+		AWSProfile: m.AWSProfile,
+		Goroutines: m.Goroutines,
+	}
+
+	adminCheckResult := iamSimMod.isPrincipalAnAdmin(principal)
+
+	if adminCheckResult {
+		return true
+	} else {
+		return false
+	}
+
+}
+
+func (m *InstancesModule) getRolesFromInstanceProfiles() {
+
+	// The "PaginationControl" value is nil when there's no more data to return.
+	var PaginationMarker *string
+	PaginationControl := true
+	m.InstanceProfileToRolesMap = map[string][]iamTypes.Role{}
+
+	for PaginationControl {
+		ListInstanceProfiles, err := m.IAMClient.ListInstanceProfiles(
+			context.TODO(),
+			&(iam.ListInstanceProfilesInput{
+				Marker: PaginationMarker,
+			}),
+		)
+
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			break
+		}
+		for _, instanceProfile := range ListInstanceProfiles.InstanceProfiles {
+			m.InstanceProfileToRolesMap[aws.ToString(instanceProfile.InstanceProfileId)] = instanceProfile.Roles
+		}
+		if aws.ToString(ListInstanceProfiles.Marker) != "" {
+			PaginationMarker = ListInstanceProfiles.Marker
+		} else {
+			PaginationMarker = nil
+			break
+		}
+	}
+
+	// next step - debug and watch localAdminmap to see if it's working like it does on lambda
 }

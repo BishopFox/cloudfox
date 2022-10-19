@@ -59,7 +59,7 @@ func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirector
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "filesystems"
-	m.modLog = utils.TxtLogger.WithFields(logrus.Fields{
+	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
@@ -70,8 +70,8 @@ func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirector
 		m.Regions[i].Region = region
 	}
 
-	fmt.Printf("[%s] Enumerating filesystems for account %s.\n", cyan(m.output.CallingModule), aws.ToString(m.Caller.Account))
-	fmt.Printf("[%s] Supported Services: EFS, FSx \n", cyan(m.output.CallingModule))
+	fmt.Printf("[%s][%s] Enumerating filesystems for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
+	fmt.Printf("[%s][%s] Supported Services: EFS, FSx \n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 
 	wg := new(sync.WaitGroup)
 	semaphore := make(chan struct{}, m.Goroutines)
@@ -138,10 +138,10 @@ func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirector
 		//m.output.OutputSelector(outputFormat)
 		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
 		m.writeLoot(m.output.FilePath, verbosity)
-		fmt.Printf("[%s] %s filesystems found.\n", cyan(m.output.CallingModule), strconv.Itoa(len(m.output.Body)))
+		fmt.Printf("[%s][%s] %s filesystems found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {
-		fmt.Printf("[%s] No filesystems found, skipping the creation of an output file.\n", cyan(m.output.CallingModule))
+		fmt.Printf("[%s][%s] No filesystems found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
 
 }
@@ -211,12 +211,12 @@ func (m *FilesystemsModule) writeLoot(outputDirectory string, verbosity int) {
 		m.modLog.Error(err.Error())
 		m.CommandCounter.Error++
 	}
-	fmt.Printf("[%s] Loot written to [%s]\n", cyan(m.output.CallingModule), f)
+	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), f)
 	if verbosity > 2 {
 		fmt.Println()
-		fmt.Printf("[%s] %s \n", cyan(m.output.CallingModule), green("Use the commands below to try and mount the identified filesystems."))
+		fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("Use the commands below to try and mount the identified filesystems."))
 		fmt.Print(out)
-		fmt.Printf("[%s] %s \n\n", cyan(m.output.CallingModule), green("End of loot file."))
+		fmt.Printf("[%s][%s] %s \n\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("End of loot file."))
 	}
 
 }
