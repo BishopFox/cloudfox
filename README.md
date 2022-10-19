@@ -21,7 +21,8 @@ CloudFox is modular (you can run one command at a time), but there is an aws `al
 
 `cloudfox aws --profile [profile-name] all-checks`
 
-![](/.github/images/cloudfox-output.png)
+![](/.github/images/cloudfox-output-p1.png)
+![](/.github/images/cloudfox-output-p2.png)
 
 ### White Box Enumeration
 CloudFox was designed to be executed by a principal with limited read-only permissions, but it's purpose is to help you find attack paths that can be exploited in simulated compromise scenarios (aka, objective based penetration testing). 
