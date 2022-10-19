@@ -280,6 +280,7 @@ var (
 					Caller:          *caller,
 					AWSRegions:      AWSRegions,
 					AWSProfile:      profile,
+					Goroutines:      Goroutines,
 					ECSClient:       ecs.NewFromConfig(AWSConfig),
 					AppRunnerClient: apprunner.NewFromConfig(AWSConfig),
 					LambdaClient:    lambda.NewFromConfig(AWSConfig),
