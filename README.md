@@ -4,9 +4,10 @@ CloudFox helps you gain situational awareness in unfamiliar cloud environments. 
 #### CloudFox helps you answer the following common questions (and many more): 
 
 * What regions is this AWS account using and roughly how many resources are in the account?
-* What secrets are lurking in EC2 userdata or service specific environment variables?  
+* What secrets are lurking in EC2 userdata or service specific environment variables?
+* What workloads have administrative permissions attached?  
 * What actions/permissions does this [principal] have?
-* What roles trusts are overly permissive or allow cross-account assumption?
+* What role trusts are overly permissive or allow cross-account assumption?
 * What endpoints/hostnames/IPs can I attack from an external starting point (public internet)?
 * What endpoints/hostnames/IPs can I attack from an internal starting point (assumed breach within the VPC)?
 * What filesystems can I potentially mount from a compromised resource inside the VPC?
