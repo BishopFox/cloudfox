@@ -4,9 +4,9 @@ CloudFox helps you gain situational awareness in unfamiliar cloud environments. 
 #### CloudFox helps you answer the following common questions (and many more): 
 
 * What regions is this AWS account using and roughly how many resources are in the account?
-* What secrets are lurking in EC2 userdata or service specific environment variables?  
+* What secrets are lurking in EC2 userdata or service specific environment variables?
 * What actions/permissions does this [principal] have?
-* What roles trusts are overly permissive or allow cross-account assumption?
+* What role trusts are overly permissive or allow cross-account assumption?
 * What endpoints/hostnames/IPs can I attack from an external starting point (public internet)?
 * What endpoints/hostnames/IPs can I attack from an internal starting point (assumed breach within the VPC)?
 * What filesystems can I potentially mount from a compromised resource inside the VPC?
@@ -93,7 +93,7 @@ Additional policy notes (as of 09/2022):
 | AWS | [iam-simulator](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#iam-simulator) | Like pmapper, but uses the IAM policy simulator. It uses AWS's evaluation logic, but notably, it doesn't consider transitive access via privesc, which is why you should also always also use pmapper.   |
 | AWS | [instances](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#instances) | Enumerates useful information for EC2 Instances in all regions like name, public/private IPs, and instance profiles. Generates loot files you can feed to nmap and other tools for service enumeration.  |
 | AWS | [inventory](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#inventory) | Gain a rough understanding of size of the account and preferred regions.  |
-| AWS | [lambda](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#lambda)  | Lists the lambda functions in the account and gives you handy commands for downloading each function.  |
+| AWS | [lambda](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#lambda)  | Lists the lambda functions in the account, including which one's have admin roles attached. Also gives you handy commands for downloading each function.  |
 | AWS | [outbound-assumed-roles](#outbound-assumed-roles)  |  List the roles that have been assumed by principals in this account. This is an excellent way to find outbound attack paths that lead into other accounts. |
 | AWS | [permissions](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#permissions) | Enumerates IAM permissions associated with all users and roles. Grep this output to figure out what permissions a particular principal has rather than logging into the AWS console and painstakingly expanding each policy attached to the principal you are investigating. |
 | AWS | [principals](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#principals) | Enumerates IAM users and Roles so you have the data at your fingertips. |
