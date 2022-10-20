@@ -2,12 +2,72 @@ package azure
 
 import (
 	"context"
-	"fmt"
 	"log"
+	"strconv"
+	"strings"
 
 	"github.com/BishopFox/cloudfox/utils"
 	"github.com/aws/smithy-go/ptr"
 )
+
+func ScopeSelection(userInput string) []string {
+	availableScope := getAvailableScopeM()
+	printAvailableScope(availableScope)
+
+	var userSelectedScope []string
+	for _, input := range strings.Split(userInput, ",") {
+		inputInt, err := strconv.Atoi(input)
+		if err != nil {
+			log.Fatalf("error during scope selection: %s", err)
+		}
+		userSelectedScope = append(userSelectedScope, availableScope[int(inputInt)])
+	}
+	return userSelectedScope
+}
+
+func printAvailableScope(availableScope map[int]string) {
+	var tableBody [][]string
+	for rgID, rgName := range availableScope {
+		tableBody = append(tableBody, []string{strconv.Itoa(rgID), rgName})
+		/*
+			TO-DO:
+			Figure out how to sort the table body by the first element.
+			Here's some example code that might help:
+
+			func (m *RoleTrustsModule) sortTrustsTablePerTrustedPrincipal() {
+				sort.Slice(
+					m.output.Body,
+					func(i int, j int) bool {
+						return m.output.Body[i][1] < m.output.Body[j][1]
+					},
+				)
+			}
+		*/
+	}
+	utils.PrintTableToScreen([]string{"Number", "Resource Group Name"}, tableBody)
+}
+
+var getAvailableScopeM = getAvailableScope
+
+func getAvailableScope() map[int]string {
+	var index int
+	menu := make(map[int]string)
+	subs, err := ListSubscriptions()
+	if err != nil {
+		log.Fatalf("error getting available scope from Azure CLI: %s", err)
+	}
+	for _, sub := range subs {
+		rgs, err := ListResourceGroups(sub)
+		if err != nil {
+			log.Fatalf("error getting available scope from Azure CLI: %s", err)
+		}
+		for _, rg := range rgs {
+			index++
+			menu[index] = rg
+		}
+	}
+	return menu
+}
 
 var ListSubscriptions = listSubscriptions
 
@@ -41,51 +101,4 @@ func listResourceGroups(subscription string) ([]string, error) {
 		}
 	}
 	return resourceGroups, nil
-}
-
-func PrintAvailableScope() (map[int]string, error) {
-	fmt.Println("Fetching available resource groups from your Azure CLI session...")
-
-	var index int
-	menu := make(map[int]string)
-
-	subs, err := ListSubscriptions()
-	if err != nil {
-		return menu, err
-	}
-	for _, sub := range subs {
-		fmt.Printf("Subscription: %s\n", sub)
-		rgs, err := ListResourceGroups(sub)
-		if err != nil {
-			return menu, err
-		}
-		for _, rg := range rgs {
-			index++
-			fmt.Printf("[%d] RG: %s\n", index, rg)
-			menu[index] = rg
-		}
-	}
-	return menu, nil
-}
-
-var getAvailableScopeM = getAvailableScope
-
-func getAvailableScope() map[int]string {
-	var index int
-	menu := make(map[int]string)
-	subs, err := ListSubscriptions()
-	if err != nil {
-		log.Fatalf("error getting available scope from Azure CLI: %s", err)
-	}
-	for _, sub := range subs {
-		rgs, err := ListResourceGroups(sub)
-		if err != nil {
-			log.Fatalf("error getting available scope from Azure CLI: %s", err)
-		}
-		for _, rg := range rgs {
-			index++
-			menu[index] = rg
-		}
-	}
-	return menu
 }

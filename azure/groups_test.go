@@ -3,38 +3,48 @@ package azure
 import (
 	"fmt"
 	"log"
-	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/BishopFox/cloudfox/utils"
 )
 
-func TestListSubscriptions(t *testing.T) {
-	t.Skip()
-	subs, err := ListSubscriptions()
-	if err != nil {
-		log.Fatal(err)
-	}
-	log.Println("Available Subscriptions:")
-	for _, sub := range subs {
-		log.Println(sub)
+func TestScopeSelection(t *testing.T) {
+	//t.Skip()
+	subtests := []struct {
+		name              string
+		getAvailableScope func() map[int]string
+		userInput         string
+		expectedResult    []string
+	}{
+		{
+			name: "subtest 1",
+			getAvailableScope: func() map[int]string {
+				return map[int]string{
+					1: "A1",
+					2: "A2",
+					3: "B3",
+					4: "B4",
+					5: "C5",
+					6: "C6",
+				}
+			},
+			userInput:      "2,3,6",
+			expectedResult: []string{"A2", "B3", "C6"},
+		},
 	}
 	fmt.Println()
-}
-
-func TestListResourceGroups(t *testing.T) {
-	t.Skip()
-	subscription := "11111111-1111-1111-1111-11111111"
-	rgs, err := ListResourceGroups(subscription)
-	if err != nil {
-		log.Fatal(err)
+	fmt.Println("[test case] scopeSelection")
+	for _, subtest := range subtests {
+		t.Run(subtest.name, func(t *testing.T) {
+			getAvailableScopeM = subtest.getAvailableScope
+			scope := ScopeSelection(subtest.userInput)
+			for i, selection := range scope {
+				if selection != subtest.expectedResult[i] {
+					log.Fatalf("[%s] expected %s, got %s", subtest.name, subtest.expectedResult[i], selection)
+				}
+			}
+			log.Printf("[%s] simulated user input of %s matches expected selection of %s", subtest.name, subtest.userInput, strings.Join(subtest.expectedResult, ","))
+		})
 	}
-	log.Printf("Available RGs for Subscription %s:", subscription)
-	for _, rg := range rgs {
-		log.Println(rg)
-	}
-	fmt.Println()
 }
 
 func TestGetAvailableScope(t *testing.T) {
@@ -92,75 +102,29 @@ func TestGetAvailableScope(t *testing.T) {
 	fmt.Println()
 }
 
-func TestScopeSelection(t *testing.T) {
-	//t.Skip()
-	subtests := []struct {
-		name              string
-		getAvailableScope func() map[int]string
-		userInput         string
-		expectedResult    []string
-	}{
-		{
-			name: "subtest 1",
-			getAvailableScope: func() map[int]string {
-				return map[int]string{
-					1: "A1",
-					2: "A2",
-					3: "B3",
-					4: "B4",
-					5: "C5",
-					6: "C6",
-				}
-			},
-			userInput:      "2,3,6",
-			expectedResult: []string{"A2", "B3", "C6"},
-		},
+func TestListSubscriptions(t *testing.T) {
+	t.Skip()
+	subs, err := ListSubscriptions()
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Println("Available Subscriptions:")
+	for _, sub := range subs {
+		log.Println(sub)
 	}
 	fmt.Println()
-	fmt.Println("[test case] scopeSelection")
-	for _, subtest := range subtests {
-		t.Run(subtest.name, func(t *testing.T) {
-			getAvailableScopeM = subtest.getAvailableScope
-			scope := ScopeSelection(subtest.userInput)
-			for i, selection := range scope {
-				if selection != subtest.expectedResult[i] {
-					log.Fatalf("[%s] expected %s, got %s", subtest.name, subtest.expectedResult[i], selection)
-				}
-			}
-			log.Printf("[%s] simulated user input of %s matches expected selection of %s", subtest.name, subtest.userInput, strings.Join(subtest.expectedResult, ","))
-		})
-	}
 }
 
-func ScopeSelection(userInput string) []string {
-	menu := getAvailableScopeM()
-	var tableBody [][]string
-	for rgID, rgName := range menu {
-		tableBody = append(tableBody, []string{strconv.Itoa(rgID), rgName})
-		/*
-			TO-DO:
-			Figure out how to sort the table body by the first element.
-			Here's some example code:
-
-			func (m *RoleTrustsModule) sortTrustsTablePerTrustedPrincipal() {
-				sort.Slice(
-					m.output.Body,
-					func(i int, j int) bool {
-						return m.output.Body[i][1] < m.output.Body[j][1]
-					},
-				)
-			}
-		*/
+func TestListResourceGroups(t *testing.T) {
+	t.Skip()
+	subscription := "11111111-1111-1111-1111-11111111"
+	rgs, err := ListResourceGroups(subscription)
+	if err != nil {
+		log.Fatal(err)
 	}
-	utils.PrintTableToScreen([]string{"Number", "Resource Group Name"}, tableBody)
-
-	var scope []string
-	for _, input := range strings.Split(userInput, ",") {
-		inputInt, err := strconv.Atoi(input)
-		if err != nil {
-			log.Fatalf("error during scope selection: %s", err)
-		}
-		scope = append(scope, menu[int(inputInt)])
+	log.Printf("Available RGs for Subscription %s:", subscription)
+	for _, rg := range rgs {
+		log.Println(rg)
 	}
-	return scope
+	fmt.Println()
 }
