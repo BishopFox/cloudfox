@@ -99,7 +99,7 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 		"Resource Arn",
 		"Role",
 		"isAdminRole?",
-		"Public",
+		//"Public",
 	}
 
 	sort.Slice(m.Lambdas, func(i, j int) bool {
@@ -118,7 +118,7 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 				m.Lambdas[i].Name,
 				m.Lambdas[i].Role,
 				m.Lambdas[i].Admin,
-				m.Lambdas[i].Public,
+				//m.Lambdas[i].Public,
 			},
 		)
 

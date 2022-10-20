@@ -280,6 +280,7 @@ var (
 					Caller:          *caller,
 					AWSRegions:      AWSRegions,
 					AWSProfile:      profile,
+					Goroutines:      Goroutines,
 					ECSClient:       ecs.NewFromConfig(AWSConfig),
 					AppRunnerClient: apprunner.NewFromConfig(AWSConfig),
 					LambdaClient:    lambda.NewFromConfig(AWSConfig),
@@ -876,7 +877,6 @@ var (
 
 				// Service and endpoint enum section
 				fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Gathering the info you'll want for your application & service enumeration needs."))
-				fmt.Printf("We are here!")
 				instances := aws.InstancesModule{
 					EC2Client:  ec2Client,
 					IAMClient:  iamClient,
