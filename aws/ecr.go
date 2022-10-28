@@ -23,7 +23,8 @@ type ECRModule struct {
 	// General configuration data
 	ECRClient *ecr.Client
 	// This interface is not being used for anything except for experimentation with unit testing
-	ECRClientM ecr.DescribeRepositoriesAPIClient
+	ECRClientDescribeReposInterface  ecr.DescribeRepositoriesAPIClient
+	ECRClientDescribeImagesInterface ecr.DescribeImagesAPIClient
 
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
@@ -215,7 +216,7 @@ func (m *ECRModule) getECRRecordsPerRegion(r string, wg *sync.WaitGroup, semapho
 	var PaginationControl2 *string
 
 	for {
-		DescribeRepositories, err := m.ECRClient.DescribeRepositories(
+		DescribeRepositories, err := m.ECRClientDescribeReposInterface.DescribeRepositories(
 			context.TODO(),
 			&ecr.DescribeRepositoriesInput{
 				NextToken: PaginationControl,
@@ -237,7 +238,7 @@ func (m *ECRModule) getECRRecordsPerRegion(r string, wg *sync.WaitGroup, semapho
 			//fmt.Printf("%s, %s, %s", repoName, repoURI, created)
 			var images []types.ImageDetail
 			for {
-				DescribeImages, err := m.ECRClient.DescribeImages(
+				DescribeImages, err := m.ECRClientDescribeImagesInterface.DescribeImages(
 					context.TODO(),
 					&ecr.DescribeImagesInput{
 						RepositoryName: &repoName,
