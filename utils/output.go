@@ -37,7 +37,7 @@ type OutputData2 struct {
 // verbosity = 2 (Output and loot printed to file, output printed screen).
 // verbosity = 3 (Output and loot printed to file and screen).
 // outputType = "table", "csv"
-func OutputSelector(verbosity int, outputType string, header []string, body [][]string, outputDirectory string, fileName string, callingModule string) {
+func OutputSelector(verbosity int, outputType string, header []string, body [][]string, outputDirectory string, fileNameWithoutExtenstion string, callingModule string) {
 
 	switch verbosity {
 	case 2:
@@ -50,7 +50,7 @@ func OutputSelector(verbosity int, outputType string, header []string, body [][]
 	case "table":
 		outputFileTable := createOutputFile(
 			ptr.String(filepath.Join(outputDirectory, "table")),
-			ptr.String(fmt.Sprintf("%s.txt", fileName)),
+			ptr.String(fmt.Sprintf("%s.txt", fileNameWithoutExtenstion)),
 			outputType,
 			callingModule)
 		printTableToFile(header, body, outputFileTable)
@@ -60,7 +60,7 @@ func OutputSelector(verbosity int, outputType string, header []string, body [][]
 	case "csv":
 		outputFileCSV := createOutputFile(
 			ptr.String(filepath.Join(outputDirectory, "csv")),
-			ptr.String(fmt.Sprintf("%s.csv", fileName)),
+			ptr.String(fmt.Sprintf("%s.csv", fileNameWithoutExtenstion)),
 			outputType,
 			callingModule)
 		printCSVtoFile(header, body, outputFileCSV)
@@ -71,7 +71,7 @@ func OutputSelector(verbosity int, outputType string, header []string, body [][]
 	default:
 		outputFileTable := createOutputFile(
 			ptr.String(filepath.Join(outputDirectory, "table")),
-			ptr.String(fmt.Sprintf("%s.txt", fileName)),
+			ptr.String(fmt.Sprintf("%s.txt", fileNameWithoutExtenstion)),
 			outputType,
 			callingModule)
 		printTableToFile(header, body, outputFileTable)
@@ -79,7 +79,7 @@ func OutputSelector(verbosity int, outputType string, header []string, body [][]
 
 		outputFileCSV := createOutputFile(
 			ptr.String(filepath.Join(outputDirectory, "csv")),
-			ptr.String(fmt.Sprintf("%s.csv", fileName)),
+			ptr.String(fmt.Sprintf("%s.csv", fileNameWithoutExtenstion)),
 			outputType,
 			callingModule)
 		printCSVtoFile(header, body, outputFileCSV)

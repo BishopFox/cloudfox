@@ -11,7 +11,7 @@ import (
 	"github.com/aws/smithy-go/ptr"
 )
 
-const instancesCallingModuleName = "instances"
+const InstancesCallingModuleName = "instances"
 
 type InstancesMapModule struct {
 	// Tenants, Subs and RGs: map[TenantID]map[SubscriptionID][]ResourceGroups
@@ -83,7 +83,7 @@ func (m *InstancesMapModule) InstancesMap(verbosity int, outputFormat string, ou
 		body,
 		outputDirectory,
 		"instances",
-		instancesCallingModuleName,
+		InstancesCallingModuleName,
 	)
 }
 

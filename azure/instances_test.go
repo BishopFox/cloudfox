@@ -2,16 +2,95 @@ package azure
 
 import (
 	"fmt"
-	"log"
-	"strings"
 	"testing"
 
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/compute/mgmt/compute"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/network/mgmt/network"
-	"github.com/BishopFox/cloudfox/utils"
 	"github.com/aws/smithy-go/ptr"
 )
 
+func TestGetComputeRelevantData2(t *testing.T) {
+	var subtests = []struct {
+		name                          string
+		expectedBody                  [][]string
+		getComputeVMsPerResourceGroup func(subscriptionID string, resourceGroup string) []compute.VirtualMachine
+		getNICdetails                 func(subscriptionID, resourceGroup string, nicReference compute.NetworkInterfaceReference) (network.Interface, error)
+		getPublicIP                   func(subscriptionID, resourceGroup string, ip network.InterfaceIPConfiguration) (string, error)
+	}{
+		{
+			name: "subtest 1",
+			expectedBody: [][]string{
+				{"TestVM1", "vm_id_1", "us-west-2", "admin", "192.168.0.1", "72.88.100.1"},
+				{"TestVM2", "vm_id_2", "us-west-2", "admin", "192.168.0.2", "72.88.100.2"},
+				{"TestVM3", "vm_id_3", "us-west-2", "admin", "192.168.0.3", "72.88.100.3"},
+			},
+			getComputeVMsPerResourceGroup: func(subscriptionID, resourceGroup string) []compute.VirtualMachine {
+				return []compute.VirtualMachine{
+					{
+						Name:     ptr.String("TestVM1"),
+						ID:       ptr.String("vm_id_1"),
+						Location: ptr.String("us-west-2"),
+						VirtualMachineProperties: &compute.VirtualMachineProperties{
+							OsProfile: &compute.OSProfile{
+								AdminUsername: ptr.String("admin"),
+							},
+						},
+					},
+					{
+						Name:     ptr.String("TestVM2"),
+						ID:       ptr.String("vm_id_2"),
+						Location: ptr.String("us-west-2"),
+						VirtualMachineProperties: &compute.VirtualMachineProperties{
+							OsProfile: &compute.OSProfile{
+								AdminUsername: ptr.String("admin"),
+							},
+						},
+					},
+					{
+						Name:     ptr.String("TestVM3"),
+						ID:       ptr.String("vm_id_3"),
+						Location: ptr.String("us-west-2"),
+						VirtualMachineProperties: &compute.VirtualMachineProperties{
+							OsProfile: &compute.OSProfile{
+								AdminUsername: ptr.String("admin"),
+							},
+						},
+					},
+				}
+			},
+			getNICdetails: func(subscriptionID, resourceGroup string, nicReference compute.NetworkInterfaceReference) (network.Interface, error) {
+				return network.Interface{
+					ID: ptr.String("/subscriptions/subid/resourceGroups/rg1//providers/Microsoft.Network/networkInterfaces/NetworkInterface1"),
+					InterfacePropertiesFormat: &network.InterfacePropertiesFormat{
+						IPConfigurations: &[]network.InterfaceIPConfiguration{
+							{
+								InterfaceIPConfigurationPropertiesFormat: &network.InterfaceIPConfigurationPropertiesFormat{
+									PrivateIPAddress: ptr.String("192.168.0.1"),
+									PublicIPAddress: &network.PublicIPAddress{
+										ID: ptr.String("/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/publicIPAddresses/PublicIpAddress1A"),
+									},
+								},
+							},
+						},
+					},
+				}, nil
+			},
+			getPublicIP: func(subscriptionID, resourceGroup string, ip network.InterfaceIPConfiguration) (string, error) {
+				return "72.88.100.1", nil
+			},
+		},
+	}
+	fmt.Println()
+	fmt.Println("[test case] Azure Instances Command")
+	for _, subtest := range subtests {
+		getComputeVMsPerResourceGroupM = subtest.getComputeVMsPerResourceGroup
+		getNICdetailsM = subtest.getNICdetails
+		getPublicIPM = subtest.getPublicIP
+	}
+	fmt.Println()
+}
+
+/*
 func TestGetComputeRelevantData(t *testing.T) {
 	var subtests = []struct {
 		name                          string
@@ -165,3 +244,4 @@ func TestGetIPs(t *testing.T) {
 		})
 	}
 }
+*/

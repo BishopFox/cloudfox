@@ -12,16 +12,16 @@ import (
 	"github.com/aws/smithy-go/ptr"
 )
 
-func GetComputeRelevantData(subscriptionID string, resourceGroup string) ([]string, [][]string) {
+func GetComputeRelevantData(subscriptionID string, resourceGroupName string) ([]string, [][]string) {
 	header := []string{"Name", "ID", "Location", "Admin Username", "Private IP", "Public IP"}
 	var body [][]string
 
-	for _, vm := range getComputeVMsPerResourceGroupM(subscriptionID, resourceGroup) {
+	for _, vm := range getComputeVMsPerResourceGroupM(subscriptionID, resourceGroupName) {
 		var adminUsername string
 		if vm.VirtualMachineProperties != nil && vm.OsProfile != nil {
 			adminUsername = ptr.ToString(vm.OsProfile.AdminUsername)
 		}
-		privateIPs, publicIPs := getIPsM(subscriptionID, resourceGroup, vm)
+		privateIPs, publicIPs := getIPsM(subscriptionID, resourceGroupName, vm)
 
 		body = append(
 			body,
