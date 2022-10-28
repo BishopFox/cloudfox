@@ -2,103 +2,131 @@ package azure
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/resources"
+	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/subscriptions"
 	"github.com/BishopFox/cloudfox/utils"
 	"github.com/aws/smithy-go/ptr"
 )
 
-func ScopeSelection(userInput string) []string {
-	availableScope := getAvailableScopeM()
+// userInput = nil will prompt interactive menu for RG selection.
+// The userInput argument is used to toggle the interactive menu (useful for unit tests).
+func ScopeSelection(userInput *string) []scopeElement {
+	var results []scopeElement
+
+	availableScope := getAvailableScope()
 	printAvailableScope(availableScope)
 
-	var userSelectedScope []string
-	for _, input := range strings.Split(userInput, ",") {
-		inputInt, err := strconv.Atoi(input)
-		if err != nil {
-			log.Fatalf("error during scope selection: %s", err)
-		}
-		userSelectedScope = append(userSelectedScope, availableScope[int(inputInt)])
+	if userInput == nil {
+		var input string
+		fmt.Println("Please select resource groups numbers to analyze. Separate selection by commas (e.g. '1,2,3').")
+		fmt.Printf("Selection: ")
+		fmt.Scanln(&input)
+		userInput = ptr.String(input)
 	}
-	return userSelectedScope
-}
 
-func printAvailableScope(availableScope map[int]string) {
-	var tableBody [][]string
-	for rgID, rgName := range availableScope {
-		tableBody = append(tableBody, []string{strconv.Itoa(rgID), rgName})
-		/*
-			TO-DO:
-			Figure out how to sort the table body by the first element.
-			Here's some example code that might help:
-
-			func (m *RoleTrustsModule) sortTrustsTablePerTrustedPrincipal() {
-				sort.Slice(
-					m.output.Body,
-					func(i int, j int) bool {
-						return m.output.Body[i][1] < m.output.Body[j][1]
-					},
-				)
+	for _, scopeItem := range availableScope {
+		for _, userSelection := range strings.Split(ptr.ToString(userInput), ",") {
+			userInputInt, err := strconv.Atoi(userSelection)
+			if err != nil {
+				log.Fatalln("Error: Invalid resource group selection.")
 			}
-		*/
+			if userInputInt == scopeItem.menuIndex {
+				results = append(
+					results,
+					scopeElement{
+						menuIndex:          scopeItem.menuIndex,
+						includeInExecution: true,
+						Sub:                scopeItem.Sub,
+						Rg:                 scopeItem.Rg})
+			}
+		}
 	}
-	utils.PrintTableToScreen([]string{"Number", "Resource Group Name"}, tableBody)
+
+	return results
 }
 
-var getAvailableScopeM = getAvailableScope
+func printAvailableScope(availableScope []scopeElement) {
+	var tableBody [][]string
 
-func getAvailableScope() map[int]string {
+	for _, scopeItem := range availableScope {
+		tableBody = append(
+			tableBody,
+			[]string{
+				strconv.Itoa(scopeItem.menuIndex),
+				ptr.ToString(scopeItem.Rg.Name),
+				ptr.ToString(scopeItem.Sub.SubscriptionID)})
+	}
+	sort.Slice(
+		tableBody,
+		func(i int, j int) bool {
+			return tableBody[i][1] < tableBody[j][1]
+		},
+	)
+	utils.PrintTableToScreen([]string{"Number", "Resource Group Name", "Subscription"}, tableBody)
+}
+
+type scopeElement struct {
+	// Use for user selection in interactive mode.
+	menuIndex int
+	// True will cause CloudFox to enumerate the resource group.
+	includeInExecution bool
+	Sub                subscriptions.Subscription
+	Rg                 resources.Group
+}
+
+func getAvailableScope() []scopeElement {
 	var index int
-	menu := make(map[int]string)
-	subs, err := ListSubscriptions()
+	var results []scopeElement
+	subs, err := getSubscriptionsM()
+
 	if err != nil {
 		log.Fatalf("error getting available scope from Azure CLI: %s", err)
 	}
 	for _, sub := range subs {
-		rgs, err := ListResourceGroups(sub)
+		rgs, err := getResourceGroupsPerSubM(ptr.ToString(sub.SubscriptionID))
 		if err != nil {
 			log.Fatalf("error getting available scope from Azure CLI: %s", err)
 		}
+
 		for _, rg := range rgs {
 			index++
-			menu[index] = rg
+			results = append(results, scopeElement{menuIndex: index, Sub: sub, Rg: rg})
 		}
 	}
-	return menu
+	return results
 }
 
-var ListSubscriptions = listSubscriptions
+var getResourceGroupsPerSubM = getResourceGroupsPerSub
 
-func listSubscriptions() ([]string, error) {
-	var subs []string
+func getResourceGroupsPerSub(subscription string) ([]resources.Group, error) {
+	var results []resources.Group
+	rgClient := utils.GetResourceGroupsClient(subscription)
+
+	for page, err := rgClient.List(context.TODO(), "", nil); page.NotDone(); err = page.Next() {
+		if err != nil {
+			return results, err
+		}
+		results = append(results, page.Values()...)
+	}
+	return results, nil
+}
+
+var getSubscriptionsM = getSubscriptions
+
+func getSubscriptions() ([]subscriptions.Subscription, error) {
+	var results []subscriptions.Subscription
 	subsClient := utils.GetSubscriptionsClient()
 	for page, err := subsClient.List(context.TODO()); page.NotDone(); err = page.Next() {
 		if err != nil {
-			return subs, err
+			return results, err
 		}
-		for _, sub := range page.Values() {
-			subs = append(subs, ptr.ToString(sub.SubscriptionID))
-		}
+		results = append(results, page.Values()...)
 	}
-	return subs, nil
-}
-
-var ListResourceGroups = listResourceGroups
-
-func listResourceGroups(subscription string) ([]string, error) {
-	var resourceGroups []string
-	rgClient := utils.GetResourceGroupsClient(subscription)
-	for page, err := rgClient.List(context.TODO(), "", nil); page.NotDone(); err = page.Next() {
-		if err != nil {
-			return resourceGroups, err
-		}
-		for _, rg := range page.Values() {
-			if rg.Name != nil {
-				resourceGroups = append(resourceGroups, ptr.ToString(rg.Name))
-			}
-		}
-	}
-	return resourceGroups, nil
+	return results, nil
 }

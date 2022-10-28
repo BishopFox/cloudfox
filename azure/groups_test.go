@@ -3,128 +3,102 @@ package azure
 import (
 	"fmt"
 	"log"
-	"strings"
 	"testing"
+
+	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/resources"
+	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/subscriptions"
+	"github.com/aws/smithy-go/ptr"
 )
 
 func TestScopeSelection(t *testing.T) {
-	//t.Skip()
 	subtests := []struct {
-		name              string
-		getAvailableScope func() map[int]string
-		userInput         string
-		expectedResult    []string
+		name                    string
+		mockedUserSelection     *string
+		expectedScope           []scopeElement
+		getResourceGroupsPerSub func(subscription string) ([]resources.Group, error)
+		getSubscriptions        func() ([]subscriptions.Subscription, error)
 	}{
 		{
-			name: "subtest 1",
-			getAvailableScope: func() map[int]string {
-				return map[int]string{
-					1: "A1",
-					2: "A2",
-					3: "B3",
-					4: "B4",
-					5: "C5",
-					6: "C6",
+			name:                "subtest 1",
+			mockedUserSelection: ptr.String("1,2,6"),
+			expectedScope: []scopeElement{
+				{Rg: resources.Group{Name: ptr.String("A1")}},
+				{Rg: resources.Group{Name: ptr.String("A2")}},
+				{Rg: resources.Group{Name: ptr.String("C6")}},
+			},
+			getResourceGroupsPerSub: func(subscription string) ([]resources.Group, error) {
+				switch subscription {
+				case "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA":
+					return []resources.Group{
+						{Name: ptr.String("A1")},
+						{Name: ptr.String("A2")},
+					}, nil
+				case "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB":
+					return []resources.Group{
+						{Name: ptr.String("B3")},
+						{Name: ptr.String("B4")},
+					}, nil
+				case "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCC":
+					return []resources.Group{
+						{Name: ptr.String("C5")},
+						{Name: ptr.String("C6")},
+					}, nil
+				default:
+					return []resources.Group{}, fmt.Errorf("no resource groups found for subscription: %s", subscription)
 				}
 			},
-			userInput:      "2,3,6",
-			expectedResult: []string{"A2", "B3", "C6"},
-		},
-	}
-	fmt.Println()
-	fmt.Println("[test case] scopeSelection")
-	for _, subtest := range subtests {
-		t.Run(subtest.name, func(t *testing.T) {
-			getAvailableScopeM = subtest.getAvailableScope
-			scope := ScopeSelection(subtest.userInput)
-			for i, selection := range scope {
-				if selection != subtest.expectedResult[i] {
-					log.Fatalf("[%s] expected %s, got %s", subtest.name, subtest.expectedResult[i], selection)
-				}
-			}
-			log.Printf("[%s] simulated user input of %s matches expected selection of %s", subtest.name, subtest.userInput, strings.Join(subtest.expectedResult, ","))
-		})
-	}
-}
-
-func TestGetAvailableScope(t *testing.T) {
-	// t.Skip()
-	subtests := []struct {
-		name               string
-		expectedMenu       map[int]string
-		ListSubscriptions  func() ([]string, error)
-		ListResourceGroups func(subscription string) ([]string, error)
-	}{
-		{
-			name: "subtest 1",
-			expectedMenu: map[int]string{
-				1: "A1",
-				2: "A2",
-				3: "B3",
-				4: "B4",
-				5: "C5",
-				6: "C6",
-			},
-			ListSubscriptions: func() ([]string, error) {
-				return []string{
-					"AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
-					"BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB",
-					"CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCC",
+			getSubscriptions: func() ([]subscriptions.Subscription, error) {
+				return []subscriptions.Subscription{
+					{SubscriptionID: ptr.String("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA")},
+					{SubscriptionID: ptr.String("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB")},
+					{SubscriptionID: ptr.String("CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCC")},
 				}, nil
 			},
-			ListResourceGroups: func(s string) ([]string, error) {
-				switch s {
-				case "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA":
-					return []string{"A1", "A2"}, nil
-				case "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB":
-					return []string{"B3", "B4"}, nil
-				case "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCC":
-					return []string{"C5", "C6"}, nil
-				}
-				return []string{}, fmt.Errorf("no resource groups found for subscription: %s", s)
-			},
 		},
 	}
 	fmt.Println()
-	fmt.Println("[test case] getAvailableScope")
+	fmt.Println("[test case] Scope Selection Interactive Menu")
 	for _, subtest := range subtests {
 		t.Run(subtest.name, func(t *testing.T) {
-			ListSubscriptions = subtest.ListSubscriptions
-			ListResourceGroups = subtest.ListResourceGroups
-			menu := getAvailableScope()
-			for i, expected := range subtest.expectedMenu {
-				if menu[i] != expected {
-					log.Fatalf("[%s] expected result: %s, got %s", subtest.name, menu[i], expected)
+			getResourceGroupsPerSubM = subtest.getResourceGroupsPerSub
+			getSubscriptionsM = subtest.getSubscriptions
+			for i, scopeElement := range ScopeSelection(subtest.mockedUserSelection) {
+				if ptr.ToString(scopeElement.Rg.Name) != ptr.ToString(subtest.expectedScope[i].Rg.Name) {
+					log.Fatalf(
+						"[%s] Selection mismatch: got %s, expected: %s",
+						subtest.name,
+						ptr.ToString(scopeElement.Rg.Name),
+						ptr.ToString(subtest.expectedScope[i].Rg.Name))
 				}
+				fmt.Printf(
+					"[%s] mocked input %d matches expected RG %s\n",
+					subtest.name,
+					scopeElement.menuIndex,
+					ptr.ToString(subtest.expectedScope[i].Rg.Name))
 			}
 		})
 	}
 	fmt.Println()
 }
 
-func TestListSubscriptions(t *testing.T) {
+// Requires Az CLI Authentication to pass
+func TestMapResourceGroups(t *testing.T) {
 	t.Skip()
-	subs, err := ListSubscriptions()
-	if err != nil {
-		log.Fatal(err)
-	}
-	log.Println("Available Subscriptions:")
-	for _, sub := range subs {
-		log.Println(sub)
-	}
 	fmt.Println()
-}
-
-func TestListResourceGroups(t *testing.T) {
-	t.Skip()
-	subscription := "11111111-1111-1111-1111-11111111"
-	rgs, err := ListResourceGroups(subscription)
+	subs, err := getSubscriptionsM()
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("Available RGs for Subscription %s:", subscription)
-	for _, rg := range rgs {
-		log.Println(rg)
+	fmt.Println("[test case] mapResourceGroups")
+	fmt.Println("Subscription, ResourceGroup")
+	for _, sub := range subs {
+		rgsMapped, err := getResourceGroupsPerSubM(ptr.ToString(sub.ID))
+		if err != nil {
+			log.Fatal(err)
+		}
+		for _, rg := range rgsMapped {
+			fmt.Printf("%s, %s", ptr.ToString(sub.ID), ptr.ToString(rg.Name))
+		}
 	}
 	fmt.Println()
 }
