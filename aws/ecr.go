@@ -49,31 +49,6 @@ type Repository struct {
 	ImageSize  int64
 }
 
-// This function is not being used for anything except for experimentation with unit testing
-func (m *ECRModule) DescribeReposDONOTUSE() {
-	var PaginationControl *string
-	for {
-		DescribeRepositories, err := m.ECRClientM.DescribeRepositories(
-			context.TODO(),
-			&ecr.DescribeRepositoriesInput{
-				NextToken: PaginationControl,
-			},
-		)
-		if err != nil {
-			// Error Handling
-		}
-
-		// The "NextToken" value is nil when there's no more data to return.
-		if DescribeRepositories.NextToken != nil {
-			PaginationControl = DescribeRepositories.NextToken
-		} else {
-			PaginationControl = nil
-			break
-		}
-		fmt.Println(DescribeRepositories)
-	}
-}
-
 func (m *ECRModule) PrintECR(outputFormat string, outputDirectory string, verbosity int) {
 	// These stuct values are used by the output module
 	m.output.Verbosity = verbosity
