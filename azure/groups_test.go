@@ -12,9 +12,10 @@ import (
 
 func TestScopeSelection(t *testing.T) {
 	subtests := []struct {
-		name                    string
-		mockedUserSelection     *string
-		expectedScope           []scopeElement
+		name                string
+		mockedUserSelection *string
+		expectedScope       []scopeElement
+		// These mocked functions below are wrapping Azure API calls
 		getResourceGroupsPerSub func(subscription string) ([]resources.Group, error)
 		getSubscriptions        func() ([]subscriptions.Subscription, error)
 	}{

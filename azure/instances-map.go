@@ -82,6 +82,7 @@ func (m *InstancesMapModule) InstancesMap(verbosity int, outputFormat string, ou
 		body,
 		outputDirectory,
 		"instances",
+		"RG_PLACEHOLDER",
 		constants.AZ_INTANCES_MODULE_NAME,
 	)
 }

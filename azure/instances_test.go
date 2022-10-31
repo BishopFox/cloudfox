@@ -8,20 +8,26 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/compute/mgmt/compute"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/network/mgmt/network"
+	"github.com/BishopFox/cloudfox/constants"
 	"github.com/BishopFox/cloudfox/utils"
 	"github.com/aws/smithy-go/ptr"
 )
 
 func TestInstancesCommand(t *testing.T) {
 	var subtests = []struct {
-		name                          string
-		expectedBody                  [][]string
+		name          string
+		subscription  string
+		resourceGroup string
+		expectedBody  [][]string
+		// These mocked functions below are wrapping Azure API calls
 		getComputeVMsPerResourceGroup func(subscriptionID string, resourceGroup string) []compute.VirtualMachine
 		getNICdetails                 func(subscriptionID, resourceGroup string, nicReference compute.NetworkInterfaceReference) (network.Interface, error)
 		getPublicIP                   func(subscriptionID, resourceGroup string, ip network.InterfaceIPConfiguration) (*string, error)
 	}{
 		{
-			name: "subtest 1",
+			name:          "subtest 1",
+			subscription:  "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
+			resourceGroup: "ResourceGroup_A1",
 			expectedBody: [][]string{
 				{"TestVM1", "vm_id_1", "us-east-1", "admin", "192.168.0.1,192.168.0.2", "72.88.100.1,72.88.100.2"},
 				{"TestVM2", "vm_id_2", "us-west-2", "admin", "192.168.0.3,192.168.0.4", "72.88.100.3,72.88.100.4"},
@@ -152,19 +158,19 @@ func TestInstancesCommand(t *testing.T) {
 	fmt.Println()
 	fmt.Println("[test case] Azure Instances Command")
 	utils.MockFileSystem(true)
-	for _, subtest := range subtests {
-		getComputeVMsPerResourceGroupM = subtest.getComputeVMsPerResourceGroup
-		getNICdetailsM = subtest.getNICdetails
-		getPublicIPM = subtest.getPublicIP
-		header, body := GetComputeRelevantData("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA", "A1")
+	for _, s := range subtests {
+		getComputeVMsPerResourceGroupM = s.getComputeVMsPerResourceGroup
+		getNICdetailsM = s.getNICdetails
+		getPublicIPM = s.getPublicIP
+		header, body := GetComputeRelevantData(s.subscription, s.resourceGroup)
 		for rownIndex, row := range body {
 			for columnIndex, element := range row {
-				if element != subtest.expectedBody[rownIndex][columnIndex] {
-					log.Fatalf("[%s] got %s, expected %s", subtest.name, element, subtest.expectedBody[rownIndex][columnIndex])
+				if element != s.expectedBody[rownIndex][columnIndex] {
+					log.Fatalf("[%s] got %s, expected %s", s.name, element, s.expectedBody[rownIndex][columnIndex])
 				}
 			}
 		}
-		utils.OutputSelector(3, "table", header, body, ".", "instances", "instances")
+		utils.OutputSelector(3, "table", header, body, constants.AZ_OUTPUT_DIRECTORY, fmt.Sprintf("instances_%s", s.resourceGroup), constants.AZ_INTANCES_MODULE_NAME, s.resourceGroup)
 	}
 	fmt.Println()
 }

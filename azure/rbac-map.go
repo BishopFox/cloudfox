@@ -66,6 +66,7 @@ func (m *RBACMapModule) printRoleAssginments(verbosity int, outputFormat string,
 		outputDirectory,
 		"rbac",
 		constants.AZ_RBAC_MODULE_NAME,
+		"RG_PLACEHOLDER",
 	)
 }
 

@@ -8,7 +8,7 @@ import (
 	"github.com/BishopFox/cloudfox/constants"
 )
 
-// This test needs AZ CLI authentication to pass
+// Requires Az CLI Authentication to passs
 func TestGetAuthorizer(t *testing.T) {
 	t.Skip()
 	subtests := []struct {

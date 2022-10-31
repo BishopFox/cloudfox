@@ -45,7 +45,8 @@ Enumerates compute instances for specified Resource Group`,
 					body,
 					AzOutputDirectory,
 					"instances",
-					constants.AZ_INTANCES_MODULE_NAME)
+					constants.AZ_INTANCES_MODULE_NAME,
+					ptr.ToString(scopeItem.Rg.Name))
 			}
 		},
 	}
