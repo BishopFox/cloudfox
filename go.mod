@@ -10,7 +10,7 @@ require (
 	github.com/Azure/go-autorest/autorest/to v0.4.0 // indirect
 	github.com/Azure/go-autorest/autorest/validation v0.3.1 // indirect
 	github.com/aquasecurity/table v1.8.0
-	github.com/aws/aws-sdk-go-v2 v1.16.16
+	github.com/aws/aws-sdk-go-v2 v1.17.1
 	github.com/aws/aws-sdk-go-v2/config v1.13.0
 	github.com/aws/aws-sdk-go-v2/service/apigateway v1.15.6
 	github.com/aws/aws-sdk-go-v2/service/apigatewayv2 v1.12.5
@@ -39,14 +39,14 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/redshift v1.25.0
 	github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi v1.13.19
 	github.com/aws/aws-sdk-go-v2/service/route53 v1.20.5
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.24.0
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.29.1
 	github.com/aws/aws-sdk-go-v2/service/sagemaker v1.32.1
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.13.0
 	github.com/aws/aws-sdk-go-v2/service/sns v1.18.1
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.19.10
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.27.1
 	github.com/aws/aws-sdk-go-v2/service/sts v1.14.0
-	github.com/aws/smithy-go v1.13.3
+	github.com/aws/smithy-go v1.13.4
 	github.com/fatih/color v1.13.0
 	github.com/go-openapi/strfmt v0.21.3 // indirect
 	github.com/golang-jwt/jwt/v4 v4.2.0 // indirect

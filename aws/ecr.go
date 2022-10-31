@@ -22,7 +22,7 @@ import (
 type ECRModule struct {
 	// General configuration data
 	ECRClient *ecr.Client
-	// This interface is not being used for anything except for experimentation with unit testing
+	// These interfaces are used for unit testing
 	ECRClientDescribeReposInterface  ecr.DescribeRepositoriesAPIClient
 	ECRClientDescribeImagesInterface ecr.DescribeImagesAPIClient
 
