@@ -21,7 +21,7 @@ func GetComputeRelevantData(subscriptionID string, resourceGroupName string) ([]
 		if vm.VirtualMachineProperties != nil && vm.OsProfile != nil {
 			adminUsername = ptr.ToString(vm.OsProfile.AdminUsername)
 		}
-		privateIPs, publicIPs := getIPsM(subscriptionID, resourceGroupName, vm)
+		privateIPs, publicIPs := getIPs(subscriptionID, resourceGroupName, vm)
 
 		body = append(
 			body,
@@ -30,8 +30,8 @@ func GetComputeRelevantData(subscriptionID string, resourceGroupName string) ([]
 				ptr.ToString(vm.ID),
 				ptr.ToString(vm.Location),
 				adminUsername,
-				strings.Join(privateIPs, "\n"),
-				strings.Join(publicIPs, "\n"),
+				strings.Join(privateIPs, ","),
+				strings.Join(publicIPs, ","),
 			},
 		)
 	}
@@ -56,8 +56,6 @@ func getComputeVMsPerResourceGroup(subscriptionID string, resourceGroup string) 
 	return vms
 }
 
-var getIPsM = getIPs
-
 func getIPs(subscriptionID string, resourceGroup string, vm compute.VirtualMachine) ([]string, []string) {
 	var privateIPs, publicIPs []string
 
@@ -69,13 +67,16 @@ func getIPs(subscriptionID string, resourceGroup string, vm compute.VirtualMachi
 			}
 			if nic.InterfacePropertiesFormat.IPConfigurations != nil {
 				for _, ip := range *nic.InterfacePropertiesFormat.IPConfigurations {
-					privateIPs = append(privateIPs, ptr.ToString(ip.InterfaceIPConfigurationPropertiesFormat.PrivateIPAddress))
+					privateIPs = append(
+						privateIPs,
+						ptr.ToString(
+							ip.InterfaceIPConfigurationPropertiesFormat.PrivateIPAddress))
 
 					publicIP, err := getPublicIPM(subscriptionID, resourceGroup, ip)
 					if err != nil {
-						// error handling placeholder
+						publicIPs = append(publicIPs, err.Error())
 					} else {
-						publicIPs = append(publicIPs, publicIP)
+						publicIPs = append(publicIPs, ptr.ToString(publicIP))
 					}
 				}
 			}
@@ -100,14 +101,13 @@ func getNICdetails(subscriptionID string, resourceGroup string, nicReference com
 
 var getPublicIPM = getPublicIP
 
-func getPublicIP(subscriptionID string, resourceGroup string, ip network.InterfaceIPConfiguration) (string, error) {
+func getPublicIP(subscriptionID string, resourceGroup string, ip network.InterfaceIPConfiguration) (*string, error) {
 	client := utils.GetPublicIPclient(subscriptionID)
 	publicIPID := ptr.ToString(ip.InterfaceIPConfigurationPropertiesFormat.PublicIPAddress.ID)
 	publicIPName := strings.Split(publicIPID, "/")[len(strings.Split(publicIPID, "/"))-1]
-	fmt.Println(publicIPName)
 	publicIPExpanded, err := client.Get(context.TODO(), resourceGroup, publicIPName, "")
 	if err != nil {
-		return "", nil
+		return nil, fmt.Errorf("IPNotFound:%s", publicIPName)
 	}
-	return ptr.ToString(publicIPExpanded.PublicIPAddressPropertiesFormat.IPAddress), nil
+	return publicIPExpanded.PublicIPAddressPropertiesFormat.IPAddress, nil
 }
