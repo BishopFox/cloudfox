@@ -18,9 +18,15 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+type S3ListBucketsAPI interface {
+	ListBuckets(ctx context.Context, params *s3.ListBucketsInput, optFns ...func(*s3.Options)) (*s3.ListBucketsOutput, error)
+}
 type BucketsModule struct {
 	// General configuration data
 	S3Client *s3.Client
+
+	// This interface is used for unit testing
+	S3ClientListBucketsInterface S3ListBucketsAPI
 
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
@@ -193,7 +199,7 @@ func (m *BucketsModule) getBuckets(verbosity int, wg *sync.WaitGroup, semaphore 
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
 	var r string = "Global"
 	var name string
-	ListBuckets, err := m.S3Client.ListBuckets(
+	ListBuckets, err := m.S3ClientListBucketsInterface.ListBuckets(
 		context.TODO(),
 		&s3.ListBucketsInput{},
 	)
