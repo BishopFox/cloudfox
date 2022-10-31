@@ -26,51 +26,54 @@ func TestInstancesCommand(t *testing.T) {
 	}{
 		{
 			name:          "subtest 1",
-			subscription:  "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
+			subscription:  "subscription/AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
 			resourceGroup: "ResourceGroup_A1",
 			expectedBody: [][]string{
-				{"TestVM1", "vm_id_1", "us-east-1", "admin", "192.168.0.1,192.168.0.2", "72.88.100.1,72.88.100.2"},
-				{"TestVM2", "vm_id_2", "us-west-2", "admin", "192.168.0.3,192.168.0.4", "72.88.100.3,72.88.100.4"},
+				{"TestVM1", "us-east-1", "admin", "192.168.0.1,192.168.0.2", "72.88.100.1,72.88.100.2"},
+				{"TestVM2", "us-west-2", "admin", "192.168.0.3,192.168.0.4", "72.88.100.3,72.88.100.4"},
 			},
 			getComputeVMsPerResourceGroup: func(subscriptionID, resourceGroup string) []compute.VirtualMachine {
-				return []compute.VirtualMachine{
-					{
-						Name:     ptr.String("TestVM1"),
-						ID:       ptr.String("vm_id_1"),
-						Location: ptr.String("us-east-1"),
-						VirtualMachineProperties: &compute.VirtualMachineProperties{
-							OsProfile: &compute.OSProfile{
-								AdminUsername: ptr.String("admin"),
-							},
-							NetworkProfile: &compute.NetworkProfile{
-								NetworkInterfaces: &[]compute.NetworkInterfaceReference{
-									{
-										ID: ptr.String("/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/NetworkInterface1"),
+				switch subscriptionID {
+				case "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA":
+					return []compute.VirtualMachine{
+						{
+							Name:     ptr.String("TestVM1"),
+							Location: ptr.String("us-east-1"),
+							VirtualMachineProperties: &compute.VirtualMachineProperties{
+								OsProfile: &compute.OSProfile{
+									AdminUsername: ptr.String("admin"),
+								},
+								NetworkProfile: &compute.NetworkProfile{
+									NetworkInterfaces: &[]compute.NetworkInterfaceReference{
+										{
+											ID: ptr.String("/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/NetworkInterface1"),
+										},
 									},
 								},
 							},
 						},
-					},
-					{
-						Name:     ptr.String("TestVM2"),
-						ID:       ptr.String("vm_id_2"),
-						Location: ptr.String("us-west-2"),
-						VirtualMachineProperties: &compute.VirtualMachineProperties{
-							OsProfile: &compute.OSProfile{
-								AdminUsername: ptr.String("admin"),
-							},
-							NetworkProfile: &compute.NetworkProfile{
-								NetworkInterfaces: &[]compute.NetworkInterfaceReference{
-									{
-										ID: ptr.String("/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/NetworkInterface2"),
-									},
-									{
-										ID: ptr.String("/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/NetworkInterface3"),
+						{
+							Name:     ptr.String("TestVM2"),
+							Location: ptr.String("us-west-2"),
+							VirtualMachineProperties: &compute.VirtualMachineProperties{
+								OsProfile: &compute.OSProfile{
+									AdminUsername: ptr.String("admin"),
+								},
+								NetworkProfile: &compute.NetworkProfile{
+									NetworkInterfaces: &[]compute.NetworkInterfaceReference{
+										{
+											ID: ptr.String("/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/NetworkInterface2"),
+										},
+										{
+											ID: ptr.String("/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/NetworkInterface3"),
+										},
 									},
 								},
 							},
 						},
-					},
+					}
+				default:
+					return []compute.VirtualMachine{}
 				}
 			},
 			getNICdetails: func(subscriptionID, resourceGroup string, nicReference compute.NetworkInterfaceReference) (network.Interface, error) {

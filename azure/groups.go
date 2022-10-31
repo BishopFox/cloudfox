@@ -17,6 +17,7 @@ import (
 // userInput = nil will prompt interactive menu for RG selection.
 // The userInput argument is used to toggle the interactive menu (useful for unit tests).
 func ScopeSelection(userInput *string) []scopeElement {
+	fmt.Println("Fetching available resource groups from Az CLI sessions...")
 	var results []scopeElement
 
 	availableScope := getAvailableScope()
@@ -59,8 +60,8 @@ func printAvailableScope(availableScope []scopeElement) {
 			tableBody,
 			[]string{
 				strconv.Itoa(scopeItem.menuIndex),
-				ptr.ToString(scopeItem.Rg.Name),
-				ptr.ToString(scopeItem.Sub.SubscriptionID)})
+				ptr.ToString(scopeItem.Sub.SubscriptionID),
+				ptr.ToString(scopeItem.Rg.Name)})
 	}
 	sort.Slice(
 		tableBody,
@@ -68,7 +69,7 @@ func printAvailableScope(availableScope []scopeElement) {
 			return tableBody[i][1] < tableBody[j][1]
 		},
 	)
-	utils.PrintTableToScreen([]string{"Number", "Resource Group Name", "Subscription"}, tableBody)
+	utils.PrintTableToScreen([]string{"Number", "Subscription", "Resource Group Name"}, tableBody)
 }
 
 type scopeElement struct {

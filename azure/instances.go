@@ -13,21 +13,23 @@ import (
 )
 
 func GetComputeRelevantData(subscriptionID string, resourceGroupName string) ([]string, [][]string) {
-	header := []string{"Name", "ID", "Location", "Admin Username", "Private IP", "Public IP"}
+	header := []string{"Name", "Location", "Admin Username", "Private IP", "Public IP"}
 	var body [][]string
 
-	for _, vm := range getComputeVMsPerResourceGroupM(subscriptionID, resourceGroupName) {
+	// Format received from Azure: subscriptionID = "/subscriptions/0f39574d-d756-48cf-b622-0e27a6943bd2"
+	subID := strings.Split(subscriptionID, "/")[len(strings.Split(subscriptionID, "/"))-1]
+
+	for _, vm := range getComputeVMsPerResourceGroupM(subID, resourceGroupName) {
 		var adminUsername string
 		if vm.VirtualMachineProperties != nil && vm.OsProfile != nil {
 			adminUsername = ptr.ToString(vm.OsProfile.AdminUsername)
 		}
-		privateIPs, publicIPs := getIPs(subscriptionID, resourceGroupName, vm)
+		privateIPs, publicIPs := getIPs(subID, resourceGroupName, vm)
 
 		body = append(
 			body,
 			[]string{
 				ptr.ToString(vm.Name),
-				ptr.ToString(vm.ID),
 				ptr.ToString(vm.Location),
 				adminUsername,
 				strings.Join(privateIPs, ","),
