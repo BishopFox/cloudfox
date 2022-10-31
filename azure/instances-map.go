@@ -7,11 +7,10 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/compute/mgmt/compute"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/network/mgmt/network"
+	"github.com/BishopFox/cloudfox/constants"
 	"github.com/BishopFox/cloudfox/utils"
 	"github.com/aws/smithy-go/ptr"
 )
-
-const InstancesCallingModuleName = "instances"
 
 type InstancesMapModule struct {
 	// Tenants, Subs and RGs: map[TenantID]map[SubscriptionID][]ResourceGroups
@@ -83,7 +82,7 @@ func (m *InstancesMapModule) InstancesMap(verbosity int, outputFormat string, ou
 		body,
 		outputDirectory,
 		"instances",
-		InstancesCallingModuleName,
+		constants.AZ_INTANCES_MODULE_NAME,
 	)
 }
 

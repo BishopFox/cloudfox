@@ -11,8 +11,6 @@ import (
 	"github.com/aws/smithy-go/ptr"
 )
 
-const AzureOutputDirectory = "/azure/"
-
 func AzNewGraphAuthorizer(tenantID string) autorest.Authorizer {
 	a, err := auth.NewAuthorizerFromCLIWithResource("https://graph.windows.net/")
 	if err != nil {

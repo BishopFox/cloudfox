@@ -2,6 +2,7 @@ package cli
 
 import (
 	"github.com/BishopFox/cloudfox/azure"
+	"github.com/BishopFox/cloudfox/constants"
 	"github.com/BishopFox/cloudfox/utils"
 	"github.com/aws/smithy-go/ptr"
 	"github.com/fatih/color"
@@ -44,7 +45,7 @@ Enumerates compute instances for specified Resource Group`,
 					body,
 					AzOutputDirectory,
 					"instances",
-					azure.InstancesCallingModuleName)
+					constants.AZ_INTANCES_MODULE_NAME)
 			}
 		},
 	}
@@ -68,7 +69,7 @@ func init() {
 	AzInstancesMapCommand.Flags().StringVarP(&AzResourceGroupFilter, "resource-group", "g", "all", "Name of Resource Group to query")
 	AzCommands.PersistentFlags().StringVarP(&AzOutputFormat, "output", "o", "all", "[\"table\" | \"csv\" | \"all\" ]")
 	AzCommands.PersistentFlags().IntVarP(&AzVerbosity, "verbosity", "v", 1, "1 = Print control messages only\n2 = Print control messages, module output\n3 = Print control messages, module output, and loot file output\n")
-	AzCommands.PersistentFlags().StringVar(&AzOutputDirectory, utils.AzureOutputDirectory, "cloudfox-output", "Output Directory ")
+	AzCommands.PersistentFlags().StringVar(&AzOutputDirectory, constants.AZ_OUTPUT_DIRECTORY, "cloudfox-output", "Output Directory ")
 
 	// Instances Map Module Flags
 	//AzInstancesMapCommand.Flags().StringVarP(&AzInstancesMapRGFilter, "resource-group", "g", "all", "Name of Resource Group to query")

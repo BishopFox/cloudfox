@@ -7,11 +7,10 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/authorization/mgmt/authorization"
 	"github.com/Azure/azure-sdk-for-go/services/graphrbac/1.6/graphrbac"
+	"github.com/BishopFox/cloudfox/constants"
 	"github.com/BishopFox/cloudfox/utils"
 	"github.com/aws/smithy-go/ptr"
 )
-
-const RBACcallingModuleName = "rbac"
 
 type RBACMapModule struct {
 	// Tenants, Subs and RGs: map[TenantID]map[SubscriptionID][]ResourceGroups
@@ -66,7 +65,7 @@ func (m *RBACMapModule) printRoleAssginments(verbosity int, outputFormat string,
 		body,
 		outputDirectory,
 		"rbac",
-		RBACcallingModuleName,
+		constants.AZ_RBAC_MODULE_NAME,
 	)
 }
 

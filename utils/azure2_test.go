@@ -4,20 +4,24 @@ import (
 	"fmt"
 	"log"
 	"testing"
+
+	"github.com/BishopFox/cloudfox/constants"
 )
 
+// This test needs AZ CLI authentication to pass
 func TestGetAuthorizer(t *testing.T) {
+	t.Skip()
 	subtests := []struct {
 		name     string
 		endpoint string
 	}{
 		{
 			name:     "Resource Manager Authorizer",
-			endpoint: RESOURCE_MANAGER_ENDPOINT,
+			endpoint: constants.AZ_RESOURCE_MANAGER_ENDPOINT,
 		},
 		{
 			name:     "Graph API Authorizer",
-			endpoint: GRAPH_ENDPOINT,
+			endpoint: constants.AZ_GRAPH_ENDPOINT,
 		},
 	}
 	for _, subtest := range subtests {

@@ -8,12 +8,10 @@ import (
 	"path"
 	"path/filepath"
 
+	"github.com/BishopFox/cloudfox/constants"
 	"github.com/aws/smithy-go/ptr"
 	"github.com/jedib0t/go-pretty/text"
 )
-
-const CloudFoxClientDirName = ".cloudfox"
-const LogFileName = "cloudfox.log"
 
 func init() {
 	text.EnableColors()
@@ -26,7 +24,7 @@ func InitLogging() *os.File {
 	// log.SetFlags(log.LstdFlags | log.Lshortfile)
 	log.SetFlags(log.LstdFlags)
 	appDir := GetLogDirPath()
-	logFile, err := os.OpenFile(path.Join(ptr.ToString(appDir), LogFileName), os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
+	logFile, err := os.OpenFile(path.Join(ptr.ToString(appDir), constants.CLOUDFOX_LOG_FILE_NAME), os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
 	if err != nil {
 		log.Fatalf("[-] Error opening log file: %s", err)
 	}
@@ -39,7 +37,7 @@ func InitLogging() *os.File {
 // If the folder does not exist the function creates it.
 func GetLogDirPath() *string {
 	user, _ := user.Current()
-	dir := filepath.Join(user.HomeDir, CloudFoxClientDirName)
+	dir := filepath.Join(user.HomeDir, constants.CLOUDFOX_LOG_FILE_DIR_NAME)
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		err = os.MkdirAll(dir, 0700)
 		if err != nil {
