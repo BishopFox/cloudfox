@@ -425,8 +425,12 @@ var (
 					continue
 				}
 				m := aws.ECSTasksModule{
-					ECSClient: ecs.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
-					EC2Client: ec2.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+					//ECSClient:           ecs.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+					DescribeTasksClient: ecs.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+					ListTasksClient:     ecs.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+					ListClustersClient:  ecs.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+					//EC2Client:                       ec2.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+					DescribeNetworkInterfacesClient: ec2.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
 
 					Caller:     *caller,
 					AWSRegions: AWSRegions,
@@ -460,7 +464,8 @@ var (
 					continue
 				}
 				m := aws.ElasticNetworkInterfacesModule{
-					EC2Client: ec2.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+					//EC2Client:                       ec2.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+					DescribeNetworkInterfacesClient: ec2.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
 
 					Caller:     *caller,
 					AWSRegions: AWSRegions,

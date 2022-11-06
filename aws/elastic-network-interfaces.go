@@ -18,7 +18,8 @@ import (
 )
 
 type ElasticNetworkInterfacesModule struct {
-	EC2Client *ec2.Client
+	//EC2Client                       *ec2.Client
+	DescribeNetworkInterfacesClient ec2.DescribeNetworkInterfacesAPIClient
 
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
@@ -181,7 +182,7 @@ func (m *ElasticNetworkInterfacesModule) executeChecks(r string, wg *sync.WaitGr
 func (m *ElasticNetworkInterfacesModule) getDescribeNetworkInterfaces(region string, dataReceiver chan MappedENI) {
 	var PaginationControl *string
 	for {
-		DescribeNetworkInterfaces, err := m.EC2Client.DescribeNetworkInterfaces(
+		DescribeNetworkInterfaces, err := m.DescribeNetworkInterfacesClient.DescribeNetworkInterfaces(
 			context.TODO(),
 			&(ec2.DescribeNetworkInterfacesInput{
 				NextToken: PaginationControl,

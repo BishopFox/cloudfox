@@ -20,8 +20,12 @@ import (
 )
 
 type ECSTasksModule struct {
-	ECSClient *ecs.Client
-	EC2Client *ec2.Client
+	//ECSClient           *ecs.Client
+	DescribeTasksClient ecs.DescribeTasksAPIClient
+	ListTasksClient     ecs.ListTasksAPIClient
+	ListClustersClient  ecs.ListClustersAPIClient
+	//EC2Client                       *ec2.Client
+	DescribeNetworkInterfacesClient ec2.DescribeNetworkInterfacesAPIClient
 
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
@@ -183,7 +187,7 @@ func (m *ECSTasksModule) getListClusters(region string, dataReceiver chan Mapped
 
 	var PaginationControl *string
 	for {
-		ListClusters, err := m.ECSClient.ListClusters(
+		ListClusters, err := m.ListClustersClient.ListClusters(
 			context.TODO(),
 			&(ecs.ListClustersInput{
 				NextToken: PaginationControl,
@@ -216,7 +220,7 @@ func (m *ECSTasksModule) getListTasks(clusterARN string, region string, dataRece
 	var PaginationControl *string
 	for {
 
-		ListTasks, err := m.ECSClient.ListTasks(
+		ListTasks, err := m.ListTasksClient.ListTasks(
 			context.TODO(),
 			&(ecs.ListTasksInput{
 				Cluster:   aws.String(clusterARN),
@@ -257,7 +261,7 @@ func (m *ECSTasksModule) loadTasksData(clusterARN string, taskARNs []string, reg
 		return
 	}
 
-	DescribeTasks, err := m.ECSClient.DescribeTasks(
+	DescribeTasks, err := m.DescribeTasksClient.DescribeTasks(
 		context.TODO(),
 		&(ecs.DescribeTasksInput{
 			Cluster: aws.String(clusterARN),
@@ -336,8 +340,7 @@ func (m *ECSTasksModule) loadPublicIPs(eniIDs []string, region string) (map[stri
 	if len(eniIDs) == 0 {
 		return eniPublicIPs, nil
 	}
-
-	DescribeNetworkInterfaces, err := m.EC2Client.DescribeNetworkInterfaces(
+	DescribeNetworkInterfaces, err := m.DescribeNetworkInterfacesClient.DescribeNetworkInterfaces(
 		context.TODO(),
 		&(ec2.DescribeNetworkInterfacesInput{
 			NetworkInterfaceIds: eniIDs,
