@@ -6,7 +6,6 @@ import (
 	"log"
 	"testing"
 
-	"github.com/BishopFox/cloudfox/utils"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
@@ -39,7 +38,6 @@ func (c *mockedDescribeNetworkInterfacesClient2) DescribeNetworkInterfaces(ctx c
 }
 
 func TestElasticNetworkInterfaces(t *testing.T) {
-	utils.FileSystem = utils.MockFileSystem(true)
 	m := ElasticNetworkInterfacesModule{
 		AWSProfile:                      "default",
 		AWSRegions:                      []string{"us-east-1", "us-west-1"},

@@ -1015,8 +1015,27 @@ var (
 					AWSProfile: profile,
 					Goroutines: Goroutines,
 				}
-
 				endpoints.PrintEndpoints(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+
+				ecstasks := aws.ECSTasksModule{
+					DescribeTasksClient:             ecsClient,
+					ListTasksClient:                 ecsClient,
+					ListClustersClient:              ecsClient,
+					DescribeNetworkInterfacesClient: ec2Client,
+					Caller:                          *Caller,
+					AWSRegions:                      AWSRegions,
+					AWSProfile:                      profile,
+				}
+				ecstasks.ECSTasks(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+
+				elasticnetworkinterfaces := aws.ElasticNetworkInterfacesModule{
+					DescribeNetworkInterfacesClient: ec2Client,
+					Caller:                          *Caller,
+					AWSRegions:                      AWSRegions,
+					AWSProfile:                      profile,
+				}
+				elasticnetworkinterfaces.ElasticNetworkInterfaces(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+
 				// Secrets section
 				fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Looking for secrets hidden between the seat cushions."))
 
@@ -1031,6 +1050,7 @@ var (
 					Goroutines:             Goroutines,
 				}
 				ec2UserData.Instances(InstancesFilter, AWSOutputFormat, AWSOutputDirectory, Verbosity)
+
 				envsMod := aws.EnvsModule{
 
 					Caller:          *Caller,
