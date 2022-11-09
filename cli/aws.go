@@ -167,6 +167,26 @@ var (
 		Run:    runInstancesCommand,
 	}
 
+	ECSTasksCommand = &cobra.Command{
+		Use:     "ecs-tasks",
+		Aliases: []string{"ecs"},
+		Short:   "Enumerate all ECS tasks along with assigned IPs and profiles",
+		Long: "\nUse case examples:\n" +
+			os.Args[0] + " aws ecs-tasks --profile readonly_profile",
+		PreRun: awsPreRun,
+		Run:    runECSTasksCommand,
+	}
+
+	ElasticNetworkInterfacesCommand = &cobra.Command{
+		Use:     "elastic-network-interfaces",
+		Aliases: []string{"eni"},
+		Short:   "Enumerate all elastic network interafces along with their private and public IPs and the VPC",
+		Long: "\nUse case examples:\n" +
+			os.Args[0] + " aws elastic-network-interfaces --profile readonly_profile",
+		PreRun: awsPreRun,
+		Run:    runENICommand,
+	}
+
 	InventoryCommand = &cobra.Command{
 		Use:   "inventory",
 		Short: "Gain a rough understanding of size of the account and preferred regions",
@@ -324,6 +344,8 @@ func init() {
 		RoleTrustCommand,
 		AccessKeysCommand,
 		InstancesCommand,
+		ECSTasksCommand,
+		ElasticNetworkInterfacesCommand,
 		InventoryCommand,
 		EndpointsCommand,
 		SecretsCommand,
@@ -763,6 +785,48 @@ func runTagsCommand(cmd *cobra.Command, args []string) {
 	}
 }
 
+func runECSTasksCommand(cmd *cobra.Command, args []string) {
+	for _, profile := range AWSProfiles {
+		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		if err != nil {
+			continue
+		}
+		m := aws.ECSTasksModule{
+			//ECSClient:           ecs.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			DescribeTasksClient: ecs.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			ListTasksClient:     ecs.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			ListClustersClient:  ecs.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			//EC2Client:                       ec2.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			DescribeNetworkInterfacesClient: ec2.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+
+			Caller:     *caller,
+			AWSRegions: AWSRegions,
+
+			AWSProfile: profile,
+		}
+		m.ECSTasks(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+	}
+}
+
+func runENICommand(cmd *cobra.Command, args []string) {
+	for _, profile := range AWSProfiles {
+		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		if err != nil {
+			continue
+		}
+		m := aws.ElasticNetworkInterfacesModule{
+			//EC2Client:                       ec2.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			DescribeNetworkInterfacesClient: ec2.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+
+			Caller:     *caller,
+			AWSRegions: AWSRegions,
+
+			AWSProfile: profile,
+		}
+		m.ElasticNetworkInterfaces(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+	}
+}
+
 func runAllChecksCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
 		var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
@@ -779,8 +843,6 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		dynamodbClient := dynamodb.NewFromConfig(AWSConfig)
 		ec2Client := ec2.NewFromConfig(AWSConfig)
 		ecrClient := ecr.NewFromConfig(AWSConfig)
-		//ECRClientDescribeReposInterface := ecr.NewFromConfig(AWSConfig)
-		//ECRClientDescribeImagesInterface := ecr.NewFromConfig(AWSConfig)
 		ecsClient := ecs.NewFromConfig(AWSConfig)
 		efsClient := efs.NewFromConfig(AWSConfig)
 		eksClient := eks.NewFromConfig(AWSConfig)
@@ -918,6 +980,26 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		}
 
 		endpoints.PrintEndpoints(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+
+		ecstasks := aws.ECSTasksModule{
+			DescribeTasksClient:             ecsClient,
+			ListTasksClient:                 ecsClient,
+			ListClustersClient:              ecsClient,
+			DescribeNetworkInterfacesClient: ec2Client,
+			Caller:                          *Caller,
+			AWSRegions:                      AWSRegions,
+			AWSProfile:                      profile,
+		}
+		ecstasks.ECSTasks(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+
+		elasticnetworkinterfaces := aws.ElasticNetworkInterfacesModule{
+			DescribeNetworkInterfacesClient: ec2Client,
+			Caller:                          *Caller,
+			AWSRegions:                      AWSRegions,
+			AWSProfile:                      profile,
+		}
+		elasticnetworkinterfaces.ElasticNetworkInterfaces(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+
 		// Secrets section
 		fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Looking for secrets hidden between the seat cushions."))
 

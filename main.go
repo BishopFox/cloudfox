@@ -11,7 +11,7 @@ import (
 var (
 	rootCmd = &cobra.Command{
 		Use:     os.Args[0],
-		Version: "1.8.0",
+		Version: "1.9.0",
 	}
 )
 
