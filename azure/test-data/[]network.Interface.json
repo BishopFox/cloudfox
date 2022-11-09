@@ -51,5 +51,35 @@
               }
           ]
       }
-  }
+    },
+    {
+        "id": "/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/NetworkInterface4",
+        "properties": {
+            "ipConfigurations": [
+                {
+                    "properties": {
+                        "privateIPAddress": "192.168.0.5",
+                        "publicIPAddress": {
+                            "id": "/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/publicIPAddresses/PublicIpAddress4A"
+                        }
+                    }
+                }
+            ]
+        }
+      },
+      {
+        "id": "/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/NetworkInterface5",
+        "properties": {
+            "ipConfigurations": [
+                {
+                    "properties": {
+                        "privateIPAddress": "192.168.0.6",
+                        "publicIPAddress": {
+                            "id": "/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/publicIPAddresses/PublicIpAddress5A"
+                        }
+                    }
+                }
+            ]
+        }
+      }
 ]

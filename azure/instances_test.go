@@ -20,6 +20,7 @@ func TestGetComputeRelevantData(t *testing.T) {
 	fmt.Println()
 	fmt.Println("[test case] GetComputeRelevantData Function")
 
+	// Mocked functions to simulate Azure responses
 	GetComputeVMsPerResourceGroup = func(subscriptionID, resourceGroup string) []compute.VirtualMachine {
 		testFile, err := os.ReadFile(constants.VMS_TEST_FILE)
 		if err != nil {
@@ -54,6 +55,10 @@ func TestGetComputeRelevantData(t *testing.T) {
 			return nics[1], nil
 		case "NetworkInterface3":
 			return nics[2], nil
+		case "NetworkInterface4":
+			return nics[3], nil
+		case "NetworkInterface5":
+			return nics[4], nil
 		default:
 			return network.Interface{}, fmt.Errorf("nic not found: %s", ptr.ToString(nicReference.ID))
 		}
@@ -70,11 +75,16 @@ func TestGetComputeRelevantData(t *testing.T) {
 			return ptr.String("72.88.100.3"), nil
 		case "PublicIpAddress3A":
 			return ptr.String("72.88.100.3"), nil
+		case "PublicIpAddress4A":
+			return ptr.String("72.88.100.4"), nil
+		case "PublicIpAddress5A":
+			return ptr.String("72.88.100.5"), nil
 		default:
 			return nil, fmt.Errorf("public IP not found %s", publicIPName)
 		}
 	}
 
+	// Test case parameters
 	subscription := "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA"
 	resourceGroup := "RG1"
 	header, body := GetComputeRelevantData(subscription, resourceGroup)

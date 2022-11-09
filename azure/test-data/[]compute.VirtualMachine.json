@@ -1,5 +1,6 @@
 [
     {
+        "name": "TestVM-1",
         "location": "us-east-1",
         "properties": {
             "networkProfile": {
@@ -15,6 +16,7 @@
         }
     },
     {
+        "name": "TestVM-2",
         "location": "us-west-2",
         "properties": {
             "networkProfile": {
@@ -24,6 +26,38 @@
                     },
                     {
                         "id": "/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/NetworkInterface3"
+                    }
+                ]
+            },
+            "osProfile": {
+                "adminUsername": "admin"
+            }
+        }
+    },
+    {
+        "name": "TestVM-3",
+        "location": "us-east-2",
+        "properties": {
+            "networkProfile": {
+                "networkInterfaces": [
+                    {
+                        "id": "/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/NetworkInterface4"
+                    }
+                ]
+            },
+            "osProfile": {
+                "adminUsername": "admin"
+            }
+        }
+    },
+    {
+        "name": "TestVM-4",
+        "location": "us-west-2",
+        "properties": {
+            "networkProfile": {
+                "networkInterfaces": [
+                    {
+                        "id": "/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/NetworkInterface5"
                     }
                 ]
             },

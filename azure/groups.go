@@ -10,14 +10,16 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/resources"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/subscriptions"
+	"github.com/BishopFox/cloudfox/constants"
 	"github.com/BishopFox/cloudfox/utils"
 	"github.com/aws/smithy-go/ptr"
+	"github.com/fatih/color"
 )
 
 // userInput = nil will prompt interactive menu for RG selection.
 // The userInput argument is used to toggle the interactive menu (useful for unit tests).
 func ScopeSelection(userInput *string) []scopeElement {
-	fmt.Println("Fetching available resource groups from Az CLI sessions...")
+	fmt.Printf("[%s] Fetching available resource groups from Az CLI sessions...\n", color.CyanString(constants.AZ_INTERACTIVE_MENU_MODULE_NAME))
 	var results []scopeElement
 
 	availableScope := getAvailableScope()
@@ -25,8 +27,8 @@ func ScopeSelection(userInput *string) []scopeElement {
 
 	if userInput == nil {
 		var input string
-		fmt.Println("Please select resource groups numbers to analyze. Separate selection by commas (e.g. '1,2,3').")
-		fmt.Printf("Selection: ")
+		fmt.Printf("[%s] Please select resource groups numbers to analyze. Separate selection by commas (e.g. '1,2,3').", color.CyanString(constants.AZ_INTERACTIVE_MENU_MODULE_NAME))
+		fmt.Printf("[%s]> ", color.CyanString(constants.AZ_INTERACTIVE_MENU_MODULE_NAME))
 		fmt.Scanln(&input)
 		userInput = ptr.String(input)
 	}
@@ -84,16 +86,9 @@ type scopeElement struct {
 func getAvailableScope() []scopeElement {
 	var index int
 	var results []scopeElement
-	subs, err := GetSubscriptions()
-
-	if err != nil {
-		log.Fatalf("error getting available scope from Azure CLI: %s", err)
-	}
+	subs := GetSubscriptions()
 	for _, sub := range subs {
-		rgs, err := GetResourceGroupsPerSub(ptr.ToString(sub.SubscriptionID))
-		if err != nil {
-			log.Fatalf("error getting available scope from Azure CLI: %s", err)
-		}
+		rgs := GetResourceGroupsPerSub(ptr.ToString(sub.SubscriptionID))
 
 		for _, rg := range rgs {
 			index++
@@ -105,48 +100,42 @@ func getAvailableScope() []scopeElement {
 
 var GetResourceGroupsPerSub = getResourceGroupsPerSub
 
-func getResourceGroupsPerSub(subscriptionID string) ([]resources.Group, error) {
+func getResourceGroupsPerSub(subscriptionID string) []resources.Group {
 	var results []resources.Group
 	rgClient := utils.GetResourceGroupsClient(subscriptionID)
 
 	for page, err := rgClient.List(context.TODO(), "", nil); page.NotDone(); err = page.Next() {
 		if err != nil {
-			return results, err
+			log.Fatalf("error reading resource groups for subscription %s", subscriptionID)
 		}
 		results = append(results, page.Values()...)
 	}
-	return results, nil
+	return results
 }
 
 var GetSubscriptions = getSubscriptions
 
-func getSubscriptions() ([]subscriptions.Subscription, error) {
+func getSubscriptions() []subscriptions.Subscription {
 	var results []subscriptions.Subscription
 	subsClient := utils.GetSubscriptionsClient()
 	for page, err := subsClient.List(context.TODO()); page.NotDone(); err = page.Next() {
 		if err != nil {
-			return results, err
+			log.Fatal("could not get subscriptions for active session")
 		}
 		results = append(results, page.Values()...)
 	}
-	return results, nil
+	return results
 }
 
-func GetSubscriptionForResourceGroup(resourceGroup string) (subscriptions.Subscription, error) {
-	subs, err := GetSubscriptions()
-	if err != nil {
-		log.Fatalf("cannot get subscriptions: %s", err)
-	}
+func GetSubscriptionForResourceGroup(resourceGroupName string) subscriptions.Subscription {
+	subs := GetSubscriptions()
 	for _, sub := range subs {
-		rgs, err := GetResourceGroupsPerSub(ptr.ToString(sub.SubscriptionID))
-		if err != nil {
-			log.Fatalf("can't find resource groups for subscription %s", ptr.ToString(sub.SubscriptionID))
-		}
+		rgs := GetResourceGroupsPerSub(ptr.ToString(sub.SubscriptionID))
 		for _, rg := range rgs {
-			if ptr.ToString(rg.Name) == resourceGroup {
-				return sub, nil
+			if ptr.ToString(rg.Name) == resourceGroupName {
+				return sub
 			}
 		}
 	}
-	return subscriptions.Subscription{}, nil
+	return subscriptions.Subscription{}
 }

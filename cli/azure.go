@@ -36,7 +36,7 @@ See \"Available Commands\" for Azure Modules`,
 		Short:   "Enumerates compute instances for specified Resource Group",
 		Long:    `Enumerates compute instances for specified Resource Group`,
 		Run: func(cmd *cobra.Command, args []string) {
-			AzRunInstancesCommand(AzSubFilter, AzRGFilter, AzOutputFormat, AzOutputDirectory, AzVerbosity)
+			AzRunInstancesCommand(AzSubFilter, AzRGFilter, AzOutputFormat, AzVerbosity)
 		},
 	}
 	AzUserFilter     string
@@ -69,29 +69,75 @@ func init() {
 	AzCommands.AddCommand(AzInstancesCommand, AzRBACMapCommand)
 }
 
-func AzRunInstancesCommand(AzSubFilter string, AzRGFilter string, AzOutputFormat string, AzOutputDirectory string, AzVerbosity int) {
+func AzRunInstancesCommand(AzSubFilter, AzRGFilter, AzOutputFormat string, AzVerbosity int) {
 	if AzRGFilter == "interactive" && AzSubFilter == "interactive" {
 		for _, scopeItem := range azure.ScopeSelection(nil) {
-
-			head, body := azure.GetComputeRelevantData(
+			tableHead, tableBody := azure.GetComputeRelevantData(
 				ptr.ToString(scopeItem.Sub.ID),
 				ptr.ToString(scopeItem.Rg.Name))
 
 			utils.OutputSelector(
 				AzVerbosity,
 				AzOutputFormat,
-				head,
-				body,
-				filepath.Join(constants.CLOUDFOX_BASE_OUTPUT_DIRECTORY, fmt.Sprintf("%s_%s", constants.AZ_OUTPUT_DIRECTORY, AzRGFilter)),
+				tableHead,
+				tableBody,
+				filepath.Join(
+					constants.CLOUDFOX_BASE_OUTPUT_DIRECTORY,
+					fmt.Sprintf("%s_%s",
+						constants.AZ_OUTPUT_DIRECTORY,
+						ptr.ToString(scopeItem.Rg.Name))),
 				constants.AZ_INTANCES_MODULE_NAME,
 				constants.AZ_INTANCES_MODULE_NAME,
 				ptr.ToString(scopeItem.Rg.Name))
 		}
 	} else if AzRGFilter == "interactive" && AzSubFilter != "interactive" {
-		// Get all instances from all resource groups in AzSubFilter
-		return
+		fmt.Printf("[%s] Enumerating VMs for subscription: %s\n", cyan(constants.AZ_INTANCES_MODULE_NAME), AzSubFilter)
+
+		for _, sub := range azure.GetSubscriptions() {
+			if ptr.ToString(sub.SubscriptionID) == AzSubFilter {
+				for _, rg := range azure.GetResourceGroupsPerSub(ptr.ToString(sub.SubscriptionID)) {
+					tableHead, tableBody := azure.GetComputeRelevantData(
+						ptr.ToString(sub.ID),
+						ptr.ToString(rg.Name))
+
+					if tableBody != nil {
+						utils.OutputSelector(
+							AzVerbosity,
+							AzOutputFormat,
+							tableHead,
+							tableBody,
+							filepath.Join(
+								constants.CLOUDFOX_BASE_OUTPUT_DIRECTORY,
+								fmt.Sprintf("%s_%s",
+									constants.AZ_OUTPUT_DIRECTORY,
+									ptr.ToString(rg.Name))),
+							constants.AZ_INTANCES_MODULE_NAME,
+							constants.AZ_INTANCES_MODULE_NAME,
+							ptr.ToString(rg.Name))
+					}
+				}
+			}
+		}
 	} else if AzRGFilter != "interactive" && AzSubFilter == "interactive" {
-		// Get instances for all resource groups with name AzRGFilter
-		return
+		fmt.Printf("[%s] Enumerating VMs for resource group: %s\n", cyan(constants.AZ_INTANCES_MODULE_NAME), AzRGFilter)
+
+		sub := azure.GetSubscriptionForResourceGroup(AzRGFilter)
+		tableHead, tableBody := azure.GetComputeRelevantData(
+			ptr.ToString(sub.ID),
+			AzRGFilter)
+
+		utils.OutputSelector(
+			AzVerbosity,
+			AzOutputFormat,
+			tableHead,
+			tableBody,
+			filepath.Join(
+				constants.CLOUDFOX_BASE_OUTPUT_DIRECTORY,
+				fmt.Sprintf("%s_%s",
+					constants.AZ_OUTPUT_DIRECTORY,
+					AzRGFilter)),
+			constants.AZ_INTANCES_MODULE_NAME,
+			constants.AZ_INTANCES_MODULE_NAME,
+			AzRGFilter)
 	}
 }
