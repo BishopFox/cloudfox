@@ -17,6 +17,9 @@ import (
 )
 
 func TestGetComputeRelevantData(t *testing.T) {
+	fmt.Println()
+	fmt.Println("[test case] GetComputeRelevantData Function")
+
 	GetComputeVMsPerResourceGroup = func(subscriptionID, resourceGroup string) []compute.VirtualMachine {
 		testFile, err := os.ReadFile(constants.VMS_TEST_FILE)
 		if err != nil {

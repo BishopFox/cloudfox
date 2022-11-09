@@ -84,13 +84,13 @@ type scopeElement struct {
 func getAvailableScope() []scopeElement {
 	var index int
 	var results []scopeElement
-	subs, err := getSubscriptionsM()
+	subs, err := GetSubscriptions()
 
 	if err != nil {
 		log.Fatalf("error getting available scope from Azure CLI: %s", err)
 	}
 	for _, sub := range subs {
-		rgs, err := getResourceGroupsPerSubM(ptr.ToString(sub.SubscriptionID))
+		rgs, err := GetResourceGroupsPerSub(ptr.ToString(sub.SubscriptionID))
 		if err != nil {
 			log.Fatalf("error getting available scope from Azure CLI: %s", err)
 		}
@@ -103,11 +103,11 @@ func getAvailableScope() []scopeElement {
 	return results
 }
 
-var getResourceGroupsPerSubM = getResourceGroupsPerSub
+var GetResourceGroupsPerSub = getResourceGroupsPerSub
 
-func getResourceGroupsPerSub(subscription string) ([]resources.Group, error) {
+func getResourceGroupsPerSub(subscriptionID string) ([]resources.Group, error) {
 	var results []resources.Group
-	rgClient := utils.GetResourceGroupsClient(subscription)
+	rgClient := utils.GetResourceGroupsClient(subscriptionID)
 
 	for page, err := rgClient.List(context.TODO(), "", nil); page.NotDone(); err = page.Next() {
 		if err != nil {
@@ -118,7 +118,7 @@ func getResourceGroupsPerSub(subscription string) ([]resources.Group, error) {
 	return results, nil
 }
 
-var getSubscriptionsM = getSubscriptions
+var GetSubscriptions = getSubscriptions
 
 func getSubscriptions() ([]subscriptions.Subscription, error) {
 	var results []subscriptions.Subscription
@@ -130,4 +130,23 @@ func getSubscriptions() ([]subscriptions.Subscription, error) {
 		results = append(results, page.Values()...)
 	}
 	return results, nil
+}
+
+func GetSubscriptionForResourceGroup(resourceGroup string) (subscriptions.Subscription, error) {
+	subs, err := GetSubscriptions()
+	if err != nil {
+		log.Fatalf("cannot get subscriptions: %s", err)
+	}
+	for _, sub := range subs {
+		rgs, err := GetResourceGroupsPerSub(ptr.ToString(sub.SubscriptionID))
+		if err != nil {
+			log.Fatalf("can't find resource groups for subscription %s", ptr.ToString(sub.SubscriptionID))
+		}
+		for _, rg := range rgs {
+			if ptr.ToString(rg.Name) == resourceGroup {
+				return sub, nil
+			}
+		}
+	}
+	return subscriptions.Subscription{}, nil
 }
