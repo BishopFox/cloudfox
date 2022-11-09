@@ -1,4 +1,4 @@
-package azure
+package cli
 
 import (
 	"encoding/json"
@@ -10,14 +10,15 @@ import (
 	"testing"
 
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/compute/mgmt/compute"
-	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2021-05-01/network"
+	"github.com/Azure/azure-sdk-for-go/profiles/latest/network/mgmt/network"
+	"github.com/BishopFox/cloudfox/azure"
 	"github.com/BishopFox/cloudfox/constants"
 	"github.com/BishopFox/cloudfox/utils"
 	"github.com/aws/smithy-go/ptr"
 )
 
-func TestGetComputeRelevantData(t *testing.T) {
-	GetComputeVMsPerResourceGroup = func(subscriptionID, resourceGroup string) []compute.VirtualMachine {
+func TestAzRunInstancesCommand(t *testing.T) {
+	azure.GetComputeVMsPerResourceGroup = func(subscriptionID, resourceGroup string) []compute.VirtualMachine {
 		testFile, err := os.ReadFile(constants.VMS_TEST_FILE)
 		if err != nil {
 			log.Fatalf("could not read file %s", constants.VMS_TEST_FILE)
@@ -33,7 +34,7 @@ func TestGetComputeRelevantData(t *testing.T) {
 		}
 		return []compute.VirtualMachine{}
 	}
-	GetNICdetails = func(subscriptionID, resourceGroup string, nicReference compute.NetworkInterfaceReference) (network.Interface, error) {
+	azure.GetNICdetails = func(subscriptionID, resourceGroup string, nicReference compute.NetworkInterfaceReference) (network.Interface, error) {
 		testFile, err := os.ReadFile(constants.NICS_TEST_FILE)
 		if err != nil {
 			log.Fatalf("could not read file %s", constants.NICS_TEST_FILE)
@@ -55,7 +56,7 @@ func TestGetComputeRelevantData(t *testing.T) {
 			return network.Interface{}, fmt.Errorf("nic not found: %s", ptr.ToString(nicReference.ID))
 		}
 	}
-	GetPublicIPM = func(subscriptionID, resourceGroup string, ip network.InterfaceIPConfiguration) (*string, error) {
+	azure.GetPublicIPM = func(subscriptionID, resourceGroup string, ip network.InterfaceIPConfiguration) (*string, error) {
 		publicIPID := ptr.ToString(ip.InterfaceIPConfigurationPropertiesFormat.PublicIPAddress.ID)
 		publicIPName := strings.Split(publicIPID, "/")[len(strings.Split(publicIPID, "/"))-1]
 		switch publicIPName {
@@ -72,15 +73,12 @@ func TestGetComputeRelevantData(t *testing.T) {
 		}
 	}
 
-	subscription := "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA"
-	resourceGroup := "RG1"
-	header, body := GetComputeRelevantData(subscription, resourceGroup)
-	verbosity := 2
-	outputType := "table"
-	outputPath := filepath.Join(constants.CLOUDFOX_BASE_OUTPUT_DIRECTORY, fmt.Sprintf("%s_%s", constants.AZ_OUTPUT_DIRECTORY, resourceGroup))
-	fileName := constants.AZ_INTANCES_MODULE_NAME
-	outputPrefixIdentifier := resourceGroup
+	AzSubFilter := "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA"
+	AzRGFilter := "RG1"
+	AzVerbosity := 2
+	AzOutputFormat := "table"
+	AzOutputDirectory := filepath.Join(constants.CLOUDFOX_BASE_OUTPUT_DIRECTORY, fmt.Sprintf("%s_%s", constants.AZ_OUTPUT_DIRECTORY, AzRGFilter))
 
 	utils.MockFileSystem(true)
-	utils.OutputSelector(verbosity, outputType, header, body, outputPath, fileName, constants.AZ_INTANCES_MODULE_NAME, outputPrefixIdentifier)
+	AzRunInstancesCommand(AzSubFilter, AzRGFilter, AzOutputFormat, AzOutputDirectory, AzVerbosity)
 }

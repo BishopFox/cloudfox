@@ -62,7 +62,7 @@ terraform.rc
 
 untracked/*
 output/*
-cloudfox-output/*
+*/cloudfox-output/*
 cloudfox
 *.log
 *.bak

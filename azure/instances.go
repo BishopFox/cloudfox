@@ -19,7 +19,7 @@ func GetComputeRelevantData(subscriptionID string, resourceGroupName string) ([]
 	// Format received from Azure: subscriptionID = "/subscriptions/0f39574d-d756-48cf-b622-0e27a6943bd2"
 	subID := strings.Split(subscriptionID, "/")[len(strings.Split(subscriptionID, "/"))-1]
 
-	for _, vm := range getComputeVMsPerResourceGroupM(subID, resourceGroupName) {
+	for _, vm := range GetComputeVMsPerResourceGroup(subID, resourceGroupName) {
 		var adminUsername string
 		if vm.VirtualMachineProperties != nil && vm.OsProfile != nil {
 			adminUsername = ptr.ToString(vm.OsProfile.AdminUsername)
@@ -40,7 +40,7 @@ func GetComputeRelevantData(subscriptionID string, resourceGroupName string) ([]
 	return header, body
 }
 
-var getComputeVMsPerResourceGroupM = getComputeVMsPerResourceGroup
+var GetComputeVMsPerResourceGroup = getComputeVMsPerResourceGroup
 
 func getComputeVMsPerResourceGroup(subscriptionID string, resourceGroup string) []compute.VirtualMachine {
 	computeClient := utils.GetComputeClient(subscriptionID)
@@ -63,7 +63,7 @@ func getIPs(subscriptionID string, resourceGroup string, vm compute.VirtualMachi
 
 	if vm.VirtualMachineProperties.NetworkProfile.NetworkInterfaces != nil {
 		for _, nicReference := range *vm.VirtualMachineProperties.NetworkProfile.NetworkInterfaces {
-			nic, err := getNICdetailsM(subscriptionID, resourceGroup, nicReference)
+			nic, err := GetNICdetails(subscriptionID, resourceGroup, nicReference)
 			if err != nil {
 				return []string{"nicNotFound"}, []string{"nicNotFound"}
 			}
@@ -74,7 +74,7 @@ func getIPs(subscriptionID string, resourceGroup string, vm compute.VirtualMachi
 						ptr.ToString(
 							ip.InterfaceIPConfigurationPropertiesFormat.PrivateIPAddress))
 
-					publicIP, err := getPublicIPM(subscriptionID, resourceGroup, ip)
+					publicIP, err := GetPublicIPM(subscriptionID, resourceGroup, ip)
 					if err != nil {
 						publicIPs = append(publicIPs, err.Error())
 					} else {
@@ -87,7 +87,7 @@ func getIPs(subscriptionID string, resourceGroup string, vm compute.VirtualMachi
 	return privateIPs, publicIPs
 }
 
-var getNICdetailsM = getNICdetails
+var GetNICdetails = getNICdetails
 
 func getNICdetails(subscriptionID string, resourceGroup string, nicReference compute.NetworkInterfaceReference) (network.Interface, error) {
 	client := utils.GetNICClient(subscriptionID)
@@ -101,7 +101,7 @@ func getNICdetails(subscriptionID string, resourceGroup string, nicReference com
 	return nic, nil
 }
 
-var getPublicIPM = getPublicIP
+var GetPublicIPM = getPublicIP
 
 func getPublicIP(subscriptionID string, resourceGroup string, ip network.InterfaceIPConfiguration) (*string, error) {
 	client := utils.GetPublicIPclient(subscriptionID)

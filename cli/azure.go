@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"fmt"
+	"path/filepath"
+
 	"github.com/BishopFox/cloudfox/azure"
 	"github.com/BishopFox/cloudfox/constants"
 	"github.com/BishopFox/cloudfox/utils"
@@ -32,7 +35,9 @@ See \"Available Commands\" for Azure Modules`,
 		Aliases: []string{"instances-map"},
 		Short:   "Enumerates compute instances for specified Resource Group",
 		Long:    `Enumerates compute instances for specified Resource Group`,
-		Run:     RunAzInstancesCommand,
+		Run: func(cmd *cobra.Command, args []string) {
+			AzRunInstancesCommand(AzSubFilter, AzRGFilter, AzOutputFormat, AzOutputDirectory, AzVerbosity)
+		},
 	}
 	AzUserFilter     string
 	AzRBACMapCommand = &cobra.Command{
@@ -50,33 +55,43 @@ See \"Available Commands\" for Azure Modules`,
 
 func init() {
 	// Global flags for the Azure modules
-	AzInstancesCommand.Flags().StringVarP(&AzSubFilter, "subscription", "s", "interactive", "Subscription ID")
-	AzInstancesCommand.Flags().StringVarP(&AzRGFilter, "resource-group", "g", "interactive", "Resource Group's Name")
 	AzCommands.PersistentFlags().StringVarP(&AzOutputFormat, "output", "o", "all", "[\"table\" | \"csv\" | \"all\" ]")
 	AzCommands.PersistentFlags().IntVarP(&AzVerbosity, "verbosity", "v", 1, "1 = Print control messages only\n2 = Print control messages, module output\n3 = Print control messages, module output, and loot file output\n")
-	AzCommands.PersistentFlags().StringVar(&AzOutputDirectory, constants.AZ_OUTPUT_DIRECTORY, "cloudfox-output", "Output Directory ")
+	AzCommands.PersistentFlags().StringVar(&AzOutputDirectory, constants.CLOUDFOX_BASE_OUTPUT_DIRECTORY, "cloudfox-output", "Output Directory ")
 
-	// RBAC Map Module Flags
+	// Instance Command Flags
+	AzInstancesCommand.Flags().StringVarP(&AzSubFilter, "subscription", "s", "interactive", "Subscription ID")
+	AzInstancesCommand.Flags().StringVarP(&AzRGFilter, "resource-group", "g", "interactive", "Resource Group's Name")
+
+	// RBAC Command Flags
 	AzRBACMapCommand.Flags().StringVarP(&AzUserFilter, "user", "u", "all", "Display name of user to query")
 
 	AzCommands.AddCommand(AzInstancesCommand, AzRBACMapCommand)
 }
 
-func RunAzInstancesCommand(cmd *cobra.Command, args []string) {
+func AzRunInstancesCommand(AzSubFilter string, AzRGFilter string, AzOutputFormat string, AzOutputDirectory string, AzVerbosity int) {
 	if AzRGFilter == "interactive" && AzSubFilter == "interactive" {
 		for _, scopeItem := range azure.ScopeSelection(nil) {
+
 			head, body := azure.GetComputeRelevantData(
 				ptr.ToString(scopeItem.Sub.ID),
 				ptr.ToString(scopeItem.Rg.Name))
+
 			utils.OutputSelector(
 				AzVerbosity,
 				AzOutputFormat,
 				head,
 				body,
-				AzOutputDirectory,
-				"instances",
+				filepath.Join(constants.CLOUDFOX_BASE_OUTPUT_DIRECTORY, fmt.Sprintf("%s_%s", constants.AZ_OUTPUT_DIRECTORY, AzRGFilter)),
+				constants.AZ_INTANCES_MODULE_NAME,
 				constants.AZ_INTANCES_MODULE_NAME,
 				ptr.ToString(scopeItem.Rg.Name))
 		}
+	} else if AzRGFilter == "interactive" && AzSubFilter != "interactive" {
+		// Get all instances from all resource groups in AzSubFilter
+		return
+	} else if AzRGFilter != "interactive" && AzSubFilter == "interactive" {
+		// Get instances for all resource groups with name AzRGFilter
+		return
 	}
 }
