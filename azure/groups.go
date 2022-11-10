@@ -27,7 +27,7 @@ func ScopeSelection(userInput *string) []scopeElement {
 
 	if userInput == nil {
 		var input string
-		fmt.Printf("[%s] Please select resource groups numbers to analyze. Separate selection by commas (e.g. '1,2,3').", color.CyanString(constants.AZ_INTERACTIVE_MENU_MODULE_NAME))
+		fmt.Printf("[%s] Please select resource groups numbers to analyze. Separate selection by commas (e.g. '1,2,3').\n", color.CyanString(constants.AZ_INTERACTIVE_MENU_MODULE_NAME))
 		fmt.Printf("[%s]> ", color.CyanString(constants.AZ_INTERACTIVE_MENU_MODULE_NAME))
 		fmt.Scanln(&input)
 		userInput = ptr.String(input)

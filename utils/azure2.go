@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/Azure/azure-sdk-for-go/profiles/latest/authorization/mgmt/authorization"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/compute/mgmt/compute"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/network/mgmt/network"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/resources"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/subscriptions"
+	"github.com/Azure/azure-sdk-for-go/services/graphrbac/1.6/graphrbac"
 	"github.com/Azure/go-autorest/autorest"
 	"github.com/Azure/go-autorest/autorest/azure/auth"
 	"github.com/BishopFox/cloudfox/constants"
@@ -16,9 +18,42 @@ import (
 func getAuthorizer(endpoint string) (autorest.Authorizer, error) {
 	auth, err := auth.NewAuthorizerFromCLIWithResource(endpoint)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get authorizer: %s", err)
+		return nil, fmt.Errorf("failed to get client authorizer: %s", err)
 	}
 	return auth, nil
+}
+
+func GetAADUsersClient(tenantID string) graphrbac.UsersClient {
+	client := graphrbac.NewUsersClient(tenantID)
+	a, err := getAuthorizer(constants.AZ_GRAPH_ENDPOINT)
+	if err != nil {
+		log.Fatalf("failed to get azure active directory client: %s", err)
+	}
+	client.Authorizer = a
+	client.AddToUserAgent(constants.CLOUDFOX_USER_AGENT)
+	return client
+}
+
+func GetRoleAssignmentsClient(subscriptionID string) authorization.RoleAssignmentsClient {
+	client := authorization.NewRoleAssignmentsClient(subscriptionID)
+	a, err := getAuthorizer(constants.AZ_RESOURCE_MANAGER_ENDPOINT)
+	if err != nil {
+		log.Fatalf("failed to get role assignments client: %s", err)
+	}
+	client.Authorizer = a
+	client.AddToUserAgent(constants.CLOUDFOX_USER_AGENT)
+	return client
+}
+
+func GetRoleDefinitionsClient(subscriptionID string) authorization.RoleDefinitionsClient {
+	client := authorization.NewRoleDefinitionsClient(subscriptionID)
+	a, err := getAuthorizer(constants.AZ_RESOURCE_MANAGER_ENDPOINT)
+	if err != nil {
+		log.Fatalf("failed to get role definitions client: %s", err)
+	}
+	client.Authorizer = a
+	client.AddToUserAgent(constants.CLOUDFOX_USER_AGENT)
+	return client
 }
 
 func GetSubscriptionsClient() subscriptions.Client {
