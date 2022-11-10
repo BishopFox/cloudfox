@@ -8,7 +8,6 @@ import (
 	"github.com/BishopFox/cloudfox/constants"
 	"github.com/BishopFox/cloudfox/utils"
 	"github.com/aws/smithy-go/ptr"
-	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
 
@@ -21,9 +20,8 @@ var (
 	AzCommands        = &cobra.Command{
 		Use:     "azure",
 		Aliases: []string{"az"},
-		Long: `
-See \"Available Commands\" for Azure Modules`,
-		Short: "See \"Available Commands\" for Azure Modules",
+		Long:    `See "Available Commands" for Azure Modules`,
+		Short:   "See \"Available Commands\" for Azure Modules",
 
 		Run: func(cmd *cobra.Command, args []string) {
 			cmd.Help()
@@ -32,23 +30,39 @@ See \"Available Commands\" for Azure Modules`,
 
 	AzInstancesCommand = &cobra.Command{
 		Use:     "instances",
-		Aliases: []string{"instances-map"},
-		Short:   "Enumerates compute instances for specified Resource Group",
-		Long:    `Enumerates compute instances for specified Resource Group`,
+		Aliases: []string{},
+		Short:   "Enumerates Azure Compute Instances",
+		Long: `
+Select scope from interactive menu:
+./cloudfox az instances
+
+Enumerate VMs from a specific resource group:
+./cloudfox az instances --resource-group RESOURCE_GROU_NAME
+
+Enumerate VMs for all resource groups in a subscription:
+./cloudfox az instances --subscription SUBSCRIPTION_ID`,
 		Run: func(cmd *cobra.Command, args []string) {
 			AzRunInstancesCommand(AzSubFilter, AzRGFilter, AzOutputFormat, AzVerbosity)
 		},
 	}
-	AzUserFilter     string
+
 	AzRBACMapCommand = &cobra.Command{
-		Use:     "rbac-map",
-		Aliases: []string{"rbac"},
-		Short:   "Display all role assignemts for all principals",
-		Long:    `Display all role assignemts for all principals`,
+		Use:     "rbac",
+		Aliases: []string{},
+		Short:   "Display all role assignemts for all Azure principals",
+		Long: `
+Select scope from interactive menu:
+./cloudfox az rbac
+
+Enumerate role assignments for a specific subscriptions:
+./cloudfox az rbac --subscription SUBSCRIPTION_ID
+`,
 		Run: func(cmd *cobra.Command, args []string) {
-			color.Red("This command is under development! Use at your own risk!")
-			m := azure.RBACMapModule{Scope: utils.AzGetScopeInformation()}
-			m.RBACMap(AzVerbosity, AzOutputFormat, AzOutputDirectory, AzUserFilter)
+			/*
+				color.Red("This command is under development! Use at your own risk!")
+				m := azure.RBACMapModule{Scope: utils.AzGetScopeInformation()}
+				m.RBACMap(AzVerbosity, AzOutputFormat, AzOutputDirectory, AzUserFilter)
+			*/
 		},
 	}
 )
@@ -62,9 +76,6 @@ func init() {
 	// Instance Command Flags
 	AzInstancesCommand.Flags().StringVarP(&AzSubFilter, "subscription", "s", "interactive", "Subscription ID")
 	AzInstancesCommand.Flags().StringVarP(&AzRGFilter, "resource-group", "g", "interactive", "Resource Group's Name")
-
-	// RBAC Command Flags
-	AzRBACMapCommand.Flags().StringVarP(&AzUserFilter, "user", "u", "all", "Display name of user to query")
 
 	AzCommands.AddCommand(AzInstancesCommand, AzRBACMapCommand)
 }
