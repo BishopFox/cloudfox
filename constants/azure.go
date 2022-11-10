@@ -2,8 +2,9 @@ package constants
 
 const VMS_TEST_FILE = "../azure/test-data/[]compute.VirtualMachine.json"
 const NICS_TEST_FILE = "../azure/test-data/[]network.Interface.json"
-const SUBS_TEST_FILE = "../azure/test-data/[]subscriptions.Subscription.json"
-const RGS_TEST_FILE = "../azure/test-data/[]resources.Group.json"
+const ROLE_DEFINITIONS_TEST_FILE = "../azure/test-data/[]authorization.RoleDefinition.json"
+const ROLE_ASSIGNMENTS_TEST_FILE = "../azure/test-data/[]authorization.RoleAssignment.json"
+const AAD_USERS_TEST_FILE = "../azure/test-data/[]graphrbac.User.json"
 
 const AZ_INTERACTIVE_MENU_MODULE_NAME = "interactive-menu"
 const AZ_INTANCES_MODULE_NAME = "instances"

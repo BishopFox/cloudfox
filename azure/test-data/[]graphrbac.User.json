@@ -1,0 +1,82 @@
+{
+    "azureADUsers": [
+        {
+            "objectId": "87034aa1-70fd-4fc6-94ce-a9666b2da2e0",
+            "accountEnabled": true,
+            "assignedLicenses": [],
+            "assignedPlans": [],
+            "createdDateTime": "2022-11-10T15:10:49Z",
+            "displayName": "test_user1",
+            "mailNickname": "test1",
+            "objectType": "User",
+            "odata.type": "Microsoft.DirectoryServices.User",
+            "otherMails": [],
+            "passwordProfile": {
+                "enforceChangePasswordPolicy": false,
+                "forceChangePasswordNextLogin": true,
+                "password": null
+            },
+            "provisionedPlans": [],
+            "provisioningErrors": [],
+            "proxyAddresses": [],
+            "refreshTokensValidFromDateTime": "2022-11-10T15:10:49Z",
+            "signInNames": [],
+            "thumbnailPhoto@odata.mediaEditLink": "directoryObjects/11111111-1111-1111-1111-11111111/Microsoft.DirectoryServices.User/thumbnailPhoto",
+            "userIdentities": [],
+            "userPrincipalName": "test1@REDACTED.onmicrosoft.com",
+            "userType": "Member"
+        },
+        {
+            "objectId": "16b3d978-5e8a-40e1-af5d-9582c7a3dda5",
+            "accountEnabled": true,
+            "assignedLicenses": [],
+            "assignedPlans": [],
+            "createdDateTime": "2022-11-10T15:11:34Z",
+            "displayName": "test_user2",
+            "mailNickname": "test2",
+            "objectType": "User",
+            "odata.type": "Microsoft.DirectoryServices.User",
+            "otherMails": [],
+            "passwordProfile": {
+                "enforceChangePasswordPolicy": false,
+                "forceChangePasswordNextLogin": true,
+                "password": null
+            },
+            "provisionedPlans": [],
+            "provisioningErrors": [],
+            "proxyAddresses": [],
+            "refreshTokensValidFromDateTime": "2022-11-10T15:11:34Z",
+            "signInNames": [],
+            "thumbnailPhoto@odata.mediaEditLink": "directoryObjects/11111111-1111-1111-1111-11111111/Microsoft.DirectoryServices.User/thumbnailPhoto",
+            "userIdentities": [],
+            "userPrincipalName": "test2@REDACTED.onmicrosoft.com",
+            "userType": "Member"
+        },
+        {
+            "objectId": "28ed1af9-a4f8-4920-83c5-1a2a20f39141",
+            "accountEnabled": true,
+            "assignedLicenses": [],
+            "assignedPlans": [],
+            "createdDateTime": "2022-11-10T15:11:50Z",
+            "displayName": "test_user3",
+            "mailNickname": "test3",
+            "objectType": "User",
+            "odata.type": "Microsoft.DirectoryServices.User",
+            "otherMails": [],
+            "passwordProfile": {
+                "enforceChangePasswordPolicy": false,
+                "forceChangePasswordNextLogin": true,
+                "password": null
+            },
+            "provisionedPlans": [],
+            "provisioningErrors": [],
+            "proxyAddresses": [],
+            "refreshTokensValidFromDateTime": "2022-11-10T15:11:50Z",
+            "signInNames": [],
+            "thumbnailPhoto@odata.mediaEditLink": "directoryObjects/11111111-1111-1111-1111-11111111/Microsoft.DirectoryServices.User/thumbnailPhoto",
+            "userIdentities": [],
+            "userPrincipalName": "test3@REDACTED.onmicrosoft.com",
+            "userType": "Member"
+        }
+    ]
+}
