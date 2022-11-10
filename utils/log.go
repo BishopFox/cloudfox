@@ -1,36 +1,34 @@
 package utils
 
 import (
-	"io"
+	"fmt"
 	"log"
 	"os"
 	"os/user"
-	"path"
 	"path/filepath"
 
 	"github.com/BishopFox/cloudfox/constants"
 	"github.com/aws/smithy-go/ptr"
 	"github.com/jedib0t/go-pretty/text"
+	"github.com/sirupsen/logrus"
 )
 
 func init() {
 	text.EnableColors()
 }
 
-// Initializes logging.
-// Don't forget to use 'defer file.close()' after invoking this function.
-func InitLogging() *os.File {
-	// Use the commented line instead to print the file path of the called function
-	// log.SetFlags(log.LstdFlags | log.Lshortfile)
-	log.SetFlags(log.LstdFlags)
-	appDir := GetLogDirPath()
-	logFile, err := os.OpenFile(path.Join(ptr.ToString(appDir), constants.CLOUDFOX_LOG_FILE_NAME), os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
+// txtLogger - Returns the txt logger
+func TxtLogger() *logrus.Logger {
+	txtLogger := logrus.New()
+	txtFile, err := os.OpenFile(fmt.Sprintf("%s/cloudfox-error.log", ptr.ToString(GetLogDirPath())), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		log.Fatalf("[-] Error opening log file: %s", err)
+		panic(fmt.Sprintf("Failed to open log file %v", err))
 	}
-	multiOutput := io.MultiWriter(os.Stdout, logFile)
-	log.SetOutput(multiOutput)
-	return logFile
+	txtLogger.Out = txtFile
+	txtLogger.SetLevel(logrus.InfoLevel)
+	//txtLogger.SetReportCaller(true)
+
+	return txtLogger
 }
 
 // This function returns ~/.cloudfox.
