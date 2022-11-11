@@ -24,7 +24,7 @@ func TestAzRunInstancesCommand(t *testing.T) {
 
 	// Mocked functions to simulate Azure responses
 	azure.GetSubscriptions = GetSubscriptions
-	azure.GetResourceGroupsPerSub = GetResourceGroupsPerSub
+	azure.GetResourceGroups = GetResourceGroups
 	azure.GetComputeVMsPerResourceGroup = GetComputeVMsPerResourceGroup
 	azure.GetNICdetails = GetNICdetails
 	azure.GetPublicIPM = GetPublicIPM
@@ -69,7 +69,7 @@ var GetSubscriptions = func() []subscriptions.Subscription {
 	}
 }
 
-var GetResourceGroupsPerSub = func(subscriptionID string) []resources.Group {
+var GetResourceGroups = func(subscriptionID string) []resources.Group {
 	switch subscriptionID {
 	case "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA":
 		return []resources.Group{

@@ -1,5 +1,6 @@
 package constants
 
+const RESOURCES_TEST_FILE = "../azure/test-data/resources.json"
 const VMS_TEST_FILE = "../azure/test-data/[]compute.VirtualMachine.json"
 const NICS_TEST_FILE = "../azure/test-data/[]network.Interface.json"
 const ROLE_DEFINITIONS_TEST_FILE = "../azure/test-data/[]authorization.RoleDefinition.json"

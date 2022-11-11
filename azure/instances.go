@@ -43,7 +43,7 @@ func GetComputeRelevantData(subscriptionID string, resourceGroupName string) ([]
 var GetComputeVMsPerResourceGroup = getComputeVMsPerResourceGroup
 
 func getComputeVMsPerResourceGroup(subscriptionID string, resourceGroup string) []compute.VirtualMachine {
-	computeClient := utils.GetComputeClient(subscriptionID)
+	computeClient := utils.GetVirtualMachinesClient(subscriptionID)
 	var vms []compute.VirtualMachine
 
 	for page, err := computeClient.List(context.TODO(), resourceGroup); page.NotDone(); page.Next() {

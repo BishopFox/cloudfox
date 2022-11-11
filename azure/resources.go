@@ -62,16 +62,16 @@ func printAvailableScope(availableScope []scopeElement) {
 			tableBody,
 			[]string{
 				strconv.Itoa(scopeItem.menuIndex),
-				ptr.ToString(scopeItem.Sub.SubscriptionID),
+				ptr.ToString(scopeItem.Sub.DisplayName),
 				ptr.ToString(scopeItem.Rg.Name)})
 	}
 	sort.Slice(
 		tableBody,
 		func(i int, j int) bool {
-			return tableBody[i][1] < tableBody[j][1]
+			return tableBody[i][0] < tableBody[j][0]
 		},
 	)
-	utils.PrintTableToScreen([]string{"Number", "Subscription", "Resource Group Name"}, tableBody)
+	utils.PrintTableToScreen([]string{"Number", "Subscription", "Resource Group"}, tableBody)
 }
 
 type scopeElement struct {
@@ -79,6 +79,7 @@ type scopeElement struct {
 	menuIndex int
 	// True will cause CloudFox to enumerate the resource group.
 	includeInExecution bool
+	Tenant             subscriptions.TenantIDDescription
 	Sub                subscriptions.Subscription
 	Rg                 resources.Group
 }
@@ -88,8 +89,7 @@ func getAvailableScope() []scopeElement {
 	var results []scopeElement
 	subs := GetSubscriptions()
 	for _, sub := range subs {
-		rgs := GetResourceGroupsPerSub(ptr.ToString(sub.SubscriptionID))
-
+		rgs := GetResourceGroups(ptr.ToString(sub.SubscriptionID))
 		for _, rg := range rgs {
 			index++
 			results = append(results, scopeElement{menuIndex: index, Sub: sub, Rg: rg})
@@ -98,15 +98,27 @@ func getAvailableScope() []scopeElement {
 	return results
 }
 
-var GetResourceGroupsPerSub = getResourceGroupsPerSub
+func GetSubscriptionForResourceGroup(resourceGroupName string) subscriptions.Subscription {
+	subs := GetSubscriptions()
+	for _, sub := range subs {
+		rgs := GetResourceGroups(ptr.ToString(sub.SubscriptionID))
+		for _, rg := range rgs {
+			if ptr.ToString(rg.Name) == resourceGroupName {
+				return sub
+			}
+		}
+	}
+	return subscriptions.Subscription{}
+}
 
-func getResourceGroupsPerSub(subscriptionID string) []resources.Group {
-	var results []resources.Group
-	rgClient := utils.GetResourceGroupsClient(subscriptionID)
+var GetTenants = getTenants
 
-	for page, err := rgClient.List(context.TODO(), "", nil); page.NotDone(); err = page.Next() {
+func getTenants() []subscriptions.TenantIDDescription {
+	tenantsClient := utils.GetTenantsClient()
+	var results []subscriptions.TenantIDDescription
+	for page, err := tenantsClient.List(context.TODO()); page.NotDone(); err = page.Next() {
 		if err != nil {
-			log.Fatalf("error reading resource groups for subscription %s", subscriptionID)
+			log.Fatal("could not get tenants for active session")
 		}
 		results = append(results, page.Values()...)
 	}
@@ -127,15 +139,17 @@ func getSubscriptions() []subscriptions.Subscription {
 	return results
 }
 
-func GetSubscriptionForResourceGroup(resourceGroupName string) subscriptions.Subscription {
-	subs := GetSubscriptions()
-	for _, sub := range subs {
-		rgs := GetResourceGroupsPerSub(ptr.ToString(sub.SubscriptionID))
-		for _, rg := range rgs {
-			if ptr.ToString(rg.Name) == resourceGroupName {
-				return sub
-			}
+var GetResourceGroups = getResourceGroups
+
+func getResourceGroups(subscriptionID string) []resources.Group {
+	var results []resources.Group
+	rgClient := utils.GetResourceGroupsClient(subscriptionID)
+
+	for page, err := rgClient.List(context.TODO(), "", nil); page.NotDone(); err = page.Next() {
+		if err != nil {
+			log.Fatalf("error reading resource groups for subscription %s", subscriptionID)
 		}
+		results = append(results, page.Values()...)
 	}
-	return subscriptions.Subscription{}
+	return results
 }

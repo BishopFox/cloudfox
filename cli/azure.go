@@ -106,7 +106,7 @@ func AzRunInstancesCommand(AzSubFilter, AzRGFilter, AzOutputFormat string, AzVer
 
 		for _, sub := range azure.GetSubscriptions() {
 			if ptr.ToString(sub.SubscriptionID) == AzSubFilter {
-				for _, rg := range azure.GetResourceGroupsPerSub(ptr.ToString(sub.SubscriptionID)) {
+				for _, rg := range azure.GetResourceGroups(ptr.ToString(sub.SubscriptionID)) {
 					tableHead, tableBody := azure.GetComputeRelevantData(
 						ptr.ToString(sub.ID),
 						ptr.ToString(rg.Name))

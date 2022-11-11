@@ -16,6 +16,10 @@ func TestRBACCommand(t *testing.T) {
 	GetAzureADUsers = MockedGetAzureADUsers
 	GetRoleDefinitions = MockedGetRoleDefinitions
 	GetRoleAssignments = MockedGetRoleAssignments
+
+}
+
+type InstancesClient struct {
 }
 
 func MockedGetAzureADUsers(testFile string) []graphrbac.User {
