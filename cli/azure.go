@@ -82,10 +82,10 @@ func init() {
 
 func AzRunInstancesCommand(AzSubFilter, AzRGFilter, AzOutputFormat string, AzVerbosity int) {
 	if AzRGFilter == "interactive" && AzSubFilter == "interactive" {
-		for _, scopeItem := range azure.ScopeSelection(nil) {
+		for _, scopeItem := range azure.ScopeSelection(nil, "full") {
 			tableHead, tableBody := azure.GetComputeRelevantData(
 				ptr.ToString(scopeItem.Sub.ID),
-				ptr.ToString(scopeItem.Rg.Name))
+				ptr.ToString(scopeItem.ResourceGroup.Name))
 
 			utils.OutputSelector(
 				AzVerbosity,
@@ -96,10 +96,10 @@ func AzRunInstancesCommand(AzSubFilter, AzRGFilter, AzOutputFormat string, AzVer
 					constants.CLOUDFOX_BASE_OUTPUT_DIRECTORY,
 					fmt.Sprintf("%s_%s",
 						constants.AZ_OUTPUT_DIRECTORY,
-						ptr.ToString(scopeItem.Rg.Name))),
+						ptr.ToString(scopeItem.ResourceGroup.Name))),
 				constants.AZ_INTANCES_MODULE_NAME,
 				constants.AZ_INTANCES_MODULE_NAME,
-				ptr.ToString(scopeItem.Rg.Name))
+				ptr.ToString(scopeItem.ResourceGroup.Name))
 		}
 	} else if AzRGFilter == "interactive" && AzSubFilter != "interactive" {
 		fmt.Printf("[%s] Enumerating VMs for subscription: %s\n", cyan(constants.AZ_INTANCES_MODULE_NAME), AzSubFilter)

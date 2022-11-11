@@ -16,18 +16,32 @@ import (
 	"github.com/fatih/color"
 )
 
+type scopeElement struct {
+	// Use for user selection in interactive mode.
+	menuIndex int
+	// True will cause CloudFox to enumerate the resource group.
+	includeInCloudFoxExecution bool
+	ResourceGroup              resources.Group
+	Sub                        subscriptions.Subscription
+	Tenant                     subscriptions.TenantIDDescription
+}
+
 // userInput = nil will prompt interactive menu for RG selection.
 // The userInput argument is used to toggle the interactive menu (useful for unit tests).
-func ScopeSelection(userInput *string) []scopeElement {
+// mode = full (prints entire table), tenant (prints only tenants table)
+func ScopeSelection(userInput *string, mode string) []scopeElement {
 	fmt.Printf("[%s] Fetching available resource groups from Az CLI sessions...\n", color.CyanString(constants.AZ_INTERACTIVE_MENU_MODULE_NAME))
 	var results []scopeElement
 
 	availableScope := getAvailableScope()
-	printAvailableScope(availableScope)
+	switch mode {
+	default:
+		printAvailableScopeFull(availableScope)
+	}
 
 	if userInput == nil {
 		var input string
-		fmt.Printf("[%s] Please select resource groups numbers to analyze. Separate selection by commas (e.g. '1,2,3').\n", color.CyanString(constants.AZ_INTERACTIVE_MENU_MODULE_NAME))
+		fmt.Printf("[%s] Please make a selection (e.g. '1' or '1,2,3').\n", color.CyanString(constants.AZ_INTERACTIVE_MENU_MODULE_NAME))
 		fmt.Printf("[%s]> ", color.CyanString(constants.AZ_INTERACTIVE_MENU_MODULE_NAME))
 		fmt.Scanln(&input)
 		userInput = ptr.String(input)
@@ -43,18 +57,17 @@ func ScopeSelection(userInput *string) []scopeElement {
 				results = append(
 					results,
 					scopeElement{
-						menuIndex:          scopeItem.menuIndex,
-						includeInExecution: true,
-						Sub:                scopeItem.Sub,
-						Rg:                 scopeItem.Rg})
+						menuIndex:                  scopeItem.menuIndex,
+						includeInCloudFoxExecution: true,
+						Sub:                        scopeItem.Sub,
+						ResourceGroup:              scopeItem.ResourceGroup})
 			}
 		}
 	}
-
 	return results
 }
 
-func printAvailableScope(availableScope []scopeElement) {
+func printAvailableScopeFull(availableScope []scopeElement) {
 	var tableBody [][]string
 
 	for _, scopeItem := range availableScope {
@@ -62,8 +75,11 @@ func printAvailableScope(availableScope []scopeElement) {
 			tableBody,
 			[]string{
 				strconv.Itoa(scopeItem.menuIndex),
+				ptr.ToString(scopeItem.ResourceGroup.Name),
 				ptr.ToString(scopeItem.Sub.DisplayName),
-				ptr.ToString(scopeItem.Rg.Name)})
+				ptr.ToString(scopeItem.Tenant.DisplayName),
+				ptr.ToString(scopeItem.Tenant.DefaultDomain),
+			})
 	}
 	sort.Slice(
 		tableBody,
@@ -71,34 +87,28 @@ func printAvailableScope(availableScope []scopeElement) {
 			return tableBody[i][0] < tableBody[j][0]
 		},
 	)
-	utils.PrintTableToScreen([]string{"Number", "Subscription", "Resource Group"}, tableBody)
-}
-
-type scopeElement struct {
-	// Use for user selection in interactive mode.
-	menuIndex int
-	// True will cause CloudFox to enumerate the resource group.
-	includeInExecution bool
-	Tenant             subscriptions.TenantIDDescription
-	Sub                subscriptions.Subscription
-	Rg                 resources.Group
-}
-
-func getAvailableScope() []scopeElement {
-	var index int
-	var results []scopeElement
-	subs := GetSubscriptions()
-	for _, sub := range subs {
-		rgs := GetResourceGroups(ptr.ToString(sub.SubscriptionID))
-		for _, rg := range rgs {
-			index++
-			results = append(results, scopeElement{menuIndex: index, Sub: sub, Rg: rg})
-		}
-	}
-	return results
+	utils.PrintTableToScreen(
+		[]string{
+			"#",
+			"Resource Group",
+			"Subscription",
+			"Tenant Name",
+			"Domain",
+		},
+		tableBody)
 }
 
 func GetSubscriptionForResourceGroup(resourceGroupName string) subscriptions.Subscription {
+	availableScope := getAvailableScope()
+	for _, s := range availableScope {
+		if ptr.ToString(s.ResourceGroup.Name) == resourceGroupName {
+			return s.Sub
+		}
+	}
+	return subscriptions.Subscription{}
+}
+
+func GetSubscriptionForResourceGroup_LEGACY(resourceGroupName string) subscriptions.Subscription {
 	subs := GetSubscriptions()
 	for _, sub := range subs {
 		rgs := GetResourceGroups(ptr.ToString(sub.SubscriptionID))
@@ -109,6 +119,31 @@ func GetSubscriptionForResourceGroup(resourceGroupName string) subscriptions.Sub
 		}
 	}
 	return subscriptions.Subscription{}
+}
+
+func getAvailableScope() []scopeElement {
+	var index int
+	var results []scopeElement
+	tenants := GetTenants()
+	subscriptions := GetSubscriptions()
+
+	for _, t := range tenants {
+		for _, s := range subscriptions {
+			if ptr.ToString(t.TenantID) == ptr.ToString(s.TenantID) {
+				for _, rg := range GetResourceGroups(ptr.ToString(s.SubscriptionID)) {
+					index++
+					results = append(results, scopeElement{
+						menuIndex:                  index,
+						includeInCloudFoxExecution: false,
+						ResourceGroup:              rg,
+						Sub:                        s,
+						Tenant:                     t,
+					})
+				}
+			}
+		}
+	}
+	return results
 }
 
 var GetTenants = getTenants

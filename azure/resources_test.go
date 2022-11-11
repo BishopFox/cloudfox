@@ -11,22 +11,54 @@ import (
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/subscriptions"
 	"github.com/BishopFox/cloudfox/constants"
 	"github.com/aws/smithy-go/ptr"
+	"github.com/fatih/color"
 )
 
-func TestScopeSelection(t *testing.T) {
-	fmt.Println()
-	fmt.Println("[test case] Scope Selection Interactive Menu")
+func TestScopeSelectionFull(t *testing.T) {
+	fmt.Println("[test case] scope selection interactive menu")
 
-	// Mocked Azure Calls
+	// Mocked Azure calls
 	GetTenants = MockedGetTenants
 	GetSubscriptions = MockedGetSubscriptions
 	GetResourceGroups = MockedGetResourceGroups
+
+	// Test case parameters
+	subtests := []struct {
+		name            string
+		mockedUserInput *string
+		expectedScope   []scopeElement
+	}{
+		{
+			name:            "multiple selections",
+			mockedUserInput: ptr.String("1,2,3"),
+		},
+	}
+
+	for _, subtest := range subtests {
+		fmt.Println()
+		fmt.Printf("[subtest] %s\n", subtest.name)
+
+		selectedScope := ScopeSelection(subtest.mockedUserInput, "full")
+		fmt.Printf("[%s]> %s\n", color.CyanString("mocked_input"), ptr.ToString(subtest.mockedUserInput))
+		fmt.Printf("[%s] ", color.CyanString("selection"))
+		for _, s := range selectedScope {
+			fmt.Printf("%s ", ptr.ToString(s.ResourceGroup.Name))
+		}
+		fmt.Println()
+		fmt.Println()
+	}
 }
 
 func TestGetSubscriptionForResourceGroup(t *testing.T) {
 	fmt.Println()
 	fmt.Println("[test case] GetSubscriptionForResourceGroup Function")
 
+	// Mocked Azure calls
+	GetTenants = MockedGetTenants
+	GetSubscriptions = MockedGetSubscriptions
+	GetResourceGroups = MockedGetResourceGroups
+
+	// Test case parameters
 	subTests := map[string]string{
 		"Resource Group A1": "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
 		"Resource Group B2": "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB",
