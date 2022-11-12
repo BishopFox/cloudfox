@@ -1,56 +1,56 @@
 {
     "Tenants":[
         {
-            "displayName": "CloudFox Test Tenant 1",
+            "displayName": "CloudFoxTestTenant1",
             "tenantId": "11111111-1111-1111-1111-11111111",
             "defaultDomain": "cloudfox1.local",
             "Subscriptions": [
                 {
-                    "displayName": "Subscription A",
+                    "displayName": "SubscriptionA",
                     "subscriptionId": "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
                     "ResourceGroups": [
                         {
-                            "Name": "Resource Group A1",
-                            "id": "subscriptions/AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA/resourceGroups/A1A1A1A1-A1A1-A1A1-A1A1-A1A1A1A1"
+                            "Name": "ResourceGroupA1",
+                            "id": "subscriptions/AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA/resourceGroups/ResourceGroupA1"
                         },
                         {
-                            "Name": "Resource Group A2",
-                            "id": "subscriptions/AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA/resourceGroups/A2A2A2A2-A2A2-A2A2-A2A2-A2A2A2A2"
+                            "Name": "ResourceGroupA2",
+                            "id": "subscriptions/AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA/resourceGroups/ResourceGroupA2"
                         }
                     ]
                 },
                 {
-                    "displayName": "Subscription B",
+                    "displayName": "SubscriptionB",
                     "subscriptionId": "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB",
                     "ResourceGroups": [
                         {
-                            "Name": "Resource Group B1",
-                            "id": "subscriptions/BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB/resourceGroups/B1B1B1B1-B1B1-B1B1-B1B1-B1B1B1B1"
+                            "Name": "ResourceGroupB1",
+                            "id": "subscriptions/BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB/resourceGroups/ResourceGroupB1"
                         },
                         {
-                            "Name": "Resource Group B2",
-                            "id": "subscriptions/BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB/resourceGroups/B2B2B2B2-B2B2-B2B2-B2B2-B2B2B2B2"
+                            "Name": "ResourceGroupB2",
+                            "id": "subscriptions/BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB/resourceGroups/ResourceGroupB2"
                         }
                     ]
                 }
             ]
         },
         {
-            "displayName": "CloudFox Test Tenant 2",
+            "displayName": "CloudFoxTestTenant2",
             "tenantId": "22222222-2222-2222-2222-22222222",
             "defaultDomain": "cloudfox2.local",
             "Subscriptions": [
                 {
-                    "displayName": "Subscription C",
+                    "displayName": "SubscriptionC",
                     "subscriptionId": "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCC",
                     "ResourceGroups": [
                         {
-                            "Name": "Resource Group C1",
-                            "id": "subscriptions/CCCCCCCC-CCCC-CCCC-CCCCCCCC/resourceGroups/C1C1C1C1-C1C1-C1C1-C1C1C1C1"
+                            "Name": "ResourceGroupC1",
+                            "id": "subscriptions/CCCCCCCC-CCCC-CCCC-CCCCCCCC/resourceGroups/ResourceGroupC1"
                         },
                         {
-                            "Name": "Resource Group C2",
-                            "id": "subscriptions/CCCCCCCC-CCCC-CCCC-CCCCCCCC/resourceGroups/C2C2C2C2-C2C2-C2C2-C2C2C2C2"
+                            "Name": "ResourceGroupC2",
+                            "id": "subscriptions/CCCCCCCC-CCCC-CCCC-CCCCCCCC/resourceGroups/ResourceGroupC2"
                         }
                     ]
                 }

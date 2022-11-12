@@ -1,13 +1,13 @@
 [
     {
-        "id": "/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/NetworkInterface1",
+        "id": "/subscriptions/AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA/resourceGroups/ResourceGroupA1/providers/Microsoft.Network/networkInterfaces/NetworkInterface1",
         "properties": {
             "ipConfigurations": [
                 {
                     "properties": {
                         "privateIPAddress": "192.168.0.1",
                         "publicIPAddress": {
-                            "id": "/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/publicIPAddresses/PublicIpAddress1A"
+                            "id": "/subscriptions/AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA/resourceGroups/ResourceGroupA1/providers/Microsoft.Network/publicIPAddresses/PublicIpAddress1A"
                         }
                     }
                 },
@@ -15,7 +15,7 @@
                     "properties": {
                         "privateIPAddress": "192.168.0.2",
                         "publicIPAddress": {
-                            "id": "/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/publicIPAddresses/PublicIpAddress1B"
+                            "id": "/subscriptions/AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA/resourceGroups/ResourceGroupA1/providers/Microsoft.Network/publicIPAddresses/PublicIpAddress1B"
                         }
                     }
                 }
@@ -23,14 +23,14 @@
         }
     },
     {
-        "id": "/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/NetworkInterface2",
+        "id": "/subscriptions/BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB/resourceGroups/ResourceGroupB1/providers/Microsoft.Network/networkInterfaces/NetworkInterface2",
         "properties": {
             "ipConfigurations": [
                 {
                     "properties": {
                         "privateIPAddress": "192.168.0.3",
                         "publicIPAddress": {
-                            "id": "/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/publicIPAddresses/PublicIpAddress2A"
+                            "id": "/subscriptions/BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB/resourceGroups/ResourceGroupB1/providers/Microsoft.Network/publicIPAddresses/PublicIpAddress2A"
                         }
                     }
                 }
@@ -38,14 +38,14 @@
         }
     },
     {
-      "id": "/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/NetworkInterface3",
+      "id": "/subscriptions/CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCC/resourceGroups/ResourceGroupC1/providers/Microsoft.Network/networkInterfaces/NetworkInterface3",
       "properties": {
           "ipConfigurations": [
               {
                   "properties": {
                       "privateIPAddress": "192.168.0.4",
                       "publicIPAddress": {
-                          "id": "/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/publicIPAddresses/PublicIpAddress3A"
+                          "id": "/subscriptions/CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCC/resourceGroups/ResourceGroupC1/providers/Microsoft.Network/publicIPAddresses/PublicIpAddress3A"
                       }
                   }
               }
@@ -53,29 +53,14 @@
       }
     },
     {
-        "id": "/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/NetworkInterface4",
+        "id": "/subscriptions/CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCC/resourceGroups/ResourceGroupC1/providers/Microsoft.Network/networkInterfaces/NetworkInterface4",
         "properties": {
             "ipConfigurations": [
                 {
                     "properties": {
                         "privateIPAddress": "192.168.0.5",
                         "publicIPAddress": {
-                            "id": "/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/publicIPAddresses/PublicIpAddress4A"
-                        }
-                    }
-                }
-            ]
-        }
-      },
-      {
-        "id": "/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/NetworkInterface5",
-        "properties": {
-            "ipConfigurations": [
-                {
-                    "properties": {
-                        "privateIPAddress": "192.168.0.6",
-                        "publicIPAddress": {
-                            "id": "/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/publicIPAddresses/PublicIpAddress5A"
+                            "id": "/subscriptions/CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCC/resourceGroups/ResourceGroupC1/providers/Microsoft.Network/publicIPAddresses/PublicIpAddress4A"
                         }
                     }
                 }

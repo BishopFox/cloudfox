@@ -1,13 +1,8 @@
 package cli
 
 import (
-	"fmt"
-	"path/filepath"
-
 	"github.com/BishopFox/cloudfox/azure"
 	"github.com/BishopFox/cloudfox/constants"
-	"github.com/BishopFox/cloudfox/utils"
-	"github.com/aws/smithy-go/ptr"
 	"github.com/spf13/cobra"
 )
 
@@ -42,7 +37,7 @@ Enumerate VMs from a specific resource group:
 Enumerate VMs for all resource groups in a subscription:
 ./cloudfox az instances --subscription SUBSCRIPTION_ID`,
 		Run: func(cmd *cobra.Command, args []string) {
-			AzRunInstancesCommand(AzSubFilter, AzRGFilter, AzOutputFormat, AzVerbosity)
+			azure.AzRunInstancesCommand(AzSubFilter, AzRGFilter, AzOutputFormat, AzVerbosity)
 		},
 	}
 
@@ -59,9 +54,7 @@ Enumerate role assignments for a specific subscriptions:
 `,
 		Run: func(cmd *cobra.Command, args []string) {
 			/*
-				color.Red("This command is under development! Use at your own risk!")
-				m := azure.RBACMapModule{Scope: utils.AzGetScopeInformation()}
-				m.RBACMap(AzVerbosity, AzOutputFormat, AzOutputDirectory, AzUserFilter)
+				RBAC COMMAND LOGIC HERE
 			*/
 		},
 	}
@@ -74,81 +67,8 @@ func init() {
 	AzCommands.PersistentFlags().StringVar(&AzOutputDirectory, constants.CLOUDFOX_BASE_OUTPUT_DIRECTORY, "cloudfox-output", "Output Directory ")
 
 	// Instance Command Flags
-	AzInstancesCommand.Flags().StringVarP(&AzSubFilter, "subscription", "s", "interactive", "Subscription ID")
-	AzInstancesCommand.Flags().StringVarP(&AzRGFilter, "resource-group", "g", "interactive", "Resource Group's Name")
+	AzInstancesCommand.Flags().StringVarP(&AzSubFilter, "subscription", "s", "interactive", "Subscription Name")
+	AzInstancesCommand.Flags().StringVarP(&AzRGFilter, "resource-group", "g", "interactive", "Resource Group Name")
 
 	AzCommands.AddCommand(AzInstancesCommand, AzRBACMapCommand)
-}
-
-func AzRunInstancesCommand(AzSubFilter, AzRGFilter, AzOutputFormat string, AzVerbosity int) {
-	if AzRGFilter == "interactive" && AzSubFilter == "interactive" {
-		for _, scopeItem := range azure.ScopeSelection(nil, "full") {
-			tableHead, tableBody := azure.GetComputeRelevantData(
-				ptr.ToString(scopeItem.Sub.ID),
-				ptr.ToString(scopeItem.ResourceGroup.Name))
-
-			utils.OutputSelector(
-				AzVerbosity,
-				AzOutputFormat,
-				tableHead,
-				tableBody,
-				filepath.Join(
-					constants.CLOUDFOX_BASE_OUTPUT_DIRECTORY,
-					fmt.Sprintf("%s_%s",
-						constants.AZ_OUTPUT_DIRECTORY,
-						ptr.ToString(scopeItem.ResourceGroup.Name))),
-				constants.AZ_INTANCES_MODULE_NAME,
-				constants.AZ_INTANCES_MODULE_NAME,
-				ptr.ToString(scopeItem.ResourceGroup.Name))
-		}
-	} else if AzRGFilter == "interactive" && AzSubFilter != "interactive" {
-		fmt.Printf("[%s] Enumerating VMs for subscription: %s\n", cyan(constants.AZ_INTANCES_MODULE_NAME), AzSubFilter)
-
-		for _, sub := range azure.GetSubscriptions() {
-			if ptr.ToString(sub.SubscriptionID) == AzSubFilter {
-				for _, rg := range azure.GetResourceGroups(ptr.ToString(sub.SubscriptionID)) {
-					tableHead, tableBody := azure.GetComputeRelevantData(
-						ptr.ToString(sub.ID),
-						ptr.ToString(rg.Name))
-
-					if tableBody != nil {
-						utils.OutputSelector(
-							AzVerbosity,
-							AzOutputFormat,
-							tableHead,
-							tableBody,
-							filepath.Join(
-								constants.CLOUDFOX_BASE_OUTPUT_DIRECTORY,
-								fmt.Sprintf("%s_%s",
-									constants.AZ_OUTPUT_DIRECTORY,
-									ptr.ToString(rg.Name))),
-							constants.AZ_INTANCES_MODULE_NAME,
-							constants.AZ_INTANCES_MODULE_NAME,
-							ptr.ToString(rg.Name))
-					}
-				}
-			}
-		}
-	} else if AzRGFilter != "interactive" && AzSubFilter == "interactive" {
-		fmt.Printf("[%s] Enumerating VMs for resource group: %s\n", cyan(constants.AZ_INTANCES_MODULE_NAME), AzRGFilter)
-
-		sub := azure.GetSubscriptionForResourceGroup(AzRGFilter)
-		tableHead, tableBody := azure.GetComputeRelevantData(
-			ptr.ToString(sub.ID),
-			AzRGFilter)
-
-		utils.OutputSelector(
-			AzVerbosity,
-			AzOutputFormat,
-			tableHead,
-			tableBody,
-			filepath.Join(
-				constants.CLOUDFOX_BASE_OUTPUT_DIRECTORY,
-				fmt.Sprintf("%s_%s",
-					constants.AZ_OUTPUT_DIRECTORY,
-					AzRGFilter)),
-			constants.AZ_INTANCES_MODULE_NAME,
-			constants.AZ_INTANCES_MODULE_NAME,
-			AzRGFilter)
-	}
 }
