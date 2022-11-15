@@ -171,3 +171,12 @@ func createOutputFile(outputDirectory *string, fileName *string, outputType stri
 	//fmt.Printf("[%s] Creating output file: %s\n", cyan(callingModule), outputFile.Name())
 	return outputFile
 }
+
+func MockFileSystem(switcher bool) {
+	if switcher {
+		fmt.Println("Using mocked file system")
+		fileSystem = afero.NewMemMapFs()
+	} else {
+		fmt.Println("Using OS file system. Make sure to clean up your disk!")
+	}
+}

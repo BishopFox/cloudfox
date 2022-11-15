@@ -180,7 +180,6 @@ func (m *LambdasModule) writeLoot(outputDirectory string, verbosity int) {
 		out = out + "# Download function code to to disk (requires jq and curl) \n"
 		out = out + fmt.Sprintf("mkdir -p ./lambdas/%s\n", function.Name)
 		out = out + fmt.Sprintf("url=`aws --profile $profile lambda get-function --region %s --function-name %s | jq .Code.Location | sed s/\"//g` && curl \"$url\" -o ./lambdas/%s.zip\n", function.Region, function.Name, function.Name)
-
 	}
 	err = os.WriteFile(pullFile, []byte(out), 0644)
 	if err != nil {
