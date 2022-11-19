@@ -2,7 +2,7 @@ package cli
 
 import (
 	"github.com/BishopFox/cloudfox/azure"
-	"github.com/BishopFox/cloudfox/constants"
+	"github.com/BishopFox/cloudfox/globals"
 	"github.com/spf13/cobra"
 )
 
@@ -64,7 +64,7 @@ func init() {
 	// Global flags for the Azure modules
 	AzCommands.PersistentFlags().StringVarP(&AzOutputFormat, "output", "o", "all", "[\"table\" | \"csv\" | \"all\" ]")
 	AzCommands.PersistentFlags().IntVarP(&AzVerbosity, "verbosity", "v", 1, "1 = Print control messages only\n2 = Print control messages, module output\n3 = Print control messages, module output, and loot file output\n")
-	AzCommands.PersistentFlags().StringVar(&AzOutputDirectory, constants.CLOUDFOX_BASE_OUTPUT_DIRECTORY, "cloudfox-output", "Output Directory ")
+	AzCommands.PersistentFlags().StringVar(&AzOutputDirectory, globals.CLOUDFOX_BASE_OUTPUT_DIRECTORY, "cloudfox-output", "Output Directory ")
 
 	// Instance Command Flags
 	AzInstancesCommand.Flags().StringVarP(&AzSubFilter, "subscription", "s", "interactive", "Subscription Name")

@@ -5,7 +5,7 @@ import (
 	"log"
 	"testing"
 
-	"github.com/BishopFox/cloudfox/constants"
+	"github.com/BishopFox/cloudfox/globals"
 )
 
 // Requires Az CLI Authentication to passs
@@ -17,11 +17,11 @@ func TestGetAuthorizer(t *testing.T) {
 	}{
 		{
 			name:     "Resource Manager Authorizer",
-			endpoint: constants.AZ_RESOURCE_MANAGER_ENDPOINT,
+			endpoint: globals.AZ_RESOURCE_MANAGER_ENDPOINT,
 		},
 		{
 			name:     "Graph API Authorizer",
-			endpoint: constants.AZ_GRAPH_ENDPOINT,
+			endpoint: globals.AZ_GRAPH_ENDPOINT,
 		},
 	}
 	for _, subtest := range subtests {

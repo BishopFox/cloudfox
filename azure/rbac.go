@@ -9,7 +9,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/authorization/mgmt/authorization"
 	"github.com/Azure/azure-sdk-for-go/services/graphrbac/1.6/graphrbac"
-	"github.com/BishopFox/cloudfox/constants"
+	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/utils"
 	"github.com/fatih/color"
 )
@@ -21,7 +21,7 @@ func getAzureADUsers(tenantID string) []graphrbac.User {
 	client := utils.GetAADUsersClient(tenantID)
 	for page, err := client.List(context.TODO(), "", ""); page.NotDone(); page.Next() {
 		if err != nil {
-			fmt.Printf("[%s] Could not enumerate users for tenant %s. Skipping it.\n", color.New(color.FgCyan).Sprint(constants.AZ_RBAC_MODULE_NAME), tenantID)
+			fmt.Printf("[%s] Could not enumerate users for tenant %s. Skipping it.\n", color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME), tenantID)
 			continue
 		}
 		users = append(users, page.Values()...)
@@ -36,7 +36,7 @@ func getRoleDefinitions(subscriptionID string) []authorization.RoleDefinition {
 	var roleDefinitions []authorization.RoleDefinition
 	for page, err := client.List(context.TODO(), "", ""); page.NotDone(); page.Next() {
 		if err != nil {
-			fmt.Printf("[%s] Could not enumerate roles for subscription %s. Skipping it.\n", color.New(color.FgCyan).Sprint(constants.AZ_RBAC_MODULE_NAME), subscriptionID)
+			fmt.Printf("[%s] Could not enumerate roles for subscription %s. Skipping it.\n", color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME), subscriptionID)
 			continue
 		}
 		roleDefinitions = append(roleDefinitions, page.Values()...)
@@ -51,7 +51,7 @@ func getRoleAssignments(subscriptionID string) []authorization.RoleAssignment {
 	client := utils.GetRoleAssignmentsClient(subscriptionID)
 	for page, err := client.List(context.TODO(), ""); page.NotDone(); page.Next() {
 		if err != nil {
-			fmt.Printf("[%s] Could not role assignments for subscription %s. Skipping it.\n", color.New(color.FgCyan).Sprint(constants.AZ_RBAC_MODULE_NAME), subscriptionID)
+			fmt.Printf("[%s] Could not role assignments for subscription %s. Skipping it.\n", color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME), subscriptionID)
 			continue
 		}
 		roleAssignments = append(roleAssignments, page.Values()...)
@@ -82,9 +82,9 @@ func GenerateAzureADUsersTestFIle(tenantID string) {
 	if err != nil {
 		log.Fatalf("could not marshall json for azure ad users in tenant %s", tenantID)
 	}
-	err = os.WriteFile(constants.AAD_USERS_TEST_FILE, usersJSON, os.ModeAppend)
+	err = os.WriteFile(globals.AAD_USERS_TEST_FILE, usersJSON, os.ModeAppend)
 	if err != nil {
-		log.Fatalf("could not write to azure ad users test file %s", constants.AAD_USERS_TEST_FILE)
+		log.Fatalf("could not write to azure ad users test file %s", globals.AAD_USERS_TEST_FILE)
 	}
 }
 
@@ -115,9 +115,9 @@ func GenerateRoleDefinitionsTestFile(subscriptionID string) {
 	if err != nil {
 		log.Fatalf("could not marshall json for role definitions in subscription %s", subscriptionID)
 	}
-	err = os.WriteFile(constants.ROLE_DEFINITIONS_TEST_FILE, rolesjson, os.ModeAppend)
+	err = os.WriteFile(globals.ROLE_DEFINITIONS_TEST_FILE, rolesjson, os.ModeAppend)
 	if err != nil {
-		log.Fatalf("could not write to role definitions test file %s", constants.ROLE_DEFINITIONS_TEST_FILE)
+		log.Fatalf("could not write to role definitions test file %s", globals.ROLE_DEFINITIONS_TEST_FILE)
 	}
 }
 
@@ -143,9 +143,9 @@ func GenerateRoleAssignmentsTestFIle(subscriptionID string) {
 	if err != nil {
 		log.Fatalf("could not marshall json for role assignments in subscription %s", subscriptionID)
 	}
-	err = os.WriteFile(constants.ROLE_ASSIGNMENTS_TEST_FILE, roleAssginments, os.ModeAppend)
+	err = os.WriteFile(globals.ROLE_ASSIGNMENTS_TEST_FILE, roleAssginments, os.ModeAppend)
 	if err != nil {
-		log.Fatalf("could not write to azure ad users test file %s", constants.ROLE_ASSIGNMENTS_TEST_FILE)
+		log.Fatalf("could not write to azure ad users test file %s", globals.ROLE_ASSIGNMENTS_TEST_FILE)
 	}
 }
 

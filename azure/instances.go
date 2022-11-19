@@ -12,7 +12,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/network/mgmt/network"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/resources"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/subscriptions"
-	"github.com/BishopFox/cloudfox/constants"
+	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/utils"
 	"github.com/aws/smithy-go/ptr"
 	"github.com/fatih/color"
@@ -29,12 +29,12 @@ func AzRunInstancesCommand(AzSubFilter, AzRGFilter, AzOutputFormat string, AzVer
 			_, tableBodyTemp := GetComputeRelevantData(scopeItem.Sub, scopeItem.ResourceGroup)
 			tableBody = append(tableBody, tableBodyTemp[0])
 		}
-		outputFile = fmt.Sprintf("%s_interactiveMenuSelection", constants.AZ_INTANCES_MODULE_NAME)
+		outputFile = fmt.Sprintf("%s_interactiveMenuSelection", globals.AZ_INTANCES_MODULE_NAME)
 		outputMessagePrefix = "multiple_selections"
 	}
 	// Enumerate VMs for a single subscription with the --subscription flag
 	if AzRGFilter == "interactive" && AzSubFilter != "interactive" {
-		fmt.Printf("[%s] Enumerating VMs for subscription: %s\n", color.CyanString(constants.AZ_INTANCES_MODULE_NAME), AzSubFilter)
+		fmt.Printf("[%s] Enumerating VMs for subscription: %s\n", color.CyanString(globals.AZ_INTANCES_MODULE_NAME), AzSubFilter)
 		for _, sub := range GetSubscriptions() {
 			if ptr.ToString(sub.DisplayName) == AzSubFilter {
 				for _, rg := range GetResourceGroups(ptr.ToString(sub.SubscriptionID)) {
@@ -43,20 +43,20 @@ func AzRunInstancesCommand(AzSubFilter, AzRGFilter, AzOutputFormat string, AzVer
 				}
 			}
 		}
-		outputFile = fmt.Sprintf("%s_sub_%s", constants.AZ_INTANCES_MODULE_NAME, AzSubFilter)
+		outputFile = fmt.Sprintf("%s_sub_%s", globals.AZ_INTANCES_MODULE_NAME, AzSubFilter)
 		outputMessagePrefix = fmt.Sprintf("sub:%s", AzSubFilter)
 	}
 	// Enumerate VMs for a single resource group with the --resource-group flag
 	if AzRGFilter != "interactive" && AzSubFilter == "interactive" {
-		fmt.Printf("[%s] Enumerating VMs for resource group: %s\n", color.CyanString(constants.AZ_INTANCES_MODULE_NAME), AzRGFilter)
+		fmt.Printf("[%s] Enumerating VMs for resource group: %s\n", color.CyanString(globals.AZ_INTANCES_MODULE_NAME), AzRGFilter)
 		sub := GetSubscriptionForResourceGroup(AzRGFilter)
 		_, tableBody = GetComputeRelevantData(sub, resources.Group{Name: ptr.String(AzRGFilter)})
-		outputFile = fmt.Sprintf("%s_sub_%s", constants.AZ_INTANCES_MODULE_NAME, AzRGFilter)
+		outputFile = fmt.Sprintf("%s_sub_%s", globals.AZ_INTANCES_MODULE_NAME, AzRGFilter)
 		outputMessagePrefix = fmt.Sprintf("rg:%s", AzRGFilter)
 	}
 
 	// Prints output to screen and file
-	utils.OutputSelector(AzVerbosity, AzOutputFormat, tableHead, tableBody, constants.CLOUDFOX_BASE_OUTPUT_DIRECTORY, outputFile, constants.AZ_INTANCES_MODULE_NAME, outputMessagePrefix)
+	utils.OutputSelector(AzVerbosity, AzOutputFormat, tableHead, tableBody, globals.CLOUDFOX_BASE_OUTPUT_DIRECTORY, outputFile, globals.AZ_INTANCES_MODULE_NAME, outputMessagePrefix)
 }
 
 func GetComputeRelevantData(sub subscriptions.Subscription, rg resources.Group) ([]string, [][]string) {
@@ -163,15 +163,15 @@ func getPublicIP(subscriptionID string, resourceGroup string, ip network.Interfa
 /************* MOCKED FUNCTIONS BELOW (USE IT FOR UNIT TESTING) *************/
 
 func MockedGetComputeVMsPerResourceGroup(subscriptionID, resourceGroup string) []compute.VirtualMachine {
-	testFile, err := os.ReadFile(constants.VMS_TEST_FILE)
+	testFile, err := os.ReadFile(globals.VMS_TEST_FILE)
 	if err != nil {
-		log.Fatalf("could not read file %s", constants.VMS_TEST_FILE)
+		log.Fatalf("could not read file %s", globals.VMS_TEST_FILE)
 	}
 
 	var vms []compute.VirtualMachine
 	err = json.Unmarshal(testFile, &vms)
 	if err != nil {
-		log.Fatalf("could not unmarshall file %s", constants.VMS_TEST_FILE)
+		log.Fatalf("could not unmarshall file %s", globals.VMS_TEST_FILE)
 	}
 
 	var results []compute.VirtualMachine
@@ -186,14 +186,14 @@ func MockedGetComputeVMsPerResourceGroup(subscriptionID, resourceGroup string) [
 }
 
 func MockedGetNICdetails(subscriptionID, resourceGroup string, nicReference compute.NetworkInterfaceReference) (network.Interface, error) {
-	testFile, err := os.ReadFile(constants.NICS_TEST_FILE)
+	testFile, err := os.ReadFile(globals.NICS_TEST_FILE)
 	if err != nil {
-		log.Fatalf("could not read file %s", constants.NICS_TEST_FILE)
+		log.Fatalf("could not read file %s", globals.NICS_TEST_FILE)
 	}
 	var nics []network.Interface
 	err = json.Unmarshal(testFile, &nics)
 	if err != nil {
-		log.Fatalf("could not unmarshall file %s", constants.VMS_TEST_FILE)
+		log.Fatalf("could not unmarshall file %s", globals.VMS_TEST_FILE)
 	}
 	nicName := strings.Split(ptr.ToString(nicReference.ID), "/")[len(strings.Split(ptr.ToString(nicReference.ID), "/"))-1]
 	switch nicName {

@@ -12,7 +12,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/resources"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/subscriptions"
-	"github.com/BishopFox/cloudfox/constants"
+	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/utils"
 	"github.com/aws/smithy-go/ptr"
 	"github.com/fatih/color"
@@ -32,7 +32,7 @@ type scopeElement struct {
 // The userInput argument is used to toggle the interactive menu (useful for unit tests).
 // mode = full (prints entire table), tenant (prints only tenants table)
 func ScopeSelection(userInput *string, mode string) []scopeElement {
-	fmt.Printf("[%s] Fetching available resource groups from Az CLI sessions...\n", color.CyanString(constants.AZ_INTERACTIVE_MENU_MODULE_NAME))
+	fmt.Printf("[%s] Fetching available resource groups from Az CLI sessions...\n", color.CyanString(globals.AZ_INTERACTIVE_MENU_MODULE_NAME))
 	var results []scopeElement
 
 	availableScope := getAvailableScope()
@@ -43,8 +43,8 @@ func ScopeSelection(userInput *string, mode string) []scopeElement {
 
 	if userInput == nil {
 		var input string
-		fmt.Printf("[%s] Please make a selection (e.g. '1' or '1,2,3').\n", color.CyanString(constants.AZ_INTERACTIVE_MENU_MODULE_NAME))
-		fmt.Printf("[%s]> ", color.CyanString(constants.AZ_INTERACTIVE_MENU_MODULE_NAME))
+		fmt.Printf("[%s] Please make a selection (e.g. '1' or '1,2,3').\n", color.CyanString(globals.AZ_INTERACTIVE_MENU_MODULE_NAME))
+		fmt.Printf("[%s]> ", color.CyanString(globals.AZ_INTERACTIVE_MENU_MODULE_NAME))
 		fmt.Scanln(&input)
 		userInput = ptr.String(input)
 	}
@@ -195,7 +195,7 @@ func getResourceGroups(subscriptionID string) []resources.Group {
 
 func MockedGetResourceGroups(subscriptionID string) []resources.Group {
 	var results []resources.Group
-	for _, tenant := range loadTestFile(constants.RESOURCES_TEST_FILE).Tenants {
+	for _, tenant := range loadTestFile(globals.RESOURCES_TEST_FILE).Tenants {
 		for _, sub := range tenant.Subscriptions {
 			if ptr.ToString(sub.SubscriptionId) == subscriptionID {
 				for _, rg := range sub.ResourceGroups {
@@ -212,7 +212,7 @@ func MockedGetResourceGroups(subscriptionID string) []resources.Group {
 
 func MockedGetSubscriptions() []subscriptions.Subscription {
 	var results []subscriptions.Subscription
-	for _, tenant := range loadTestFile(constants.RESOURCES_TEST_FILE).Tenants {
+	for _, tenant := range loadTestFile(globals.RESOURCES_TEST_FILE).Tenants {
 		for _, sub := range tenant.Subscriptions {
 			results = append(results, subscriptions.Subscription{
 				TenantID:       tenant.TenantID,
@@ -226,7 +226,7 @@ func MockedGetSubscriptions() []subscriptions.Subscription {
 
 func MockedGetTenants() []subscriptions.TenantIDDescription {
 	var results []subscriptions.TenantIDDescription
-	for _, tenant := range loadTestFile(constants.RESOURCES_TEST_FILE).Tenants {
+	for _, tenant := range loadTestFile(globals.RESOURCES_TEST_FILE).Tenants {
 		results = append(results, subscriptions.TenantIDDescription{
 			TenantID:      tenant.TenantID,
 			DisplayName:   tenant.DisplayName,
@@ -239,12 +239,12 @@ func MockedGetTenants() []subscriptions.TenantIDDescription {
 func loadTestFile(fileName string) ResourcesTestFile {
 	file, err := os.ReadFile(fileName)
 	if err != nil {
-		log.Fatalf("could not read file %s", constants.RESOURCES_TEST_FILE)
+		log.Fatalf("could not read file %s", globals.RESOURCES_TEST_FILE)
 	}
 	var testFile ResourcesTestFile
 	err = json.Unmarshal(file, &testFile)
 	if err != nil {
-		log.Fatalf("could not unmarshall file %s", constants.RESOURCES_TEST_FILE)
+		log.Fatalf("could not unmarshall file %s", globals.RESOURCES_TEST_FILE)
 	}
 	return testFile
 }
