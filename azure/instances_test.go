@@ -2,53 +2,78 @@ package azure
 
 import (
 	"fmt"
+	"log"
 	"testing"
 
+	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/utils"
 )
 
 func TestAzRunInstancesCommand(t *testing.T) {
 	fmt.Println()
-	fmt.Println("[test case] Azure Run Instances Command")
+	fmt.Println("[test case] Azure Instances Command")
 
-	// Mocked functions to simulate Azure responses
+	// Test case parameters
+	utils.MockFileSystem(true)
+	subtests := []struct {
+		Name               string
+		AzSubscriptionName string
+		AzRGName           string
+		AzVerbosity        int
+		AzOutputFormat     string
+		resourcesTestFile  string
+		vmsTestFile        string
+		nicsTestFile       string
+		publicIPsTestFile  string
+	}{
+		{
+			Name:               "basic acceptance with subscription filter",
+			AzSubscriptionName: "SubscriptionA",
+			AzRGName:           "",
+			AzVerbosity:        2,
+			AzOutputFormat:     "table",
+			resourcesTestFile:  "./test-data/resources.json",
+			vmsTestFile:        "./test-data/vms.json",
+			nicsTestFile:       "./test-data/nics.json",
+			publicIPsTestFile:  "./test-data/public-ips.json",
+		},
+		{
+			Name:               "basic acceptance with resource group filter",
+			AzSubscriptionName: "SubscriptionA",
+			AzRGName:           "ResourceGroupA2",
+			AzVerbosity:        2,
+			AzOutputFormat:     "table",
+			resourcesTestFile:  "./test-data/resources.json",
+			vmsTestFile:        "./test-data/vms.json",
+			nicsTestFile:       "./test-data/nics.json",
+			publicIPsTestFile:  "./test-data/public-ips.json",
+		},
+	}
+
+	// Mocked functions to simulate Azure calls and responses
 	GetTenants = MockedGetTenants
 	GetSubscriptions = MockedGetSubscriptions
 	GetResourceGroups = MockedGetResourceGroups
-	// Need to adjust these three mocked functions, they are not filtering right
 	GetComputeVMsPerResourceGroup = MockedGetComputeVMsPerResourceGroup
 	GetNICdetails = MockedGetNICdetails
 	GetPublicIP = MockedGetPublicIP
 
-	// Test case parameters
-	utils.MockFileSystem(true)
-
-	subtests := []struct {
-		Name           string
-		AzSubFilter    string
-		AzRGFilter     string
-		AzVerbosity    int
-		AzOutputFormat string
-	}{
-		{
-			Name:           "./cloudfox az instances --subscription SUB_NAME",
-			AzSubFilter:    "SubscriptionA",
-			AzRGFilter:     "interactive",
-			AzVerbosity:    2,
-			AzOutputFormat: "table",
-		},
-		{
-			Name:           "./cloudfox az instances --resource-group RG_NAME",
-			AzSubFilter:    "interactive",
-			AzRGFilter:     "ResourceGroupC1",
-			AzVerbosity:    2,
-			AzOutputFormat: "table",
-		},
-	}
-
 	for _, s := range subtests {
-		fmt.Printf("[subtest] %s\n", s.Name)
-		AzRunInstancesCommand(s.AzSubFilter, s.AzRGFilter, s.AzOutputFormat, s.AzVerbosity)
 		fmt.Println()
+		fmt.Printf("[subtest] %s\n", s.Name)
+		globals.RESOURCES_TEST_FILE = s.resourcesTestFile
+		globals.VMS_TEST_FILE = s.vmsTestFile
+		globals.NICS_TEST_FILE = s.nicsTestFile
+		globals.PUBLIC_IPS_TEST_FILE = s.publicIPsTestFile
+
+		err := AzRunInstancesCommand(
+			s.AzSubscriptionName,
+			s.AzRGName,
+			s.AzOutputFormat,
+			s.AzVerbosity)
+
+		if err != nil {
+			log.Fatalf(err.Error())
+		}
 	}
 }

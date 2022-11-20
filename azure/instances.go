@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"strings"
 
@@ -18,52 +17,79 @@ import (
 	"github.com/fatih/color"
 )
 
-func AzRunInstancesCommand(AzSubFilter, AzRGFilter, AzOutputFormat string, AzVerbosity int) {
+func AzRunInstancesCommand(AzSubscriptionName, AzRGName, AzOutputFormat string, AzVerbosity int) error {
 	tableHead := []string{"Subscription", "Resource Group", "Name", "Location", "Admin Username", "Private IP", "Public IP"}
-	var tableBody [][]string
+	var tableBody, tableBodyTemp [][]string
 	var outputFile, outputMessagePrefix string
+	var err error
 
-	// Enumerate VMs based on interactive menu selection
-	if AzRGFilter == "interactive" && AzSubFilter == "interactive" {
-		for _, scopeItem := range ScopeSelection(nil, "full") {
-			_, tableBodyTemp := GetComputeRelevantData(scopeItem.Sub, scopeItem.ResourceGroup)
-			tableBody = append(tableBody, tableBodyTemp[0])
-		}
-		outputFile = fmt.Sprintf("%s_interactiveMenuSelection", globals.AZ_INTANCES_MODULE_NAME)
-		outputMessagePrefix = "multiple_selections"
-	}
-	// Enumerate VMs for a single subscription with the --subscription flag
-	if AzRGFilter == "interactive" && AzSubFilter != "interactive" {
-		fmt.Printf("[%s] Enumerating VMs for subscription: %s\n", color.CyanString(globals.AZ_INTANCES_MODULE_NAME), AzSubFilter)
-		for _, sub := range GetSubscriptions() {
-			if ptr.ToString(sub.DisplayName) == AzSubFilter {
-				for _, rg := range GetResourceGroups(ptr.ToString(sub.SubscriptionID)) {
-					_, tableBodyTemp := GetComputeRelevantData(sub, rg)
-					tableBody = append(tableBody, tableBodyTemp[0])
+	if AzSubscriptionName != "" {
+		if AzRGName != "" {
+			// Enumerate VMs for a single resource group with the -s and -g flags
+			fmt.Printf(
+				"[%s] Enumerating VMs for resource group %s in subscription %s\n",
+				color.CyanString(globals.AZ_INTANCES_MODULE_NAME),
+				AzRGName,
+				AzSubscriptionName)
+
+			_, tableBody, err = GetComputeRelevantData(
+				GetSubscriptionForResourceGroup(AzRGName),
+				resources.Group{Name: ptr.String(AzRGName)})
+
+			outputFile = fmt.Sprintf("%s_rg_%s", globals.AZ_INTANCES_MODULE_NAME, AzRGName)
+			outputMessagePrefix = fmt.Sprintf("rg_%s", AzRGName)
+		} else {
+			// Enumerate VMs for a single subscription with the -s flag
+			fmt.Printf(
+				"[%s] Enumerating VMs for subscription %s\n",
+				color.CyanString(globals.AZ_INTANCES_MODULE_NAME),
+				AzSubscriptionName)
+
+			for _, sub := range GetSubscriptions() {
+				if ptr.ToString(sub.DisplayName) == AzSubscriptionName {
+					rgs := GetResourceGroups(ptr.ToString(sub.SubscriptionID))
+					for _, rg := range rgs {
+						_, tableBodyTemp, err = GetComputeRelevantData(sub, rg)
+						tableBody = append(tableBody, tableBodyTemp...)
+					}
 				}
 			}
+			outputFile = fmt.Sprintf("%s-sub-%s", globals.AZ_INTANCES_MODULE_NAME, AzRGName)
+			outputMessagePrefix = fmt.Sprintf("sub:%s", AzSubscriptionName)
 		}
-		outputFile = fmt.Sprintf("%s_sub_%s", globals.AZ_INTANCES_MODULE_NAME, AzSubFilter)
-		outputMessagePrefix = fmt.Sprintf("sub:%s", AzSubFilter)
-	}
-	// Enumerate VMs for a single resource group with the --resource-group flag
-	if AzRGFilter != "interactive" && AzSubFilter == "interactive" {
-		fmt.Printf("[%s] Enumerating VMs for resource group: %s\n", color.CyanString(globals.AZ_INTANCES_MODULE_NAME), AzRGFilter)
-		sub := GetSubscriptionForResourceGroup(AzRGFilter)
-		_, tableBody = GetComputeRelevantData(sub, resources.Group{Name: ptr.String(AzRGFilter)})
-		outputFile = fmt.Sprintf("%s_sub_%s", globals.AZ_INTANCES_MODULE_NAME, AzRGFilter)
-		outputMessagePrefix = fmt.Sprintf("rg:%s", AzRGFilter)
+	} else {
+		// Enumerate VMs based on interactive menu selection
+		if AzRGName == "interactive" && AzSubscriptionName == "interactive" {
+			for _, scopeItem := range ScopeSelection(nil, "full") {
+				_, tableBodyTemp, err = GetComputeRelevantData(scopeItem.Sub, scopeItem.ResourceGroup)
+				tableBody = append(tableBody, tableBodyTemp...)
+			}
+			outputFile = fmt.Sprintf("%s-multiple-selections", globals.AZ_INTANCES_MODULE_NAME)
+			outputMessagePrefix = "multiple-selections"
+		}
 	}
 
-	// Prints output to screen and file
+	if err != nil {
+		return err
+	}
+
 	utils.OutputSelector(AzVerbosity, AzOutputFormat, tableHead, tableBody, globals.CLOUDFOX_BASE_OUTPUT_DIRECTORY, outputFile, globals.AZ_INTANCES_MODULE_NAME, outputMessagePrefix)
+	return nil
 }
 
-func GetComputeRelevantData(sub subscriptions.Subscription, rg resources.Group) ([]string, [][]string) {
+func GetComputeRelevantData(sub subscriptions.Subscription, rg resources.Group) ([]string, [][]string, error) {
 	header := []string{"Subscription", "Resource Group", "Name", "Location", "Admin Username", "Private IP", "Public IP"}
 	var body [][]string
 
-	for _, vm := range GetComputeVMsPerResourceGroup(ptr.ToString(sub.SubscriptionID), ptr.ToString(rg.Name)) {
+	subscriptionID := ptr.ToString(sub.SubscriptionID)
+	resourceGroupName := ptr.ToString(rg.Name)
+
+	vms, err := GetComputeVMsPerResourceGroup(subscriptionID, resourceGroupName)
+	if err != nil {
+		return nil, nil, fmt.Errorf("error fetching vms for resource group %s: %s", resourceGroupName, err)
+	}
+
+	for _, vm := range vms {
 		var adminUsername string
 		if vm.VirtualMachineProperties != nil && vm.OsProfile != nil {
 			adminUsername = ptr.ToString(vm.OsProfile.AdminUsername)
@@ -78,30 +104,30 @@ func GetComputeRelevantData(sub subscriptions.Subscription, rg resources.Group) 
 				ptr.ToString(vm.Name),
 				ptr.ToString(vm.Location),
 				adminUsername,
-				strings.Join(privateIPs, ","),
-				strings.Join(publicIPs, ","),
+				strings.Join(privateIPs, "\n"),
+				strings.Join(publicIPs, "\n"),
 			},
 		)
 	}
-	return header, body
+	return header, body, nil
 }
 
 var GetComputeVMsPerResourceGroup = getComputeVMsPerResourceGroup
 
-func getComputeVMsPerResourceGroup(subscriptionID string, resourceGroup string) []compute.VirtualMachine {
+func getComputeVMsPerResourceGroup(subscriptionID string, resourceGroup string) ([]compute.VirtualMachine, error) {
 	computeClient := utils.GetVirtualMachinesClient(subscriptionID)
 	var vms []compute.VirtualMachine
 
 	for page, err := computeClient.List(context.TODO(), resourceGroup); page.NotDone(); page.Next() {
 		if err != nil {
-			log.Fatalf("could not enumerate resource group %s. %s", resourceGroup, err)
+			return nil, fmt.Errorf("could not enumerate resource group %s. %s", resourceGroup, err)
 		} else {
 
 			vms = append(vms, page.Values()...)
 		}
 	}
 
-	return vms
+	return vms, nil
 }
 
 func getIPs(subscriptionID string, resourceGroup string, vm compute.VirtualMachine) ([]string, []string) {
@@ -111,7 +137,7 @@ func getIPs(subscriptionID string, resourceGroup string, vm compute.VirtualMachi
 		for _, nicReference := range *vm.VirtualMachineProperties.NetworkProfile.NetworkInterfaces {
 			nic, err := GetNICdetails(subscriptionID, resourceGroup, nicReference)
 			if err != nil {
-				return []string{"nicNotFound"}, []string{"nicNotFound"}
+				return []string{err.Error()}, []string{err.Error()}
 			}
 			if nic.InterfacePropertiesFormat.IPConfigurations != nil {
 				for _, ip := range *nic.InterfacePropertiesFormat.IPConfigurations {
@@ -141,7 +167,7 @@ func getNICdetails(subscriptionID string, resourceGroup string, nicReference com
 
 	nic, err := client.Get(context.TODO(), resourceGroup, NICName, "")
 	if err != nil {
-		return network.Interface{}, err
+		return network.Interface{}, fmt.Errorf("NICnotFound_%s", NICName)
 	}
 
 	return nic, nil
@@ -155,23 +181,23 @@ func getPublicIP(subscriptionID string, resourceGroup string, ip network.Interfa
 	publicIPName := strings.Split(publicIPID, "/")[len(strings.Split(publicIPID, "/"))-1]
 	publicIPExpanded, err := client.Get(context.TODO(), resourceGroup, publicIPName, "")
 	if err != nil {
-		return nil, fmt.Errorf("IPNotFound:%s", publicIPName)
+		return nil, fmt.Errorf("IPNotFound_%s", publicIPName)
 	}
 	return publicIPExpanded.PublicIPAddressPropertiesFormat.IPAddress, nil
 }
 
 /************* MOCKED FUNCTIONS BELOW (USE IT FOR UNIT TESTING) *************/
 
-func MockedGetComputeVMsPerResourceGroup(subscriptionID, resourceGroup string) []compute.VirtualMachine {
+func MockedGetComputeVMsPerResourceGroup(subscriptionID, resourceGroup string) ([]compute.VirtualMachine, error) {
 	testFile, err := os.ReadFile(globals.VMS_TEST_FILE)
 	if err != nil {
-		log.Fatalf("could not read file %s", globals.VMS_TEST_FILE)
+		return nil, fmt.Errorf("could not read file %s", globals.VMS_TEST_FILE)
 	}
 
 	var vms []compute.VirtualMachine
 	err = json.Unmarshal(testFile, &vms)
 	if err != nil {
-		log.Fatalf("could not unmarshall file %s", globals.VMS_TEST_FILE)
+		return nil, fmt.Errorf("could not unmarshall file %s", globals.VMS_TEST_FILE)
 	}
 
 	var results []compute.VirtualMachine
@@ -182,51 +208,49 @@ func MockedGetComputeVMsPerResourceGroup(subscriptionID, resourceGroup string) [
 			results = append(results, vm)
 		}
 	}
-	return results
+	return results, nil
 }
 
 func MockedGetNICdetails(subscriptionID, resourceGroup string, nicReference compute.NetworkInterfaceReference) (network.Interface, error) {
 	testFile, err := os.ReadFile(globals.NICS_TEST_FILE)
 	if err != nil {
-		log.Fatalf("could not read file %s", globals.NICS_TEST_FILE)
+		return network.Interface{}, fmt.Errorf("NICnotFound_%s", globals.NICS_TEST_FILE)
 	}
+
 	var nics []network.Interface
 	err = json.Unmarshal(testFile, &nics)
 	if err != nil {
-		log.Fatalf("could not unmarshall file %s", globals.VMS_TEST_FILE)
+		return network.Interface{}, fmt.Errorf("NICnotFound_%s", globals.NICS_TEST_FILE)
 	}
-	nicName := strings.Split(ptr.ToString(nicReference.ID), "/")[len(strings.Split(ptr.ToString(nicReference.ID), "/"))-1]
-	switch nicName {
-	case "NetworkInterface1":
-		return nics[0], nil
-	case "NetworkInterface2":
-		return nics[1], nil
-	case "NetworkInterface3":
-		return nics[2], nil
-	case "NetworkInterface4":
-		return nics[3], nil
-	default:
-		return network.Interface{}, fmt.Errorf("nic not found: %s", ptr.ToString(nicReference.ID))
+
+	for _, nic := range nics {
+		if ptr.ToString(nic.ID) == ptr.ToString(nicReference.ID) {
+			return nic, nil
+		}
 	}
+	return network.Interface{}, fmt.Errorf("NICnotFound_%s", ptr.ToString(nicReference.ID))
 }
 
 func MockedGetPublicIP(subscriptionID, resourceGroup string, ip network.InterfaceIPConfiguration) (*string, error) {
+	f, err := os.ReadFile(globals.PUBLIC_IPS_TEST_FILE)
+	if err != nil {
+		return nil, fmt.Errorf("IPNotFound_%s", globals.PUBLIC_IPS_TEST_FILE)
+	}
+
+	var ips []network.PublicIPAddress
+	err = json.Unmarshal(f, &ips)
+	if err != nil {
+		return nil, fmt.Errorf("IPNotFound_%s", globals.PUBLIC_IPS_TEST_FILE)
+	}
+
 	publicIPID := ptr.ToString(ip.InterfaceIPConfigurationPropertiesFormat.PublicIPAddress.ID)
 	publicIPName := strings.Split(publicIPID, "/")[len(strings.Split(publicIPID, "/"))-1]
-	switch publicIPName {
-	case "PublicIpAddress1A":
-		return ptr.String("72.88.100.1"), nil
-	case "PublicIpAddress1B":
-		return ptr.String("72.88.100.2"), nil
-	case "PublicIpAddress2A":
-		return ptr.String("72.88.100.3"), nil
-	case "PublicIpAddress3A":
-		return ptr.String("72.88.100.3"), nil
-	case "PublicIpAddress4A":
-		return ptr.String("72.88.100.4"), nil
-	case "PublicIpAddress5A":
-		return ptr.String("72.88.100.5"), nil
-	default:
-		return nil, fmt.Errorf("public IP not found %s", publicIPName)
+
+	// replace this switch for a for loop
+	for _, ip := range ips {
+		if ptr.ToString(ip.ID) == publicIPID {
+			return ip.PublicIPAddressPropertiesFormat.IPAddress, nil
+		}
 	}
+	return nil, fmt.Errorf("IPNotFound_%s", publicIPName)
 }

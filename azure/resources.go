@@ -110,19 +110,6 @@ func GetSubscriptionForResourceGroup(resourceGroupName string) subscriptions.Sub
 	return subscriptions.Subscription{}
 }
 
-func GetSubscriptionForResourceGroup_LEGACY(resourceGroupName string) subscriptions.Subscription {
-	subs := GetSubscriptions()
-	for _, sub := range subs {
-		rgs := GetResourceGroups(ptr.ToString(sub.SubscriptionID))
-		for _, rg := range rgs {
-			if ptr.ToString(rg.Name) == resourceGroupName {
-				return sub
-			}
-		}
-	}
-	return subscriptions.Subscription{}
-}
-
 func getAvailableScope() []scopeElement {
 	var index int
 	var results []scopeElement

@@ -7,12 +7,12 @@ import (
 )
 
 var (
-	AzSubFilter       string
-	AzRGFilter        string
-	AzOutputFormat    string
-	AzOutputDirectory string
-	AzVerbosity       int
-	AzCommands        = &cobra.Command{
+	AzSubscriptionName string
+	AzRGName           string
+	AzOutputFormat     string
+	AzOutputDirectory  string
+	AzVerbosity        int
+	AzCommands         = &cobra.Command{
 		Use:     "azure",
 		Aliases: []string{"az"},
 		Long:    `See "Available Commands" for Azure Modules`,
@@ -31,13 +31,13 @@ var (
 Select scope from interactive menu:
 ./cloudfox az instances
 
-Enumerate VMs from a specific resource group:
-./cloudfox az instances --resource-group RESOURCE_GROU_NAME
-
 Enumerate VMs for all resource groups in a subscription:
-./cloudfox az instances --subscription SUBSCRIPTION_ID`,
+./cloudfox az instances --subscription SUBSCRIPTION_NAME
+
+Enumerate VMs from a specific resource group:
+./cloudfox az instances -s SUBSCRIPTION_NAME -g RESOURCE_GROUP_NAME`,
 		Run: func(cmd *cobra.Command, args []string) {
-			azure.AzRunInstancesCommand(AzSubFilter, AzRGFilter, AzOutputFormat, AzVerbosity)
+			azure.AzRunInstancesCommand(AzSubscriptionName, AzRGName, AzOutputFormat, AzVerbosity)
 		},
 	}
 
@@ -50,7 +50,7 @@ Select scope from interactive menu:
 ./cloudfox az rbac
 
 Enumerate role assignments for a specific subscriptions:
-./cloudfox az rbac --subscription SUBSCRIPTION_ID
+./cloudfox az rbac --subscription SUBSCRIPTION_NAME
 `,
 		Run: func(cmd *cobra.Command, args []string) {
 			/*
@@ -67,8 +67,8 @@ func init() {
 	AzCommands.PersistentFlags().StringVar(&AzOutputDirectory, globals.CLOUDFOX_BASE_OUTPUT_DIRECTORY, "cloudfox-output", "Output Directory ")
 
 	// Instance Command Flags
-	AzInstancesCommand.Flags().StringVarP(&AzSubFilter, "subscription", "s", "interactive", "Subscription Name")
-	AzInstancesCommand.Flags().StringVarP(&AzRGFilter, "resource-group", "g", "interactive", "Resource Group Name")
+	AzInstancesCommand.Flags().StringVarP(&AzSubscriptionName, "subscription", "s", "", "Subscription Name")
+	AzInstancesCommand.Flags().StringVarP(&AzRGName, "resource-group", "g", "", "Resource Group Name")
 
 	AzCommands.AddCommand(AzInstancesCommand, AzRBACMapCommand)
 }

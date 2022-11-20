@@ -1,8 +1,9 @@
 package globals
 
-var RESOURCES_TEST_FILE = "../azure/test-data/resources.json"
-var VMS_TEST_FILE = "../azure/test-data/[]compute.VirtualMachine.json"
-var NICS_TEST_FILE = "../azure/test-data/[]network.Interface.json"
+var VMS_TEST_FILE string
+var NICS_TEST_FILE string
+var PUBLIC_IPS_TEST_FILE string
+var RESOURCES_TEST_FILE string
 var ROLE_DEFINITIONS_TEST_FILE = "../azure/test-data/[]authorization.RoleDefinition.json"
 var ROLE_ASSIGNMENTS_TEST_FILE = "../azure/test-data/[]authorization.RoleAssignment.json"
 var AAD_USERS_TEST_FILE = "../azure/test-data/[]graphrbac.User.json"
