@@ -41,7 +41,8 @@ Enumerate VMs from a specific resource group:
 		},
 	}
 
-	AzRBACMapCommand = &cobra.Command{
+	AzTenantName  string
+	AzRbacCommand = &cobra.Command{
 		Use:     "rbac",
 		Aliases: []string{},
 		Short:   "Display all role assignemts for all Azure principals",
@@ -61,14 +62,17 @@ Enumerate role assignments for a specific subscriptions:
 )
 
 func init() {
-	// Global flags for the Azure modules
+	// Global flags
 	AzCommands.PersistentFlags().StringVarP(&AzOutputFormat, "output", "o", "all", "[\"table\" | \"csv\" | \"all\" ]")
 	AzCommands.PersistentFlags().IntVarP(&AzVerbosity, "verbosity", "v", 1, "1 = Print control messages only\n2 = Print control messages, module output\n3 = Print control messages, module output, and loot file output\n")
-	AzCommands.PersistentFlags().StringVar(&AzOutputDirectory, globals.CLOUDFOX_BASE_OUTPUT_DIRECTORY, "cloudfox-output", "Output Directory ")
+	AzCommands.PersistentFlags().StringVarP(&AzOutputDirectory, globals.CLOUDFOX_BASE_OUTPUT_DIRECTORY, "cloudfox-output", "d", "Output Directory")
 
-	// Instance Command Flags
+	// Instance command flags
 	AzInstancesCommand.Flags().StringVarP(&AzSubscriptionName, "subscription", "s", "", "Subscription Name")
-	AzInstancesCommand.Flags().StringVarP(&AzRGName, "resource-group", "g", "", "Resource Group Name")
+	AzInstancesCommand.Flags().StringVarP(&AzRGName, "resource-group", "g", "", "Resource Group name")
 
-	AzCommands.AddCommand(AzInstancesCommand, AzRBACMapCommand)
+	// RBAC command flags
+	AzRbacCommand.Flags().StringVarP(&AzTenantName, "tenant", "t", "", "Tenant name")
+
+	AzCommands.AddCommand(AzInstancesCommand, AzRbacCommand)
 }

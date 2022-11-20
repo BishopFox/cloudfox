@@ -17,8 +17,7 @@ func TestRBACCommand(t *testing.T) {
 	utils.MockFileSystem(true)
 	subtests := []struct {
 		Name                    string
-		AzSubscriptionName      string
-		AzRGName                string
+		AzTenantName            string
 		AzVerbosity             int
 		AzOutputFormat          string
 		usersTestFile           string
@@ -27,8 +26,7 @@ func TestRBACCommand(t *testing.T) {
 	}{
 		{
 			Name:                    "basic acceptance",
-			AzSubscriptionName:      "",
-			AzRGName:                "",
+			AzTenantName:            "",
 			AzVerbosity:             2,
 			AzOutputFormat:          "table",
 			usersTestFile:           "./test-data/users.json",
