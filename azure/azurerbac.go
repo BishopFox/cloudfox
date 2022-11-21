@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/authorization/mgmt/authorization"
 	"github.com/Azure/azure-sdk-for-go/services/graphrbac/1.6/graphrbac"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/utils"
+	"github.com/aws/smithy-go/ptr"
 	"github.com/fatih/color"
 )
 
@@ -31,12 +33,12 @@ func getAzureADUsers(tenantID string) []graphrbac.User {
 
 var GetRoleDefinitions = getRoleDefinitions
 
-func getRoleDefinitions(subscriptionID string) []authorization.RoleDefinition {
-	client := utils.GetRoleDefinitionsClient(subscriptionID)
+func getRoleDefinitions(subscriptionName string) []authorization.RoleDefinition {
+	client := utils.GetRoleDefinitionsClient(subscriptionName)
 	var roleDefinitions []authorization.RoleDefinition
 	for page, err := client.List(context.TODO(), "", ""); page.NotDone(); page.Next() {
 		if err != nil {
-			fmt.Printf("[%s] Could not enumerate roles for subscription %s. Skipping it.\n", color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME), subscriptionID)
+			fmt.Printf("[%s] Could not enumerate roles for subscription %s. Skipping it.\n", color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME), subscriptionName)
 			continue
 		}
 		roleDefinitions = append(roleDefinitions, page.Values()...)
@@ -61,15 +63,16 @@ func getRoleAssignments(subscriptionID string) []authorization.RoleAssignment {
 
 /************* MOCKED FUNCTIONS BELOW (USE IT FOR UNIT TESTING) *************/
 
-func MockedGetAzureADUsers(testFile string) []graphrbac.User {
+func MockedGetAzureADUsers(tenantID string) []graphrbac.User {
 	var users AzureADUsersTestFile
-	file, err := os.ReadFile(testFile)
+
+	file, err := os.ReadFile(globals.AAD_USERS_TEST_FILE)
 	if err != nil {
-		log.Fatalf("could not read file %s", testFile)
+		log.Fatalf("could not read file %s", globals.AAD_USERS_TEST_FILE)
 	}
 	err = json.Unmarshal(file, &users)
 	if err != nil {
-		log.Fatalf("could not unmarshall file %s", testFile)
+		log.Fatalf("could not unmarshall file %s", globals.AAD_USERS_TEST_FILE)
 	}
 	return users.AzureADUsers
 }
@@ -77,8 +80,8 @@ func MockedGetAzureADUsers(testFile string) []graphrbac.User {
 func GenerateAzureADUsersTestFIle(tenantID string) {
 	// The READ-ONLY ObjectID attribute needs to be included manually in the test file
 	// ObjectID *string `json:"objectId,omitempty"`
-
-	usersJSON, err := json.Marshal(AzureADUsersTestFile{AzureADUsers: getAzureADUsers(tenantID)})
+	users := getAzureADUsers(tenantID)
+	usersJSON, err := json.Marshal(AzureADUsersTestFile{AzureADUsers: users})
 	if err != nil {
 		log.Fatalf("could not marshall json for azure ad users in tenant %s", tenantID)
 	}
@@ -92,29 +95,49 @@ type AzureADUsersTestFile struct {
 	AzureADUsers []graphrbac.User `json:"azureADUsers"`
 }
 
-func MockedGetRoleDefinitions(testFile string) []authorization.RoleDefinition {
+func MockedGetRoleDefinitions(subscriptionName string) []authorization.RoleDefinition {
 	var roleDefinitions RoleDefinitionTestFile
-	file, err := os.ReadFile(testFile)
+	file, err := os.ReadFile(globals.ROLE_DEFINITIONS_TEST_FILE)
 	if err != nil {
-		log.Fatalf("could not read file %s", testFile)
+		log.Fatalf("could not read file %s", globals.ROLE_DEFINITIONS_TEST_FILE)
 	}
 	err = json.Unmarshal(file, &roleDefinitions)
 	if err != nil {
-		log.Fatalf("could not unmarshall file %s", testFile)
+		log.Fatalf("could not unmarshall file %s", globals.ROLE_DEFINITIONS_TEST_FILE)
 	}
 	return roleDefinitions.RoleDefinitions
 }
 
-func GenerateRoleDefinitionsTestFile(subscriptionID string) {
-	// The READ-ONLY Name attribute needs to be included manually in the test file
-	// This attribute is the unique identifier for the role (e.g. "fbc52c3f-28ad-4303-a892-8a056630b8f1")
-	// Name *string `json:"name,omitempty"`
+func GenerateRoleDefinitionsTestFile(subscriptionName string) {
+	// The READ-ONLY ID attribute needs to be included manually in the test file.
+	// This attribute is the unique identifier for the role.
+	// ID *string `json:"id,omitempty"`.
 
-	rolesjson, err := json.Marshal(
-		RoleDefinitionTestFile{RoleDefinitions: getRoleDefinitions(subscriptionID)})
-	if err != nil {
-		log.Fatalf("could not marshall json for role definitions in subscription %s", subscriptionID)
+	roleDefinitions := getRoleDefinitions(subscriptionName)
+	roleAssignments := getRoleAssignments(subscriptionName)
+	var roleDefinitionsResults []authorization.RoleDefinition
+
+	for _, rd := range roleDefinitions {
+		for _, ra := range roleAssignments {
+			want := strings.Split(ptr.ToString(ra.Properties.RoleDefinitionID), "/")[len(strings.Split(ptr.ToString(ra.Properties.RoleDefinitionID), "/"))-1]
+
+			got := strings.Split(ptr.ToString(rd.ID), "/")[len(strings.Split(ptr.ToString(rd.ID), "/"))-1]
+
+			if want == got {
+				roleDefinitionsResults = append(roleDefinitionsResults, rd)
+			}
+		}
 	}
+
+	tf := RoleDefinitionTestFile{
+		RoleDefinitions: roleDefinitionsResults,
+	}
+
+	rolesjson, err := json.Marshal(tf)
+	if err != nil {
+		log.Fatalf("could not marshall json for role definitions in subscription %s", subscriptionName)
+	}
+
 	err = os.WriteFile(globals.ROLE_DEFINITIONS_TEST_FILE, rolesjson, os.ModeAppend)
 	if err != nil {
 		log.Fatalf("could not write to role definitions test file %s", globals.ROLE_DEFINITIONS_TEST_FILE)

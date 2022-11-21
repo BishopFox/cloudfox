@@ -17,36 +17,37 @@ import (
 	"github.com/fatih/color"
 )
 
-func AzRunInstancesCommand(AzSubscriptionName, AzRGName, AzOutputFormat string, AzVerbosity int) error {
+func AzRunInstancesCommand(AzSubscriptionID, AzRGName, AzOutputFormat string, AzVerbosity int) error {
 	tableHead := []string{"Subscription", "Resource Group", "Name", "Location", "Admin Username", "Private IP", "Public IP"}
 	var tableBody, tableBodyTemp [][]string
 	var outputFile, outputMessagePrefix string
 	var err error
 
-	if AzSubscriptionName != "" {
+	if AzSubscriptionID != "" {
 		if AzRGName != "" {
 			// Enumerate VMs for a single resource group with the -s and -g flags
 			fmt.Printf(
 				"[%s] Enumerating VMs for resource group %s in subscription %s\n",
 				color.CyanString(globals.AZ_INTANCES_MODULE_NAME),
 				AzRGName,
-				AzSubscriptionName)
+				AzSubscriptionID)
 
 			_, tableBody, err = GetComputeRelevantData(
 				GetSubscriptionForResourceGroup(AzRGName),
 				resources.Group{Name: ptr.String(AzRGName)})
 
 			outputFile = fmt.Sprintf("%s_rg_%s", globals.AZ_INTANCES_MODULE_NAME, AzRGName)
-			outputMessagePrefix = fmt.Sprintf("rg_%s", AzRGName)
+			outputMessagePrefix = fmt.Sprintf("rg:%s", AzRGName)
 		} else {
 			// Enumerate VMs for a single subscription with the -s flag
 			fmt.Printf(
 				"[%s] Enumerating VMs for subscription %s\n",
 				color.CyanString(globals.AZ_INTANCES_MODULE_NAME),
-				AzSubscriptionName)
+				AzSubscriptionID)
 
-			for _, sub := range GetSubscriptions() {
-				if ptr.ToString(sub.DisplayName) == AzSubscriptionName {
+			subscriptions := GetSubscriptions()
+			for _, sub := range subscriptions {
+				if ptr.ToString(sub.SubscriptionID) == AzSubscriptionID {
 					rgs := GetResourceGroups(ptr.ToString(sub.SubscriptionID))
 					for _, rg := range rgs {
 						_, tableBodyTemp, err = GetComputeRelevantData(sub, rg)
@@ -55,17 +56,17 @@ func AzRunInstancesCommand(AzSubscriptionName, AzRGName, AzOutputFormat string, 
 				}
 			}
 			outputFile = fmt.Sprintf("%s-sub-%s", globals.AZ_INTANCES_MODULE_NAME, AzRGName)
-			outputMessagePrefix = fmt.Sprintf("sub:%s", AzSubscriptionName)
+			outputMessagePrefix = fmt.Sprintf("sub:%s", AzSubscriptionID)
 		}
 	} else {
 		// Enumerate VMs based on interactive menu selection
-		if AzRGName == "interactive" && AzSubscriptionName == "interactive" {
+		if AzRGName == "" && AzSubscriptionID == "" {
 			for _, scopeItem := range ScopeSelection(nil, "full") {
 				_, tableBodyTemp, err = GetComputeRelevantData(scopeItem.Sub, scopeItem.ResourceGroup)
 				tableBody = append(tableBody, tableBodyTemp...)
 			}
 			outputFile = fmt.Sprintf("%s-multiple-selections", globals.AZ_INTANCES_MODULE_NAME)
-			outputMessagePrefix = "multiple-selections"
+			outputMessagePrefix = "multiple_selections"
 		}
 	}
 

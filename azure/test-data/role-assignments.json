@@ -1,32 +1,37 @@
-{
-    "RoleAssignments": [
-        {
-            "properties": {
-                "scope": "/subscriptions/11111111-1111-1111-11111111/resourceGroups/testAAA",
-                "roleDefinitionId": "/subscriptions/11111111-1111-1111-11111111/providers/Microsoft.Authorization/roleDefinitions/7f951dda-4ed3-4680-a7ca-43fe172d538d",
-                "principalId": "28ed1af9-a4f8-4920-83c5-1a2a20f39141"
-            }
-        },
-        {
-            "properties": {
-                "scope": "/subscriptions/11111111-1111-1111-11111111/resourceGroups/testAAA",
-                "roleDefinitionId": "/subscriptions/11111111-1111-1111-11111111/providers/Microsoft.Authorization/roleDefinitions/7f951dda-4ed3-4680-a7ca-43fe172d538d",
-                "principalId": "87034aa1-70fd-4fc6-94ce-a9666b2da2e0"
-            }
-        },
-        {
-            "properties": {
-                "scope": "/subscriptions/11111111-1111-1111-11111111/resourceGroups/testAAA",
-                "roleDefinitionId": "/subscriptions/11111111-1111-1111-11111111/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7",
-                "principalId": "16b3d978-5e8a-40e1-af5d-9582c7a3dda5"
-            }
-        },
-        {
-            "properties": {
-                "scope": "/subscriptions/11111111-1111-1111-11111111/resourceGroups/testAAA",
-                "roleDefinitionId": "/subscriptions/11111111-1111-1111-11111111/providers/Microsoft.Authorization/roleDefinitions/86e8f5dc-a6e9-4c67-9d15-de283e8eac25",
-                "principalId": "87034aa1-70fd-4fc6-94ce-a9666b2da2e0"
-            }
+[
+    {
+        "properties": {
+            "scope": "/subscriptions/ede6a6a8-1ecc-4810-a4dc-9c78ebdc0820",
+            "roleDefinitionId": "/subscriptions/ede6a6a8-1ecc-4810-a4dc-9c78ebdc0820/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7",
+            "principalId": "8da340e3-5e2e-4f55-a3f7-4ea20d6755be"
         }
-    ]
-}
+    },
+    {
+        "properties": {
+            "scope": "/subscriptions/ede6a6a8-1ecc-4810-a4dc-9c78ebdc0820",
+            "roleDefinitionId": "/subscriptions/ede6a6a8-1ecc-4810-a4dc-9c78ebdc0820/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c",
+            "principalId": "d994d51b-d939-469e-ac73-bd81030cecf0"
+        }
+    },
+    {
+        "properties": {
+            "scope": "/subscriptions/ede6a6a8-1ecc-4810-a4dc-9c78ebdc0820",
+            "roleDefinitionId": "/subscriptions/ede6a6a8-1ecc-4810-a4dc-9c78ebdc0820/providers/Microsoft.Authorization/roleDefinitions/c6decf44-fd0a-444c-a844-d653c394e7ab",
+            "principalId": "8da340e3-5e2e-4f55-a3f7-4ea20d6755be"
+        }
+    },
+    {
+        "properties": {
+            "scope": "/subscriptions/ede6a6a8-1ecc-4810-a4dc-9c78ebdc0820",
+            "roleDefinitionId": "/subscriptions/ede6a6a8-1ecc-4810-a4dc-9c78ebdc0820/providers/Microsoft.Authorization/roleDefinitions/c6decf44-fd0a-444c-a844-d653c394e7ab",
+            "principalId": "4ad03365-28cd-40cd-a46f-6e9d1149803d"
+        }
+    },
+    {
+        "properties": {
+            "scope": "/subscriptions/ede6a6a8-1ecc-4810-a4dc-9c78ebdc0820",
+            "roleDefinitionId": "/subscriptions/ede6a6a8-1ecc-4810-a4dc-9c78ebdc0820/providers/Microsoft.Authorization/roleDefinitions/8e3af657-a8ff-443c-a75c-2fe8c4bcb635",
+            "principalId": "73d5b926-b258-47a2-891c-b14bf9da5dde"
+        }
+    }
+]

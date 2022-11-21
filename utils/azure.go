@@ -78,8 +78,8 @@ func GetRoleAssignmentsClient(subscriptionID string) authorization.RoleAssignmen
 	return client
 }
 
-func GetRoleDefinitionsClient(subscriptionID string) authorization.RoleDefinitionsClient {
-	client := authorization.NewRoleDefinitionsClient(subscriptionID)
+func GetRoleDefinitionsClient(subscriptionName string) authorization.RoleDefinitionsClient {
+	client := authorization.NewRoleDefinitionsClient(subscriptionName)
 	a, err := getAuthorizer(globals.AZ_RESOURCE_MANAGER_ENDPOINT)
 	if err != nil {
 		log.Fatalf("failed to get role definitions client: %s", err)

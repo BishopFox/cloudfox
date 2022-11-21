@@ -16,37 +16,37 @@ func TestAzRunInstancesCommand(t *testing.T) {
 	// Test case parameters
 	utils.MockFileSystem(true)
 	subtests := []struct {
-		Name               string
-		AzSubscriptionName string
-		AzRGName           string
-		AzVerbosity        int
-		AzOutputFormat     string
-		resourcesTestFile  string
-		vmsTestFile        string
-		nicsTestFile       string
-		publicIPsTestFile  string
+		Name              string
+		AzSubscriptionID  string
+		AzRGName          string
+		AzVerbosity       int
+		AzOutputFormat    string
+		resourcesTestFile string
+		vmsTestFile       string
+		nicsTestFile      string
+		publicIPsTestFile string
 	}{
 		{
-			Name:               "basic acceptance with subscription filter",
-			AzSubscriptionName: "SubscriptionA",
-			AzRGName:           "",
-			AzVerbosity:        2,
-			AzOutputFormat:     "table",
-			resourcesTestFile:  "./test-data/resources.json",
-			vmsTestFile:        "./test-data/vms.json",
-			nicsTestFile:       "./test-data/nics.json",
-			publicIPsTestFile:  "./test-data/public-ips.json",
+			Name:              "basic acceptance with subscription filter",
+			AzSubscriptionID:  "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
+			AzRGName:          "",
+			AzVerbosity:       2,
+			AzOutputFormat:    "table",
+			resourcesTestFile: "./test-data/resources.json",
+			vmsTestFile:       "./test-data/vms.json",
+			nicsTestFile:      "./test-data/nics.json",
+			publicIPsTestFile: "./test-data/public-ips.json",
 		},
 		{
-			Name:               "basic acceptance with resource group filter",
-			AzSubscriptionName: "SubscriptionA",
-			AzRGName:           "ResourceGroupA2",
-			AzVerbosity:        2,
-			AzOutputFormat:     "table",
-			resourcesTestFile:  "./test-data/resources.json",
-			vmsTestFile:        "./test-data/vms.json",
-			nicsTestFile:       "./test-data/nics.json",
-			publicIPsTestFile:  "./test-data/public-ips.json",
+			Name:              "basic acceptance with resource group filter",
+			AzSubscriptionID:  "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
+			AzRGName:          "ResourceGroupA2",
+			AzVerbosity:       2,
+			AzOutputFormat:    "table",
+			resourcesTestFile: "./test-data/resources.json",
+			vmsTestFile:       "./test-data/vms.json",
+			nicsTestFile:      "./test-data/nics.json",
+			publicIPsTestFile: "./test-data/public-ips.json",
 		},
 	}
 
@@ -67,7 +67,7 @@ func TestAzRunInstancesCommand(t *testing.T) {
 		globals.PUBLIC_IPS_TEST_FILE = s.publicIPsTestFile
 
 		err := AzRunInstancesCommand(
-			s.AzSubscriptionName,
+			s.AzSubscriptionID,
 			s.AzRGName,
 			s.AzOutputFormat,
 			s.AzVerbosity)

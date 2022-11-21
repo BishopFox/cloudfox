@@ -2,11 +2,9 @@ package azure
 
 import (
 	"fmt"
-	"log"
 	"testing"
 
 	"github.com/BishopFox/cloudfox/globals"
-	"github.com/BishopFox/cloudfox/utils"
 )
 
 func TestRBACCommand(t *testing.T) {
@@ -14,10 +12,13 @@ func TestRBACCommand(t *testing.T) {
 	fmt.Println("[test case] Azure RBAC Command")
 
 	// Test case parameters
-	utils.MockFileSystem(true)
+	//utils.MockFileSystem(true)
 	subtests := []struct {
 		Name                    string
-		AzTenantName            string
+		AzTenantID              string
+		AzSubscriptionID        string
+		AzRGName                string
+		AZSub                   string
 		AzVerbosity             int
 		AzOutputFormat          string
 		usersTestFile           string
@@ -26,7 +27,9 @@ func TestRBACCommand(t *testing.T) {
 	}{
 		{
 			Name:                    "basic acceptance",
-			AzTenantName:            "",
+			AzTenantID:              "11111111-1111-1111-1111-11111111",
+			AzSubscriptionID:        "AAAA",
+			AzRGName:                "",
 			AzVerbosity:             2,
 			AzOutputFormat:          "table",
 			usersTestFile:           "./test-data/users.json",
@@ -45,11 +48,7 @@ func TestRBACCommand(t *testing.T) {
 		globals.AAD_USERS_TEST_FILE = s.usersTestFile
 		globals.ROLE_DEFINITIONS_TEST_FILE = s.roleDefinitionsTestFile
 		globals.ROLE_ASSIGNMENTS_TEST_FILE = s.roleAssignmentsTestFile
-
-		var err error
-		// call the function to be tested here err = function...
-		if err != nil {
-			log.Fatalf(err.Error())
-		}
+		ra := getRoleAssignments("ede6a6a8-1ecc-4810-a4dc-9c78ebdc0820")
+		fmt.Println(ra)
 	}
 }
