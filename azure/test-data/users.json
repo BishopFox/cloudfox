@@ -21,7 +21,7 @@
             "proxyAddresses": [],
             "refreshTokensValidFromDateTime": "2022-11-21T00:28:36Z",
             "signInNames": [],
-            "thumbnailPhoto@odata.mediaEditLink": "directoryObjects/8da340e3-5e2e-4f55-a3f7-4ea20d6755be/Microsoft.DirectoryServices.User/thumbnailPhoto",
+            "thumbnailPhoto@odata.mediaEditLink": "directoryObjects/11111111-1111-1111-1111-11111111/Microsoft.DirectoryServices.User/thumbnailPhoto",
             "userIdentities": [],
             "userPrincipalName": "test_username1@REDACTED.onmicrosoft.com",
             "userType": "Member"
@@ -47,7 +47,7 @@
             "proxyAddresses": [],
             "refreshTokensValidFromDateTime": "2022-11-21T00:28:55Z",
             "signInNames": [],
-            "thumbnailPhoto@odata.mediaEditLink": "directoryObjects/d994d51b-d939-469e-ac73-bd81030cecf0/Microsoft.DirectoryServices.User/thumbnailPhoto",
+            "thumbnailPhoto@odata.mediaEditLink": "directoryObjects/11111111-1111-1111-1111-11111111/Microsoft.DirectoryServices.User/thumbnailPhoto",
             "userIdentities": [],
             "userPrincipalName": "test_username2@REDACTED.onmicrosoft.com",
             "userType": "Member"
@@ -73,7 +73,7 @@
             "proxyAddresses": [],
             "refreshTokensValidFromDateTime": "2022-11-21T00:29:10Z",
             "signInNames": [],
-            "thumbnailPhoto@odata.mediaEditLink": "directoryObjects/4ad03365-28cd-40cd-a46f-6e9d1149803d/Microsoft.DirectoryServices.User/thumbnailPhoto",
+            "thumbnailPhoto@odata.mediaEditLink": "directoryObjects/11111111-1111-1111-1111-11111111/Microsoft.DirectoryServices.User/thumbnailPhoto",
             "userIdentities": [],
             "userPrincipalName": "test_username3@REDACTED.onmicrosoft.com",
             "userType": "Member"
