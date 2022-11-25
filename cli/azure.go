@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"log"
 
 	"github.com/BishopFox/cloudfox/azure"
@@ -23,6 +24,9 @@ var (
 
 		Run: func(cmd *cobra.Command, args []string) {
 			cmd.Help()
+			fmt.Println()
+			fmt.Println("Your Azure CLI is currently authenticated to the following scopes:")
+			azure.PrintAvailableScopeFull(azure.GetAvailableScope())
 		},
 	}
 
@@ -71,7 +75,6 @@ func init() {
 	// Global flags
 	AzCommands.PersistentFlags().StringVarP(&AzOutputFormat, "output", "o", "all", "[\"table\" | \"csv\" | \"all\" ]")
 	AzCommands.PersistentFlags().IntVarP(&AzVerbosity, "verbosity", "v", 1, "1 = Print control messages only\n2 = Print control messages, module output\n3 = Print control messages, module output, and loot file output\n")
-	AzCommands.PersistentFlags().StringVarP(&AzOutputDirectory, globals.CLOUDFOX_BASE_OUTPUT_DIRECTORY, "cloudfox-output", "d", "Output Directory")
 	AzCommands.PersistentFlags().StringVarP(&AzTenantID, "tenant", "t", "", "Tenant name")
 	AzCommands.PersistentFlags().StringVarP(&AzSubscriptionID, "subscription", "s", "", "Subscription Name")
 	AzCommands.PersistentFlags().StringVarP(&AzRGName, "resource-group", "g", "", "Resource Group name")

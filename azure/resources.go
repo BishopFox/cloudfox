@@ -35,10 +35,10 @@ func ScopeSelection(userInput *string, mode string) []scopeElement {
 	fmt.Printf("[%s] Fetching available resource groups from Az CLI sessions...\n", color.CyanString(globals.AZ_INTERACTIVE_MENU_MODULE_NAME))
 	var results []scopeElement
 
-	availableScope := getAvailableScope()
+	availableScope := GetAvailableScope()
 	switch mode {
 	default:
-		printAvailableScopeFull(availableScope)
+		PrintAvailableScopeFull(availableScope)
 	}
 
 	if userInput == nil {
@@ -69,7 +69,7 @@ func ScopeSelection(userInput *string, mode string) []scopeElement {
 	return results
 }
 
-func printAvailableScopeFull(availableScope []scopeElement) {
+func PrintAvailableScopeFull(availableScope []scopeElement) {
 	var tableBody [][]string
 
 	for _, scopeItem := range availableScope {
@@ -101,7 +101,7 @@ func printAvailableScopeFull(availableScope []scopeElement) {
 }
 
 func GetSubscriptionForResourceGroup(resourceGroupName string) subscriptions.Subscription {
-	availableScope := getAvailableScope()
+	availableScope := GetAvailableScope()
 	for _, s := range availableScope {
 		if ptr.ToString(s.ResourceGroup.Name) == resourceGroupName {
 			return s.Sub
@@ -110,7 +110,7 @@ func GetSubscriptionForResourceGroup(resourceGroupName string) subscriptions.Sub
 	return subscriptions.Subscription{}
 }
 
-func getAvailableScope() []scopeElement {
+func GetAvailableScope() []scopeElement {
 	var index int
 	var results []scopeElement
 	tenants := GetTenants()
