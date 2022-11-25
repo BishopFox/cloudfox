@@ -28,9 +28,9 @@ func TestRBACCommand(t *testing.T) {
 		roleAssignmentsTestFile string
 	}{
 		{
-			Name:                    "basic acceptance: rbacs in a single resource group",
+			Name:                    "basic acceptance: rbac in a single resource group",
 			AzTenantID:              "11111111-1111-1111-1111-11111111",
-			AzSubscriptionID:        "ResourceGroupA1",
+			AzSubscriptionID:        "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
 			AzVerbosity:             2,
 			AzOutputFormat:          "table",
 			resourcesTestFile:       "./test-data/resources.json",
@@ -47,12 +47,19 @@ func TestRBACCommand(t *testing.T) {
 	GetRoleAssignments = MockedGetRoleAssignments
 
 	for _, s := range subtests {
+		fmt.Println()
 		fmt.Printf("[subtest] %s\n", s.Name)
+
+		// Test files used by mocked functions
 		globals.RESOURCES_TEST_FILE = s.resourcesTestFile
 		globals.AAD_USERS_TEST_FILE = s.usersTestFile
 		globals.ROLE_DEFINITIONS_TEST_FILE = s.roleDefinitionsTestFile
 		globals.ROLE_ASSIGNMENTS_TEST_FILE = s.roleAssignmentsTestFile
-		AzRbacCommand(CloudFoxRBACclient{}, s.AzTenantID, "", s.AzOutputFormat, s.AzVerbosity)
+
+		err := AzRbacCommand(CloudFoxRBACclient{}, s.AzTenantID, s.AzSubscriptionID, s.AzOutputFormat, s.AzVerbosity)
+		if err != nil {
+			fmt.Println(err)
+		}
 	}
 	fmt.Println()
 }

@@ -29,27 +29,36 @@ func AzRbacCommand(c CloudFoxRBACclient, tenantID, subscriptionID, outputFormat 
 	outputDirectory := filepath.Join(globals.CLOUDFOX_BASE_OUTPUT_DIRECTORY, globals.AZ_OUTPUT_DIRECTORY)
 
 	if tenantID != "" {
-		// Display all RBAC roles for a single subscriptions
-		if subscriptionID != "" {
-			header, body = c.GetRelevantRBACData(tenantID, subscriptionID)
-			fileNameWithoutExtension = fmt.Sprintf("rbac-tenant-%s", tenantID)
-			controlMessagePrefix = tenantID
-		}
 		// Display all RBAC roles for all subscriptions in a tenant
 		if subscriptionID == "" {
+			fmt.Printf(
+				"[%s] Enumerating Azure RBAC assignments for all subscriptions on tenant %s\n",
+				color.CyanString(globals.AZ_RBAC_MODULE_NAME),
+				tenantID)
 			subscriptions := GetSubscriptions()
 			for _, s := range subscriptions {
 				if ptr.ToString(s.TenantID) == tenantID {
 					header, body = c.GetRelevantRBACData(tenantID, ptr.ToString(s.SubscriptionID))
-					fileNameWithoutExtension = fmt.Sprintf("rbac-sub-%s", tenantID)
+					fileNameWithoutExtension = fmt.Sprintf("rbac-tenant-%s", tenantID)
 					controlMessagePrefix = tenantID
 				}
 			}
 		}
+		// Display all RBAC roles for a single subscriptions
+		if subscriptionID != "" {
+			fmt.Printf(
+				"[%s] Enumerating Azure RBAC assignments for the single subscription %s\n",
+				color.CyanString(globals.AZ_RBAC_MODULE_NAME),
+				subscriptionID)
+			header, body = c.GetRelevantRBACData(tenantID, subscriptionID)
+			fileNameWithoutExtension = fmt.Sprintf("rbac-sub-%s", subscriptionID)
+			controlMessagePrefix = subscriptionID
+		}
 		// TO-DO: add an option for the interactive menu
 		utils.OutputSelector(verbosity, outputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_RBAC_MODULE_NAME, controlMessagePrefix)
+		return nil
 	}
-	return nil
+	return fmt.Errorf("please provide a valid tenant and/or subscription flag")
 }
 
 type CloudFoxRBACclient struct {

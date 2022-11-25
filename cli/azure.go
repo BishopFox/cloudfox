@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"log"
+
 	"github.com/BishopFox/cloudfox/azure"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/spf13/cobra"
@@ -38,7 +40,10 @@ Enumerate VMs for all resource groups in a subscription:
 Enumerate VMs from a specific resource group:
 ./cloudfox az instances -s SUBSCRIPTION_NAME -g RESOURCE_GROUP_NAME`,
 		Run: func(cmd *cobra.Command, args []string) {
-			azure.AzInstancesCommand(AzSubscriptionID, AzRGName, AzOutputFormat, AzVerbosity)
+			err := azure.AzInstancesCommand(AzSubscriptionID, AzRGName, AzOutputFormat, AzVerbosity)
+			if err != nil {
+				log.Fatalf("[%s] %s", globals.AZ_INTANCES_MODULE_NAME, err)
+			}
 		},
 	}
 
@@ -54,9 +59,10 @@ Enumerate role assignments for a specific subscriptions:
 ./cloudfox az rbac --subscription SUBSCRIPTION_NAME
 `,
 		Run: func(cmd *cobra.Command, args []string) {
-			/*
-				RBAC COMMAND LOGIC HERE
-			*/
+			err := azure.AzRbacCommand(azure.CloudFoxRBACclient{}, AzTenantID, AzSubscriptionID, AzOutputFormat, AzVerbosity)
+			if err != nil {
+				log.Fatalf("[%s] %s", globals.AZ_RBAC_MODULE_NAME, err)
+			}
 		},
 	}
 )
