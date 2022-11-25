@@ -199,7 +199,8 @@ func MockedGetResourceGroups(subscriptionID string) []resources.Group {
 
 func MockedGetSubscriptions() []subscriptions.Subscription {
 	var results []subscriptions.Subscription
-	for _, tenant := range loadTestFile(globals.RESOURCES_TEST_FILE).Tenants {
+	tenants := loadTestFile(globals.RESOURCES_TEST_FILE).Tenants
+	for _, tenant := range tenants {
 		for _, sub := range tenant.Subscriptions {
 			results = append(results, subscriptions.Subscription{
 				TenantID:       tenant.TenantID,

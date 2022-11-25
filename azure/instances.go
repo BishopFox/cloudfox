@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/compute/mgmt/compute"
@@ -17,7 +18,7 @@ import (
 	"github.com/fatih/color"
 )
 
-func AzRunInstancesCommand(AzSubscriptionID, AzRGName, AzOutputFormat string, AzVerbosity int) error {
+func AzInstancesCommand(AzSubscriptionID, AzRGName, AzOutputFormat string, AzVerbosity int) error {
 	tableHead := []string{"Subscription", "Resource Group", "Name", "Location", "Admin Username", "Private IP", "Public IP"}
 	var tableBody, tableBodyTemp [][]string
 	var outputFile, outputMessagePrefix string
@@ -74,7 +75,8 @@ func AzRunInstancesCommand(AzSubscriptionID, AzRGName, AzOutputFormat string, Az
 		return err
 	}
 
-	utils.OutputSelector(AzVerbosity, AzOutputFormat, tableHead, tableBody, globals.CLOUDFOX_BASE_OUTPUT_DIRECTORY, outputFile, globals.AZ_INTANCES_MODULE_NAME, outputMessagePrefix)
+	outputDirectory := filepath.Join(globals.CLOUDFOX_BASE_OUTPUT_DIRECTORY, globals.AZ_OUTPUT_DIRECTORY)
+	utils.OutputSelector(AzVerbosity, AzOutputFormat, tableHead, tableBody, outputDirectory, outputFile, globals.AZ_INTANCES_MODULE_NAME, outputMessagePrefix)
 	return nil
 }
 

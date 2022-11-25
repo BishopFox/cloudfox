@@ -9,7 +9,7 @@ import (
 	"github.com/BishopFox/cloudfox/utils"
 )
 
-func TestAzRunInstancesCommand(t *testing.T) {
+func TestAzInstancesCommand(t *testing.T) {
 	fmt.Println()
 	fmt.Println("[test case] Azure Instances Command")
 
@@ -66,7 +66,7 @@ func TestAzRunInstancesCommand(t *testing.T) {
 		globals.NICS_TEST_FILE = s.nicsTestFile
 		globals.PUBLIC_IPS_TEST_FILE = s.publicIPsTestFile
 
-		err := AzRunInstancesCommand(
+		err := AzInstancesCommand(
 			s.AzSubscriptionID,
 			s.AzRGName,
 			s.AzOutputFormat,

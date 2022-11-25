@@ -22,17 +22,18 @@ func TestRBACCommand(t *testing.T) {
 		AZSub                   string
 		AzVerbosity             int
 		AzOutputFormat          string
+		resourcesTestFile       string
 		usersTestFile           string
 		roleDefinitionsTestFile string
 		roleAssignmentsTestFile string
 	}{
 		{
-			Name:                    "basic acceptance",
+			Name:                    "basic acceptance: rbacs in a single resource group",
 			AzTenantID:              "11111111-1111-1111-1111-11111111",
-			AzSubscriptionID:        "AAAA",
-			AzRGName:                "",
+			AzSubscriptionID:        "ResourceGroupA1",
 			AzVerbosity:             2,
 			AzOutputFormat:          "table",
+			resourcesTestFile:       "./test-data/resources.json",
 			usersTestFile:           "./test-data/users.json",
 			roleDefinitionsTestFile: "./test-data/role-definitions.json",
 			roleAssignmentsTestFile: "./test-data/role-assignments.json",
@@ -40,30 +41,18 @@ func TestRBACCommand(t *testing.T) {
 	}
 	utils.MockFileSystem(true)
 	// Mocked functions to simulate Azure calls and responses
+	GetSubscriptions = MockedGetSubscriptions
 	GetAzureADUsers = MockedGetAzureADUsers
 	GetRoleDefinitions = MockedGetRoleDefinitions
 	GetRoleAssignments = MockedGetRoleAssignments
 
 	for _, s := range subtests {
 		fmt.Printf("[subtest] %s\n", s.Name)
+		globals.RESOURCES_TEST_FILE = s.resourcesTestFile
 		globals.AAD_USERS_TEST_FILE = s.usersTestFile
 		globals.ROLE_DEFINITIONS_TEST_FILE = s.roleDefinitionsTestFile
 		globals.ROLE_ASSIGNMENTS_TEST_FILE = s.roleAssignmentsTestFile
-
-		c := CloudFoxRBACclient{}
-		c.initialize(s.AzTenantID, s.AzSubscriptionID)
-		header, body := c.GetRelevantRBACData(s.AzTenantID, s.AzSubscriptionID)
-
-		outputFile := fmt.Sprintf("%s-test-file", globals.AZ_RBAC_MODULE_NAME)
-		utils.OutputSelector(
-			s.AzVerbosity,
-			s.AzOutputFormat,
-			header,
-			body,
-			globals.AZ_OUTPUT_DIRECTORY,
-			outputFile,
-			globals.AZ_RBAC_MODULE_NAME,
-			"unitTest")
+		AzRbacCommand(CloudFoxRBACclient{}, s.AzTenantID, "", s.AzOutputFormat, s.AzVerbosity)
 	}
 	fmt.Println()
 }

@@ -38,7 +38,7 @@ Enumerate VMs for all resource groups in a subscription:
 Enumerate VMs from a specific resource group:
 ./cloudfox az instances -s SUBSCRIPTION_NAME -g RESOURCE_GROUP_NAME`,
 		Run: func(cmd *cobra.Command, args []string) {
-			azure.AzRunInstancesCommand(AzSubscriptionID, AzRGName, AzOutputFormat, AzVerbosity)
+			azure.AzInstancesCommand(AzSubscriptionID, AzRGName, AzOutputFormat, AzVerbosity)
 		},
 	}
 

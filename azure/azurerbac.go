@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/authorization/mgmt/authorization"
@@ -16,11 +17,45 @@ import (
 	"github.com/fatih/color"
 )
 
+func AzRbacCommand(c CloudFoxRBACclient, tenantID, subscriptionID, outputFormat string, verbosity int) error {
+	err := c.initialize(tenantID, subscriptionID)
+	if err != nil {
+		return fmt.Errorf("[%s] %s", color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME), err)
+	}
+
+	var header []string
+	var body [][]string
+	var fileNameWithoutExtension, controlMessagePrefix string
+	outputDirectory := filepath.Join(globals.CLOUDFOX_BASE_OUTPUT_DIRECTORY, globals.AZ_OUTPUT_DIRECTORY)
+
+	if tenantID != "" {
+		// Display all RBAC roles for a single subscriptions
+		if subscriptionID != "" {
+			header, body = c.GetRelevantRBACData(tenantID, subscriptionID)
+			fileNameWithoutExtension = fmt.Sprintf("rbac-tenant-%s", tenantID)
+			controlMessagePrefix = tenantID
+		}
+		// Display all RBAC roles for all subscriptions in a tenant
+		if subscriptionID == "" {
+			subscriptions := GetSubscriptions()
+			for _, s := range subscriptions {
+				if ptr.ToString(s.TenantID) == tenantID {
+					header, body = c.GetRelevantRBACData(tenantID, ptr.ToString(s.SubscriptionID))
+					fileNameWithoutExtension = fmt.Sprintf("rbac-sub-%s", tenantID)
+					controlMessagePrefix = tenantID
+				}
+			}
+		}
+		// TO-DO: add an option for the interactive menu
+		utils.OutputSelector(verbosity, outputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_RBAC_MODULE_NAME, controlMessagePrefix)
+	}
+	return nil
+}
+
 type CloudFoxRBACclient struct {
 	roleAssignments []authorization.RoleAssignment
 	roleDefinitions []authorization.RoleDefinition
 	AADUsers        []graphrbac.User
-	results         []RoleBindingRelevantData
 }
 
 type RoleBindingRelevantData struct {
@@ -31,26 +66,28 @@ type RoleBindingRelevantData struct {
 	roleName        string
 }
 
-func (c *CloudFoxRBACclient) initialize(tenantID, subscriptionID string) {
+func (c *CloudFoxRBACclient) initialize(tenantID, subscriptionID string) error {
 	var err error
 	c.roleAssignments, err = GetRoleAssignments(subscriptionID)
 	if err != nil {
-		log.Fatalf("[%s] %s", color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME), err)
+		return err
 	}
 	c.roleDefinitions, err = GetRoleDefinitions(subscriptionID)
 	if err != nil {
-		log.Fatalf("[%s] %s", color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME), err)
+		return err
 	}
 	c.AADUsers, err = GetAzureADUsers(tenantID)
 	if err != nil {
-		log.Fatalf("[%s] %s", color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME), err)
+		return err
 	}
+	return nil
 }
 
 func (c *CloudFoxRBACclient) GetRelevantRBACData(tenantID, subscriptionID string) ([]string, [][]string) {
 	header := []string{"Tenant ID", "User Name", "Role Name", "Role Scope"}
 	var body [][]string
 	var extract RoleBindingRelevantData
+	var results []RoleBindingRelevantData
 
 	for _, ra := range c.roleAssignments {
 		extract.tenantID = tenantID
@@ -58,10 +95,10 @@ func (c *CloudFoxRBACclient) GetRelevantRBACData(tenantID, subscriptionID string
 		extract.roleScope = ptr.ToString(ra.Properties.Scope)
 		findUser(c.AADUsers, ra, &extract)
 		findRole(c.roleDefinitions, ra, &extract)
-		c.results = append(c.results, extract)
+		results = append(results, extract)
 	}
 
-	for _, r := range c.results {
+	for _, r := range results {
 		body = append(body,
 			[]string{
 				r.tenantID,
