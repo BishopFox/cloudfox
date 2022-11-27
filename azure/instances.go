@@ -179,7 +179,7 @@ func getNICdetails(subscriptionID string, resourceGroup string, nicReference com
 var GetPublicIP = getPublicIP
 
 func getPublicIP(subscriptionID string, resourceGroup string, ip network.InterfaceIPConfiguration) (*string, error) {
-	client := utils.GetPublicIPclient(subscriptionID)
+	client := utils.GetPublicIPClient(subscriptionID)
 	publicIPID := ptr.ToString(ip.InterfaceIPConfigurationPropertiesFormat.PublicIPAddress.ID)
 	publicIPName := strings.Split(publicIPID, "/")[len(strings.Split(publicIPID, "/"))-1]
 	publicIPExpanded, err := client.Get(context.TODO(), resourceGroup, publicIPName, "")

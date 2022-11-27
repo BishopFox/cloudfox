@@ -1,5 +1,6 @@
 package globals
 
+var STORAGE_ACCOUNTS_TEST_FILE string
 var VMS_TEST_FILE string
 var NICS_TEST_FILE string
 var PUBLIC_IPS_TEST_FILE string

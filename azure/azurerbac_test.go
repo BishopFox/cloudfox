@@ -13,7 +13,6 @@ func TestRBACCommand(t *testing.T) {
 	fmt.Println("[test case] Azure RBAC Command")
 
 	// Test case parameters
-	//utils.MockFileSystem(true)
 	subtests := []struct {
 		Name                    string
 		AzTenantID              string

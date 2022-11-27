@@ -1,0 +1,41 @@
+[
+    {
+        "name": "Storage-12345",
+        "kind": "KindBlobStorage",
+        "location": "eastus",
+        "properties": {
+            "allowBlobPublicAccess": true,
+            "allowCrossTenantReplication": true,
+            "allowSharedKeyAccess": true,
+            "minimumTlsVersion": "TLS1_2",
+            "supportsHttpsTrafficOnly": true
+        },
+        "tags": {}
+    },
+    {
+        "name": "Storage-678910",
+        "location": "eastus",
+        "kind": "KindStorageV2",
+        "properties": {
+            "allowBlobPublicAccess": true,
+            "allowCrossTenantReplication": true,
+            "allowSharedKeyAccess": true,
+            "minimumTlsVersion": "TLS1_2",
+            "supportsHttpsTrafficOnly": true
+        },
+        "tags": {}
+    },
+    {
+        "name": "Storage-1112131415",
+        "location": "eastus",
+        "kind": "KindStorageV2",
+        "properties": {
+            "allowBlobPublicAccess": true,
+            "allowCrossTenantReplication": true,
+            "allowSharedKeyAccess": true,
+            "minimumTlsVersion": "TLS1_2",
+            "supportsHttpsTrafficOnly": true
+        },
+        "tags": {}
+    }
+]

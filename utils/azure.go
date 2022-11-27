@@ -9,6 +9,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/network/mgmt/network"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/resources"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/subscriptions"
+	"github.com/Azure/azure-sdk-for-go/profiles/latest/storage/mgmt/storage"
 	"github.com/Azure/azure-sdk-for-go/services/graphrbac/1.6/graphrbac"
 	"github.com/Azure/go-autorest/autorest"
 	"github.com/Azure/go-autorest/autorest/azure/auth"
@@ -111,12 +112,23 @@ func GetNICClient(subscriptionID string) network.InterfacesClient {
 	return client
 }
 
-func GetPublicIPclient(subscriptionID string) network.PublicIPAddressesClient {
+func GetPublicIPClient(subscriptionID string) network.PublicIPAddressesClient {
 	client := network.NewPublicIPAddressesClient(subscriptionID)
 	authorizer, err := getAuthorizer(globals.AZ_RESOURCE_MANAGER_ENDPOINT)
 	if err != nil {
 		log.Fatalf("failed to get public ip client: %s", err)
 	}
 	client.Authorizer = authorizer
+	return client
+}
+
+func GetStorageClient(subscriptionID string) storage.AccountsClient {
+	client := storage.NewAccountsClient(subscriptionID)
+	a, err := getAuthorizer(globals.AZ_RESOURCE_MANAGER_ENDPOINT)
+	if err != nil {
+		log.Fatalf("failed to get storage client: %s", err)
+	}
+	client.Authorizer = a
+	client.AddToUserAgent(globals.CLOUDFOX_USER_AGENT)
 	return client
 }
