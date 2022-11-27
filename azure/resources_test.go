@@ -15,9 +15,9 @@ func TestScopeSelectionFull(t *testing.T) {
 	fmt.Println("[test case] scope selection interactive menu")
 
 	// Mocked functions to simulate Azure calls and responses
-	GetTenants = MockedGetTenants
-	GetSubscriptions = MockedGetSubscriptions
-	GetResourceGroups = MockedGetResourceGroups
+	getTenants = mockedGetTenants
+	getSubscriptions = mockedGetSubscriptions
+	getResourceGroups = mockedGetResourceGroups
 
 	// Test case parameters
 	subtests := []struct {
@@ -35,7 +35,7 @@ func TestScopeSelectionFull(t *testing.T) {
 
 	for _, s := range subtests {
 		globals.RESOURCES_TEST_FILE = s.resourcesTestFile
-		selectedScope := ScopeSelection(s.mockedUserInput, "full")
+		selectedScope := scopeSelection(s.mockedUserInput, "full")
 		fmt.Printf("[%s]> %s\n", color.CyanString("mocked_input"), ptr.ToString(s.mockedUserInput))
 		fmt.Printf("[%s] ", color.CyanString("selection"))
 		for _, s := range selectedScope {

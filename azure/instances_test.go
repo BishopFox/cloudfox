@@ -51,12 +51,12 @@ func TestAzInstancesCommand(t *testing.T) {
 	}
 
 	// Mocked functions to simulate Azure calls and responses
-	GetTenants = MockedGetTenants
-	GetSubscriptions = MockedGetSubscriptions
-	GetResourceGroups = MockedGetResourceGroups
-	GetComputeVMsPerResourceGroup = MockedGetComputeVMsPerResourceGroup
-	GetNICdetails = MockedGetNICdetails
-	GetPublicIP = MockedGetPublicIP
+	getTenants = mockedGetTenants
+	getSubscriptions = mockedGetSubscriptions
+	getResourceGroups = mockedGetResourceGroups
+	getComputeVMsPerResourceGroup = mockedGetComputeVMsPerResourceGroup
+	getNICdetails = mockedGetNICdetails
+	getPublicIP = mockedGetPublicIP
 
 	for _, s := range subtests {
 		fmt.Println()

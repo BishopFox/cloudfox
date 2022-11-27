@@ -31,14 +31,14 @@ type scopeElement struct {
 // userInput = nil will prompt interactive menu for RG selection.
 // The userInput argument is used to toggle the interactive menu (useful for unit tests).
 // mode = full (prints entire table), tenant (prints only tenants table)
-func ScopeSelection(userInput *string, mode string) []scopeElement {
+func scopeSelection(userInput *string, mode string) []scopeElement {
 	fmt.Printf("[%s] Fetching available resource groups from Az CLI sessions...\n", color.CyanString(globals.AZ_INTERACTIVE_MENU_MODULE_NAME))
 	var results []scopeElement
 
-	availableScope := GetAvailableScope()
+	availableScope := getAvailableScope()
 	switch mode {
 	default:
-		PrintAvailableScopeFull(availableScope)
+		printAvailableScopeFull(availableScope)
 	}
 
 	if userInput == nil {
@@ -69,7 +69,7 @@ func ScopeSelection(userInput *string, mode string) []scopeElement {
 	return results
 }
 
-func PrintAvailableScopeFull(availableScope []scopeElement) {
+func printAvailableScopeFull(availableScope []scopeElement) {
 	var tableBody [][]string
 
 	for _, scopeItem := range availableScope {
@@ -100,8 +100,8 @@ func PrintAvailableScopeFull(availableScope []scopeElement) {
 		tableBody)
 }
 
-func GetSubscriptionForResourceGroup(resourceGroupName string) subscriptions.Subscription {
-	availableScope := GetAvailableScope()
+func getSubscriptionForResourceGroup(resourceGroupName string) subscriptions.Subscription {
+	availableScope := getAvailableScope()
 	for _, s := range availableScope {
 		if ptr.ToString(s.ResourceGroup.Name) == resourceGroupName {
 			return s.Sub
@@ -110,16 +110,16 @@ func GetSubscriptionForResourceGroup(resourceGroupName string) subscriptions.Sub
 	return subscriptions.Subscription{}
 }
 
-func GetAvailableScope() []scopeElement {
+func getAvailableScope() []scopeElement {
 	var index int
 	var results []scopeElement
-	tenants := GetTenants()
-	subscriptions := GetSubscriptions()
+	tenants := getTenants()
+	subscriptions := getSubscriptions()
 
 	for _, t := range tenants {
 		for _, s := range subscriptions {
 			if ptr.ToString(t.TenantID) == ptr.ToString(s.TenantID) {
-				for _, rg := range GetResourceGroups(ptr.ToString(s.SubscriptionID)) {
+				for _, rg := range getResourceGroups(ptr.ToString(s.SubscriptionID)) {
 					index++
 					results = append(results, scopeElement{
 						menuIndex:                  index,
@@ -135,9 +135,9 @@ func GetAvailableScope() []scopeElement {
 	return results
 }
 
-var GetTenants = getTenants
+var getTenants = getTenantsOriginal
 
-func getTenants() []subscriptions.TenantIDDescription {
+func getTenantsOriginal() []subscriptions.TenantIDDescription {
 	tenantsClient := utils.GetTenantsClient()
 	var results []subscriptions.TenantIDDescription
 	for page, err := tenantsClient.List(context.TODO()); page.NotDone(); err = page.Next() {
@@ -149,70 +149,7 @@ func getTenants() []subscriptions.TenantIDDescription {
 	return results
 }
 
-var GetSubscriptions = getSubscriptions
-
-func getSubscriptions() []subscriptions.Subscription {
-	var results []subscriptions.Subscription
-	subsClient := utils.GetSubscriptionsClient()
-	for page, err := subsClient.List(context.TODO()); page.NotDone(); err = page.Next() {
-		if err != nil {
-			log.Fatal("could not get subscriptions for active session")
-		}
-		results = append(results, page.Values()...)
-	}
-	return results
-}
-
-var GetResourceGroups = getResourceGroups
-
-func getResourceGroups(subscriptionID string) []resources.Group {
-	var results []resources.Group
-	rgClient := utils.GetResourceGroupsClient(subscriptionID)
-
-	for page, err := rgClient.List(context.TODO(), "", nil); page.NotDone(); err = page.Next() {
-		if err != nil {
-			log.Fatalf("error reading resource groups for subscription %s", subscriptionID)
-		}
-		results = append(results, page.Values()...)
-	}
-	return results
-}
-
-/************* MOCKED FUNCTIONS BELOW (USE IT FOR UNIT TESTING) *************/
-
-func MockedGetResourceGroups(subscriptionID string) []resources.Group {
-	var results []resources.Group
-	for _, tenant := range loadTestFile(globals.RESOURCES_TEST_FILE).Tenants {
-		for _, sub := range tenant.Subscriptions {
-			if ptr.ToString(sub.SubscriptionId) == subscriptionID {
-				for _, rg := range sub.ResourceGroups {
-					results = append(results, resources.Group{
-						ID:   rg.ID,
-						Name: rg.Name,
-					})
-				}
-			}
-		}
-	}
-	return results
-}
-
-func MockedGetSubscriptions() []subscriptions.Subscription {
-	var results []subscriptions.Subscription
-	tenants := loadTestFile(globals.RESOURCES_TEST_FILE).Tenants
-	for _, tenant := range tenants {
-		for _, sub := range tenant.Subscriptions {
-			results = append(results, subscriptions.Subscription{
-				TenantID:       tenant.TenantID,
-				SubscriptionID: sub.SubscriptionId,
-				DisplayName:    sub.DisplayName,
-			})
-		}
-	}
-	return results
-}
-
-func MockedGetTenants() []subscriptions.TenantIDDescription {
+func mockedGetTenants() []subscriptions.TenantIDDescription {
 	var results []subscriptions.TenantIDDescription
 	for _, tenant := range loadTestFile(globals.RESOURCES_TEST_FILE).Tenants {
 		results = append(results, subscriptions.TenantIDDescription{
@@ -235,6 +172,67 @@ func loadTestFile(fileName string) ResourcesTestFile {
 		log.Fatalf("could not unmarshall file %s", globals.RESOURCES_TEST_FILE)
 	}
 	return testFile
+}
+
+var getSubscriptions = getSubscriptionsOriginal
+
+func getSubscriptionsOriginal() []subscriptions.Subscription {
+	var results []subscriptions.Subscription
+	subsClient := utils.GetSubscriptionsClient()
+	for page, err := subsClient.List(context.TODO()); page.NotDone(); err = page.Next() {
+		if err != nil {
+			log.Fatal("could not get subscriptions for active session")
+		}
+		results = append(results, page.Values()...)
+	}
+	return results
+}
+
+func mockedGetSubscriptions() []subscriptions.Subscription {
+	var results []subscriptions.Subscription
+	tenants := loadTestFile(globals.RESOURCES_TEST_FILE).Tenants
+	for _, tenant := range tenants {
+		for _, sub := range tenant.Subscriptions {
+			results = append(results, subscriptions.Subscription{
+				TenantID:       tenant.TenantID,
+				SubscriptionID: sub.SubscriptionId,
+				DisplayName:    sub.DisplayName,
+			})
+		}
+	}
+	return results
+}
+
+var getResourceGroups = getResourceGroupsOriginal
+
+func getResourceGroupsOriginal(subscriptionID string) []resources.Group {
+	var results []resources.Group
+	rgClient := utils.GetResourceGroupsClient(subscriptionID)
+
+	for page, err := rgClient.List(context.TODO(), "", nil); page.NotDone(); err = page.Next() {
+		if err != nil {
+			log.Fatalf("error reading resource groups for subscription %s", subscriptionID)
+		}
+		results = append(results, page.Values()...)
+	}
+	return results
+}
+
+func mockedGetResourceGroups(subscriptionID string) []resources.Group {
+	var results []resources.Group
+	for _, tenant := range loadTestFile(globals.RESOURCES_TEST_FILE).Tenants {
+		for _, sub := range tenant.Subscriptions {
+			if ptr.ToString(sub.SubscriptionId) == subscriptionID {
+				for _, rg := range sub.ResourceGroups {
+					results = append(results, resources.Group{
+						ID:   rg.ID,
+						Name: rg.Name,
+					})
+				}
+			}
+		}
+	}
+	return results
 }
 
 type ResourcesTestFile struct {

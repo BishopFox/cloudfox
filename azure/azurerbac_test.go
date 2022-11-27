@@ -40,10 +40,10 @@ func TestRBACCommand(t *testing.T) {
 	}
 	utils.MockFileSystem(true)
 	// Mocked functions to simulate Azure calls and responses
-	GetSubscriptions = MockedGetSubscriptions
-	GetAzureADUsers = MockedGetAzureADUsers
-	GetRoleDefinitions = MockedGetRoleDefinitions
-	GetRoleAssignments = MockedGetRoleAssignments
+	getSubscriptions = mockedGetSubscriptions
+	getAzureADUsers = mockedGetAzureADUsers
+	getRoleDefinitions = mockedGetRoleDefinitions
+	getRoleAssignments = mockedGetRoleAssignments
 
 	for _, s := range subtests {
 		fmt.Println()

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"fmt"
 	"log"
 
 	"github.com/BishopFox/cloudfox/azure"
@@ -24,9 +23,6 @@ var (
 
 		Run: func(cmd *cobra.Command, args []string) {
 			cmd.Help()
-			fmt.Println()
-			fmt.Println("Your Azure CLI is currently authenticated to the following scopes:")
-			azure.PrintAvailableScopeFull(azure.GetAvailableScope())
 		},
 	}
 

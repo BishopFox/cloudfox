@@ -34,7 +34,7 @@ func AzInstancesCommand(AzSubscriptionID, AzRGName, AzOutputFormat string, AzVer
 				AzSubscriptionID)
 
 			_, tableBody, err = GetComputeRelevantData(
-				GetSubscriptionForResourceGroup(AzRGName),
+				getSubscriptionForResourceGroup(AzRGName),
 				resources.Group{Name: ptr.String(AzRGName)})
 
 			outputFile = fmt.Sprintf("%s_rg_%s", globals.AZ_INTANCES_MODULE_NAME, AzRGName)
@@ -46,10 +46,10 @@ func AzInstancesCommand(AzSubscriptionID, AzRGName, AzOutputFormat string, AzVer
 				color.CyanString(globals.AZ_INTANCES_MODULE_NAME),
 				AzSubscriptionID)
 
-			subscriptions := GetSubscriptions()
+			subscriptions := getSubscriptions()
 			for _, sub := range subscriptions {
 				if ptr.ToString(sub.SubscriptionID) == AzSubscriptionID {
-					rgs := GetResourceGroups(ptr.ToString(sub.SubscriptionID))
+					rgs := getResourceGroups(ptr.ToString(sub.SubscriptionID))
 					for _, rg := range rgs {
 						_, tableBodyTemp, err = GetComputeRelevantData(sub, rg)
 						tableBody = append(tableBody, tableBodyTemp...)
@@ -62,7 +62,7 @@ func AzInstancesCommand(AzSubscriptionID, AzRGName, AzOutputFormat string, AzVer
 	} else {
 		// Enumerate VMs based on interactive menu selection
 		if AzRGName == "" && AzSubscriptionID == "" {
-			for _, scopeItem := range ScopeSelection(nil, "full") {
+			for _, scopeItem := range scopeSelection(nil, "full") {
 				_, tableBodyTemp, err = GetComputeRelevantData(scopeItem.Sub, scopeItem.ResourceGroup)
 				tableBody = append(tableBody, tableBodyTemp...)
 			}
@@ -87,7 +87,7 @@ func GetComputeRelevantData(sub subscriptions.Subscription, rg resources.Group) 
 	subscriptionID := ptr.ToString(sub.SubscriptionID)
 	resourceGroupName := ptr.ToString(rg.Name)
 
-	vms, err := GetComputeVMsPerResourceGroup(subscriptionID, resourceGroupName)
+	vms, err := getComputeVMsPerResourceGroup(subscriptionID, resourceGroupName)
 	if err != nil {
 		return nil, nil, fmt.Errorf("error fetching vms for resource group %s: %s", resourceGroupName, err)
 	}
@@ -115,9 +115,9 @@ func GetComputeRelevantData(sub subscriptions.Subscription, rg resources.Group) 
 	return header, body, nil
 }
 
-var GetComputeVMsPerResourceGroup = getComputeVMsPerResourceGroup
+var getComputeVMsPerResourceGroup = getComputeVMsPerResourceGroupOriginal
 
-func getComputeVMsPerResourceGroup(subscriptionID string, resourceGroup string) ([]compute.VirtualMachine, error) {
+func getComputeVMsPerResourceGroupOriginal(subscriptionID string, resourceGroup string) ([]compute.VirtualMachine, error) {
 	computeClient := utils.GetVirtualMachinesClient(subscriptionID)
 	var vms []compute.VirtualMachine
 
@@ -133,65 +133,7 @@ func getComputeVMsPerResourceGroup(subscriptionID string, resourceGroup string) 
 	return vms, nil
 }
 
-func getIPs(subscriptionID string, resourceGroup string, vm compute.VirtualMachine) ([]string, []string) {
-	var privateIPs, publicIPs []string
-
-	if vm.VirtualMachineProperties.NetworkProfile.NetworkInterfaces != nil {
-		for _, nicReference := range *vm.VirtualMachineProperties.NetworkProfile.NetworkInterfaces {
-			nic, err := GetNICdetails(subscriptionID, resourceGroup, nicReference)
-			if err != nil {
-				return []string{err.Error()}, []string{err.Error()}
-			}
-			if nic.InterfacePropertiesFormat.IPConfigurations != nil {
-				for _, ip := range *nic.InterfacePropertiesFormat.IPConfigurations {
-					privateIPs = append(
-						privateIPs,
-						ptr.ToString(
-							ip.InterfaceIPConfigurationPropertiesFormat.PrivateIPAddress))
-
-					publicIP, err := GetPublicIP(subscriptionID, resourceGroup, ip)
-					if err != nil {
-						publicIPs = append(publicIPs, err.Error())
-					} else {
-						publicIPs = append(publicIPs, ptr.ToString(publicIP))
-					}
-				}
-			}
-		}
-	}
-	return privateIPs, publicIPs
-}
-
-var GetNICdetails = getNICdetails
-
-func getNICdetails(subscriptionID string, resourceGroup string, nicReference compute.NetworkInterfaceReference) (network.Interface, error) {
-	client := utils.GetNICClient(subscriptionID)
-	NICName := strings.Split(ptr.ToString(nicReference.ID), "/")[len(strings.Split(ptr.ToString(nicReference.ID), "/"))-1]
-
-	nic, err := client.Get(context.TODO(), resourceGroup, NICName, "")
-	if err != nil {
-		return network.Interface{}, fmt.Errorf("NICnotFound_%s", NICName)
-	}
-
-	return nic, nil
-}
-
-var GetPublicIP = getPublicIP
-
-func getPublicIP(subscriptionID string, resourceGroup string, ip network.InterfaceIPConfiguration) (*string, error) {
-	client := utils.GetPublicIPClient(subscriptionID)
-	publicIPID := ptr.ToString(ip.InterfaceIPConfigurationPropertiesFormat.PublicIPAddress.ID)
-	publicIPName := strings.Split(publicIPID, "/")[len(strings.Split(publicIPID, "/"))-1]
-	publicIPExpanded, err := client.Get(context.TODO(), resourceGroup, publicIPName, "")
-	if err != nil {
-		return nil, fmt.Errorf("IPNotFound_%s", publicIPName)
-	}
-	return publicIPExpanded.PublicIPAddressPropertiesFormat.IPAddress, nil
-}
-
-/************* MOCKED FUNCTIONS BELOW (USE IT FOR UNIT TESTING) *************/
-
-func MockedGetComputeVMsPerResourceGroup(subscriptionID, resourceGroup string) ([]compute.VirtualMachine, error) {
+func mockedGetComputeVMsPerResourceGroup(subscriptionID, resourceGroup string) ([]compute.VirtualMachine, error) {
 	testFile, err := os.ReadFile(globals.VMS_TEST_FILE)
 	if err != nil {
 		return nil, fmt.Errorf("could not read file %s", globals.VMS_TEST_FILE)
@@ -214,7 +156,50 @@ func MockedGetComputeVMsPerResourceGroup(subscriptionID, resourceGroup string) (
 	return results, nil
 }
 
-func MockedGetNICdetails(subscriptionID, resourceGroup string, nicReference compute.NetworkInterfaceReference) (network.Interface, error) {
+func getIPs(subscriptionID string, resourceGroup string, vm compute.VirtualMachine) ([]string, []string) {
+	var privateIPs, publicIPs []string
+
+	if vm.VirtualMachineProperties.NetworkProfile.NetworkInterfaces != nil {
+		for _, nicReference := range *vm.VirtualMachineProperties.NetworkProfile.NetworkInterfaces {
+			nic, err := getNICdetails(subscriptionID, resourceGroup, nicReference)
+			if err != nil {
+				return []string{err.Error()}, []string{err.Error()}
+			}
+			if nic.InterfacePropertiesFormat.IPConfigurations != nil {
+				for _, ip := range *nic.InterfacePropertiesFormat.IPConfigurations {
+					privateIPs = append(
+						privateIPs,
+						ptr.ToString(
+							ip.InterfaceIPConfigurationPropertiesFormat.PrivateIPAddress))
+
+					publicIP, err := getPublicIP(subscriptionID, resourceGroup, ip)
+					if err != nil {
+						publicIPs = append(publicIPs, err.Error())
+					} else {
+						publicIPs = append(publicIPs, ptr.ToString(publicIP))
+					}
+				}
+			}
+		}
+	}
+	return privateIPs, publicIPs
+}
+
+var getNICdetails = getNICdetailsOriginal
+
+func getNICdetailsOriginal(subscriptionID string, resourceGroup string, nicReference compute.NetworkInterfaceReference) (network.Interface, error) {
+	client := utils.GetNICClient(subscriptionID)
+	NICName := strings.Split(ptr.ToString(nicReference.ID), "/")[len(strings.Split(ptr.ToString(nicReference.ID), "/"))-1]
+
+	nic, err := client.Get(context.TODO(), resourceGroup, NICName, "")
+	if err != nil {
+		return network.Interface{}, fmt.Errorf("NICnotFound_%s", NICName)
+	}
+
+	return nic, nil
+}
+
+func mockedGetNICdetails(subscriptionID, resourceGroup string, nicReference compute.NetworkInterfaceReference) (network.Interface, error) {
 	testFile, err := os.ReadFile(globals.NICS_TEST_FILE)
 	if err != nil {
 		return network.Interface{}, fmt.Errorf("NICnotFound_%s", globals.NICS_TEST_FILE)
@@ -234,7 +219,20 @@ func MockedGetNICdetails(subscriptionID, resourceGroup string, nicReference comp
 	return network.Interface{}, fmt.Errorf("NICnotFound_%s", ptr.ToString(nicReference.ID))
 }
 
-func MockedGetPublicIP(subscriptionID, resourceGroup string, ip network.InterfaceIPConfiguration) (*string, error) {
+var getPublicIP = getPublicIPOriginal
+
+func getPublicIPOriginal(subscriptionID string, resourceGroup string, ip network.InterfaceIPConfiguration) (*string, error) {
+	client := utils.GetPublicIPClient(subscriptionID)
+	publicIPID := ptr.ToString(ip.InterfaceIPConfigurationPropertiesFormat.PublicIPAddress.ID)
+	publicIPName := strings.Split(publicIPID, "/")[len(strings.Split(publicIPID, "/"))-1]
+	publicIPExpanded, err := client.Get(context.TODO(), resourceGroup, publicIPName, "")
+	if err != nil {
+		return nil, fmt.Errorf("IPNotFound_%s", publicIPName)
+	}
+	return publicIPExpanded.PublicIPAddressPropertiesFormat.IPAddress, nil
+}
+
+func mockedGetPublicIP(subscriptionID, resourceGroup string, ip network.InterfaceIPConfiguration) (*string, error) {
 	f, err := os.ReadFile(globals.PUBLIC_IPS_TEST_FILE)
 	if err != nil {
 		return nil, fmt.Errorf("IPNotFound_%s", globals.PUBLIC_IPS_TEST_FILE)

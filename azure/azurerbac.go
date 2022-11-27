@@ -35,7 +35,7 @@ func AzRbacCommand(c CloudFoxRBACclient, tenantID, subscriptionID, outputFormat 
 				"[%s] Enumerating Azure RBAC assignments for all subscriptions on tenant %s\n",
 				color.CyanString(globals.AZ_RBAC_MODULE_NAME),
 				tenantID)
-			subscriptions := GetSubscriptions()
+			subscriptions := getSubscriptions()
 			for _, s := range subscriptions {
 				if ptr.ToString(s.TenantID) == tenantID {
 					header, body = c.GetRelevantRBACData(tenantID, ptr.ToString(s.SubscriptionID))
@@ -77,15 +77,15 @@ type RoleBindingRelevantData struct {
 
 func (c *CloudFoxRBACclient) initialize(tenantID, subscriptionID string) error {
 	var err error
-	c.roleAssignments, err = GetRoleAssignments(subscriptionID)
+	c.roleAssignments, err = getRoleAssignments(subscriptionID)
 	if err != nil {
 		return err
 	}
-	c.roleDefinitions, err = GetRoleDefinitions(subscriptionID)
+	c.roleDefinitions, err = getRoleDefinitions(subscriptionID)
 	if err != nil {
 		return err
 	}
-	c.AADUsers, err = GetAzureADUsers(tenantID)
+	c.AADUsers, err = getAzureADUsers(tenantID)
 	if err != nil {
 		return err
 	}
@@ -141,9 +141,9 @@ func findRole(roleDefinitions []authorization.RoleDefinition, roleAssignment aut
 	}
 }
 
-var GetAzureADUsers = getAzureADUsers
+var getAzureADUsers = getAzureADUsersOriginal
 
-func getAzureADUsers(tenantID string) ([]graphrbac.User, error) {
+func getAzureADUsersOriginal(tenantID string) ([]graphrbac.User, error) {
 	var users []graphrbac.User
 	client := utils.GetAADUsersClient(tenantID)
 	for page, err := client.List(context.TODO(), "", ""); page.NotDone(); page.Next() {
@@ -155,37 +155,7 @@ func getAzureADUsers(tenantID string) ([]graphrbac.User, error) {
 	return users, nil
 }
 
-var GetRoleDefinitions = getRoleDefinitions
-
-func getRoleDefinitions(subscriptionID string) ([]authorization.RoleDefinition, error) {
-	client := utils.GetRoleDefinitionsClient(subscriptionID)
-	var roleDefinitions []authorization.RoleDefinition
-	for page, err := client.List(context.TODO(), "", ""); page.NotDone(); page.Next() {
-		if err != nil {
-			return nil, fmt.Errorf("could not fetch role definitions for subscription %s. Skipping it", subscriptionID)
-		}
-		roleDefinitions = append(roleDefinitions, page.Values()...)
-	}
-	return roleDefinitions, nil
-}
-
-var GetRoleAssignments = getRoleAssignments
-
-func getRoleAssignments(subscriptionID string) ([]authorization.RoleAssignment, error) {
-	var roleAssignments []authorization.RoleAssignment
-	client := utils.GetRoleAssignmentsClient(subscriptionID)
-	for page, err := client.List(context.TODO(), ""); page.NotDone(); page.Next() {
-		if err != nil {
-			return nil, fmt.Errorf("could not fetch role assignments for subscription %s", subscriptionID)
-		}
-		roleAssignments = append(roleAssignments, page.Values()...)
-	}
-	return roleAssignments, nil
-}
-
-/************* MOCKED FUNCTIONS BELOW (USE IT FOR UNIT TESTING) *************/
-
-func MockedGetAzureADUsers(tenantID string) ([]graphrbac.User, error) {
+func mockedGetAzureADUsers(tenantID string) ([]graphrbac.User, error) {
 	var users AzureADUsersTestFile
 
 	file, err := os.ReadFile(globals.AAD_USERS_TEST_FILE)
@@ -199,7 +169,7 @@ func MockedGetAzureADUsers(tenantID string) ([]graphrbac.User, error) {
 	return users.AzureADUsers, nil
 }
 
-func GenerateAzureADUsersTestFIle(tenantID string) {
+func generateAzureADUsersTestFIle(tenantID string) {
 	// The READ-ONLY ObjectID attribute needs to be included manually in the test file
 	// ObjectID *string `json:"objectId,omitempty"`
 	users, err := getAzureADUsers(tenantID)
@@ -220,7 +190,21 @@ type AzureADUsersTestFile struct {
 	AzureADUsers []graphrbac.User `json:"azureADUsers"`
 }
 
-func MockedGetRoleDefinitions(subscriptionID string) ([]authorization.RoleDefinition, error) {
+var getRoleDefinitions = getRoleDefinitionsOriginal
+
+func getRoleDefinitionsOriginal(subscriptionID string) ([]authorization.RoleDefinition, error) {
+	client := utils.GetRoleDefinitionsClient(subscriptionID)
+	var roleDefinitions []authorization.RoleDefinition
+	for page, err := client.List(context.TODO(), "", ""); page.NotDone(); page.Next() {
+		if err != nil {
+			return nil, fmt.Errorf("could not fetch role definitions for subscription %s. Skipping it", subscriptionID)
+		}
+		roleDefinitions = append(roleDefinitions, page.Values()...)
+	}
+	return roleDefinitions, nil
+}
+
+func mockedGetRoleDefinitions(subscriptionID string) ([]authorization.RoleDefinition, error) {
 	var roleDefinitions RoleDefinitionTestFile
 	file, err := os.ReadFile(globals.ROLE_DEFINITIONS_TEST_FILE)
 	if err != nil {
@@ -233,7 +217,7 @@ func MockedGetRoleDefinitions(subscriptionID string) ([]authorization.RoleDefini
 	return roleDefinitions.RoleDefinitions, nil
 }
 
-func GenerateRoleDefinitionsTestFile(subscriptionID string) {
+func generateRoleDefinitionsTestFile(subscriptionID string) {
 	// The READ-ONLY ID attribute needs to be included manually in the test file.
 	// This attribute is the unique identifier for the role.
 	// ID *string `json:"id,omitempty"`.
@@ -279,7 +263,21 @@ type RoleDefinitionTestFile struct {
 	RoleDefinitions []authorization.RoleDefinition `json:"roleDefinitions"`
 }
 
-func MockedGetRoleAssignments(subscriptionID string) ([]authorization.RoleAssignment, error) {
+var getRoleAssignments = getRoleAssignmentsOriginal
+
+func getRoleAssignmentsOriginal(subscriptionID string) ([]authorization.RoleAssignment, error) {
+	var roleAssignments []authorization.RoleAssignment
+	client := utils.GetRoleAssignmentsClient(subscriptionID)
+	for page, err := client.List(context.TODO(), ""); page.NotDone(); page.Next() {
+		if err != nil {
+			return nil, fmt.Errorf("could not fetch role assignments for subscription %s", subscriptionID)
+		}
+		roleAssignments = append(roleAssignments, page.Values()...)
+	}
+	return roleAssignments, nil
+}
+
+func mockedGetRoleAssignments(subscriptionID string) ([]authorization.RoleAssignment, error) {
 	var roleAssignments []authorization.RoleAssignment
 	file, err := os.ReadFile(globals.ROLE_ASSIGNMENTS_TEST_FILE)
 	if err != nil {
@@ -292,7 +290,7 @@ func MockedGetRoleAssignments(subscriptionID string) ([]authorization.RoleAssign
 	return roleAssignments, nil
 }
 
-func GenerateRoleAssignmentsTestFile(subscriptionID string) {
+func generateRoleAssignmentsTestFile(subscriptionID string) {
 	ra, err := getRoleAssignments(subscriptionID)
 	if err != nil {
 		log.Fatalf("could not generate role assignments for subscription %s", subscriptionID)
