@@ -139,9 +139,7 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 	//create a channel to receive the objects
 	dataReceiver := make(chan GlobalResourceCount2)
 
-	// Create a channel to signal to stop
-	receiverDone := make(chan bool)
-	go m.Receiver(dataReceiver, receiverDone)
+	go m.Receiver(dataReceiver)
 
 	for _, region := range m.AWSRegions {
 
@@ -261,9 +259,7 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 		fmt.Printf("[%s][%s] No resources identified, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
 
-	// Send a message to the data receiver goroutine to close the channel and stop
-	receiverDone <- true
-	<-receiverDone
+	close(dataReceiver)
 }
 
 func (m *Inventory2Module) PrintGlobalResources(outputFormat string, outputDirectory string, verbosity int, dataReceiver chan GlobalResourceCount2) {
@@ -301,16 +297,10 @@ func (m *Inventory2Module) PrintGlobalResources(outputFormat string, outputDirec
 
 }
 
-func (m *Inventory2Module) Receiver(receiver chan GlobalResourceCount2, receiverDone chan bool) {
-	defer close(receiverDone)
-	for {
-		select {
-		case data := <-receiver:
-			m.GlobalResourceCounts = append(m.GlobalResourceCounts, data)
-		case <-receiverDone:
-			receiverDone <- true
-			return
-		}
+func (m *Inventory2Module) Receiver(receiver chan GlobalResourceCount2) {
+	for data := range receiver {
+		m.GlobalResourceCounts = append(m.GlobalResourceCounts, data)
+
 	}
 }
 

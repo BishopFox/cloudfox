@@ -68,8 +68,7 @@ func (m *ECSTasksModule) ECSTasks(outputFormat string, outputDirectory string, v
 
 	dataReceiver := make(chan MappedECSTask)
 
-	receiverDone := make(chan bool)
-	go m.Receiver(dataReceiver, receiverDone)
+	go m.Receiver(dataReceiver)
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
 		m.CommandCounter.Pending++
@@ -80,23 +79,16 @@ func (m *ECSTasksModule) ECSTasks(outputFormat string, outputDirectory string, v
 	wg.Wait()
 	spinnerDone <- true
 	<-spinnerDone
-	receiverDone <- true
-	<-receiverDone
+	close(dataReceiver)
 
 	m.printECSTaskData(outputFormat, outputDirectory, dataReceiver)
 
 }
 
-func (m *ECSTasksModule) Receiver(receiver chan MappedECSTask, receiverDone chan bool) {
-	defer close(receiverDone)
-	for {
-		select {
-		case data := <-receiver:
-			m.MappedECSTasks = append(m.MappedECSTasks, data)
-		case <-receiverDone:
-			receiverDone <- true
-			return
-		}
+func (m *ECSTasksModule) Receiver(receiver chan MappedECSTask) {
+	for data := range receiver {
+		m.MappedECSTasks = append(m.MappedECSTasks, data)
+
 	}
 }
 

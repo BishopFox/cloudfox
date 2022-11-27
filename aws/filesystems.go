@@ -84,9 +84,7 @@ func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirector
 	//create a channel to receive the objects
 	dataReceiver := make(chan FilesystemObject)
 
-	// Create a channel to signal to stop
-	receiverDone := make(chan bool)
-	go m.Receiver(dataReceiver, receiverDone)
+	go m.Receiver(dataReceiver)
 
 	//execute regional checks
 	for _, region := range m.AWSRegions {
@@ -98,9 +96,7 @@ func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirector
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	// Send a message to the data receiver goroutine to close the channel and stop
-	receiverDone <- true
-	<-receiverDone
+	close(dataReceiver)
 
 	sort.Slice(m.Filesystems, func(i, j int) bool {
 		return m.Filesystems[i].AWSService < m.Filesystems[j].AWSService
@@ -146,16 +142,10 @@ func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirector
 
 }
 
-func (m *FilesystemsModule) Receiver(receiver chan FilesystemObject, receiverDone chan bool) {
-	defer close(receiverDone)
-	for {
-		select {
-		case data := <-receiver:
-			m.Filesystems = append(m.Filesystems, data)
-		case <-receiverDone:
-			receiverDone <- true
-			return
-		}
+func (m *FilesystemsModule) Receiver(receiver chan FilesystemObject) {
+	for data := range receiver {
+		m.Filesystems = append(m.Filesystems, data)
+
 	}
 }
 

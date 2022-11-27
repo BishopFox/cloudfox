@@ -90,8 +90,7 @@ func (m *EnvsModule) PrintEnvs(outputFormat string, outputDirectory string, verb
 	dataReceiver := make(chan EnvironmentVariable)
 
 	// Create a channel to signal to stop
-	receiverDone := make(chan bool)
-	go m.Receiver(dataReceiver, receiverDone)
+	go m.Receiver(dataReceiver)
 
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
@@ -104,9 +103,7 @@ func (m *EnvsModule) PrintEnvs(outputFormat string, outputDirectory string, verb
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	// Send a message to the data receiver goroutine to close the channel and stop
-	receiverDone <- true
-	<-receiverDone
+	close(dataReceiver)
 
 	sort.Slice(m.EnvironmentVariables, func(i, j int) bool {
 		return m.EnvironmentVariables[i].service < m.EnvironmentVariables[j].service
@@ -145,16 +142,23 @@ func (m *EnvsModule) PrintEnvs(outputFormat string, outputDirectory string, verb
 	}
 }
 
-func (m *EnvsModule) Receiver(receiver chan EnvironmentVariable, receiverDone chan bool) {
-	defer close(receiverDone)
-	for {
-		select {
-		case data := <-receiver:
-			m.EnvironmentVariables = append(m.EnvironmentVariables, data)
-		case <-receiverDone:
-			receiverDone <- true
-			return
+func EnvVarsContains(element EnvironmentVariable, array []EnvironmentVariable) bool {
+	for _, v := range array {
+		if v == element {
+			return true
 		}
+	}
+	return false
+}
+
+func (m *EnvsModule) Receiver(receiver chan EnvironmentVariable) {
+	for data := range receiver {
+		if !EnvVarsContains(data, m.EnvironmentVariables) {
+			m.EnvironmentVariables = append(m.EnvironmentVariables, data)
+		} //else {
+		// 	fmt.Println("exists")
+		// }
+
 	}
 }
 

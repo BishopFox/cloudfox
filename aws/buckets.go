@@ -74,9 +74,7 @@ func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string
 	//create a channel to receive the objects
 	dataReceiver := make(chan Bucket)
 
-	// Create a channel to signal to stop
-	receiverDone := make(chan bool)
-	go m.Receiver(dataReceiver, receiverDone)
+	go m.Receiver(dataReceiver)
 
 	wg.Add(1)
 	m.CommandCounter.Pending++
@@ -86,9 +84,7 @@ func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	// Send a message to the data receiver goroutine to close the channel and stop
-	receiverDone <- true
-	<-receiverDone
+	close(dataReceiver)
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{"Service", "Region", "Name"}
@@ -118,16 +114,10 @@ func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string
 
 }
 
-func (m *BucketsModule) Receiver(receiver chan Bucket, receiverDone chan bool) {
-	defer close(receiverDone)
-	for {
-		select {
-		case data := <-receiver:
-			m.Buckets = append(m.Buckets, data)
-		case <-receiverDone:
-			receiverDone <- true
-			return
-		}
+func (m *BucketsModule) Receiver(receiver chan Bucket) {
+	for data := range receiver {
+		m.Buckets = append(m.Buckets, data)
+
 	}
 }
 

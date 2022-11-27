@@ -105,9 +105,7 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 	//create a channel to receive the objects
 	dataReceiver := make(chan Endpoint)
 
-	// Create a channel to signal to stop
-	receiverDone := make(chan bool)
-	go m.Receiver(dataReceiver, receiverDone)
+	go m.Receiver(dataReceiver)
 
 	//execute global checks -- removing from now. not sure i want s3 data in here
 	// wg.Add(1)
@@ -131,9 +129,7 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	// Send a message to the data receiver goroutine to close the channel and stop
-	receiverDone <- true
-	<-receiverDone
+	close(dataReceiver)
 
 	sort.Slice(m.Endpoints, func(i, j int) bool {
 		return m.Endpoints[i].AWSService < m.Endpoints[j].AWSService
@@ -185,16 +181,10 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 
 }
 
-func (m *EndpointsModule) Receiver(receiver chan Endpoint, receiverDone chan bool) {
-	defer close(receiverDone)
-	for {
-		select {
-		case data := <-receiver:
-			m.Endpoints = append(m.Endpoints, data)
-		case <-receiverDone:
-			receiverDone <- true
-			return
-		}
+func (m *EndpointsModule) Receiver(receiver chan Endpoint) {
+	for data := range receiver {
+		m.Endpoints = append(m.Endpoints, data)
+
 	}
 }
 

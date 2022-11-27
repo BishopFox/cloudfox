@@ -90,9 +90,7 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 	//create a channel to receive the objects
 	dataReceiver := make(chan SimulatorResult)
 
-	// Create a channel to signal to stop
-	receiverDone := make(chan bool)
-	go m.Receiver(dataReceiver, receiverDone)
+	go m.Receiver(dataReceiver)
 
 	// This double if/else section is here to handle the cases where --principal or --action (or both) are specified.
 	if principal != "" {
@@ -138,9 +136,7 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	// Send a message to the data receiver goroutine to close the channel and stop
-	receiverDone <- true
-	<-receiverDone
+	close(dataReceiver)
 
 	//duration := time.Since(start)
 	//fmt.Printf("\n\n[*] Total execution time %s\n", duration)
@@ -215,16 +211,10 @@ func (m *IamSimulatorModule) writeLoot(outputDirectory string, verbosity int, pm
 
 }
 
-func (m *IamSimulatorModule) Receiver(receiver chan SimulatorResult, receiverDone chan bool) {
-	defer close(receiverDone)
-	for {
-		select {
-		case data := <-receiver:
-			m.SimulatorResults = append(m.SimulatorResults, data)
-		case <-receiverDone:
-			receiverDone <- true
-			return
-		}
+func (m *IamSimulatorModule) Receiver(receiver chan SimulatorResult) {
+	for data := range receiver {
+		m.SimulatorResults = append(m.SimulatorResults, data)
+
 	}
 }
 

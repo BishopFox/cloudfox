@@ -62,8 +62,7 @@ func (m *ElasticNetworkInterfacesModule) ElasticNetworkInterfaces(outputFormat s
 	go console.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
 
 	dataReceiver := make(chan MappedENI)
-	receiverDone := make(chan bool)
-	go m.Receiver(dataReceiver, receiverDone)
+	go m.Receiver(dataReceiver)
 
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
@@ -75,23 +74,16 @@ func (m *ElasticNetworkInterfacesModule) ElasticNetworkInterfaces(outputFormat s
 	wg.Wait()
 	spinnerDone <- true
 	<-spinnerDone
-	receiverDone <- true
-	<-receiverDone
+	close(dataReceiver)
 
 	m.printENIsData(outputFormat, outputDirectory, dataReceiver)
 
 }
 
-func (m *ElasticNetworkInterfacesModule) Receiver(receiver chan MappedENI, receiverDone chan bool) {
-	defer close(receiverDone)
-	for {
-		select {
-		case data := <-receiver:
-			m.MappedENIs = append(m.MappedENIs, data)
-		case <-receiverDone:
-			receiverDone <- true
-			return
-		}
+func (m *ElasticNetworkInterfacesModule) Receiver(receiver chan MappedENI) {
+	for data := range receiver {
+		m.MappedENIs = append(m.MappedENIs, data)
+
 	}
 }
 

@@ -73,9 +73,7 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 	//create a channel to receive the objects
 	dataReceiver := make(chan Tag)
 
-	// Create a channel to signal to stop
-	receiverDone := make(chan bool)
-	go m.Receiver(dataReceiver, receiverDone)
+	go m.Receiver(dataReceiver)
 
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
@@ -88,9 +86,7 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	// Send a message to the data receiver goroutine to close the channel and stop
-	receiverDone <- true
-	<-receiverDone
+	close(dataReceiver)
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
@@ -184,16 +180,10 @@ func (m *TagsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan 
 	m.getTagsPerRegion(r, wg, semaphore, dataReceiver)
 }
 
-func (m *TagsModule) Receiver(receiver chan Tag, receiverDone chan bool) {
-	defer close(receiverDone)
-	for {
-		select {
-		case data := <-receiver:
-			m.Tags = append(m.Tags, data)
-		case <-receiverDone:
-			receiverDone <- true
-			return
-		}
+func (m *TagsModule) Receiver(receiver chan Tag) {
+	for data := range receiver {
+		m.Tags = append(m.Tags, data)
+
 	}
 }
 

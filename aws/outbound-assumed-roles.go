@@ -140,9 +140,7 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputFor
 	//create a channel to receive the objects
 	dataReceiver := make(chan OutboundAssumeRoleEntry)
 
-	// Create a channel to signal to stop
-	receiverDone := make(chan bool)
-	go m.Receiver(dataReceiver, receiverDone)
+	go m.Receiver(dataReceiver)
 
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
@@ -155,9 +153,7 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputFor
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	// Send a message to the data receiver goroutine to close the channel and stop
-	receiverDone <- true
-	<-receiverDone
+	close(dataReceiver)
 
 	m.output.Headers = []string{
 		"Service",
@@ -201,16 +197,10 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputFor
 
 }
 
-func (m *OutboundAssumedRolesModule) Receiver(receiver chan OutboundAssumeRoleEntry, receiverDone chan bool) {
-	defer close(receiverDone)
-	for {
-		select {
-		case data := <-receiver:
-			m.OutboundAssumeRoleEntries = append(m.OutboundAssumeRoleEntries, data)
-		case <-receiverDone:
-			receiverDone <- true
-			return
-		}
+func (m *OutboundAssumedRolesModule) Receiver(receiver chan OutboundAssumeRoleEntry) {
+	for data := range receiver {
+		m.OutboundAssumeRoleEntries = append(m.OutboundAssumeRoleEntries, data)
+
 	}
 }
 

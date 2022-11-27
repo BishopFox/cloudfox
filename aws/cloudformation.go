@@ -71,8 +71,8 @@ func (m *CloudformationModule) PrintCloudformationStacks(outputFormat string, ou
 	dataReceiver := make(chan CFStack)
 
 	// Create a channel to signal to stop
-	receiverDone := make(chan bool)
-	go m.Receiver(dataReceiver, receiverDone)
+
+	go m.Receiver(dataReceiver)
 
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
@@ -85,9 +85,7 @@ func (m *CloudformationModule) PrintCloudformationStacks(outputFormat string, ou
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	// Send a message to the data receiver goroutine to close the channel and stop
-	receiverDone <- true
-	<-receiverDone
+	close(dataReceiver)
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
@@ -147,16 +145,9 @@ func (m *CloudformationModule) executeChecks(r string, wg *sync.WaitGroup, semap
 	m.getCFStacksPerRegion(r, wg, semaphore, dataReceiver)
 }
 
-func (m *CloudformationModule) Receiver(receiver chan CFStack, receiverDone chan bool) {
-	defer close(receiverDone)
-	for {
-		select {
-		case data := <-receiver:
-			m.CFStacks = append(m.CFStacks, data)
-		case <-receiverDone:
-			receiverDone <- true
-			return
-		}
+func (m *CloudformationModule) Receiver(receiver chan CFStack) {
+	for data := range receiver {
+		m.CFStacks = append(m.CFStacks, data)
 	}
 }
 

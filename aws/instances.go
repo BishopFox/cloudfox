@@ -92,9 +92,7 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 	//create a channel to receive the objects
 	dataReceiver := make(chan MappedInstance)
 
-	// Create a channel to signal to stop
-	receiverDone := make(chan bool)
-	go m.Receiver(dataReceiver, receiverDone)
+	go m.Receiver(dataReceiver)
 	m.getRolesFromInstanceProfiles()
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
@@ -107,9 +105,7 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	// Send a message to the data receiver goroutine to close the channel and stop
-	receiverDone <- true
-	<-receiverDone
+	close(dataReceiver)
 
 	// This conditional block will either dump the userData attribute content or the general instances data, depending on what you select via command line.
 	//fmt.Printf("\n[*] Preparing output...\n\n")
@@ -121,16 +117,10 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 
 }
 
-func (m *InstancesModule) Receiver(receiver chan MappedInstance, receiverDone chan bool) {
-	defer close(receiverDone)
-	for {
-		select {
-		case data := <-receiver:
-			m.MappedInstances = append(m.MappedInstances, data)
-		case <-receiverDone:
-			receiverDone <- true
-			return
-		}
+func (m *InstancesModule) Receiver(receiver chan MappedInstance) {
+	for data := range receiver {
+		m.MappedInstances = append(m.MappedInstances, data)
+
 	}
 }
 
