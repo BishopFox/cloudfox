@@ -69,6 +69,7 @@ func (m *ECSTasksModule) ECSTasks(outputFormat string, outputDirectory string, v
 	dataReceiver := make(chan MappedECSTask)
 
 	go m.Receiver(dataReceiver)
+
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
 		m.CommandCounter.Pending++

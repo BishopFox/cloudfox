@@ -11,8 +11,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go/ptr"
+	"github.com/bishopfox/awsservicemap"
 	"github.com/kyokomi/emoji"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/afero"
@@ -56,6 +58,29 @@ func AWSWhoami(awsProfile string, version string) (*sts.GetCallerIdentityOutput,
 
 	}
 	return CallerIdentity, err
+}
+
+func GetEnabledRegions(awsProfile string, version string) []string {
+	var enabledRegions []string
+	ec2Client := ec2.NewFromConfig(AWSConfigFileLoader(awsProfile, version))
+	regions, err := ec2Client.DescribeRegions(
+		context.TODO(),
+		&ec2.DescribeRegionsInput{
+			AllRegions: aws.Bool(false),
+		},
+	)
+
+	if err != nil {
+		AWSRegions := awsservicemap.GetAllRegions()
+		return AWSRegions
+	}
+
+	for _, region := range regions.Regions {
+		enabledRegions = append(enabledRegions, *region.RegionName)
+	}
+
+	return enabledRegions
+
 }
 
 // func GetRegionsForService(awsProfile string, service string) []string {

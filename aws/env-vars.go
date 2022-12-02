@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/lightsail"
 	"github.com/aws/aws-sdk-go-v2/service/sagemaker"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -165,25 +166,34 @@ func (m *EnvsModule) Receiver(receiver chan EnvironmentVariable) {
 func (m *EnvsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan EnvironmentVariable) {
 	defer wg.Done()
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getECSEnvironmentVariablesPerRegion(r, wg, semaphore, dataReceiver)
+	if awsservicemap.IsServiceInRegion("ecs", r) {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getECSEnvironmentVariablesPerRegion(r, wg, semaphore, dataReceiver)
+	}
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getLambdaEnvironmentVariablesPerRegion(r, wg, semaphore, dataReceiver)
+	if awsservicemap.IsServiceInRegion("lambda", r) {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getLambdaEnvironmentVariablesPerRegion(r, wg, semaphore, dataReceiver)
+	}
 
+	// AppRunner is not supported in the aws service region catalog so we have to run it in all regions
 	m.CommandCounter.Total++
 	wg.Add(1)
 	go m.getAppRunnerEnvironmentVariablesPerRegion(r, wg, semaphore, dataReceiver)
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getLightsailEnvironmentVariablesPerRegion(r, wg, semaphore, dataReceiver)
+	if awsservicemap.IsServiceInRegion("lightsail", r) {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getLightsailEnvironmentVariablesPerRegion(r, wg, semaphore, dataReceiver)
+	}
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getSagemakerEnvironmentVariablesPerRegion(r, wg, semaphore, dataReceiver)
+	if awsservicemap.IsServiceInRegion("sagemaker", r) {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getSagemakerEnvironmentVariablesPerRegion(r, wg, semaphore, dataReceiver)
+	}
 
 }
 

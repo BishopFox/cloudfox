@@ -114,6 +114,7 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 	go m.getCloudfrontEndpoints(wg, semaphore, dataReceiver)
 
 	//execute regional checks
+
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
 		go m.executeChecks(region, wg, semaphore, dataReceiver)

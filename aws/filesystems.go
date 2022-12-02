@@ -87,6 +87,7 @@ func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirector
 	go m.Receiver(dataReceiver)
 
 	//execute regional checks
+
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
 		m.executeChecks(region, wg, semaphore, dataReceiver)

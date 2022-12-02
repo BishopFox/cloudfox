@@ -117,6 +117,7 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 	//initialize servicemap and total
 	for _, service := range m.services {
 		m.serviceMap[service] = map[string]int{}
+
 		for _, region := range m.AWSRegions {
 			m.serviceMap[service][region] = 0
 			m.totalRegionCounts[region] = 0

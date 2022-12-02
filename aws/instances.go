@@ -94,6 +94,7 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 
 	go m.Receiver(dataReceiver)
 	m.getRolesFromInstanceProfiles()
+
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
 		m.CommandCounter.Pending++
