@@ -37,6 +37,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -308,93 +309,129 @@ func (m *Inventory2Module) Receiver(receiver chan GlobalResourceCount2) {
 func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan GlobalResourceCount2) {
 	defer wg.Done()
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getLambdaFunctionsPerRegion(r, wg, semaphore)
+	if awsservicemap.IsServiceInRegion("lambda", r) {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getLambdaFunctionsPerRegion(r, wg, semaphore)
+	}
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getEc2InstancesPerRegion(r, wg, semaphore)
+	if awsservicemap.IsServiceInRegion("ec2", r) {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getEc2InstancesPerRegion(r, wg, semaphore)
+	}
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getCloudFormationStacksPerRegion(r, wg, semaphore)
+	if awsservicemap.IsServiceInRegion("cloudformation", r) {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getCloudFormationStacksPerRegion(r, wg, semaphore)
+	}
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getSecretsManagerSecretsPerRegion(r, wg, semaphore)
+	if awsservicemap.IsServiceInRegion("secretsmanager", r) {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getSecretsManagerSecretsPerRegion(r, wg, semaphore)
+	}
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getEksClustersPerRegion(r, wg, semaphore)
+	if awsservicemap.IsServiceInRegion("eks", r) {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getEksClustersPerRegion(r, wg, semaphore)
+	}
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getEcsTasksPerRegion(r, wg, semaphore)
+	if awsservicemap.IsServiceInRegion("ecs", r) {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getEcsTasksPerRegion(r, wg, semaphore)
+	}
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getRdsClustersPerRegion(r, wg, semaphore)
+	if awsservicemap.IsServiceInRegion("rds", r) {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getRdsClustersPerRegion(r, wg, semaphore)
+	}
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getAPIGatewayvAPIsPerRegion(r, wg, semaphore)
+	if awsservicemap.IsServiceInRegion("apigateway", r) {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getAPIGatewayvAPIsPerRegion(r, wg, semaphore)
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getAPIGatewayv2APIsPerRegion(r, wg, semaphore)
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getAPIGatewayv2APIsPerRegion(r, wg, semaphore)
+	}
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getELBv2ListenersPerRegion(r, wg, semaphore)
+	if awsservicemap.IsServiceInRegion("elb", r) {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getELBv2ListenersPerRegion(r, wg, semaphore)
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getELBListenersPerRegion(r, wg, semaphore)
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getELBListenersPerRegion(r, wg, semaphore)
+	}
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	m.getMqBrokersPerRegion(r, wg, semaphore)
+	if awsservicemap.IsServiceInRegion("mq", r) {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		m.getMqBrokersPerRegion(r, wg, semaphore)
+	}
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	m.getOpenSearchPerRegion(r, wg, semaphore)
+	if awsservicemap.IsServiceInRegion("es", r) {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		m.getOpenSearchPerRegion(r, wg, semaphore)
+	}
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getGrafanaWorkspacesPerRegion(r, wg, semaphore)
+	if awsservicemap.IsServiceInRegion("grafana", r) {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getGrafanaWorkspacesPerRegion(r, wg, semaphore)
+	}
 
+	// AppRunner is not supported in the aws service region catalog so we have to run it in all regions
 	m.CommandCounter.Total++
 	wg.Add(1)
 	go m.getAppRunnerServicesPerRegion(r, wg, semaphore)
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getLightsailInstancesAndContainersPerRegion(r, wg, semaphore)
+	if awsservicemap.IsServiceInRegion("lightsail", r) {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getLightsailInstancesAndContainersPerRegion(r, wg, semaphore)
+	}
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getSSMParametersPerRegion(r, wg, semaphore)
+	if awsservicemap.IsServiceInRegion("ssm", r) {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getSSMParametersPerRegion(r, wg, semaphore)
+	}
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getGlueDevEndpointsPerRegion(r, wg, semaphore)
+	if awsservicemap.IsServiceInRegion("glue", r) {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getGlueDevEndpointsPerRegion(r, wg, semaphore)
+	}
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getGlueJobsPerRegion(r, wg, semaphore)
-
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getSNSTopicsPerRegion(r, wg, semaphore)
-
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getSQSQueuesPerRegion(r, wg, semaphore)
-
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getDynamoDBTablesPerRegion(r, wg, semaphore)
+	if awsservicemap.IsServiceInRegion("ssm", r) {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getGlueJobsPerRegion(r, wg, semaphore)
+	}
+	if awsservicemap.IsServiceInRegion("sns", r) {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getSNSTopicsPerRegion(r, wg, semaphore)
+	}
+	if awsservicemap.IsServiceInRegion("sqs", r) {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getSQSQueuesPerRegion(r, wg, semaphore)
+	}
+	if awsservicemap.IsServiceInRegion("dynamodb", r) {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getDynamoDBTablesPerRegion(r, wg, semaphore)
+	}
 }
 
 func (m *Inventory2Module) getLambdaFunctionsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
