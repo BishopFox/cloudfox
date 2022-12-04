@@ -21,7 +21,9 @@ import (
 
 type RoleTrustsModule struct {
 	// General configuration data
-	IAMClient      iam.ListRolesAPIClient
+	IAMClientListRoles iam.ListRolesAPIClient
+	IAMClient          *iam.Client
+
 	Caller         sts.GetCallerIdentityOutput
 	AWSProfile     string
 	Goroutines     int
@@ -62,6 +64,7 @@ func (m *RoleTrustsModule) printPrincipalTrusts(outputFormat string, outputDirec
 		"Role",
 		"Trusted Principal",
 		"ExternalID",
+		"isAdmin",
 	}
 
 	for _, role := range m.AnalyzedRoles {
@@ -70,7 +73,8 @@ func (m *RoleTrustsModule) printPrincipalTrusts(outputFormat string, outputDirec
 				column1 := aws.ToString(role.roleARN)
 				column2 := principal
 				column3 := role.trustsDoc.Statement[0].Condition.StringEquals.StsExternalID
-				m.output.Body = append(m.output.Body, []string{column1, column2, column3})
+				column4 := role.isAdmin
+				m.output.Body = append(m.output.Body, []string{column1, column2, column3, column4})
 			}
 		}
 	}
@@ -95,6 +99,7 @@ func (m *RoleTrustsModule) printServiceTrusts(outputFormat string, outputDirecto
 		"Role",
 		"Trusted Service",
 		"ExternalID",
+		"isAdmin",
 	}
 
 	for _, role := range m.AnalyzedRoles {
@@ -103,7 +108,8 @@ func (m *RoleTrustsModule) printServiceTrusts(outputFormat string, outputDirecto
 				column1 := aws.ToString(role.roleARN)
 				column2 := service
 				column3 := role.trustsDoc.Statement[0].Condition.StringEquals.StsExternalID
-				m.output.Body = append(m.output.Body, []string{column1, column2, column3})
+				column4 := role.isAdmin
+				m.output.Body = append(m.output.Body, []string{column1, column2, column3, column4})
 			}
 		}
 	}
@@ -133,9 +139,11 @@ func (m *RoleTrustsModule) getAllRoleTrusts() {
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
 	var PaginationMarker *string
 
+	var adminRole string = ""
+
 	// This for loop exits at the end dependeding on whether the output hits its last page (see pagination control block at the end of the loop).
 	for {
-		results, err := m.IAMClient.ListRoles(
+		results, err := m.IAMClientListRoles.ListRoles(
 			context.TODO(),
 			&iam.ListRolesInput{
 				Marker: PaginationMarker,
@@ -154,7 +162,17 @@ func (m *RoleTrustsModule) getAllRoleTrusts() {
 				m.CommandCounter.Error++
 				break
 			}
-			m.AnalyzedRoles = append(m.AnalyzedRoles, AnalyzedRole{roleARN: role.Arn, trustsDoc: trustsdoc})
+			if role.Arn != nil {
+				isRoleAdmin := m.isRoleAdmin(role.Arn)
+				if isRoleAdmin {
+					adminRole = "YES"
+				} else {
+					adminRole = "No"
+
+				}
+				m.AnalyzedRoles = append(m.AnalyzedRoles, AnalyzedRole{roleARN: role.Arn, trustsDoc: trustsdoc, isAdmin: adminRole})
+			}
+
 		}
 
 		// Pagination control. After the last page of output, the for loop exits.
@@ -171,6 +189,7 @@ type AnalyzedRole struct {
 	roleARN   *string
 	trustsDoc trustPolicyDocument
 	trustType string
+	isAdmin   string
 }
 
 type trustPolicyDocument struct {
@@ -214,4 +233,22 @@ func (r *ListOfPrincipals) UnmarshalJSON(b []byte) error {
 		return nil
 	}
 	return errors.New("cannot unmarshal neither to a string nor a slice of strings")
+}
+
+func (m *RoleTrustsModule) isRoleAdmin(principal *string) bool {
+	iamSimMod := IamSimulatorModule{
+		IAMClient:  m.IAMClient,
+		Caller:     m.Caller,
+		AWSProfile: m.AWSProfile,
+		Goroutines: m.Goroutines,
+	}
+
+	adminCheckResult := iamSimMod.isPrincipalAnAdmin(principal)
+
+	if adminCheckResult {
+		return true
+	} else {
+		return false
+	}
+
 }

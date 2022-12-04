@@ -718,10 +718,11 @@ func runRoleTrustCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.RoleTrustsModule{
-			IAMClient:  iam.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			Caller:     *caller,
-			AWSProfile: profile,
-			Goroutines: Goroutines,
+			IAMClientListRoles: iam.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			IAMClient:          iam.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			Caller:             *caller,
+			AWSProfile:         profile,
+			Goroutines:         Goroutines,
 		}
 		m.PrintRoleTrusts(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 	}
@@ -1103,10 +1104,11 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		}
 		accessKeys.PrintAccessKeys(AccessKeysFilter, AWSOutputFormat, AWSOutputDirectory, Verbosity)
 		roleTrusts := aws.RoleTrustsModule{
-			IAMClient:  iamClient,
-			Caller:     *Caller,
-			AWSProfile: profile,
-			Goroutines: Goroutines,
+			IAMClientListRoles: iamClient,
+			IAMClient:          iamClient,
+			Caller:             *Caller,
+			AWSProfile:         profile,
+			Goroutines:         Goroutines,
 		}
 		roleTrusts.PrintRoleTrusts(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 		iamSimulator := aws.IamSimulatorModule{
