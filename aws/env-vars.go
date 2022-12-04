@@ -212,13 +212,41 @@ func (m *EnvsModule) getECSEnvironmentVariablesPerRegion(region string, wg *sync
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
+	//var PaginationMarker *string
+
+	// This new approach takes one active task from each task family and grabs the container envs from that. Ran into a case where every version
+	// of a task was listed as active and it brought cloudfox to a halt for a really long time.
+	for _, familyName := range m.getTaskDefinitionFamilies(region) {
+
+		DescribeTaskDefinition, err := m.ECSClient.DescribeTaskDefinition(
+			context.TODO(),
+			&ecs.DescribeTaskDefinitionInput{
+				TaskDefinition: &familyName,
+			},
+			func(o *ecs.Options) {
+				o.Region = region
+			},
+		)
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			break
+		}
+		for _, containerDefinition := range DescribeTaskDefinition.TaskDefinition.ContainerDefinitions {
+			m.getECSEnvironmentVariablesPerDefinition(containerDefinition, region, dataReceiver)
+		}
+	}
+}
+
+func (m *EnvsModule) getTaskDefinitionFamilies(region string) []string {
+	var allFamilyNames []string
 	var PaginationMarker *string
 
-	// This for loop exits at the end dependeding on whether the output hits its last page (see pagination control block at the end of the loop).
 	for {
-		ListTaskDefinitions, err := m.ECSClient.ListTaskDefinitions(
+
+		ListTaskDefinitionFamilies, err := m.ECSClient.ListTaskDefinitionFamilies(
 			context.TODO(),
-			&ecs.ListTaskDefinitionsInput{
+			&ecs.ListTaskDefinitionFamiliesInput{
 				NextToken: PaginationMarker,
 			},
 			func(o *ecs.Options) {
@@ -231,32 +259,17 @@ func (m *EnvsModule) getECSEnvironmentVariablesPerRegion(region string, wg *sync
 			break
 		}
 
-		for _, taskDefinitionArn := range ListTaskDefinitions.TaskDefinitionArns {
-			DescribeTaskDefinition, err := m.ECSClient.DescribeTaskDefinition(
-				context.TODO(),
-				&ecs.DescribeTaskDefinitionInput{
-					TaskDefinition: &taskDefinitionArn,
-				},
-			)
-			if err != nil {
-				m.modLog.Error(err.Error())
-				m.CommandCounter.Error++
-				break
-			}
-			for _, containerDefinition := range DescribeTaskDefinition.TaskDefinition.ContainerDefinitions {
-				m.getECSEnvironmentVariablesPerDefinition(containerDefinition, region, dataReceiver)
-			}
+		allFamilyNames = append(allFamilyNames, ListTaskDefinitionFamilies.Families...)
 
-		}
-
-		// Pagination control. After the last page of output, the for loop exits.
-		if ListTaskDefinitions.NextToken != nil {
-			PaginationMarker = ListTaskDefinitions.NextToken
+		if ListTaskDefinitionFamilies.NextToken != nil {
+			PaginationMarker = ListTaskDefinitionFamilies.NextToken
 		} else {
 			PaginationMarker = nil
 			break
 		}
 	}
+	return allFamilyNames
+
 }
 
 func (m *EnvsModule) getECSEnvironmentVariablesPerDefinition(containerDefinition ecsTypes.ContainerDefinition, region string, dataReceiver chan EnvironmentVariable) {
