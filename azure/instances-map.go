@@ -115,7 +115,7 @@ type ListAPIClientInterface interface {
 
 func (m *InstancesMapModule) getVMsDataPerResourceGroupV2(resourceGroup string) {
 	var vmData vmRelevantInformation
-	for page, err := m.computeClient.List(context.TODO(), resourceGroup); page.NotDone(); page.Next() {
+	for page, err := m.computeClient.List(context.TODO(), resourceGroup, ""); page.NotDone(); page.Next() {
 		if err != nil {
 			fmt.Printf("[-] Could not enumerate resource group %s. Skipping it. %s\n", resourceGroup, err)
 		} else {
@@ -142,7 +142,7 @@ func (m *InstancesMapModule) getVMsDataPerResourceGroupV2(resourceGroup string) 
 
 func (m *InstancesMapModule) getVMsDataPerResourceGroup(subscriptionID string, resourceGroup string) {
 	var vmData vmRelevantInformation
-	for page, err := m.computeClient.List(context.TODO(), resourceGroup); page.NotDone(); page.Next() {
+	for page, err := m.computeClient.List(context.TODO(), resourceGroup, ""); page.NotDone(); page.Next() {
 		if err != nil {
 			fmt.Printf("[-] Could not enumerate resource group %s. Skipping it. %s\n", resourceGroup, err)
 		} else {

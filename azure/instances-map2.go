@@ -58,7 +58,7 @@ func getComputeVMsPerResourceGroup(subscriptionID string, resourceGroup string) 
 	computeClient := createComputeClient(subscriptionID)
 	var vms []compute.VirtualMachine
 
-	for page, err := computeClient.List(context.TODO(), resourceGroup); page.NotDone(); page.Next() {
+	for page, err := computeClient.List(context.TODO(), resourceGroup, ""); page.NotDone(); page.Next() {
 		if err != nil {
 			log.Fatalf("[-] Could not enumerate resource group %s. %s", resourceGroup, err)
 		} else {
