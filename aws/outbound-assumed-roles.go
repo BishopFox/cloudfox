@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudtrail"
 	cloudtrailTypes "github.com/aws/aws-sdk-go-v2/service/cloudtrail/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -206,9 +207,11 @@ func (m *OutboundAssumedRolesModule) Receiver(receiver chan OutboundAssumeRoleEn
 
 func (m *OutboundAssumedRolesModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan OutboundAssumeRoleEntry) {
 	defer wg.Done()
-	wg.Add(1)
-	m.CommandCounter.Total++
-	m.getAssumeRoleLogEntriesPerRegion(r, wg, semaphore, dataReceiver)
+	if awsservicemap.IsServiceInRegion("cloudtrail", r) {
+		wg.Add(1)
+		m.CommandCounter.Total++
+		m.getAssumeRoleLogEntriesPerRegion(r, wg, semaphore, dataReceiver)
+	}
 
 }
 

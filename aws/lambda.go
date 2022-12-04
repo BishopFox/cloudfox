@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -133,9 +134,11 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 func (m *LambdasModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Lambda) {
 	defer wg.Done()
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	m.getLambdasPerRegion(r, wg, semaphore, dataReceiver)
+	if awsservicemap.IsServiceInRegion("lambda", r) {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		m.getLambdasPerRegion(r, wg, semaphore, dataReceiver)
+	}
 }
 
 func (m *LambdasModule) Receiver(receiver chan Lambda) {

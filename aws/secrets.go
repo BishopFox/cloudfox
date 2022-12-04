@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -130,13 +131,16 @@ func (m *SecretsModule) Receiver(receiver chan Secret) {
 func (m *SecretsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Secret) {
 	defer wg.Done()
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getSecretsManagerSecretsPerRegion(r, wg, semaphore, dataReceiver)
-
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getSSMParametersPerRegion(r, wg, semaphore, dataReceiver)
+	if awsservicemap.IsServiceInRegion("secretsmanager", r) {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getSecretsManagerSecretsPerRegion(r, wg, semaphore, dataReceiver)
+	}
+	if awsservicemap.IsServiceInRegion("ssm", r) {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getSSMParametersPerRegion(r, wg, semaphore, dataReceiver)
+	}
 
 }
 

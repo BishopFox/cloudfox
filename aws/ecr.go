@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/aws/aws-sdk-go-v2/service/ecr/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -132,9 +133,11 @@ func (m *ECRModule) PrintECR(outputFormat string, outputDirectory string, verbos
 func (m *ECRModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Repository) {
 	defer wg.Done()
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	m.getECRRecordsPerRegion(r, wg, semaphore, dataReceiver)
+	if awsservicemap.IsServiceInRegion("ecr", r) {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		m.getECRRecordsPerRegion(r, wg, semaphore, dataReceiver)
+	}
 }
 
 func (m *ECRModule) Receiver(receiver chan Repository) {

@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -168,12 +169,15 @@ func (m *ECSTasksModule) writeLoot(outputDirectory string) {
 
 func (m *ECSTasksModule) executeChecks(r string, wg *sync.WaitGroup, dataReceiver chan MappedECSTask) {
 	defer wg.Done()
-	m.CommandCounter.Total++
-	m.CommandCounter.Pending--
-	m.CommandCounter.Executing++
-	m.getListClusters(r, dataReceiver)
-	m.CommandCounter.Executing--
-	m.CommandCounter.Complete++
+	if awsservicemap.IsServiceInRegion("ecs", r) {
+
+		m.CommandCounter.Total++
+		m.CommandCounter.Pending--
+		m.CommandCounter.Executing++
+		m.getListClusters(r, dataReceiver)
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}
 }
 
 func (m *ECSTasksModule) getListClusters(region string, dataReceiver chan MappedECSTask) {

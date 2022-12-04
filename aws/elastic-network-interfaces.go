@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -163,12 +164,14 @@ func (m *ElasticNetworkInterfacesModule) writeLoot(outputDirectory string) {
 
 func (m *ElasticNetworkInterfacesModule) executeChecks(r string, wg *sync.WaitGroup, dataReceiver chan MappedENI) {
 	defer wg.Done()
-	m.CommandCounter.Total++
-	m.CommandCounter.Pending--
-	m.CommandCounter.Executing++
-	m.getDescribeNetworkInterfaces(r, dataReceiver)
-	m.CommandCounter.Executing--
-	m.CommandCounter.Complete++
+	if awsservicemap.IsServiceInRegion("ec2", r) {
+		m.CommandCounter.Total++
+		m.CommandCounter.Pending--
+		m.CommandCounter.Executing++
+		m.getDescribeNetworkInterfaces(r, dataReceiver)
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}
 }
 
 func (m *ElasticNetworkInterfacesModule) getDescribeNetworkInterfaces(region string, dataReceiver chan MappedENI) {
