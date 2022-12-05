@@ -792,17 +792,17 @@ func runECSTasksCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.ECSTasksModule{
-			//ECSClient:           ecs.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			DescribeTasksClient: ecs.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			ListTasksClient:     ecs.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			ListClustersClient:  ecs.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			//EC2Client:                       ec2.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			DescribeTasksClient:             ecs.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			DescribeTaskDefinitionClient:    ecs.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			ListTasksClient:                 ecs.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			ListClustersClient:              ecs.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
 			DescribeNetworkInterfacesClient: ec2.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			IAMClient:                       iam.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
 
 			Caller:     *caller,
 			AWSRegions: utils.GetEnabledRegions(AWSProfile, cmd.Root().Version),
-
 			AWSProfile: profile,
+			Goroutines: Goroutines,
 		}
 		m.ECSTasks(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 	}
