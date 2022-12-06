@@ -27,7 +27,7 @@ func TestAzInstancesCommand(t *testing.T) {
 		publicIPsTestFile string
 	}{
 		{
-			Name:              "basic acceptance with subscription filter",
+			Name:              "./cloudfox azure instances -s SUBSCRIPTION_ID",
 			AzSubscriptionID:  "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
 			AzRGName:          "",
 			AzVerbosity:       2,
@@ -38,7 +38,7 @@ func TestAzInstancesCommand(t *testing.T) {
 			publicIPsTestFile: "./test-data/public-ips.json",
 		},
 		{
-			Name:              "basic acceptance with resource group filter",
+			Name:              "./cloudfox azure instances -s SUBSCRIPTION_ID -g RESOURCE_GROUP_NAME",
 			AzSubscriptionID:  "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
 			AzRGName:          "ResourceGroupA2",
 			AzVerbosity:       2,

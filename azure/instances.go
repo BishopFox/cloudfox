@@ -24,9 +24,42 @@ func AzInstancesCommand(AzSubscriptionID, AzRGName, AzOutputFormat string, AzVer
 	var outputFile, outputMessagePrefix string
 	var err error
 
-	if AzSubscriptionID != "" {
-		if AzRGName != "" {
-			// Enumerate VMs for a single resource group with the -s and -g flags
+	switch AzSubscriptionID {
+	case "": // ./cloudfox azure instances
+
+		for _, scopeItem := range scopeSelection(nil, "full") {
+			_, tableBodyTemp, err = GetComputeRelevantData(scopeItem.Sub, scopeItem.ResourceGroup)
+			tableBody = append(tableBody, tableBodyTemp...)
+		}
+		outputFile = fmt.Sprintf("%s-multiple-selections", globals.AZ_INTANCES_MODULE_NAME)
+		outputMessagePrefix = "multiple_selections"
+
+	default:
+		switch AzRGName {
+		case "": // ./cloudfox azure instances -s SUBSCRIPTION_ID
+
+			fmt.Printf(
+				"[%s] Enumerating VMs for subscription %s\n",
+				color.CyanString(globals.AZ_INTANCES_MODULE_NAME),
+				AzSubscriptionID)
+
+			subscriptions := getSubscriptions()
+
+			for _, sub := range subscriptions {
+				if ptr.ToString(sub.SubscriptionID) == AzSubscriptionID {
+					rgs := getResourceGroups(ptr.ToString(sub.SubscriptionID))
+					for _, rg := range rgs {
+						_, tableBodyTemp, err = GetComputeRelevantData(sub, rg)
+						tableBody = append(tableBody, tableBodyTemp...)
+					}
+				}
+			}
+
+			outputFile = fmt.Sprintf("%s-sub-%s", globals.AZ_INTANCES_MODULE_NAME, AzRGName)
+			outputMessagePrefix = fmt.Sprintf("sub:%s", AzSubscriptionID)
+
+		default: // ./cloudfox azure instances -s SUBSCRIPTION_ID -g RESOURCE_GROUP_NAME
+
 			fmt.Printf(
 				"[%s] Enumerating VMs for resource group %s in subscription %s\n",
 				color.CyanString(globals.AZ_INTANCES_MODULE_NAME),
@@ -39,44 +72,18 @@ func AzInstancesCommand(AzSubscriptionID, AzRGName, AzOutputFormat string, AzVer
 
 			outputFile = fmt.Sprintf("%s_rg_%s", globals.AZ_INTANCES_MODULE_NAME, AzRGName)
 			outputMessagePrefix = fmt.Sprintf("rg:%s", AzRGName)
-		} else {
-			// Enumerate VMs for a single subscription with the -s flag
-			fmt.Printf(
-				"[%s] Enumerating VMs for subscription %s\n",
-				color.CyanString(globals.AZ_INTANCES_MODULE_NAME),
-				AzSubscriptionID)
-
-			subscriptions := getSubscriptions()
-			for _, sub := range subscriptions {
-				if ptr.ToString(sub.SubscriptionID) == AzSubscriptionID {
-					rgs := getResourceGroups(ptr.ToString(sub.SubscriptionID))
-					for _, rg := range rgs {
-						_, tableBodyTemp, err = GetComputeRelevantData(sub, rg)
-						tableBody = append(tableBody, tableBodyTemp...)
-					}
-				}
-			}
-			outputFile = fmt.Sprintf("%s-sub-%s", globals.AZ_INTANCES_MODULE_NAME, AzRGName)
-			outputMessagePrefix = fmt.Sprintf("sub:%s", AzSubscriptionID)
-		}
-	} else {
-		// Enumerate VMs based on interactive menu selection
-		if AzRGName == "" && AzSubscriptionID == "" {
-			for _, scopeItem := range scopeSelection(nil, "full") {
-				_, tableBodyTemp, err = GetComputeRelevantData(scopeItem.Sub, scopeItem.ResourceGroup)
-				tableBody = append(tableBody, tableBodyTemp...)
-			}
-			outputFile = fmt.Sprintf("%s-multiple-selections", globals.AZ_INTANCES_MODULE_NAME)
-			outputMessagePrefix = "multiple_selections"
 		}
 	}
-
 	if err != nil {
 		return err
 	}
 
-	outputDirectory := filepath.Join(globals.CLOUDFOX_BASE_OUTPUT_DIRECTORY, globals.AZ_OUTPUT_DIRECTORY)
+	outputDirectory := filepath.Join(
+		globals.CLOUDFOX_BASE_OUTPUT_DIRECTORY,
+		globals.AZ_OUTPUT_DIRECTORY)
+
 	utils.OutputSelector(AzVerbosity, AzOutputFormat, tableHead, tableBody, outputDirectory, outputFile, globals.AZ_INTANCES_MODULE_NAME, outputMessagePrefix)
+
 	return nil
 }
 
