@@ -103,6 +103,7 @@ Additional policy notes (as of 09/2022):
 | AWS | [route53](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#route53) | Enumerate all records from all route53 managed zones. Use this for application and service enumeration. |
 | AWS | [secrets](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#secrets) | List secrets from SecretsManager and SSM. Look for interesting secrets in the list and then see who has access to them using use `cloudfox iam-simulator` and/or `pmapper`. |
 | AWS | [tags](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#tags) | List all resources with tags, and all of the tags. This can be used similar to inventory as another method to identify what types of resources exist in an account. |
+| AWS | [tags](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#tags) | List all ecs tasks. This returns a list of ecs tasks and assocaited cluster, task definition, container instance, launch type, and associted IAM principal. |
 | Azure | [instances-map](https://github.com/BishopFox/cloudfox/wiki/Azure-Commands#instances-map) | Enumerates useful information for Compute instances in all available resource groups and subscriptions | 
 | Azure | [rbac-map](https://github.com/BishopFox/cloudfox/wiki/Azure-Commands#rbac-map) | Enumerates Role Assignments for all tenants | 
 
