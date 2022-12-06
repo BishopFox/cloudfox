@@ -25,12 +25,13 @@ type DescribeTasksDefinitionAPIClient interface {
 	DescribeTaskDefinition(context.Context, *ecs.DescribeTaskDefinitionInput, ...func(*ecs.Options)) (*ecs.DescribeTaskDefinitionOutput, error)
 }
 type ECSTasksModule struct {
-	DescribeTaskDefinitionClient    DescribeTasksDefinitionAPIClient
-	DescribeTasksClient             ecs.DescribeTasksAPIClient
-	ListTasksClient                 ecs.ListTasksAPIClient
-	ListClustersClient              ecs.ListClustersAPIClient
-	DescribeNetworkInterfacesClient ec2.DescribeNetworkInterfacesAPIClient
-	IAMClient                       *iam.Client
+	DescribeTaskDefinitionClient     DescribeTasksDefinitionAPIClient
+	DescribeTasksClient              ecs.DescribeTasksAPIClient
+	ListTasksClient                  ecs.ListTasksAPIClient
+	ListClustersClient               ecs.ListClustersAPIClient
+	DescribeNetworkInterfacesClient  ec2.DescribeNetworkInterfacesAPIClient
+	IAMSimulatePrincipalPolicyClient iam.SimulatePrincipalPolicyAPIClient
+	IAMClient                        *iam.Client
 
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
@@ -349,10 +350,10 @@ func (m *ECSTasksModule) loadTasksData(clusterARN string, taskARNs []string, reg
 
 func (m *ECSTasksModule) isRoleAdmin(principal *string) bool {
 	iamSimMod := IamSimulatorModule{
-		IAMClient:  m.IAMClient,
-		Caller:     m.Caller,
-		AWSProfile: m.AWSProfile,
-		Goroutines: m.Goroutines,
+		IAMSimulatePrincipalPolicyClient: m.IAMSimulatePrincipalPolicyClient,
+		Caller:                           m.Caller,
+		AWSProfile:                       m.AWSProfile,
+		Goroutines:                       m.Goroutines,
 	}
 	adminCheckResult := iamSimMod.isPrincipalAnAdmin(principal)
 

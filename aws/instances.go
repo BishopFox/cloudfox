@@ -24,15 +24,16 @@ import (
 
 type InstancesModule struct {
 	// General configuration data
-	EC2Client                 *ec2.Client
-	IAMClient                 *iam.Client
-	Caller                    sts.GetCallerIdentityOutput
-	AWSRegions                []string
-	OutputFormat              string
-	Goroutines                int
-	UserDataAttributesOnly    bool
-	AWSProfile                string
-	InstanceProfileToRolesMap map[string][]iamTypes.Role
+	EC2Client                        *ec2.Client
+	IAMSimulatePrincipalPolicyClient iam.SimulatePrincipalPolicyAPIClient
+	IAMListInstanceProfilesClient    iam.ListInstanceProfilesAPIClient
+	Caller                           sts.GetCallerIdentityOutput
+	AWSRegions                       []string
+	OutputFormat                     string
+	Goroutines                       int
+	UserDataAttributesOnly           bool
+	AWSProfile                       string
+	InstanceProfileToRolesMap        map[string][]iamTypes.Role
 
 	// Module's Results
 	MappedInstances []MappedInstance
@@ -426,10 +427,10 @@ func (m *InstancesModule) loadInstanceData(instance types.Instance, region strin
 
 func (m *InstancesModule) isRoleAdmin(principal *string) bool {
 	iamSimMod := IamSimulatorModule{
-		IAMClient:  m.IAMClient,
-		Caller:     m.Caller,
-		AWSProfile: m.AWSProfile,
-		Goroutines: m.Goroutines,
+		IAMSimulatePrincipalPolicyClient: m.IAMSimulatePrincipalPolicyClient,
+		Caller:                           m.Caller,
+		AWSProfile:                       m.AWSProfile,
+		Goroutines:                       m.Goroutines,
 	}
 
 	adminCheckResult := iamSimMod.isPrincipalAnAdmin(principal)
@@ -450,7 +451,7 @@ func (m *InstancesModule) getRolesFromInstanceProfiles() {
 	m.InstanceProfileToRolesMap = map[string][]iamTypes.Role{}
 
 	for PaginationControl {
-		ListInstanceProfiles, err := m.IAMClient.ListInstanceProfiles(
+		ListInstanceProfiles, err := m.IAMListInstanceProfilesClient.ListInstanceProfiles(
 			context.TODO(),
 			&(iam.ListInstanceProfilesInput{
 				Marker: PaginationMarker,

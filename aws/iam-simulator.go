@@ -20,7 +20,9 @@ import (
 
 type IamSimulatorModule struct {
 	// General configuration data
-	IAMClient *iam.Client
+	IAMSimulatePrincipalPolicyClient iam.SimulatePrincipalPolicyAPIClient
+	IAMListUsersClient               iam.ListUsersAPIClient
+	IAMListRolesClient               iam.ListRolesAPIClient
 
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
@@ -238,7 +240,7 @@ func (m *IamSimulatorModule) getIAMUsers(wg *sync.WaitGroup, actions []string, r
 	var PaginationControl *string
 
 	for {
-		ListUsers, err := m.IAMClient.ListUsers(
+		ListUsers, err := m.IAMListUsersClient.ListUsers(
 			context.TODO(),
 			&iam.ListUsersInput{
 				Marker: PaginationControl,
@@ -292,7 +294,7 @@ func (m *IamSimulatorModule) getIAMRoles(wg *sync.WaitGroup, actions []string, r
 	var PaginationControl *string
 
 	for {
-		ListRoles, err := m.IAMClient.ListRoles(
+		ListRoles, err := m.IAMListRolesClient.ListRoles(
 			context.TODO(),
 			&iam.ListRolesInput{
 				Marker: PaginationControl,
@@ -342,7 +344,7 @@ func (m *IamSimulatorModule) getPolicySimulatorResult(principal *string, actionN
 	//var resourceArns = []string{"*"}
 
 	for {
-		SimulatePrincipalPolicy, err := m.IAMClient.SimulatePrincipalPolicy(
+		SimulatePrincipalPolicy, err := m.IAMSimulatePrincipalPolicyClient.SimulatePrincipalPolicy(
 			context.TODO(),
 			&iam.SimulatePrincipalPolicyInput{
 				Marker:          PaginationControl2,
@@ -397,7 +399,7 @@ func (m *IamSimulatorModule) isPrincipalAnAdmin(principal *string) bool {
 		"ssm:GetDocument",
 	}
 	for {
-		SimulatePrincipalPolicy, err := m.IAMClient.SimulatePrincipalPolicy(
+		SimulatePrincipalPolicy, err := m.IAMSimulatePrincipalPolicyClient.SimulatePrincipalPolicy(
 			context.TODO(),
 			&iam.SimulatePrincipalPolicyInput{
 				Marker:          PaginationControl2,

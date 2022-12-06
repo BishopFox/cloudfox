@@ -21,8 +21,9 @@ import (
 
 type RoleTrustsModule struct {
 	// General configuration data
-	IAMClientListRoles iam.ListRolesAPIClient
-	IAMClient          *iam.Client
+	IAMClientListRoles               iam.ListRolesAPIClient
+	IAMClient                        *iam.Client
+	IAMSimulatePrincipalPolicyClient iam.SimulatePrincipalPolicyAPIClient
 
 	Caller         sts.GetCallerIdentityOutput
 	AWSProfile     string
@@ -237,10 +238,10 @@ func (r *ListOfPrincipals) UnmarshalJSON(b []byte) error {
 
 func (m *RoleTrustsModule) isRoleAdmin(principal *string) bool {
 	iamSimMod := IamSimulatorModule{
-		IAMClient:  m.IAMClient,
-		Caller:     m.Caller,
-		AWSProfile: m.AWSProfile,
-		Goroutines: m.Goroutines,
+		IAMSimulatePrincipalPolicyClient: m.IAMSimulatePrincipalPolicyClient,
+		Caller:                           m.Caller,
+		AWSProfile:                       m.AWSProfile,
+		Goroutines:                       m.Goroutines,
 	}
 
 	adminCheckResult := iamSimMod.isPrincipalAnAdmin(principal)

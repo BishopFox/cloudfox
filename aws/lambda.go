@@ -21,8 +21,8 @@ import (
 
 type LambdasModule struct {
 	// General configuration data
-	LambdaClient *lambda.Client
-	IAMClient    *iam.Client
+	LambdaClient                     *lambda.Client
+	IAMSimulatePrincipalPolicyClient iam.SimulatePrincipalPolicyAPIClient
 
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
@@ -273,10 +273,10 @@ func (m *LambdasModule) getLambdasPerRegion(r string, wg *sync.WaitGroup, semaph
 
 func (m *LambdasModule) isRoleAdmin(principal *string) bool {
 	iamSimMod := IamSimulatorModule{
-		IAMClient:  m.IAMClient,
-		Caller:     m.Caller,
-		AWSProfile: m.AWSProfile,
-		Goroutines: m.Goroutines,
+		IAMSimulatePrincipalPolicyClient: m.IAMSimulatePrincipalPolicyClient,
+		Caller:                           m.Caller,
+		AWSProfile:                       m.AWSProfile,
+		Goroutines:                       m.Goroutines,
 	}
 
 	adminCheckResult := iamSimMod.isPrincipalAnAdmin(principal)
