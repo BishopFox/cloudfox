@@ -4,7 +4,6 @@ import (
 	"log"
 
 	"github.com/BishopFox/cloudfox/azure"
-	"github.com/BishopFox/cloudfox/globals"
 	"github.com/spf13/cobra"
 )
 
@@ -18,8 +17,8 @@ var (
 	AzCommands        = &cobra.Command{
 		Use:     "azure",
 		Aliases: []string{"az"},
-		Long:    `See "Available Commands" for Azure Modules`,
-		Short:   "See \"Available Commands\" for Azure Modules",
+		Long:    `See "Available Commands" for Azure Modules below`,
+		Short:   "See \"Available Commands\" for Azure Modules below",
 
 		Run: func(cmd *cobra.Command, args []string) {
 			cmd.Help()
@@ -35,33 +34,33 @@ Select scope from interactive menu:
 ./cloudfox az instances
 
 Enumerate VMs for all resource groups in a subscription:
-./cloudfox az instances --subscription SUBSCRIPTION_NAME
+./cloudfox az instances --subscription SUBSCRIPTION_ID
 
 Enumerate VMs from a specific resource group:
-./cloudfox az instances -s SUBSCRIPTION_NAME -g RESOURCE_GROUP_NAME`,
+./cloudfox az instances -s SUBSCRIPTION_ID -g RESOURCE_GROUP_NAME`,
 		Run: func(cmd *cobra.Command, args []string) {
 			err := azure.AzInstancesCommand(AzSubscriptionID, AzRGName, AzOutputFormat, AzVerbosity)
 			if err != nil {
-				log.Fatalf("[%s] %s", globals.AZ_INTANCES_MODULE_NAME, err)
+				log.Fatal(err)
 			}
 		},
 	}
 
-	AzRbacCommand = &cobra.Command{
+	AzRBACCommand = &cobra.Command{
 		Use:     "rbac",
 		Aliases: []string{},
 		Short:   "Display all role assignemts for all Azure principals",
 		Long: `
-Select scope from interactive menu:
-./cloudfox az rbac
+Enumerate role assignments for a all subscriptions in a specific tenant:
+./cloudfox az rbac --tenant TENANT_ID
 
-Enumerate role assignments for a specific subscriptions:
-./cloudfox az rbac --subscription SUBSCRIPTION_NAME
+Enumerate role assignments for a specific subscription:
+./cloudfox az rbac -t TENANT_ID -s SUBSCRIPTION_ID
 `,
 		Run: func(cmd *cobra.Command, args []string) {
-			err := azure.AzRbacCommand(azure.CloudFoxRBACclient{}, AzTenantID, AzSubscriptionID, AzOutputFormat, AzVerbosity)
+			err := azure.AzRBACCommand(azure.CloudFoxRBACclient{}, AzTenantID, AzSubscriptionID, AzOutputFormat, AzVerbosity)
 			if err != nil {
-				log.Fatalf("[%s] %s", globals.AZ_RBAC_MODULE_NAME, err)
+				log.Fatal(err)
 			}
 		},
 	}
@@ -75,5 +74,5 @@ func init() {
 	AzCommands.PersistentFlags().StringVarP(&AzSubscriptionID, "subscription", "s", "", "Subscription Name")
 	AzCommands.PersistentFlags().StringVarP(&AzRGName, "resource-group", "g", "", "Resource Group name")
 
-	AzCommands.AddCommand(AzInstancesCommand, AzRbacCommand)
+	AzCommands.AddCommand(AzInstancesCommand, AzRBACCommand)
 }

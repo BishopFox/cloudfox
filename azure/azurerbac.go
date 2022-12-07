@@ -17,48 +17,51 @@ import (
 	"github.com/fatih/color"
 )
 
-func AzRbacCommand(c CloudFoxRBACclient, tenantID, subscriptionID, outputFormat string, verbosity int) error {
-	err := c.initialize(tenantID, subscriptionID)
-	if err != nil {
-		return fmt.Errorf("[%s] %s", color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME), err)
-	}
+func AzRBACCommand(c CloudFoxRBACclient, tenantID, subscriptionID, outputFormat string, verbosity int) error {
 
 	var header []string
 	var body [][]string
 	var fileNameWithoutExtension, controlMessagePrefix string
 	outputDirectory := filepath.Join(globals.CLOUDFOX_BASE_OUTPUT_DIRECTORY, globals.AZ_OUTPUT_DIRECTORY)
 
-	if tenantID != "" {
-		// Display all RBAC roles for all subscriptions in a tenant
-		if subscriptionID == "" {
+	switch tenantID {
+	case "": // TO-DO: add an option for the interactive menu: ./cloudfox azure rbac
+		return fmt.Errorf(
+			"[%s] please select a valid tenant ID",
+			color.CyanString(globals.AZ_RBAC_MODULE_NAME))
+
+	default:
+		switch subscriptionID {
+		case "": // ./cloudfox azure rbac -t TENANT_ID
 			fmt.Printf(
-				"[%s] Enumerating Azure RBAC assignments for all subscriptions on tenant %s\n",
+				"[%s] Enumerating Azure RBAC assignments for all subscriptions in tenant %s\n",
 				color.CyanString(globals.AZ_RBAC_MODULE_NAME),
 				tenantID)
-			subscriptions := getSubscriptions()
-			for _, s := range subscriptions {
-				if ptr.ToString(s.TenantID) == tenantID {
-					header, body = c.GetRelevantRBACData(tenantID, ptr.ToString(s.SubscriptionID))
-					fileNameWithoutExtension = fmt.Sprintf("rbac-tenant-%s", tenantID)
-					controlMessagePrefix = tenantID
-				}
+
+			subIDs := getSubscriptionIDsForTenant(tenantID)
+			c.initialize(tenantID, subIDs)
+			var b [][]string
+			for _, subID := range subIDs {
+				header, b = c.GetRelevantRBACData(tenantID, subID)
+				body = append(body, b...)
 			}
-		}
-		// Display all RBAC roles for a single subscriptions
-		if subscriptionID != "" {
+			fileNameWithoutExtension = fmt.Sprintf("rbac-tenant-%s", tenantID)
+			controlMessagePrefix = fmt.Sprintf("ten-%s", tenantID)
+
+		default: // ./cloudfox azure rbac -t TENANT_ID -s SUBSCRIPTION_ID
 			fmt.Printf(
 				"[%s] Enumerating Azure RBAC assignments for the single subscription %s\n",
 				color.CyanString(globals.AZ_RBAC_MODULE_NAME),
 				subscriptionID)
+			c.initialize(tenantID, []string{subscriptionID})
 			header, body = c.GetRelevantRBACData(tenantID, subscriptionID)
 			fileNameWithoutExtension = fmt.Sprintf("rbac-sub-%s", subscriptionID)
-			controlMessagePrefix = subscriptionID
+			controlMessagePrefix = fmt.Sprintf("sub-%s", subscriptionID)
 		}
-		// TO-DO: add an option for the interactive menu
-		utils.OutputSelector(verbosity, outputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_RBAC_MODULE_NAME, controlMessagePrefix)
-		return nil
 	}
-	return fmt.Errorf("please provide a valid tenant and/or subscription flag")
+
+	utils.OutputSelector(verbosity, outputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_RBAC_MODULE_NAME, controlMessagePrefix)
+	return nil
 }
 
 type CloudFoxRBACclient struct {
@@ -67,27 +70,40 @@ type CloudFoxRBACclient struct {
 	AADUsers        []graphrbac.User
 }
 
-type RoleBindingRelevantData struct {
-	tenantID        string
-	subscriptionID  string
-	roleScope       string
-	userDisplayName string
-	roleName        string
-}
-
-func (c *CloudFoxRBACclient) initialize(tenantID, subscriptionID string) error {
+func (c *CloudFoxRBACclient) initialize(tenantID string, subscriptionIDs []string) error {
 	var err error
-	c.roleAssignments, err = getRoleAssignments(subscriptionID)
-	if err != nil {
-		return err
-	}
-	c.roleDefinitions, err = getRoleDefinitions(subscriptionID)
-	if err != nil {
-		return err
-	}
-	c.AADUsers, err = getAzureADUsers(tenantID)
-	if err != nil {
-		return err
+	var u []graphrbac.User
+	var rd []authorization.RoleDefinition
+	var ra []authorization.RoleAssignment
+
+	for _, subID := range subscriptionIDs {
+		u, err = getAzureADUsers(subID)
+		if err != nil {
+			return fmt.Errorf(
+				"[%s] failed to get users for tenant %s: %s",
+				color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME),
+				tenantID,
+				err)
+		}
+		c.AADUsers = append(c.AADUsers, u...)
+		rd, err = getRoleDefinitions(subID)
+		if err != nil {
+			return fmt.Errorf(
+				"[%s] failed to get role definitions for subscription %s: %s",
+				color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME),
+				subID,
+				err)
+		}
+		c.roleDefinitions = append(c.roleDefinitions, rd...)
+		ra, err = getRoleAssignments(subID)
+		if err != nil {
+			return fmt.Errorf(
+				"[%s] failed to get role assignments for subscription %s: %s",
+				color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME),
+				subID,
+				err)
+		}
+		c.roleAssignments = append(c.roleAssignments, ra...)
 	}
 	return nil
 }
@@ -141,6 +157,14 @@ func findRole(roleDefinitions []authorization.RoleDefinition, roleAssignment aut
 	}
 }
 
+type RoleBindingRelevantData struct {
+	tenantID        string
+	subscriptionID  string
+	roleScope       string
+	userDisplayName string
+	roleName        string
+}
+
 var getAzureADUsers = getAzureADUsersOriginal
 
 func getAzureADUsersOriginal(tenantID string) ([]graphrbac.User, error) {
@@ -148,7 +172,11 @@ func getAzureADUsersOriginal(tenantID string) ([]graphrbac.User, error) {
 	client := utils.GetAADUsersClient(tenantID)
 	for page, err := client.List(context.TODO(), "", ""); page.NotDone(); page.Next() {
 		if err != nil {
-			return nil, fmt.Errorf("could not enumerate users for tenant %s", tenantID)
+			return nil, fmt.Errorf(
+				"[%s] could not enumerate users for tenant %s: %s",
+				color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME),
+				tenantID,
+				err)
 		}
 		users = append(users, page.Values()...)
 	}
@@ -197,7 +225,11 @@ func getRoleDefinitionsOriginal(subscriptionID string) ([]authorization.RoleDefi
 	var roleDefinitions []authorization.RoleDefinition
 	for page, err := client.List(context.TODO(), "", ""); page.NotDone(); page.Next() {
 		if err != nil {
-			return nil, fmt.Errorf("could not fetch role definitions for subscription %s. Skipping it", subscriptionID)
+			return nil, fmt.Errorf(
+				"[%s] could not fetch role definitions for subscription %s: %s",
+				color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME),
+				subscriptionID,
+				err)
 		}
 		roleDefinitions = append(roleDefinitions, page.Values()...)
 	}
@@ -270,7 +302,10 @@ func getRoleAssignmentsOriginal(subscriptionID string) ([]authorization.RoleAssi
 	client := utils.GetRoleAssignmentsClient(subscriptionID)
 	for page, err := client.List(context.TODO(), ""); page.NotDone(); page.Next() {
 		if err != nil {
-			return nil, fmt.Errorf("could not fetch role assignments for subscription %s", subscriptionID)
+			return nil, fmt.Errorf(
+				"[%s] could not fetch role assignments for subscription %s",
+				color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME),
+				subscriptionID)
 		}
 		roleAssignments = append(roleAssignments, page.Values()...)
 	}
@@ -278,16 +313,22 @@ func getRoleAssignmentsOriginal(subscriptionID string) ([]authorization.RoleAssi
 }
 
 func mockedGetRoleAssignments(subscriptionID string) ([]authorization.RoleAssignment, error) {
-	var roleAssignments []authorization.RoleAssignment
+	var allRoleAssignments, roleAssignmentsResults []authorization.RoleAssignment
 	file, err := os.ReadFile(globals.ROLE_ASSIGNMENTS_TEST_FILE)
 	if err != nil {
 		log.Fatalf("could not read file %s", globals.ROLE_ASSIGNMENTS_TEST_FILE)
 	}
-	err = json.Unmarshal(file, &roleAssignments)
+	err = json.Unmarshal(file, &allRoleAssignments)
 	if err != nil {
 		log.Fatalf("could not unmarshall file %s", globals.ROLE_ASSIGNMENTS_TEST_FILE)
 	}
-	return roleAssignments, nil
+	for _, ra := range allRoleAssignments {
+		roleAssignmentSubscriptionID := strings.Split(ptr.ToString(ra.Properties.RoleDefinitionID), "/")[2]
+		if roleAssignmentSubscriptionID == subscriptionID {
+			roleAssignmentsResults = append(roleAssignmentsResults, ra)
+		}
+	}
+	return roleAssignmentsResults, nil
 }
 
 func generateRoleAssignmentsTestFile(subscriptionID string) {

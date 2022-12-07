@@ -100,6 +100,17 @@ func printAvailableScopeFull(availableScope []scopeElement) {
 		tableBody)
 }
 
+func getSubscriptionIDsForTenant(tenantID string) []string {
+	subscriptions := getSubscriptions()
+	var subIDs []string
+	for _, s := range subscriptions {
+		if ptr.ToString(s.TenantID) == tenantID {
+			subIDs = append(subIDs, ptr.ToString(s.SubscriptionID))
+		}
+	}
+	return subIDs
+}
+
 func getSubscriptionForResourceGroup(resourceGroupName string) subscriptions.Subscription {
 	availableScope := getAvailableScope()
 	for _, s := range availableScope {

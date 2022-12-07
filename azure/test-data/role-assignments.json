@@ -1,36 +1,36 @@
 [
     {
         "properties": {
-            "scope": "/subscriptions/ede6a6a8-1ecc-4810-a4dc-9c78ebdc0820",
-            "roleDefinitionId": "/subscriptions/ede6a6a8-1ecc-4810-a4dc-9c78ebdc0820/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7",
+            "scope": "/subscriptions/AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
+            "roleDefinitionId": "/subscriptions/AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7",
             "principalId": "8da340e3-5e2e-4f55-a3f7-4ea20d6755be"
         }
     },
     {
         "properties": {
-            "scope": "/subscriptions/ede6a6a8-1ecc-4810-a4dc-9c78ebdc0820",
-            "roleDefinitionId": "/subscriptions/ede6a6a8-1ecc-4810-a4dc-9c78ebdc0820/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c",
+            "scope": "/subscriptions/AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
+            "roleDefinitionId": "/subscriptions/AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c",
             "principalId": "d994d51b-d939-469e-ac73-bd81030cecf0"
         }
     },
     {
         "properties": {
-            "scope": "/subscriptions/ede6a6a8-1ecc-4810-a4dc-9c78ebdc0820",
-            "roleDefinitionId": "/subscriptions/ede6a6a8-1ecc-4810-a4dc-9c78ebdc0820/providers/Microsoft.Authorization/roleDefinitions/c6decf44-fd0a-444c-a844-d653c394e7ab",
+            "scope": "/subscriptions/BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB",
+            "roleDefinitionId": "/subscriptions/BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB/providers/Microsoft.Authorization/roleDefinitions/c6decf44-fd0a-444c-a844-d653c394e7ab",
             "principalId": "8da340e3-5e2e-4f55-a3f7-4ea20d6755be"
         }
     },
     {
         "properties": {
-            "scope": "/subscriptions/ede6a6a8-1ecc-4810-a4dc-9c78ebdc0820",
-            "roleDefinitionId": "/subscriptions/ede6a6a8-1ecc-4810-a4dc-9c78ebdc0820/providers/Microsoft.Authorization/roleDefinitions/c6decf44-fd0a-444c-a844-d653c394e7ab",
+            "scope": "/subscriptions/BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB",
+            "roleDefinitionId": "/subscriptions/BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB/providers/Microsoft.Authorization/roleDefinitions/c6decf44-fd0a-444c-a844-d653c394e7ab",
             "principalId": "4ad03365-28cd-40cd-a46f-6e9d1149803d"
         }
     },
     {
         "properties": {
-            "scope": "/subscriptions/ede6a6a8-1ecc-4810-a4dc-9c78ebdc0820",
-            "roleDefinitionId": "/subscriptions/ede6a6a8-1ecc-4810-a4dc-9c78ebdc0820/providers/Microsoft.Authorization/roleDefinitions/8e3af657-a8ff-443c-a75c-2fe8c4bcb635",
+            "scope": "/subscriptions/CCCCCCCC-CCCC-CCCC-CCCCCCCC",
+            "roleDefinitionId": "/subscriptions/CCCCCCCC-CCCC-CCCC-CCCCCCCC/providers/Microsoft.Authorization/roleDefinitions/8e3af657-a8ff-443c-a75c-2fe8c4bcb635",
             "principalId": "73d5b926-b258-47a2-891c-b14bf9da5dde"
         }
     }

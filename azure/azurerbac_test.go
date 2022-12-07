@@ -8,7 +8,7 @@ import (
 	"github.com/BishopFox/cloudfox/utils"
 )
 
-func TestRBACCommand(t *testing.T) {
+func TestAzRBACCommand(t *testing.T) {
 	fmt.Println()
 	fmt.Println("[test case] Azure RBAC Command")
 
@@ -27,9 +27,31 @@ func TestRBACCommand(t *testing.T) {
 		roleAssignmentsTestFile string
 	}{
 		{
-			Name:                    "basic acceptance: rbac in a single resource group",
+			Name:                    "./cloudfox azure rbac --tenant 11111111-1111-1111-1111-11111111",
+			AzTenantID:              "11111111-1111-1111-1111-11111111",
+			AzSubscriptionID:        "",
+			AzVerbosity:             2,
+			AzOutputFormat:          "table",
+			resourcesTestFile:       "./test-data/resources.json",
+			usersTestFile:           "./test-data/users.json",
+			roleDefinitionsTestFile: "./test-data/role-definitions.json",
+			roleAssignmentsTestFile: "./test-data/role-assignments.json",
+		},
+		{
+			Name:                    "./cloudfox azure rbac -t 11111111-1111-1111-1111-11111111 -s AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
 			AzTenantID:              "11111111-1111-1111-1111-11111111",
 			AzSubscriptionID:        "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
+			AzVerbosity:             2,
+			AzOutputFormat:          "table",
+			resourcesTestFile:       "./test-data/resources.json",
+			usersTestFile:           "./test-data/users.json",
+			roleDefinitionsTestFile: "./test-data/role-definitions.json",
+			roleAssignmentsTestFile: "./test-data/role-assignments.json",
+		},
+		{
+			Name:                    "./cloudfox azure rbac -t 11111111-1111-1111-1111-11111111 -s BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB",
+			AzTenantID:              "11111111-1111-1111-1111-11111111",
+			AzSubscriptionID:        "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB",
 			AzVerbosity:             2,
 			AzOutputFormat:          "table",
 			resourcesTestFile:       "./test-data/resources.json",
@@ -55,7 +77,7 @@ func TestRBACCommand(t *testing.T) {
 		globals.ROLE_DEFINITIONS_TEST_FILE = s.roleDefinitionsTestFile
 		globals.ROLE_ASSIGNMENTS_TEST_FILE = s.roleAssignmentsTestFile
 
-		err := AzRbacCommand(CloudFoxRBACclient{}, s.AzTenantID, s.AzSubscriptionID, s.AzOutputFormat, s.AzVerbosity)
+		err := AzRBACCommand(CloudFoxRBACclient{}, s.AzTenantID, s.AzSubscriptionID, s.AzOutputFormat, s.AzVerbosity)
 		if err != nil {
 			fmt.Println(err)
 		}
