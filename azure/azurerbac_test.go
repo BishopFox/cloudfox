@@ -18,7 +18,6 @@ func TestAzRBACCommand(t *testing.T) {
 		AzTenantID              string
 		AzSubscriptionID        string
 		AzRGName                string
-		AZSub                   string
 		AzVerbosity             int
 		AzOutputFormat          string
 		resourcesTestFile       string

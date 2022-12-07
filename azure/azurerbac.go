@@ -88,8 +88,8 @@ func (c *CloudFoxRBACclient) initialize(tenantID string, subscriptionIDs []strin
 		c.AADUsers = append(c.AADUsers, u...)
 		rd, err = getRoleDefinitions(subID)
 		if err != nil {
-			return fmt.Errorf(
-				"[%s] failed to get role definitions for subscription %s: %s",
+			fmt.Printf(
+				"[%s] failed to get role definitions for subscription %s: %s. Skipping it.\n",
 				color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME),
 				subID,
 				err)
@@ -97,8 +97,8 @@ func (c *CloudFoxRBACclient) initialize(tenantID string, subscriptionIDs []strin
 		c.roleDefinitions = append(c.roleDefinitions, rd...)
 		ra, err = getRoleAssignments(subID)
 		if err != nil {
-			return fmt.Errorf(
-				"[%s] failed to get role assignments for subscription %s: %s",
+			fmt.Printf(
+				"[%s] failed to get role assignments for subscription %s: %s. Skipping it.\n",
 				color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME),
 				subID,
 				err)
