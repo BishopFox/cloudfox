@@ -5,13 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/storage/mgmt/storage"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/utils"
+	"github.com/aws/smithy-go/ptr"
 )
 
-var GetStorageAccounts = getStorageAccountsOriginal
+var getStorageAccounts = getStorageAccountsOriginal
 
 func getStorageAccountsOriginal(subscriptionID string) ([]storage.Account, error) {
 	storageClient := utils.GetStorageClient(subscriptionID)
@@ -25,15 +27,21 @@ func getStorageAccountsOriginal(subscriptionID string) ([]storage.Account, error
 	return storageAccounts, nil
 }
 
-func MockedGetStorageAccounts(subscriptionID string) ([]storage.Account, error) {
+func mockedGetStorageAccounts(subscriptionID string) ([]storage.Account, error) {
 	testFile, err := os.ReadFile(globals.STORAGE_ACCOUNTS_TEST_FILE)
 	if err != nil {
 		return nil, fmt.Errorf("could not open storage accounts test file %s", globals.STORAGE_ACCOUNTS_TEST_FILE)
 	}
-	var storageAccounts []storage.Account
-	err = json.Unmarshal(testFile, &storageAccounts)
+	var storageAccountsAll, storageAccountsResults []storage.Account
+	err = json.Unmarshal(testFile, &storageAccountsAll)
 	if err != nil {
 		return nil, fmt.Errorf("could not unmarshall storage accounts test file %s", globals.STORAGE_ACCOUNTS_TEST_FILE)
 	}
-	return storageAccounts, nil
+	for _, sa := range storageAccountsAll {
+		saSubID := strings.Split(ptr.ToString(sa.ID), "/")[2]
+		if saSubID == subscriptionID {
+			storageAccountsResults = append(storageAccountsResults, sa)
+		}
+	}
+	return storageAccountsResults, nil
 }
