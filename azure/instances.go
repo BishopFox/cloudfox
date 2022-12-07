@@ -25,7 +25,7 @@ func AzInstancesCommand(AzSubscriptionID, AzRGName, AzOutputFormat string, AzVer
 	var err error
 
 	switch AzSubscriptionID {
-	case "": // ./cloudfox azure instances
+	case "": // Interactive selection menu: ./cloudfox azure instances
 
 		for _, scopeItem := range scopeSelection(nil, "full") {
 			_, tableBodyTemp, err = GetComputeRelevantData(scopeItem.Sub, scopeItem.ResourceGroup)
