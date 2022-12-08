@@ -77,7 +77,7 @@ func (c *CloudFoxRBACclient) initialize(tenantID string, subscriptionIDs []strin
 	var ra []authorization.RoleAssignment
 
 	for _, subID := range subscriptionIDs {
-		u, err = getAzureADUsers(subID)
+		u, err = getAzureADUsers(tenantID)
 		if err != nil {
 			return fmt.Errorf(
 				"[%s] failed to get users for tenant %s: %s",
@@ -109,7 +109,7 @@ func (c *CloudFoxRBACclient) initialize(tenantID string, subscriptionIDs []strin
 }
 
 func (c *CloudFoxRBACclient) GetRelevantRBACData(tenantID, subscriptionID string) ([]string, [][]string) {
-	header := []string{"Tenant ID", "User Name", "Role Name", "Role Scope"}
+	header := []string{"Tenant ID", "Tenant Name", "Domain", "User Name", "Role Name", "Role Scope"}
 	var body [][]string
 	var extract RoleBindingRelevantData
 	var results []RoleBindingRelevantData

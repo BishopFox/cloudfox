@@ -8,6 +8,11 @@ import (
 	"github.com/BishopFox/cloudfox/utils"
 )
 
+func TestGetAzureADUsersOriginal(t *testing.T) {
+	u, _ := getAzureADUsersOriginal("5af4fb40-52da-4ac1-a717-3978ec456c2c")
+	fmt.Println(u)
+}
+
 func TestAzRBACCommand(t *testing.T) {
 	fmt.Println()
 	fmt.Println("[test case] Azure RBAC Command")
