@@ -25,6 +25,18 @@ var (
 		},
 	}
 
+	AzWhoamiCommand = &cobra.Command{
+		Use:     "whoami",
+		Aliases: []string{},
+		Short:   "Display Available Azure CLI Sessions",
+		Long: `
+Display Available Azure CLI Sessions:
+./cloudfox az whoami`,
+		Run: func(cmd *cobra.Command, args []string) {
+			azure.AzWhoamiCommand()
+		},
+	}
+
 	AzInstancesCommand = &cobra.Command{
 		Use:     "instances",
 		Aliases: []string{},
@@ -74,5 +86,8 @@ func init() {
 	AzCommands.PersistentFlags().StringVarP(&AzSubscriptionID, "subscription", "s", "", "Subscription Name")
 	AzCommands.PersistentFlags().StringVarP(&AzRGName, "resource-group", "g", "", "Resource Group name")
 
-	AzCommands.AddCommand(AzInstancesCommand, AzRBACCommand)
+	AzCommands.AddCommand(
+		AzWhoamiCommand,
+		AzInstancesCommand,
+		AzRBACCommand)
 }

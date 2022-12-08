@@ -9,6 +9,34 @@ import (
 	"github.com/fatih/color"
 )
 
+func TestAzWhoamiCommand(t *testing.T) {
+	fmt.Println()
+	fmt.Println("[test case] Azure Whoami Command")
+
+	// Mocked functions to simulate Azure calls and responses
+	getTenants = mockedGetTenants
+	getSubscriptions = mockedGetSubscriptions
+	getResourceGroups = mockedGetResourceGroups
+
+	// Test case parameters
+	subtests := []struct {
+		name              string
+		resourcesTestFile string
+		mockedUserInput   *string
+		expectedScope     []scopeElement
+	}{
+		{
+			name:              "./cloudfox azure whoami",
+			resourcesTestFile: "./test-data/resources.json",
+		},
+	}
+
+	for _, s := range subtests {
+		globals.RESOURCES_TEST_FILE = s.resourcesTestFile
+		AzWhoamiCommand()
+	}
+}
+
 func TestScopeSelectionFull(t *testing.T) {
 	t.Skip()
 	fmt.Println()

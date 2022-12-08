@@ -18,6 +18,14 @@ import (
 	"github.com/fatih/color"
 )
 
+func AzWhoamiCommand() error {
+	fmt.Printf("[%s] Enumerating VMs for subscription...\n", color.CyanString(globals.AZ_WHOAMI_MODULE_NAME))
+	availableScope := getAvailableScope()
+	fmt.Printf("[%s] Current Azure CLI sessions: \n", color.CyanString(globals.AZ_WHOAMI_MODULE_NAME))
+	printAvailableScopeFull(availableScope)
+	return nil
+}
+
 type scopeElement struct {
 	// Use for user selection in interactive mode.
 	menuIndex int
@@ -36,6 +44,8 @@ func scopeSelection(userInput *string, mode string) []scopeElement {
 	var results []scopeElement
 
 	availableScope := getAvailableScope()
+	// To-Do: add different scope displays (e.g. tentants + subs, subgs + rgs, etc)
+	// Adding a whole table with everything will cause output to not fit the screen
 	switch mode {
 	default:
 		printAvailableScopeFull(availableScope)
@@ -77,9 +87,11 @@ func printAvailableScopeFull(availableScope []scopeElement) {
 			tableBody,
 			[]string{
 				strconv.Itoa(scopeItem.menuIndex),
-				ptr.ToString(scopeItem.ResourceGroup.Name),
-				ptr.ToString(scopeItem.Sub.DisplayName),
 				ptr.ToString(scopeItem.Tenant.DisplayName),
+				ptr.ToString(scopeItem.Tenant.TenantID),
+				ptr.ToString(scopeItem.Sub.DisplayName),
+				ptr.ToString(scopeItem.Sub.SubscriptionID),
+				ptr.ToString(scopeItem.ResourceGroup.Name),
 				ptr.ToString(scopeItem.Tenant.DefaultDomain),
 			})
 	}
@@ -92,9 +104,11 @@ func printAvailableScopeFull(availableScope []scopeElement) {
 	utils.PrintTableToScreen(
 		[]string{
 			"#",
-			"Resource Group",
-			"Subscription",
 			"Tenant Name",
+			"Tenant ID",
+			"Subscription",
+			"Subscription ID",
+			"Resource Group Name",
 			"Domain",
 		},
 		tableBody)
