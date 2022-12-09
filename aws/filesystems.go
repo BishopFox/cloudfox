@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/fsx"
 	fsxTypes "github.com/aws/aws-sdk-go-v2/service/fsx/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/bishopfox/awsservicemap/pkg/awsservicemap"
 	"github.com/fatih/color"
 	"github.com/sirupsen/logrus"
 )
@@ -84,11 +85,10 @@ func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirector
 	//create a channel to receive the objects
 	dataReceiver := make(chan FilesystemObject)
 
-	// Create a channel to signal to stop
-	receiverDone := make(chan bool)
-	go m.Receiver(dataReceiver, receiverDone)
+	go m.Receiver(dataReceiver)
 
 	//execute regional checks
+
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
 		m.executeChecks(region, wg, semaphore, dataReceiver)
@@ -98,9 +98,7 @@ func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirector
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	// Send a message to the data receiver goroutine to close the channel and stop
-	receiverDone <- true
-	<-receiverDone
+	close(dataReceiver)
 
 	sort.Slice(m.Filesystems, func(i, j int) bool {
 		return m.Filesystems[i].AWSService < m.Filesystems[j].AWSService
@@ -146,23 +144,25 @@ func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirector
 
 }
 
-func (m *FilesystemsModule) Receiver(receiver chan FilesystemObject, receiverDone chan bool) {
-	defer close(receiverDone)
-	for {
-		select {
-		case data := <-receiver:
-			m.Filesystems = append(m.Filesystems, data)
-		case <-receiverDone:
-			receiverDone <- true
-			return
-		}
+func (m *FilesystemsModule) Receiver(receiver chan FilesystemObject) {
+	for data := range receiver {
+		m.Filesystems = append(m.Filesystems, data)
+
 	}
 }
 
 func (m *FilesystemsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan FilesystemObject) {
 	defer wg.Done()
-	wg.Add(1)
-	go m.getEFSSharesPerRegion(r, wg, semaphore, dataReceiver)
+	servicemap := awsservicemap.NewServiceMap()
+	res, err := servicemap.IsServiceInRegion("efs", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		wg.Add(1)
+		go m.getEFSSharesPerRegion(r, wg, semaphore, dataReceiver)
+	}
+	//each fsx type has different supported regions so easier to just run this function against all enabled regions.
 	wg.Add(1)
 	go m.getFSxSharesPerRegion(r, wg, semaphore, dataReceiver)
 }

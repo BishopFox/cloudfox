@@ -15,22 +15,28 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/aws/aws-sdk-go-v2/service/ecs/types"
+	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/bishopfox/awsservicemap/pkg/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
+type DescribeTasksDefinitionAPIClient interface {
+	DescribeTaskDefinition(context.Context, *ecs.DescribeTaskDefinitionInput, ...func(*ecs.Options)) (*ecs.DescribeTaskDefinitionOutput, error)
+}
 type ECSTasksModule struct {
-	//ECSClient           *ecs.Client
-	DescribeTasksClient ecs.DescribeTasksAPIClient
-	ListTasksClient     ecs.ListTasksAPIClient
-	ListClustersClient  ecs.ListClustersAPIClient
-	//EC2Client                       *ec2.Client
-	DescribeNetworkInterfacesClient ec2.DescribeNetworkInterfacesAPIClient
+	DescribeTaskDefinitionClient     DescribeTasksDefinitionAPIClient
+	DescribeTasksClient              ecs.DescribeTasksAPIClient
+	ListTasksClient                  ecs.ListTasksAPIClient
+	ListClustersClient               ecs.ListClustersAPIClient
+	DescribeNetworkInterfacesClient  ec2.DescribeNetworkInterfacesAPIClient
+	IAMSimulatePrincipalPolicyClient iam.SimulatePrincipalPolicyAPIClient
 
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
 	OutputFormat string
 	AWSProfile   string
+	Goroutines   int
 
 	MappedECSTasks []MappedECSTask
 	CommandCounter console.CommandCounter
@@ -46,6 +52,8 @@ type MappedECSTask struct {
 	ID             string
 	ExternalIP     string
 	PrivateIP      string
+	TaskRole       string
+	isAdmin        string
 }
 
 func (m *ECSTasksModule) ECSTasks(outputFormat string, outputDirectory string, verbosity int) {
@@ -68,8 +76,8 @@ func (m *ECSTasksModule) ECSTasks(outputFormat string, outputDirectory string, v
 
 	dataReceiver := make(chan MappedECSTask)
 
-	receiverDone := make(chan bool)
-	go m.Receiver(dataReceiver, receiverDone)
+	go m.Receiver(dataReceiver)
+
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
 		m.CommandCounter.Pending++
@@ -80,23 +88,16 @@ func (m *ECSTasksModule) ECSTasks(outputFormat string, outputDirectory string, v
 	wg.Wait()
 	spinnerDone <- true
 	<-spinnerDone
-	receiverDone <- true
-	<-receiverDone
+	close(dataReceiver)
 
 	m.printECSTaskData(outputFormat, outputDirectory, dataReceiver)
 
 }
 
-func (m *ECSTasksModule) Receiver(receiver chan MappedECSTask, receiverDone chan bool) {
-	defer close(receiverDone)
-	for {
-		select {
-		case data := <-receiver:
-			m.MappedECSTasks = append(m.MappedECSTasks, data)
-		case <-receiverDone:
-			receiverDone <- true
-			return
-		}
+func (m *ECSTasksModule) Receiver(receiver chan MappedECSTask) {
+	for data := range receiver {
+		m.MappedECSTasks = append(m.MappedECSTasks, data)
+
 	}
 }
 
@@ -108,6 +109,8 @@ func (m *ECSTasksModule) printECSTaskData(outputFormat string, outputDirectory s
 		"ID",
 		"External IP",
 		"Internal IP",
+		"RoleArn",
+		"IsAdmin",
 	}
 
 	for _, ecsTask := range m.MappedECSTasks {
@@ -120,6 +123,8 @@ func (m *ECSTasksModule) printECSTaskData(outputFormat string, outputDirectory s
 				ecsTask.ID,
 				ecsTask.ExternalIP,
 				ecsTask.PrivateIP,
+				ecsTask.TaskRole,
+				ecsTask.isAdmin,
 			},
 		)
 	}
@@ -175,12 +180,21 @@ func (m *ECSTasksModule) writeLoot(outputDirectory string) {
 
 func (m *ECSTasksModule) executeChecks(r string, wg *sync.WaitGroup, dataReceiver chan MappedECSTask) {
 	defer wg.Done()
-	m.CommandCounter.Total++
-	m.CommandCounter.Pending--
-	m.CommandCounter.Executing++
-	m.getListClusters(r, dataReceiver)
-	m.CommandCounter.Executing--
-	m.CommandCounter.Complete++
+
+	servicemap := awsservicemap.NewServiceMap()
+	res, err := servicemap.IsServiceInRegion("ecs", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+
+		m.CommandCounter.Total++
+		m.CommandCounter.Pending--
+		m.CommandCounter.Executing++
+		m.getListClusters(r, dataReceiver)
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}
 }
 
 func (m *ECSTasksModule) getListClusters(region string, dataReceiver chan MappedECSTask) {
@@ -257,6 +271,10 @@ func (m *ECSTasksModule) getListTasks(clusterARN string, region string, dataRece
 }
 
 func (m *ECSTasksModule) loadTasksData(clusterARN string, taskARNs []string, region string, dataReceiver chan MappedECSTask) {
+
+	var adminRole string = ""
+	localAdminMap := make(map[string]bool)
+
 	if len(taskARNs) == 0 {
 		return
 	}
@@ -298,6 +316,32 @@ func (m *ECSTasksModule) loadTasksData(clusterARN string, taskARNs []string, reg
 			LaunchType:     string(task.LaunchType),
 			ID:             getIDFromECSTask(aws.ToString(task.TaskArn)),
 			PrivateIP:      getPrivateIPv4AddressFromECSTask(task),
+			TaskRole:       m.getTaskRole(aws.ToString(task.TaskDefinitionArn), region),
+		}
+
+		if mappedTask.TaskRole != "" {
+			// If we've seen the function before, skip the isRoleAdmin function and just pull the value from the localAdminMap
+			if val, ok := localAdminMap[mappedTask.TaskRole]; ok {
+				if val {
+					// we've seen it before and it's an admin
+					adminRole = "YES"
+				} else {
+					// we've seen it before and it's NOT an admin
+					adminRole = "No"
+				}
+			} else {
+				isRoleAdmin := m.isRoleAdmin(&mappedTask.TaskRole)
+				if isRoleAdmin {
+					adminRole = "YES"
+					localAdminMap[mappedTask.TaskRole] = true
+				} else {
+					adminRole = "No"
+					localAdminMap[mappedTask.TaskRole] = false
+				}
+			}
+			if adminRole != "" {
+				mappedTask.isAdmin = adminRole
+			}
 		}
 
 		eniID := getElasticNetworkInterfaceIDOfECSTask(task)
@@ -307,6 +351,41 @@ func (m *ECSTasksModule) loadTasksData(clusterARN string, taskARNs []string, reg
 
 		dataReceiver <- mappedTask
 	}
+}
+
+func (m *ECSTasksModule) isRoleAdmin(principal *string) bool {
+	iamSimMod := IamSimulatorModule{
+		IAMSimulatePrincipalPolicyClient: m.IAMSimulatePrincipalPolicyClient,
+		Caller:                           m.Caller,
+		AWSProfile:                       m.AWSProfile,
+		Goroutines:                       m.Goroutines,
+	}
+	adminCheckResult := iamSimMod.isPrincipalAnAdmin(principal)
+
+	if adminCheckResult {
+		return true
+	} else {
+		return false
+	}
+
+}
+
+func (m *ECSTasksModule) getTaskRole(taskDefinitionArn string, region string) string {
+	DescribeTaskDefinition, err := m.DescribeTaskDefinitionClient.DescribeTaskDefinition(
+		context.TODO(),
+		&ecs.DescribeTaskDefinitionInput{
+			TaskDefinition: &taskDefinitionArn,
+		},
+		func(o *ecs.Options) {
+			o.Region = region
+		},
+	)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return ""
+	}
+	return aws.ToString(DescribeTaskDefinition.TaskDefinition.TaskRoleArn)
 }
 
 func (m *ECSTasksModule) loadAllPublicIPs(eniIDs []string, region string) (map[string]string, error) {

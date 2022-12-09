@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/bishopfox/awsservicemap/pkg/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -71,8 +72,8 @@ func (m *CloudformationModule) PrintCloudformationStacks(outputFormat string, ou
 	dataReceiver := make(chan CFStack)
 
 	// Create a channel to signal to stop
-	receiverDone := make(chan bool)
-	go m.Receiver(dataReceiver, receiverDone)
+
+	go m.Receiver(dataReceiver)
 
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
@@ -85,9 +86,7 @@ func (m *CloudformationModule) PrintCloudformationStacks(outputFormat string, ou
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	// Send a message to the data receiver goroutine to close the channel and stop
-	receiverDone <- true
-	<-receiverDone
+	close(dataReceiver)
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
@@ -141,22 +140,23 @@ func (m *CloudformationModule) PrintCloudformationStacks(outputFormat string, ou
 
 func (m *CloudformationModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan CFStack) {
 	defer wg.Done()
-
-	m.CommandCounter.Total++
-	wg.Add(1)
-	m.getCFStacksPerRegion(r, wg, semaphore, dataReceiver)
+	servicemap := awsservicemap.NewServiceMap()
+	serviceRegions, err := servicemap.GetRegionsForService("cloudformation")
+	if err != nil {
+		m.modLog.Error(err.Error())
+	}
+	for _, serviceRegion := range serviceRegions {
+		if r == serviceRegion {
+			m.CommandCounter.Total++
+			wg.Add(1)
+			m.getCFStacksPerRegion(r, wg, semaphore, dataReceiver)
+		}
+	}
 }
 
-func (m *CloudformationModule) Receiver(receiver chan CFStack, receiverDone chan bool) {
-	defer close(receiverDone)
-	for {
-		select {
-		case data := <-receiver:
-			m.CFStacks = append(m.CFStacks, data)
-		case <-receiverDone:
-			receiverDone <- true
-			return
-		}
+func (m *CloudformationModule) Receiver(receiver chan CFStack) {
+	for data := range receiver {
+		m.CFStacks = append(m.CFStacks, data)
 	}
 }
 

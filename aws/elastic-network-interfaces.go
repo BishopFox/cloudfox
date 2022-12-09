@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/bishopfox/awsservicemap/pkg/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -62,8 +63,7 @@ func (m *ElasticNetworkInterfacesModule) ElasticNetworkInterfaces(outputFormat s
 	go console.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
 
 	dataReceiver := make(chan MappedENI)
-	receiverDone := make(chan bool)
-	go m.Receiver(dataReceiver, receiverDone)
+	go m.Receiver(dataReceiver)
 
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
@@ -75,23 +75,16 @@ func (m *ElasticNetworkInterfacesModule) ElasticNetworkInterfaces(outputFormat s
 	wg.Wait()
 	spinnerDone <- true
 	<-spinnerDone
-	receiverDone <- true
-	<-receiverDone
+	close(dataReceiver)
 
 	m.printENIsData(outputFormat, outputDirectory, dataReceiver)
 
 }
 
-func (m *ElasticNetworkInterfacesModule) Receiver(receiver chan MappedENI, receiverDone chan bool) {
-	defer close(receiverDone)
-	for {
-		select {
-		case data := <-receiver:
-			m.MappedENIs = append(m.MappedENIs, data)
-		case <-receiverDone:
-			receiverDone <- true
-			return
-		}
+func (m *ElasticNetworkInterfacesModule) Receiver(receiver chan MappedENI) {
+	for data := range receiver {
+		m.MappedENIs = append(m.MappedENIs, data)
+
 	}
 }
 
@@ -171,12 +164,19 @@ func (m *ElasticNetworkInterfacesModule) writeLoot(outputDirectory string) {
 
 func (m *ElasticNetworkInterfacesModule) executeChecks(r string, wg *sync.WaitGroup, dataReceiver chan MappedENI) {
 	defer wg.Done()
-	m.CommandCounter.Total++
-	m.CommandCounter.Pending--
-	m.CommandCounter.Executing++
-	m.getDescribeNetworkInterfaces(r, dataReceiver)
-	m.CommandCounter.Executing--
-	m.CommandCounter.Complete++
+	servicemap := awsservicemap.NewServiceMap()
+	res, err := servicemap.IsServiceInRegion("ec2", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		m.CommandCounter.Pending--
+		m.CommandCounter.Executing++
+		m.getDescribeNetworkInterfaces(r, dataReceiver)
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}
 }
 
 func (m *ElasticNetworkInterfacesModule) getDescribeNetworkInterfaces(region string, dataReceiver chan MappedENI) {

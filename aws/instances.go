@@ -18,20 +18,22 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iamTypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/bishopfox/awsservicemap/pkg/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
 type InstancesModule struct {
 	// General configuration data
-	EC2Client                 *ec2.Client
-	IAMClient                 *iam.Client
-	Caller                    sts.GetCallerIdentityOutput
-	AWSRegions                []string
-	OutputFormat              string
-	Goroutines                int
-	UserDataAttributesOnly    bool
-	AWSProfile                string
-	InstanceProfileToRolesMap map[string][]iamTypes.Role
+	EC2Client                        *ec2.Client
+	IAMSimulatePrincipalPolicyClient iam.SimulatePrincipalPolicyAPIClient
+	IAMListInstanceProfilesClient    iam.ListInstanceProfilesAPIClient
+	Caller                           sts.GetCallerIdentityOutput
+	AWSRegions                       []string
+	OutputFormat                     string
+	Goroutines                       int
+	UserDataAttributesOnly           bool
+	AWSProfile                       string
+	InstanceProfileToRolesMap        map[string][]iamTypes.Role
 
 	// Module's Results
 	MappedInstances []MappedInstance
@@ -92,10 +94,9 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 	//create a channel to receive the objects
 	dataReceiver := make(chan MappedInstance)
 
-	// Create a channel to signal to stop
-	receiverDone := make(chan bool)
-	go m.Receiver(dataReceiver, receiverDone)
+	go m.Receiver(dataReceiver)
 	m.getRolesFromInstanceProfiles()
+
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
 		m.CommandCounter.Pending++
@@ -107,9 +108,7 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	// Send a message to the data receiver goroutine to close the channel and stop
-	receiverDone <- true
-	<-receiverDone
+	close(dataReceiver)
 
 	// This conditional block will either dump the userData attribute content or the general instances data, depending on what you select via command line.
 	//fmt.Printf("\n[*] Preparing output...\n\n")
@@ -121,16 +120,10 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 
 }
 
-func (m *InstancesModule) Receiver(receiver chan MappedInstance, receiverDone chan bool) {
-	defer close(receiverDone)
-	for {
-		select {
-		case data := <-receiver:
-			m.MappedInstances = append(m.MappedInstances, data)
-		case <-receiverDone:
-			receiverDone <- true
-			return
-		}
+func (m *InstancesModule) Receiver(receiver chan MappedInstance) {
+	for data := range receiver {
+		m.MappedInstances = append(m.MappedInstances, data)
+
 	}
 }
 
@@ -271,12 +264,19 @@ func (m *InstancesModule) writeLoot(outputDirectory string) {
 
 func (m *InstancesModule) executeChecks(instancesToSearch []string, r string, wg *sync.WaitGroup, dataReceiver chan MappedInstance) {
 	defer wg.Done()
-	m.CommandCounter.Total++
-	m.CommandCounter.Pending--
-	m.CommandCounter.Executing++
-	m.getDescribeInstances(instancesToSearch, r, dataReceiver)
-	m.CommandCounter.Executing--
-	m.CommandCounter.Complete++
+	servicemap := awsservicemap.NewServiceMap()
+	res, err := servicemap.IsServiceInRegion("ec2", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		m.CommandCounter.Pending--
+		m.CommandCounter.Executing++
+		m.getDescribeInstances(instancesToSearch, r, dataReceiver)
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}
 }
 
 func (m *InstancesModule) getInstanceUserDataAttribute(instanceID *string, region string) (userData *string, err error) {
@@ -432,10 +432,10 @@ func (m *InstancesModule) loadInstanceData(instance types.Instance, region strin
 
 func (m *InstancesModule) isRoleAdmin(principal *string) bool {
 	iamSimMod := IamSimulatorModule{
-		IAMClient:  m.IAMClient,
-		Caller:     m.Caller,
-		AWSProfile: m.AWSProfile,
-		Goroutines: m.Goroutines,
+		IAMSimulatePrincipalPolicyClient: m.IAMSimulatePrincipalPolicyClient,
+		Caller:                           m.Caller,
+		AWSProfile:                       m.AWSProfile,
+		Goroutines:                       m.Goroutines,
 	}
 
 	adminCheckResult := iamSimMod.isPrincipalAnAdmin(principal)
@@ -456,7 +456,7 @@ func (m *InstancesModule) getRolesFromInstanceProfiles() {
 	m.InstanceProfileToRolesMap = map[string][]iamTypes.Role{}
 
 	for PaginationControl {
-		ListInstanceProfiles, err := m.IAMClient.ListInstanceProfiles(
+		ListInstanceProfiles, err := m.IAMListInstanceProfilesClient.ListInstanceProfiles(
 			context.TODO(),
 			&(iam.ListInstanceProfilesInput{
 				Marker: PaginationMarker,

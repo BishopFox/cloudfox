@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/bishopfox/awsservicemap/pkg/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -70,9 +71,7 @@ func (m *SecretsModule) PrintSecrets(outputFormat string, outputDirectory string
 	//create a channel to receive the objects
 	dataReceiver := make(chan Secret)
 
-	// Create a channel to signal to stop
-	receiverDone := make(chan bool)
-	go m.Receiver(dataReceiver, receiverDone)
+	go m.Receiver(dataReceiver)
 
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
@@ -84,9 +83,7 @@ func (m *SecretsModule) PrintSecrets(outputFormat string, outputDirectory string
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	// Send a message to the data receiver goroutine to close the channel and stop
-	receiverDone <- true
-	<-receiverDone
+	close(dataReceiver)
 
 	//	fmt.Printf("\nAnalyzed Resources by Region\n\n")
 
@@ -124,29 +121,35 @@ func (m *SecretsModule) PrintSecrets(outputFormat string, outputDirectory string
 
 }
 
-func (m *SecretsModule) Receiver(receiver chan Secret, receiverDone chan bool) {
-	defer close(receiverDone)
-	for {
-		select {
-		case data := <-receiver:
-			m.Secrets = append(m.Secrets, data)
-		case <-receiverDone:
-			receiverDone <- true
-			return
-		}
+func (m *SecretsModule) Receiver(receiver chan Secret) {
+	for data := range receiver {
+		m.Secrets = append(m.Secrets, data)
+
 	}
 }
 
 func (m *SecretsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Secret) {
 	defer wg.Done()
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getSecretsManagerSecretsPerRegion(r, wg, semaphore, dataReceiver)
-
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getSSMParametersPerRegion(r, wg, semaphore, dataReceiver)
+	servicemap := awsservicemap.NewServiceMap()
+	res, err := servicemap.IsServiceInRegion("secretsmanager", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getSecretsManagerSecretsPerRegion(r, wg, semaphore, dataReceiver)
+	}
+	res, err = servicemap.IsServiceInRegion("ssm", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getSSMParametersPerRegion(r, wg, semaphore, dataReceiver)
+	}
 
 }
 

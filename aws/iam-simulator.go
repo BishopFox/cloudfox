@@ -20,7 +20,9 @@ import (
 
 type IamSimulatorModule struct {
 	// General configuration data
-	IAMClient *iam.Client
+	IAMSimulatePrincipalPolicyClient iam.SimulatePrincipalPolicyAPIClient
+	IAMListUsersClient               iam.ListUsersAPIClient
+	IAMListRolesClient               iam.ListRolesAPIClient
 
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
@@ -90,9 +92,7 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 	//create a channel to receive the objects
 	dataReceiver := make(chan SimulatorResult)
 
-	// Create a channel to signal to stop
-	receiverDone := make(chan bool)
-	go m.Receiver(dataReceiver, receiverDone)
+	go m.Receiver(dataReceiver)
 
 	// This double if/else section is here to handle the cases where --principal or --action (or both) are specified.
 	if principal != "" {
@@ -138,9 +138,7 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	// Send a message to the data receiver goroutine to close the channel and stop
-	receiverDone <- true
-	<-receiverDone
+	close(dataReceiver)
 
 	//duration := time.Since(start)
 	//fmt.Printf("\n\n[*] Total execution time %s\n", duration)
@@ -215,16 +213,10 @@ func (m *IamSimulatorModule) writeLoot(outputDirectory string, verbosity int, pm
 
 }
 
-func (m *IamSimulatorModule) Receiver(receiver chan SimulatorResult, receiverDone chan bool) {
-	defer close(receiverDone)
-	for {
-		select {
-		case data := <-receiver:
-			m.SimulatorResults = append(m.SimulatorResults, data)
-		case <-receiverDone:
-			receiverDone <- true
-			return
-		}
+func (m *IamSimulatorModule) Receiver(receiver chan SimulatorResult) {
+	for data := range receiver {
+		m.SimulatorResults = append(m.SimulatorResults, data)
+
 	}
 }
 
@@ -248,7 +240,7 @@ func (m *IamSimulatorModule) getIAMUsers(wg *sync.WaitGroup, actions []string, r
 	var PaginationControl *string
 
 	for {
-		ListUsers, err := m.IAMClient.ListUsers(
+		ListUsers, err := m.IAMListUsersClient.ListUsers(
 			context.TODO(),
 			&iam.ListUsersInput{
 				Marker: PaginationControl,
@@ -302,7 +294,7 @@ func (m *IamSimulatorModule) getIAMRoles(wg *sync.WaitGroup, actions []string, r
 	var PaginationControl *string
 
 	for {
-		ListRoles, err := m.IAMClient.ListRoles(
+		ListRoles, err := m.IAMListRolesClient.ListRoles(
 			context.TODO(),
 			&iam.ListRolesInput{
 				Marker: PaginationControl,
@@ -352,7 +344,7 @@ func (m *IamSimulatorModule) getPolicySimulatorResult(principal *string, actionN
 	//var resourceArns = []string{"*"}
 
 	for {
-		SimulatePrincipalPolicy, err := m.IAMClient.SimulatePrincipalPolicy(
+		SimulatePrincipalPolicy, err := m.IAMSimulatePrincipalPolicyClient.SimulatePrincipalPolicy(
 			context.TODO(),
 			&iam.SimulatePrincipalPolicyInput{
 				Marker:          PaginationControl2,
@@ -407,7 +399,7 @@ func (m *IamSimulatorModule) isPrincipalAnAdmin(principal *string) bool {
 		"ssm:GetDocument",
 	}
 	for {
-		SimulatePrincipalPolicy, err := m.IAMClient.SimulatePrincipalPolicy(
+		SimulatePrincipalPolicy, err := m.IAMSimulatePrincipalPolicyClient.SimulatePrincipalPolicy(
 			context.TODO(),
 			&iam.SimulatePrincipalPolicyInput{
 				Marker:          PaginationControl2,

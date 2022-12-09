@@ -15,13 +15,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/bishopfox/awsservicemap/pkg/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
 type LambdasModule struct {
 	// General configuration data
-	LambdaClient *lambda.Client
-	IAMClient    *iam.Client
+	LambdaClient                     *lambda.Client
+	IAMSimulatePrincipalPolicyClient iam.SimulatePrincipalPolicyAPIClient
 
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
@@ -72,9 +73,7 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 	//create a channel to receive the objects
 	dataReceiver := make(chan Lambda)
 
-	// Create a channel to signal to stop
-	receiverDone := make(chan bool)
-	go m.Receiver(dataReceiver, receiverDone)
+	go m.Receiver(dataReceiver)
 
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
@@ -87,9 +86,7 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	// Send a message to the data receiver goroutine to close the channel and stop
-	receiverDone <- true
-	<-receiverDone
+	close(dataReceiver)
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
@@ -137,21 +134,22 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 func (m *LambdasModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Lambda) {
 	defer wg.Done()
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	m.getLambdasPerRegion(r, wg, semaphore, dataReceiver)
+	servicemap := awsservicemap.NewServiceMap()
+	res, err := servicemap.IsServiceInRegion("lambda", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		m.getLambdasPerRegion(r, wg, semaphore, dataReceiver)
+	}
 }
 
-func (m *LambdasModule) Receiver(receiver chan Lambda, receiverDone chan bool) {
-	defer close(receiverDone)
-	for {
-		select {
-		case data := <-receiver:
-			m.Lambdas = append(m.Lambdas, data)
-		case <-receiverDone:
-			receiverDone <- true
-			return
-		}
+func (m *LambdasModule) Receiver(receiver chan Lambda) {
+	for data := range receiver {
+		m.Lambdas = append(m.Lambdas, data)
+
 	}
 }
 
@@ -280,10 +278,10 @@ func (m *LambdasModule) getLambdasPerRegion(r string, wg *sync.WaitGroup, semaph
 
 func (m *LambdasModule) isRoleAdmin(principal *string) bool {
 	iamSimMod := IamSimulatorModule{
-		IAMClient:  m.IAMClient,
-		Caller:     m.Caller,
-		AWSProfile: m.AWSProfile,
-		Goroutines: m.Goroutines,
+		IAMSimulatePrincipalPolicyClient: m.IAMSimulatePrincipalPolicyClient,
+		Caller:                           m.Caller,
+		AWSProfile:                       m.AWSProfile,
+		Goroutines:                       m.Goroutines,
 	}
 
 	adminCheckResult := iamSimMod.isPrincipalAnAdmin(principal)

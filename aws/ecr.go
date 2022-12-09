@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/aws/aws-sdk-go-v2/service/ecr/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/bishopfox/awsservicemap/pkg/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -75,9 +76,7 @@ func (m *ECRModule) PrintECR(outputFormat string, outputDirectory string, verbos
 	//create a channel to receive the objects
 	dataReceiver := make(chan Repository)
 
-	// Create a channel to signal to stop
-	receiverDone := make(chan bool)
-	go m.Receiver(dataReceiver, receiverDone)
+	go m.Receiver(dataReceiver)
 
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
@@ -90,9 +89,7 @@ func (m *ECRModule) PrintECR(outputFormat string, outputDirectory string, verbos
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	// Send a message to the data receiver goroutine to close the channel and stop
-	receiverDone <- true
-	<-receiverDone
+	close(dataReceiver)
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
@@ -136,21 +133,22 @@ func (m *ECRModule) PrintECR(outputFormat string, outputDirectory string, verbos
 func (m *ECRModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Repository) {
 	defer wg.Done()
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	m.getECRRecordsPerRegion(r, wg, semaphore, dataReceiver)
+	servicemap := awsservicemap.NewServiceMap()
+	res, err := servicemap.IsServiceInRegion("ecr", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		m.getECRRecordsPerRegion(r, wg, semaphore, dataReceiver)
+	}
 }
 
-func (m *ECRModule) Receiver(receiver chan Repository, receiverDone chan bool) {
-	defer close(receiverDone)
-	for {
-		select {
-		case data := <-receiver:
-			m.Repositories = append(m.Repositories, data)
-		case <-receiverDone:
-			receiverDone <- true
-			return
-		}
+func (m *ECRModule) Receiver(receiver chan Repository) {
+	for data := range receiver {
+		m.Repositories = append(m.Repositories, data)
+
 	}
 }
 

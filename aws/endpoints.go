@@ -31,6 +31,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go"
+	"github.com/bishopfox/awsservicemap/pkg/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -105,9 +106,7 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 	//create a channel to receive the objects
 	dataReceiver := make(chan Endpoint)
 
-	// Create a channel to signal to stop
-	receiverDone := make(chan bool)
-	go m.Receiver(dataReceiver, receiverDone)
+	go m.Receiver(dataReceiver)
 
 	//execute global checks -- removing from now. not sure i want s3 data in here
 	// wg.Add(1)
@@ -116,6 +115,7 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 	go m.getCloudfrontEndpoints(wg, semaphore, dataReceiver)
 
 	//execute regional checks
+
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
 		go m.executeChecks(region, wg, semaphore, dataReceiver)
@@ -131,9 +131,7 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	// Send a message to the data receiver goroutine to close the channel and stop
-	receiverDone <- true
-	<-receiverDone
+	close(dataReceiver)
 
 	sort.Slice(m.Endpoints, func(i, j int) bool {
 		return m.Endpoints[i].AWSService < m.Endpoints[j].AWSService
@@ -185,16 +183,10 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 
 }
 
-func (m *EndpointsModule) Receiver(receiver chan Endpoint, receiverDone chan bool) {
-	defer close(receiverDone)
-	for {
-		select {
-		case data := <-receiver:
-			m.Endpoints = append(m.Endpoints, data)
-		case <-receiverDone:
-			receiverDone <- true
-			return
-		}
+func (m *EndpointsModule) Receiver(receiver chan Endpoint) {
+	for data := range receiver {
+		m.Endpoints = append(m.Endpoints, data)
+
 	}
 }
 
@@ -206,57 +198,111 @@ func (m *EndpointsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore 
 	// 	<-semaphore
 	// }()
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getLambdaFunctionsPerRegion(r, wg, semaphore, dataReceiver)
+	servicemap := awsservicemap.NewServiceMap()
+	res, err := servicemap.IsServiceInRegion("lambda", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getLambdaFunctionsPerRegion(r, wg, semaphore, dataReceiver)
+	}
+	res, err = servicemap.IsServiceInRegion("eks", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getEksClustersPerRegion(r, wg, semaphore, dataReceiver)
+	}
+	res, err = servicemap.IsServiceInRegion("mq", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getMqBrokersPerRegion(r, wg, semaphore, dataReceiver)
+	}
+	res, err = servicemap.IsServiceInRegion("es", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		m.getOpenSearchPerRegion(r, wg, semaphore, dataReceiver)
+	}
+	res, err = servicemap.IsServiceInRegion("grafana", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		m.getGrafanaEndPointsPerRegion(r, wg, semaphore, dataReceiver)
+	}
+	res, err = servicemap.IsServiceInRegion("elb", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getELBv2ListenersPerRegion(r, wg, semaphore, dataReceiver)
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getEksClustersPerRegion(r, wg, semaphore, dataReceiver)
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getELBListenersPerRegion(r, wg, semaphore, dataReceiver)
+	}
+	res, err = servicemap.IsServiceInRegion("apigateway", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getAPIGatewayAPIsPerRegion(r, wg, semaphore, dataReceiver)
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getMqBrokersPerRegion(r, wg, semaphore, dataReceiver)
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getAPIGatewayv2APIsPerRegion(r, wg, semaphore, dataReceiver)
+	}
+	res, err = servicemap.IsServiceInRegion("rds", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getRdsClustersPerRegion(r, wg, semaphore, dataReceiver)
+	}
+	res, err = servicemap.IsServiceInRegion("redshift", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		m.getRedshiftEndPointsPerRegion(r, wg, semaphore, dataReceiver)
+	}
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	m.getOpenSearchPerRegion(r, wg, semaphore, dataReceiver)
-
-	m.CommandCounter.Total++
-	wg.Add(1)
-	m.getGrafanaEndPointsPerRegion(r, wg, semaphore, dataReceiver)
-
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getELBv2ListenersPerRegion(r, wg, semaphore, dataReceiver)
-
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getELBListenersPerRegion(r, wg, semaphore, dataReceiver)
-
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getAPIGatewayAPIsPerRegion(r, wg, semaphore, dataReceiver)
-
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getAPIGatewayv2APIsPerRegion(r, wg, semaphore, dataReceiver)
-
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getRdsClustersPerRegion(r, wg, semaphore, dataReceiver)
-
-	m.CommandCounter.Total++
-	wg.Add(1)
-	m.getRedshiftEndPointsPerRegion(r, wg, semaphore, dataReceiver)
-
+	//apprunner is not supported by the aws json so we have to call it in every region
 	m.CommandCounter.Total++
 	wg.Add(1)
 	go m.getAppRunnerEndpointsPerRegion(r, wg, semaphore, dataReceiver)
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getLightsailContainerEndpointsPerRegion(r, wg, semaphore, dataReceiver)
+	res, err = servicemap.IsServiceInRegion("lightsail", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getLightsailContainerEndpointsPerRegion(r, wg, semaphore, dataReceiver)
+	}
 }
 
 func (m *EndpointsModule) writeLoot(outputDirectory string, verbosity int) {
