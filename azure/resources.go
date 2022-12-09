@@ -19,7 +19,7 @@ import (
 )
 
 func AzWhoamiCommand() error {
-	fmt.Printf("[%s] Enumerating VMs for subscription...\n", color.CyanString(globals.AZ_WHOAMI_MODULE_NAME))
+	fmt.Printf("[%s] Enumerating active sessions for the Azure CLI...\n", color.CyanString(globals.AZ_WHOAMI_MODULE_NAME))
 	availableScope := getAvailableScope()
 	fmt.Printf("[%s] Current Azure CLI sessions: \n", color.CyanString(globals.AZ_WHOAMI_MODULE_NAME))
 	printAvailableScopeFull(availableScope)
@@ -91,9 +91,7 @@ func printAvailableScopeFull(availableScope []scopeElement) {
 				ptr.ToString(scopeItem.Tenant.TenantID),
 				ptr.ToString(scopeItem.Sub.DisplayName),
 				ptr.ToString(scopeItem.Sub.SubscriptionID),
-				ptr.ToString(scopeItem.ResourceGroup.Name),
-				ptr.ToString(scopeItem.Tenant.DefaultDomain),
-			})
+				ptr.ToString(scopeItem.ResourceGroup.Name)})
 	}
 	sort.Slice(
 		tableBody,
@@ -108,16 +106,25 @@ func printAvailableScopeFull(availableScope []scopeElement) {
 			"Tenant ID",
 			"Subscription",
 			"Subscription ID",
-			"Resource Group Name",
-			"Domain",
-		},
+			"Resource Group Name"},
 		tableBody)
 }
 
+func getSubscriptionsForTenant(tenantID string) []subscriptions.Subscription {
+	subs := getSubscriptions()
+	var results []subscriptions.Subscription
+	for _, s := range subs {
+		if ptr.ToString(s.TenantID) == tenantID {
+			results = append(results, s)
+		}
+	}
+	return results
+}
+
 func getSubscriptionIDsForTenant(tenantID string) []string {
-	subscriptions := getSubscriptions()
+	subs := getSubscriptions()
 	var subIDs []string
-	for _, s := range subscriptions {
+	for _, s := range subs {
 		if ptr.ToString(s.TenantID) == tenantID {
 			subIDs = append(subIDs, ptr.ToString(s.SubscriptionID))
 		}

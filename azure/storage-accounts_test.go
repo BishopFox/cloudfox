@@ -2,6 +2,7 @@ package azure
 
 import (
 	"fmt"
+	"log"
 	"testing"
 
 	"github.com/BishopFox/cloudfox/globals"
@@ -18,24 +19,48 @@ func TestStorageAccountsCommand(t *testing.T) {
 		AzTenantID              string
 		AzSubscriptionID        string
 		AzRGName                string
-		AzVerbosity             int
 		AzOutputFormat          string
+		AzVerbosity             int
 		resourcesTestFile       string
 		storageAccountsTestFile string
 	}{
 		{
-			name:                    "./cloudfox storage --subscription SUBSCRIPTION_ID",
-			AzSubscriptionID:        "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
+			name:                    "./cloudfox az storage -t 11111111-1111-1111-1111-11111111",
+			AzTenantID:              "11111111-1111-1111-1111-11111111",
+			AzSubscriptionID:        "",
+			AzRGName:                "",
+			AzOutputFormat:          "all",
+			AzVerbosity:             2,
+			resourcesTestFile:       "./test-data/resources.json",
+			storageAccountsTestFile: "./test-data/storage-accounts.json",
+		},
+		{
+			name:                    "./cloudfox az storage -t 11111111-1111-1111-1111-11111111 -s BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB",
+			AzTenantID:              "11111111-1111-1111-1111-11111111",
+			AzSubscriptionID:        "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB",
+			AzRGName:                "",
+			AzOutputFormat:          "all",
+			AzVerbosity:             2,
+			resourcesTestFile:       "./test-data/resources.json",
+			storageAccountsTestFile: "./test-data/storage-accounts.json",
+		},
+		{
+			name:                    "./cloudfox az storage -t 22222222-2222-2222-2222-22222222 -s CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCC -g ResourceGroupC1",
+			AzTenantID:              "22222222-2222-2222-2222-22222222",
+			AzSubscriptionID:        "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCC",
+			AzRGName:                "ResourceGroupC1",
+			AzOutputFormat:          "all",
+			AzVerbosity:             2,
 			resourcesTestFile:       "./test-data/resources.json",
 			storageAccountsTestFile: "./test-data/storage-accounts.json",
 		},
 	}
 	utils.MockFileSystem(true)
 	// Mocked functions to simulate Azure calls and responses
-	getStorageAccounts = mockedGetStorageAccounts
 	getTenants = mockedGetTenants
 	getSubscriptions = mockedGetSubscriptions
 	getResourceGroups = mockedGetResourceGroups
+	getStorageAccounts = mockedGetStorageAccounts
 
 	for _, s := range subtests {
 		fmt.Println()
@@ -43,6 +68,9 @@ func TestStorageAccountsCommand(t *testing.T) {
 		globals.RESOURCES_TEST_FILE = s.resourcesTestFile
 		globals.STORAGE_ACCOUNTS_TEST_FILE = s.storageAccountsTestFile
 
-		_, _ = getStorageAccounts(s.AzSubscriptionID)
+		err := AzStorageCommand(s.AzTenantID, s.AzSubscriptionID, s.AzRGName, s.AzOutputFormat, s.AzVerbosity)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 }
