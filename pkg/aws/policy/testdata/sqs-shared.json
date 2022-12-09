@@ -1,0 +1,16 @@
+{
+   "Version": "2012-10-17",
+   "Id": "anyID",
+   "Statement": [{
+      "Sid":"unconditionally_shared",
+      "Effect": "Allow",
+      "Principal": {
+          "AWS": [
+              "111122223333",
+              "arn:aws:iam::123456789012:root"
+          ]
+      },
+      "Action": "sqs:*",
+      "Resource": "arn:aws:sqs:*:111122223333:queue1"
+   }]
+}

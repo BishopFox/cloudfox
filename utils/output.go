@@ -178,5 +178,6 @@ func MockFileSystem(switcher bool) {
 		fileSystem = afero.NewMemMapFs()
 	} else {
 		fmt.Println("Using OS file system. Make sure to clean up your disk!")
+		fileSystem = afero.NewOsFs()
 	}
 }
