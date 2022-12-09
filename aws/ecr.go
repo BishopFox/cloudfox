@@ -133,7 +133,9 @@ func (m *ECRModule) PrintECR(outputFormat string, outputDirectory string, verbos
 func (m *ECRModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Repository) {
 	defer wg.Done()
 
-	servicemap := awsservicemap.NewServiceMap()
+	servicemap := &awsservicemap.AwsServiceMap{
+		DownloadJson: false,
+	}
 	res, err := servicemap.IsServiceInRegion("ecr", r)
 	if err != nil {
 		m.modLog.Error(err)
