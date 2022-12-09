@@ -301,16 +301,16 @@ var (
 		Run:    runAllChecksCommand,
 	}
 
-	PmapperCommand = &cobra.Command{
+	// PmapperCommand = &cobra.Command{
 
-		Use:     "pmapper",
-		Aliases: []string{"Pmapper", "pmapperParse"},
-		Short:   "",
-		Long: "\nUse case examples:\n" +
-			os.Args[0] + " aws ",
-		PreRun: awsPreRun,
-		Run:    runPmapperCommand,
-	}
+	// 	Use:     "pmapper",
+	// 	Aliases: []string{"Pmapper", "pmapperParse"},
+	// 	Short:   "",
+	// 	Long: "\nUse case examples:\n" +
+	// 		os.Args[0] + " aws ",
+	// 	PreRun: awsPreRun,
+	// 	Run:    runPmapperCommand,
+	// }
 )
 
 func init() {
@@ -372,7 +372,7 @@ func init() {
 		RAMCommand,
 		TagsCommand,
 		LambdasCommand,
-		PmapperCommand,
+		//PmapperCommand,
 	)
 
 }
