@@ -13,7 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ram"
 	ramTypes "github.com/aws/aws-sdk-go-v2/service/ram/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
-	"github.com/bishopfox/awsservicemap"
+	"github.com/bishopfox/awsservicemap/pkg/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -121,7 +121,12 @@ func (m *RAMModule) PrintRAM(outputFormat string, outputDirectory string, verbos
 
 func (m *RAMModule) executeChecks(r string, wg *sync.WaitGroup, dataReceiver chan Resource) {
 	defer wg.Done()
-	if awsservicemap.IsServiceInRegion("ram", r) {
+	servicemap := awsservicemap.NewServiceMap()
+	res, err := servicemap.IsServiceInRegion("ram", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		m.CommandCounter.Pending--
 		m.CommandCounter.Executing++

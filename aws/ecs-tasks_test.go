@@ -234,6 +234,10 @@ func (c *mockedDescribeNetworkInterfacesClient) DescribeNetworkInterfaces(ctx co
 	return &ec2.DescribeNetworkInterfacesOutput{NetworkInterfaces: nics}, nil
 }
 
+// type mockedDescribeTaskDefinitionsClient struct {
+// 	describeTaskDefinitions DescribeTaskDefinitions
+// }
+
 func TestECSTasks(t *testing.T) {
 	m := ECSTasksModule{
 		AWSProfile:                      "default",
@@ -243,6 +247,7 @@ func TestECSTasks(t *testing.T) {
 		DescribeTasksClient:             &mockedDescribeTasksClient{},
 		ListTasksClient:                 &mockedListTasksClient{},
 		ListClustersClient:              &mockedListclustersClient{},
+		//IAMSimulatePrincipalPolicyClient: &mockedDescribeTaskDefinitionsClient{},
 	}
 	m.ECSTasks("table", ".", 3)
 }

@@ -17,7 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
-	"github.com/bishopfox/awsservicemap"
+	"github.com/bishopfox/awsservicemap/pkg/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -31,7 +31,6 @@ type ECSTasksModule struct {
 	ListClustersClient               ecs.ListClustersAPIClient
 	DescribeNetworkInterfacesClient  ec2.DescribeNetworkInterfacesAPIClient
 	IAMSimulatePrincipalPolicyClient iam.SimulatePrincipalPolicyAPIClient
-	IAMClient                        *iam.Client
 
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
@@ -181,7 +180,13 @@ func (m *ECSTasksModule) writeLoot(outputDirectory string) {
 
 func (m *ECSTasksModule) executeChecks(r string, wg *sync.WaitGroup, dataReceiver chan MappedECSTask) {
 	defer wg.Done()
-	if awsservicemap.IsServiceInRegion("ecs", r) {
+
+	servicemap := awsservicemap.NewServiceMap()
+	res, err := servicemap.IsServiceInRegion("ecs", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 
 		m.CommandCounter.Total++
 		m.CommandCounter.Pending--
@@ -378,6 +383,7 @@ func (m *ECSTasksModule) getTaskRole(taskDefinitionArn string, region string) st
 	if err != nil {
 		m.modLog.Error(err.Error())
 		m.CommandCounter.Error++
+		return ""
 	}
 	return aws.ToString(DescribeTaskDefinition.TaskDefinition.TaskRoleArn)
 }

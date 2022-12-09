@@ -16,7 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/fsx"
 	fsxTypes "github.com/aws/aws-sdk-go-v2/service/fsx/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
-	"github.com/bishopfox/awsservicemap"
+	"github.com/bishopfox/awsservicemap/pkg/awsservicemap"
 	"github.com/fatih/color"
 	"github.com/sirupsen/logrus"
 )
@@ -153,7 +153,12 @@ func (m *FilesystemsModule) Receiver(receiver chan FilesystemObject) {
 
 func (m *FilesystemsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan FilesystemObject) {
 	defer wg.Done()
-	if awsservicemap.IsServiceInRegion("efs", r) {
+	servicemap := awsservicemap.NewServiceMap()
+	res, err := servicemap.IsServiceInRegion("efs", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		wg.Add(1)
 		go m.getEFSSharesPerRegion(r, wg, semaphore, dataReceiver)
 	}

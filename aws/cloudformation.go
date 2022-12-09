@@ -14,7 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
-	"github.com/bishopfox/awsservicemap"
+	"github.com/bishopfox/awsservicemap/pkg/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -140,8 +140,11 @@ func (m *CloudformationModule) PrintCloudformationStacks(outputFormat string, ou
 
 func (m *CloudformationModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan CFStack) {
 	defer wg.Done()
-
-	serviceRegions := awsservicemap.GetRegionsForService("cloudformation")
+	servicemap := awsservicemap.NewServiceMap()
+	serviceRegions, err := servicemap.GetRegionsForService("cloudformation")
+	if err != nil {
+		m.modLog.Error(err.Error())
+	}
 	for _, serviceRegion := range serviceRegions {
 		if r == serviceRegion {
 			m.CommandCounter.Total++

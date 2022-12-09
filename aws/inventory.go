@@ -37,7 +37,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
-	"github.com/bishopfox/awsservicemap"
+	"github.com/bishopfox/awsservicemap/pkg/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -309,49 +309,83 @@ func (m *Inventory2Module) Receiver(receiver chan GlobalResourceCount2) {
 func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan GlobalResourceCount2) {
 	defer wg.Done()
 
-	if awsservicemap.IsServiceInRegion("lambda", r) {
+	servicemap := awsservicemap.NewServiceMap()
+
+	res, err := servicemap.IsServiceInRegion("lambda", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getLambdaFunctionsPerRegion(r, wg, semaphore)
 	}
 
-	if awsservicemap.IsServiceInRegion("ec2", r) {
+	res, err = servicemap.IsServiceInRegion("ec2", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getEc2InstancesPerRegion(r, wg, semaphore)
 	}
 
-	if awsservicemap.IsServiceInRegion("cloudformation", r) {
+	res, err = servicemap.IsServiceInRegion("cloudformation", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getCloudFormationStacksPerRegion(r, wg, semaphore)
 	}
 
-	if awsservicemap.IsServiceInRegion("secretsmanager", r) {
+	res, err = servicemap.IsServiceInRegion("secretsmanager", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getSecretsManagerSecretsPerRegion(r, wg, semaphore)
 	}
 
-	if awsservicemap.IsServiceInRegion("eks", r) {
+	res, err = servicemap.IsServiceInRegion("eks", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getEksClustersPerRegion(r, wg, semaphore)
 	}
 
-	if awsservicemap.IsServiceInRegion("ecs", r) {
+	res, err = servicemap.IsServiceInRegion("ecs", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getEcsTasksPerRegion(r, wg, semaphore)
 	}
 
-	if awsservicemap.IsServiceInRegion("rds", r) {
+	res, err = servicemap.IsServiceInRegion("rds", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getRdsClustersPerRegion(r, wg, semaphore)
 	}
 
-	if awsservicemap.IsServiceInRegion("apigateway", r) {
+	res, err = servicemap.IsServiceInRegion("apigateway", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getAPIGatewayvAPIsPerRegion(r, wg, semaphore)
@@ -361,7 +395,11 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 		go m.getAPIGatewayv2APIsPerRegion(r, wg, semaphore)
 	}
 
-	if awsservicemap.IsServiceInRegion("elb", r) {
+	res, err = servicemap.IsServiceInRegion("elb", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getELBv2ListenersPerRegion(r, wg, semaphore)
@@ -371,19 +409,31 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 		go m.getELBListenersPerRegion(r, wg, semaphore)
 	}
 
-	if awsservicemap.IsServiceInRegion("mq", r) {
+	res, err = servicemap.IsServiceInRegion("mq", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		m.getMqBrokersPerRegion(r, wg, semaphore)
 	}
 
-	if awsservicemap.IsServiceInRegion("es", r) {
+	res, err = servicemap.IsServiceInRegion("es", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		m.getOpenSearchPerRegion(r, wg, semaphore)
 	}
 
-	if awsservicemap.IsServiceInRegion("grafana", r) {
+	res, err = servicemap.IsServiceInRegion("grafana", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getGrafanaWorkspacesPerRegion(r, wg, semaphore)
@@ -394,40 +444,68 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 	wg.Add(1)
 	go m.getAppRunnerServicesPerRegion(r, wg, semaphore)
 
-	if awsservicemap.IsServiceInRegion("lightsail", r) {
+	res, err = servicemap.IsServiceInRegion("lightsail", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getLightsailInstancesAndContainersPerRegion(r, wg, semaphore)
 	}
 
-	if awsservicemap.IsServiceInRegion("ssm", r) {
+	res, err = servicemap.IsServiceInRegion("ssm", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getSSMParametersPerRegion(r, wg, semaphore)
 	}
 
-	if awsservicemap.IsServiceInRegion("glue", r) {
+	res, err = servicemap.IsServiceInRegion("glue", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getGlueDevEndpointsPerRegion(r, wg, semaphore)
 	}
 
-	if awsservicemap.IsServiceInRegion("ssm", r) {
+	res, err = servicemap.IsServiceInRegion("ssm", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getGlueJobsPerRegion(r, wg, semaphore)
 	}
-	if awsservicemap.IsServiceInRegion("sns", r) {
+	res, err = servicemap.IsServiceInRegion("sns", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getSNSTopicsPerRegion(r, wg, semaphore)
 	}
-	if awsservicemap.IsServiceInRegion("sqs", r) {
+	res, err = servicemap.IsServiceInRegion("sqs", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getSQSQueuesPerRegion(r, wg, semaphore)
 	}
-	if awsservicemap.IsServiceInRegion("dynamodb", r) {
+	res, err = servicemap.IsServiceInRegion("dynamodb", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getDynamoDBTablesPerRegion(r, wg, semaphore)

@@ -31,7 +31,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go"
-	"github.com/bishopfox/awsservicemap"
+	"github.com/bishopfox/awsservicemap/pkg/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -198,32 +198,57 @@ func (m *EndpointsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore 
 	// 	<-semaphore
 	// }()
 
-	if awsservicemap.IsServiceInRegion("lambda", r) {
+	servicemap := awsservicemap.NewServiceMap()
+	res, err := servicemap.IsServiceInRegion("lambda", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getLambdaFunctionsPerRegion(r, wg, semaphore, dataReceiver)
 	}
-	if awsservicemap.IsServiceInRegion("eks", r) {
+	res, err = servicemap.IsServiceInRegion("eks", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getEksClustersPerRegion(r, wg, semaphore, dataReceiver)
 	}
-	if awsservicemap.IsServiceInRegion("mq", r) {
+	res, err = servicemap.IsServiceInRegion("mq", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getMqBrokersPerRegion(r, wg, semaphore, dataReceiver)
 	}
-	if awsservicemap.IsServiceInRegion("es", r) {
+	res, err = servicemap.IsServiceInRegion("es", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		m.getOpenSearchPerRegion(r, wg, semaphore, dataReceiver)
 	}
-	if awsservicemap.IsServiceInRegion("grafana", r) {
+	res, err = servicemap.IsServiceInRegion("grafana", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		m.getGrafanaEndPointsPerRegion(r, wg, semaphore, dataReceiver)
 	}
-	if awsservicemap.IsServiceInRegion("elb", r) {
+	res, err = servicemap.IsServiceInRegion("elb", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getELBv2ListenersPerRegion(r, wg, semaphore, dataReceiver)
@@ -232,7 +257,11 @@ func (m *EndpointsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore 
 		wg.Add(1)
 		go m.getELBListenersPerRegion(r, wg, semaphore, dataReceiver)
 	}
-	if awsservicemap.IsServiceInRegion("apigateway", r) {
+	res, err = servicemap.IsServiceInRegion("apigateway", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getAPIGatewayAPIsPerRegion(r, wg, semaphore, dataReceiver)
@@ -241,12 +270,20 @@ func (m *EndpointsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore 
 		wg.Add(1)
 		go m.getAPIGatewayv2APIsPerRegion(r, wg, semaphore, dataReceiver)
 	}
-	if awsservicemap.IsServiceInRegion("rds", r) {
+	res, err = servicemap.IsServiceInRegion("rds", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getRdsClustersPerRegion(r, wg, semaphore, dataReceiver)
 	}
-	if awsservicemap.IsServiceInRegion("redshift", r) {
+	res, err = servicemap.IsServiceInRegion("redshift", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		m.getRedshiftEndPointsPerRegion(r, wg, semaphore, dataReceiver)
@@ -257,7 +294,11 @@ func (m *EndpointsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore 
 	wg.Add(1)
 	go m.getAppRunnerEndpointsPerRegion(r, wg, semaphore, dataReceiver)
 
-	if awsservicemap.IsServiceInRegion("lightsail", r) {
+	res, err = servicemap.IsServiceInRegion("lightsail", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getLightsailContainerEndpointsPerRegion(r, wg, semaphore, dataReceiver)

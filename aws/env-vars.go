@@ -19,7 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/lightsail"
 	"github.com/aws/aws-sdk-go-v2/service/sagemaker"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
-	"github.com/bishopfox/awsservicemap"
+	"github.com/bishopfox/awsservicemap/pkg/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -165,14 +165,22 @@ func (m *EnvsModule) Receiver(receiver chan EnvironmentVariable) {
 
 func (m *EnvsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan EnvironmentVariable) {
 	defer wg.Done()
+	servicemap := awsservicemap.NewServiceMap()
+	res, err := servicemap.IsServiceInRegion("ecs", r)
+	if err != nil {
 
-	if awsservicemap.IsServiceInRegion("ecs", r) {
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getECSEnvironmentVariablesPerRegion(r, wg, semaphore, dataReceiver)
 	}
 
-	if awsservicemap.IsServiceInRegion("lambda", r) {
+	res, err = servicemap.IsServiceInRegion("lambda", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getLambdaEnvironmentVariablesPerRegion(r, wg, semaphore, dataReceiver)
@@ -183,13 +191,21 @@ func (m *EnvsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan 
 	wg.Add(1)
 	go m.getAppRunnerEnvironmentVariablesPerRegion(r, wg, semaphore, dataReceiver)
 
-	if awsservicemap.IsServiceInRegion("lightsail", r) {
+	res, err = servicemap.IsServiceInRegion("lightsail", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getLightsailEnvironmentVariablesPerRegion(r, wg, semaphore, dataReceiver)
 	}
 
-	if awsservicemap.IsServiceInRegion("sagemaker", r) {
+	res, err = servicemap.IsServiceInRegion("sagemaker", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getSagemakerEnvironmentVariablesPerRegion(r, wg, semaphore, dataReceiver)

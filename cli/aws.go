@@ -300,6 +300,17 @@ var (
 		PreRun: awsPreRun,
 		Run:    runAllChecksCommand,
 	}
+
+	PmapperCommand = &cobra.Command{
+
+		Use:     "pmapper",
+		Aliases: []string{"Pmapper", "pmapperParse"},
+		Short:   "",
+		Long: "\nUse case examples:\n" +
+			os.Args[0] + " aws ",
+		PreRun: awsPreRun,
+		Run:    runPmapperCommand,
+	}
 )
 
 func init() {
@@ -361,6 +372,7 @@ func init() {
 		RAMCommand,
 		TagsCommand,
 		LambdasCommand,
+		PmapperCommand,
 	)
 
 }
@@ -679,6 +691,21 @@ func runPermissionsCommand(cmd *cobra.Command, args []string) {
 	}
 }
 
+func runPmapperCommand(cmd *cobra.Command, args []string) {
+	for _, profile := range AWSProfiles {
+		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		if err != nil {
+			continue
+		}
+		m := aws.PmapperModule{
+			Caller:     *caller,
+			AWSProfile: profile,
+			Goroutines: Goroutines,
+		}
+		m.PrintPmapperData(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+	}
+}
+
 func runPrincipalsCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
 		var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
@@ -989,14 +1016,17 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		endpoints.PrintEndpoints(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
 		ecstasks := aws.ECSTasksModule{
+			DescribeTaskDefinitionClient:     ecsClient,
 			DescribeTasksClient:              ecsClient,
 			ListTasksClient:                  ecsClient,
 			ListClustersClient:               ecsClient,
 			DescribeNetworkInterfacesClient:  ec2Client,
 			IAMSimulatePrincipalPolicyClient: iamClient,
-			Caller:                           *Caller,
-			AWSRegions:                       utils.GetEnabledRegions(AWSProfile, cmd.Root().Version),
-			AWSProfile:                       profile,
+
+			Caller:     *Caller,
+			AWSRegions: utils.GetEnabledRegions(AWSProfile, cmd.Root().Version),
+			AWSProfile: profile,
+			Goroutines: Goroutines,
 		}
 		ecstasks.ECSTasks(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
