@@ -227,10 +227,6 @@ func (m *EKSModule) getEKSRecordsPerRegion(r string, wg *sync.WaitGroup, semapho
 	}()
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
 	var PaginationControl *string
-	var PaginationControl2 *string
-	var role string
-	var adminRole string = ""
-	localAdminMap := make(map[string]bool)
 
 	for {
 		ListClusters, err := m.EKSClientListClustersInterface.ListClusters(
@@ -249,10 +245,72 @@ func (m *EKSModule) getEKSRecordsPerRegion(r string, wg *sync.WaitGroup, semapho
 		}
 
 		for _, clusterName := range ListClusters.Clusters {
-			DescribeCluster, err := m.EKSClientDescribeClusterInterface.DescribeCluster(
+			m.getClusterDetails(clusterName, r, dataReceiver)
+
+		}
+		// The "NextToken" value is nil when there's no more data to return.
+		if ListClusters.NextToken != nil {
+			PaginationControl = ListClusters.NextToken
+		} else {
+			PaginationControl = nil
+			break
+		}
+	}
+}
+
+func (m *EKSModule) getClusterDetails(clusterName string, r string, dataReceiver chan Cluster) {
+	var PaginationControl *string
+	var role string
+	var adminRole string = ""
+	localAdminMap := make(map[string]bool)
+
+	DescribeCluster, err := m.EKSClientDescribeClusterInterface.DescribeCluster(
+		context.TODO(),
+		&eks.DescribeClusterInput{
+			Name: &clusterName,
+		},
+		func(o *eks.Options) {
+			o.Region = r
+		},
+	)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+	}
+
+	//nodeGroups = append(nodeGroups, DescribeCluster.Cluster.)
+	endpoint := aws.ToString(DescribeCluster.Cluster.Endpoint)
+	oidc := aws.ToString(DescribeCluster.Cluster.Identity.Oidc.Issuer)
+	publicEndpoint := strconv.FormatBool(DescribeCluster.Cluster.ResourcesVpcConfig.EndpointPublicAccess)
+	// if DescribeCluster.Cluster.ResourcesVpcConfig.PublicAccessCidrs[0] == "0.0.0.0/0" {
+	// 	publicCIDRs := "0.0.0.0/0"
+	// } else {
+	// 	publicCIDRs := "specific IPs"
+	// }
+
+	for {
+		ListNodeGroups, err := m.EKSClientListNodeGroupsInterface.ListNodegroups(
+			context.TODO(),
+			&eks.ListNodegroupsInput{
+				ClusterName: &clusterName,
+				NextToken:   PaginationControl,
+			},
+			func(o *eks.Options) {
+				o.Region = r
+			},
+		)
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			break
+		}
+
+		for _, nodeGroup := range ListNodeGroups.Nodegroups {
+			DescribeNodegroup, err := m.EKSClientDesribeNodeGroupInterface.DescribeNodegroup(
 				context.TODO(),
-				&eks.DescribeClusterInput{
-					Name: &clusterName,
+				&eks.DescribeNodegroupInput{
+					ClusterName:   &clusterName,
+					NodegroupName: &nodeGroup,
 				},
 				func(o *eks.Options) {
 					o.Region = r
@@ -263,104 +321,52 @@ func (m *EKSModule) getEKSRecordsPerRegion(r string, wg *sync.WaitGroup, semapho
 				m.CommandCounter.Error++
 				break
 			}
-
-			//nodeGroups = append(nodeGroups, DescribeCluster.Cluster.)
-			endpoint := aws.ToString(DescribeCluster.Cluster.Endpoint)
-			oidc := aws.ToString(DescribeCluster.Cluster.Identity.Oidc.Issuer)
-			publicEndpoint := strconv.FormatBool(DescribeCluster.Cluster.ResourcesVpcConfig.EndpointPublicAccess)
-			// if DescribeCluster.Cluster.ResourcesVpcConfig.PublicAccessCidrs[0] == "0.0.0.0/0" {
-			// 	publicCIDRs := "0.0.0.0/0"
-			// } else {
-			// 	publicCIDRs := "specific IPs"
-			// }
-
-			for {
-				ListNodeGroups, err := m.EKSClientListNodeGroupsInterface.ListNodegroups(
-					context.TODO(),
-					&eks.ListNodegroupsInput{
-						ClusterName: &clusterName,
-						NextToken:   PaginationControl2,
-					},
-					func(o *eks.Options) {
-						o.Region = r
-					},
-				)
-				if err != nil {
-					m.modLog.Error(err.Error())
-					m.CommandCounter.Error++
-					break
-				}
-
-				for _, nodeGroup := range ListNodeGroups.Nodegroups {
-					DescribeNodegroup, err := m.EKSClientDesribeNodeGroupInterface.DescribeNodegroup(
-						context.TODO(),
-						&eks.DescribeNodegroupInput{
-							ClusterName:   &clusterName,
-							NodegroupName: &nodeGroup,
-						},
-						func(o *eks.Options) {
-							o.Region = r
-						},
-					)
-					if err != nil {
-						m.modLog.Error(err.Error())
-						m.CommandCounter.Error++
-						break
+			role = aws.ToString(DescribeNodegroup.Nodegroup.NodeRole)
+			if role != "" {
+				// If we've seen the role before, skip the isRoleAdmin role and just pull the value from the localAdminMap
+				if val, ok := localAdminMap[role]; ok {
+					if val {
+						// we've seen it before and it's an admin
+						adminRole = "YES"
+					} else {
+						// we've seen it before and it's NOT an admin
+						adminRole = "No"
 					}
-					role = aws.ToString(DescribeNodegroup.Nodegroup.NodeRole)
-					if role != "" {
-						// If we've seen the role before, skip the isRoleAdmin role and just pull the value from the localAdminMap
-						if val, ok := localAdminMap[role]; ok {
-							if val {
-								// we've seen it before and it's an admin
-								adminRole = "YES"
-							} else {
-								// we've seen it before and it's NOT an admin
-								adminRole = "No"
-							}
-						} else {
-							isRoleAdmin := m.isRoleAdmin(&role)
-							if isRoleAdmin {
-								adminRole = "YES"
-								localAdminMap[role] = true
-							} else {
-								adminRole = "No"
-								localAdminMap[role] = false
-							}
-						}
-					}
-					dataReceiver <- Cluster{
-						AWSService: "EKS",
-						Name:       clusterName,
-						Region:     r,
-						Endpoint:   endpoint,
-						Public:     publicEndpoint,
-						OIDC:       oidc,
-						NodeGroup:  nodeGroup,
-						NodeRole:   role,
-						isAdmin:    adminRole,
-					}
-				}
-
-				if ListNodeGroups.NextToken != nil {
-					PaginationControl2 = ListNodeGroups.NextToken
 				} else {
-					PaginationControl2 = nil
-
-					// }
-					break
+					isRoleAdmin := m.isRoleAdmin(&role)
+					if isRoleAdmin {
+						adminRole = "YES"
+						localAdminMap[role] = true
+					} else {
+						adminRole = "No"
+						localAdminMap[role] = false
+					}
 				}
-
+			}
+			dataReceiver <- Cluster{
+				AWSService: "EKS",
+				Name:       clusterName,
+				Region:     r,
+				Endpoint:   endpoint,
+				Public:     publicEndpoint,
+				OIDC:       oidc,
+				NodeGroup:  nodeGroup,
+				NodeRole:   role,
+				isAdmin:    adminRole,
 			}
 		}
-		// The "NextToken" value is nil when there's no more data to return.
-		if ListClusters.NextToken != nil {
-			PaginationControl = ListClusters.NextToken
+
+		if ListNodeGroups.NextToken != nil {
+			PaginationControl = ListNodeGroups.NextToken
 		} else {
 			PaginationControl = nil
+
+			// }
 			break
 		}
+
 	}
+
 }
 
 func (m *EKSModule) isRoleAdmin(principal *string) bool {

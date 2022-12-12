@@ -322,7 +322,7 @@ func (m *ECSTasksModule) loadTasksData(clusterARN string, taskARNs []string, reg
 		}
 
 		if mappedTask.TaskRole != "" {
-			// If we've seen the function before, skip the isRoleAdmin function and just pull the value from the localAdminMap
+			// If we've seen the role before, skip the isRoleAdmin function and just pull the value from the localAdminMap
 			if val, ok := localAdminMap[mappedTask.TaskRole]; ok {
 				if val {
 					// we've seen it before and it's an admin

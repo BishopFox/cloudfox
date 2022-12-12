@@ -110,6 +110,16 @@ var (
 		Run:    runECRCommand,
 	}
 
+	EKSCommand = &cobra.Command{
+		Use:     "eks",
+		Aliases: []string{"EKS", "clusters"},
+		Short:   "Enumerate EKS clusters. Get a loot file with commands to authenticate with each cluster",
+		Long: "\nUse case examples:\n" +
+			os.Args[0] + " aws --profile readonly_profile eks",
+		PreRun: awsPreRun,
+		Run:    runEKSCommand,
+	}
+
 	EndpointsCommand = &cobra.Command{
 		Use:     "endpoints",
 		Aliases: []string{"endpoint"},
@@ -361,6 +371,7 @@ func init() {
 		SecretsCommand,
 		Route53Command,
 		ECRCommand,
+		EKSCommand,
 		OutboundAssumedRolesCommand,
 		EnvsCommand,
 		PrincipalsCommand,
@@ -473,6 +484,29 @@ func runECRCommand(cmd *cobra.Command, args []string) {
 			Goroutines: Goroutines,
 		}
 		m.PrintECR(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+	}
+}
+
+func runEKSCommand(cmd *cobra.Command, args []string) {
+	for _, profile := range AWSProfiles {
+		var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
+		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		if err != nil {
+			continue
+		}
+		m := aws.EKSModule{
+			EKSClientListClustersInterface:     eks.NewFromConfig(AWSConfig),
+			EKSClientDescribeClusterInterface:  eks.NewFromConfig(AWSConfig),
+			EKSClientListNodeGroupsInterface:   eks.NewFromConfig(AWSConfig),
+			EKSClientDesribeNodeGroupInterface: eks.NewFromConfig(AWSConfig),
+			IAMSimulatePrincipalPolicyClient:   iam.NewFromConfig(AWSConfig),
+
+			Caller:     *caller,
+			AWSRegions: utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile: profile,
+			Goroutines: Goroutines,
+		}
+		m.EKS(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 	}
 }
 
