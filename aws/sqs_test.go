@@ -2,8 +2,6 @@ package aws
 
 import (
 	"context"
-	"io/ioutil"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -14,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/spf13/afero"
 )
 
 func TestSQSQueues(t *testing.T) {
@@ -34,18 +33,15 @@ func TestSQSQueues(t *testing.T) {
 		Goroutines: 3,
 	}
 
-	utils.MockFileSystem(false)
-	tmpDir, err := os.MkdirTemp("", "cloudfox-unittest") // empty 1st arg means new dir is put into default tmp dir on current system
-	if err != nil {
-		t.Fatalf("Cannot create temporary directory for output files: %s", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	fs := utils.MockFileSystem(true)
+	defer utils.MockFileSystem(false)
+	tmpDir := "."
 
 	// execute the module with 3 goroutines
 	m.PrintSQS("table", tmpDir, 3)
 
 	resultsFilePath := filepath.Join(tmpDir, "cloudfox-output/aws/default/table/sqs.txt")
-	resultsFile, err := ioutil.ReadFile(resultsFilePath)
+	resultsFile, err := afero.ReadFile(fs, resultsFilePath)
 	if err != nil {
 		t.Fatalf("Cannot read output file at %s: %s", resultsFilePath, err)
 	}

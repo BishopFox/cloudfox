@@ -2,8 +2,6 @@ package aws
 
 import (
 	"context"
-	"io/ioutil"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -14,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/aws/aws-sdk-go-v2/service/sns/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/spf13/afero"
 )
 
 func TestSNSQueues(t *testing.T) {
@@ -34,21 +33,16 @@ func TestSNSQueues(t *testing.T) {
 		Goroutines: 3,
 	}
 
-	utils.MockFileSystem(false)
-	tmpDir, err := os.MkdirTemp("", "cloudfox-unittest") // empty 1st arg means new dir is put into default tmp dir on current system
-	if err != nil {
-		t.Fatalf("Cannot create temporary directory for output files: %s", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	fs := utils.MockFileSystem(true)
+	defer utils.MockFileSystem(false)
+	tmpDir := "."
 
 	// execute the module with 3 goroutines
 	m.PrintSNS("table", tmpDir, 3)
 
 	resultsFilePath := filepath.Join(tmpDir, "cloudfox-output/aws/default/table/sns.txt")
-	resultsFile, err := ioutil.ReadFile(resultsFilePath)
+	resultsFile, err := afero.ReadFile(fs, resultsFilePath)
 	if err != nil {
-		//fmt.Printf("sleeping")
-		//time.Sleep(60 * time.Second)
 		t.Fatalf("Cannot read output file at %s: %s", resultsFilePath, err)
 	}
 	expectedResults := strings.TrimLeft(`
