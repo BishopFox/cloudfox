@@ -111,6 +111,28 @@ var (
 		Run:    runECRCommand,
 	}
 
+	StoreSQSAccessPolicies bool
+	SQSCommand             = &cobra.Command{
+		Use:     "sqs",
+		Aliases: []string{},
+		Short:   "Enumerate SQS Queues.",
+		Long: "\nUse case examples:\n" +
+			os.Args[0] + " aws sqs --profile readonly_profile",
+		PreRun: awsPreRun,
+		Run:    runSQSCommand,
+	}
+
+	StoreSNSAccessPolicies bool
+	SNSCommand             = &cobra.Command{
+		Use:     "sns",
+		Aliases: []string{},
+		Short:   "Enumerate SNS Queues.",
+		Long: "\nUse case examples:\n" +
+			os.Args[0] + " aws sns --profile readonly_profile",
+		PreRun: awsPreRun,
+		Run:    runSNSCommand,
+	}
+
 	EndpointsCommand = &cobra.Command{
 		Use:     "endpoints",
 		Aliases: []string{"endpoint"},
@@ -318,6 +340,12 @@ func init() {
 	InstancesCommand.Flags().StringVarP(&InstancesFilter, "filter", "t", "all", "[InstanceID | InstanceIDsFile]")
 	InstancesCommand.Flags().BoolVarP(&InstanceMapUserDataAttributesOnly, "userdata", "u", false, "Use this flag to retrieve only the userData attribute from EC2 instances.")
 
+	// SQS module flags
+	SQSCommand.Flags().BoolVarP(&StoreSQSAccessPolicies, "policies", "", false, "Store all flagged access policies along with the output")
+
+	// SNS module flags
+	SNSCommand.Flags().BoolVarP(&StoreSNSAccessPolicies, "policies", "", false, "Store all flagged access policies along with the output")
+
 	//  outbound-assumed-roles module flags
 	OutboundAssumedRolesCommand.Flags().IntVarP(&OutboundAssumedRolesDays, "days", "d", 7, "How many days of CloudTrail events should we go back and look at.")
 
@@ -351,6 +379,8 @@ func init() {
 		SecretsCommand,
 		Route53Command,
 		ECRCommand,
+		SQSCommand,
+		SNSCommand,
 		OutboundAssumedRolesCommand,
 		EnvsCommand,
 		PrincipalsCommand,
@@ -462,6 +492,48 @@ func runECRCommand(cmd *cobra.Command, args []string) {
 			Goroutines: Goroutines,
 		}
 		m.PrintECR(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+	}
+}
+
+func runSQSCommand(cmd *cobra.Command, args []string) {
+	for _, profile := range AWSProfiles {
+		var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
+		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		if err != nil {
+			continue
+		}
+		m := aws.SQSModule{
+			SQSClient: sqs.NewFromConfig(AWSConfig),
+
+			StorePolicies: StoreSQSAccessPolicies,
+
+			Caller:     *caller,
+			AWSRegions: AWSRegions,
+			AWSProfile: profile,
+			Goroutines: Goroutines,
+		}
+		m.PrintSQS(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+	}
+}
+
+func runSNSCommand(cmd *cobra.Command, args []string) {
+	for _, profile := range AWSProfiles {
+		var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
+		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		if err != nil {
+			continue
+		}
+		m := aws.SNSModule{
+			SNSClient: sns.NewFromConfig(AWSConfig),
+
+			StorePolicies: StoreSNSAccessPolicies,
+
+			Caller:     *caller,
+			AWSRegions: AWSRegions,
+			AWSProfile: profile,
+			Goroutines: Goroutines,
+		}
+		m.PrintSNS(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 	}
 }
 

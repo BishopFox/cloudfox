@@ -1,0 +1,17 @@
+{
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {
+                "AWS": "*"
+            },
+            "Action": "SNS:Publish",
+            "Resource": "arn:aws:sns:us-east-2:444455556666:MyTopic",
+            "Condition": {
+                "ArnLike": {
+                    "aws:SourceArn": "arn:aws:cloudwatch:us-east-2:111122223333:alarm:*"
+                }
+            }
+        }
+    ]
+}
