@@ -18,64 +18,59 @@ import (
 	"github.com/fatih/color"
 )
 
-func AzInstancesCommand(AzSubscriptionID, AzRGName, AzOutputFormat string, AzVerbosity int) error {
+func AzInstancesCommand(AzTenantID, AzSubscriptionID, AzOutputFormat string, AzVerbosity int) error {
 	tableHead := []string{"Subscription", "Resource Group", "Name", "Location", "Admin Username", "Private IP", "Public IP"}
 	var tableBody, tableBodyTemp [][]string
 	var outputFile, outputMessagePrefix string
 	var err error
 
-	switch AzSubscriptionID {
-	case "": // Interactive selection menu: ./cloudfox azure instances
-
-		for _, scopeItem := range scopeSelection(nil, "full") {
-			_, tableBodyTemp, err = GetComputeRelevantData(scopeItem.Sub, scopeItem.ResourceGroup)
-			tableBody = append(tableBody, tableBodyTemp...)
-		}
-		outputFile = fmt.Sprintf("%s-multiple-selections", globals.AZ_INTANCES_MODULE_NAME)
-		outputMessagePrefix = "multiple_selections"
-
-	default:
-		switch AzRGName {
-		case "": // ./cloudfox azure instances -s SUBSCRIPTION_ID
-
-			fmt.Printf(
-				"[%s] Enumerating VMs for subscription %s\n",
-				color.CyanString(globals.AZ_INTANCES_MODULE_NAME),
-				AzSubscriptionID)
-
-			subscriptions := getSubscriptions()
-
-			for _, sub := range subscriptions {
-				if ptr.ToString(sub.SubscriptionID) == AzSubscriptionID {
-					rgs := getResourceGroups(ptr.ToString(sub.SubscriptionID))
-					for _, rg := range rgs {
-						_, tableBodyTemp, err = GetComputeRelevantData(sub, rg)
+	if AzTenantID != "" && AzSubscriptionID == "" {
+		// ./cloudfox azure instances --tenant TENANT_ID
+		fmt.Printf(
+			"[%s] Enumerating VMs for tenant %s\n",
+			color.CyanString(globals.AZ_INTANCES_MODULE_NAME),
+			AzTenantID)
+		subscriptions := getSubscriptions()
+		for _, sub := range subscriptions {
+			if ptr.ToString(sub.TenantID) == AzTenantID {
+				rgs := getResourceGroups(ptr.ToString(sub.SubscriptionID))
+				for _, rg := range rgs {
+					_, tableBodyTemp, err = GetComputeRelevantData(sub, rg)
+					if err != nil {
+						// Print error, continue and skip sub
+					} else {
 						tableBody = append(tableBody, tableBodyTemp...)
 					}
 				}
 			}
-
-			outputFile = fmt.Sprintf("%s-sub-%s", globals.AZ_INTANCES_MODULE_NAME, AzRGName)
-			outputMessagePrefix = fmt.Sprintf("sub:%s", AzSubscriptionID)
-
-		default: // ./cloudfox azure instances -s SUBSCRIPTION_ID -g RESOURCE_GROUP_NAME
-
-			fmt.Printf(
-				"[%s] Enumerating VMs for resource group %s in subscription %s\n",
-				color.CyanString(globals.AZ_INTANCES_MODULE_NAME),
-				AzRGName,
-				AzSubscriptionID)
-
-			_, tableBody, err = GetComputeRelevantData(
-				getSubscriptionForResourceGroup(AzRGName),
-				resources.Group{Name: ptr.String(AzRGName)})
-
-			outputFile = fmt.Sprintf("%s_rg_%s", globals.AZ_INTANCES_MODULE_NAME, AzRGName)
-			outputMessagePrefix = fmt.Sprintf("rg:%s", AzRGName)
 		}
-	}
-	if err != nil {
-		return err
+
+	} else if AzTenantID == "" && AzSubscriptionID != "" {
+		// ./cloudfox azure instances --subscription SUBSCRIPTION_ID
+		fmt.Printf(
+			"[%s] Enumerating VMs for subscription %s\n",
+			color.CyanString(globals.AZ_INTANCES_MODULE_NAME),
+			AzSubscriptionID)
+
+		subscriptions := getSubscriptions()
+		for _, sub := range subscriptions {
+			if ptr.ToString(sub.SubscriptionID) == AzSubscriptionID {
+				rgs := getResourceGroups(ptr.ToString(sub.SubscriptionID))
+				for _, rg := range rgs {
+					_, tableBodyTemp, err = GetComputeRelevantData(sub, rg)
+					if err != nil {
+						// Print error, continue and skip sub
+					} else {
+						tableBody = append(tableBody, tableBodyTemp...)
+					}
+				}
+			}
+		}
+		outputFile = fmt.Sprintf("%s-sub-%s", globals.AZ_INTANCES_MODULE_NAME, AzSubscriptionID)
+		outputMessagePrefix = fmt.Sprintf("sub:%s", AzSubscriptionID)
+
+	} else {
+		fmt.Printf("[%s] please enter a valid input, use --help for info", globals.AZ_INTANCES_MODULE_NAME)
 	}
 
 	outputDirectory := filepath.Join(
@@ -128,7 +123,7 @@ func getComputeVMsPerResourceGroupOriginal(subscriptionID string, resourceGroup 
 	computeClient := utils.GetVirtualMachinesClient(subscriptionID)
 	var vms []compute.VirtualMachine
 
-	for page, err := computeClient.List(context.TODO(), resourceGroup); page.NotDone(); page.Next() {
+	for page, err := computeClient.List(context.TODO(), resourceGroup, ""); page.NotDone(); page.Next() {
 		if err != nil {
 			return nil, fmt.Errorf("could not enumerate resource group %s. %s", resourceGroup, err)
 		} else {

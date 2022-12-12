@@ -17,8 +17,8 @@ func TestAzInstancesCommand(t *testing.T) {
 	utils.MockFileSystem(true)
 	subtests := []struct {
 		Name              string
+		AzTenantID        string
 		AzSubscriptionID  string
-		AzRGName          string
 		AzVerbosity       int
 		AzOutputFormat    string
 		resourcesTestFile string
@@ -28,8 +28,8 @@ func TestAzInstancesCommand(t *testing.T) {
 	}{
 		{
 			Name:              "./cloudfox azure instances -s SUBSCRIPTION_ID",
-			AzSubscriptionID:  "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
-			AzRGName:          "",
+			AzTenantID:        "11111111-1111-1111-11111111",
+			AzSubscriptionID:  "",
 			AzVerbosity:       2,
 			AzOutputFormat:    "table",
 			resourcesTestFile: "./test-data/resources.json",
@@ -39,8 +39,8 @@ func TestAzInstancesCommand(t *testing.T) {
 		},
 		{
 			Name:              "./cloudfox azure instances -s SUBSCRIPTION_ID -g RESOURCE_GROUP_NAME",
+			AzTenantID:        "",
 			AzSubscriptionID:  "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
-			AzRGName:          "ResourceGroupA2",
 			AzVerbosity:       2,
 			AzOutputFormat:    "table",
 			resourcesTestFile: "./test-data/resources.json",
@@ -67,8 +67,8 @@ func TestAzInstancesCommand(t *testing.T) {
 		globals.PUBLIC_IPS_TEST_FILE = s.publicIPsTestFile
 
 		err := AzInstancesCommand(
+			s.AzTenantID,
 			s.AzSubscriptionID,
-			s.AzRGName,
 			s.AzOutputFormat,
 			s.AzVerbosity)
 

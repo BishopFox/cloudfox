@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"os/user"
@@ -10,25 +9,10 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/aws/smithy-go/ptr"
 	"github.com/jedib0t/go-pretty/text"
-	"github.com/sirupsen/logrus"
 )
 
 func init() {
 	text.EnableColors()
-}
-
-// txtLogger - Returns the txt logger
-func TxtLogger() *logrus.Logger {
-	txtLogger := logrus.New()
-	txtFile, err := os.OpenFile(fmt.Sprintf("%s/cloudfox-error.log", ptr.ToString(GetLogDirPath())), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		panic(fmt.Sprintf("Failed to open log file %v", err))
-	}
-	txtLogger.Out = txtFile
-	txtLogger.SetLevel(logrus.InfoLevel)
-	//txtLogger.SetReportCaller(true)
-
-	return txtLogger
 }
 
 // This function returns ~/.cloudfox.
