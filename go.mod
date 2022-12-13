@@ -44,7 +44,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.33.1
 	github.com/aws/aws-sdk-go-v2/service/sts v1.17.5
 	github.com/aws/smithy-go v1.13.4
-	github.com/bishopfox/awsservicemap v0.0.7
+	github.com/bishopfox/awsservicemap v1.0.0
 	github.com/dominikbraun/graph v0.15.0
 	github.com/fatih/color v1.13.0
 	github.com/jedib0t/go-pretty v4.3.0+incompatible
