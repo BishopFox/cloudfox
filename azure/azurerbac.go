@@ -17,50 +17,65 @@ import (
 	"github.com/fatih/color"
 )
 
-func AzRBACCommand(c CloudFoxRBACclient, tenantID, subscriptionID, outputFormat string, verbosity int) error {
+func AzRBACCommand(c CloudFoxRBACclient, AzTenantID, AzSubscriptionID, AzOutputFormat string, AzVerbosity int) error {
+	tableHead := []string{"User Name", "Role Name", "Role Scope"}
+	var tableBody, tb [][]string
+	var outputFile, outputMessagePrefix string
 
-	var header []string
-	var body [][]string
-	var fileNameWithoutExtension, controlMessagePrefix string
-	outputDirectory := filepath.Join(globals.CLOUDFOX_BASE_OUTPUT_DIRECTORY, globals.AZ_OUTPUT_DIRECTORY)
+	if AzTenantID != "" && AzSubscriptionID == "" {
+		// ./cloudfox azure instances --tenant TENANT_ID
+		fmt.Printf(
+			"[%s] Enumerating RBAC roles for tenant %s\n",
+			color.CyanString(globals.AZ_RBAC_MODULE_NAME),
+			AzTenantID)
 
-	switch tenantID {
-	case "": // TO-DO: add an option for the interactive menu: ./cloudfox azure rbac
-		return fmt.Errorf(
-			"[%s] please select a valid tenant ID",
-			color.CyanString(globals.AZ_RBAC_MODULE_NAME))
-
-	default:
-		switch subscriptionID {
-		case "": // ./cloudfox azure rbac -t TENANT_ID
-			fmt.Printf(
-				"[%s] Enumerating Azure RBAC assignments for all subscriptions in tenant %s\n",
-				color.CyanString(globals.AZ_RBAC_MODULE_NAME),
-				tenantID)
-
-			subIDs := getSubscriptionIDsForTenant(tenantID)
-			c.initialize(tenantID, subIDs)
-			var b [][]string
-			for _, subID := range subIDs {
-				header, b = c.GetRelevantRBACData(tenantID, subID)
-				body = append(body, b...)
+		var selectedSubs []string
+		subscriptions := getSubscriptions()
+		for _, sub := range subscriptions {
+			if ptr.ToString(sub.TenantID) == AzTenantID {
+				selectedSubs = append(selectedSubs, ptr.ToString(sub.SubscriptionID))
 			}
-			fileNameWithoutExtension = fmt.Sprintf("rbac-tenant-%s", tenantID)
-			controlMessagePrefix = fmt.Sprintf("ten-%s", tenantID)
-
-		default: // ./cloudfox azure rbac -t TENANT_ID -s SUBSCRIPTION_ID
-			fmt.Printf(
-				"[%s] Enumerating Azure RBAC assignments for the single subscription %s\n",
-				color.CyanString(globals.AZ_RBAC_MODULE_NAME),
-				subscriptionID)
-			c.initialize(tenantID, []string{subscriptionID})
-			header, body = c.GetRelevantRBACData(tenantID, subscriptionID)
-			fileNameWithoutExtension = fmt.Sprintf("rbac-sub-%s", subscriptionID)
-			controlMessagePrefix = fmt.Sprintf("sub-%s", subscriptionID)
 		}
+		c.initialize(AzTenantID, selectedSubs)
+		for _, s := range selectedSubs {
+			_, tb = c.GetRelevantRBACData(AzTenantID, s)
+			tableBody = append(tableBody, tb...)
+		}
+		outputFile = fmt.Sprintf("%s-ten-%s", globals.AZ_RBAC_MODULE_NAME, AzTenantID)
+		outputMessagePrefix = fmt.Sprintf("ten:%s", AzTenantID)
+
+	} else if AzTenantID == "" && AzSubscriptionID != "" {
+		// ./cloudfox azure instances --subscription SUBSCRIPTION_ID
+		fmt.Printf(
+			"[%s] Enumerating RBAC roles for subscription %s\n",
+			color.CyanString(globals.AZ_RBAC_MODULE_NAME),
+			AzSubscriptionID)
+
+		var selectedSubs []string
+		subscriptions := getSubscriptions()
+		for _, sub := range subscriptions {
+			if ptr.ToString(sub.SubscriptionID) == AzSubscriptionID {
+				selectedSubs = append(selectedSubs, ptr.ToString(sub.SubscriptionID))
+			}
+		}
+		c.initialize(AzTenantID, selectedSubs)
+		for _, s := range selectedSubs {
+			_, tb = c.GetRelevantRBACData(AzTenantID, s)
+			tableBody = append(tableBody, tb...)
+		}
+		outputFile = fmt.Sprintf("%s-sub-%s", globals.AZ_RBAC_MODULE_NAME, AzSubscriptionID)
+		outputMessagePrefix = fmt.Sprintf("sub:%s", AzSubscriptionID)
+
+	} else {
+		fmt.Println("Please enter a valid input with a valid flag, use --help for info")
 	}
 
-	utils.OutputSelector(verbosity, outputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_RBAC_MODULE_NAME, controlMessagePrefix)
+	outputDirectory := filepath.Join(
+		globals.CLOUDFOX_BASE_OUTPUT_DIRECTORY,
+		globals.AZ_OUTPUT_DIRECTORY)
+
+	utils.OutputSelector(AzVerbosity, AzOutputFormat, tableHead, tableBody, outputDirectory, outputFile, globals.AZ_RBAC_MODULE_NAME, outputMessagePrefix)
+
 	return nil
 }
 
@@ -72,21 +87,21 @@ type CloudFoxRBACclient struct {
 
 func (c *CloudFoxRBACclient) initialize(tenantID string, subscriptionIDs []string) error {
 	var err error
-	var u []graphrbac.User
-	var rd []authorization.RoleDefinition
-	var ra []authorization.RoleAssignment
+	c.AADUsers = nil
+	c.roleAssignments = nil
+	c.roleDefinitions = nil
+
+	c.AADUsers, err = getAzureADUsers(tenantID)
+	if err != nil {
+		return fmt.Errorf(
+			"[%s] failed to get users for tenant %s: %s",
+			color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME),
+			tenantID,
+			err)
+	}
 
 	for _, subID := range subscriptionIDs {
-		u, err = getAzureADUsers(tenantID)
-		if err != nil {
-			return fmt.Errorf(
-				"[%s] failed to get users for tenant %s: %s",
-				color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME),
-				tenantID,
-				err)
-		}
-		c.AADUsers = append(c.AADUsers, u...)
-		rd, err = getRoleDefinitions(subID)
+		rd, err := getRoleDefinitions(subID)
 		if err != nil {
 			fmt.Printf(
 				"[%s] failed to get role definitions for subscription %s: %s. Skipping it.\n",
@@ -95,7 +110,8 @@ func (c *CloudFoxRBACclient) initialize(tenantID string, subscriptionIDs []strin
 				err)
 		}
 		c.roleDefinitions = append(c.roleDefinitions, rd...)
-		ra, err = getRoleAssignments(subID)
+
+		ra, err := getRoleAssignments(subID)
 		if err != nil {
 			fmt.Printf(
 				"[%s] failed to get role assignments for subscription %s: %s. Skipping it.\n",
@@ -109,24 +125,23 @@ func (c *CloudFoxRBACclient) initialize(tenantID string, subscriptionIDs []strin
 }
 
 func (c *CloudFoxRBACclient) GetRelevantRBACData(tenantID, subscriptionID string) ([]string, [][]string) {
-	header := []string{"Tenant ID", "Tenant Name", "Domain", "User Name", "Role Name", "Role Scope"}
+	header := []string{"User Name", "Role Name", "Role Scope"}
 	var body [][]string
-	var extract RoleBindingRelevantData
-	var results []RoleBindingRelevantData
+	var roleAssignmentRelevantData RoleAssignmentRelevantData
+	var results []RoleAssignmentRelevantData
 
-	for _, ra := range c.roleAssignments {
-		extract.tenantID = tenantID
-		extract.subscriptionID = subscriptionID
-		extract.roleScope = ptr.ToString(ra.Properties.Scope)
-		findUser(c.AADUsers, ra, &extract)
-		findRole(c.roleDefinitions, ra, &extract)
-		results = append(results, extract)
+	for _, rb := range c.roleAssignments {
+		roleAssignmentRelevantData.tenantID = tenantID
+		roleAssignmentRelevantData.subscriptionID = subscriptionID
+		roleAssignmentRelevantData.roleScope = ptr.ToString(rb.Properties.Scope)
+		findUser(c.AADUsers, rb, &roleAssignmentRelevantData)
+		findRole(c.roleDefinitions, rb, &roleAssignmentRelevantData)
+		results = append(results, roleAssignmentRelevantData)
 	}
 
 	for _, r := range results {
 		body = append(body,
 			[]string{
-				r.tenantID,
 				r.userDisplayName,
 				r.roleName,
 				r.roleScope,
@@ -135,29 +150,29 @@ func (c *CloudFoxRBACclient) GetRelevantRBACData(tenantID, subscriptionID string
 	return header, body
 }
 
-func findUser(users []graphrbac.User, roleAssignment authorization.RoleAssignment, extract *RoleBindingRelevantData) {
+func findUser(users []graphrbac.User, roleAssignment authorization.RoleAssignment, roleAssignmentRelevantData *RoleAssignmentRelevantData) {
 	for _, u := range users {
 		principalID := ptr.ToString(roleAssignment.Properties.PrincipalID)
 		if ptr.ToString(u.ObjectID) == principalID {
-			// Extract user data here
-			extract.userDisplayName = ptr.ToString(u.DisplayName)
+			// roleBindingRelevantData user data here
+			roleAssignmentRelevantData.userDisplayName = ptr.ToString(u.DisplayName)
 		}
 	}
 }
 
-func findRole(roleDefinitions []authorization.RoleDefinition, roleAssignment authorization.RoleAssignment, extract *RoleBindingRelevantData) {
+func findRole(roleDefinitions []authorization.RoleDefinition, roleAssignment authorization.RoleAssignment, roleAssignmentRelevantData *RoleAssignmentRelevantData) {
 	// Find the role
 	for _, rd := range roleDefinitions {
 		roleDefinitionID := strings.Split(ptr.ToString(roleAssignment.Properties.RoleDefinitionID), "/")[len(strings.Split(ptr.ToString(roleAssignment.Properties.RoleDefinitionID), "/"))-1]
 		rdID := strings.Split(ptr.ToString(rd.ID), "/")[len(strings.Split(ptr.ToString(rd.ID), "/"))-1]
-		// Extract role data here
+		// roleBindingRelevantData role data here
 		if rdID == roleDefinitionID {
-			extract.roleName = ptr.ToString(rd.RoleName)
+			roleAssignmentRelevantData.roleName = ptr.ToString(rd.RoleName)
 		}
 	}
 }
 
-type RoleBindingRelevantData struct {
+type RoleAssignmentRelevantData struct {
 	tenantID        string
 	subscriptionID  string
 	roleScope       string

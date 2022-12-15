@@ -27,8 +27,8 @@ func TestAzInstancesCommand(t *testing.T) {
 		publicIPsTestFile string
 	}{
 		{
-			Name:              "./cloudfox azure instances -s SUBSCRIPTION_ID",
-			AzTenantID:        "11111111-1111-1111-11111111",
+			Name:              "./cloudfox azure instances --tenant TENANT_ID",
+			AzTenantID:        "11111111-1111-1111-1111-11111111",
 			AzSubscriptionID:  "",
 			AzVerbosity:       2,
 			AzOutputFormat:    "table",
@@ -38,7 +38,7 @@ func TestAzInstancesCommand(t *testing.T) {
 			publicIPsTestFile: "./test-data/public-ips.json",
 		},
 		{
-			Name:              "./cloudfox azure instances -s SUBSCRIPTION_ID -g RESOURCE_GROUP_NAME",
+			Name:              "./cloudfox azure instances --subscription SUBSCRIPTION_ID",
 			AzTenantID:        "",
 			AzSubscriptionID:  "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
 			AzVerbosity:       2,

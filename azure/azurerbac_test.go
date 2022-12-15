@@ -8,11 +8,6 @@ import (
 	"github.com/BishopFox/cloudfox/utils"
 )
 
-func TestGetAzureADUsersOriginal(t *testing.T) {
-	u, _ := getAzureADUsersOriginal("5af4fb40-52da-4ac1-a717-3978ec456c2c")
-	fmt.Println(u)
-}
-
 func TestAzRBACCommand(t *testing.T) {
 	fmt.Println()
 	fmt.Println("[test case] Azure RBAC Command")
@@ -34,30 +29,19 @@ func TestAzRBACCommand(t *testing.T) {
 			Name:                    "./cloudfox azure rbac --tenant 11111111-1111-1111-1111-11111111",
 			AzTenantID:              "11111111-1111-1111-1111-11111111",
 			AzSubscriptionID:        "",
-			AzVerbosity:             2,
 			AzOutputFormat:          "table",
+			AzVerbosity:             2,
 			resourcesTestFile:       "./test-data/resources.json",
 			usersTestFile:           "./test-data/users.json",
 			roleDefinitionsTestFile: "./test-data/role-definitions.json",
 			roleAssignmentsTestFile: "./test-data/role-assignments.json",
 		},
 		{
-			Name:                    "./cloudfox azure rbac -t 11111111-1111-1111-1111-11111111 -s AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
-			AzTenantID:              "11111111-1111-1111-1111-11111111",
+			Name:                    "./cloudfox azure rbac --subscription AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
+			AzTenantID:              "",
 			AzSubscriptionID:        "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
-			AzVerbosity:             2,
 			AzOutputFormat:          "table",
-			resourcesTestFile:       "./test-data/resources.json",
-			usersTestFile:           "./test-data/users.json",
-			roleDefinitionsTestFile: "./test-data/role-definitions.json",
-			roleAssignmentsTestFile: "./test-data/role-assignments.json",
-		},
-		{
-			Name:                    "./cloudfox azure rbac -t 11111111-1111-1111-1111-11111111 -s BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB",
-			AzTenantID:              "11111111-1111-1111-1111-11111111",
-			AzSubscriptionID:        "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB",
 			AzVerbosity:             2,
-			AzOutputFormat:          "table",
 			resourcesTestFile:       "./test-data/resources.json",
 			usersTestFile:           "./test-data/users.json",
 			roleDefinitionsTestFile: "./test-data/role-definitions.json",
@@ -81,8 +65,7 @@ func TestAzRBACCommand(t *testing.T) {
 		globals.ROLE_DEFINITIONS_TEST_FILE = s.roleDefinitionsTestFile
 		globals.ROLE_ASSIGNMENTS_TEST_FILE = s.roleAssignmentsTestFile
 
-		err := AzRBACCommand(CloudFoxRBACclient{}, s.AzTenantID, s.AzSubscriptionID, s.AzOutputFormat, s.AzVerbosity)
-		if err != nil {
+		if err := AzRBACCommand(CloudFoxRBACclient{}, s.AzTenantID, s.AzSubscriptionID, s.AzOutputFormat, s.AzVerbosity); err != nil {
 			fmt.Println(err)
 		}
 	}

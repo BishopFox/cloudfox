@@ -19,7 +19,7 @@ import (
 )
 
 func AzInstancesCommand(AzTenantID, AzSubscriptionID, AzOutputFormat string, AzVerbosity int) error {
-	tableHead := []string{"Subscription", "Resource Group", "Name", "Location", "Admin Username", "Private IP", "Public IP"}
+	tableHead := []string{"Resource Group", "Name", "Location", "Admin Username", "Private IP", "Public IP"}
 	var tableBody, tableBodyTemp [][]string
 	var outputFile, outputMessagePrefix string
 	var err error
@@ -44,6 +44,8 @@ func AzInstancesCommand(AzTenantID, AzSubscriptionID, AzOutputFormat string, AzV
 				}
 			}
 		}
+		outputFile = fmt.Sprintf("%s-ten-%s", globals.AZ_INTANCES_MODULE_NAME, AzTenantID)
+		outputMessagePrefix = fmt.Sprintf("ten:%s", AzTenantID)
 
 	} else if AzTenantID == "" && AzSubscriptionID != "" {
 		// ./cloudfox azure instances --subscription SUBSCRIPTION_ID
@@ -70,7 +72,7 @@ func AzInstancesCommand(AzTenantID, AzSubscriptionID, AzOutputFormat string, AzV
 		outputMessagePrefix = fmt.Sprintf("sub:%s", AzSubscriptionID)
 
 	} else {
-		fmt.Printf("[%s] please enter a valid input, use --help for info", globals.AZ_INTANCES_MODULE_NAME)
+		fmt.Println("Please enter a valid input with a valid flag, use --help for info")
 	}
 
 	outputDirectory := filepath.Join(
@@ -83,7 +85,7 @@ func AzInstancesCommand(AzTenantID, AzSubscriptionID, AzOutputFormat string, AzV
 }
 
 func GetComputeRelevantData(sub subscriptions.Subscription, rg resources.Group) ([]string, [][]string, error) {
-	header := []string{"Subscription", "Resource Group", "Name", "Location", "Admin Username", "Private IP", "Public IP"}
+	header := []string{"Resource Group", "Name", "Location", "Admin Username", "Private IP", "Public IP"}
 	var body [][]string
 
 	subscriptionID := ptr.ToString(sub.SubscriptionID)
@@ -104,7 +106,6 @@ func GetComputeRelevantData(sub subscriptions.Subscription, rg resources.Group) 
 		body = append(
 			body,
 			[]string{
-				ptr.ToString(sub.DisplayName),
 				ptr.ToString(rg.Name),
 				ptr.ToString(vm.Name),
 				ptr.ToString(vm.Location),
