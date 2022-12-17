@@ -86,11 +86,9 @@ func printAvailableScopeFull(availableScope []scopeElement) {
 		tableBody = append(
 			tableBody,
 			[]string{
-				strconv.Itoa(scopeItem.menuIndex),
-				ptr.ToString(scopeItem.Tenant.DisplayName),
 				ptr.ToString(scopeItem.Tenant.TenantID),
-				ptr.ToString(scopeItem.Sub.DisplayName),
 				ptr.ToString(scopeItem.Sub.SubscriptionID),
+				ptr.ToString(scopeItem.Sub.DisplayName),
 				ptr.ToString(scopeItem.ResourceGroup.Name)})
 	}
 	sort.Slice(
@@ -101,11 +99,9 @@ func printAvailableScopeFull(availableScope []scopeElement) {
 	)
 	utils.PrintTableToScreen(
 		[]string{
-			"#",
-			"Tenant Name",
 			"Tenant ID",
-			"Subscription",
 			"Subscription ID",
+			"Subscription Name",
 			"Resource Group Name"},
 		tableBody)
 }
