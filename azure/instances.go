@@ -19,73 +19,75 @@ import (
 )
 
 func AzInstancesCommand(AzTenantID, AzSubscriptionID, AzOutputFormat string, AzVerbosity int) error {
-	tableHead := []string{"Resource Group", "Name", "Location", "Admin Username", "Private IP", "Public IP"}
-	var tableBody, tableBodyTemp [][]string
-	var outputFile, outputMessagePrefix string
-	var err error
+	var header []string
+	var body [][]string
+	var outputDirectory, controlMessagePrefix string
 
 	if AzTenantID != "" && AzSubscriptionID == "" {
 		// ./cloudfox azure instances --tenant TENANT_ID
-		fmt.Printf(
-			"[%s] Enumerating VMs for tenant %s\n",
-			color.CyanString(globals.AZ_INTANCES_MODULE_NAME),
-			AzTenantID)
-		subscriptions := getSubscriptions()
-		for _, sub := range subscriptions {
-			if ptr.ToString(sub.TenantID) == AzTenantID {
-				rgs := getResourceGroups(ptr.ToString(sub.SubscriptionID))
-				for _, rg := range rgs {
-					_, tableBodyTemp, err = GetComputeRelevantData(sub, rg)
-					if err != nil {
-						// Print error, continue and skip sub
-					} else {
-						tableBody = append(tableBody, tableBodyTemp...)
-					}
-				}
-			}
-		}
-		outputFile = fmt.Sprintf("%s-ten-%s", globals.AZ_INTANCES_MODULE_NAME, AzTenantID)
-		outputMessagePrefix = fmt.Sprintf("ten:%s", AzTenantID)
+		fmt.Printf("[%s] Enumerating VMs for tenant %s\n", color.CyanString(globals.AZ_INSTANCES_MODULE_NAME), AzTenantID)
+		controlMessagePrefix = fmt.Sprintf("tenant-%s", AzTenantID)
+		outputDirectory = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, globals.AZ_DIR_TEN, AzTenantID)
+		header, body = getVMsPerTenantID(AzTenantID)
 
 	} else if AzTenantID == "" && AzSubscriptionID != "" {
 		// ./cloudfox azure instances --subscription SUBSCRIPTION_ID
-		fmt.Printf(
-			"[%s] Enumerating VMs for subscription %s\n",
-			color.CyanString(globals.AZ_INTANCES_MODULE_NAME),
-			AzSubscriptionID)
-
-		subscriptions := getSubscriptions()
-		for _, sub := range subscriptions {
-			if ptr.ToString(sub.SubscriptionID) == AzSubscriptionID {
-				rgs := getResourceGroups(ptr.ToString(sub.SubscriptionID))
-				for _, rg := range rgs {
-					_, tableBodyTemp, err = GetComputeRelevantData(sub, rg)
-					if err != nil {
-						// Print error, continue and skip sub
-					} else {
-						tableBody = append(tableBody, tableBodyTemp...)
-					}
-				}
-			}
-		}
-		outputFile = fmt.Sprintf("%s-sub-%s", globals.AZ_INTANCES_MODULE_NAME, AzSubscriptionID)
-		outputMessagePrefix = fmt.Sprintf("sub:%s", AzSubscriptionID)
+		fmt.Printf("[%s] Enumerating VMs for subscription %s\n", color.CyanString(globals.AZ_INSTANCES_MODULE_NAME), AzSubscriptionID)
+		controlMessagePrefix = fmt.Sprintf("subscription-%s", AzSubscriptionID)
+		outputDirectory = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, globals.AZ_DIR_SUB, AzSubscriptionID)
+		header, body = getVMsPerSubscriptionID(AzSubscriptionID)
 
 	} else {
-		fmt.Println("Please enter a valid input with a valid flag, use --help for info")
+		// Error: please make a valid flag selection
+		fmt.Println("Please enter a valid input with a valid flag. Use --help for info.")
 	}
 
-	outputDirectory := filepath.Join(
-		globals.CLOUDFOX_BASE_OUTPUT_DIRECTORY,
-		globals.AZ_OUTPUT_DIRECTORY)
-
-	utils.OutputSelector(AzVerbosity, AzOutputFormat, tableHead, tableBody, outputDirectory, outputFile, globals.AZ_INTANCES_MODULE_NAME, outputMessagePrefix)
+	fileNameWithoutExtension := globals.AZ_INSTANCES_MODULE_NAME
+	utils.OutputSelector(AzVerbosity, AzOutputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_INSTANCES_MODULE_NAME, controlMessagePrefix)
 
 	return nil
 }
 
-func GetComputeRelevantData(sub subscriptions.Subscription, rg resources.Group) ([]string, [][]string, error) {
-	header := []string{"Resource Group", "Name", "Location", "Admin Username", "Private IP", "Public IP"}
+func getVMsPerTenantID(AzTenantID string) ([]string, [][]string) {
+	var resultsHeader []string
+	var resultsBody, b [][]string
+	var err error
+
+	for _, s := range getSubscriptionsForTenant(AzTenantID) {
+		for _, rg := range getResourceGroups(ptr.ToString(s.SubscriptionID)) {
+			resultsHeader, b, err = getComputeRelevantData(s, rg)
+			if err != nil {
+				fmt.Printf("[%s] Could not enumerate VMs for resource group %s in subscription %s\n", color.CyanString(globals.AZ_INSTANCES_MODULE_NAME), ptr.ToString(rg.Name), ptr.ToString(s.SubscriptionID))
+			} else {
+				resultsBody = append(resultsBody, b...)
+			}
+		}
+	}
+	return resultsHeader, resultsBody
+}
+
+func getVMsPerSubscriptionID(AzSubscriptionID string) ([]string, [][]string) {
+	var resultsHeader []string
+	var resultsBody, b [][]string
+	var err error
+
+	for _, s := range getSubscriptions() {
+		if ptr.ToString(s.SubscriptionID) == AzSubscriptionID {
+			for _, rg := range getResourceGroups(ptr.ToString(s.SubscriptionID)) {
+				resultsHeader, b, err = getComputeRelevantData(s, rg)
+				if err != nil {
+					fmt.Printf("[%s] Could not enumerate VMs for resource group %s in subscription %s\n", color.CyanString(globals.AZ_INSTANCES_MODULE_NAME), ptr.ToString(rg.Name), ptr.ToString(s.SubscriptionID))
+				} else {
+					resultsBody = append(resultsBody, b...)
+				}
+			}
+		}
+	}
+	return resultsHeader, resultsBody
+}
+
+func getComputeRelevantData(sub subscriptions.Subscription, rg resources.Group) ([]string, [][]string, error) {
+	header := []string{"VM Name", "VM Location", "Private IPs", "Public IPs", "Admin Username", "Resource Group Name"}
 	var body [][]string
 
 	subscriptionID := ptr.ToString(sub.SubscriptionID)
@@ -106,12 +108,13 @@ func GetComputeRelevantData(sub subscriptions.Subscription, rg resources.Group) 
 		body = append(
 			body,
 			[]string{
-				ptr.ToString(rg.Name),
+				subscriptionID,
 				ptr.ToString(vm.Name),
 				ptr.ToString(vm.Location),
-				adminUsername,
 				strings.Join(privateIPs, "\n"),
 				strings.Join(publicIPs, "\n"),
+				adminUsername,
+				ptr.ToString(rg.Name),
 			},
 		)
 	}

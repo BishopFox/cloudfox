@@ -65,7 +65,7 @@ func TestAzRBACCommand(t *testing.T) {
 		globals.ROLE_DEFINITIONS_TEST_FILE = s.roleDefinitionsTestFile
 		globals.ROLE_ASSIGNMENTS_TEST_FILE = s.roleAssignmentsTestFile
 
-		if err := AzRBACCommand(CloudFoxRBACclient{}, s.AzTenantID, s.AzSubscriptionID, s.AzOutputFormat, s.AzVerbosity); err != nil {
+		if err := AzRBACCommand(s.AzTenantID, s.AzSubscriptionID, s.AzOutputFormat, s.AzVerbosity); err != nil {
 			fmt.Println(err)
 		}
 	}

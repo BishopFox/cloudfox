@@ -117,27 +117,6 @@ func getSubscriptionsForTenant(tenantID string) []subscriptions.Subscription {
 	return results
 }
 
-func getSubscriptionIDsForTenant(tenantID string) []string {
-	subs := getSubscriptions()
-	var subIDs []string
-	for _, s := range subs {
-		if ptr.ToString(s.TenantID) == tenantID {
-			subIDs = append(subIDs, ptr.ToString(s.SubscriptionID))
-		}
-	}
-	return subIDs
-}
-
-func getSubscriptionForResourceGroup(resourceGroupName string) subscriptions.Subscription {
-	availableScope := getAvailableScope()
-	for _, s := range availableScope {
-		if ptr.ToString(s.ResourceGroup.Name) == resourceGroupName {
-			return s.Sub
-		}
-	}
-	return subscriptions.Subscription{}
-}
-
 func getAvailableScope() []scopeElement {
 	var index int
 	var results []scopeElement

@@ -17,66 +17,69 @@ import (
 	"github.com/fatih/color"
 )
 
-func AzRBACCommand(c CloudFoxRBACclient, AzTenantID, AzSubscriptionID, AzOutputFormat string, AzVerbosity int) error {
-	tableHead := []string{"User Name", "Role Name", "Role Scope"}
-	var tableBody, tb [][]string
-	var outputFile, outputMessagePrefix string
+func AzRBACCommand(AzTenantID, AzSubscriptionID, AzOutputFormat string, AzVerbosity int) error {
+	var c CloudFoxRBACclient
+	var header []string
+	var body [][]string
+	var outputDirectory, controlMessagePrefix string
 
 	if AzTenantID != "" && AzSubscriptionID == "" {
-		// ./cloudfox azure instances --tenant TENANT_ID
-		fmt.Printf(
-			"[%s] Enumerating RBAC roles for tenant %s\n",
-			color.CyanString(globals.AZ_RBAC_MODULE_NAME),
-			AzTenantID)
-
-		var selectedSubs []string
-		subscriptions := getSubscriptions()
-		for _, sub := range subscriptions {
-			if ptr.ToString(sub.TenantID) == AzTenantID {
-				selectedSubs = append(selectedSubs, ptr.ToString(sub.SubscriptionID))
-			}
+		// ./cloudfox azure rbac --tenant TENANT_ID
+		fmt.Printf("[%s] Enumerating RBAC permissions for tenant %s\n", color.CyanString(globals.AZ_RBAC_MODULE_NAME), AzTenantID)
+		controlMessagePrefix = fmt.Sprintf("tenant-%s", AzTenantID)
+		outputDirectory = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, "tenants", AzTenantID)
+		var err error
+		header, body, err = getRBACperTenant(AzTenantID, c)
+		if err != nil {
+			return err
 		}
-		c.initialize(AzTenantID, selectedSubs)
-		for _, s := range selectedSubs {
-			_, tb = c.GetRelevantRBACData(AzTenantID, s)
-			tableBody = append(tableBody, tb...)
-		}
-		outputFile = fmt.Sprintf("%s-ten-%s", globals.AZ_RBAC_MODULE_NAME, AzTenantID)
-		outputMessagePrefix = fmt.Sprintf("ten:%s", AzTenantID)
-
 	} else if AzTenantID == "" && AzSubscriptionID != "" {
-		// ./cloudfox azure instances --subscription SUBSCRIPTION_ID
-		fmt.Printf(
-			"[%s] Enumerating RBAC roles for subscription %s\n",
-			color.CyanString(globals.AZ_RBAC_MODULE_NAME),
-			AzSubscriptionID)
-
-		var selectedSubs []string
-		subscriptions := getSubscriptions()
-		for _, sub := range subscriptions {
-			if ptr.ToString(sub.SubscriptionID) == AzSubscriptionID {
-				selectedSubs = append(selectedSubs, ptr.ToString(sub.SubscriptionID))
-			}
-		}
-		c.initialize(AzTenantID, selectedSubs)
-		for _, s := range selectedSubs {
-			_, tb = c.GetRelevantRBACData(AzTenantID, s)
-			tableBody = append(tableBody, tb...)
-		}
-		outputFile = fmt.Sprintf("%s-sub-%s", globals.AZ_RBAC_MODULE_NAME, AzSubscriptionID)
-		outputMessagePrefix = fmt.Sprintf("sub:%s", AzSubscriptionID)
+		// ./cloudfox azure rbac --subscription SUBSCRIPTION_ID
+		fmt.Printf("[%s] Enumerating RBAC permissions for subscription %s\n", color.CyanString(globals.AZ_RBAC_MODULE_NAME), AzSubscriptionID)
+		controlMessagePrefix = fmt.Sprintf("subscription-%s", AzSubscriptionID)
+		outputDirectory = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, "subscriptions", AzSubscriptionID)
+		header, body = getRBACperSubscription(AzTenantID, AzSubscriptionID, c)
 
 	} else {
-		fmt.Println("Please enter a valid input with a valid flag, use --help for info")
+		// Error: please make a valid flag selection
+		fmt.Println("Please enter a valid input with a valid flag. Use --help for info.")
 	}
 
-	outputDirectory := filepath.Join(
-		globals.CLOUDFOX_BASE_OUTPUT_DIRECTORY,
-		globals.AZ_OUTPUT_DIRECTORY)
-
-	utils.OutputSelector(AzVerbosity, AzOutputFormat, tableHead, tableBody, outputDirectory, outputFile, globals.AZ_RBAC_MODULE_NAME, outputMessagePrefix)
+	fileNameWithoutExtension := globals.AZ_RBAC_MODULE_NAME
+	utils.OutputSelector(AzVerbosity, AzOutputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_RBAC_MODULE_NAME, controlMessagePrefix)
 
 	return nil
+}
+
+func getRBACperTenant(AzTenantID string, c CloudFoxRBACclient) ([]string, [][]string, error) {
+	var selectedSubs, resultsHeader []string
+	var resultsBody, b [][]string
+	for _, s := range getSubscriptions() {
+		if ptr.ToString(s.TenantID) == AzTenantID {
+			selectedSubs = append(selectedSubs, ptr.ToString(s.SubscriptionID))
+		}
+	}
+	err := c.initialize(AzTenantID, selectedSubs)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, s := range selectedSubs {
+		resultsHeader, b = c.GetRelevantRBACData(AzTenantID, s)
+		resultsBody = append(resultsBody, b...)
+	}
+	return resultsHeader, resultsBody, nil
+}
+
+func getRBACperSubscription(AzTenantID, AzSubscriptionID string, c CloudFoxRBACclient) ([]string, [][]string) {
+	var resultsHeader []string
+	var resultsBody [][]string
+	for _, s := range getSubscriptions() {
+		if ptr.ToString(s.SubscriptionID) == AzSubscriptionID {
+			c.initialize(AzTenantID, []string{ptr.ToString(s.SubscriptionID)})
+			resultsHeader, resultsBody = c.GetRelevantRBACData(AzTenantID, ptr.ToString(s.SubscriptionID))
+		}
+	}
+	return resultsHeader, resultsBody
 }
 
 type CloudFoxRBACclient struct {
@@ -93,31 +96,19 @@ func (c *CloudFoxRBACclient) initialize(tenantID string, subscriptionIDs []strin
 
 	c.AADUsers, err = getAzureADUsers(tenantID)
 	if err != nil {
-		return fmt.Errorf(
-			"[%s] failed to get users for tenant %s: %s",
-			color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME),
-			tenantID,
-			err)
+		return fmt.Errorf("[%s] failed to get users for tenant %s: %s", color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME), tenantID, err)
 	}
 
 	for _, subID := range subscriptionIDs {
 		rd, err := getRoleDefinitions(subID)
 		if err != nil {
-			fmt.Printf(
-				"[%s] failed to get role definitions for subscription %s: %s. Skipping it.\n",
-				color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME),
-				subID,
-				err)
+			fmt.Printf("[%s] failed to get role definitions for subscription %s: %s. Skipping it.\n", color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME), subID, err)
 		}
 		c.roleDefinitions = append(c.roleDefinitions, rd...)
 
 		ra, err := getRoleAssignments(subID)
 		if err != nil {
-			fmt.Printf(
-				"[%s] failed to get role assignments for subscription %s: %s. Skipping it.\n",
-				color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME),
-				subID,
-				err)
+			fmt.Printf("[%s] failed to get role assignments for subscription %s: %s. Skipping it.\n", color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME), subID, err)
 		}
 		c.roleAssignments = append(c.roleAssignments, ra...)
 	}

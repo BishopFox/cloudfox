@@ -41,14 +41,14 @@ Display Available Azure CLI Sessions:
 		Aliases: []string{},
 		Short:   "Display role assignemts for Azure principals",
 		Long: `
-Enumerate role assignments for a all subscriptions in a specific tenant:
+Enumerate role assignments for a specific tenant:
 ./cloudfox az rbac --tenant TENANT_ID
 
 Enumerate role assignments for a specific subscription:
-./cloudfox az rbac -t TENANT_ID -s SUBSCRIPTION_ID
+./cloudfox az rbac --subscription SUBSCRIPTION_ID
 `,
 		Run: func(cmd *cobra.Command, args []string) {
-			err := azure.AzRBACCommand(azure.CloudFoxRBACclient{}, AzTenantID, AzSubscriptionID, AzOutputFormat, AzVerbosity)
+			err := azure.AzRBACCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, AzVerbosity)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -59,14 +59,11 @@ Enumerate role assignments for a specific subscription:
 		Aliases: []string{},
 		Short:   "Enumerates Azure Compute instances",
 		Long: `
-Select scope from interactive menu:
-./cloudfox az instances
+Enumerate VMs for a specific tenant:
+./cloudfox az instances --tenant TENANT_ID
 
-Enumerate VMs for all resource groups in a subscription:
-./cloudfox az instances --subscription SUBSCRIPTION_ID
-
-Enumerate VMs from a specific resource group:
-./cloudfox az instances -s SUBSCRIPTION_ID -g RESOURCE_GROUP_NAME`,
+Enumerate VMs for a specific subscription:
+./cloudfox az instances --subscription SUBSCRIPTION_ID`,
 		Run: func(cmd *cobra.Command, args []string) {
 			err := azure.AzInstancesCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, AzVerbosity)
 			if err != nil {
@@ -83,10 +80,7 @@ Enumerate storage accounts for a specific tenant:
 ./cloudfox az storage --tenant TENANT_ID
 
 Enumerate storage accounts for a specific subscription:
-./cloudfox az storage -t TENANT_ID -s SUBSCRIPTION_ID
-
-Enumerate storage accounts for a specific resource group:
-./cloudfox az storage -t TENANT_ID -s SUBSCRIPTION_ID -g RESOURCE_GROUP_NAME
+./cloudfox az storage --subscription SUBSCRIPTION_ID
 `,
 		Run: func(cmd *cobra.Command, args []string) {
 			azure.AzStorageCommand(AzTenantID, AzSubscriptionID, AzRGName, AzOutputFormat, AzVerbosity)

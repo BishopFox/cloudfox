@@ -16,58 +16,80 @@ import (
 	"github.com/fatih/color"
 )
 
-func AzStorageCommand(AzTenantID, AzSubscriptionID, AzRGName, AzOutputFormat string, AzVerbosity int) error {
-
-	header := []string{"Tenant ID", "Subscription ID", "Storage Account Name", "Kind", "BlobPublicAccess"}
+func AzStorageCommand(AzTenantID, AzSubscriptionID, AzOutputFormat string, AzVerbosity int) error {
+	var err error
+	var header []string
 	var body [][]string
-	var fileNameWithoutExtension, controlMessagePrefix string
-	outputDirectory := filepath.Join(globals.CLOUDFOX_BASE_OUTPUT_DIRECTORY, globals.AZ_OUTPUT_DIRECTORY)
+	var outputDirectory, controlMessagePrefix string
 
-	switch AzTenantID {
-	case "": // TO-DO: add an option for the interactive menu: ./cloudfox azure storage
-		return fmt.Errorf(
-			"[%s] please select a valid tenant ID",
-			color.CyanString(globals.AZ_STORAGE_MODULE_NAME))
-	default:
-		switch AzSubscriptionID {
-		case "": // ./cloudfox azure storage -t TENANT_ID
-			subs := getSubscriptionsForTenant(AzTenantID)
-			for _, s := range subs {
-				b, err := getRelevantStorageAccountData(AzTenantID, ptr.ToString(s.SubscriptionID))
-				if err != nil {
-					// To-do: Print error message and skip
-				}
-				body = append(body, b...)
-			}
-			fileNameWithoutExtension = fmt.Sprintf("storage-tenant-%s", AzTenantID)
-			controlMessagePrefix = fmt.Sprintf("ten-%s", AzTenantID)
+	if AzTenantID != "" && AzSubscriptionID == "" {
+		// ./cloudfox azure storage --tenant TENANT_ID
+		fmt.Printf("[%s] Enumerating storage accounts for tenant %s\n", color.CyanString(globals.AZ_STORAGE_MODULE_NAME), AzTenantID)
+		controlMessagePrefix = fmt.Sprintf("tenant-%s", AzTenantID)
+		outputDirectory = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, "tenants", AzTenantID)
+		header, body, err = getStoragePerTenant(AzTenantID)
 
-		default:
-			switch AzRGName {
-			case "": // ./cloudfox azure storage -t TENANT_ID -s SUB_ID
-				fileNameWithoutExtension = fmt.Sprintf("storage-sub-%s", AzSubscriptionID)
-				controlMessagePrefix = fmt.Sprintf("sub-%s", AzSubscriptionID)
-			default: // ./cloudfox azure storage -t TENANT_ID -s SUB_ID -g RG_NAME
-				fileNameWithoutExtension = fmt.Sprintf("storage-rg-%s", AzSubscriptionID)
-				controlMessagePrefix = fmt.Sprintf("rg-%s", AzSubscriptionID)
-			}
-		}
+	} else if AzTenantID == "" && AzSubscriptionID != "" {
+		// ./cloudfox azure storage --subscription SUBSCRIPTION_ID
+		fmt.Printf("[%s] Enumerating storage account for subscription %s\n", color.CyanString(globals.AZ_STORAGE_MODULE_NAME), AzSubscriptionID)
+		controlMessagePrefix = fmt.Sprintf("subscription-%s", AzSubscriptionID)
+		outputDirectory = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, "subscriptions", AzSubscriptionID)
+		header, body, err = getStoragePerSubscription(AzSubscriptionID)
+
+	} else {
+		// Error: please make a valid flag selection
+		fmt.Println("Please enter a valid input with a valid flag. Use --help for info.")
 	}
-
+	if err != nil {
+		return err
+	}
+	fileNameWithoutExtension := globals.AZ_STORAGE_MODULE_NAME
 	utils.OutputSelector(AzVerbosity, AzOutputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_STORAGE_MODULE_NAME, controlMessagePrefix)
 	return nil
 }
 
-func getRelevantStorageAccountData(tenantID, subscriptionID string) ([][]string, error) {
+func getStoragePerTenant(AzTenantID string) ([]string, [][]string, error) {
+	var err error
+	var header []string
+	var body, b [][]string
+
+	for _, s := range getSubscriptionsForTenant(AzTenantID) {
+		header, b, err = getRelevantStorageAccountData(ptr.ToString(s.SubscriptionID))
+		if err != nil {
+			return nil, nil, err
+		} else {
+			body = append(body, b...)
+		}
+	}
+	return header, body, nil
+}
+
+func getStoragePerSubscription(AzSubscriptionID string) ([]string, [][]string, error) {
+	var err error
+	var header []string
+	var body [][]string
+
+	for _, s := range getSubscriptions() {
+		if ptr.ToString(s.SubscriptionID) == AzSubscriptionID {
+			header, body, err = getRelevantStorageAccountData(ptr.ToString(s.SubscriptionID))
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+	return header, body, nil
+}
+
+func getRelevantStorageAccountData(subscriptionID string) ([]string, [][]string, error) {
+	tableHeader := []string{"Subscription ID", "Storage Account Name", "Kind", "Public Blob Allowed"}
 	var tableBody [][]string
 	storageAccounts, err := getStorageAccounts(subscriptionID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, sa := range storageAccounts {
 		tableBody = append(tableBody,
 			[]string{
-				tenantID,
 				subscriptionID,
 				ptr.ToString(sa.Name),
 				string(sa.Kind),
@@ -75,7 +97,7 @@ func getRelevantStorageAccountData(tenantID, subscriptionID string) ([][]string,
 			},
 		)
 	}
-	return tableBody, nil
+	return tableHeader, tableBody, nil
 }
 
 var getStorageAccounts = getStorageAccountsOriginal
