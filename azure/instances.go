@@ -229,11 +229,14 @@ var getPublicIP = getPublicIPOriginal
 
 func getPublicIPOriginal(subscriptionID string, resourceGroup string, ip network.InterfaceIPConfiguration) (*string, error) {
 	client := utils.GetPublicIPClient(subscriptionID)
+	if ip.InterfaceIPConfigurationPropertiesFormat.PublicIPAddress == nil {
+		return nil, fmt.Errorf("NoPublicIP")
+	}
 	publicIPID := ptr.ToString(ip.InterfaceIPConfigurationPropertiesFormat.PublicIPAddress.ID)
 	publicIPName := strings.Split(publicIPID, "/")[len(strings.Split(publicIPID, "/"))-1]
 	publicIPExpanded, err := client.Get(context.TODO(), resourceGroup, publicIPName, "")
 	if err != nil {
-		return nil, fmt.Errorf("IPNotFound_%s", publicIPName)
+		return nil, fmt.Errorf("NoPublicIP")
 	}
 	return publicIPExpanded.PublicIPAddressPropertiesFormat.IPAddress, nil
 }

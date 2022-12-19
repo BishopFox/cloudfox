@@ -83,7 +83,7 @@ Enumerate storage accounts for a specific subscription:
 ./cloudfox az storage --subscription SUBSCRIPTION_ID
 `,
 		Run: func(cmd *cobra.Command, args []string) {
-			azure.AzStorageCommand(AzTenantID, AzSubscriptionID, AzRGName, AzOutputFormat, AzVerbosity)
+			azure.AzStorageCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, AzVerbosity)
 		},
 	}
 )
