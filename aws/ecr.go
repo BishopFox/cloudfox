@@ -16,7 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/aws/aws-sdk-go-v2/service/ecr/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
-	"github.com/bishopfox/awsservicemap/pkg/awsservicemap"
+	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -133,7 +133,9 @@ func (m *ECRModule) PrintECR(outputFormat string, outputDirectory string, verbos
 func (m *ECRModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Repository) {
 	defer wg.Done()
 
-	servicemap := awsservicemap.NewServiceMap()
+	servicemap := &awsservicemap.AwsServiceMap{
+		JsonFileSource: "EMBEDDED_IN_PACKAGE",
+	}
 	res, err := servicemap.IsServiceInRegion("ecr", r)
 	if err != nil {
 		m.modLog.Error(err)

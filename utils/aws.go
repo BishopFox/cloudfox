@@ -14,7 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go/ptr"
-	"github.com/bishopfox/awsservicemap/pkg/awsservicemap"
+	"github.com/bishopfox/awsservicemap"
 	"github.com/kyokomi/emoji"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/afero"
@@ -71,7 +71,9 @@ func GetEnabledRegions(awsProfile string, version string) []string {
 	)
 
 	if err != nil {
-		servicemap := awsservicemap.NewServiceMap()
+		servicemap := &awsservicemap.AwsServiceMap{
+			JsonFileSource: "EMBEDDED_IN_PACKAGE",
+		}
 		AWSRegions, err := servicemap.GetAllRegions()
 		if err != nil {
 			TxtLog.Println(err)

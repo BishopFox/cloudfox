@@ -37,7 +37,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
-	"github.com/bishopfox/awsservicemap/pkg/awsservicemap"
+	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -309,7 +309,9 @@ func (m *Inventory2Module) Receiver(receiver chan GlobalResourceCount2) {
 func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan GlobalResourceCount2) {
 	defer wg.Done()
 
-	servicemap := awsservicemap.NewServiceMap()
+	servicemap := &awsservicemap.AwsServiceMap{
+		JsonFileSource: "EMBEDDED_IN_PACKAGE",
+	}
 
 	res, err := servicemap.IsServiceInRegion("lambda", r)
 	if err != nil {

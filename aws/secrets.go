@@ -14,7 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
-	"github.com/bishopfox/awsservicemap/pkg/awsservicemap"
+	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -131,7 +131,9 @@ func (m *SecretsModule) Receiver(receiver chan Secret) {
 func (m *SecretsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Secret) {
 	defer wg.Done()
 
-	servicemap := awsservicemap.NewServiceMap()
+	servicemap := &awsservicemap.AwsServiceMap{
+		JsonFileSource: "EMBEDDED_IN_PACKAGE",
+	}
 	res, err := servicemap.IsServiceInRegion("secretsmanager", r)
 	if err != nil {
 		m.modLog.Error(err)

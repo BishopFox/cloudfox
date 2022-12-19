@@ -19,7 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/lightsail"
 	"github.com/aws/aws-sdk-go-v2/service/sagemaker"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
-	"github.com/bishopfox/awsservicemap/pkg/awsservicemap"
+	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -165,7 +165,9 @@ func (m *EnvsModule) Receiver(receiver chan EnvironmentVariable) {
 
 func (m *EnvsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan EnvironmentVariable) {
 	defer wg.Done()
-	servicemap := awsservicemap.NewServiceMap()
+	servicemap := &awsservicemap.AwsServiceMap{
+		JsonFileSource: "EMBEDDED_IN_PACKAGE",
+	}
 	res, err := servicemap.IsServiceInRegion("ecs", r)
 	if err != nil {
 
