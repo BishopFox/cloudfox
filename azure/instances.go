@@ -87,7 +87,7 @@ func getVMsPerSubscriptionID(AzSubscriptionID string) ([]string, [][]string) {
 }
 
 func getComputeRelevantData(sub subscriptions.Subscription, rg resources.Group) ([]string, [][]string, error) {
-	header := []string{"VM Name", "VM Location", "Private IPs", "Public IPs", "Admin Username", "Resource Group Name"}
+	header := []string{"Subscription ID", "VM Name", "VM Location", "Private IPs", "Public IPs", "Admin Username", "Resource Group Name"}
 	var body [][]string
 
 	subscriptionID := ptr.ToString(sub.SubscriptionID)
