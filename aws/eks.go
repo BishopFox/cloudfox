@@ -28,11 +28,12 @@ type EKSModule struct {
 	EKSClientDesribeNodeGroupInterface eks.DescribeNodegroupAPIClient
 	IAMSimulatePrincipalPolicyClient   iam.SimulatePrincipalPolicyAPIClient
 
-	Caller       sts.GetCallerIdentityOutput
-	AWSRegions   []string
-	OutputFormat string
-	Goroutines   int
-	AWSProfile   string
+	Caller         sts.GetCallerIdentityOutput
+	AWSRegions     []string
+	OutputFormat   string
+	Goroutines     int
+	AWSProfile     string
+	SkipAdminCheck bool
 
 	// Main module data
 	Clusters       []Cluster
@@ -276,13 +277,17 @@ func (m *EKSModule) getEKSRecordsPerRegion(r string, wg *sync.WaitGroup, semapho
 						adminRole = "No"
 					}
 				} else {
-					isRoleAdmin := m.isRoleAdmin(&role)
-					if isRoleAdmin {
-						adminRole = "YES"
-						localAdminMap[role] = true
+					if !m.SkipAdminCheck {
+						isRoleAdmin := m.isRoleAdmin(&role)
+						if isRoleAdmin {
+							adminRole = "YES"
+							localAdminMap[role] = true
+						} else {
+							adminRole = "No"
+							localAdminMap[role] = false
+						}
 					} else {
-						adminRole = "No"
-						localAdminMap[role] = false
+						adminRole = "Skipped"
 					}
 				}
 			}
