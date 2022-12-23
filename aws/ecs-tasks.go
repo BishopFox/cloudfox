@@ -32,11 +32,12 @@ type ECSTasksModule struct {
 	DescribeNetworkInterfacesClient  ec2.DescribeNetworkInterfacesAPIClient
 	IAMSimulatePrincipalPolicyClient iam.SimulatePrincipalPolicyAPIClient
 
-	Caller       sts.GetCallerIdentityOutput
-	AWSRegions   []string
-	OutputFormat string
-	AWSProfile   string
-	Goroutines   int
+	Caller         sts.GetCallerIdentityOutput
+	AWSRegions     []string
+	OutputFormat   string
+	AWSProfile     string
+	Goroutines     int
+	SkipAdminCheck bool
 
 	MappedECSTasks []MappedECSTask
 	CommandCounter console.CommandCounter
@@ -110,7 +111,7 @@ func (m *ECSTasksModule) printECSTaskData(outputFormat string, outputDirectory s
 		"External IP",
 		"Internal IP",
 		"RoleArn",
-		"IsAdmin",
+		"isAdminRole?",
 	}
 
 	for _, ecsTask := range m.MappedECSTasks {
@@ -332,13 +333,17 @@ func (m *ECSTasksModule) loadTasksData(clusterARN string, taskARNs []string, reg
 					adminRole = "No"
 				}
 			} else {
-				isRoleAdmin := m.isRoleAdmin(&mappedTask.TaskRole)
-				if isRoleAdmin {
-					adminRole = "YES"
-					localAdminMap[mappedTask.TaskRole] = true
+				if !m.SkipAdminCheck {
+					isRoleAdmin := m.isRoleAdmin(&mappedTask.TaskRole)
+					if isRoleAdmin {
+						adminRole = "YES"
+						localAdminMap[mappedTask.TaskRole] = true
+					} else {
+						adminRole = "No"
+						localAdminMap[mappedTask.TaskRole] = false
+					}
 				} else {
-					adminRole = "No"
-					localAdminMap[mappedTask.TaskRole] = false
+					adminRole = "Skipped"
 				}
 			}
 			if adminRole != "" {

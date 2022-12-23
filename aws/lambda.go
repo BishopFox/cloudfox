@@ -24,11 +24,12 @@ type LambdasModule struct {
 	LambdaClient                     *lambda.Client
 	IAMSimulatePrincipalPolicyClient iam.SimulatePrincipalPolicyAPIClient
 
-	Caller       sts.GetCallerIdentityOutput
-	AWSRegions   []string
-	OutputFormat string
-	Goroutines   int
-	AWSProfile   string
+	Caller         sts.GetCallerIdentityOutput
+	AWSRegions     []string
+	OutputFormat   string
+	Goroutines     int
+	AWSProfile     string
+	SkipAdminCheck bool
 
 	// Main module data
 	Lambdas        []Lambda
@@ -246,13 +247,17 @@ func (m *LambdasModule) getLambdasPerRegion(r string, wg *sync.WaitGroup, semaph
 						adminRole = "No"
 					}
 				} else {
-					isRoleAdmin := m.isRoleAdmin(function.Role)
-					if isRoleAdmin {
-						adminRole = "YES"
-						localAdminMap[role] = true
+					if !m.SkipAdminCheck {
+						isRoleAdmin := m.isRoleAdmin(function.Role)
+						if isRoleAdmin {
+							adminRole = "YES"
+							localAdminMap[role] = true
+						} else {
+							adminRole = "No"
+							localAdminMap[role] = false
+						}
 					} else {
-						adminRole = "No"
-						localAdminMap[role] = false
+						adminRole = "Skipped"
 					}
 				}
 			}

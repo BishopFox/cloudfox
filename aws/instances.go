@@ -34,6 +34,7 @@ type InstancesModule struct {
 	UserDataAttributesOnly           bool
 	AWSProfile                       string
 	InstanceProfileToRolesMap        map[string][]iamTypes.Role
+	SkipAdminCheck                   bool
 
 	// Module's Results
 	MappedInstances []MappedInstance
@@ -400,13 +401,17 @@ func (m *InstancesModule) loadInstanceData(instance types.Instance, region strin
 							adminRole = "No"
 						}
 					} else {
-						isRoleAdmin := m.isRoleAdmin(role.Arn)
-						if isRoleAdmin {
-							adminRole = "YES"
-							localAdminMap[roleArn] = true
+						if !m.SkipAdminCheck {
+							isRoleAdmin := m.isRoleAdmin(role.Arn)
+							if isRoleAdmin {
+								adminRole = "YES"
+								localAdminMap[roleArn] = true
+							} else {
+								adminRole = "No"
+								localAdminMap[roleArn] = false
+							}
 						} else {
-							adminRole = "No"
-							localAdminMap[roleArn] = false
+							adminRole = "Skipped"
 						}
 					}
 				}

@@ -56,6 +56,7 @@ var (
 	AWSConfirm         bool
 	AWSOutputFormat    string
 	AWSOutputDirectory string
+	AWSSkipAdminCheck  bool
 	Goroutines         int
 	Verbosity          int
 	AWSCommands        = &cobra.Command{
@@ -325,7 +326,7 @@ var (
 
 func init() {
 	cobra.OnInitialize(initAWSProfiles)
-	// Principal Trusts Module Flags
+	// Role Trusts Module Flags
 	RoleTrustCommand.Flags().StringVarP(&RoleTrustFilter, "filter", "t", "all", "[AccountNumber | PrincipalARN | PrincipalName | ServiceName]")
 
 	// Map Access Keys Module Flags
@@ -358,6 +359,7 @@ func init() {
 	AWSCommands.PersistentFlags().IntVarP(&Verbosity, "verbosity", "v", 1, "1 = Print control messages only\n2 = Print control messages, module output\n3 = Print control messages, module output, and loot file output\n")
 	AWSCommands.PersistentFlags().StringVar(&AWSOutputDirectory, "outdir", ".", "Output Directory ")
 	AWSCommands.PersistentFlags().IntVarP(&Goroutines, "max-goroutines", "g", 30, "Maximum number of concurrent goroutines")
+	AWSCommands.PersistentFlags().BoolVar(&AWSSkipAdminCheck, "skip-admin-check", false, "Skip check to determine if role is an Admin")
 
 	AWSCommands.AddCommand(
 		AllChecksCommand,
@@ -501,10 +503,11 @@ func runEKSCommand(cmd *cobra.Command, args []string) {
 			EKSClientDesribeNodeGroupInterface: eks.NewFromConfig(AWSConfig),
 			IAMSimulatePrincipalPolicyClient:   iam.NewFromConfig(AWSConfig),
 
-			Caller:     *caller,
-			AWSRegions: utils.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile: profile,
-			Goroutines: Goroutines,
+			Caller:         *caller,
+			AWSRegions:     utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile:     profile,
+			Goroutines:     Goroutines,
+			SkipAdminCheck: AWSSkipAdminCheck,
 		}
 		m.EKS(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 	}
@@ -617,11 +620,11 @@ func runInstancesCommand(cmd *cobra.Command, args []string) {
 			IAMSimulatePrincipalPolicyClient: iam.NewFromConfig(AWSConfig),
 			IAMListInstanceProfilesClient:    iam.NewFromConfig(AWSConfig),
 
-			Caller:     *caller,
-			AWSRegions: utils.GetEnabledRegions(profile, cmd.Root().Version),
-
+			Caller:                 *caller,
+			AWSRegions:             utils.GetEnabledRegions(profile, cmd.Root().Version),
 			UserDataAttributesOnly: InstanceMapUserDataAttributesOnly,
 			AWSProfile:             profile,
+			SkipAdminCheck:         AWSSkipAdminCheck,
 		}
 		m.Instances(InstancesFilter, AWSOutputFormat, AWSOutputDirectory, Verbosity)
 	}
@@ -684,6 +687,7 @@ func runLambdasCommand(cmd *cobra.Command, args []string) {
 			AWSRegions:                       utils.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile:                       profile,
 			Goroutines:                       Goroutines,
+			SkipAdminCheck:                   AWSSkipAdminCheck,
 		}
 		m.PrintLambdas(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 	}
@@ -790,6 +794,7 @@ func runRoleTrustCommand(cmd *cobra.Command, args []string) {
 			Caller:                           *caller,
 			AWSProfile:                       profile,
 			Goroutines:                       Goroutines,
+			SkipAdminCheck:                   AWSSkipAdminCheck,
 		}
 		m.PrintRoleTrusts(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 	}
@@ -866,10 +871,11 @@ func runECSTasksCommand(cmd *cobra.Command, args []string) {
 			DescribeNetworkInterfacesClient:  ec2.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
 			IAMSimulatePrincipalPolicyClient: iam.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
 
-			Caller:     *caller,
-			AWSRegions: utils.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile: profile,
-			Goroutines: Goroutines,
+			Caller:         *caller,
+			AWSRegions:     utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile:     profile,
+			Goroutines:     Goroutines,
+			SkipAdminCheck: AWSSkipAdminCheck,
 		}
 		m.ECSTasks(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 	}
@@ -987,9 +993,9 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			IAMListInstanceProfilesClient:    iamClient,
 			Caller:                           *Caller,
 			AWSRegions:                       utils.GetEnabledRegions(profile, cmd.Root().Version),
-
-			UserDataAttributesOnly: false,
-			AWSProfile:             profile,
+			SkipAdminCheck:                   AWSSkipAdminCheck,
+			UserDataAttributesOnly:           false,
+			AWSProfile:                       profile,
 		}
 		instances.Instances(InstancesFilter, AWSOutputFormat, AWSOutputDirectory, Verbosity)
 		route53 := aws.Route53Module{
@@ -1008,6 +1014,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			AWSRegions:                       utils.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile:                       profile,
 			Goroutines:                       Goroutines,
+			SkipAdminCheck:                   AWSSkipAdminCheck,
 		}
 		lambdasMod.PrintLambdas(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
@@ -1057,10 +1064,11 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			DescribeNetworkInterfacesClient:  ec2Client,
 			IAMSimulatePrincipalPolicyClient: iamClient,
 
-			Caller:     *Caller,
-			AWSRegions: utils.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile: profile,
-			Goroutines: Goroutines,
+			Caller:         *Caller,
+			AWSRegions:     utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile:     profile,
+			Goroutines:     Goroutines,
+			SkipAdminCheck: AWSSkipAdminCheck,
 		}
 		ecstasks.ECSTasks(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
@@ -1183,6 +1191,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			Caller:                           *Caller,
 			AWSProfile:                       profile,
 			Goroutines:                       Goroutines,
+			SkipAdminCheck:                   AWSSkipAdminCheck,
 		}
 		roleTrusts.PrintRoleTrusts(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 		iamSimulator := aws.IamSimulatorModule{
