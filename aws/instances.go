@@ -35,6 +35,8 @@ type InstancesModule struct {
 	AWSProfile                       string
 	InstanceProfileToRolesMap        map[string][]iamTypes.Role
 	SkipAdminCheck                   bool
+	pmapperMod                       PmapperModule
+	pmapperError                     error
 
 	// Module's Results
 	MappedInstances []MappedInstance
@@ -84,6 +86,13 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 
 	//Connects to EC2 service and maps instances
 	fmt.Printf("[%s][%s] Enumerating EC2 instances in all regions for account %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
+	m.pmapperMod, m.pmapperError = m.initPmapperGraph()
+	if m.pmapperError != nil {
+		fmt.Printf("[%s][%s] No pmapper data found for this account. Using cloudfox's iam-simulator for role analysis\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	} else {
+		fmt.Printf("[%s][%s] Found pmapper data for this account. Using it for role analysis\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+
+	}
 
 	wg := new(sync.WaitGroup)
 
@@ -402,7 +411,13 @@ func (m *InstancesModule) loadInstanceData(instance types.Instance, region strin
 						}
 					} else {
 						if !m.SkipAdminCheck {
-							isRoleAdmin := m.isRoleAdmin(role.Arn)
+							var isRoleAdmin bool
+							if m.pmapperError != nil {
+								isRoleAdmin = m.hasPathToAdmin(m.pmapperMod, role.Arn)
+							} else {
+								isRoleAdmin = m.isRoleAdmin(role.Arn)
+							}
+
 							if isRoleAdmin {
 								adminRole = "YES"
 								localAdminMap[roleArn] = true
@@ -487,4 +502,29 @@ func (m *InstancesModule) getRolesFromInstanceProfiles() {
 	}
 
 	// next step - debug and watch localAdminmap to see if it's working like it does on lambda
+}
+
+func (m *InstancesModule) hasPathToAdmin(pmapperMod PmapperModule, principal *string) bool {
+	privescCheckResult := pmapperMod.DoesPrincipalHavePathToAdmin(aws.ToString(principal))
+
+	if privescCheckResult {
+		return true
+	} else {
+		return false
+	}
+
+}
+
+func (m *InstancesModule) initPmapperGraph() (PmapperModule, error) {
+	pmapperMod := PmapperModule{
+		Caller:     m.Caller,
+		AWSProfile: m.AWSProfile,
+		Goroutines: m.Goroutines,
+	}
+	err := pmapperMod.initPmapperGraph()
+	if err != nil {
+		return pmapperMod, err
+	}
+	return pmapperMod, nil
+
 }
