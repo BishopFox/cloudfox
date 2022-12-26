@@ -16,33 +16,36 @@ func TestAzInstancesCommand(t *testing.T) {
 	// Test case parameters
 	utils.MockFileSystem(true)
 	subtests := []struct {
-		Name              string
-		AzTenantID        string
-		AzSubscriptionID  string
-		AzVerbosity       int
-		AzOutputFormat    string
+		name              string
+		azTenantID        string
+		azSubscriptionID  string
+		azVerbosity       int
+		azOutputFormat    string
+		version           string
 		resourcesTestFile string
 		vmsTestFile       string
 		nicsTestFile      string
 		publicIPsTestFile string
 	}{
 		{
-			Name:              "./cloudfox azure instances --tenant TENANT_ID",
-			AzTenantID:        "11111111-1111-1111-1111-11111111",
-			AzSubscriptionID:  "",
-			AzVerbosity:       2,
-			AzOutputFormat:    "table",
+			name:              "./cloudfox azure instances --tenant TENANT_ID",
+			azTenantID:        "11111111-1111-1111-1111-11111111",
+			azSubscriptionID:  "",
+			azVerbosity:       2,
+			azOutputFormat:    "table",
+			version:           "DEV",
 			resourcesTestFile: "./test-data/resources.json",
 			vmsTestFile:       "./test-data/vms.json",
 			nicsTestFile:      "./test-data/nics.json",
 			publicIPsTestFile: "./test-data/public-ips.json",
 		},
 		{
-			Name:              "./cloudfox azure instances --subscription SUBSCRIPTION_ID",
-			AzTenantID:        "",
-			AzSubscriptionID:  "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
-			AzVerbosity:       2,
-			AzOutputFormat:    "table",
+			name:              "./cloudfox azure instances --subscription SUBSCRIPTION_ID",
+			azTenantID:        "",
+			azSubscriptionID:  "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
+			azVerbosity:       2,
+			azOutputFormat:    "table",
+			version:           "DEV",
 			resourcesTestFile: "./test-data/resources.json",
 			vmsTestFile:       "./test-data/vms.json",
 			nicsTestFile:      "./test-data/nics.json",
@@ -51,7 +54,6 @@ func TestAzInstancesCommand(t *testing.T) {
 	}
 
 	// Mocked functions to simulate Azure calls and responses
-	getTenants = mockedGetTenants
 	getSubscriptions = mockedGetSubscriptions
 	getResourceGroups = mockedGetResourceGroups
 	getComputeVMsPerResourceGroup = mockedGetComputeVMsPerResourceGroup
@@ -60,18 +62,13 @@ func TestAzInstancesCommand(t *testing.T) {
 
 	for _, s := range subtests {
 		fmt.Println()
-		fmt.Printf("[subtest] %s\n", s.Name)
+		fmt.Printf("[subtest] %s\n", s.name)
 		globals.RESOURCES_TEST_FILE = s.resourcesTestFile
 		globals.VMS_TEST_FILE = s.vmsTestFile
 		globals.NICS_TEST_FILE = s.nicsTestFile
 		globals.PUBLIC_IPS_TEST_FILE = s.publicIPsTestFile
 
-		err := AzInstancesCommand(
-			s.AzTenantID,
-			s.AzSubscriptionID,
-			s.AzOutputFormat,
-			s.AzVerbosity)
-
+		err := AzInstancesCommand(s.azTenantID, s.azSubscriptionID, s.azOutputFormat, s.version, s.azVerbosity)
 		if err != nil {
 			log.Fatalf(err.Error())
 		}

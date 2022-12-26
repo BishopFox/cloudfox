@@ -14,34 +14,37 @@ func TestAzRBACCommand(t *testing.T) {
 
 	// Test case parameters
 	subtests := []struct {
-		Name                    string
-		AzTenantID              string
-		AzSubscriptionID        string
-		AzRGName                string
-		AzVerbosity             int
-		AzOutputFormat          string
+		name                    string
+		azTenantID              string
+		azSubscriptionID        string
+		azRGName                string
+		azVerbosity             int
+		azOutputFormat          string
+		version                 string
 		resourcesTestFile       string
 		usersTestFile           string
 		roleDefinitionsTestFile string
 		roleAssignmentsTestFile string
 	}{
 		{
-			Name:                    "./cloudfox azure rbac --tenant 11111111-1111-1111-1111-11111111",
-			AzTenantID:              "11111111-1111-1111-1111-11111111",
-			AzSubscriptionID:        "",
-			AzOutputFormat:          "table",
-			AzVerbosity:             2,
+			name:                    "./cloudfox azure rbac --tenant 11111111-1111-1111-1111-11111111",
+			azTenantID:              "11111111-1111-1111-1111-11111111",
+			azSubscriptionID:        "",
+			azOutputFormat:          "table",
+			azVerbosity:             2,
 			resourcesTestFile:       "./test-data/resources.json",
 			usersTestFile:           "./test-data/users.json",
 			roleDefinitionsTestFile: "./test-data/role-definitions.json",
 			roleAssignmentsTestFile: "./test-data/role-assignments.json",
+			version:                 "DEV",
 		},
 		{
-			Name:                    "./cloudfox azure rbac --subscription AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
-			AzTenantID:              "",
-			AzSubscriptionID:        "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
-			AzOutputFormat:          "table",
-			AzVerbosity:             2,
+			name:                    "./cloudfox azure rbac --subscription AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
+			azTenantID:              "",
+			azSubscriptionID:        "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
+			azOutputFormat:          "table",
+			azVerbosity:             2,
+			version:                 "DEV",
 			resourcesTestFile:       "./test-data/resources.json",
 			usersTestFile:           "./test-data/users.json",
 			roleDefinitionsTestFile: "./test-data/role-definitions.json",
@@ -57,7 +60,7 @@ func TestAzRBACCommand(t *testing.T) {
 
 	for _, s := range subtests {
 		fmt.Println()
-		fmt.Printf("[subtest] %s\n", s.Name)
+		fmt.Printf("[subtest] %s\n", s.name)
 
 		// Test files used by mocked functions
 		globals.RESOURCES_TEST_FILE = s.resourcesTestFile
@@ -65,7 +68,7 @@ func TestAzRBACCommand(t *testing.T) {
 		globals.ROLE_DEFINITIONS_TEST_FILE = s.roleDefinitionsTestFile
 		globals.ROLE_ASSIGNMENTS_TEST_FILE = s.roleAssignmentsTestFile
 
-		if err := AzRBACCommand(s.AzTenantID, s.AzSubscriptionID, s.AzOutputFormat, s.AzVerbosity); err != nil {
+		if err := AzRBACCommand(s.azTenantID, s.azSubscriptionID, s.azOutputFormat, s.version, s.azVerbosity); err != nil {
 			fmt.Println(err)
 		}
 	}

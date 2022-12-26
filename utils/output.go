@@ -89,19 +89,6 @@ func OutputSelector(verbosity int, outputType string, header []string, body [][]
 
 }
 
-/*
-Carlos: Seth, I'm commenting this because it doesn't seem to be used by the code.
-If you don't need it can you please delete it for cleanup? Thanks!
-func printCSVtoScreen(header []string, body [][]string) {
-	csvWriter := csv.NewWriter(os.Stdout)
-	csvWriter.Write(header)
-	for _, row := range body {
-		csvWriter.Write(row)
-	}
-	csvWriter.Flush()
-}
-*/
-
 func printCSVtoFile(header []string, body [][]string, outputFile afero.File) {
 	csvWriter := csv.NewWriter(outputFile)
 	csvWriter.Write(header)
@@ -135,22 +122,6 @@ func PrintTableToScreen(header []string, body [][]string) {
 	t.SetDividers(table.UnicodeRoundedDividers)
 	t.Render()
 }
-
-/*
-Carlos: Seth, I'm commenting this because it doesn't seem to be used by the code.
-If you don't need it can you please delete it for cleanup? Thanks!
-func getTerminalWidth() (int, error) {
-	terminalFileDescriptor := int(os.Stdout.Fd())
-	if term.IsTerminal(terminalFileDescriptor) {
-		width, _, err := term.GetSize(terminalFileDescriptor)
-		if err != nil {
-			return 0, fmt.Errorf("[-] Valid terminal but failed to read width")
-		}
-		return width, nil
-	}
-	return 0, fmt.Errorf("invalid terminal")
-}
-*/
 
 // The Afero library enables file system mocking:
 // fileSystem = afero.NewOsFs() if not unit testing (real file system) OR

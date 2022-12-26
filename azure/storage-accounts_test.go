@@ -22,6 +22,7 @@ func TestAzStorageCommand(t *testing.T) {
 		AzVerbosity             int
 		resourcesTestFile       string
 		storageAccountsTestFile string
+		version                 string
 	}{
 		{
 			name:                    "./cloudfox az storage --tenant 11111111-1111-1111-1111-11111111",
@@ -31,6 +32,7 @@ func TestAzStorageCommand(t *testing.T) {
 			AzVerbosity:             2,
 			resourcesTestFile:       "./test-data/resources.json",
 			storageAccountsTestFile: "./test-data/storage-accounts.json",
+			version:                 "DEV",
 		},
 		{
 			name:                    "./cloudfox az storage --subscription BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB",
@@ -40,6 +42,7 @@ func TestAzStorageCommand(t *testing.T) {
 			AzVerbosity:             2,
 			resourcesTestFile:       "./test-data/resources.json",
 			storageAccountsTestFile: "./test-data/storage-accounts.json",
+			version:                 "DEV",
 		},
 	}
 	utils.MockFileSystem(true)
@@ -55,7 +58,7 @@ func TestAzStorageCommand(t *testing.T) {
 		globals.RESOURCES_TEST_FILE = s.resourcesTestFile
 		globals.STORAGE_ACCOUNTS_TEST_FILE = s.storageAccountsTestFile
 
-		err := AzStorageCommand(s.AzTenantID, s.AzSubscriptionID, s.AzOutputFormat, s.AzVerbosity)
+		err := AzStorageCommand(s.AzTenantID, s.AzSubscriptionID, s.AzOutputFormat, s.version, s.AzVerbosity)
 		if err != nil {
 			log.Fatal(err)
 		}

@@ -16,23 +16,24 @@ import (
 	"github.com/BishopFox/cloudfox/utils"
 	"github.com/aws/smithy-go/ptr"
 	"github.com/fatih/color"
+	"github.com/kyokomi/emoji"
 )
 
-func AzInstancesCommand(AzTenantID, AzSubscriptionID, AzOutputFormat string, AzVerbosity int) error {
+func AzInstancesCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, Version string, AzVerbosity int) error {
 	var header []string
 	var body [][]string
 	var outputDirectory, controlMessagePrefix string
 
 	if AzTenantID != "" && AzSubscriptionID == "" {
 		// ./cloudfox azure instances --tenant TENANT_ID
-		fmt.Printf("[%s] Enumerating VMs for tenant %s\n", color.CyanString(globals.AZ_INSTANCES_MODULE_NAME), AzTenantID)
+		fmt.Printf("[%s][%s] Enumerating VMs for tenant %s\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_INSTANCES_MODULE_NAME), AzTenantID)
 		controlMessagePrefix = fmt.Sprintf("tenant-%s", AzTenantID)
 		outputDirectory = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, globals.AZ_DIR_TEN, AzTenantID)
 		header, body = getVMsPerTenantID(AzTenantID)
 
 	} else if AzTenantID == "" && AzSubscriptionID != "" {
 		// ./cloudfox azure instances --subscription SUBSCRIPTION_ID
-		fmt.Printf("[%s] Enumerating VMs for subscription %s\n", color.CyanString(globals.AZ_INSTANCES_MODULE_NAME), AzSubscriptionID)
+		fmt.Printf("[%s][%s] Enumerating VMs for subscription %s\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_INSTANCES_MODULE_NAME), AzSubscriptionID)
 		controlMessagePrefix = fmt.Sprintf("subscription-%s", AzSubscriptionID)
 		outputDirectory = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, globals.AZ_DIR_SUB, AzSubscriptionID)
 		header, body = getVMsPerSubscriptionID(AzSubscriptionID)
@@ -53,7 +54,7 @@ func getVMsPerTenantID(AzTenantID string) ([]string, [][]string) {
 	var resultsBody, b [][]string
 	var err error
 
-	for _, s := range getSubscriptionsForTenant(AzTenantID) {
+	for _, s := range getSubscriptionsPerTenantID(AzTenantID) {
 		for _, rg := range getResourceGroups(ptr.ToString(s.SubscriptionID)) {
 			resultsHeader, b, err = getComputeRelevantData(s, rg)
 			if err != nil {

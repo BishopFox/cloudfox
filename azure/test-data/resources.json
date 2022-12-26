@@ -12,11 +12,13 @@
                     "ResourceGroups": [
                         {
                             "Name": "ResourceGroupA1",
-                            "id": "subscriptions/AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA/resourceGroups/ResourceGroupA1"
+                            "id": "subscriptions/AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA/resourceGroups/ResourceGroupA1",
+                            "location": "eastus"
                         },
                         {
                             "Name": "ResourceGroupA2",
-                            "id": "subscriptions/AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA/resourceGroups/ResourceGroupA2"
+                            "id": "subscriptions/AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA/resourceGroups/ResourceGroupA2",
+                            "location": "eastus"
                         }
                     ]
                 },
@@ -27,11 +29,13 @@
                     "ResourceGroups": [
                         {
                             "Name": "ResourceGroupB1",
-                            "id": "subscriptions/BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB/resourceGroups/ResourceGroupB1"
+                            "id": "subscriptions/BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB/resourceGroups/ResourceGroupB1",
+                            "location": "eastus"
                         },
                         {
                             "Name": "ResourceGroupB2",
-                            "id": "subscriptions/BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB/resourceGroups/ResourceGroupB2"
+                            "id": "subscriptions/BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB/resourceGroups/ResourceGroupB2",
+                            "location": "eastus"
                         }
                     ]
                 }
@@ -49,11 +53,13 @@
                     "ResourceGroups": [
                         {
                             "Name": "ResourceGroupC1",
-                            "id": "subscriptions/CCCCCCCC-CCCC-CCCC-CCCCCCCC/resourceGroups/ResourceGroupC1"
+                            "id": "subscriptions/CCCCCCCC-CCCC-CCCC-CCCCCCCC/resourceGroups/ResourceGroupC1",
+                            "location": "eastus"
                         },
                         {
                             "Name": "ResourceGroupC2",
-                            "id": "subscriptions/CCCCCCCC-CCCC-CCCC-CCCCCCCC/resourceGroups/ResourceGroupC2"
+                            "id": "subscriptions/CCCCCCCC-CCCC-CCCC-CCCCCCCC/resourceGroups/ResourceGroupC2",
+                            "location": "eastus"
                         }
                     ]
                 }

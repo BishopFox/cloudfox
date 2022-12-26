@@ -15,9 +15,10 @@ import (
 	"github.com/BishopFox/cloudfox/utils"
 	"github.com/aws/smithy-go/ptr"
 	"github.com/fatih/color"
+	"github.com/kyokomi/emoji"
 )
 
-func AzRBACCommand(AzTenantID, AzSubscriptionID, AzOutputFormat string, AzVerbosity int) error {
+func AzRBACCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, Version string, AzVerbosity int) error {
 	var c CloudFoxRBACclient
 	var header []string
 	var body [][]string
@@ -25,7 +26,7 @@ func AzRBACCommand(AzTenantID, AzSubscriptionID, AzOutputFormat string, AzVerbos
 
 	if AzTenantID != "" && AzSubscriptionID == "" {
 		// ./cloudfox azure rbac --tenant TENANT_ID
-		fmt.Printf("[%s] Enumerating RBAC permissions for tenant %s\n", color.CyanString(globals.AZ_RBAC_MODULE_NAME), AzTenantID)
+		fmt.Printf("[%s][%s] Enumerating RBAC permissions for tenant %s\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_RBAC_MODULE_NAME), AzTenantID)
 		controlMessagePrefix = fmt.Sprintf("tenant-%s", AzTenantID)
 		outputDirectory = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, "tenants", AzTenantID)
 		var err error
@@ -35,7 +36,7 @@ func AzRBACCommand(AzTenantID, AzSubscriptionID, AzOutputFormat string, AzVerbos
 		}
 	} else if AzTenantID == "" && AzSubscriptionID != "" {
 		// ./cloudfox azure rbac --subscription SUBSCRIPTION_ID
-		fmt.Printf("[%s] Enumerating RBAC permissions for subscription %s\n", color.CyanString(globals.AZ_RBAC_MODULE_NAME), AzSubscriptionID)
+		fmt.Printf("[%s][%s] Enumerating RBAC permissions for subscription %s\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_RBAC_MODULE_NAME), AzSubscriptionID)
 		controlMessagePrefix = fmt.Sprintf("subscription-%s", AzSubscriptionID)
 		outputDirectory = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, "subscriptions", AzSubscriptionID)
 		header, body = getRBACperSubscription(AzTenantID, AzSubscriptionID, c)

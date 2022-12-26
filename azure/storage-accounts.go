@@ -14,9 +14,10 @@ import (
 	"github.com/BishopFox/cloudfox/utils"
 	"github.com/aws/smithy-go/ptr"
 	"github.com/fatih/color"
+	"github.com/kyokomi/emoji"
 )
 
-func AzStorageCommand(AzTenantID, AzSubscriptionID, AzOutputFormat string, AzVerbosity int) error {
+func AzStorageCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, Version string, AzVerbosity int) error {
 	var err error
 	var header []string
 	var body [][]string
@@ -24,14 +25,14 @@ func AzStorageCommand(AzTenantID, AzSubscriptionID, AzOutputFormat string, AzVer
 
 	if AzTenantID != "" && AzSubscriptionID == "" {
 		// ./cloudfox azure storage --tenant TENANT_ID
-		fmt.Printf("[%s] Enumerating storage accounts for tenant %s\n", color.CyanString(globals.AZ_STORAGE_MODULE_NAME), AzTenantID)
+		fmt.Printf("[%s][%s] Enumerating storage accounts for tenant %s\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_STORAGE_MODULE_NAME), AzTenantID)
 		controlMessagePrefix = fmt.Sprintf("tenant-%s", AzTenantID)
 		outputDirectory = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, "tenants", AzTenantID)
 		header, body, err = getStoragePerTenant(AzTenantID)
 
 	} else if AzTenantID == "" && AzSubscriptionID != "" {
 		// ./cloudfox azure storage --subscription SUBSCRIPTION_ID
-		fmt.Printf("[%s] Enumerating storage account for subscription %s\n", color.CyanString(globals.AZ_STORAGE_MODULE_NAME), AzSubscriptionID)
+		fmt.Printf("[%s][%s] Enumerating storage accounts for subscription %s\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_STORAGE_MODULE_NAME), AzSubscriptionID)
 		controlMessagePrefix = fmt.Sprintf("subscription-%s", AzSubscriptionID)
 		outputDirectory = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, "subscriptions", AzSubscriptionID)
 		header, body, err = getStoragePerSubscription(AzSubscriptionID)
@@ -53,7 +54,7 @@ func getStoragePerTenant(AzTenantID string) ([]string, [][]string, error) {
 	var header []string
 	var body, b [][]string
 
-	for _, s := range getSubscriptionsForTenant(AzTenantID) {
+	for _, s := range getSubscriptionsPerTenantID(AzTenantID) {
 		header, b, err = getRelevantStorageAccountData(ptr.ToString(s.SubscriptionID))
 		if err != nil {
 			return nil, nil, err

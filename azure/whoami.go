@@ -6,9 +6,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"sort"
-	"strconv"
-	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/resources"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/subscriptions"
@@ -16,127 +13,72 @@ import (
 	"github.com/BishopFox/cloudfox/utils"
 	"github.com/aws/smithy-go/ptr"
 	"github.com/fatih/color"
+	"github.com/kyokomi/emoji"
 )
 
-func AzWhoamiCommand() error {
-	fmt.Printf("[%s] Enumerating active sessions for the Azure CLI...\n", color.CyanString(globals.AZ_WHOAMI_MODULE_NAME))
-	availableScope := getAvailableScope()
-	fmt.Printf("[%s] Current Azure CLI sessions: \n", color.CyanString(globals.AZ_WHOAMI_MODULE_NAME))
-	printAvailableScopeFull(availableScope)
+func AzWhoamiCommand(AzExtendedFilter bool, version string) error {
+	fmt.Printf("[%s][%s] Enumerating Azure CLI sessions...\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", version)), color.CyanString(globals.AZ_WHOAMI_MODULE_NAME))
+	var header []string
+	var body [][]string
+	if !AzExtendedFilter {
+		header, body = getWhoamiRelevantDataPerTenant()
+	} else {
+		header, body = getWhoamiRelevantDataPerRG()
+	}
+	utils.PrintTableToScreen(header, body)
 	return nil
 }
 
-type scopeElement struct {
-	// Use for user selection in interactive mode.
-	menuIndex int
-	// True will cause CloudFox to enumerate the resource group.
-	includeInCloudFoxExecution bool
-	ResourceGroup              resources.Group
-	Sub                        subscriptions.Subscription
-	Tenant                     subscriptions.TenantIDDescription
-}
+func getWhoamiRelevantDataPerRG() ([]string, [][]string) {
+	tableHead := []string{"Subscription ID", "Subscription Name", "RG Name", "Region"}
+	var tableBody [][]string
 
-// userInput = nil will prompt interactive menu for RG selection.
-// The userInput argument is used to toggle the interactive menu (useful for unit tests).
-// mode = full (prints entire table), tenant (prints only tenants table)
-func scopeSelection(userInput *string, mode string) []scopeElement {
-	fmt.Printf("[%s] Fetching available resource groups from Az CLI sessions...\n", color.CyanString(globals.AZ_INTERACTIVE_MENU_MODULE_NAME))
-	var results []scopeElement
-
-	availableScope := getAvailableScope()
-	// To-Do: add different scope displays (e.g. tentants + subs, subgs + rgs, etc)
-	// Adding a whole table with everything will cause output to not fit the screen
-	switch mode {
-	default:
-		printAvailableScopeFull(availableScope)
-	}
-
-	if userInput == nil {
-		var input string
-		fmt.Printf("[%s] Please make a selection (e.g. '1' or '1,2,3').\n", color.CyanString(globals.AZ_INTERACTIVE_MENU_MODULE_NAME))
-		fmt.Printf("[%s]> ", color.CyanString(globals.AZ_INTERACTIVE_MENU_MODULE_NAME))
-		fmt.Scanln(&input)
-		userInput = ptr.String(input)
-	}
-
-	for _, scopeItem := range availableScope {
-		for _, userSelection := range strings.Split(ptr.ToString(userInput), ",") {
-			userInputInt, err := strconv.Atoi(userSelection)
-			if err != nil {
-				log.Fatalln("Error: Invalid resource group selection.")
-			}
-			if userInputInt == scopeItem.menuIndex {
-				results = append(
-					results,
-					scopeElement{
-						menuIndex:                  scopeItem.menuIndex,
-						includeInCloudFoxExecution: true,
-						Sub:                        scopeItem.Sub,
-						ResourceGroup:              scopeItem.ResourceGroup})
+	for _, t := range getTenants() {
+		for _, s := range getSubscriptions() {
+			if ptr.ToString(t.TenantID) == ptr.ToString(s.TenantID) {
+				for _, rg := range getResourceGroups(ptr.ToString(s.SubscriptionID)) {
+					tableBody = append(
+						tableBody,
+						[]string{
+							ptr.ToString(s.SubscriptionID),
+							ptr.ToString(s.DisplayName),
+							ptr.ToString(rg.Name),
+							ptr.ToString(rg.Location)})
+				}
 			}
 		}
 	}
-	return results
+
+	return tableHead, tableBody
 }
 
-func printAvailableScopeFull(availableScope []scopeElement) {
+func getWhoamiRelevantDataPerTenant() ([]string, [][]string) {
+	tableHead := []string{"Tenant ID", "Subscription ID", "Subscription Name", "Default Domain"}
 	var tableBody [][]string
 
-	for _, scopeItem := range availableScope {
-		tableBody = append(
-			tableBody,
-			[]string{
-				ptr.ToString(scopeItem.Tenant.TenantID),
-				ptr.ToString(scopeItem.Sub.SubscriptionID),
-				ptr.ToString(scopeItem.Sub.DisplayName),
-				ptr.ToString(scopeItem.ResourceGroup.Name)})
+	for _, t := range getTenants() {
+		for _, s := range getSubscriptions() {
+			if ptr.ToString(t.TenantID) == ptr.ToString(s.TenantID) {
+				tableBody = append(
+					tableBody,
+					[]string{
+						ptr.ToString(s.TenantID),
+						ptr.ToString(s.SubscriptionID),
+						ptr.ToString(s.DisplayName),
+						ptr.ToString(t.DefaultDomain)})
+			}
+		}
 	}
-	sort.Slice(
-		tableBody,
-		func(i int, j int) bool {
-			return tableBody[i][0] < tableBody[j][0]
-		},
-	)
-	utils.PrintTableToScreen(
-		[]string{
-			"Tenant ID",
-			"Subscription ID",
-			"Subscription Name",
-			"Resource Group Name"},
-		tableBody)
+
+	return tableHead, tableBody
 }
 
-func getSubscriptionsForTenant(tenantID string) []subscriptions.Subscription {
+func getSubscriptionsPerTenantID(tenantID string) []subscriptions.Subscription {
 	subs := getSubscriptions()
 	var results []subscriptions.Subscription
 	for _, s := range subs {
 		if ptr.ToString(s.TenantID) == tenantID {
 			results = append(results, s)
-		}
-	}
-	return results
-}
-
-func getAvailableScope() []scopeElement {
-	var index int
-	var results []scopeElement
-	tenants := getTenants()
-	subscriptions := getSubscriptions()
-
-	for _, t := range tenants {
-		for _, s := range subscriptions {
-			if ptr.ToString(t.TenantID) == ptr.ToString(s.TenantID) {
-				for _, rg := range getResourceGroups(ptr.ToString(s.SubscriptionID)) {
-					index++
-					results = append(results, scopeElement{
-						menuIndex:                  index,
-						includeInCloudFoxExecution: false,
-						ResourceGroup:              rg,
-						Sub:                        s,
-						Tenant:                     t,
-					})
-				}
-			}
 		}
 	}
 	return results
@@ -166,19 +108,6 @@ func mockedGetTenants() []subscriptions.TenantIDDescription {
 		})
 	}
 	return results
-}
-
-func loadTestFile(fileName string) ResourcesTestFile {
-	file, err := os.ReadFile(fileName)
-	if err != nil {
-		log.Fatalf("could not read file %s", globals.RESOURCES_TEST_FILE)
-	}
-	var testFile ResourcesTestFile
-	err = json.Unmarshal(file, &testFile)
-	if err != nil {
-		log.Fatalf("could not unmarshall file %s", globals.RESOURCES_TEST_FILE)
-	}
-	return testFile
 }
 
 var getSubscriptions = getSubscriptionsOriginal
@@ -232,14 +161,28 @@ func mockedGetResourceGroups(subscriptionID string) []resources.Group {
 			if ptr.ToString(sub.SubscriptionId) == subscriptionID {
 				for _, rg := range sub.ResourceGroups {
 					results = append(results, resources.Group{
-						ID:   rg.ID,
-						Name: rg.Name,
+						ID:       rg.ID,
+						Name:     rg.Name,
+						Location: rg.Location,
 					})
 				}
 			}
 		}
 	}
 	return results
+}
+
+func loadTestFile(fileName string) ResourcesTestFile {
+	file, err := os.ReadFile(fileName)
+	if err != nil {
+		log.Fatalf("could not read file %s", globals.RESOURCES_TEST_FILE)
+	}
+	var testFile ResourcesTestFile
+	err = json.Unmarshal(file, &testFile)
+	if err != nil {
+		log.Fatalf("could not unmarshall file %s", globals.RESOURCES_TEST_FILE)
+	}
+	return testFile
 }
 
 type ResourcesTestFile struct {
@@ -251,8 +194,9 @@ type ResourcesTestFile struct {
 			DisplayName    *string `json:"displayName"`
 			SubscriptionId *string `json:"subscriptionId"`
 			ResourceGroups []struct {
-				Name *string `json:"Name"`
-				ID   *string `json:"id"`
+				Name     *string `json:"Name"`
+				ID       *string `json:"id"`
+				Location *string `json:"location"`
 			} `json:"ResourceGroups"`
 		} `json:"Subscriptions"`
 	} `json:"Tenants"`
