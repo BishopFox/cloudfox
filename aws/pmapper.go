@@ -1,7 +1,10 @@
 package aws
 
 import (
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"os"
 	"path/filepath"
 	"strconv"
 
@@ -65,7 +68,7 @@ var pmapperTxtLogger = utils.TxtLogger()
 
 func (m *PmapperModule) initPmapperGraph() error {
 	// Parse mapper nodes and edges and populate the m.Nodes and m.Edges slices in the method struct
-	err := readPmapperData(m.Caller.Account)
+	err := m.readPmapperData(m.Caller.Account)
 	if err != nil {
 		return err
 	}
@@ -205,4 +208,28 @@ func (m *PmapperModule) doesNodeHavePathToAdmin(startNode Node) bool {
 		}
 	}
 	return false
+}
+
+func (m *PmapperModule) readPmapperData(accountID *string) error {
+
+	e, n := generatePmapperDataBasePaths(accountID)
+
+	nodesFile, err := os.Open(n)
+	if err != nil {
+		return err
+	}
+	defer nodesFile.Close()
+	nodesByteValue, _ := ioutil.ReadAll(nodesFile)
+	json.Unmarshal([]byte(nodesByteValue), &m.Nodes)
+
+	edgesFile, err := os.Open(e)
+	if err != nil {
+		return err
+	}
+	defer edgesFile.Close()
+	edgesByteValue, _ := ioutil.ReadAll(edgesFile)
+	json.Unmarshal([]byte(edgesByteValue), &m.Edges)
+
+	return nil
+
 }

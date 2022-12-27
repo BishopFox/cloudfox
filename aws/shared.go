@@ -1,9 +1,7 @@
 package aws
 
 import (
-	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"runtime"
@@ -127,30 +125,6 @@ func generatePmapperDataBasePaths(accountId *string) (string, string) {
 	}
 
 	return edgesPath, nodesPath
-}
-
-func readPmapperData(accountID *string) error {
-
-	e, n := generatePmapperDataBasePaths(accountID)
-
-	nodesFile, err := os.Open(n)
-	if err != nil {
-		return err
-	}
-	defer nodesFile.Close()
-	nodesByteValue, _ := ioutil.ReadAll(nodesFile)
-	json.Unmarshal([]byte(nodesByteValue), &m.Nodes)
-
-	edgesFile, err := os.Open(e)
-	if err != nil {
-		return err
-	}
-	defer edgesFile.Close()
-	edgesByteValue, _ := ioutil.ReadAll(edgesFile)
-	json.Unmarshal([]byte(edgesByteValue), &m.Edges)
-
-	return nil
-
 }
 
 func pmapperIsRoleAdmin(pmapperMod PmapperModule, principal *string) bool {
