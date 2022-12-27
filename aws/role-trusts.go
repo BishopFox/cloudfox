@@ -32,6 +32,9 @@ type RoleTrustsModule struct {
 	Goroutines     int
 	CommandCounter console.CommandCounter
 	SkipAdminCheck bool
+	pmapperMod     PmapperModule
+	pmapperError   error
+	iamSimClient   IamSimulatorModule
 
 	// Main module data
 	AnalyzedRoles []AnalyzedRole
@@ -40,6 +43,48 @@ type RoleTrustsModule struct {
 	output utils.OutputData2
 
 	modLog *logrus.Entry
+}
+
+type AnalyzedRole struct {
+	roleARN    *string
+	trustsDoc  trustPolicyDocument
+	trustType  string
+	Admin      string
+	CanPrivEsc string
+}
+
+type trustPolicyDocument struct {
+	Version   string                    `json:"Version"`
+	Statement []RoleTrustStatementEntry `json:"Statement"`
+}
+
+type RoleTrustStatementEntry struct {
+	Sid       string `json:"Sid"`
+	Effect    string `json:"Effect"`
+	Principal struct {
+		AWS       ListOfPrincipals `json:"AWS"`
+		Service   ListOfPrincipals `json:"Service"`
+		Federated ListOfPrincipals `json:"Federated"`
+	} `json:"Principal"`
+	Action    string `json:"Action"`
+	Condition struct {
+		StringEquals struct {
+			StsExternalID string `json:"sts:ExternalId"`
+			SAMLAud       string `json:"SAML:aud"`
+			OidcEksSub    string `json:"OidcEksSub"`
+			OidcEksAud    string `json:"OidcEksAud"`
+			CognitoAud    string `json:"cognito-identity.amazonaws.com:aud"`
+		} `json:"StringEquals"`
+		StringLike struct {
+			TokenActionsGithubusercontentComSub ListOfPrincipals `json:"token.actions.githubusercontent.com:sub"`
+			TokenActionsGithubusercontentComAud string           `json:"token.actions.githubusercontent.com:aud"`
+			OidcEksSub                          string           `json:"OidcEksSub"`
+			OidcEksAud                          string           `json:"OidcEksAud"`
+		} `json:"StringLike"`
+		ForAnyValueStringLike struct {
+			CognitoAMR string `json:"cognito-identity.amazonaws.com:amr"`
+		} `json:"ForAnyValue:StringLike"`
+	} `json:"Condition"`
 }
 
 func (m *RoleTrustsModule) PrintRoleTrusts(outputFormat string, outputDirectory string, verbosity int) {
@@ -52,9 +97,30 @@ func (m *RoleTrustsModule) PrintRoleTrusts(outputFormat string, outputDirectory 
 	if m.AWSProfile == "" {
 		m.AWSProfile = utils.BuildAWSPath(m.Caller)
 	}
+	localAdminMap := make(map[string]bool)
 	fmt.Printf("[%s][%s] Enumerating role trusts for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
+	fmt.Printf("[%s][%s] Looking for pmapper data for this account and building a PrivEsc graph in golang if it exists.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	m.pmapperMod, m.pmapperError = initPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines)
+	m.iamSimClient = initIAMSimClient(m.IAMSimulatePrincipalPolicyClient, m.Caller, m.AWSProfile, m.Goroutines)
+	if m.pmapperError != nil {
+		fmt.Printf("[%s][%s] No pmapper data found for this account. Using cloudfox's iam-simulator for role analysis\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	} else {
+		fmt.Printf("[%s][%s] Found pmapper data for this account. Using it for role analysis\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 
+	}
 	m.getAllRoleTrusts()
+
+	if m.pmapperError == nil {
+		for i := range m.AnalyzedRoles {
+			m.AnalyzedRoles[i].Admin, m.AnalyzedRoles[i].CanPrivEsc = GetPmapperResults(m.SkipAdminCheck, m.pmapperMod, m.AnalyzedRoles[i].roleARN)
+		}
+	} else {
+		for i := range m.AnalyzedRoles {
+			m.AnalyzedRoles[i].Admin, m.AnalyzedRoles[i].CanPrivEsc = GetIamSimResult(m.SkipAdminCheck, m.AnalyzedRoles[i].roleARN, m.iamSimClient, localAdminMap)
+
+		}
+	}
+
 	m.printPrincipalTrusts(outputFormat, outputDirectory)
 	m.printServiceTrusts(outputFormat, outputDirectory)
 	m.printFederatedTrusts(outputFormat, outputDirectory)
@@ -70,6 +136,7 @@ func (m *RoleTrustsModule) printPrincipalTrusts(outputFormat string, outputDirec
 		"Trusted Principal",
 		"ExternalID",
 		"isAdmin",
+		"canPrivEsc",
 	}
 
 	for _, role := range m.AnalyzedRoles {
@@ -78,8 +145,9 @@ func (m *RoleTrustsModule) printPrincipalTrusts(outputFormat string, outputDirec
 				column1 := aws.ToString(role.roleARN)
 				column2 := principal
 				column3 := statement.Condition.StringEquals.StsExternalID
-				column4 := role.isAdmin
-				m.output.Body = append(m.output.Body, []string{column1, column2, column3, column4})
+				column4 := role.Admin
+				column5 := role.CanPrivEsc
+				m.output.Body = append(m.output.Body, []string{column1, column2, column3, column4, column5})
 			}
 		}
 	}
@@ -105,6 +173,7 @@ func (m *RoleTrustsModule) printServiceTrusts(outputFormat string, outputDirecto
 		"Trusted Service",
 		"ExternalID",
 		"isAdmin",
+		"canPrivEsc",
 	}
 
 	for _, role := range m.AnalyzedRoles {
@@ -113,8 +182,9 @@ func (m *RoleTrustsModule) printServiceTrusts(outputFormat string, outputDirecto
 				column1 := aws.ToString(role.roleARN)
 				column2 := service
 				column3 := statement.Condition.StringEquals.StsExternalID
-				column4 := role.isAdmin
-				m.output.Body = append(m.output.Body, []string{column1, column2, column3, column4})
+				column4 := role.Admin
+				column5 := role.CanPrivEsc
+				m.output.Body = append(m.output.Body, []string{column1, column2, column3, column4, column5})
 			}
 		}
 	}
@@ -142,6 +212,7 @@ func (m *RoleTrustsModule) printFederatedTrusts(outputFormat string, outputDirec
 		"Trusted Provider",
 		"Trusted Subject",
 		"isAdmin",
+		"canPrivEsc",
 	}
 
 	for _, role := range m.AnalyzedRoles {
@@ -150,8 +221,9 @@ func (m *RoleTrustsModule) printFederatedTrusts(outputFormat string, outputDirec
 		for _, statement := range role.trustsDoc.Statement {
 			if len(statement.Principal.Federated) > 0 {
 				column2, column3 = parseFederatedTrustPolicy(statement)
-				column4 := role.isAdmin
-				m.output.Body = append(m.output.Body, []string{column1, column2, column3, column4})
+				column4 := role.Admin
+				column5 := role.CanPrivEsc
+				m.output.Body = append(m.output.Body, []string{column1, column2, column3, column4, column5})
 			}
 		}
 	}
@@ -224,8 +296,6 @@ func (m *RoleTrustsModule) getAllRoleTrusts() {
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
 	var PaginationMarker *string
 
-	var adminRole string = ""
-
 	// This for loop exits at the end depending on whether the output hits its last page (see pagination control block at the end of the loop).
 	for {
 		results, err := m.IAMClientListRoles.ListRoles(
@@ -247,18 +317,14 @@ func (m *RoleTrustsModule) getAllRoleTrusts() {
 				m.CommandCounter.Error++
 				break
 			}
+
 			if role.Arn != nil {
-				if !m.SkipAdminCheck {
-					isRoleAdmin := m.isRoleAdmin(role.Arn)
-					if isRoleAdmin {
-						adminRole = "YES"
-					} else {
-						adminRole = "No"
-					}
-				} else {
-					adminRole = "Skipped"
-				}
-				m.AnalyzedRoles = append(m.AnalyzedRoles, AnalyzedRole{roleARN: role.Arn, trustsDoc: trustsdoc, isAdmin: adminRole})
+				m.AnalyzedRoles = append(m.AnalyzedRoles, AnalyzedRole{
+					roleARN:    role.Arn,
+					trustsDoc:  trustsdoc,
+					Admin:      "",
+					CanPrivEsc: "",
+				})
 			}
 
 		}
@@ -271,47 +337,6 @@ func (m *RoleTrustsModule) getAllRoleTrusts() {
 			break
 		}
 	}
-}
-
-type AnalyzedRole struct {
-	roleARN   *string
-	trustsDoc trustPolicyDocument
-	trustType string
-	isAdmin   string
-}
-
-type trustPolicyDocument struct {
-	Version   string                    `json:"Version"`
-	Statement []RoleTrustStatementEntry `json:"Statement"`
-}
-
-type RoleTrustStatementEntry struct {
-	Sid       string `json:"Sid"`
-	Effect    string `json:"Effect"`
-	Principal struct {
-		AWS       ListOfPrincipals `json:"AWS"`
-		Service   ListOfPrincipals `json:"Service"`
-		Federated ListOfPrincipals `json:"Federated"`
-	} `json:"Principal"`
-	Action    string `json:"Action"`
-	Condition struct {
-		StringEquals struct {
-			StsExternalID string `json:"sts:ExternalId"`
-			SAMLAud       string `json:"SAML:aud"`
-			OidcEksSub    string `json:"OidcEksSub"`
-			OidcEksAud    string `json:"OidcEksAud"`
-			CognitoAud    string `json:"cognito-identity.amazonaws.com:aud"`
-		} `json:"StringEquals"`
-		StringLike struct {
-			TokenActionsGithubusercontentComSub ListOfPrincipals `json:"token.actions.githubusercontent.com:sub"`
-			TokenActionsGithubusercontentComAud string           `json:"token.actions.githubusercontent.com:aud"`
-			OidcEksSub                          string           `json:"OidcEksSub"`
-			OidcEksAud                          string           `json:"OidcEksAud"`
-		} `json:"StringLike"`
-		ForAnyValueStringLike struct {
-			CognitoAMR string `json:"cognito-identity.amazonaws.com:amr"`
-		} `json:"ForAnyValue:StringLike"`
-	} `json:"Condition"`
 }
 
 func parseRoleTrustPolicyDocument(role types.Role) (trustPolicyDocument, error) {
@@ -349,21 +374,4 @@ func (r *ListOfPrincipals) UnmarshalJSON(b []byte) error {
 		return nil
 	}
 	return errors.New("cannot unmarshal neither to a string nor a slice of strings")
-}
-
-func (m *RoleTrustsModule) isRoleAdmin(principal *string) bool {
-	iamSimMod := IamSimulatorModule{
-		IAMSimulatePrincipalPolicyClient: m.IAMSimulatePrincipalPolicyClient,
-		Caller:                           m.Caller,
-		AWSProfile:                       m.AWSProfile,
-		Goroutines:                       m.Goroutines,
-	}
-
-	adminCheckResult := iamSimMod.isPrincipalAnAdmin(principal)
-	if adminCheckResult {
-		return true
-	} else {
-		return false
-	}
-
 }

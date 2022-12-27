@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
+	"github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
@@ -32,6 +33,7 @@ type LambdasModule struct {
 	SkipAdminCheck bool
 	pmapperMod     PmapperModule
 	pmapperError   error
+	iamSimClient   IamSimulatorModule
 
 	// Main module data
 	Lambdas        []Lambda
@@ -48,6 +50,7 @@ type Lambda struct {
 	Name       string
 	Role       string
 	Admin      string
+	CanPrivEsc string
 	Public     string
 }
 
@@ -56,6 +59,7 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "lambdas"
+	localAdminMap := make(map[string]bool)
 	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
@@ -64,13 +68,16 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 	}
 
 	fmt.Printf("[%s][%s] Enumerating lambdas for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
-	m.pmapperMod, m.pmapperError = m.initPmapperGraph()
-	if m.pmapperError != nil {
-		fmt.Printf("[%s][%s] No pmapper data found for this account. Using cloudfox's iam-simulator for role analysis\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
-	} else {
-		fmt.Printf("[%s][%s] Found pmapper data for this account. Using it for role analysis\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	fmt.Printf("[%s][%s] Attempting to build a PrivEsc graph in memory using local pmapper data if it exists on the filesystem.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	m.pmapperMod, m.pmapperError = initPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines)
+	m.iamSimClient = initIAMSimClient(m.IAMSimulatePrincipalPolicyClient, m.Caller, m.AWSProfile, m.Goroutines)
 
+	if m.pmapperError != nil {
+		fmt.Printf("[%s][%s] No pmapper data found for this account. Using cloudfox's iam-simulator for role analysis.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	} else {
+		fmt.Printf("[%s][%s] Found pmapper data for this account. Using it for role analysis.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
+
 	wg := new(sync.WaitGroup)
 	semaphore := make(chan struct{}, m.Goroutines)
 
@@ -90,8 +97,19 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 		go m.executeChecks(region, wg, semaphore, dataReceiver)
 
 	}
-
 	wg.Wait()
+
+	// Perform role analysis
+	if m.pmapperError == nil {
+		for i := range m.Lambdas {
+			m.Lambdas[i].Admin, m.Lambdas[i].CanPrivEsc = GetPmapperResults(m.SkipAdminCheck, m.pmapperMod, &m.Lambdas[i].Role)
+		}
+	} else {
+		for i := range m.Lambdas {
+			m.Lambdas[i].Admin, m.Lambdas[i].CanPrivEsc = GetIamSimResult(m.SkipAdminCheck, &m.Lambdas[i].Role, m.iamSimClient, localAdminMap)
+		}
+	}
+
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
@@ -104,7 +122,7 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 		//"Type",
 		"Resource Arn",
 		"Role",
-		//"isAdminRole?",
+		"isAdminRole?",
 		"CanPrivEscToAdmin?",
 	}
 
@@ -124,6 +142,7 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 				m.Lambdas[i].Name,
 				m.Lambdas[i].Role,
 				m.Lambdas[i].Admin,
+				m.Lambdas[i].CanPrivEsc,
 				//m.Lambdas[i].Public,
 			},
 		)
@@ -219,10 +238,37 @@ func (m *LambdasModule) getLambdasPerRegion(r string, wg *sync.WaitGroup, semaph
 	defer func() {
 		<-semaphore
 	}()
+
+	functions, err := m.listFunctions(r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+	}
+
+	for _, function := range functions {
+		//arn := aws.ToString(function.FunctionArn)
+		name := aws.ToString(function.FunctionName)
+		role := aws.ToString(function.Role)
+
+		dataReceiver <- Lambda{
+			AWSService: "Lambda",
+			Name:       name,
+			Region:     r,
+			Type:       "",
+			Role:       role,
+			Admin:      "",
+			CanPrivEsc: "",
+			Public:     "",
+		}
+
+	}
+
+}
+
+func (m *LambdasModule) listFunctions(r string) ([]types.FunctionConfiguration, error) {
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
 	var PaginationControl *string
-	var adminRole string = ""
-	localAdminMap := make(map[string]bool)
+	var functions []types.FunctionConfiguration
 
 	for {
 		ListFunctions, err := m.LambdaClient.ListFunctions(
@@ -237,51 +283,9 @@ func (m *LambdasModule) getLambdasPerRegion(r string, wg *sync.WaitGroup, semaph
 		if err != nil {
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
-			break
+			return functions, err
 		}
-		//var parsedArn types.Arn
-		for _, function := range ListFunctions.Functions {
-			//arn := aws.ToString(function.FunctionArn)
-			name := aws.ToString(function.FunctionName)
-			role := aws.ToString(function.Role)
-			if function.Role != nil {
-				// If we've seen the function before, skip the isRoleAdmin function and just pull the value from the localAdminMap
-				if val, ok := localAdminMap[role]; ok {
-					if val {
-						// we've seen it before and it's an admin
-						adminRole = "YES"
-					} else {
-						// we've seen it before and it's NOT an admin
-						adminRole = "No"
-					}
-				} else {
-					if !m.SkipAdminCheck {
-						//isRoleAdmin := m.isRoleAdmin(function.Role)
-						isRoleAdmin := m.hasPathToAdmin(m.pmapperMod, function.Role)
-						if isRoleAdmin {
-							adminRole = "YES"
-							localAdminMap[role] = true
-						} else {
-							adminRole = "No"
-							localAdminMap[role] = false
-						}
-					} else {
-						adminRole = "Skipped"
-					}
-				}
-			}
-
-			dataReceiver <- Lambda{
-				AWSService: "Lambda",
-				Name:       name,
-				Region:     r,
-				Type:       "",
-				Role:       role,
-				Admin:      adminRole,
-				Public:     "",
-			}
-
-		}
+		functions = append(functions, ListFunctions.Functions...)
 
 		if aws.ToString(ListFunctions.NextMarker) != "" {
 			PaginationControl = ListFunctions.NextMarker
@@ -290,47 +294,5 @@ func (m *LambdasModule) getLambdasPerRegion(r string, wg *sync.WaitGroup, semaph
 			break
 		}
 	}
-}
-
-func (m *LambdasModule) isRoleAdmin(principal *string) bool {
-	iamSimMod := IamSimulatorModule{
-		IAMSimulatePrincipalPolicyClient: m.IAMSimulatePrincipalPolicyClient,
-		Caller:                           m.Caller,
-		AWSProfile:                       m.AWSProfile,
-		Goroutines:                       m.Goroutines,
-	}
-
-	adminCheckResult := iamSimMod.isPrincipalAnAdmin(principal)
-
-	if adminCheckResult {
-		return true
-	} else {
-		return false
-	}
-
-}
-
-func (m *LambdasModule) hasPathToAdmin(pmapperMod PmapperModule, principal *string) bool {
-	privescCheckResult := pmapperMod.DoesPrincipalHavePathToAdmin(aws.ToString(principal))
-
-	if privescCheckResult {
-		return true
-	} else {
-		return false
-	}
-
-}
-
-func (m *LambdasModule) initPmapperGraph() (PmapperModule, error) {
-	pmapperMod := PmapperModule{
-		Caller:     m.Caller,
-		AWSProfile: m.AWSProfile,
-		Goroutines: m.Goroutines,
-	}
-	err := pmapperMod.initPmapperGraph()
-	if err != nil {
-		return pmapperMod, err
-	}
-	return pmapperMod, nil
-
+	return functions, nil
 }
