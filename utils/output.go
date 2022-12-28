@@ -54,7 +54,7 @@ func OutputSelector(verbosity int, outputType string, header []string, body [][]
 			ptr.String(fmt.Sprintf("%s.txt", fileName)),
 			outputType,
 			callingModule)
-		printTableToFile(header, body, outputFileTable)
+		printTableToFile(header, body, outputFileTable, false)
 		fmt.Printf("[%s] Output written to [%s]\n", cyan(callingModule), outputFileTable.Name())
 		// Add writeLootToFile function here
 
@@ -75,7 +75,7 @@ func OutputSelector(verbosity int, outputType string, header []string, body [][]
 			ptr.String(fmt.Sprintf("%s.txt", fileName)),
 			outputType,
 			callingModule)
-		printTableToFile(header, body, outputFileTable)
+		printTableToFile(header, body, outputFileTable, false)
 		fmt.Printf("[%s] Output written to [%s]\n", cyan(callingModule), outputFileTable.Name())
 
 		outputFileCSV := createOutputFile(
@@ -109,7 +109,7 @@ func OutputSelector2(verbosity int, outputType string, header []string, body [][
 			ptr.String(fmt.Sprintf("%s.txt", fileName)),
 			outputType,
 			callingModule)
-		printTableToFile(header, body, outputFileTable)
+		printTableToFile(header, body, outputFileTable, wrap)
 		fmt.Printf("[%s] Output written to [%s]\n", cyan(callingModule), outputFileTable.Name())
 		// Add writeLootToFile function here
 
@@ -130,7 +130,7 @@ func OutputSelector2(verbosity int, outputType string, header []string, body [][
 			ptr.String(fmt.Sprintf("%s.txt", fileName)),
 			outputType,
 			callingModule)
-		printTableToFile(header, body, outputFileTable)
+		printTableToFile(header, body, outputFileTable, wrap)
 		fmt.Printf("[%s] Output written to [%s]\n", cyan(callingModule), outputFileTable.Name())
 
 		outputFileCSV := createOutputFile(
@@ -162,9 +162,12 @@ func printCSVtoFile(header []string, body [][]string, outputFile afero.File) {
 	csvWriter.Flush()
 }
 
-func printTableToFile(header []string, body [][]string, outputFile afero.File) {
+func printTableToFile(header []string, body [][]string, outputFile afero.File, wrap bool) {
 	t := table.New(outputFile)
-	t.SetColumnMaxWidth(1000)
+	if !wrap {
+		t.SetColumnMaxWidth(1000)
+	}
+
 	t.SetHeaders(header...)
 	t.AddRows(body...)
 	t.SetRowLines(false)
