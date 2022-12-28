@@ -32,6 +32,7 @@ type RoleTrustsModule struct {
 	Goroutines     int
 	CommandCounter console.CommandCounter
 	SkipAdminCheck bool
+	WrapTable      bool
 	pmapperMod     PmapperModule
 	pmapperError   error
 	iamSimClient   IamSimulatorModule
@@ -155,7 +156,8 @@ func (m *RoleTrustsModule) printPrincipalTrusts(outputFormat string, outputDirec
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		////m.output.OutputSelector(outputFormat)
-		utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
+		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
+		utils.OutputSelector2(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable)
 		fmt.Printf("[%s][%s] %s role trusts found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {
@@ -193,7 +195,8 @@ func (m *RoleTrustsModule) printServiceTrusts(outputFormat string, outputDirecto
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
-		utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
+		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
+		utils.OutputSelector2(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable)
 		fmt.Printf("[%s][%s] %s role trusts found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {
@@ -232,7 +235,8 @@ func (m *RoleTrustsModule) printFederatedTrusts(outputFormat string, outputDirec
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
-		utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
+		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
+		utils.OutputSelector2(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable)
 		fmt.Printf("[%s][%s] %s role trusts found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {

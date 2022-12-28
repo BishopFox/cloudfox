@@ -28,6 +28,7 @@ type OutboundAssumedRolesModule struct {
 	OutputFormat string
 	Goroutines   int
 	AWSProfile   string
+	WrapTable    bool
 
 	// Main module data
 	OutboundAssumeRoleEntries []OutboundAssumeRoleEntry
@@ -188,7 +189,8 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputFor
 
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
-		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		utils.OutputSelector2(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
 		fmt.Printf("[%s][%s] %s log entries found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 		//m.writeLoot()

@@ -34,6 +34,7 @@ type EKSModule struct {
 	Goroutines     int
 	AWSProfile     string
 	SkipAdminCheck bool
+	WrapTable      bool
 
 	// Main module data
 	Clusters       []Cluster
@@ -137,7 +138,8 @@ func (m *EKSModule) EKS(outputFormat string, outputDirectory string, verbosity i
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
-		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		utils.OutputSelector2(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
 		m.writeLoot(m.output.FilePath, verbosity)
 		fmt.Printf("[%s][%s] %d clusters with a total of %d node groups found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), len(seen), len(m.output.Body))
 	} else {

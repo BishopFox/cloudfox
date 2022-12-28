@@ -58,6 +58,7 @@ type EndpointsModule struct {
 	OutputFormat string
 	Goroutines   int
 	AWSProfile   string
+	WrapTable    bool
 
 	// Main module data
 	Endpoints      []Endpoint
@@ -166,7 +167,8 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
-		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		utils.OutputSelector2(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
 		m.writeLoot(m.output.FilePath, verbosity)
 		fmt.Printf("[%s][%s] %s endpoints found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 	} else {

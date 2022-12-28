@@ -27,6 +27,7 @@ type SecretsModule struct {
 	AWSRegions []string
 	AWSProfile string
 	Goroutines int
+	WrapTable  bool
 
 	// Main module data
 	Secrets []Secret
@@ -111,7 +112,9 @@ func (m *SecretsModule) PrintSecrets(outputFormat string, outputDirectory string
 
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
-		utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		utils.OutputSelector2(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
+
 		m.writeLoot(m.output.FilePath, verbosity)
 		fmt.Printf("[%s][%s] %s secrets found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 

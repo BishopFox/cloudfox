@@ -74,6 +74,7 @@ type Inventory2Module struct {
 	OutputFormat string
 	Goroutines   int
 	AWSProfile   string
+	WrapTable    bool
 
 	// Main module data
 	RegionResourceCount  int
@@ -254,7 +255,8 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 	if len(m.output.Body) > 0 {
 
 		//m.output.OutputSelector(outputFormat)
-		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		utils.OutputSelector2(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
 		m.PrintGlobalResources(outputFormat, outputDirectory, verbosity, dataReceiver)
 		m.PrintTotalResources(outputFormat)
 	} else {

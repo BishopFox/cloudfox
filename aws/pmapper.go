@@ -23,6 +23,7 @@ type PmapperModule struct {
 	OutputFormat string
 	Goroutines   int
 	AWSProfile   string
+	WrapTable    bool
 
 	// Main module data
 	pmapperGraph   graph.Graph[string, string]
@@ -175,7 +176,9 @@ func (m *PmapperModule) PrintPmapperData(outputFormat string, outputDirectory st
 
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
-		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
+		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
+		utils.OutputSelector2(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable)
+
 		fmt.Printf("[%s][%s] %s principals who are admin or have a path to admin identified.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {
@@ -189,16 +192,18 @@ func (m *PmapperModule) doesNodeHavePathToAdmin(startNode Node) bool {
 		return true
 	} else {
 		for _, destNode := range m.Nodes {
-			path, _ := graph.ShortestPath(m.pmapperGraph, startNode.Arn, destNode.Arn)
-			for _, p := range path {
-				if p != "" {
-					if startNode.Arn != destNode.Arn {
-						// if we got here there is a path
-						//fmt.Printf("%s has a path %s who is an admin.\n", startNode.Arn, destNode.Arn)
-						//fmt.Println(path)
-						return true
-					}
+			if destNode.IsAdmin {
+				path, _ := graph.ShortestPath(m.pmapperGraph, startNode.Arn, destNode.Arn)
+				for _, p := range path {
+					if p != "" {
+						if startNode.Arn != destNode.Arn {
+							// if we got here there is a path
+							//fmt.Printf("%s has a path %s who is an admin.\n", startNode.Arn, destNode.Arn)
+							//fmt.Println(path)
+							return true
+						}
 
+					}
 				}
 			}
 		}

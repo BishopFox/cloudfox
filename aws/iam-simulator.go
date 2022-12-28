@@ -29,6 +29,7 @@ type IamSimulatorModule struct {
 	OutputFormat string
 	Goroutines   int
 	AWSProfile   string
+	WrapTable    bool
 
 	// Main module data
 	SimulatorResults []SimulatorResult
@@ -168,7 +169,8 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 	}
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
-		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
+		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
+		utils.OutputSelector2(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable)
 		fmt.Printf("[%s][%s] We suggest running the pmapper commands in the loot file to get the same information but taking privesc paths into account.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 		// fmt.Printf("[%s]\t\tpmapper --profile %s graph create\n", cyan(m.output.CallingModule),  cyan(m.AWSProfile), m.AWSProfile)
 		// for _, line := range pmapperCommands {
