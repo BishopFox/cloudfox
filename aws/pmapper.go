@@ -84,11 +84,6 @@ func (m *PmapperModule) initPmapperGraph() error {
 		_ = m.pmapperGraph.AddEdge(edge.Source, edge.Destination)
 	}
 
-	// //populate mod level map of nodes
-	// for _, node := range m.Nodes {
-	// 	m.Nodes[node.Arn] = node
-	// }
-
 	for i, _ := range m.Nodes {
 		if m.doesNodeHavePathToAdmin(m.Nodes[i]) {
 			m.Nodes[i].PathToAdmin = true
@@ -98,6 +93,7 @@ func (m *PmapperModule) initPmapperGraph() error {
 		}
 
 	}
+
 	return nil
 }
 
