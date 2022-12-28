@@ -42,9 +42,9 @@ func OutputSelector(verbosity int, outputType string, header []string, body [][]
 
 	switch verbosity {
 	case 2:
-		printTableToScreen(header, body)
+		printTableToScreen(header, body, false)
 	case 3:
-		printTableToScreen(header, body)
+		printTableToScreen(header, body, false)
 		// Add writeLootToScreen function here
 	}
 	switch outputType {
@@ -87,7 +87,61 @@ func OutputSelector(verbosity int, outputType string, header []string, body [][]
 		fmt.Printf("[%s] Output written to [%s]\n", cyan(callingModule), outputFileCSV.Name())
 		// Add writeLootToFile function here
 	}
+}
 
+// verbosity = 1 (Output and loot printed to file).
+// verbosity = 2 (Output and loot printed to file, output printed screen).
+// verbosity = 3 (Output and loot printed to file and screen).
+// outputType = "table", "csv"
+func OutputSelector2(verbosity int, outputType string, header []string, body [][]string, outputDirectory string, fileName string, callingModule string, wrap bool) {
+
+	switch verbosity {
+	case 2:
+		printTableToScreen(header, body, wrap)
+	case 3:
+		printTableToScreen(header, body, wrap)
+		// Add writeLootToScreen function here
+	}
+	switch outputType {
+	case "table":
+		outputFileTable := createOutputFile(
+			ptr.String(filepath.Join(outputDirectory, "table")),
+			ptr.String(fmt.Sprintf("%s.txt", fileName)),
+			outputType,
+			callingModule)
+		printTableToFile(header, body, outputFileTable)
+		fmt.Printf("[%s] Output written to [%s]\n", cyan(callingModule), outputFileTable.Name())
+		// Add writeLootToFile function here
+
+	case "csv":
+		outputFileCSV := createOutputFile(
+			ptr.String(filepath.Join(outputDirectory, "csv")),
+			ptr.String(fmt.Sprintf("%s.csv", fileName)),
+			outputType,
+			callingModule)
+		printCSVtoFile(header, body, outputFileCSV)
+		fmt.Printf("[%s] Output written to [%s]\n", cyan(callingModule), outputFileCSV.Name())
+
+		// Add writeLootToFile function here
+
+	default:
+		outputFileTable := createOutputFile(
+			ptr.String(filepath.Join(outputDirectory, "table")),
+			ptr.String(fmt.Sprintf("%s.txt", fileName)),
+			outputType,
+			callingModule)
+		printTableToFile(header, body, outputFileTable)
+		fmt.Printf("[%s] Output written to [%s]\n", cyan(callingModule), outputFileTable.Name())
+
+		outputFileCSV := createOutputFile(
+			ptr.String(filepath.Join(outputDirectory, "csv")),
+			ptr.String(fmt.Sprintf("%s.csv", fileName)),
+			outputType,
+			callingModule)
+		printCSVtoFile(header, body, outputFileCSV)
+		fmt.Printf("[%s] Output written to [%s]\n", cyan(callingModule), outputFileCSV.Name())
+		// Add writeLootToFile function here
+	}
 }
 
 func printCSVtoScreen(header []string, body [][]string) {
@@ -118,12 +172,14 @@ func printTableToFile(header []string, body [][]string, outputFile afero.File) {
 	t.Render()
 }
 
-func printTableToScreen(header []string, body [][]string) {
+func printTableToScreen(header []string, body [][]string, wrap bool) {
 	t := table.New(os.Stdout)
 	// ColumnMaxWidth needs to be set as a large value so the table doesn't wrap.
 	// If the table wraps it's hard to grep the output from the terminal.
 	// TO-DO: add a flag to make this optional.
-	t.SetColumnMaxWidth(1000)
+	if !wrap {
+		t.SetColumnMaxWidth(1000)
+	}
 	t.SetHeaders(header...)
 	t.AddRows(body...)
 	t.SetHeaderStyle(table.StyleBold)
