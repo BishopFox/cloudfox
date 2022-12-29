@@ -153,7 +153,7 @@ func (m *CloudformationModule) executeChecks(r string, wg *sync.WaitGroup, semap
 		if r == serviceRegion {
 			m.CommandCounter.Total++
 			wg.Add(1)
-			m.getCFStacksPerRegion(r, wg, semaphore, dataReceiver)
+			m.createCFStackRowsPerRegion(r, wg, semaphore, dataReceiver)
 		}
 	}
 }
@@ -223,7 +223,7 @@ func (m *CloudformationModule) writeLoot(outputDirectory string, verbosity int) 
 
 }
 
-func (m *CloudformationModule) getCFStacksPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan CFStack) {
+func (m *CloudformationModule) createCFStackRowsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan CFStack) {
 	defer func() {
 		m.CommandCounter.Executing--
 		m.CommandCounter.Complete++
@@ -234,8 +234,44 @@ func (m *CloudformationModule) getCFStacksPerRegion(r string, wg *sync.WaitGroup
 	defer func() {
 		<-semaphore
 	}()
+	var stackTemplateBody string = ""
+
+	DescribeStacks, err := m.describeStacks(r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+	}
+
+	for _, stack := range DescribeStacks {
+		stackName := aws.ToString(stack.StackName)
+		stackRole := aws.ToString(stack.RoleARN)
+		stackOutputs := stack.Outputs
+		stackParameters := stack.Parameters
+
+		stackTemplateBody, err = m.getTemplateBody(r, stackName)
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+		}
+
+		dataReceiver <- CFStack{
+			AWSService: "cloudformation",
+			Name:       stackName,
+			Region:     r,
+			Role:       stackRole,
+			Outputs:    stackOutputs,
+			Parameters: stackParameters,
+			Template:   stackTemplateBody,
+		}
+	}
+
+}
+
+func (m *CloudformationModule) describeStacks(r string) ([]types.Stack, error) {
+
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
 	var PaginationControl *string
+	var stacks []types.Stack
 
 	for {
 		DescribeStacks, err := m.CloudFormationClient.DescribeStacks(
@@ -250,48 +286,10 @@ func (m *CloudformationModule) getCFStacksPerRegion(r string, wg *sync.WaitGroup
 		if err != nil {
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
-			break
+			return stacks, err
 		}
-		//var stackOutputs []types.Output
-		for _, stack := range DescribeStacks.Stacks {
-			stackName := aws.ToString(stack.StackName)
-			stackRole := aws.ToString(stack.RoleARN)
-			stackOutputs := stack.Outputs
-			stackParameters := stack.Parameters
 
-			for {
-				GetTemplate, err := m.CloudFormationClient.GetTemplate(
-					context.TODO(),
-					&cloudformation.GetTemplateInput{
-						StackName: &stackName,
-					},
-					func(o *cloudformation.Options) {
-						o.Region = r
-					},
-				)
-				if err != nil {
-					m.modLog.Error(err.Error())
-					m.CommandCounter.Error++
-					break
-				}
-
-				stackTemplateBody := aws.ToString(GetTemplate.TemplateBody)
-
-				dataReceiver <- CFStack{
-					AWSService: "cloudformation",
-					Name:       stackName,
-					Region:     r,
-					Role:       stackRole,
-					Outputs:    stackOutputs,
-					Parameters: stackParameters,
-					Template:   stackTemplateBody,
-				}
-
-				// }
-				break
-			}
-
-		}
+		stacks = append(stacks, DescribeStacks.Stacks...)
 
 		// The "NextToken" value is nil when there's no more data to return.
 		if DescribeStacks.NextToken != nil {
@@ -301,4 +299,28 @@ func (m *CloudformationModule) getCFStacksPerRegion(r string, wg *sync.WaitGroup
 			break
 		}
 	}
+	return stacks, nil
+}
+
+func (m *CloudformationModule) getTemplateBody(r string, stackName string) (string, error) {
+
+	var stackTemplateBody string
+	GetTemplate, err := m.CloudFormationClient.GetTemplate(
+		context.TODO(),
+		&cloudformation.GetTemplateInput{
+			StackName: &stackName,
+		},
+		func(o *cloudformation.Options) {
+			o.Region = r
+		},
+	)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return stackTemplateBody, err
+	}
+
+	stackTemplateBody = aws.ToString(GetTemplate.TemplateBody)
+
+	return stackTemplateBody, nil
 }
