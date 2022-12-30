@@ -38,6 +38,10 @@ type ECSTasksModule struct {
 	AWSProfile     string
 	Goroutines     int
 	SkipAdminCheck bool
+	WrapTable      bool
+	pmapperMod     PmapperModule
+	pmapperError   error
+	iamSimClient   IamSimulatorModule
 
 	MappedECSTasks []MappedECSTask
 	CommandCounter console.CommandCounter
@@ -53,14 +57,16 @@ type MappedECSTask struct {
 	ID             string
 	ExternalIP     string
 	PrivateIP      string
-	TaskRole       string
-	isAdmin        string
+	Role           string
+	Admin          string
+	CanPrivEsc     string
 }
 
 func (m *ECSTasksModule) ECSTasks(outputFormat string, outputDirectory string, verbosity int) {
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "ecs-tasks"
+	localAdminMap := make(map[string]bool)
 	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
@@ -69,6 +75,16 @@ func (m *ECSTasksModule) ECSTasks(outputFormat string, outputDirectory string, v
 	}
 
 	fmt.Printf("[%s][%s] Enumerating ECS tasks in all regions for account %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
+	// Initialized the tools we'll need to check if any workload roles are admin or can privesc to admin
+	fmt.Printf("[%s][%s] Attempting to build a PrivEsc graph in memory using local pmapper data if it exists on the filesystem.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	m.pmapperMod, m.pmapperError = initPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines)
+	m.iamSimClient = initIAMSimClient(m.IAMSimulatePrincipalPolicyClient, m.Caller, m.AWSProfile, m.Goroutines)
+
+	if m.pmapperError != nil {
+		fmt.Printf("[%s][%s] No pmapper data found for this account. Using cloudfox's iam-simulator for role analysis.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	} else {
+		fmt.Printf("[%s][%s] Found pmapper data for this account. Using it for role analysis.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	}
 
 	wg := new(sync.WaitGroup)
 
@@ -87,6 +103,18 @@ func (m *ECSTasksModule) ECSTasks(outputFormat string, outputDirectory string, v
 	}
 
 	wg.Wait()
+
+	// Perform role analysis
+	if m.pmapperError == nil {
+		for i := range m.MappedECSTasks {
+			m.MappedECSTasks[i].Admin, m.MappedECSTasks[i].CanPrivEsc = GetPmapperResults(m.SkipAdminCheck, m.pmapperMod, &m.MappedECSTasks[i].Role)
+		}
+	} else {
+		for i := range m.MappedECSTasks {
+			m.MappedECSTasks[i].Admin, m.MappedECSTasks[i].CanPrivEsc = GetIamSimResult(m.SkipAdminCheck, &m.MappedECSTasks[i].Role, m.iamSimClient, localAdminMap)
+		}
+	}
+
 	spinnerDone <- true
 	<-spinnerDone
 	close(dataReceiver)
@@ -112,6 +140,7 @@ func (m *ECSTasksModule) printECSTaskData(outputFormat string, outputDirectory s
 		"Internal IP",
 		"RoleArn",
 		"isAdminRole?",
+		"CanPrivEscToAdmin?",
 	}
 
 	for _, ecsTask := range m.MappedECSTasks {
@@ -124,14 +153,16 @@ func (m *ECSTasksModule) printECSTaskData(outputFormat string, outputDirectory s
 				ecsTask.ID,
 				ecsTask.ExternalIP,
 				ecsTask.PrivateIP,
-				ecsTask.TaskRole,
-				ecsTask.isAdmin,
+				ecsTask.Role,
+				ecsTask.Admin,
+				ecsTask.CanPrivEsc,
 			},
 		)
 	}
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
-		utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.AWSProfile)
+		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
 
 		m.writeLoot(m.output.FilePath)
 		fmt.Printf("[%s][%s] %s ECS tasks found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
@@ -275,9 +306,6 @@ func (m *ECSTasksModule) getListTasks(clusterARN string, region string, dataRece
 
 func (m *ECSTasksModule) loadTasksData(clusterARN string, taskARNs []string, region string, dataReceiver chan MappedECSTask) {
 
-	var adminRole string = ""
-	localAdminMap := make(map[string]bool)
-
 	if len(taskARNs) == 0 {
 		return
 	}
@@ -319,36 +347,7 @@ func (m *ECSTasksModule) loadTasksData(clusterARN string, taskARNs []string, reg
 			LaunchType:     string(task.LaunchType),
 			ID:             getIDFromECSTask(aws.ToString(task.TaskArn)),
 			PrivateIP:      getPrivateIPv4AddressFromECSTask(task),
-			TaskRole:       m.getTaskRole(aws.ToString(task.TaskDefinitionArn), region),
-		}
-
-		if mappedTask.TaskRole != "" {
-			// If we've seen the role before, skip the isRoleAdmin function and just pull the value from the localAdminMap
-			if val, ok := localAdminMap[mappedTask.TaskRole]; ok {
-				if val {
-					// we've seen it before and it's an admin
-					adminRole = "YES"
-				} else {
-					// we've seen it before and it's NOT an admin
-					adminRole = "No"
-				}
-			} else {
-				if !m.SkipAdminCheck {
-					isRoleAdmin := m.isRoleAdmin(&mappedTask.TaskRole)
-					if isRoleAdmin {
-						adminRole = "YES"
-						localAdminMap[mappedTask.TaskRole] = true
-					} else {
-						adminRole = "No"
-						localAdminMap[mappedTask.TaskRole] = false
-					}
-				} else {
-					adminRole = "Skipped"
-				}
-			}
-			if adminRole != "" {
-				mappedTask.isAdmin = adminRole
-			}
+			Role:           m.getTaskRole(aws.ToString(task.TaskDefinitionArn), region),
 		}
 
 		eniID := getElasticNetworkInterfaceIDOfECSTask(task)
@@ -358,23 +357,6 @@ func (m *ECSTasksModule) loadTasksData(clusterARN string, taskARNs []string, reg
 
 		dataReceiver <- mappedTask
 	}
-}
-
-func (m *ECSTasksModule) isRoleAdmin(principal *string) bool {
-	iamSimMod := IamSimulatorModule{
-		IAMSimulatePrincipalPolicyClient: m.IAMSimulatePrincipalPolicyClient,
-		Caller:                           m.Caller,
-		AWSProfile:                       m.AWSProfile,
-		Goroutines:                       m.Goroutines,
-	}
-	adminCheckResult := iamSimMod.isPrincipalAnAdmin(principal)
-
-	if adminCheckResult {
-		return true
-	} else {
-		return false
-	}
-
 }
 
 func (m *ECSTasksModule) getTaskRole(taskDefinitionArn string, region string) string {
@@ -395,6 +377,7 @@ func (m *ECSTasksModule) getTaskRole(taskDefinitionArn string, region string) st
 	return aws.ToString(DescribeTaskDefinition.TaskDefinition.TaskRoleArn)
 }
 
+/* UNUSED CODE BLOCK - PLEASE REVIEW AND DELETE IF NOT NEEDED
 func (m *ECSTasksModule) loadAllPublicIPs(eniIDs []string, region string) (map[string]string, error) {
 	eniPublicIPs := make(map[string]string)
 
@@ -419,6 +402,7 @@ func (m *ECSTasksModule) loadAllPublicIPs(eniIDs []string, region string) (map[s
 
 	return eniPublicIPs, nil
 }
+*/
 
 func (m *ECSTasksModule) loadPublicIPs(eniIDs []string, region string) (map[string]string, error) {
 	eniPublicIPs := make(map[string]string)

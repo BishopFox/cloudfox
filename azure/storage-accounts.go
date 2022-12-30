@@ -17,39 +17,52 @@ import (
 	"github.com/kyokomi/emoji"
 )
 
-func AzStorageCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, Version string, AzVerbosity int) error {
+func AzStorageCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, Version string, AzVerbosity int, AzWrapTable bool) error {
 	var err error
 	var header []string
 	var body [][]string
-	var outputDirectory, controlMessagePrefix string
+	var outputDirectory string
 
 	if AzTenantID != "" && AzSubscriptionID == "" {
 		// ./cloudfox azure storage --tenant TENANT_ID
-		fmt.Printf("[%s][%s] Enumerating storage accounts for tenant %s\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_STORAGE_MODULE_NAME), AzTenantID)
-		controlMessagePrefix = fmt.Sprintf("tenant-%s", AzTenantID)
-		outputDirectory = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, "tenants", AzTenantID)
-		header, body, err = getStoragePerTenant(AzTenantID)
+		fmt.Printf(
+			"[%s][%s] Enumerating storage accounts for tenant %s\n",
+			color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)),
+			color.CyanString(globals.AZ_STORAGE_MODULE_NAME),
+			AzTenantID)
+		header, body, err = getStorageInfoPerTenant(AzTenantID)
+		outputDirectory = filepath.Join(
+			globals.CLOUDFOX_BASE_DIRECTORY,
+			globals.AZ_DIR_BASE,
+			"tenants",
+			AzTenantID)
 
 	} else if AzTenantID == "" && AzSubscriptionID != "" {
 		// ./cloudfox azure storage --subscription SUBSCRIPTION_ID
-		fmt.Printf("[%s][%s] Enumerating storage accounts for subscription %s\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_STORAGE_MODULE_NAME), AzSubscriptionID)
-		controlMessagePrefix = fmt.Sprintf("subscription-%s", AzSubscriptionID)
-		outputDirectory = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, "subscriptions", AzSubscriptionID)
-		header, body, err = getStoragePerSubscription(AzSubscriptionID)
-
+		fmt.Printf(
+			"[%s][%s] Enumerating storage accounts for subscription %s\n",
+			color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)),
+			color.CyanString(globals.AZ_STORAGE_MODULE_NAME),
+			AzSubscriptionID)
+		header, body, err = getStorageInfoPerSubscription(AzSubscriptionID)
+		outputDirectory = filepath.Join(
+			globals.CLOUDFOX_BASE_DIRECTORY,
+			globals.AZ_DIR_BASE,
+			"subscriptions",
+			AzSubscriptionID)
 	} else {
 		// Error: please make a valid flag selection
-		fmt.Println("Please enter a valid input with a valid flag. Use --help for info.")
+		err = fmt.Errorf("please enter a valid input with a valid flag. Use --help for info")
 	}
 	if err != nil {
 		return err
 	}
 	fileNameWithoutExtension := globals.AZ_STORAGE_MODULE_NAME
-	utils.OutputSelector(AzVerbosity, AzOutputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_STORAGE_MODULE_NAME, controlMessagePrefix)
+	utils.OutputSelector(AzVerbosity, AzOutputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_STORAGE_MODULE_NAME, AzWrapTable)
 	return nil
 }
 
-func getStoragePerTenant(AzTenantID string) ([]string, [][]string, error) {
+func getStorageInfoPerTenant(AzTenantID string) ([]string, [][]string, error) {
 	var err error
 	var header []string
 	var body, b [][]string
@@ -65,7 +78,7 @@ func getStoragePerTenant(AzTenantID string) ([]string, [][]string, error) {
 	return header, body, nil
 }
 
-func getStoragePerSubscription(AzSubscriptionID string) ([]string, [][]string, error) {
+func getStorageInfoPerSubscription(AzSubscriptionID string) ([]string, [][]string, error) {
 	var err error
 	var header []string
 	var body [][]string

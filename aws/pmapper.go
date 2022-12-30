@@ -4,10 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 
 	"github.com/BishopFox/cloudfox/console"
@@ -25,6 +23,7 @@ type PmapperModule struct {
 	OutputFormat string
 	Goroutines   int
 	AWSProfile   string
+	WrapTable    bool
 
 	// Main module data
 	pmapperGraph   graph.Graph[string, string]
@@ -66,8 +65,6 @@ type AttachedPolicies struct {
 type Tags struct {
 }
 
-var pmapperTxtLogger = utils.TxtLogger()
-
 func (m *PmapperModule) initPmapperGraph() error {
 	// Parse mapper nodes and edges and populate the m.Nodes and m.Edges slices in the method struct
 	err := m.readPmapperData(m.Caller.Account)
@@ -86,12 +83,7 @@ func (m *PmapperModule) initPmapperGraph() error {
 		_ = m.pmapperGraph.AddEdge(edge.Source, edge.Destination)
 	}
 
-	// //populate mod level map of nodes
-	// for _, node := range m.Nodes {
-	// 	m.Nodes[node.Arn] = node
-	// }
-
-	for i, _ := range m.Nodes {
+	for i := range m.Nodes {
 		if m.doesNodeHavePathToAdmin(m.Nodes[i]) {
 			m.Nodes[i].PathToAdmin = true
 			//fmt.Println(m.Nodes[i].Arn, m.Nodes[i].IsAdmin, m.Nodes[i].PathToAdmin)
@@ -100,13 +92,26 @@ func (m *PmapperModule) initPmapperGraph() error {
 		}
 
 	}
+
 	return nil
 }
 
 func (m *PmapperModule) DoesPrincipalHavePathToAdmin(principal string) bool {
-	for i, _ := range m.Nodes {
+	for i := range m.Nodes {
 		if m.Nodes[i].Arn == principal {
-			if m.doesNodeHavePathToAdmin(m.Nodes[i]) {
+			if m.Nodes[i].PathToAdmin {
+				return true
+			}
+		}
+
+	}
+	return false
+}
+
+func (m *PmapperModule) DoesPrincipalHaveAdmin(principal string) bool {
+	for i := range m.Nodes {
+		if m.Nodes[i].Arn == principal {
+			if m.Nodes[i].IsAdmin {
 				return true
 			}
 		}
@@ -142,14 +147,26 @@ func (m *PmapperModule) PrintPmapperData(outputFormat string, outputDirectory st
 	}
 
 	//Table rows
+	var isAdmin, pathToAdmin string
 	for i := range m.Nodes {
 		if m.Nodes[i].PathToAdmin || m.Nodes[i].IsAdmin {
+			if m.Nodes[i].IsAdmin {
+				isAdmin = "YES"
+			} else {
+				isAdmin = "No"
+			}
+			if m.Nodes[i].PathToAdmin {
+				pathToAdmin = "YES"
+			} else {
+				pathToAdmin = "No"
+			}
+
 			m.output.Body = append(
 				m.output.Body,
 				[]string{
 					m.Nodes[i].Arn,
-					strconv.FormatBool(m.Nodes[i].IsAdmin),
-					strconv.FormatBool(m.Nodes[i].PathToAdmin),
+					isAdmin,
+					pathToAdmin,
 				},
 			)
 		}
@@ -157,7 +174,9 @@ func (m *PmapperModule) PrintPmapperData(outputFormat string, outputDirectory st
 
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
-		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, cyan(m.output.CallingModule))
+		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
+		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable)
+
 		fmt.Printf("[%s][%s] %s principals who are admin or have a path to admin identified.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {
@@ -167,20 +186,22 @@ func (m *PmapperModule) PrintPmapperData(outputFormat string, outputDirectory st
 }
 
 func (m *PmapperModule) doesNodeHavePathToAdmin(startNode Node) bool {
-	if startNode.IsAdmin == true {
+	if startNode.IsAdmin {
 		return true
 	} else {
 		for _, destNode := range m.Nodes {
-			path, _ := graph.ShortestPath(m.pmapperGraph, startNode.Arn, destNode.Arn)
-			for _, p := range path {
-				if p != "" {
-					if startNode.Arn != destNode.Arn {
-						// if we got here there is a path
-						//fmt.Printf("%s has a path %s who is an admin.\n", startNode.Arn, destNode.Arn)
-						//fmt.Println(path)
-						return true
-					}
+			if destNode.IsAdmin {
+				path, _ := graph.ShortestPath(m.pmapperGraph, startNode.Arn, destNode.Arn)
+				for _, p := range path {
+					if p != "" {
+						if startNode.Arn != destNode.Arn {
+							// if we got here there is a path
+							//fmt.Printf("%s has a path %s who is an admin.\n", startNode.Arn, destNode.Arn)
+							//fmt.Println(path)
+							return true
+						}
 
+					}
 				}
 			}
 		}
@@ -210,38 +231,4 @@ func (m *PmapperModule) readPmapperData(accountID *string) error {
 
 	return nil
 
-}
-
-func generatePmapperDataBasePaths(accountId *string) (string, string) {
-	var edgesPath, nodesPath string
-
-	if runtime.GOOS == "darwin" {
-		dir, err := os.UserHomeDir()
-		if err != nil {
-			log.Fatal("Could not get homedir")
-		}
-		edgesPath = fmt.Sprintf(dir + "/Library/Application Support/com.nccgroup.principalmapper/" + aws.ToString(accountId) + "/graph/edges.json")
-		nodesPath = fmt.Sprintf(dir + "/Library/Application Support/com.nccgroup.principalmapper/" + aws.ToString(accountId) + "/graph/nodes.json")
-
-	} else if runtime.GOOS == "linux" || runtime.GOOS == "freebsd" || runtime.GOOS == "openbsd" {
-		xdg, ok := os.LookupEnv("XDG_DATA_HOME")
-		if !ok {
-			edgesPath = fmt.Sprintf(xdg + aws.ToString(accountId) + "/graph/edges.json")
-			nodesPath = fmt.Sprintf(xdg + aws.ToString(accountId) + "/graph/nodes.json")
-		} else {
-			edgesPath = fmt.Sprintf("~/.local/share/principalmapper/" + aws.ToString(accountId) + "/graph/edges.json")
-			nodesPath = fmt.Sprintf("~/.local/share/principalmapper/" + aws.ToString(accountId) + "/graph/nodes.json")
-		}
-
-	} else if runtime.GOOS == "windows" {
-		dir, err := os.UserConfigDir()
-		if err != nil {
-			log.Fatal("Could not get userconfigdir")
-		}
-		edgesPath = fmt.Sprintf(dir + "\\principalmapper" + aws.ToString(accountId) + "\\graph\\edges.json")
-		nodesPath = fmt.Sprintf(dir + "\\principalmapper" + aws.ToString(accountId) + "\\graph\\nodes.json")
-
-	}
-
-	return edgesPath, nodesPath
 }

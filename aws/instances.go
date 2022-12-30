@@ -33,10 +33,12 @@ type InstancesModule struct {
 	Goroutines                       int
 	UserDataAttributesOnly           bool
 	AWSProfile                       string
+	WrapTable                        bool
 	InstanceProfileToRolesMap        map[string][]iamTypes.Role
 	SkipAdminCheck                   bool
 	pmapperMod                       PmapperModule
 	pmapperError                     error
+	iamSimClient                     IamSimulatorModule
 
 	// Module's Results
 	MappedInstances []MappedInstance
@@ -56,9 +58,10 @@ type MappedInstance struct {
 	ExternalIP       string
 	PrivateIP        string
 	Profile          string
+	Admin            string
 	Role             string
 	Region           string
-	Admin            string
+	CanPrivEsc       string
 }
 
 func (m *InstancesModule) Instances(filter string, outputFormat string, outputDirectory string, verbosity int) {
@@ -66,6 +69,7 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "instances"
+	localAdminMap := make(map[string]bool)
 	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
@@ -86,12 +90,16 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 
 	//Connects to EC2 service and maps instances
 	fmt.Printf("[%s][%s] Enumerating EC2 instances in all regions for account %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
-	m.pmapperMod, m.pmapperError = m.initPmapperGraph()
-	if m.pmapperError != nil {
-		fmt.Printf("[%s][%s] No pmapper data found for this account. Using cloudfox's iam-simulator for role analysis\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
-	} else {
-		fmt.Printf("[%s][%s] Found pmapper data for this account. Using it for role analysis\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 
+	// Initialized the tools we'll need to check if any workload roles are admin or can privesc to admin
+	fmt.Printf("[%s][%s] Attempting to build a PrivEsc graph in memory using local pmapper data if it exists on the filesystem.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	m.pmapperMod, m.pmapperError = initPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines)
+	m.iamSimClient = initIAMSimClient(m.IAMSimulatePrincipalPolicyClient, m.Caller, m.AWSProfile, m.Goroutines)
+
+	if m.pmapperError != nil {
+		fmt.Printf("[%s][%s] No pmapper data found for this account. Using cloudfox's iam-simulator for role analysis.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	} else {
+		fmt.Printf("[%s][%s] Found pmapper data for this account. Using it for role analysis.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
 
 	wg := new(sync.WaitGroup)
@@ -115,6 +123,18 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 	}
 
 	wg.Wait()
+
+	// Perform role analysis
+	if m.pmapperError == nil {
+		for i := range m.MappedInstances {
+			m.MappedInstances[i].Admin, m.MappedInstances[i].CanPrivEsc = GetPmapperResults(m.SkipAdminCheck, m.pmapperMod, &m.MappedInstances[i].Role)
+		}
+	} else {
+		for i := range m.MappedInstances {
+			m.MappedInstances[i].Admin, m.MappedInstances[i].CanPrivEsc = GetIamSimResult(m.SkipAdminCheck, &m.MappedInstances[i].Role, m.iamSimClient, localAdminMap)
+		}
+	}
+
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
@@ -151,7 +171,7 @@ func (m *InstancesModule) printInstancesUserDataAttributesOnly(outputFormat stri
 	}
 	userDataFileName := filepath.Join(path, fmt.Sprintf("%s.txt", m.output.CallingModule))
 
-	var userDataOut string = fmt.Sprintf("=============================================\n")
+	var userDataOut string = fmt.Sprintln("=============================================")
 
 	for _, instance := range m.MappedInstances {
 		userData, err := m.getInstanceUserDataAttribute(aws.String(instance.ID), instance.Region)
@@ -167,7 +187,7 @@ func (m *InstancesModule) printInstancesUserDataAttributesOnly(outputFormat stri
 				userDataOut = userDataOut + fmt.Sprintf("Region: %s\n", instance.Region)
 				userDataOut = userDataOut + fmt.Sprintf("Instance Profile: %s\n\n", instance.Profile)
 				userDataOut = userDataOut + fmt.Sprintf("User Data: \n%s\n", aws.ToString(userData))
-				userDataOut = userDataOut + fmt.Sprintf("=============================================\n\n")
+				userDataOut = userDataOut + "=============================================\n\n"
 			}
 		}
 	}
@@ -201,6 +221,7 @@ func (m *InstancesModule) printGeneralInstanceData(outputFormat string, outputDi
 		"Internal IP",
 		"Role",
 		"isAdminRole?",
+		"CanPrivEscToAdmin?",
 	}
 	//Table rows
 	for _, instance := range m.MappedInstances {
@@ -218,13 +239,15 @@ func (m *InstancesModule) printGeneralInstanceData(outputFormat string, outputDi
 				instance.PrivateIP,
 				instance.Role,
 				instance.Admin,
+				instance.CanPrivEsc,
 			},
 		)
 	}
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		////m.output.OutputSelector(outputFormat)
-		utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.AWSProfile)
+		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
 
 		m.writeLoot(m.output.FilePath)
 		fmt.Printf("[%s][%s] %s instances found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
@@ -368,7 +391,6 @@ func (m *InstancesModule) loadInstanceData(instance types.Instance, region strin
 	var externalIP string
 	var name string = ""
 	var adminRole string = ""
-	localAdminMap := make(map[string]bool)
 	var roleArn string = ""
 
 	// The name is in a tag so we have to do this to grab the value from the right tag
@@ -398,74 +420,22 @@ func (m *InstancesModule) loadInstanceData(instance types.Instance, region strin
 		if roles, ok := m.InstanceProfileToRolesMap[profileID]; ok {
 			for _, role := range roles {
 				roleArn = aws.ToString(role.Arn)
-				if role.Arn != nil {
-					// If we've seen the function before, skip the isRoleAdmin function and just pull the value from the localAdminMap
-					roleArn := aws.ToString(role.Arn)
-					if val, ok := localAdminMap[roleArn]; ok {
-						if val {
-							// we've seen it before and it's an admin
-							adminRole = "YES"
-						} else {
-							// we've seen it before and it's NOT an admin
-							adminRole = "No"
-						}
-					} else {
-						if !m.SkipAdminCheck {
-							var isRoleAdmin bool
-							if m.pmapperError != nil {
-								isRoleAdmin = m.hasPathToAdmin(m.pmapperMod, role.Arn)
-							} else {
-								isRoleAdmin = m.isRoleAdmin(role.Arn)
-							}
-
-							if isRoleAdmin {
-								adminRole = "YES"
-								localAdminMap[roleArn] = true
-							} else {
-								adminRole = "No"
-								localAdminMap[roleArn] = false
-							}
-						} else {
-							adminRole = "Skipped"
-						}
-					}
-				}
-
 			}
 		}
 
 	}
 	dataReceiver <- MappedInstance{
-		aws.ToString(instance.InstanceId),
-		aws.ToString(&name),
-		//arn,
-		aws.ToString(instance.InstanceId),
-		aws.ToString(instance.Placement.AvailabilityZone),
-		string(instance.State.Name),
-		externalIP,
-		aws.ToString(instance.PrivateIpAddress),
-		profile,
-		roleArn,
-		region,
-		adminRole,
-	}
-
-}
-
-func (m *InstancesModule) isRoleAdmin(principal *string) bool {
-	iamSimMod := IamSimulatorModule{
-		IAMSimulatePrincipalPolicyClient: m.IAMSimulatePrincipalPolicyClient,
-		Caller:                           m.Caller,
-		AWSProfile:                       m.AWSProfile,
-		Goroutines:                       m.Goroutines,
-	}
-
-	adminCheckResult := iamSimMod.isPrincipalAnAdmin(principal)
-
-	if adminCheckResult {
-		return true
-	} else {
-		return false
+		ID:               aws.ToString(instance.InstanceId),
+		Name:             aws.ToString(&name),
+		AvailabilityZone: aws.ToString(instance.Placement.AvailabilityZone),
+		State:            string(instance.State.Name),
+		ExternalIP:       externalIP,
+		PrivateIP:        aws.ToString(instance.PrivateIpAddress),
+		Profile:          profile,
+		Role:             roleArn,
+		Region:           region,
+		Admin:            adminRole,
+		CanPrivEsc:       "",
 	}
 
 }
@@ -500,31 +470,5 @@ func (m *InstancesModule) getRolesFromInstanceProfiles() {
 			break
 		}
 	}
-
-	// next step - debug and watch localAdminmap to see if it's working like it does on lambda
-}
-
-func (m *InstancesModule) hasPathToAdmin(pmapperMod PmapperModule, principal *string) bool {
-	privescCheckResult := pmapperMod.DoesPrincipalHavePathToAdmin(aws.ToString(principal))
-
-	if privescCheckResult {
-		return true
-	} else {
-		return false
-	}
-
-}
-
-func (m *InstancesModule) initPmapperGraph() (PmapperModule, error) {
-	pmapperMod := PmapperModule{
-		Caller:     m.Caller,
-		AWSProfile: m.AWSProfile,
-		Goroutines: m.Goroutines,
-	}
-	err := pmapperMod.initPmapperGraph()
-	if err != nil {
-		return pmapperMod, err
-	}
-	return pmapperMod, nil
 
 }

@@ -15,6 +15,7 @@ var (
 	AzOutputDirectory string
 	AzVerbosity       int
 	AzExtendedFilter  bool
+	AzWrapTable       bool
 
 	AzCommands = &cobra.Command{
 		Use:     "azure",
@@ -33,7 +34,7 @@ var (
 Display Available Azure CLI Sessions:
 ./cloudfox az whoami`,
 		Run: func(cmd *cobra.Command, args []string) {
-			azure.AzWhoamiCommand(AzExtendedFilter, cmd.Root().Version)
+			azure.AzWhoamiCommand(AzExtendedFilter, cmd.Root().Version, AzWrapTable)
 		},
 	}
 	AzRBACCommand = &cobra.Command{
@@ -48,7 +49,7 @@ Enumerate role assignments for a specific subscription:
 ./cloudfox az rbac --subscription SUBSCRIPTION_ID
 `,
 		Run: func(cmd *cobra.Command, args []string) {
-			err := azure.AzRBACCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, cmd.Root().Version, AzVerbosity)
+			err := azure.AzRBACCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, cmd.Root().Version, AzVerbosity, AzWrapTable)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -65,7 +66,7 @@ Enumerate VMs for a specific tenant:
 Enumerate VMs for a specific subscription:
 ./cloudfox az instances --subscription SUBSCRIPTION_ID`,
 		Run: func(cmd *cobra.Command, args []string) {
-			err := azure.AzInstancesCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, cmd.Root().Version, AzVerbosity)
+			err := azure.AzInstancesCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, cmd.Root().Version, AzVerbosity, AzWrapTable)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -83,7 +84,7 @@ Enumerate storage accounts for a specific subscription:
 ./cloudfox az storage --subscription SUBSCRIPTION_ID
 `,
 		Run: func(cmd *cobra.Command, args []string) {
-			azure.AzStorageCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, cmd.Root().Version, AzVerbosity)
+			azure.AzStorageCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, cmd.Root().Version, AzVerbosity, AzWrapTable)
 		},
 	}
 )
@@ -120,13 +121,18 @@ func init() {
 		"g",
 		"",
 		"Resource Group name")
-
 	AzCommands.PersistentFlags().BoolVarP(
 		&AzExtendedFilter,
 		"extended",
 		"e",
 		false,
 		"Display extended output view (if available)")
+	AzCommands.PersistentFlags().BoolVarP(
+		&AzWrapTable,
+		"wrap",
+		"w",
+		false,
+		"Wrap table to fit in terminal (complicates grepping)")
 
 	AzCommands.AddCommand(
 		AzWhoamiCommand,

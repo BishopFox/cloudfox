@@ -68,7 +68,7 @@ func TestAzInstancesCommand(t *testing.T) {
 		globals.NICS_TEST_FILE = s.nicsTestFile
 		globals.PUBLIC_IPS_TEST_FILE = s.publicIPsTestFile
 
-		err := AzInstancesCommand(s.azTenantID, s.azSubscriptionID, s.azOutputFormat, s.version, s.azVerbosity)
+		err := AzInstancesCommand(s.azTenantID, s.azSubscriptionID, s.azOutputFormat, s.version, 2, false)
 		if err != nil {
 			log.Fatalf(err.Error())
 		}

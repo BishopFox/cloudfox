@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"strconv"
-	"sync"
 
 	"github.com/BishopFox/cloudfox/console"
 	"github.com/BishopFox/cloudfox/utils"
@@ -24,6 +23,7 @@ type IamPrincipalsModule struct {
 	OutputFormat string
 	Goroutines   int
 	AWSProfile   string
+	WrapTable    bool
 
 	// Main module data
 	Users          []User
@@ -138,7 +138,8 @@ func (m *IamPrincipalsModule) PrintIamPrincipals(outputFormat string, outputDire
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
-		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.AWSProfile)
+		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
 		fmt.Printf("[%s][%s] %s IAM principals found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {
@@ -147,6 +148,7 @@ func (m *IamPrincipalsModule) PrintIamPrincipals(outputFormat string, outputDire
 
 }
 
+/* UNUSED CODE BLOCK - PLEASE REVIEW AND DELETE IF APPLICABLE
 func (m *IamPrincipalsModule) executeChecks(wg *sync.WaitGroup) {
 	defer wg.Done()
 	m.CommandCounter.Total++
@@ -157,6 +159,7 @@ func (m *IamPrincipalsModule) executeChecks(wg *sync.WaitGroup) {
 	m.CommandCounter.Executing--
 	m.CommandCounter.Complete++
 }
+*/
 
 func (m *IamPrincipalsModule) getIAMUsers() {
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.

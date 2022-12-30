@@ -58,7 +58,7 @@ func TestAzStorageCommand(t *testing.T) {
 		globals.RESOURCES_TEST_FILE = s.resourcesTestFile
 		globals.STORAGE_ACCOUNTS_TEST_FILE = s.storageAccountsTestFile
 
-		err := AzStorageCommand(s.AzTenantID, s.AzSubscriptionID, s.AzOutputFormat, s.version, s.AzVerbosity)
+		err := AzStorageCommand(s.AzTenantID, s.AzSubscriptionID, s.AzOutputFormat, s.version, s.AzVerbosity, false)
 		if err != nil {
 			log.Fatal(err)
 		}

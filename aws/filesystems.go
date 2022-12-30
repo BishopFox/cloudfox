@@ -34,6 +34,7 @@ type FilesystemsModule struct {
 	OutputFormat string
 	Goroutines   int
 	AWSProfile   string
+	WrapTable    bool
 
 	// Main module data
 	Filesystems []FilesystemObject
@@ -134,7 +135,8 @@ func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirector
 
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
-		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.AWSProfile)
+		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
 		m.writeLoot(m.output.FilePath, verbosity)
 		fmt.Printf("[%s][%s] %s filesystems found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
@@ -407,7 +409,7 @@ func (m *FilesystemsModule) getFSxSharesPerRegion(r string, wg *sync.WaitGroup, 
 					context.TODO(),
 					&fsx.DescribeVolumesInput{
 						Filters: []fsxTypes.VolumeFilter{
-							fsxTypes.VolumeFilter{
+							{
 								Name:   "file-system-id",
 								Values: []string{id},
 							}},

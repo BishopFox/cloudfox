@@ -37,56 +37,54 @@ type OutputData2 struct {
 // verbosity = 2 (Output and loot printed to file, output printed screen).
 // verbosity = 3 (Output and loot printed to file and screen).
 // outputType = "table", "csv"
-// prefixIdentifier = this string gets printed with control message calling module (e.g. aws profile, azure resource group, gcp project, etc)
-func OutputSelector(verbosity int, outputType string, header []string, body [][]string, outputDirectory string, fileNameWithoutExtenstion string, callingModule string, prefixIdentifier string) {
+func OutputSelector(verbosity int, outputType string, header []string, body [][]string, outputDirectory string, fileName string, callingModule string, wrapTable bool) {
 
 	switch verbosity {
 	case 2:
-		PrintTableToScreen(header, body)
+		PrintTableToScreen(header, body, wrapTable)
 	case 3:
-		PrintTableToScreen(header, body)
+		PrintTableToScreen(header, body, wrapTable)
 		// Add writeLootToScreen function here
 	}
 	switch outputType {
 	case "table":
 		outputFileTable := createOutputFile(
 			ptr.String(filepath.Join(outputDirectory, "table")),
-			ptr.String(fmt.Sprintf("%s.txt", fileNameWithoutExtenstion)),
+			ptr.String(fmt.Sprintf("%s.txt", fileName)),
 			outputType,
 			callingModule)
-		printTableToFile(header, body, outputFileTable)
-		fmt.Printf("[%s][%s] Output written to [%s]\n", cyan(callingModule), cyan(prefixIdentifier), outputFileTable.Name())
+		printTableToFile(header, body, outputFileTable, wrapTable)
+		fmt.Printf("[%s] Output written to [%s]\n", cyan(callingModule), outputFileTable.Name())
 		// Add writeLootToFile function here
 
 	case "csv":
 		outputFileCSV := createOutputFile(
 			ptr.String(filepath.Join(outputDirectory, "csv")),
-			ptr.String(fmt.Sprintf("%s.csv", fileNameWithoutExtenstion)),
+			ptr.String(fmt.Sprintf("%s.csv", fileName)),
 			outputType,
 			callingModule)
 		printCSVtoFile(header, body, outputFileCSV)
-		fmt.Printf("[%s][%s] Output written to [%s]\n", cyan(callingModule), cyan(prefixIdentifier), outputFileCSV.Name())
+		fmt.Printf("[%s] Output written to [%s]\n", cyan(callingModule), outputFileCSV.Name())
 		// Add writeLootToFile function here
 
 	default:
 		outputFileTable := createOutputFile(
 			ptr.String(filepath.Join(outputDirectory, "table")),
-			ptr.String(fmt.Sprintf("%s.txt", fileNameWithoutExtenstion)),
+			ptr.String(fmt.Sprintf("%s.txt", fileName)),
 			outputType,
 			callingModule)
-		printTableToFile(header, body, outputFileTable)
-		fmt.Printf("[%s][%s] Output written to [%s]\n", cyan(callingModule), cyan(prefixIdentifier), outputFileTable.Name())
+		printTableToFile(header, body, outputFileTable, wrapTable)
+		fmt.Printf("[%s] Output written to [%s]\n", cyan(callingModule), outputFileTable.Name())
 
 		outputFileCSV := createOutputFile(
 			ptr.String(filepath.Join(outputDirectory, "csv")),
-			ptr.String(fmt.Sprintf("%s.csv", fileNameWithoutExtenstion)),
+			ptr.String(fmt.Sprintf("%s.csv", fileName)),
 			outputType,
 			callingModule)
 		printCSVtoFile(header, body, outputFileCSV)
-		fmt.Printf("[%s][%s] Output written to [%s]\n", cyan(callingModule), cyan(prefixIdentifier), outputFileCSV.Name())
+		fmt.Printf("[%s] Output written to [%s]\n", cyan(callingModule), outputFileCSV.Name())
 		// Add writeLootToFile function here
 	}
-
 }
 
 func printCSVtoFile(header []string, body [][]string, outputFile afero.File) {
@@ -98,9 +96,12 @@ func printCSVtoFile(header []string, body [][]string, outputFile afero.File) {
 	csvWriter.Flush()
 }
 
-func printTableToFile(header []string, body [][]string, outputFile afero.File) {
+func printTableToFile(header []string, body [][]string, outputFile afero.File, wrapOutputLines bool) {
 	t := table.New(outputFile)
-	t.SetColumnMaxWidth(1000)
+	if !wrapOutputLines {
+		t.SetColumnMaxWidth(1000)
+	}
+
 	t.SetHeaders(header...)
 	t.AddRows(body...)
 	t.SetRowLines(false)
@@ -108,12 +109,14 @@ func printTableToFile(header []string, body [][]string, outputFile afero.File) {
 	t.Render()
 }
 
-func PrintTableToScreen(header []string, body [][]string) {
+func PrintTableToScreen(header []string, body [][]string, wrapOutputLines bool) {
 	t := table.New(os.Stdout)
-	// ColumnMaxWidth needs to be set as a large value so the table doesn't wrap.
-	// If the table wraps it's hard to grep the output from the terminal.
+	// ColumnMaxWidth needs to be set as a large value so the table doesn't wrapOutputLines.
+	// If the table wrapOutputLiness it's hard to grep the output from the terminal.
 	// TO-DO: add a flag to make this optional.
-	t.SetColumnMaxWidth(1000)
+	if !wrapOutputLines {
+		t.SetColumnMaxWidth(1000)
+	}
 	t.SetHeaders(header...)
 	t.AddRows(body...)
 	t.SetHeaderStyle(table.StyleBold)

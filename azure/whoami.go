@@ -16,7 +16,7 @@ import (
 	"github.com/kyokomi/emoji"
 )
 
-func AzWhoamiCommand(AzExtendedFilter bool, version string) error {
+func AzWhoamiCommand(AzExtendedFilter bool, version string, AzWrapTable bool) error {
 	fmt.Printf("[%s][%s] Enumerating Azure CLI sessions...\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", version)), color.CyanString(globals.AZ_WHOAMI_MODULE_NAME))
 	var header []string
 	var body [][]string
@@ -25,7 +25,7 @@ func AzWhoamiCommand(AzExtendedFilter bool, version string) error {
 	} else {
 		header, body = getWhoamiRelevantDataPerRG()
 	}
-	utils.PrintTableToScreen(header, body)
+	utils.PrintTableToScreen(header, body, AzWrapTable)
 	return nil
 }
 

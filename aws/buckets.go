@@ -14,6 +14,7 @@ import (
 	"github.com/BishopFox/cloudfox/utils"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/sirupsen/logrus"
 )
@@ -33,6 +34,7 @@ type BucketsModule struct {
 	OutputFormat string
 	Goroutines   int
 	AWSProfile   string
+	WrapTable    bool
 
 	// Main module data
 	Buckets        []Bucket
@@ -104,7 +106,8 @@ func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		////m.output.OutputSelector(outputFormat)
-		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.AWSProfile)
+		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
 		m.writeLoot(m.output.FilePath, verbosity, m.AWSProfile)
 		fmt.Printf("[%s][%s] %s buckets found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
@@ -126,7 +129,7 @@ func (m *BucketsModule) executeChecks(wg *sync.WaitGroup, semaphore chan struct{
 
 	m.CommandCounter.Total++
 	wg.Add(1)
-	m.getBuckets(m.output.Verbosity, wg, semaphore, dataReceiver)
+	m.createBucketsRows(m.output.Verbosity, wg, semaphore, dataReceiver)
 	m.CommandCounter.Executing--
 	m.CommandCounter.Complete++
 }
@@ -175,7 +178,7 @@ func (m *BucketsModule) writeLoot(outputDirectory string, verbosity int, profile
 
 }
 
-func (m *BucketsModule) getBuckets(verbosity int, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Bucket) {
+func (m *BucketsModule) createBucketsRows(verbosity int, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Bucket) {
 	defer func() {
 		m.CommandCounter.Executing--
 		m.CommandCounter.Complete++
@@ -186,19 +189,15 @@ func (m *BucketsModule) getBuckets(verbosity int, wg *sync.WaitGroup, semaphore 
 	defer func() {
 		<-semaphore
 	}()
-	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
 	var r string = "Global"
 	var name string
-	ListBuckets, err := m.S3ClientListBucketsInterface.ListBuckets(
-		context.TODO(),
-		&s3.ListBucketsInput{},
-	)
+	ListBuckets, err := m.listBuckets()
 	if err != nil {
 		m.modLog.Error(err.Error())
 		return
 	}
 
-	for _, bucket := range ListBuckets.Buckets {
+	for _, bucket := range ListBuckets {
 		name = aws.ToString(bucket.Name)
 		// Send Bucket object through the channel to the receiver
 		dataReceiver <- Bucket{
@@ -207,5 +206,22 @@ func (m *BucketsModule) getBuckets(verbosity int, wg *sync.WaitGroup, semaphore 
 			Region:     r,
 		}
 	}
+
+}
+
+func (m *BucketsModule) listBuckets() ([]types.Bucket, error) {
+
+	var buckets []types.Bucket
+	ListBuckets, err := m.S3ClientListBucketsInterface.ListBuckets(
+		context.TODO(),
+		&s3.ListBucketsInput{},
+	)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		return buckets, err
+	}
+
+	buckets = append(buckets, ListBuckets.Buckets...)
+	return buckets, nil
 
 }
