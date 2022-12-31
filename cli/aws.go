@@ -503,11 +503,11 @@ func runEKSCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.EKSModule{
-			EKSClientListClustersInterface:     eks.NewFromConfig(AWSConfig),
-			EKSClientDescribeClusterInterface:  eks.NewFromConfig(AWSConfig),
-			EKSClientListNodeGroupsInterface:   eks.NewFromConfig(AWSConfig),
-			EKSClientDesribeNodeGroupInterface: eks.NewFromConfig(AWSConfig),
-			IAMSimulatePrincipalPolicyClient:   iam.NewFromConfig(AWSConfig),
+			EKSClientListClustersInterface:      eks.NewFromConfig(AWSConfig),
+			EKSClientDescribeClusterInterface:   eks.NewFromConfig(AWSConfig),
+			EKSClientListNodeGroupsInterface:    eks.NewFromConfig(AWSConfig),
+			EKSClientDescribeNodeGroupInterface: eks.NewFromConfig(AWSConfig),
+			IAMSimulatePrincipalPolicyClient:    iam.NewFromConfig(AWSConfig),
 
 			Caller:         *caller,
 			AWSRegions:     utils.GetEnabledRegions(profile, cmd.Root().Version),
@@ -1104,11 +1104,11 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		ecstasks.ECSTasks(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
 		eksCommand := aws.EKSModule{
-			EKSClientListClustersInterface:     eks.NewFromConfig(AWSConfig),
-			EKSClientDescribeClusterInterface:  eks.NewFromConfig(AWSConfig),
-			EKSClientListNodeGroupsInterface:   eks.NewFromConfig(AWSConfig),
-			EKSClientDesribeNodeGroupInterface: eks.NewFromConfig(AWSConfig),
-			IAMSimulatePrincipalPolicyClient:   iam.NewFromConfig(AWSConfig),
+			EKSClientListClustersInterface:      eks.NewFromConfig(AWSConfig),
+			EKSClientDescribeClusterInterface:   eks.NewFromConfig(AWSConfig),
+			EKSClientListNodeGroupsInterface:    eks.NewFromConfig(AWSConfig),
+			EKSClientDescribeNodeGroupInterface: eks.NewFromConfig(AWSConfig),
+			IAMSimulatePrincipalPolicyClient:    iam.NewFromConfig(AWSConfig),
 
 			Caller:         *Caller,
 			AWSRegions:     utils.GetEnabledRegions(profile, cmd.Root().Version),
