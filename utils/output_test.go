@@ -136,3 +136,40 @@ func TestCreateOutputFile(t *testing.T) {
 	}
 	fmt.Println()
 }
+
+func TestPrintTableToScreen(t *testing.T) {
+	subTests := []struct {
+		name      string
+		wrapLines bool
+	}{
+		{
+			name:      "wrapLines enabled",
+			wrapLines: true,
+		},
+		{
+			name:      "wrapLines disabled",
+			wrapLines: false,
+		},
+	}
+
+	fmt.Println("TEST_CASE: PrintTableToScreen")
+
+	for _, s := range subTests {
+		fmt.Printf("\n[subtest]: %s\n", s.name)
+
+		t.Run(s.name, func(t *testing.T) {
+			header := []string{"A", "B", "C", "E", "F"}
+			body := [][]string{
+				{
+					"AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
+					"BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB",
+					"DDDDDDDD-DDDD-DDDD-DDDD-DDDDDDDD",
+					"EEEEEEEE-EEEE-EEEE-EEEE-EEEEEEEE",
+					"FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFF",
+				},
+			}
+			PrintTableToScreen(header, body, s.wrapLines)
+		})
+	}
+	fmt.Println()
+}

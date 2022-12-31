@@ -12,6 +12,7 @@ import (
 	"github.com/aws/smithy-go/ptr"
 	"github.com/fatih/color"
 	"github.com/spf13/afero"
+	"golang.org/x/crypto/ssh/terminal"
 )
 
 // Used for file system mocking with Afero library. Set:
@@ -53,7 +54,7 @@ func OutputSelector(verbosity int, outputType string, header []string, body [][]
 			ptr.String(fmt.Sprintf("%s.txt", fileName)),
 			outputType,
 			callingModule)
-		printTableToFile(header, body, outputFileTable, wrapTable)
+		printTableToFile(header, body, outputFileTable)
 		fmt.Printf("[%s] Output written to [%s]\n", cyan(callingModule), outputFileTable.Name())
 		// Add writeLootToFile function here
 
@@ -73,7 +74,7 @@ func OutputSelector(verbosity int, outputType string, header []string, body [][]
 			ptr.String(fmt.Sprintf("%s.txt", fileName)),
 			outputType,
 			callingModule)
-		printTableToFile(header, body, outputFileTable, wrapTable)
+		printTableToFile(header, body, outputFileTable)
 		fmt.Printf("[%s] Output written to [%s]\n", cyan(callingModule), outputFileTable.Name())
 
 		outputFileCSV := createOutputFile(
@@ -96,12 +97,8 @@ func printCSVtoFile(header []string, body [][]string, outputFile afero.File) {
 	csvWriter.Flush()
 }
 
-func printTableToFile(header []string, body [][]string, outputFile afero.File, wrapOutputLines bool) {
+func printTableToFile(header []string, body [][]string, outputFile afero.File) {
 	t := table.New(outputFile)
-	if !wrapOutputLines {
-		t.SetColumnMaxWidth(1000)
-	}
-
 	t.SetHeaders(header...)
 	t.AddRows(body...)
 	t.SetRowLines(false)
@@ -109,13 +106,18 @@ func printTableToFile(header []string, body [][]string, outputFile afero.File, w
 	t.Render()
 }
 
-func PrintTableToScreen(header []string, body [][]string, wrapOutputLines bool) {
+func PrintTableToScreen(header []string, body [][]string, wrapLines bool) {
 	t := table.New(os.Stdout)
-	// ColumnMaxWidth needs to be set as a large value so the table doesn't wrapOutputLines.
-	// If the table wrapOutputLiness it's hard to grep the output from the terminal.
-	// TO-DO: add a flag to make this optional.
-	if !wrapOutputLines {
-		t.SetColumnMaxWidth(1000)
+	if wrapLines {
+		terminalWidth, _, err := terminal.GetSize(int(os.Stdout.Fd()))
+		if err != nil {
+			fmt.Println("error getting terminal size:", err)
+			return
+		}
+		columnCount := len(header)
+		// The offset value was defined by trial and error to get the best wrapping
+		trialAndErrorOffset := 4
+		t.SetColumnMaxWidth(terminalWidth/columnCount - trialAndErrorOffset)
 	}
 	t.SetHeaders(header...)
 	t.AddRows(body...)
