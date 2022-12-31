@@ -22,11 +22,11 @@ import (
 type EKSModule struct {
 	// General configuration data
 	// These interfaces are used for unit testing
-	EKSClientListClustersInterface     eks.ListClustersAPIClient
-	EKSClientDescribeClusterInterface  eks.DescribeClusterAPIClient
-	EKSClientListNodeGroupsInterface   eks.ListNodegroupsAPIClient
-	EKSClientDesribeNodeGroupInterface eks.DescribeNodegroupAPIClient
-	IAMSimulatePrincipalPolicyClient   iam.SimulatePrincipalPolicyAPIClient
+	EKSClientListClustersInterface      eks.ListClustersAPIClient
+	EKSClientDescribeClusterInterface   eks.DescribeClusterAPIClient
+	EKSClientListNodeGroupsInterface    eks.ListNodegroupsAPIClient
+	EKSClientDescribeNodeGroupInterface eks.DescribeNodegroupAPIClient
+	IAMSimulatePrincipalPolicyClient    iam.SimulatePrincipalPolicyAPIClient
 
 	Caller         sts.GetCallerIdentityOutput
 	AWSRegions     []string
@@ -401,7 +401,7 @@ func (m *EKSModule) describeCluster(clusterName string, r string) (*types.Cluste
 
 func (m *EKSModule) describeNodegroup(clusterName string, nodeGroup string, r string) (*types.Nodegroup, error) {
 
-	DescribeNodegroup, err := m.EKSClientDesribeNodeGroupInterface.DescribeNodegroup(
+	DescribeNodegroup, err := m.EKSClientDescribeNodeGroupInterface.DescribeNodegroup(
 		context.TODO(),
 		&eks.DescribeNodegroupInput{
 			ClusterName:   &clusterName,
