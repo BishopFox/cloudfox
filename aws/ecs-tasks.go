@@ -30,6 +30,7 @@ type ECSTasksModule struct {
 	ListTasksClient                  ecs.ListTasksAPIClient
 	ListClustersClient               ecs.ListClustersAPIClient
 	DescribeNetworkInterfacesClient  ec2.DescribeNetworkInterfacesAPIClient
+	DescribeTasksDefinitionInterface DescribeTasksDefinitionAPIClient
 	IAMSimulatePrincipalPolicyClient iam.SimulatePrincipalPolicyAPIClient
 
 	Caller         sts.GetCallerIdentityOutput
@@ -360,7 +361,7 @@ func (m *ECSTasksModule) loadTasksData(clusterARN string, taskARNs []string, reg
 }
 
 func (m *ECSTasksModule) getTaskRole(taskDefinitionArn string, region string) string {
-	DescribeTaskDefinition, err := m.DescribeTaskDefinitionClient.DescribeTaskDefinition(
+	DescribeTaskDefinition, err := m.DescribeTasksDefinitionInterface.DescribeTaskDefinition(
 		context.TODO(),
 		&ecs.DescribeTaskDefinitionInput{
 			TaskDefinition: &taskDefinitionArn,

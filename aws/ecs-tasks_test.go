@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
+	"github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	ecsTypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
@@ -234,19 +235,28 @@ func (c *mockedDescribeNetworkInterfacesClient) DescribeNetworkInterfaces(ctx co
 	return &ec2.DescribeNetworkInterfacesOutput{NetworkInterfaces: nics}, nil
 }
 
-// type mockedDescribeTaskDefinitionsClient struct {
-// 	describeTaskDefinitions DescribeTaskDefinitions
-// }
+type mockedDescribeTaskDefinitionInterface struct {
+	describeTaskDefinition DescribeTasksDefinitionAPIClient
+}
+
+func (c *mockedDescribeTaskDefinitionInterface) DescribeTaskDefinition(ctx context.Context, input *ecs.DescribeTaskDefinitionInput, f ...func(o *ecs.Options)) (*ecs.DescribeTaskDefinitionOutput, error) {
+	testTaskDefinition := types.TaskDefinition{}
+	testTaskDefinition.TaskRoleArn = aws.String("test123")
+	return &ecs.DescribeTaskDefinitionOutput{TaskDefinition: &testTaskDefinition}, nil
+}
 
 func TestECSTasks(t *testing.T) {
 	m := ECSTasksModule{
-		AWSProfile:                      "default",
-		AWSRegions:                      []string{"us-east-1", "us-west-1"},
-		Caller:                          sts.GetCallerIdentityOutput{Arn: aws.String("arn:aws:iam::123456789012:user/cloudfox_unit_tests")},
-		DescribeNetworkInterfacesClient: &mockedDescribeNetworkInterfacesClient{},
-		DescribeTasksClient:             &mockedDescribeTasksClient{},
-		ListTasksClient:                 &mockedListTasksClient{},
-		ListClustersClient:              &mockedListclustersClient{},
+		AWSProfile:                       "default",
+		AWSRegions:                       []string{"us-east-1", "us-west-1"},
+		Caller:                           sts.GetCallerIdentityOutput{Arn: aws.String("arn:aws:iam::123456789012:user/cloudfox_unit_tests")},
+		SkipAdminCheck:                   true,
+		Goroutines:                       30,
+		DescribeNetworkInterfacesClient:  &mockedDescribeNetworkInterfacesClient{},
+		DescribeTasksClient:              &mockedDescribeTasksClient{},
+		ListTasksClient:                  &mockedListTasksClient{},
+		ListClustersClient:               &mockedListclustersClient{},
+		DescribeTasksDefinitionInterface: &mockedDescribeTaskDefinitionInterface{},
 		//IAMSimulatePrincipalPolicyClient: &mockedDescribeTaskDefinitionsClient{},
 	}
 	m.ECSTasks("table", ".", 3)
