@@ -12,7 +12,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
-	"github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	ecsTypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
@@ -236,11 +235,10 @@ func (c *mockedDescribeNetworkInterfacesClient) DescribeNetworkInterfaces(ctx co
 }
 
 type mockedDescribeTaskDefinitionInterface struct {
-	describeTaskDefinition DescribeTasksDefinitionAPIClient
 }
 
 func (c *mockedDescribeTaskDefinitionInterface) DescribeTaskDefinition(ctx context.Context, input *ecs.DescribeTaskDefinitionInput, f ...func(o *ecs.Options)) (*ecs.DescribeTaskDefinitionOutput, error) {
-	testTaskDefinition := types.TaskDefinition{}
+	testTaskDefinition := ecsTypes.TaskDefinition{}
 	testTaskDefinition.TaskRoleArn = aws.String("test123")
 	return &ecs.DescribeTaskDefinitionOutput{TaskDefinition: &testTaskDefinition}, nil
 }

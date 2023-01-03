@@ -112,7 +112,7 @@ func TestEks(t *testing.T) {
 				AWSRegions:     AWSRegions,
 				SkipAdminCheck: true,
 			},
-			expectedResult: []Cluster{Cluster{
+			expectedResult: []Cluster{{
 				Name:     "test1",
 				Endpoint: "http://endpoint.com",
 				OIDC:     "abc123",

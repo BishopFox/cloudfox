@@ -96,7 +96,7 @@ func TestCloudFormation(t *testing.T) {
 				Goroutines:                            30,
 				AWSRegions:                            AWSRegions,
 			},
-			expectedResult: []CFStack{CFStack{
+			expectedResult: []CFStack{{
 				Name: "myteststack",
 				Role: "role123",
 			}},
