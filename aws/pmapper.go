@@ -65,8 +65,6 @@ type AttachedPolicies struct {
 type Tags struct {
 }
 
-var pmapperTxtLogger = utils.TxtLogger()
-
 func (m *PmapperModule) initPmapperGraph() error {
 	// Parse mapper nodes and edges and populate the m.Nodes and m.Edges slices in the method struct
 	err := m.readPmapperData(m.Caller.Account)
@@ -85,7 +83,7 @@ func (m *PmapperModule) initPmapperGraph() error {
 		_ = m.pmapperGraph.AddEdge(edge.Source, edge.Destination)
 	}
 
-	for i, _ := range m.Nodes {
+	for i := range m.Nodes {
 		if m.doesNodeHavePathToAdmin(m.Nodes[i]) {
 			m.Nodes[i].PathToAdmin = true
 			//fmt.Println(m.Nodes[i].Arn, m.Nodes[i].IsAdmin, m.Nodes[i].PathToAdmin)
@@ -99,7 +97,7 @@ func (m *PmapperModule) initPmapperGraph() error {
 }
 
 func (m *PmapperModule) DoesPrincipalHavePathToAdmin(principal string) bool {
-	for i, _ := range m.Nodes {
+	for i := range m.Nodes {
 		if m.Nodes[i].Arn == principal {
 			if m.Nodes[i].PathToAdmin {
 				return true
@@ -111,7 +109,7 @@ func (m *PmapperModule) DoesPrincipalHavePathToAdmin(principal string) bool {
 }
 
 func (m *PmapperModule) DoesPrincipalHaveAdmin(principal string) bool {
-	for i, _ := range m.Nodes {
+	for i := range m.Nodes {
 		if m.Nodes[i].Arn == principal {
 			if m.Nodes[i].IsAdmin {
 				return true
@@ -177,7 +175,7 @@ func (m *PmapperModule) PrintPmapperData(outputFormat string, outputDirectory st
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
-		utils.OutputSelector2(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable)
+		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable)
 
 		fmt.Printf("[%s][%s] %s principals who are admin or have a path to admin identified.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
@@ -188,7 +186,7 @@ func (m *PmapperModule) PrintPmapperData(outputFormat string, outputDirectory st
 }
 
 func (m *PmapperModule) doesNodeHavePathToAdmin(startNode Node) bool {
-	if startNode.IsAdmin == true {
+	if startNode.IsAdmin {
 		return true
 	} else {
 		for _, destNode := range m.Nodes {

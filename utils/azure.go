@@ -1,123 +1,134 @@
 package utils
 
 import (
-	"context"
+	"fmt"
 	"log"
 
+	"github.com/Azure/azure-sdk-for-go/profiles/latest/authorization/mgmt/authorization"
+	"github.com/Azure/azure-sdk-for-go/profiles/latest/compute/mgmt/compute"
+	"github.com/Azure/azure-sdk-for-go/profiles/latest/network/mgmt/network"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/resources"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/subscriptions"
+	"github.com/Azure/azure-sdk-for-go/profiles/latest/storage/mgmt/storage"
+	"github.com/Azure/azure-sdk-for-go/services/graphrbac/1.6/graphrbac"
 	"github.com/Azure/go-autorest/autorest"
 	"github.com/Azure/go-autorest/autorest/azure/auth"
-	"github.com/aws/smithy-go/ptr"
+	"github.com/BishopFox/cloudfox/globals"
 )
 
-const AzureOutputDirectory = "/azure/"
-
-func AzNewGraphAuthorizer(tenantID string) autorest.Authorizer {
-	a, err := auth.NewAuthorizerFromCLIWithResource("https://graph.windows.net/")
+func getAuthorizer(endpoint string) (autorest.Authorizer, error) {
+	auth, err := auth.NewAuthorizerFromCLIWithResource(endpoint)
 	if err != nil {
-		log.Fatalf("[-] Could not create Graph API Client. %s\n", err)
+		return nil, fmt.Errorf("failed to get client authorizer: %s", err)
 	}
-	return a
+	return auth, nil
 }
 
-func AzNewResourceManagerAuthorizer() autorest.Authorizer {
-	a, err := auth.NewAuthorizerFromCLIWithResource("https://management.azure.com/")
+func GetTenantsClient() subscriptions.TenantsClient {
+	client := subscriptions.NewTenantsClient()
+	a, err := getAuthorizer(globals.AZ_RESOURCE_MANAGER_ENDPOINT)
 	if err != nil {
-		log.Fatalf("[-] Could not create Azure Resource Manager (ARM) API Client. %s\n", err)
+		log.Fatalf("failed to get subscriptions client: %s", err)
 	}
-	return a
+	client.Authorizer = a
+	client.AddToUserAgent(globals.CLOUDFOX_USER_AGENT)
+	return client
 }
 
-func AzGetScopeInformation() map[string]map[string][]string {
-	// Auxiliary variables
-	results := make(map[string]map[string][]string)
-	var subscriptionsList []string
-
-	// Clients & Authorizers
-	subscriptionsClient := subscriptions.NewClient()
-	subscriptionsClient.Authorizer = AzNewResourceManagerAuthorizer()
-
-	for page, err := subscriptionsClient.List(context.TODO()); page.NotDone(); err = page.Next() {
-		if err != nil {
-			log.Fatalf("[-] Could not enumerate tenants for current user. %s", err)
-		}
-		// Little bit of an obscure logic here but it works. It's a map of maps.
-		// Format: map[TenantID]map[SubscriptionID][]ResourceGroups
-		// Resource groups are mapped to subscription IDs, which in turn are mapped to tenant IDs.
-		for _, sub := range page.Values() {
-			tenantID := ptr.ToString(sub.TenantID)
-			subscriptionsList = append(subscriptionsList, ptr.ToString(sub.SubscriptionID))
-
-			for _, subID := range subscriptionsList {
-				if _, ok := results[tenantID][subID]; !ok {
-					resourceGroupList := AzGetResourceGroups(subID, subscriptionsClient.Authorizer)
-					if results[tenantID] == nil {
-						results[tenantID] = make(map[string][]string)
-					}
-					results[tenantID][subID] = resourceGroupList
-				}
-			}
-		}
+func GetSubscriptionsClient() subscriptions.Client {
+	client := subscriptions.NewClient()
+	a, err := getAuthorizer(globals.AZ_RESOURCE_MANAGER_ENDPOINT)
+	if err != nil {
+		log.Fatalf("failed to get subscriptions client: %s", err)
 	}
-	return results
+	client.Authorizer = a
+	client.AddToUserAgent(globals.CLOUDFOX_USER_AGENT)
+	return client
 }
 
-func AzGetResourceGroups(subscriptionID string, authorizer autorest.Authorizer) []string {
-	groupsClient := resources.NewGroupsClient(subscriptionID)
-	groupsClient.Authorizer = authorizer
-	var resourceGroups []string
-
-	for page, err := groupsClient.List(context.TODO(), "", nil); page.NotDone(); err = page.Next() {
-
-		if err != nil {
-			log.Fatalf("[-] Could not list resource groups for subscription %s. %s", subscriptionID, err)
-		}
-
-		for _, rg := range page.Values() {
-			if rg.Name != nil {
-				resourceGroups = append(resourceGroups, *(rg.Name))
-			}
-		}
+func GetResourceGroupsClient(subscriptionID string) resources.GroupsClient {
+	client := resources.NewGroupsClient(subscriptionID)
+	a, err := getAuthorizer(globals.AZ_RESOURCE_MANAGER_ENDPOINT)
+	if err != nil {
+		log.Fatalf("failed to get resource groups client: %s", err)
 	}
-	return resourceGroups
+	client.Authorizer = a
+	client.AddToUserAgent(globals.CLOUDFOX_USER_AGENT)
+	return client
 }
 
-/* Azure Public API Edpoints:
-To request a token: az account get-access-token -o json --resource URL
-ManagementPortalURL: "https://manage.windowsazure.com/"
-PublishSettingsURL: "https://manage.windowsazure.com/publishsettings/index"
-ServiceManagementEndpoint: "https://management.core.windows.net/"
-ResourceManagerEndpoint: "https://management.azure.com/"
-ActiveDirectoryEndpoint: "https://login.microsoftonline.com/"
-GalleryEndpoint: "https://gallery.azure.com/"
-KeyVaultEndpoint: "https://vault.azure.net/"
-GraphEndpoint: "https://graph.windows.net/"
-ServiceBusEndpoint: "https://servicebus.windows.net/"
-BatchManagementEndpoint: "https://batch.core.windows.net/"
-StorageEndpointSuffix: "core.windows.net"
-CosmosDBDNSSuffix: "documents.azure.com"
-MariaDBDNSSuffix: "mariadb.database.azure.com"
-MySQLDatabaseDNSSuffix: "mysql.database.azure.com"
-PostgresqlDatabaseDNSSuffix: "postgres.database.azure.com"
-SQLDatabaseDNSSuffix: "database.windows.net"
-TrafficManagerDNSSuffix: "trafficmanager.net"
-KeyVaultDNSSuffix: "vault.azure.net"
-ServiceBusEndpointSuffix: "servicebus.windows.net"
-ServiceManagementVMDNSSuffix: "cloudapp.net"
-ResourceManagerVMDNSSuffix: "cloudapp.azure.com"
-ContainerRegistryDNSSuffix: "azurecr.io"
-TokenAudience: "https://management.azure.com/"
-APIManagementHostNameSuffix: "azure-api.net"
-SynapseEndpointSuffix: "dev.azuresynapse.net"
-ResourceIdentifiers: github.com/Azure/go-autorest/autorest/azure.ResourceIdentifier {Graph: "https://graph.windows.net/"
-KeyVault: "https://vault.azure.net"
-Datalake: "https://datalake.azure.net/"
-Batch: "https://batch.core.windows.net/"
-OperationalInsights: "https://api.loganalytics.io"
-OSSRDBMS: "https://ossrdbms-aad.database.windows.net"
-Storage: "https://storage.azure.com/"
-Synapse: "https://dev.azuresynapse.net"
-ServiceBus: "https://servicebus.azure.net/"
-SQLDatabase: "https://database.windows.net/"
-CosmosDB: "https://cosmos.azure.com" */
+func GetAADUsersClient(tenantID string) graphrbac.UsersClient {
+	client := graphrbac.NewUsersClient(tenantID)
+	a, err := getAuthorizer(globals.AZ_GRAPH_ENDPOINT)
+	if err != nil {
+		log.Fatalf("failed to get azure active directory client: %s", err)
+	}
+	client.Authorizer = a
+	client.AddToUserAgent(globals.CLOUDFOX_USER_AGENT)
+	return client
+}
+
+func GetRoleAssignmentsClient(subscriptionID string) authorization.RoleAssignmentsClient {
+	client := authorization.NewRoleAssignmentsClient(subscriptionID)
+	a, err := getAuthorizer(globals.AZ_RESOURCE_MANAGER_ENDPOINT)
+	if err != nil {
+		log.Fatalf("failed to get role assignments client: %s", err)
+	}
+	client.Authorizer = a
+	client.AddToUserAgent(globals.CLOUDFOX_USER_AGENT)
+	return client
+}
+
+func GetRoleDefinitionsClient(subscriptionName string) authorization.RoleDefinitionsClient {
+	client := authorization.NewRoleDefinitionsClient(subscriptionName)
+	a, err := getAuthorizer(globals.AZ_RESOURCE_MANAGER_ENDPOINT)
+	if err != nil {
+		log.Fatalf("failed to get role definitions client: %s", err)
+	}
+	client.Authorizer = a
+	client.AddToUserAgent(globals.CLOUDFOX_USER_AGENT)
+	return client
+}
+
+func GetVirtualMachinesClient(subscriptionID string) compute.VirtualMachinesClient {
+	client := compute.NewVirtualMachinesClient(subscriptionID)
+	authorizer, err := getAuthorizer(globals.AZ_RESOURCE_MANAGER_ENDPOINT)
+	if err != nil {
+		log.Fatalf("failed to get compute client: %s", err)
+	}
+	client.Authorizer = authorizer
+	client.AddToUserAgent(globals.CLOUDFOX_USER_AGENT)
+	return client
+}
+
+func GetNICClient(subscriptionID string) network.InterfacesClient {
+	client := network.NewInterfacesClient(subscriptionID)
+	authorizer, err := getAuthorizer(globals.AZ_RESOURCE_MANAGER_ENDPOINT)
+	if err != nil {
+		log.Fatalf("failed to get nic client: %s", err)
+	}
+	client.Authorizer = authorizer
+	client.AddToUserAgent(globals.CLOUDFOX_USER_AGENT)
+	return client
+}
+
+func GetPublicIPClient(subscriptionID string) network.PublicIPAddressesClient {
+	client := network.NewPublicIPAddressesClient(subscriptionID)
+	authorizer, err := getAuthorizer(globals.AZ_RESOURCE_MANAGER_ENDPOINT)
+	if err != nil {
+		log.Fatalf("failed to get public ip client: %s", err)
+	}
+	client.Authorizer = authorizer
+	return client
+}
+
+func GetStorageClient(subscriptionID string) storage.AccountsClient {
+	client := storage.NewAccountsClient(subscriptionID)
+	a, err := getAuthorizer(globals.AZ_RESOURCE_MANAGER_ENDPOINT)
+	if err != nil {
+		log.Fatalf("failed to get storage client: %s", err)
+	}
+	client.Authorizer = a
+	client.AddToUserAgent(globals.CLOUDFOX_USER_AGENT)
+	return client
+}

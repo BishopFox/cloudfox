@@ -137,7 +137,7 @@ func (m *EnvsModule) PrintEnvs(outputFormat string, outputDirectory string, verb
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		utils.OutputSelector2(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
+		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
 		fmt.Printf("[%s][%s] %s environment variables found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {
@@ -170,17 +170,14 @@ func (m *EnvsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan 
 	servicemap := &awsservicemap.AwsServiceMap{
 		JsonFileSource: "EMBEDDED_IN_PACKAGE",
 	}
-	res, err := servicemap.IsServiceInRegion("ecs", r)
-	if err != nil {
-
-	}
+	res, _ := servicemap.IsServiceInRegion("ecs", r)
 	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getECSEnvironmentVariablesPerRegion(r, wg, semaphore, dataReceiver)
 	}
 
-	res, err = servicemap.IsServiceInRegion("lambda", r)
+	res, err := servicemap.IsServiceInRegion("lambda", r)
 	if err != nil {
 		m.modLog.Error(err)
 	}

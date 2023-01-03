@@ -135,7 +135,7 @@ func (m *CloudformationModule) PrintCloudformationStacks(outputFormat string, ou
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		utils.OutputSelector2(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
+		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
 		m.writeLoot(m.output.FilePath, verbosity)
 		fmt.Printf("[%s][%s] %s cloudformation stacks found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 	} else {
@@ -184,9 +184,10 @@ func (m *CloudformationModule) writeLoot(outputDirectory string, verbosity int) 
 	out = out + fmt.Sprintln("")
 
 	for _, stack := range m.CFStacks {
-		out = out + fmt.Sprintf("=============================================\n")
+		out = out + fmt.Sprintln("=============================================")
 		out = out + fmt.Sprintf("Stack Name: %s\n\n", stack.Name)
-		out = out + fmt.Sprintf("Stack Outputs:\n\n")
+		out = out + fmt.Sprintln("Stack Outputs:")
+		out = out + fmt.Sprintln()
 		for _, output := range stack.Outputs {
 			outputDescription := aws.ToString(output.Description)
 			outputExport := aws.ToString(output.ExportName)
@@ -197,7 +198,7 @@ func (m *CloudformationModule) writeLoot(outputDirectory string, verbosity int) 
 			out = out + fmt.Sprintf("Stack Output Key: %s\n", outputKey)
 			out = out + fmt.Sprintf("Stack Output Value: %s\n\n", outputValue)
 		}
-		out = out + fmt.Sprintf("Stack Parameters:\n\n")
+		out = out + "Stack Parameters:\n\n"
 		for _, param := range stack.Parameters {
 			paramKey := aws.ToString(param.ParameterKey)
 			paramValue := aws.ToString(param.ParameterValue)
@@ -206,7 +207,7 @@ func (m *CloudformationModule) writeLoot(outputDirectory string, verbosity int) 
 		}
 		//out = out + fmt.Sprintf("Stack Parameters:\n %s\n", stack.Parameters)
 		out = out + fmt.Sprintf("Stack Template:\n %s\n", stack.Template)
-		out = out + fmt.Sprintf("=============================================\n")
+		out = out + fmt.Sprintln("=============================================")
 
 	}
 	err = os.WriteFile(pullFile, []byte(out), 0644)

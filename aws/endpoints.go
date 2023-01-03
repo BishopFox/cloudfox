@@ -169,7 +169,7 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		utils.OutputSelector2(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
+		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
 		m.writeLoot(m.output.FilePath, verbosity)
 		fmt.Printf("[%s][%s] %s endpoints found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 	} else {
@@ -1236,7 +1236,7 @@ func (m *EndpointsModule) getRdsClustersPerRegion(r string, wg *sync.WaitGroup, 
 				name := aws.ToString(instance.DBInstanceIdentifier)
 				port := instance.Endpoint.Port
 				endpoint := aws.ToString(instance.Endpoint.Address)
-				awsService := fmt.Sprintf("RDS")
+				awsService := "RDS"
 
 				if instance.PubliclyAccessible {
 					public = "True"
@@ -1342,80 +1342,83 @@ func (m *EndpointsModule) getRedshiftEndPointsPerRegion(r string, wg *sync.WaitG
 
 }
 
-func (m *EndpointsModule) getS3EndpointsPerRegion(wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Endpoint) {
-	defer func() {
-		m.CommandCounter.Executing--
-		m.CommandCounter.Complete++
-		wg.Done()
+/*
+UNUSED CODE - PLEASE REVIEW AND DELETE IF IT DOESN'T APPLY
 
-	}()
-	semaphore <- struct{}{}
-	defer func() {
-		<-semaphore
-	}()
-	// m.CommandCounter.Total++
-	m.CommandCounter.Pending--
-	m.CommandCounter.Executing++
+	func (m *EndpointsModule) getS3EndpointsPerRegion(wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Endpoint) {
+		defer func() {
+			m.CommandCounter.Executing--
+			m.CommandCounter.Complete++
+			wg.Done()
 
-	// This for loop exits at the end dependeding on whether the output hits its last page (see pagination control block at the end of the loop).
-	ListBuckets, _ := m.S3Client.ListBuckets(
-		context.TODO(),
-		&s3.ListBucketsInput{},
-	)
+		}()
+		semaphore <- struct{}{}
+		defer func() {
+			<-semaphore
+		}()
+		// m.CommandCounter.Total++
+		m.CommandCounter.Pending--
+		m.CommandCounter.Executing++
 
-	var public string
-	for _, bucket := range ListBuckets.Buckets {
-		name := aws.ToString(bucket.Name)
-		endpoint := fmt.Sprintf("https://%s.s3.amazonaws.com", name)
-		awsService := "S3"
-
-		var port int32 = 443
-		protocol := "https"
-		var r string = "Global"
-		public = "False"
-
-		GetBucketPolicyStatus, err := m.S3Client.GetBucketPolicyStatus(
+		// This for loop exits at the end dependeding on whether the output hits its last page (see pagination control block at the end of the loop).
+		ListBuckets, _ := m.S3Client.ListBuckets(
 			context.TODO(),
-			&s3.GetBucketPolicyStatusInput{
-				Bucket: &name,
-			},
+			&s3.ListBucketsInput{},
 		)
 
-		if err == nil {
-			isPublic := GetBucketPolicyStatus.PolicyStatus.IsPublic
-			if isPublic {
-				public = "True"
+		var public string
+		for _, bucket := range ListBuckets.Buckets {
+			name := aws.ToString(bucket.Name)
+			endpoint := fmt.Sprintf("https://%s.s3.amazonaws.com", name)
+			awsService := "S3"
+
+			var port int32 = 443
+			protocol := "https"
+			var r string = "Global"
+			public = "False"
+
+			GetBucketPolicyStatus, err := m.S3Client.GetBucketPolicyStatus(
+				context.TODO(),
+				&s3.GetBucketPolicyStatusInput{
+					Bucket: &name,
+				},
+			)
+
+			if err == nil {
+				isPublic := GetBucketPolicyStatus.PolicyStatus.IsPublic
+				if isPublic {
+					public = "True"
+				}
 			}
+
+			// GetBucketWebsite, err := m.S3Client.GetBucketWebsite(
+			// 	context.TODO(),
+			// 	&s3.GetBucketWebsiteInput{
+			// 		Bucket: &name,
+			// 	},
+			// )
+
+			// if err != nil {
+			// 	index := *GetBucketWebsite.IndexDocument.Suffix
+			// 	if index != "" {
+			// 		public = "True"
+			// 	}
+
+			// }
+
+			dataReceiver <- Endpoint{
+				AWSService: awsService,
+				Region:     r,
+				Name:       name,
+				Endpoint:   endpoint,
+				Port:       port,
+				Protocol:   protocol,
+				Public:     public,
+			}
+
 		}
-
-		// GetBucketWebsite, err := m.S3Client.GetBucketWebsite(
-		// 	context.TODO(),
-		// 	&s3.GetBucketWebsiteInput{
-		// 		Bucket: &name,
-		// 	},
-		// )
-
-		// if err != nil {
-		// 	index := *GetBucketWebsite.IndexDocument.Suffix
-		// 	if index != "" {
-		// 		public = "True"
-		// 	}
-
-		// }
-
-		dataReceiver <- Endpoint{
-			AWSService: awsService,
-			Region:     r,
-			Name:       name,
-			Endpoint:   endpoint,
-			Port:       port,
-			Protocol:   protocol,
-			Public:     public,
-		}
-
 	}
-}
-
+*/
 func (m *EndpointsModule) getCloudfrontEndpoints(wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Endpoint) {
 	defer func() {
 		m.CommandCounter.Executing--

@@ -152,7 +152,7 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		utils.OutputSelector2(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
+		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
 		m.writeLoot(m.output.FilePath, verbosity)
 		fmt.Printf("[%s][%s] %s lambdas found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 	} else {
@@ -203,7 +203,7 @@ func (m *LambdasModule) writeLoot(outputDirectory string, verbosity int) {
 	out = out + fmt.Sprintln("")
 
 	for _, function := range m.Lambdas {
-		out = out + fmt.Sprintf("=============================================\n")
+		out = out + fmt.Sprintln("=============================================")
 		out = out + fmt.Sprintf("# Lambda Name: %s\n\n", function.Name)
 		out = out + "# Get function metadata including download location\n"
 		out = out + fmt.Sprintf("aws --profile $profile --region %s lambda get-function --function-name %s\n", function.Region, function.Name)

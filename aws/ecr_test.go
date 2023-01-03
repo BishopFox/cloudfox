@@ -67,7 +67,7 @@ func TestDescribeRepos(t *testing.T) {
 				Goroutines:                       30,
 				AWSRegions:                       AWSRegions,
 			},
-			expectedResult: []Repository{Repository{
+			expectedResult: []Repository{{
 				Name:      "test1",
 				URI:       "testURI:latest",
 				PushedAt:  "2022-10-25 15:14:06",

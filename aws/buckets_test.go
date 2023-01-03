@@ -51,7 +51,7 @@ func TestListBuckets(t *testing.T) {
 				Goroutines:                   30,
 				AWSRegions:                   AWSRegions,
 			},
-			expectedResult: []Bucket{Bucket{
+			expectedResult: []Bucket{{
 				Name: "mockBucket123",
 			}},
 		},

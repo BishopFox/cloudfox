@@ -47,9 +47,9 @@ type RoleTrustsModule struct {
 }
 
 type AnalyzedRole struct {
-	roleARN    *string
-	trustsDoc  trustPolicyDocument
-	trustType  string
+	roleARN   *string
+	trustsDoc trustPolicyDocument
+	// trustType  string // UNUSED FIELD, PLEASE REVIEW
 	Admin      string
 	CanPrivEsc string
 }
@@ -157,7 +157,7 @@ func (m *RoleTrustsModule) printPrincipalTrusts(outputFormat string, outputDirec
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		////m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
-		utils.OutputSelector2(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable)
+		utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable)
 		fmt.Printf("[%s][%s] %s role trusts found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {
@@ -196,7 +196,7 @@ func (m *RoleTrustsModule) printServiceTrusts(outputFormat string, outputDirecto
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
-		utils.OutputSelector2(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable)
+		utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable)
 		fmt.Printf("[%s][%s] %s role trusts found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {
@@ -236,7 +236,7 @@ func (m *RoleTrustsModule) printFederatedTrusts(outputFormat string, outputDirec
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
-		utils.OutputSelector2(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable)
+		utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable)
 		fmt.Printf("[%s][%s] %s role trusts found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {
@@ -248,7 +248,7 @@ func parseFederatedTrustPolicy(statement RoleTrustStatementEntry) (string, strin
 	var column2, column3 string
 	if statement.Condition.StringLike.TokenActionsGithubusercontentComAud != "" || len(statement.Condition.StringLike.TokenActionsGithubusercontentComSub) > 0 {
 		column2 = "GitHub Actions  (" + statement.Principal.Federated[0] + ")"
-		trustedRepos := fmt.Sprintf(strings.Join(statement.Condition.StringLike.TokenActionsGithubusercontentComSub, "\n"))
+		trustedRepos := strings.Join(statement.Condition.StringLike.TokenActionsGithubusercontentComSub, "\n")
 		if trustedRepos == "" {
 			column3 = "ALL REPOS!!!"
 		} else {

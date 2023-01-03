@@ -171,7 +171,7 @@ func (m *InstancesModule) printInstancesUserDataAttributesOnly(outputFormat stri
 	}
 	userDataFileName := filepath.Join(path, fmt.Sprintf("%s.txt", m.output.CallingModule))
 
-	var userDataOut string = fmt.Sprintf("=============================================\n")
+	var userDataOut string = fmt.Sprintln("=============================================")
 
 	for _, instance := range m.MappedInstances {
 		userData, err := m.getInstanceUserDataAttribute(aws.String(instance.ID), instance.Region)
@@ -187,7 +187,7 @@ func (m *InstancesModule) printInstancesUserDataAttributesOnly(outputFormat stri
 				userDataOut = userDataOut + fmt.Sprintf("Region: %s\n", instance.Region)
 				userDataOut = userDataOut + fmt.Sprintf("Instance Profile: %s\n\n", instance.Profile)
 				userDataOut = userDataOut + fmt.Sprintf("User Data: \n%s\n", aws.ToString(userData))
-				userDataOut = userDataOut + fmt.Sprintf("=============================================\n\n")
+				userDataOut = userDataOut + "=============================================\n\n"
 			}
 		}
 	}
@@ -247,7 +247,7 @@ func (m *InstancesModule) printGeneralInstanceData(outputFormat string, outputDi
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		////m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		utils.OutputSelector2(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
+		utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
 
 		m.writeLoot(m.output.FilePath)
 		fmt.Printf("[%s][%s] %s instances found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))

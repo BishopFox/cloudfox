@@ -16,6 +16,7 @@ func TestOutputSelector(t *testing.T) {
 		outputDirectory   string
 		fileNameExtension string
 		callingModule     string
+		prefixIdentifier  string
 	}{
 		{
 			name:              "Verbosity1-OutputTable",
@@ -24,6 +25,7 @@ func TestOutputSelector(t *testing.T) {
 			outputDirectory:   "cloudfox-output",
 			fileNameExtension: ".txt",
 			callingModule:     "calling_module_1",
+			prefixIdentifier:  "AWS_PROFILE_1",
 		},
 		{
 			name:              "Verbosity2-OutputTable",
@@ -32,6 +34,7 @@ func TestOutputSelector(t *testing.T) {
 			outputDirectory:   "cloudfox-output",
 			fileNameExtension: ".txt",
 			callingModule:     "calling_module_2",
+			prefixIdentifier:  "AWS_PROFILE_2",
 		},
 		{
 			name:              "Verbosity3-OutputTable",
@@ -40,6 +43,7 @@ func TestOutputSelector(t *testing.T) {
 			outputDirectory:   "cloudfox-output",
 			fileNameExtension: ".txt",
 			callingModule:     "calling_module_3",
+			prefixIdentifier:  "AZURE_RESOURCE_GROUP_1",
 		},
 		{
 			name:              "Verbosity1-OutputCSV",
@@ -48,6 +52,7 @@ func TestOutputSelector(t *testing.T) {
 			outputDirectory:   "cloudfox-output",
 			fileNameExtension: ".csv",
 			callingModule:     "calling_module_4",
+			prefixIdentifier:  "AZURE_RESOURCE_GROUP_2",
 		},
 		{
 			name:              "Verbosity2-OutputCSV",
@@ -56,6 +61,7 @@ func TestOutputSelector(t *testing.T) {
 			outputDirectory:   "cloudfox-output",
 			fileNameExtension: ".csv",
 			callingModule:     "calling_module_5",
+			prefixIdentifier:  "GCP_PROJECT_1",
 		},
 		{
 			name:              "Verbosity3-OutputCSV",
@@ -64,6 +70,7 @@ func TestOutputSelector(t *testing.T) {
 			outputDirectory:   "cloudfox-output",
 			fileNameExtension: ".csv",
 			callingModule:     "calling_module_6",
+			prefixIdentifier:  "GCP_PROJECT_2",
 		},
 	}
 
@@ -81,7 +88,7 @@ func TestOutputSelector(t *testing.T) {
 				{"2020", "March"},
 				{"2019", "April"},
 			}
-			OutputSelector(s.verbosity, s.outputType, header, body, s.outputDirectory, fmt.Sprintf("%s%s", s.callingModule, s.fileNameExtension), s.callingModule)
+			OutputSelector(s.verbosity, s.outputType, header, body, s.outputDirectory, fmt.Sprintf("%s%s", s.callingModule, s.fileNameExtension), s.callingModule, false)
 		})
 	}
 	fmt.Println()
@@ -125,6 +132,43 @@ func TestCreateOutputFile(t *testing.T) {
 			if strings.Compare(file.Name(), s.expectedAbsoluteFileName) != 0 {
 				t.Errorf("Incorrect file name. Expected %s, got %s.", file.Name(), s.expectedAbsoluteFileName)
 			}
+		})
+	}
+	fmt.Println()
+}
+
+func TestPrintTableToScreen(t *testing.T) {
+	subTests := []struct {
+		name      string
+		wrapLines bool
+	}{
+		{
+			name:      "wrapLines enabled",
+			wrapLines: true,
+		},
+		{
+			name:      "wrapLines disabled",
+			wrapLines: false,
+		},
+	}
+
+	fmt.Println("TEST_CASE: PrintTableToScreen")
+
+	for _, s := range subTests {
+		fmt.Printf("\n[subtest]: %s\n", s.name)
+
+		t.Run(s.name, func(t *testing.T) {
+			header := []string{"A", "B", "C", "E", "F"}
+			body := [][]string{
+				{
+					"AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
+					"BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB",
+					"DDDDDDDD-DDDD-DDDD-DDDD-DDDDDDDD",
+					"EEEEEEEE-EEEE-EEEE-EEEE-EEEEEEEE",
+					"FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFF",
+				},
+			}
+			PrintTableToScreen(header, body, s.wrapLines)
 		})
 	}
 	fmt.Println()

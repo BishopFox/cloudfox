@@ -163,7 +163,7 @@ func (m *ECSTasksModule) printECSTaskData(outputFormat string, outputDirectory s
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		utils.OutputSelector2(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
+		utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
 
 		m.writeLoot(m.output.FilePath)
 		fmt.Printf("[%s][%s] %s ECS tasks found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
@@ -378,6 +378,7 @@ func (m *ECSTasksModule) getTaskRole(taskDefinitionArn string, region string) st
 	return aws.ToString(DescribeTaskDefinition.TaskDefinition.TaskRoleArn)
 }
 
+/* UNUSED CODE BLOCK - PLEASE REVIEW AND DELETE IF NOT NEEDED
 func (m *ECSTasksModule) loadAllPublicIPs(eniIDs []string, region string) (map[string]string, error) {
 	eniPublicIPs := make(map[string]string)
 
@@ -402,6 +403,7 @@ func (m *ECSTasksModule) loadAllPublicIPs(eniIDs []string, region string) (map[s
 
 	return eniPublicIPs, nil
 }
+*/
 
 func (m *ECSTasksModule) loadPublicIPs(eniIDs []string, region string) (map[string]string, error) {
 	eniPublicIPs := make(map[string]string)
