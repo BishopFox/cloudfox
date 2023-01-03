@@ -15,7 +15,7 @@
             "CreationTime": "2013-08-23T01:02:15.422Z",
             "Capabilities": [],
             "StackName": "myteststack",
-            "RoleArn": "ARNrole123",
+            "RoleArn": "role123",
             "StackStatus": "CREATE_COMPLETE",
             "DisableRollback": false
         }

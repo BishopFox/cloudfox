@@ -35,7 +35,9 @@ type EKSModule struct {
 	AWSProfile     string
 	SkipAdminCheck bool
 	WrapTable      bool
-
+	pmapperMod     PmapperModule
+	pmapperError   error
+	iamSimClient   IamSimulatorModule
 	// Main module data
 	Clusters       []Cluster
 	CommandCounter console.CommandCounter
@@ -53,7 +55,8 @@ type Cluster struct {
 	OIDC       string
 	NodeGroup  string
 	NodeRole   string
-	isAdmin    string
+	Admin      string
+	CanPrivEsc string
 }
 
 func (m *EKSModule) EKS(outputFormat string, outputDirectory string, verbosity int) {
@@ -61,6 +64,8 @@ func (m *EKSModule) EKS(outputFormat string, outputDirectory string, verbosity i
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "eks"
+	localAdminMap := make(map[string]bool)
+
 	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
@@ -69,7 +74,16 @@ func (m *EKSModule) EKS(outputFormat string, outputDirectory string, verbosity i
 	}
 
 	fmt.Printf("[%s][%s] Enumerating EKS clusters for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
+	// Initialized the tools we'll need to check if any workload roles are admin or can privesc to admin
+	fmt.Printf("[%s][%s] Attempting to build a PrivEsc graph in memory using local pmapper data if it exists on the filesystem.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	m.pmapperMod, m.pmapperError = initPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines)
+	m.iamSimClient = initIAMSimClient(m.IAMSimulatePrincipalPolicyClient, m.Caller, m.AWSProfile, m.Goroutines)
 
+	if m.pmapperError != nil {
+		fmt.Printf("[%s][%s] No pmapper data found for this account. Using cloudfox's iam-simulator for role analysis.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	} else {
+		fmt.Printf("[%s][%s] Found pmapper data for this account. Using it for role analysis.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	}
 	wg := new(sync.WaitGroup)
 	semaphore := make(chan struct{}, m.Goroutines)
 
@@ -91,6 +105,18 @@ func (m *EKSModule) EKS(outputFormat string, outputDirectory string, verbosity i
 	}
 
 	wg.Wait()
+
+	// Perform role analysis
+	if m.pmapperError == nil {
+		for i := range m.Clusters {
+			m.Clusters[i].Admin, m.Clusters[i].CanPrivEsc = GetPmapperResults(m.SkipAdminCheck, m.pmapperMod, &m.Clusters[i].NodeRole)
+		}
+	} else {
+		for i := range m.Clusters {
+			m.Clusters[i].Admin, m.Clusters[i].CanPrivEsc = GetIamSimResult(m.SkipAdminCheck, &m.Clusters[i].NodeRole, m.iamSimClient, localAdminMap)
+		}
+	}
+
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
@@ -107,6 +133,7 @@ func (m *EKSModule) EKS(outputFormat string, outputDirectory string, verbosity i
 		"NodeGroup",
 		"NodeRole",
 		"isAdminRole?",
+		"CanPrivEscToAdmin?",
 	}
 
 	// Table rows
@@ -122,7 +149,8 @@ func (m *EKSModule) EKS(outputFormat string, outputDirectory string, verbosity i
 				//m.Clusters[i].OIDC,
 				m.Clusters[i].NodeGroup,
 				m.Clusters[i].NodeRole,
-				m.Clusters[i].isAdmin,
+				m.Clusters[i].Admin,
+				m.Clusters[i].CanPrivEsc,
 			},
 		)
 
@@ -231,8 +259,6 @@ func (m *EKSModule) getEKSRecordsPerRegion(r string, wg *sync.WaitGroup, semapho
 	}()
 	var clusters []string
 	var role string
-	var adminRole string = ""
-	localAdminMap := make(map[string]bool)
 
 	clusters, err := m.listClusters(r)
 	if err != nil {
@@ -268,31 +294,7 @@ func (m *EKSModule) getEKSRecordsPerRegion(r string, wg *sync.WaitGroup, semapho
 			}
 
 			role = aws.ToString(nodeGroupDetails.NodeRole)
-			if role != "" {
-				// If we've seen the role before, skip the isRoleAdmin role and just pull the value from the localAdminMap
-				if val, ok := localAdminMap[role]; ok {
-					if val {
-						// we've seen it before and it's an admin
-						adminRole = "YES"
-					} else {
-						// we've seen it before and it's NOT an admin
-						adminRole = "No"
-					}
-				} else {
-					if !m.SkipAdminCheck {
-						isRoleAdmin := m.isRoleAdmin(&role)
-						if isRoleAdmin {
-							adminRole = "YES"
-							localAdminMap[role] = true
-						} else {
-							adminRole = "No"
-							localAdminMap[role] = false
-						}
-					} else {
-						adminRole = "Skipped"
-					}
-				}
-			}
+
 			dataReceiver <- Cluster{
 				AWSService: "EKS",
 				Name:       clusterName,
@@ -302,7 +304,8 @@ func (m *EKSModule) getEKSRecordsPerRegion(r string, wg *sync.WaitGroup, semapho
 				OIDC:       oidc,
 				NodeGroup:  nodeGroup,
 				NodeRole:   role,
-				isAdmin:    adminRole,
+				Admin:      "",
+				CanPrivEsc: "",
 			}
 		}
 
