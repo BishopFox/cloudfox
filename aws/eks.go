@@ -421,20 +421,3 @@ func (m *EKSModule) describeNodegroup(clusterName string, nodeGroup string, r st
 	}
 	return DescribeNodegroup.Nodegroup, err
 }
-
-func (m *EKSModule) isRoleAdmin(principal *string) bool {
-	iamSimMod := IamSimulatorModule{
-		IAMSimulatePrincipalPolicyClient: m.IAMSimulatePrincipalPolicyClient,
-		Caller:                           m.Caller,
-		AWSProfile:                       m.AWSProfile,
-		Goroutines:                       m.Goroutines,
-	}
-	adminCheckResult := iamSimMod.isPrincipalAnAdmin(principal)
-
-	if adminCheckResult {
-		return true
-	} else {
-		return false
-	}
-
-}
