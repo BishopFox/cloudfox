@@ -18,9 +18,13 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+type CloudFormationGetTemplateAPIClient interface {
+	GetTemplate(context.Context, *cloudformation.GetTemplateInput, ...func(*cloudformation.Options)) (*cloudformation.GetTemplateOutput, error)
+}
 type CloudformationModule struct {
 	// General configuration data
-	CloudFormationClient *cloudformation.Client
+	CloudFormationDescribeStacksInterface cloudformation.DescribeStacksAPIClient
+	CloudFormationGetTemplateInterface    CloudFormationGetTemplateAPIClient
 
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
@@ -274,7 +278,7 @@ func (m *CloudformationModule) describeStacks(r string) ([]types.Stack, error) {
 	var stacks []types.Stack
 
 	for {
-		DescribeStacks, err := m.CloudFormationClient.DescribeStacks(
+		DescribeStacks, err := m.CloudFormationDescribeStacksInterface.DescribeStacks(
 			context.TODO(),
 			&cloudformation.DescribeStacksInput{
 				NextToken: PaginationControl,
@@ -305,7 +309,7 @@ func (m *CloudformationModule) describeStacks(r string) ([]types.Stack, error) {
 func (m *CloudformationModule) getTemplateBody(r string, stackName string) (string, error) {
 
 	var stackTemplateBody string
-	GetTemplate, err := m.CloudFormationClient.GetTemplate(
+	GetTemplate, err := m.CloudFormationGetTemplateInterface.GetTemplate(
 		context.TODO(),
 		&cloudformation.GetTemplateInput{
 			StackName: &stackName,

@@ -44,16 +44,20 @@ func (m *MockedEKSClientListClusters) ListClusters(ctx context.Context, params *
 }
 
 func (m *MockedEKSClientDescribeCluster) DescribeCluster(context.Context, *eks.DescribeClusterInput, ...func(*eks.Options)) (*eks.DescribeClusterOutput, error) {
-	testCluster := types.Cluster{}
-	testIdentity := types.Identity{}
-	testOidc := types.OIDC{}
-	testCluster.Identity = &testIdentity
-	testCluster.Identity.Oidc = &testOidc
-	testCluster.Identity.Oidc.Issuer = aws.String("abc123")
-	testCluster.Endpoint = aws.String("http://endpoint.com")
-	testRVPC := types.VpcConfigResponse{}
-	testCluster.ResourcesVpcConfig = &testRVPC
-	testCluster.ResourcesVpcConfig.EndpointPublicAccess = true
+	testIdentity := types.Identity{
+		Oidc: &types.OIDC{
+			Issuer: aws.String("abc123"),
+		},
+	}
+	testRVPC := types.VpcConfigResponse{
+		EndpointPublicAccess: true,
+	}
+
+	testCluster := types.Cluster{
+		Identity:           &testIdentity,
+		Endpoint:           aws.String("http://endpoint.com"),
+		ResourcesVpcConfig: &testRVPC,
+	}
 
 	testDescribeClusterOutput := &eks.DescribeClusterOutput{
 		Cluster: &testCluster,

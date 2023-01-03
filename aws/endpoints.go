@@ -24,6 +24,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/grafana"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/lightsail"
+	"github.com/aws/aws-sdk-go-v2/service/lightsail/types"
 	"github.com/aws/aws-sdk-go-v2/service/mq"
 	"github.com/aws/aws-sdk-go-v2/service/opensearch"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
@@ -1634,6 +1635,34 @@ func (m *EndpointsModule) getLightsailContainerEndpointsPerRegion(r string, wg *
 	var protocol string = "https"
 	var port int32 = 443
 
+	containerServices, err := m.getLightsailContainerServices(r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+	}
+
+	if len(containerServices) > 0 {
+
+		for _, containerService := range containerServices {
+			name := aws.ToString(containerService.ContainerServiceName)
+			endpoint := aws.ToString(containerService.Url)
+			awsService := "Lightsail [Container]"
+
+			dataReceiver <- Endpoint{
+				AWSService: awsService,
+				Region:     r,
+				Name:       name,
+				Endpoint:   endpoint,
+				Port:       port,
+				Protocol:   protocol,
+				Public:     public,
+			}
+		}
+	}
+}
+
+func (m *EndpointsModule) getLightsailContainerServices(r string) ([]types.ContainerService, error) {
+	var containerServices []types.ContainerService
 	GetContainerServices, err := m.LightsailClient.GetContainerServices(
 		context.TODO(),
 		&(lightsail.GetContainerServicesInput{}),
@@ -1641,27 +1670,11 @@ func (m *EndpointsModule) getLightsailContainerEndpointsPerRegion(r string, wg *
 			o.Region = r
 		},
 	)
-	if err == nil {
-
-		if len(GetContainerServices.ContainerServices) > 0 {
-
-			for _, containerService := range GetContainerServices.ContainerServices {
-				name := aws.ToString(containerService.ContainerServiceName)
-				//arn := *containerService.Arn
-				endpoint := aws.ToString(containerService.Url)
-				//endpoint := fmt.Sprintf("https//%s", *service.ServiceUrl)
-				awsService := "Lightsail [Container]"
-
-				dataReceiver <- Endpoint{
-					AWSService: awsService,
-					Region:     r,
-					Name:       name,
-					Endpoint:   endpoint,
-					Port:       port,
-					Protocol:   protocol,
-					Public:     public,
-				}
-			}
-		}
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return containerServices, err
 	}
+	containerServices = append(containerServices, GetContainerServices.ContainerServices...)
+	return containerServices, nil
 }

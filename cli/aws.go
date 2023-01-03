@@ -48,6 +48,7 @@ import (
 var (
 	cyan  = color.New(color.FgCyan).SprintFunc()
 	green = color.New(color.FgGreen).SprintFunc()
+	red   = color.New(color.FgRed).SprintFunc()
 
 	AWSProfile         string
 	AWSProfilesList    string
@@ -462,12 +463,13 @@ func runCloudformationCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.CloudformationModule{
-			CloudFormationClient: cloudformation.NewFromConfig(AWSConfig),
-			Caller:               *caller,
-			AWSRegions:           utils.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile:           profile,
-			Goroutines:           Goroutines,
-			WrapTable:            AWSWrapTable,
+			CloudFormationDescribeStacksInterface: cloudformation.NewFromConfig(AWSConfig),
+			CloudFormationGetTemplateInterface:    cloudformation.NewFromConfig(AWSConfig),
+			Caller:                                *caller,
+			AWSRegions:                            utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile:                            profile,
+			Goroutines:                            Goroutines,
+			WrapTable:                             AWSWrapTable,
 		}
 		m.PrintCloudformationStacks(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 	}
@@ -1160,12 +1162,13 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		envsMod.PrintEnvs(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
 		cfMod := aws.CloudformationModule{
-			CloudFormationClient: cloudFormationClient,
-			Caller:               *Caller,
-			AWSRegions:           utils.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile:           profile,
-			Goroutines:           Goroutines,
-			WrapTable:            AWSWrapTable,
+			CloudFormationDescribeStacksInterface: cloudFormationClient,
+			CloudFormationGetTemplateInterface:    cloudFormationClient,
+			Caller:                                *Caller,
+			AWSRegions:                            utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile:                            profile,
+			Goroutines:                            Goroutines,
+			WrapTable:                             AWSWrapTable,
 		}
 		cfMod.PrintCloudformationStacks(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
