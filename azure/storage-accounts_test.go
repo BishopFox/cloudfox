@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/BishopFox/cloudfox/globals"
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 )
 
 func TestAzStorageCommand(t *testing.T) {
@@ -45,7 +45,7 @@ func TestAzStorageCommand(t *testing.T) {
 			version:                 "DEV",
 		},
 	}
-	utils.MockFileSystem(true)
+	internal.MockFileSystem(true)
 	// Mocked functions to simulate Azure calls and responses
 	getTenants = mockedGetTenants
 	getSubscriptions = mockedGetSubscriptions

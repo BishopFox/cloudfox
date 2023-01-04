@@ -10,7 +10,7 @@ import (
 	"sync"
 
 	"github.com/BishopFox/cloudfox/console"
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/arn"
 	"github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi"
@@ -35,7 +35,7 @@ type TagsModule struct {
 	ResourceTypeCounts map[string]int
 
 	// Used to store output data for pretty printing
-	output utils.OutputData2
+	output internal.OutputData2
 	modLog *logrus.Entry
 }
 
@@ -54,11 +54,11 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "tags"
-	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
+	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-		m.AWSProfile = utils.BuildAWSPath(m.Caller)
+		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
 
 	fmt.Printf("[%s][%s] Enumerating tags for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
@@ -124,7 +124,7 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
+		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
 		//m.writeLoot(m.output.FilePath, verbosity)
 		fmt.Printf("[%s][%s] %s tags found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 		count := m.countUniqueResourcesWithTags()
@@ -138,7 +138,7 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 func (m *TagsModule) countUniqueResourcesWithTags() int {
 	var uniqueResources []string
 	for i := range m.Tags {
-		if !utils.Contains(m.Tags[i].Name, uniqueResources) {
+		if !internal.Contains(m.Tags[i].Name, uniqueResources) {
 			uniqueResources = append(uniqueResources, m.Tags[i].Name)
 		}
 	}

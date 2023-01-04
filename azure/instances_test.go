@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/BishopFox/cloudfox/globals"
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 )
 
 func TestAzInstancesCommand(t *testing.T) {
@@ -14,7 +14,7 @@ func TestAzInstancesCommand(t *testing.T) {
 	fmt.Println("[test case] Azure Instances Command")
 
 	// Test case parameters
-	utils.MockFileSystem(true)
+	internal.MockFileSystem(true)
 	subtests := []struct {
 		name              string
 		azTenantID        string

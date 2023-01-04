@@ -9,7 +9,7 @@ import (
 	"sync"
 
 	"github.com/BishopFox/cloudfox/console"
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
@@ -42,7 +42,7 @@ type EKSModule struct {
 	Clusters       []Cluster
 	CommandCounter console.CommandCounter
 	// Used to store output data for pretty printing
-	output utils.OutputData2
+	output internal.OutputData2
 	modLog *logrus.Entry
 }
 
@@ -66,11 +66,11 @@ func (m *EKSModule) EKS(outputFormat string, outputDirectory string, verbosity i
 	m.output.CallingModule = "eks"
 	localAdminMap := make(map[string]bool)
 
-	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
+	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-		m.AWSProfile = utils.BuildAWSPath(m.Caller)
+		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
 
 	fmt.Printf("[%s][%s] Enumerating EKS clusters for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
@@ -158,7 +158,7 @@ func (m *EKSModule) EKS(outputFormat string, outputDirectory string, verbosity i
 
 	var seen []string
 	for _, cluster := range m.Clusters {
-		if !utils.Contains(cluster.Name, seen) {
+		if !internal.Contains(cluster.Name, seen) {
 			seen = append(seen, cluster.Name)
 		}
 	}
@@ -167,7 +167,7 @@ func (m *EKSModule) EKS(outputFormat string, outputDirectory string, verbosity i
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
+		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
 		m.writeLoot(m.output.FilePath, verbosity)
 		fmt.Printf("[%s][%s] %d clusters with a total of %d node groups found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), len(seen), len(m.output.Body))
 	} else {
@@ -220,7 +220,7 @@ func (m *EKSModule) writeLoot(outputDirectory string, verbosity int) {
 	var seen []string
 	for _, cluster := range m.Clusters {
 
-		if !utils.Contains(cluster.Name, seen) {
+		if !internal.Contains(cluster.Name, seen) {
 			out = out + fmt.Sprintf("aws --profile $profile --region %s eks update-kubeconfig --name %s\n", cluster.Region, cluster.Name)
 			seen = append(seen, cluster.Name)
 		}

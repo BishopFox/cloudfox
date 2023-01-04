@@ -13,7 +13,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/resources"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/subscriptions"
 	"github.com/BishopFox/cloudfox/globals"
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/smithy-go/ptr"
 	"github.com/fatih/color"
 	"github.com/kyokomi/emoji"
@@ -42,7 +42,7 @@ func AzInstancesCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, Version st
 	}
 
 	fileNameWithoutExtension := globals.AZ_INSTANCES_MODULE_NAME
-	utils.OutputSelector(AzVerbosity, AzOutputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_INSTANCES_MODULE_NAME, AzWrapTable)
+	internal.OutputSelector(AzVerbosity, AzOutputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_INSTANCES_MODULE_NAME, AzWrapTable)
 
 	return nil
 }
@@ -123,7 +123,7 @@ func getComputeRelevantData(sub subscriptions.Subscription, rg resources.Group) 
 var getComputeVMsPerResourceGroup = getComputeVMsPerResourceGroupOriginal
 
 func getComputeVMsPerResourceGroupOriginal(subscriptionID string, resourceGroup string) ([]compute.VirtualMachine, error) {
-	computeClient := utils.GetVirtualMachinesClient(subscriptionID)
+	computeClient := internal.GetVirtualMachinesClient(subscriptionID)
 	var vms []compute.VirtualMachine
 
 	for page, err := computeClient.List(context.TODO(), resourceGroup, ""); page.NotDone(); page.Next() {
@@ -193,7 +193,7 @@ func getIPs(subscriptionID string, resourceGroup string, vm compute.VirtualMachi
 var getNICdetails = getNICdetailsOriginal
 
 func getNICdetailsOriginal(subscriptionID string, resourceGroup string, nicReference compute.NetworkInterfaceReference) (network.Interface, error) {
-	client := utils.GetNICClient(subscriptionID)
+	client := internal.GetNICClient(subscriptionID)
 	NICName := strings.Split(ptr.ToString(nicReference.ID), "/")[len(strings.Split(ptr.ToString(nicReference.ID), "/"))-1]
 
 	nic, err := client.Get(context.TODO(), resourceGroup, NICName, "")
@@ -227,7 +227,7 @@ func mockedGetNICdetails(subscriptionID, resourceGroup string, nicReference comp
 var getPublicIP = getPublicIPOriginal
 
 func getPublicIPOriginal(subscriptionID string, resourceGroup string, ip network.InterfaceIPConfiguration) (*string, error) {
-	client := utils.GetPublicIPClient(subscriptionID)
+	client := internal.GetPublicIPClient(subscriptionID)
 	if ip.InterfaceIPConfigurationPropertiesFormat.PublicIPAddress == nil {
 		return nil, fmt.Errorf("NoPublicIP")
 	}

@@ -10,7 +10,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/resources"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/subscriptions"
 	"github.com/BishopFox/cloudfox/globals"
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/smithy-go/ptr"
 	"github.com/fatih/color"
 	"github.com/kyokomi/emoji"
@@ -25,7 +25,7 @@ func AzWhoamiCommand(AzExtendedFilter bool, version string, AzWrapTable bool) er
 	} else {
 		header, body = getWhoamiRelevantDataPerRG()
 	}
-	utils.PrintTableToScreen(header, body, AzWrapTable)
+	internal.PrintTableToScreen(header, body, AzWrapTable)
 	return nil
 }
 
@@ -87,7 +87,7 @@ func getSubscriptionsPerTenantID(tenantID string) []subscriptions.Subscription {
 var getTenants = getTenantsOriginal
 
 func getTenantsOriginal() []subscriptions.TenantIDDescription {
-	tenantsClient := utils.GetTenantsClient()
+	tenantsClient := internal.GetTenantsClient()
 	var results []subscriptions.TenantIDDescription
 	for page, err := tenantsClient.List(context.TODO()); page.NotDone(); err = page.Next() {
 		if err != nil {
@@ -114,7 +114,7 @@ var getSubscriptions = getSubscriptionsOriginal
 
 func getSubscriptionsOriginal() []subscriptions.Subscription {
 	var results []subscriptions.Subscription
-	subsClient := utils.GetSubscriptionsClient()
+	subsClient := internal.GetSubscriptionsClient()
 	for page, err := subsClient.List(context.TODO()); page.NotDone(); err = page.Next() {
 		if err != nil {
 			log.Fatal("could not get subscriptions for active session")
@@ -143,7 +143,7 @@ var getResourceGroups = getResourceGroupsOriginal
 
 func getResourceGroupsOriginal(subscriptionID string) []resources.Group {
 	var results []resources.Group
-	rgClient := utils.GetResourceGroupsClient(subscriptionID)
+	rgClient := internal.GetResourceGroupsClient(subscriptionID)
 
 	for page, err := rgClient.List(context.TODO(), "", nil); page.NotDone(); err = page.Next() {
 		if err != nil {

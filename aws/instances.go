@@ -11,7 +11,7 @@ import (
 	"sync"
 
 	"github.com/BishopFox/cloudfox/console"
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
@@ -45,7 +45,7 @@ type InstancesModule struct {
 	CommandCounter  console.CommandCounter
 
 	// Used to store output data for pretty printing
-	output utils.OutputData2
+	output internal.OutputData2
 	modLog *logrus.Entry
 }
 
@@ -70,11 +70,11 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "instances"
 	localAdminMap := make(map[string]bool)
-	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
+	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-		m.AWSProfile = utils.BuildAWSPath(m.Caller)
+		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
 
 	// Populate the instance profile to roles map. You can't use getInstanceProfile by name, so the only way to do this is to
@@ -85,7 +85,7 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 	if filter == "all" {
 		instancesToSearch = []string{"all"}
 	} else {
-		instancesToSearch = utils.LoadFileLinesIntoArray(filter)
+		instancesToSearch = internal.LoadFileLinesIntoArray(filter)
 	}
 
 	//Connects to EC2 service and maps instances
@@ -247,7 +247,7 @@ func (m *InstancesModule) printGeneralInstanceData(outputFormat string, outputDi
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		////m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
+		internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
 
 		m.writeLoot(m.output.FilePath)
 		fmt.Printf("[%s][%s] %s instances found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
@@ -368,7 +368,7 @@ func (m *InstancesModule) getDescribeInstances(instancesToSearch []string, regio
 
 			for _, instance := range reservation.Instances {
 
-				if instancesToSearch[0] == "all" || utils.Contains(aws.ToString(instance.InstanceId), instancesToSearch) {
+				if instancesToSearch[0] == "all" || internal.Contains(aws.ToString(instance.InstanceId), instancesToSearch) {
 					m.loadInstanceData(instance, region, accountId, dataReceiver)
 				}
 			}

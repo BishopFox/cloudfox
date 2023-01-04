@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/aws/aws-sdk-go-v2/service/ecr/types"
@@ -76,7 +76,7 @@ func TestDescribeRepos(t *testing.T) {
 			}},
 		},
 	}
-	utils.MockFileSystem(true)
+	internal.MockFileSystem(true)
 	for _, subtest := range subtests {
 		t.Run(subtest.name, func(t *testing.T) {
 			subtest.testModule.PrintECR(subtest.testModule.OutputFormat, subtest.outputDirectory, subtest.verbosity)

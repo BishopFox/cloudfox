@@ -6,7 +6,7 @@ import (
 	"os"
 
 	"github.com/BishopFox/cloudfox/aws"
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/service/apigateway"
 	"github.com/aws/aws-sdk-go-v2/service/apigatewayv2"
 	"github.com/aws/aws-sdk-go-v2/service/apprunner"
@@ -401,9 +401,9 @@ func initAWSProfiles() {
 		AWSProfiles = append(AWSProfiles, AWSProfile)
 	} else if AWSProfilesList != "" {
 		// Written like so to enable testing while still being readable
-		AWSProfiles = utils.GetSelectedAWSProfiles(AWSProfilesList)
+		AWSProfiles = internal.GetSelectedAWSProfiles(AWSProfilesList)
 	} else if AWSAllProfiles {
-		AWSProfiles = utils.GetAllAWSProfiles(AWSConfirm)
+		AWSProfiles = internal.GetAllAWSProfiles(AWSConfirm)
 	} else {
 		AWSProfiles = append(AWSProfiles, "")
 	}
@@ -411,7 +411,7 @@ func initAWSProfiles() {
 
 func awsPreRun(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
-		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
 		if err != nil {
 			continue
 		}
@@ -421,12 +421,12 @@ func awsPreRun(cmd *cobra.Command, args []string) {
 
 func runAccessKeysCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
-		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
 		if err != nil {
 			continue
 		}
 		m := aws.AccessKeysModule{
-			IAMClient:  iam.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			IAMClient:  iam.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
 			Caller:     *caller,
 			AWSProfile: profile,
 			Goroutines: Goroutines,
@@ -438,13 +438,13 @@ func runAccessKeysCommand(cmd *cobra.Command, args []string) {
 
 func runBucketsCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
-		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
 		if err != nil {
 			continue
 		}
 		m := aws.BucketsModule{
 			//S3Client: s3.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			S3ClientListBucketsInterface: s3.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			S3ClientListBucketsInterface: s3.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
 			Caller:                       *caller,
 			AWSProfile:                   profile,
 			Goroutines:                   Goroutines,
@@ -457,8 +457,8 @@ func runBucketsCommand(cmd *cobra.Command, args []string) {
 
 func runCloudformationCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
-		var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
-		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
 		if err != nil {
 			continue
 		}
@@ -466,7 +466,7 @@ func runCloudformationCommand(cmd *cobra.Command, args []string) {
 			CloudFormationDescribeStacksInterface: cloudformation.NewFromConfig(AWSConfig),
 			CloudFormationGetTemplateInterface:    cloudformation.NewFromConfig(AWSConfig),
 			Caller:                                *caller,
-			AWSRegions:                            utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions:                            internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile:                            profile,
 			Goroutines:                            Goroutines,
 			WrapTable:                             AWSWrapTable,
@@ -477,8 +477,8 @@ func runCloudformationCommand(cmd *cobra.Command, args []string) {
 
 func runECRCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
-		var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
-		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
 		if err != nil {
 			continue
 		}
@@ -488,7 +488,7 @@ func runECRCommand(cmd *cobra.Command, args []string) {
 			ECRClientDescribeImagesInterface: ecr.NewFromConfig(AWSConfig),
 
 			Caller:     *caller,
-			AWSRegions: utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile: profile,
 			Goroutines: Goroutines,
 			WrapTable:  AWSWrapTable,
@@ -499,8 +499,8 @@ func runECRCommand(cmd *cobra.Command, args []string) {
 
 func runEKSCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
-		var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
-		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
 		if err != nil {
 			continue
 		}
@@ -512,7 +512,7 @@ func runEKSCommand(cmd *cobra.Command, args []string) {
 			IAMSimulatePrincipalPolicyClient:    iam.NewFromConfig(AWSConfig),
 
 			Caller:         *caller,
-			AWSRegions:     utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions:     internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile:     profile,
 			Goroutines:     Goroutines,
 			SkipAdminCheck: AWSSkipAdminCheck,
@@ -524,8 +524,8 @@ func runEKSCommand(cmd *cobra.Command, args []string) {
 
 func runEndpointsCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
-		var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
-		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
 		if err != nil {
 			continue
 		}
@@ -547,7 +547,7 @@ func runEndpointsCommand(cmd *cobra.Command, args []string) {
 			S3Client:           s3.NewFromConfig(AWSConfig),
 
 			Caller:     *caller,
-			AWSRegions: utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile: profile,
 			Goroutines: Goroutines,
 			WrapTable:  AWSWrapTable,
@@ -558,15 +558,15 @@ func runEndpointsCommand(cmd *cobra.Command, args []string) {
 
 func runEnvsCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
-		var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
-		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
 		if err != nil {
 			continue
 		}
 		m := aws.EnvsModule{
 
 			Caller:     *caller,
-			AWSRegions: utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile: profile,
 			Goroutines: Goroutines,
 			WrapTable:  AWSWrapTable,
@@ -583,8 +583,8 @@ func runEnvsCommand(cmd *cobra.Command, args []string) {
 
 func runFilesystemsCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
-		var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
-		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
 		if err != nil {
 			continue
 		}
@@ -595,7 +595,7 @@ func runFilesystemsCommand(cmd *cobra.Command, args []string) {
 			Caller:     *caller,
 			AWSProfile: profile,
 			Goroutines: Goroutines,
-			AWSRegions: utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
 			WrapTable:  AWSWrapTable,
 		}
 		filesystems.PrintFilesystems(AWSOutputFormat, AWSOutputDirectory, Verbosity)
@@ -604,8 +604,8 @@ func runFilesystemsCommand(cmd *cobra.Command, args []string) {
 
 func runIamSimulatorCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
-		var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
-		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
 		if err != nil {
 			continue
 		}
@@ -624,8 +624,8 @@ func runIamSimulatorCommand(cmd *cobra.Command, args []string) {
 
 func runInstancesCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
-		var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
-		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
 		if err != nil {
 			continue
 		}
@@ -635,7 +635,7 @@ func runInstancesCommand(cmd *cobra.Command, args []string) {
 			IAMListInstanceProfilesClient:    iam.NewFromConfig(AWSConfig),
 
 			Caller:                 *caller,
-			AWSRegions:             utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions:             internal.GetEnabledRegions(profile, cmd.Root().Version),
 			UserDataAttributesOnly: InstanceMapUserDataAttributesOnly,
 			AWSProfile:             profile,
 			SkipAdminCheck:         AWSSkipAdminCheck,
@@ -647,8 +647,8 @@ func runInstancesCommand(cmd *cobra.Command, args []string) {
 
 func runInventoryCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
-		var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
-		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
 		if err != nil {
 			continue
 		}
@@ -680,7 +680,7 @@ func runInventoryCommand(cmd *cobra.Command, args []string) {
 			SSMClient:            ssm.NewFromConfig(AWSConfig),
 
 			Caller:     *caller,
-			AWSRegions: utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile: profile,
 			Goroutines: Goroutines,
 			WrapTable:  AWSWrapTable,
@@ -691,8 +691,8 @@ func runInventoryCommand(cmd *cobra.Command, args []string) {
 
 func runLambdasCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
-		var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
-		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
 		if err != nil {
 			continue
 		}
@@ -700,7 +700,7 @@ func runLambdasCommand(cmd *cobra.Command, args []string) {
 			LambdaClient:                     lambda.NewFromConfig(AWSConfig),
 			IAMSimulatePrincipalPolicyClient: iam.NewFromConfig(AWSConfig),
 			Caller:                           *caller,
-			AWSRegions:                       utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions:                       internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile:                       profile,
 			Goroutines:                       Goroutines,
 			SkipAdminCheck:                   AWSSkipAdminCheck,
@@ -712,8 +712,8 @@ func runLambdasCommand(cmd *cobra.Command, args []string) {
 
 func runOutboundAssumedRolesCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
-		var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
-		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
 		if err != nil {
 			continue
 		}
@@ -721,7 +721,7 @@ func runOutboundAssumedRolesCommand(cmd *cobra.Command, args []string) {
 			CloudTrailClient: cloudtrail.NewFromConfig(AWSConfig),
 
 			Caller:     *caller,
-			AWSRegions: utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile: profile,
 			Goroutines: Goroutines,
 			WrapTable:  AWSWrapTable,
@@ -732,8 +732,8 @@ func runOutboundAssumedRolesCommand(cmd *cobra.Command, args []string) {
 
 func runPermissionsCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
-		var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
-		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
 		if err != nil {
 			continue
 		}
@@ -750,7 +750,7 @@ func runPermissionsCommand(cmd *cobra.Command, args []string) {
 
 func runPmapperCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
-		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
 		if err != nil {
 			continue
 		}
@@ -766,8 +766,8 @@ func runPmapperCommand(cmd *cobra.Command, args []string) {
 
 func runPrincipalsCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
-		var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
-		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
 		if err != nil {
 			continue
 		}
@@ -784,8 +784,8 @@ func runPrincipalsCommand(cmd *cobra.Command, args []string) {
 
 func runRAMCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
-		var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
-		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
 		if err != nil {
 			continue
 		}
@@ -794,7 +794,7 @@ func runRAMCommand(cmd *cobra.Command, args []string) {
 			Caller:     *caller,
 			AWSProfile: profile,
 			Goroutines: Goroutines,
-			AWSRegions: utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
 			WrapTable:  AWSWrapTable,
 		}
 		ram.PrintRAM(AWSOutputFormat, AWSOutputDirectory, Verbosity)
@@ -804,8 +804,8 @@ func runRAMCommand(cmd *cobra.Command, args []string) {
 
 func runRoleTrustCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
-		var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
-		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
 		if err != nil {
 			continue
 		}
@@ -825,8 +825,8 @@ func runRoleTrustCommand(cmd *cobra.Command, args []string) {
 
 func runRoute53Command(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
-		var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
-		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
 		if err != nil {
 			continue
 		}
@@ -834,7 +834,7 @@ func runRoute53Command(cmd *cobra.Command, args []string) {
 			Route53Client: route53.NewFromConfig(AWSConfig),
 
 			Caller:     *caller,
-			AWSRegions: utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile: profile,
 			Goroutines: Goroutines,
 			WrapTable:  AWSWrapTable,
@@ -845,8 +845,8 @@ func runRoute53Command(cmd *cobra.Command, args []string) {
 
 func runSecretsCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
-		var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
-		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
 		if err != nil {
 			continue
 		}
@@ -855,7 +855,7 @@ func runSecretsCommand(cmd *cobra.Command, args []string) {
 			SSMClient:            ssm.NewFromConfig(AWSConfig),
 
 			Caller:     *caller,
-			AWSRegions: utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile: profile,
 			Goroutines: Goroutines,
 			WrapTable:  AWSWrapTable,
@@ -866,15 +866,15 @@ func runSecretsCommand(cmd *cobra.Command, args []string) {
 
 func runTagsCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
-		var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
-		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
 		if err != nil {
 			continue
 		}
 		m := aws.TagsModule{
 			ResourceGroupsTaggingApiClient: resourcegroupstaggingapi.NewFromConfig(AWSConfig),
 			Caller:                         *caller,
-			AWSRegions:                     utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions:                     internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile:                     profile,
 			Goroutines:                     Goroutines,
 			WrapTable:                      AWSWrapTable,
@@ -885,20 +885,20 @@ func runTagsCommand(cmd *cobra.Command, args []string) {
 
 func runECSTasksCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
-		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
 		if err != nil {
 			continue
 		}
 		m := aws.ECSTasksModule{
-			DescribeTasksClient:              ecs.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			DescribeTaskDefinitionClient:     ecs.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			ListTasksClient:                  ecs.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			ListClustersClient:               ecs.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			DescribeNetworkInterfacesClient:  ec2.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			IAMSimulatePrincipalPolicyClient: iam.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			DescribeTasksClient:              ecs.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			DescribeTaskDefinitionClient:     ecs.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			ListTasksClient:                  ecs.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			ListClustersClient:               ecs.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			DescribeNetworkInterfacesClient:  ec2.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			IAMSimulatePrincipalPolicyClient: iam.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
 
 			Caller:         *caller,
-			AWSRegions:     utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions:     internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile:     profile,
 			Goroutines:     Goroutines,
 			SkipAdminCheck: AWSSkipAdminCheck,
@@ -910,16 +910,16 @@ func runECSTasksCommand(cmd *cobra.Command, args []string) {
 
 func runENICommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
-		caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
 		if err != nil {
 			continue
 		}
 		m := aws.ElasticNetworkInterfacesModule{
 			//EC2Client:                       ec2.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			DescribeNetworkInterfacesClient: ec2.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			DescribeNetworkInterfacesClient: ec2.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
 
 			Caller:     *caller,
-			AWSRegions: utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile: profile,
 			WrapTable:  AWSWrapTable,
 		}
@@ -929,8 +929,8 @@ func runENICommand(cmd *cobra.Command, args []string) {
 
 func runAllChecksCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
-		var AWSConfig = utils.AWSConfigFileLoader(profile, cmd.Root().Version)
-		Caller, err := utils.AWSWhoami(profile, cmd.Root().Version)
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
+		Caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
 		if err != nil {
 			continue
 		}
@@ -997,7 +997,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			SSMClient:            ssmClient,
 
 			Caller:     *Caller,
-			AWSRegions: utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile: profile,
 			Goroutines: Goroutines,
 			WrapTable:  AWSWrapTable,
@@ -1007,7 +1007,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		tagsMod := aws.TagsModule{
 			ResourceGroupsTaggingApiClient: resourceClient,
 			Caller:                         *Caller,
-			AWSRegions:                     utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions:                     internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile:                     profile,
 			Goroutines:                     Goroutines,
 		}
@@ -1020,7 +1020,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			IAMSimulatePrincipalPolicyClient: iamClient,
 			IAMListInstanceProfilesClient:    iamClient,
 			Caller:                           *Caller,
-			AWSRegions:                       utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions:                       internal.GetEnabledRegions(profile, cmd.Root().Version),
 			SkipAdminCheck:                   AWSSkipAdminCheck,
 			UserDataAttributesOnly:           false,
 			AWSProfile:                       profile,
@@ -1031,7 +1031,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			Route53Client: route53Client,
 
 			Caller:     *Caller,
-			AWSRegions: utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile: profile,
 			Goroutines: Goroutines,
 		}
@@ -1040,7 +1040,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			LambdaClient:                     lambdaClient,
 			IAMSimulatePrincipalPolicyClient: iamClient,
 			Caller:                           *Caller,
-			AWSRegions:                       utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions:                       internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile:                       profile,
 			Goroutines:                       Goroutines,
 			SkipAdminCheck:                   AWSSkipAdminCheck,
@@ -1055,7 +1055,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			FSxClient:  fsxClient,
 			Caller:     *Caller,
 			AWSProfile: profile,
-			AWSRegions: utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
 			Goroutines: Goroutines,
 			WrapTable:  AWSWrapTable,
 		}
@@ -1080,7 +1080,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			LightsailClient:    lightsailClient,
 
 			Caller:     *Caller,
-			AWSRegions: utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile: profile,
 			Goroutines: Goroutines,
 			WrapTable:  AWSWrapTable,
@@ -1097,7 +1097,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			IAMSimulatePrincipalPolicyClient: iamClient,
 
 			Caller:         *Caller,
-			AWSRegions:     utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions:     internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile:     profile,
 			Goroutines:     Goroutines,
 			SkipAdminCheck: AWSSkipAdminCheck,
@@ -1113,7 +1113,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			IAMSimulatePrincipalPolicyClient:    iam.NewFromConfig(AWSConfig),
 
 			Caller:         *Caller,
-			AWSRegions:     utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions:     internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile:     profile,
 			Goroutines:     Goroutines,
 			SkipAdminCheck: AWSSkipAdminCheck,
@@ -1124,7 +1124,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		elasticnetworkinterfaces := aws.ElasticNetworkInterfacesModule{
 			DescribeNetworkInterfacesClient: ec2Client,
 			Caller:                          *Caller,
-			AWSRegions:                      utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions:                      internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile:                      profile,
 			WrapTable:                       AWSWrapTable,
 		}
@@ -1138,7 +1138,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			IAMSimulatePrincipalPolicyClient: iamClient,
 			IAMListInstanceProfilesClient:    iamClient,
 			Caller:                           *Caller,
-			AWSRegions:                       utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions:                       internal.GetEnabledRegions(profile, cmd.Root().Version),
 
 			UserDataAttributesOnly: true,
 			AWSProfile:             profile,
@@ -1149,7 +1149,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		envsMod := aws.EnvsModule{
 
 			Caller:          *Caller,
-			AWSRegions:      utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions:      internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile:      profile,
 			ECSClient:       ecsClient,
 			AppRunnerClient: appRunnerClient,
@@ -1165,7 +1165,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			CloudFormationDescribeStacksInterface: cloudFormationClient,
 			CloudFormationGetTemplateInterface:    cloudFormationClient,
 			Caller:                                *Caller,
-			AWSRegions:                            utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions:                            internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile:                            profile,
 			Goroutines:                            Goroutines,
 			WrapTable:                             AWSWrapTable,
@@ -1190,7 +1190,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			ECRClientDescribeReposInterface:  ecrClient,
 			ECRClientDescribeImagesInterface: ecrClient,
 			Caller:                           *Caller,
-			AWSRegions:                       utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions:                       internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile:                       profile,
 			Goroutines:                       Goroutines,
 			WrapTable:                        AWSWrapTable,
@@ -1202,7 +1202,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			SSMClient:            ssmClient,
 
 			Caller:     *Caller,
-			AWSRegions: utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile: profile,
 			Goroutines: Goroutines,
 			WrapTable:  AWSWrapTable,
@@ -1214,7 +1214,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			Caller:     *Caller,
 			AWSProfile: profile,
 			Goroutines: Goroutines,
-			AWSRegions: utils.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
 			WrapTable:  AWSWrapTable,
 		}
 		ram.PrintRAM(AWSOutputFormat, AWSOutputDirectory, Verbosity)

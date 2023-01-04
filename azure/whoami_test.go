@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/BishopFox/cloudfox/globals"
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 )
 
 func TestAzWhoamiCommand(t *testing.T) {
@@ -18,7 +18,7 @@ func TestAzWhoamiCommand(t *testing.T) {
 	getResourceGroups = mockedGetResourceGroups
 
 	// Test case parameters
-	utils.MockFileSystem(true)
+	internal.MockFileSystem(true)
 	subtests := []struct {
 		name              string
 		resourcesTestFile string

@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/BishopFox/cloudfox/globals"
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 )
 
 func TestAzRBACCommand(t *testing.T) {
@@ -51,7 +51,7 @@ func TestAzRBACCommand(t *testing.T) {
 			roleAssignmentsTestFile: "./test-data/role-assignments.json",
 		},
 	}
-	utils.MockFileSystem(true)
+	internal.MockFileSystem(true)
 	// Mocked functions to simulate Azure calls and responses
 	getSubscriptions = mockedGetSubscriptions
 	getAzureADUsers = mockedGetAzureADUsers
