@@ -26,6 +26,7 @@ func TestAzInstancesCommand(t *testing.T) {
 		vmsTestFile       string
 		nicsTestFile      string
 		publicIPsTestFile string
+		wrapTableOutput   bool
 	}{
 		{
 			name:              "./cloudfox azure instances --tenant TENANT_ID",
@@ -38,6 +39,7 @@ func TestAzInstancesCommand(t *testing.T) {
 			vmsTestFile:       "./test-data/vms.json",
 			nicsTestFile:      "./test-data/nics.json",
 			publicIPsTestFile: "./test-data/public-ips.json",
+			wrapTableOutput:   true,
 		},
 		{
 			name:              "./cloudfox azure instances --subscription SUBSCRIPTION_ID",
@@ -50,6 +52,7 @@ func TestAzInstancesCommand(t *testing.T) {
 			vmsTestFile:       "./test-data/vms.json",
 			nicsTestFile:      "./test-data/nics.json",
 			publicIPsTestFile: "./test-data/public-ips.json",
+			wrapTableOutput:   true,
 		},
 	}
 
@@ -68,7 +71,7 @@ func TestAzInstancesCommand(t *testing.T) {
 		globals.NICS_TEST_FILE = s.nicsTestFile
 		globals.PUBLIC_IPS_TEST_FILE = s.publicIPsTestFile
 
-		err := AzInstancesCommand(s.azTenantID, s.azSubscriptionID, s.azOutputFormat, s.version, 2, false)
+		err := AzInstancesCommand(s.azTenantID, s.azSubscriptionID, s.azOutputFormat, s.version, 2, s.wrapTableOutput)
 		if err != nil {
 			log.Fatalf(err.Error())
 		}
