@@ -43,6 +43,6 @@ func TestAzWhoamiCommand(t *testing.T) {
 	}
 	for _, s := range subtests {
 		globals.RESOURCES_TEST_FILE = s.resourcesTestFile
-		AzWhoamiCommand(s.azExtendedFilter, s.version, s.wrapTableOutput)
+		AzWhoamiCommand(s.version, s.wrapTableOutput)
 	}
 }

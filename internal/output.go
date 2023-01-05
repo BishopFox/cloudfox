@@ -49,6 +49,7 @@ func OutputSelector(verbosity int, outputType string, header []string, body [][]
 	}
 	switch outputType {
 	case "table":
+		fmt.Println("")
 		outputFileTable := createOutputFile(
 			ptr.String(filepath.Join(outputDirectory, "table")),
 			ptr.String(fmt.Sprintf("%s.txt", fileName)),
@@ -107,6 +108,7 @@ func printTableToFile(header []string, body [][]string, outputFile afero.File) {
 }
 
 func PrintTableToScreen(header []string, body [][]string, wrapLines bool) {
+	standardColumnWidth := 10000
 	t := table.New(os.Stdout)
 	if wrapLines {
 		terminalWidth, _, err := terminal.GetSize(int(os.Stdout.Fd()))
@@ -116,9 +118,10 @@ func PrintTableToScreen(header []string, body [][]string, wrapLines bool) {
 		}
 		columnCount := len(header)
 		// The offset value was defined by trial and error to get the best wrapping
-		trialAndErrorOffset := 4
-		t.SetColumnMaxWidth(terminalWidth/columnCount - trialAndErrorOffset)
+		trialAndErrorOffset := 1
+		standardColumnWidth = terminalWidth / (columnCount + trialAndErrorOffset)
 	}
+	t.SetColumnMaxWidth(standardColumnWidth)
 	t.SetHeaders(header...)
 	t.AddRows(body...)
 	t.SetHeaderStyle(table.StyleBold)

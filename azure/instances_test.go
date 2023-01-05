@@ -29,30 +29,30 @@ func TestAzInstancesCommand(t *testing.T) {
 		wrapTableOutput   bool
 	}{
 		{
-			name:              "./cloudfox azure instances --tenant TENANT_ID",
+			name:              "./cloudfox azure instances --tenant 11111111-1111-1111-1111-11111111",
 			azTenantID:        "11111111-1111-1111-1111-11111111",
 			azSubscriptionID:  "",
 			azVerbosity:       2,
-			azOutputFormat:    "table",
+			azOutputFormat:    "all",
 			version:           "DEV",
 			resourcesTestFile: "./test-data/resources.json",
 			vmsTestFile:       "./test-data/vms.json",
 			nicsTestFile:      "./test-data/nics.json",
 			publicIPsTestFile: "./test-data/public-ips.json",
-			wrapTableOutput:   true,
+			wrapTableOutput:   false,
 		},
 		{
-			name:              "./cloudfox azure instances --subscription SUBSCRIPTION_ID",
+			name:              "./cloudfox azure instances --subscription AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
 			azTenantID:        "",
 			azSubscriptionID:  "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
 			azVerbosity:       2,
-			azOutputFormat:    "table",
+			azOutputFormat:    "all",
 			version:           "DEV",
 			resourcesTestFile: "./test-data/resources.json",
 			vmsTestFile:       "./test-data/vms.json",
 			nicsTestFile:      "./test-data/nics.json",
 			publicIPsTestFile: "./test-data/public-ips.json",
-			wrapTableOutput:   true,
+			wrapTableOutput:   false,
 		},
 	}
 

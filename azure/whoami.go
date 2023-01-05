@@ -16,21 +16,17 @@ import (
 	"github.com/kyokomi/emoji"
 )
 
-func AzWhoamiCommand(AzExtendedFilter bool, version string, AzWrapTable bool) error {
+func AzWhoamiCommand(version string, AzWrapTable bool) error {
 	fmt.Printf("[%s][%s] Enumerating Azure CLI sessions...\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", version)), color.CyanString(globals.AZ_WHOAMI_MODULE_NAME))
 	var header []string
 	var body [][]string
-	if !AzExtendedFilter {
-		header, body = getWhoamiRelevantDataPerTenant()
-	} else {
-		header, body = getWhoamiRelevantDataPerRG()
-	}
+	header, body = getWhoamiRelevantDataPerRG()
 	internal.PrintTableToScreen(header, body, AzWrapTable)
 	return nil
 }
 
 func getWhoamiRelevantDataPerRG() ([]string, [][]string) {
-	tableHead := []string{"Subscription ID", "Subscription Name", "RG Name", "Region"}
+	tableHead := []string{"Tenant ID", "Subscription ID", "Subscription Name", "RG Name", "Region", "Domain"}
 	var tableBody [][]string
 
 	for _, t := range getTenants() {
@@ -40,32 +36,13 @@ func getWhoamiRelevantDataPerRG() ([]string, [][]string) {
 					tableBody = append(
 						tableBody,
 						[]string{
+							ptr.ToString(s.TenantID),
 							ptr.ToString(s.SubscriptionID),
 							ptr.ToString(s.DisplayName),
 							ptr.ToString(rg.Name),
-							ptr.ToString(rg.Location)})
+							ptr.ToString(rg.Location),
+							ptr.ToString(t.DefaultDomain)})
 				}
-			}
-		}
-	}
-
-	return tableHead, tableBody
-}
-
-func getWhoamiRelevantDataPerTenant() ([]string, [][]string) {
-	tableHead := []string{"Tenant ID", "Subscription ID", "Subscription Name", "Default Domain"}
-	var tableBody [][]string
-
-	for _, t := range getTenants() {
-		for _, s := range getSubscriptions() {
-			if ptr.ToString(t.TenantID) == ptr.ToString(s.TenantID) {
-				tableBody = append(
-					tableBody,
-					[]string{
-						ptr.ToString(s.TenantID),
-						ptr.ToString(s.SubscriptionID),
-						ptr.ToString(s.DisplayName),
-						ptr.ToString(t.DefaultDomain)})
 			}
 		}
 	}

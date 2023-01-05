@@ -34,7 +34,7 @@ func TestAzStorageCommand(t *testing.T) {
 			resourcesTestFile:       "./test-data/resources.json",
 			storageAccountsTestFile: "./test-data/storage-accounts.json",
 			version:                 "DEV",
-			wrapTableOutput:         true,
+			wrapTableOutput:         false,
 		},
 		{
 			name:                    "./cloudfox az storage --subscription BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB",
@@ -45,7 +45,7 @@ func TestAzStorageCommand(t *testing.T) {
 			resourcesTestFile:       "./test-data/resources.json",
 			storageAccountsTestFile: "./test-data/storage-accounts.json",
 			version:                 "DEV",
-			wrapTableOutput:         true,
+			wrapTableOutput:         false,
 		},
 	}
 	internal.MockFileSystem(true)

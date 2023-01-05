@@ -14,7 +14,6 @@ var (
 	AzOutputFormat    string
 	AzOutputDirectory string
 	AzVerbosity       int
-	AzExtendedFilter  bool
 	AzWrapTable       bool
 
 	AzCommands = &cobra.Command{
@@ -34,7 +33,7 @@ var (
 Display Available Azure CLI Sessions:
 ./cloudfox az whoami`,
 		Run: func(cmd *cobra.Command, args []string) {
-			azure.AzWhoamiCommand(AzExtendedFilter, cmd.Root().Version, AzWrapTable)
+			azure.AzWhoamiCommand(cmd.Root().Version, AzWrapTable)
 		},
 	}
 	AzRBACCommand = &cobra.Command{
@@ -121,12 +120,6 @@ func init() {
 		"g",
 		"",
 		"Resource Group name")
-	AzCommands.PersistentFlags().BoolVarP(
-		&AzExtendedFilter,
-		"extended",
-		"e",
-		false,
-		"Display extended output view (if available)")
 	AzCommands.PersistentFlags().BoolVarP(
 		&AzWrapTable,
 		"wrap",
