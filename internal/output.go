@@ -119,6 +119,8 @@ func PrintTableToScreen(header []string, body [][]string, wrapLines bool) {
 		// The offset value was defined by trial and error to get the best wrapping
 		trialAndErrorOffset := 4
 		t.SetColumnMaxWidth(terminalWidth/columnCount - trialAndErrorOffset)
+	} else {
+		t.SetColumnMaxWidth(1000)
 	}
 	t.SetHeaders(header...)
 	t.AddRows(body...)
