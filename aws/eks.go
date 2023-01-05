@@ -366,14 +366,12 @@ func (m *EKSModule) listNodeGroups(clusterName string, r string) []string {
 			break
 		}
 
+		nodeGroups = append(nodeGroups, ListNodeGroups.Nodegroups...)
 		if ListNodeGroups.NextToken != nil {
-			nodeGroups = append(nodeGroups, ListNodeGroups.Nodegroups...)
 			PaginationControl = ListNodeGroups.NextToken
 		} else {
-			nodeGroups = append(nodeGroups, ListNodeGroups.Nodegroups...)
 			PaginationControl = nil
 			break
-
 		}
 
 	}

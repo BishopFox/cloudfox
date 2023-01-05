@@ -13,23 +13,18 @@ import (
 )
 
 type MockedEKSClientListClusters struct {
-	AWSRegions []string
 }
 
 type MockedEKSClientDescribeCluster struct {
-	AWSRegions []string
 }
 
 type MockedEKSClientListNodegroups struct {
-	AWSRegions []string
 }
 
 type MockedEKSClientDescribeNodegroup struct {
-	AWSRegions []string
 }
 
 type MockedIAMSimulatePrincipalPolicy struct {
-	AWSRegions []string
 }
 
 func (m *MockedEKSClientListClusters) ListClusters(ctx context.Context, params *eks.ListClustersInput, optFns ...func(*eks.Options)) (*eks.ListClustersOutput, error) {
@@ -113,10 +108,11 @@ func TestEks(t *testing.T) {
 				SkipAdminCheck: true,
 			},
 			expectedResult: []Cluster{{
-				Name:     "test1",
-				Endpoint: "http://endpoint.com",
-				OIDC:     "abc123",
-				Public:   "Yes",
+				Name:      "test1",
+				Endpoint:  "http://endpoint.com",
+				NodeGroup: "test1",
+				OIDC:      "abc123",
+				Public:    "true",
 			}},
 		},
 	}
@@ -126,7 +122,22 @@ func TestEks(t *testing.T) {
 			subtest.testModule.EKS(subtest.testModule.OutputFormat, subtest.outputDirectory, subtest.verbosity)
 			for index, expectedCluster := range subtest.expectedResult {
 				if expectedCluster.Name != subtest.testModule.Clusters[index].Name {
-					log.Fatal("Cluster name does not match expected name")
+					log.Fatal("Cluster name does not match expected value")
+				}
+				if expectedCluster.Endpoint != subtest.testModule.Clusters[index].Endpoint {
+					log.Fatal("Cluster endpoint does not match expected value")
+				}
+				if expectedCluster.OIDC != subtest.testModule.Clusters[index].OIDC {
+					log.Fatal("Cluster OIDC does not match expected value")
+				}
+				if expectedCluster.Public != subtest.testModule.Clusters[index].Public {
+					log.Fatal("Cluster public does not match expected value")
+				}
+				if expectedCluster.NodeGroup != subtest.testModule.Clusters[index].NodeGroup {
+					log.Fatal("Cluster NodeGroup does not match expected value")
+				}
+				if expectedCluster.Admin != subtest.testModule.Clusters[index].Admin {
+					log.Fatal("Cluster isAdmin does not match expected value")
 				}
 
 			}
