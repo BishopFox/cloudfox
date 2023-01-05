@@ -45,8 +45,10 @@ func AzRBACCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, Version string,
 	}
 
 	fileNameWithoutExtension := globals.AZ_RBAC_MODULE_NAME
-	internal.OutputSelector(AzVerbosity, AzOutputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_RBAC_MODULE_NAME, AzWrapTable)
 
+	if body != nil {
+		internal.OutputSelector(AzVerbosity, AzOutputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_RBAC_MODULE_NAME, AzWrapTable)
+	}
 	return nil
 }
 

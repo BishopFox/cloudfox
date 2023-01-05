@@ -53,6 +53,17 @@ func TestAzRBACCommand(t *testing.T) {
 			roleAssignmentsTestFile: "./test-data/role-assignments.json",
 			wrapTableOutput:         false,
 		},
+		{
+			name:                    "./cloudfox azure rbac",
+			azOutputFormat:          "all",
+			azVerbosity:             2,
+			version:                 "DEV",
+			resourcesTestFile:       "./test-data/resources.json",
+			usersTestFile:           "./test-data/users.json",
+			roleDefinitionsTestFile: "./test-data/role-definitions.json",
+			roleAssignmentsTestFile: "./test-data/role-assignments.json",
+			wrapTableOutput:         false,
+		},
 	}
 	internal.MockFileSystem(true)
 	// Mocked functions to simulate Azure calls and responses

@@ -54,6 +54,17 @@ func TestAzInstancesCommand(t *testing.T) {
 			publicIPsTestFile: "./test-data/public-ips.json",
 			wrapTableOutput:   false,
 		},
+		{
+			name:              "./cloudfox azure instances",
+			azVerbosity:       2,
+			azOutputFormat:    "all",
+			version:           "DEV",
+			resourcesTestFile: "./test-data/resources.json",
+			vmsTestFile:       "./test-data/vms.json",
+			nicsTestFile:      "./test-data/nics.json",
+			publicIPsTestFile: "./test-data/public-ips.json",
+			wrapTableOutput:   false,
+		},
 	}
 
 	// Mocked functions to simulate Azure calls and responses

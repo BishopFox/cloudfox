@@ -52,13 +52,15 @@ func AzStorageCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, Version stri
 			AzSubscriptionID)
 	} else {
 		// Error: please make a valid flag selection
-		err = fmt.Errorf("please enter a valid input with a valid flag. Use --help for info")
+		fmt.Println("Please enter a valid input with a valid flag. Use --help for info.")
 	}
 	if err != nil {
 		return err
 	}
 	fileNameWithoutExtension := globals.AZ_STORAGE_MODULE_NAME
-	internal.OutputSelector(AzVerbosity, AzOutputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_STORAGE_MODULE_NAME, AzWrapTable)
+	if body != nil {
+		internal.OutputSelector(AzVerbosity, AzOutputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_STORAGE_MODULE_NAME, AzWrapTable)
+	}
 	return nil
 }
 

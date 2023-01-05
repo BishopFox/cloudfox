@@ -47,6 +47,15 @@ func TestAzStorageCommand(t *testing.T) {
 			version:                 "DEV",
 			wrapTableOutput:         false,
 		},
+		{
+			name:                    "./cloudfox az storage",
+			AzOutputFormat:          "all",
+			AzVerbosity:             2,
+			resourcesTestFile:       "./test-data/resources.json",
+			storageAccountsTestFile: "./test-data/storage-accounts.json",
+			version:                 "DEV",
+			wrapTableOutput:         false,
+		},
 	}
 	internal.MockFileSystem(true)
 	// Mocked functions to simulate Azure calls and responses
