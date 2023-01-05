@@ -10,7 +10,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/BishopFox/cloudfox/console"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
@@ -36,7 +35,7 @@ type ECRModule struct {
 
 	// Main module data
 	Repositories   []Repository
-	CommandCounter console.CommandCounter
+	CommandCounter internal.CommandCounter
 	// Used to store output data for pretty printing
 	output internal.OutputData2
 	modLog *logrus.Entry
@@ -72,7 +71,7 @@ func (m *ECRModule) PrintECR(outputFormat string, outputDirectory string, verbos
 	// Create a channel to signal the spinner aka task status goroutine to finish
 	spinnerDone := make(chan bool)
 	//fire up the the task status spinner/updated
-	go console.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "regions")
+	go internal.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "regions")
 
 	//create a channel to receive the objects
 	dataReceiver := make(chan Repository)

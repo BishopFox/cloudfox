@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/BishopFox/cloudfox/console"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
@@ -28,7 +27,7 @@ type Route53Module struct {
 	Goroutines     int
 	AWSProfile     string
 	WrapTable      bool
-	CommandCounter console.CommandCounter
+	CommandCounter internal.CommandCounter
 
 	// Main module data
 	Records []Record

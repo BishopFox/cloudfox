@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/BishopFox/cloudfox/console"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -44,7 +43,7 @@ type ECSTasksModule struct {
 	iamSimClient   IamSimulatorModule
 
 	MappedECSTasks []MappedECSTask
-	CommandCounter console.CommandCounter
+	CommandCounter internal.CommandCounter
 
 	output internal.OutputData2
 	modLog *logrus.Entry
@@ -89,7 +88,7 @@ func (m *ECSTasksModule) ECSTasks(outputFormat string, outputDirectory string, v
 	wg := new(sync.WaitGroup)
 
 	spinnerDone := make(chan bool)
-	go console.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
+	go internal.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
 
 	dataReceiver := make(chan MappedECSTask)
 

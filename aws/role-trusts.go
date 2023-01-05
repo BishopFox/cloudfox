@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/BishopFox/cloudfox/console"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
@@ -30,7 +29,7 @@ type RoleTrustsModule struct {
 	Caller         sts.GetCallerIdentityOutput
 	AWSProfile     string
 	Goroutines     int
-	CommandCounter console.CommandCounter
+	CommandCounter internal.CommandCounter
 	SkipAdminCheck bool
 	WrapTable      bool
 	pmapperMod     PmapperModule

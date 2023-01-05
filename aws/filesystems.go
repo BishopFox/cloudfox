@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/BishopFox/cloudfox/console"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/efs"
@@ -40,7 +39,7 @@ type FilesystemsModule struct {
 	Filesystems []FilesystemObject
 
 	Regions        [30]FilesystemObject
-	CommandCounter console.CommandCounter
+	CommandCounter internal.CommandCounter
 	// Used to store output data for pretty printing
 	output internal.OutputData2
 	modLog *logrus.Entry
@@ -81,7 +80,7 @@ func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirector
 	// Create a channel to signal the spinner aka task status goroutine to finish
 	spinnerDone := make(chan bool)
 	//fire up the the task status spinner/updated
-	go console.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
+	go internal.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
 
 	//create a channel to receive the objects
 	dataReceiver := make(chan FilesystemObject)

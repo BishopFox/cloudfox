@@ -245,16 +245,16 @@ func (c *mockedDescribeTaskDefinitionInterface) DescribeTaskDefinition(ctx conte
 
 func TestECSTasks(t *testing.T) {
 	m := ECSTasksModule{
-		AWSProfile:                       "default",
-		AWSRegions:                       []string{"us-east-1", "us-west-1"},
-		Caller:                           sts.GetCallerIdentityOutput{Arn: aws.String("arn:aws:iam::123456789012:user/cloudfox_unit_tests")},
-		SkipAdminCheck:                   true,
-		Goroutines:                       30,
-		DescribeNetworkInterfacesClient:  &mockedDescribeNetworkInterfacesClient{},
-		DescribeTasksClient:              &mockedDescribeTasksClient{},
-		ListTasksClient:                  &mockedListTasksClient{},
-		ListClustersClient:               &mockedListclustersClient{},
-		DescribeTasksDefinitionInterface: &mockedDescribeTaskDefinitionInterface{},
+		AWSProfile:                      "default",
+		AWSRegions:                      []string{"us-east-1", "us-west-1"},
+		Caller:                          sts.GetCallerIdentityOutput{Arn: aws.String("arn:aws:iam::123456789012:user/cloudfox_unit_tests")},
+		SkipAdminCheck:                  true,
+		Goroutines:                      30,
+		DescribeNetworkInterfacesClient: &mockedDescribeNetworkInterfacesClient{},
+		DescribeTasksClient:             &mockedDescribeTasksClient{},
+		ListTasksClient:                 &mockedListTasksClient{},
+		ListClustersClient:              &mockedListclustersClient{},
+		DescribeTaskDefinitionClient:    &mockedDescribeTaskDefinitionInterface{},
 		//IAMSimulatePrincipalPolicyClient: &mockedDescribeTaskDefinitionsClient{},
 	}
 	m.ECSTasks("table", ".", 3)

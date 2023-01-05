@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/BishopFox/cloudfox/console"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/apigateway"
@@ -78,7 +77,7 @@ type Inventory2Module struct {
 
 	// Main module data
 	RegionResourceCount  int
-	CommandCounter       console.CommandCounter
+	CommandCounter       internal.CommandCounter
 	GlobalResourceCounts []GlobalResourceCount2
 	serviceMap           map[string]map[string]int
 	services             []string
@@ -137,7 +136,7 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 	// Create a channel to signal the spinner aka task status goroutine to finish
 	spinnerDone := make(chan bool)
 	//fire up the the task status spinner/updated
-	go console.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
+	go internal.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
 
 	//create a channel to receive the objects
 	dataReceiver := make(chan GlobalResourceCount2)

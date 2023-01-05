@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/BishopFox/cloudfox/console"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/arn"
@@ -31,7 +30,7 @@ type TagsModule struct {
 
 	// Main module data
 	Tags               []Tag
-	CommandCounter     console.CommandCounter
+	CommandCounter     internal.CommandCounter
 	ResourceTypeCounts map[string]int
 
 	// Used to store output data for pretty printing
@@ -69,7 +68,7 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 	// Create a channel to signal the spinner aka task status goroutine to finish
 	spinnerDone := make(chan bool)
 	//fire up the the task status spinner/updated
-	go console.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "regions")
+	go internal.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "regions")
 
 	//create a channel to receive the objects
 	dataReceiver := make(chan Tag)

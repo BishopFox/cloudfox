@@ -22,6 +22,7 @@ var fileSystem = afero.NewOsFs()
 
 // Color functions
 var cyan = color.New(color.FgCyan).SprintFunc()
+var green = color.New(color.FgGreen).SprintFunc()
 
 // This struct is here to mantain compatibility with legacy cloudfox code
 type OutputData2 struct {

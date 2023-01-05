@@ -7,6 +7,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
@@ -243,4 +244,29 @@ func BuildAWSPath(Caller sts.GetCallerIdentityOutput) string {
 	var callerUserID = removeBadPathChars(Caller.UserId)
 
 	return fmt.Sprintf("%s-%s", callerAccount, callerUserID)
+}
+
+// this is all for the spinner and command counter
+const clearln = "\r\x1b[2K"
+
+type CommandCounter struct {
+	Total     int
+	Pending   int
+	Complete  int
+	Error     int
+	Executing int
+}
+
+func SpinUntil(callingModuleName string, counter *CommandCounter, done chan bool, spinType string) {
+	defer close(done)
+	for {
+		select {
+		case <-time.After(1 * time.Second):
+			fmt.Printf(clearln+"[%s] Status: %d/%d %s complete (%d errors -- For details check %s)", cyan(callingModuleName), counter.Complete, counter.Total, spinType, counter.Error, fmt.Sprintf("%s/cloudfox-error.log", ptr.ToString(GetLogDirPath())))
+		case <-done:
+			fmt.Printf(clearln+"[%s] Status: %d/%d %s complete (%d errors -- For details check %s)\n", cyan(callingModuleName), counter.Complete, counter.Complete, spinType, counter.Error, fmt.Sprintf("%s/cloudfox-error.log", ptr.ToString(GetLogDirPath())))
+			done <- true
+			return
+		}
+	}
 }
