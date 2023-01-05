@@ -53,7 +53,7 @@ type Cluster struct {
 	Public     string
 	OIDC       string
 	NodeGroup  string
-	NodeRole   string
+	Role       string
 	Admin      string
 	CanPrivEsc string
 }
@@ -108,11 +108,11 @@ func (m *EKSModule) EKS(outputFormat string, outputDirectory string, verbosity i
 	// Perform role analysis
 	if m.pmapperError == nil {
 		for i := range m.Clusters {
-			m.Clusters[i].Admin, m.Clusters[i].CanPrivEsc = GetPmapperResults(m.SkipAdminCheck, m.pmapperMod, &m.Clusters[i].NodeRole)
+			m.Clusters[i].Admin, m.Clusters[i].CanPrivEsc = GetPmapperResults(m.SkipAdminCheck, m.pmapperMod, &m.Clusters[i].Role)
 		}
 	} else {
 		for i := range m.Clusters {
-			m.Clusters[i].Admin, m.Clusters[i].CanPrivEsc = GetIamSimResult(m.SkipAdminCheck, &m.Clusters[i].NodeRole, m.iamSimClient, localAdminMap)
+			m.Clusters[i].Admin, m.Clusters[i].CanPrivEsc = GetIamSimResult(m.SkipAdminCheck, &m.Clusters[i].Role, m.iamSimClient, localAdminMap)
 		}
 	}
 
@@ -147,7 +147,7 @@ func (m *EKSModule) EKS(outputFormat string, outputDirectory string, verbosity i
 				m.Clusters[i].Public,
 				//m.Clusters[i].OIDC,
 				m.Clusters[i].NodeGroup,
-				m.Clusters[i].NodeRole,
+				m.Clusters[i].Role,
 				m.Clusters[i].Admin,
 				m.Clusters[i].CanPrivEsc,
 			},
@@ -284,16 +284,32 @@ func (m *EKSModule) getEKSRecordsPerRegion(r string, wg *sync.WaitGroup, semapho
 
 		ListNodeGroups := m.listNodeGroups(clusterName, r)
 
-		for _, nodeGroup := range ListNodeGroups {
+		if len(ListNodeGroups) > 0 {
+			for _, nodeGroup := range ListNodeGroups {
 
-			nodeGroupDetails, err := m.describeNodegroup(clusterName, nodeGroup, r)
-			if err != nil {
-				m.modLog.Error(err.Error())
-				m.CommandCounter.Error++
+				nodeGroupDetails, err := m.describeNodegroup(clusterName, nodeGroup, r)
+				if err != nil {
+					m.modLog.Error(err.Error())
+					m.CommandCounter.Error++
+				}
+
+				role = aws.ToString(nodeGroupDetails.NodeRole)
+
+				dataReceiver <- Cluster{
+					AWSService: "EKS",
+					Name:       clusterName,
+					Region:     r,
+					Endpoint:   endpoint,
+					Public:     publicEndpoint,
+					OIDC:       oidc,
+					NodeGroup:  nodeGroup,
+					Role:       role,
+					Admin:      "",
+					CanPrivEsc: "",
+				}
 			}
-
-			role = aws.ToString(nodeGroupDetails.NodeRole)
-
+		} else {
+			role = aws.ToString(clusterDetails.RoleArn)
 			dataReceiver <- Cluster{
 				AWSService: "EKS",
 				Name:       clusterName,
@@ -301,11 +317,12 @@ func (m *EKSModule) getEKSRecordsPerRegion(r string, wg *sync.WaitGroup, semapho
 				Endpoint:   endpoint,
 				Public:     publicEndpoint,
 				OIDC:       oidc,
-				NodeGroup:  nodeGroup,
-				NodeRole:   role,
+				NodeGroup:  "N/A",
+				Role:       role,
 				Admin:      "",
 				CanPrivEsc: "",
 			}
+
 		}
 
 	}
