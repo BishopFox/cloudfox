@@ -9,7 +9,7 @@ import (
 	"strconv"
 
 	"github.com/BishopFox/cloudfox/console"
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/dominikbraun/graph"
@@ -31,7 +31,7 @@ type PmapperModule struct {
 	Edges          []Edge
 	CommandCounter console.CommandCounter
 	// Used to store output data for pretty printing
-	output utils.OutputData2
+	output internal.OutputData2
 	modLog *logrus.Entry
 }
 
@@ -126,11 +126,11 @@ func (m *PmapperModule) PrintPmapperData(outputFormat string, outputDirectory st
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "pmapper"
 	m.output.FullFilename = m.output.CallingModule
-	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
+	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-		m.AWSProfile = utils.BuildAWSPath(m.Caller)
+		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
 	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 	fmt.Printf("[%s][%s] Parsing pmapper data for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
@@ -175,7 +175,7 @@ func (m *PmapperModule) PrintPmapperData(outputFormat string, outputDirectory st
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
-		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable)
+		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable)
 
 		fmt.Printf("[%s][%s] %s principals who are admin or have a path to admin identified.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 

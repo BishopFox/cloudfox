@@ -10,7 +10,7 @@ import (
 	"sync"
 
 	"github.com/BishopFox/cloudfox/console"
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
@@ -47,7 +47,7 @@ type ECSTasksModule struct {
 	MappedECSTasks []MappedECSTask
 	CommandCounter console.CommandCounter
 
-	output utils.OutputData2
+	output internal.OutputData2
 	modLog *logrus.Entry
 }
 
@@ -68,11 +68,11 @@ func (m *ECSTasksModule) ECSTasks(outputFormat string, outputDirectory string, v
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "ecs-tasks"
 	localAdminMap := make(map[string]bool)
-	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
+	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-		m.AWSProfile = utils.BuildAWSPath(m.Caller)
+		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
 
 	fmt.Printf("[%s][%s] Enumerating ECS tasks in all regions for account %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
@@ -163,7 +163,7 @@ func (m *ECSTasksModule) printECSTaskData(outputFormat string, outputDirectory s
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
+		internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
 
 		m.writeLoot(m.output.FilePath)
 		fmt.Printf("[%s][%s] %s ECS tasks found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))

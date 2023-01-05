@@ -5,7 +5,7 @@ import (
 	"log"
 	"testing"
 
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/eks/types"
@@ -116,7 +116,7 @@ func TestEks(t *testing.T) {
 			}},
 		},
 	}
-	utils.MockFileSystem(true)
+	internal.MockFileSystem(true)
 	for _, subtest := range subtests {
 		t.Run(subtest.name, func(t *testing.T) {
 			subtest.testModule.EKS(subtest.testModule.OutputFormat, subtest.outputDirectory, subtest.verbosity)

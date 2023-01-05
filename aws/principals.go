@@ -7,7 +7,7 @@ import (
 	"strconv"
 
 	"github.com/BishopFox/cloudfox/console"
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -31,7 +31,7 @@ type IamPrincipalsModule struct {
 	Groups         []Group
 	CommandCounter console.CommandCounter
 	// Used to store output data for pretty printing
-	output utils.OutputData2
+	output internal.OutputData2
 	modLog *logrus.Entry
 }
 
@@ -68,11 +68,11 @@ func (m *IamPrincipalsModule) PrintIamPrincipals(outputFormat string, outputDire
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "principals"
-	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
+	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-		m.AWSProfile = utils.BuildAWSPath(m.Caller)
+		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
 
 	fmt.Printf("[%s][%s] Enumerating IAM Users and Roles for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
@@ -139,7 +139,7 @@ func (m *IamPrincipalsModule) PrintIamPrincipals(outputFormat string, outputDire
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
+		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
 		fmt.Printf("[%s][%s] %s IAM principals found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {

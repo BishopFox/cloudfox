@@ -11,7 +11,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/storage/mgmt/storage"
 	"github.com/BishopFox/cloudfox/globals"
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/smithy-go/ptr"
 	"github.com/fatih/color"
 	"github.com/kyokomi/emoji"
@@ -58,7 +58,7 @@ func AzStorageCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, Version stri
 		return err
 	}
 	fileNameWithoutExtension := globals.AZ_STORAGE_MODULE_NAME
-	utils.OutputSelector(AzVerbosity, AzOutputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_STORAGE_MODULE_NAME, AzWrapTable)
+	internal.OutputSelector(AzVerbosity, AzOutputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_STORAGE_MODULE_NAME, AzWrapTable)
 	return nil
 }
 
@@ -117,7 +117,7 @@ func getRelevantStorageAccountData(subscriptionID string) ([]string, [][]string,
 var getStorageAccounts = getStorageAccountsOriginal
 
 func getStorageAccountsOriginal(subscriptionID string) ([]storage.Account, error) {
-	storageClient := utils.GetStorageClient(subscriptionID)
+	storageClient := internal.GetStorageClient(subscriptionID)
 	var storageAccounts []storage.Account
 	for page, err := storageClient.List(context.TODO()); page.NotDone(); page.Next() {
 		if err != nil {

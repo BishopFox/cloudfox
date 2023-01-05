@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/BishopFox/cloudfox/globals"
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 )
 
 func TestAzRBACCommand(t *testing.T) {
@@ -25,6 +25,7 @@ func TestAzRBACCommand(t *testing.T) {
 		usersTestFile           string
 		roleDefinitionsTestFile string
 		roleAssignmentsTestFile string
+		wrapTableOutput         bool
 	}{
 		{
 			name:                    "./cloudfox azure rbac --tenant 11111111-1111-1111-1111-11111111",
@@ -37,6 +38,7 @@ func TestAzRBACCommand(t *testing.T) {
 			roleDefinitionsTestFile: "./test-data/role-definitions.json",
 			roleAssignmentsTestFile: "./test-data/role-assignments.json",
 			version:                 "DEV",
+			wrapTableOutput:         true,
 		},
 		{
 			name:                    "./cloudfox azure rbac --subscription AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
@@ -49,9 +51,10 @@ func TestAzRBACCommand(t *testing.T) {
 			usersTestFile:           "./test-data/users.json",
 			roleDefinitionsTestFile: "./test-data/role-definitions.json",
 			roleAssignmentsTestFile: "./test-data/role-assignments.json",
+			wrapTableOutput:         true,
 		},
 	}
-	utils.MockFileSystem(true)
+	internal.MockFileSystem(true)
 	// Mocked functions to simulate Azure calls and responses
 	getSubscriptions = mockedGetSubscriptions
 	getAzureADUsers = mockedGetAzureADUsers
@@ -68,7 +71,7 @@ func TestAzRBACCommand(t *testing.T) {
 		globals.ROLE_DEFINITIONS_TEST_FILE = s.roleDefinitionsTestFile
 		globals.ROLE_ASSIGNMENTS_TEST_FILE = s.roleAssignmentsTestFile
 
-		if err := AzRBACCommand(s.azTenantID, s.azSubscriptionID, s.azOutputFormat, s.version, s.azVerbosity, false); err != nil {
+		if err := AzRBACCommand(s.azTenantID, s.azSubscriptionID, s.azOutputFormat, s.version, s.azVerbosity, s.wrapTableOutput); err != nil {
 			fmt.Println(err)
 		}
 	}

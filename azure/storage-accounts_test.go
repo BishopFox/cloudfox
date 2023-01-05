@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/BishopFox/cloudfox/globals"
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 )
 
 func TestAzStorageCommand(t *testing.T) {
@@ -23,6 +23,7 @@ func TestAzStorageCommand(t *testing.T) {
 		resourcesTestFile       string
 		storageAccountsTestFile string
 		version                 string
+		wrapTableOutput         bool
 	}{
 		{
 			name:                    "./cloudfox az storage --tenant 11111111-1111-1111-1111-11111111",
@@ -33,6 +34,7 @@ func TestAzStorageCommand(t *testing.T) {
 			resourcesTestFile:       "./test-data/resources.json",
 			storageAccountsTestFile: "./test-data/storage-accounts.json",
 			version:                 "DEV",
+			wrapTableOutput:         true,
 		},
 		{
 			name:                    "./cloudfox az storage --subscription BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB",
@@ -43,9 +45,10 @@ func TestAzStorageCommand(t *testing.T) {
 			resourcesTestFile:       "./test-data/resources.json",
 			storageAccountsTestFile: "./test-data/storage-accounts.json",
 			version:                 "DEV",
+			wrapTableOutput:         true,
 		},
 	}
-	utils.MockFileSystem(true)
+	internal.MockFileSystem(true)
 	// Mocked functions to simulate Azure calls and responses
 	getTenants = mockedGetTenants
 	getSubscriptions = mockedGetSubscriptions
@@ -58,7 +61,7 @@ func TestAzStorageCommand(t *testing.T) {
 		globals.RESOURCES_TEST_FILE = s.resourcesTestFile
 		globals.STORAGE_ACCOUNTS_TEST_FILE = s.storageAccountsTestFile
 
-		err := AzStorageCommand(s.AzTenantID, s.AzSubscriptionID, s.AzOutputFormat, s.version, s.AzVerbosity, false)
+		err := AzStorageCommand(s.AzTenantID, s.AzSubscriptionID, s.AzOutputFormat, s.version, s.AzVerbosity, s.wrapTableOutput)
 		if err != nil {
 			log.Fatal(err)
 		}

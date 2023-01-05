@@ -9,7 +9,7 @@ import (
 	"sync"
 
 	"github.com/BishopFox/cloudfox/console"
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/apigateway"
 	"github.com/aws/aws-sdk-go-v2/service/apigatewayv2"
@@ -86,8 +86,8 @@ type Inventory2Module struct {
 	mu                   sync.Mutex
 
 	// Used to store output data for pretty printing
-	output       utils.OutputData2
-	globalOutput utils.OutputData2
+	output       internal.OutputData2
+	globalOutput internal.OutputData2
 
 	modLog *logrus.Entry
 }
@@ -103,7 +103,7 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "inventory"
-	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
+	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": "inventory",
 	},
 	)
@@ -113,7 +113,7 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 	m.totalRegionCounts = map[string]int{}
 
 	if m.AWSProfile == "" {
-		m.AWSProfile = utils.BuildAWSPath(m.Caller)
+		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
 
 	//initialize servicemap and total
@@ -256,7 +256,7 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
+		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
 		m.PrintGlobalResources(outputFormat, outputDirectory, verbosity, dataReceiver)
 		m.PrintTotalResources(outputFormat)
 	} else {
@@ -297,7 +297,7 @@ func (m *Inventory2Module) PrintGlobalResources(outputFormat string, outputDirec
 	}
 	//m.globalOutput.FilePath = filepath.Join(path, m.globalOutput.CallingModule)
 	//m.globalOutput.OutputSelector(outputFormat)
-	utils.OutputSelector(verbosity, outputFormat, m.globalOutput.Headers, m.globalOutput.Body, m.globalOutput.FilePath, m.globalOutput.FullFilename, m.globalOutput.CallingModule, false)
+	internal.OutputSelector(verbosity, outputFormat, m.globalOutput.Headers, m.globalOutput.Body, m.globalOutput.FilePath, m.globalOutput.FullFilename, m.globalOutput.CallingModule, false)
 
 }
 

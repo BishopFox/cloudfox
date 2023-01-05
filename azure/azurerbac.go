@@ -12,7 +12,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/authorization/mgmt/authorization"
 	"github.com/Azure/azure-sdk-for-go/services/graphrbac/1.6/graphrbac"
 	"github.com/BishopFox/cloudfox/globals"
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/smithy-go/ptr"
 	"github.com/fatih/color"
 	"github.com/kyokomi/emoji"
@@ -45,7 +45,7 @@ func AzRBACCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, Version string,
 	}
 
 	fileNameWithoutExtension := globals.AZ_RBAC_MODULE_NAME
-	utils.OutputSelector(AzVerbosity, AzOutputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_RBAC_MODULE_NAME, AzWrapTable)
+	internal.OutputSelector(AzVerbosity, AzOutputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_RBAC_MODULE_NAME, AzWrapTable)
 
 	return nil
 }
@@ -174,7 +174,7 @@ var getAzureADUsers = getAzureADUsersOriginal
 
 func getAzureADUsersOriginal(tenantID string) ([]graphrbac.User, error) {
 	var users []graphrbac.User
-	client := utils.GetAADUsersClient(tenantID)
+	client := internal.GetAADUsersClient(tenantID)
 	for page, err := client.List(context.TODO(), "", ""); page.NotDone(); page.Next() {
 		if err != nil {
 			return nil, fmt.Errorf(
@@ -226,7 +226,7 @@ type AzureADUsersTestFile struct {
 var getRoleDefinitions = getRoleDefinitionsOriginal
 
 func getRoleDefinitionsOriginal(subscriptionID string) ([]authorization.RoleDefinition, error) {
-	client := utils.GetRoleDefinitionsClient(subscriptionID)
+	client := internal.GetRoleDefinitionsClient(subscriptionID)
 	var roleDefinitions []authorization.RoleDefinition
 	for page, err := client.List(context.TODO(), "", ""); page.NotDone(); page.Next() {
 		if err != nil {
@@ -304,7 +304,7 @@ var getRoleAssignments = getRoleAssignmentsOriginal
 
 func getRoleAssignmentsOriginal(subscriptionID string) ([]authorization.RoleAssignment, error) {
 	var roleAssignments []authorization.RoleAssignment
-	client := utils.GetRoleAssignmentsClient(subscriptionID)
+	client := internal.GetRoleAssignmentsClient(subscriptionID)
 	for page, err := client.List(context.TODO(), ""); page.NotDone(); page.Next() {
 		if err != nil {
 			return nil, fmt.Errorf(
