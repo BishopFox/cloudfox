@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/BishopFox/cloudfox/console"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -29,7 +28,7 @@ type PmapperModule struct {
 	pmapperGraph   graph.Graph[string, string]
 	Nodes          []Node
 	Edges          []Edge
-	CommandCounter console.CommandCounter
+	CommandCounter internal.CommandCounter
 	// Used to store output data for pretty printing
 	output internal.OutputData2
 	modLog *logrus.Entry

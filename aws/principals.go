@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/BishopFox/cloudfox/console"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
@@ -29,7 +28,7 @@ type IamPrincipalsModule struct {
 	Users          []User
 	Roles          []Role
 	Groups         []Group
-	CommandCounter console.CommandCounter
+	CommandCounter internal.CommandCounter
 	// Used to store output data for pretty printing
 	output internal.OutputData2
 	modLog *logrus.Entry
@@ -80,7 +79,7 @@ func (m *IamPrincipalsModule) PrintIamPrincipals(outputFormat string, outputDire
 	// wg := new(sync.WaitGroup)
 
 	// done := make(chan bool)
-	// go console.SpinUntil(m.output.CallingModule, &m.CommandCounter, done)
+	// go internal.SpinUntil(m.output.CallingModule, &m.CommandCounter, done)
 	// wg.Add(1)
 	// m.CommandCounter.Pending++
 	//m.executeChecks(wg)

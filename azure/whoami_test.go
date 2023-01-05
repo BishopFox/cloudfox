@@ -31,7 +31,7 @@ func TestAzWhoamiCommand(t *testing.T) {
 			resourcesTestFile: "./test-data/resources.json",
 			azExtendedFilter:  false,
 			version:           "DEV",
-			wrapTableOutput:   true,
+			wrapTableOutput:   false,
 		},
 		{
 			name:              "./cloudfox azure whoami --extended",
@@ -43,6 +43,8 @@ func TestAzWhoamiCommand(t *testing.T) {
 	}
 	for _, s := range subtests {
 		globals.RESOURCES_TEST_FILE = s.resourcesTestFile
+		fmt.Println()
+		fmt.Printf("[subtest] %s\n", s.name)
 		AzWhoamiCommand(s.version, s.wrapTableOutput)
 	}
 }

@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/BishopFox/cloudfox/console"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -30,7 +29,6 @@ type ECSTasksModule struct {
 	ListTasksClient                  ecs.ListTasksAPIClient
 	ListClustersClient               ecs.ListClustersAPIClient
 	DescribeNetworkInterfacesClient  ec2.DescribeNetworkInterfacesAPIClient
-	DescribeTasksDefinitionInterface DescribeTasksDefinitionAPIClient
 	IAMSimulatePrincipalPolicyClient iam.SimulatePrincipalPolicyAPIClient
 
 	Caller         sts.GetCallerIdentityOutput
@@ -45,7 +43,7 @@ type ECSTasksModule struct {
 	iamSimClient   IamSimulatorModule
 
 	MappedECSTasks []MappedECSTask
-	CommandCounter console.CommandCounter
+	CommandCounter internal.CommandCounter
 
 	output internal.OutputData2
 	modLog *logrus.Entry
@@ -90,7 +88,7 @@ func (m *ECSTasksModule) ECSTasks(outputFormat string, outputDirectory string, v
 	wg := new(sync.WaitGroup)
 
 	spinnerDone := make(chan bool)
-	go console.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
+	go internal.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
 
 	dataReceiver := make(chan MappedECSTask)
 
@@ -361,7 +359,7 @@ func (m *ECSTasksModule) loadTasksData(clusterARN string, taskARNs []string, reg
 }
 
 func (m *ECSTasksModule) getTaskRole(taskDefinitionArn string, region string) string {
-	DescribeTaskDefinition, err := m.DescribeTasksDefinitionInterface.DescribeTaskDefinition(
+	DescribeTaskDefinition, err := m.DescribeTaskDefinitionClient.DescribeTaskDefinition(
 		context.TODO(),
 		&ecs.DescribeTaskDefinitionInput{
 			TaskDefinition: &taskDefinitionArn,

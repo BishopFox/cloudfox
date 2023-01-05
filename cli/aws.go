@@ -1106,11 +1106,11 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		ecstasks.ECSTasks(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
 		eksCommand := aws.EKSModule{
-			EKSClientListClustersInterface:      eks.NewFromConfig(AWSConfig),
-			EKSClientDescribeClusterInterface:   eks.NewFromConfig(AWSConfig),
-			EKSClientListNodeGroupsInterface:    eks.NewFromConfig(AWSConfig),
-			EKSClientDescribeNodeGroupInterface: eks.NewFromConfig(AWSConfig),
-			IAMSimulatePrincipalPolicyClient:    iam.NewFromConfig(AWSConfig),
+			EKSClientListClustersInterface:      eksClient,
+			EKSClientDescribeClusterInterface:   eksClient,
+			EKSClientListNodeGroupsInterface:    eksClient,
+			EKSClientDescribeNodeGroupInterface: eksClient,
+			IAMSimulatePrincipalPolicyClient:    iamClient,
 
 			Caller:         *Caller,
 			AWSRegions:     internal.GetEnabledRegions(profile, cmd.Root().Version),

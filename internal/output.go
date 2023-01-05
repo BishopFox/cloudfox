@@ -108,7 +108,7 @@ func printTableToFile(header []string, body [][]string, outputFile afero.File) {
 }
 
 func PrintTableToScreen(header []string, body [][]string, wrapLines bool) {
-	standardColumnWidth := 10000
+	standardColumnWidth := 1000
 	t := table.New(os.Stdout)
 	if wrapLines {
 		terminalWidth, _, err := terminal.GetSize(int(os.Stdout.Fd()))
