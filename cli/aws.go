@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/aws/aws-sdk-go-v2/service/efs"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	"github.com/aws/aws-sdk-go-v2/service/elasticache"
 	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancing"
 	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	"github.com/aws/aws-sdk-go-v2/service/fsx"
@@ -229,13 +230,18 @@ var (
 					continue
 				}
 				m := aws.NetworkPortsModule{
-					EC2Client:  ec2.NewFromConfig(AWSConfig),
-					RDSClient:  rds.NewFromConfig(AWSConfig),
-					Caller:     *caller,
-					AWSRegions: AWSRegions,
-					AWSProfile: profile,
-					Goroutines: Goroutines,
-					Verbosity:  Verbosity,
+					EC2Client:         ec2.NewFromConfig(AWSConfig),
+					ECSClient:         ecs.NewFromConfig(AWSConfig),
+					EFSClient:         efs.NewFromConfig(AWSConfig),
+					ElastiCacheClient: elasticache.NewFromConfig(AWSConfig),
+					ELBv2Client:       elasticloadbalancingv2.NewFromConfig(AWSConfig),
+					LightsailClient:   lightsail.NewFromConfig(AWSConfig),
+					RDSClient:         rds.NewFromConfig(AWSConfig),
+					Caller:            *caller,
+					AWSRegions:        AWSRegions,
+					AWSProfile:        profile,
+					Goroutines:        Goroutines,
+					Verbosity:         Verbosity,
 				}
 				m.PrintNetworkPorts(AWSOutputFormat, AWSOutputDirectory)
 			}
@@ -883,6 +889,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		ecsClient := ecs.NewFromConfig(AWSConfig)
 		efsClient := efs.NewFromConfig(AWSConfig)
 		eksClient := eks.NewFromConfig(AWSConfig)
+		elasticacheClient := elasticache.NewFromConfig(AWSConfig)
 		elbClient := elasticloadbalancing.NewFromConfig(AWSConfig)
 		elbv2Client := elasticloadbalancingv2.NewFromConfig(AWSConfig)
 		fsxClient := fsx.NewFromConfig(AWSConfig)
@@ -1118,12 +1125,17 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		ram.PrintRAM(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
 		networkPorts := aws.NetworkPortsModule{
-			EC2Client:  ec2Client,
-			RDSClient:  rdsClient,
-			Caller:     *Caller,
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			AWSRegions: AWSRegions,
+			EC2Client:         ec2Client,
+			ECSClient:         ecsClient,
+			EFSClient:         efsClient,
+			ElastiCacheClient: elasticacheClient,
+			ELBv2Client:       elbv2Client,
+			LightsailClient:   lightsailClient,
+			RDSClient:         rdsClient,
+			Caller:            *Caller,
+			AWSProfile:        profile,
+			Goroutines:        Goroutines,
+			AWSRegions:        AWSRegions,
 		}
 		networkPorts.PrintNetworkPorts(AWSOutputFormat, AWSOutputDirectory)
 
