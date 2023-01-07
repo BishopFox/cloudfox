@@ -94,7 +94,10 @@ func (m *EKSModule) EKS(outputFormat string, outputDirectory string, verbosity i
 	//create a channel to receive the objects
 	dataReceiver := make(chan Cluster)
 
-	go m.Receiver(dataReceiver)
+	// Create a channel to signal to stop
+	receiverDone := make(chan bool)
+
+	go m.Receiver(dataReceiver, receiverDone)
 
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
@@ -104,6 +107,13 @@ func (m *EKSModule) EKS(outputFormat string, outputDirectory string, verbosity i
 	}
 
 	wg.Wait()
+	//time.Sleep(time.Second * 2)
+
+	// Send a message to the spinner goroutine to close the channel and stop
+	spinnerDone <- true
+	<-spinnerDone
+	receiverDone <- true
+	<-receiverDone
 
 	// Perform role analysis
 	if m.pmapperError == nil {
@@ -116,11 +126,6 @@ func (m *EKSModule) EKS(outputFormat string, outputDirectory string, verbosity i
 		}
 	}
 
-	// Send a message to the spinner goroutine to close the channel and stop
-	spinnerDone <- true
-	<-spinnerDone
-	close(dataReceiver)
-
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
 		"Service",
@@ -130,8 +135,8 @@ func (m *EKSModule) EKS(outputFormat string, outputDirectory string, verbosity i
 		"Public",
 		//"OIDC",
 		"NodeGroup",
-		"NodeRole",
-		"isAdminRole?",
+		"Role",
+		"IsAdminRole?",
 		"CanPrivEscToAdmin?",
 	}
 
@@ -166,7 +171,7 @@ func (m *EKSModule) EKS(outputFormat string, outputDirectory string, verbosity i
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
+		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		m.writeLoot(m.output.FilePath, verbosity)
 		fmt.Printf("[%s][%s] %d clusters with a total of %d node groups found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), len(seen), len(m.output.Body))
 	} else {
@@ -192,10 +197,16 @@ func (m *EKSModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan s
 	}
 }
 
-func (m *EKSModule) Receiver(receiver chan Cluster) {
-	for data := range receiver {
-		m.Clusters = append(m.Clusters, data)
-
+func (m *EKSModule) Receiver(receiver chan Cluster, receiverDone chan bool) {
+	defer close(receiverDone)
+	for {
+		select {
+		case data := <-receiver:
+			m.Clusters = append(m.Clusters, data)
+		case <-receiverDone:
+			receiverDone <- true
+			return
+		}
 	}
 }
 
@@ -417,7 +428,6 @@ func (m *EKSModule) describeCluster(clusterName string, r string) (*types.Cluste
 }
 
 func (m *EKSModule) describeNodegroup(clusterName string, nodeGroup string, r string) (*types.Nodegroup, error) {
-
 	DescribeNodegroup, err := m.EKSClientDescribeNodeGroupInterface.DescribeNodegroup(
 		context.TODO(),
 		&eks.DescribeNodegroupInput{

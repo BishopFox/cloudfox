@@ -68,7 +68,10 @@ func (m *RAMModule) PrintRAM(outputFormat string, outputDirectory string, verbos
 	//create a channel to receive the objects
 	dataReceiver := make(chan Resource)
 
-	go m.Receiver(dataReceiver)
+	// Create a channel to signal to stop
+	receiverDone := make(chan bool)
+
+	go m.Receiver(dataReceiver, receiverDone)
 
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
@@ -78,10 +81,13 @@ func (m *RAMModule) PrintRAM(outputFormat string, outputDirectory string, verbos
 	}
 
 	wg.Wait()
+	//time.Sleep(time.Second * 2)
+
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	close(dataReceiver)
+	receiverDone <- true
+	<-receiverDone
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
@@ -112,7 +118,7 @@ func (m *RAMModule) PrintRAM(outputFormat string, outputDirectory string, verbos
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
+		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		fmt.Printf("[%s][%s] %s resources found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 	} else {
 		fmt.Printf("[%s][%s] No resources found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
@@ -139,10 +145,16 @@ func (m *RAMModule) executeChecks(r string, wg *sync.WaitGroup, dataReceiver cha
 	}
 }
 
-func (m *RAMModule) Receiver(receiver chan Resource) {
-	for data := range receiver {
-		m.Resources = append(m.Resources, data)
-
+func (m *RAMModule) Receiver(receiver chan Resource, receiverDone chan bool) {
+	defer close(receiverDone)
+	for {
+		select {
+		case data := <-receiver:
+			m.Resources = append(m.Resources, data)
+		case <-receiverDone:
+			receiverDone <- true
+			return
+		}
 	}
 }
 

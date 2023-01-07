@@ -22,11 +22,12 @@ func AzRBACCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, Version string,
 	var c CloudFoxRBACclient
 	var header []string
 	var body [][]string
-	var outputDirectory string
+	var outputDirectory, controlMessagePrefix string
 
 	if AzTenantID != "" && AzSubscriptionID == "" {
 		// ./cloudfox azure rbac --tenant TENANT_ID
 		fmt.Printf("[%s][%s] Enumerating RBAC permissions for tenant %s\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_RBAC_MODULE_NAME), AzTenantID)
+		controlMessagePrefix = fmt.Sprintf("tenant-%s", AzTenantID)
 		outputDirectory = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, "tenants", AzTenantID)
 		var err error
 		header, body, err = getRBACperTenant(AzTenantID, c)
@@ -36,6 +37,7 @@ func AzRBACCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, Version string,
 	} else if AzTenantID == "" && AzSubscriptionID != "" {
 		// ./cloudfox azure rbac --subscription SUBSCRIPTION_ID
 		fmt.Printf("[%s][%s] Enumerating RBAC permissions for subscription %s\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_RBAC_MODULE_NAME), AzSubscriptionID)
+		controlMessagePrefix = fmt.Sprintf("subscription-%s", AzSubscriptionID)
 		outputDirectory = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, "subscriptions", AzSubscriptionID)
 		header, body = getRBACperSubscription(AzTenantID, AzSubscriptionID, c)
 
@@ -47,7 +49,7 @@ func AzRBACCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, Version string,
 	fileNameWithoutExtension := globals.AZ_RBAC_MODULE_NAME
 
 	if body != nil {
-		internal.OutputSelector(AzVerbosity, AzOutputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_RBAC_MODULE_NAME, AzWrapTable)
+		internal.OutputSelector(AzVerbosity, AzOutputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_RBAC_MODULE_NAME, AzWrapTable, controlMessagePrefix)
 	}
 	return nil
 }

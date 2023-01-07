@@ -91,7 +91,10 @@ func (m *EnvsModule) PrintEnvs(outputFormat string, outputDirectory string, verb
 	dataReceiver := make(chan EnvironmentVariable)
 
 	// Create a channel to signal to stop
-	go m.Receiver(dataReceiver)
+	receiverDone := make(chan bool)
+
+	// Create a channel to signal to stop
+	go m.Receiver(dataReceiver, receiverDone)
 
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
@@ -101,10 +104,13 @@ func (m *EnvsModule) PrintEnvs(outputFormat string, outputDirectory string, verb
 	}
 
 	wg.Wait()
+	//time.Sleep(time.Second * 2)
+
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	close(dataReceiver)
+	receiverDone <- true
+	<-receiverDone
 
 	sort.Slice(m.EnvironmentVariables, func(i, j int) bool {
 		return m.EnvironmentVariables[i].service < m.EnvironmentVariables[j].service
@@ -136,7 +142,7 @@ func (m *EnvsModule) PrintEnvs(outputFormat string, outputDirectory string, verb
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
+		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		fmt.Printf("[%s][%s] %s environment variables found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {
@@ -153,14 +159,18 @@ func EnvVarsContains(element EnvironmentVariable, array []EnvironmentVariable) b
 	return false
 }
 
-func (m *EnvsModule) Receiver(receiver chan EnvironmentVariable) {
-	for data := range receiver {
-		if !EnvVarsContains(data, m.EnvironmentVariables) {
-			m.EnvironmentVariables = append(m.EnvironmentVariables, data)
-		} //else {
-		// 	fmt.Println("exists")
-		// }
-
+func (m *EnvsModule) Receiver(receiver chan EnvironmentVariable, receiverDone chan bool) {
+	defer close(receiverDone)
+	for {
+		select {
+		case data := <-receiver:
+			if !EnvVarsContains(data, m.EnvironmentVariables) {
+				m.EnvironmentVariables = append(m.EnvironmentVariables, data)
+			}
+		case <-receiverDone:
+			receiverDone <- true
+			return
+		}
 	}
 }
 

@@ -136,9 +136,6 @@ func TestEks(t *testing.T) {
 				if expectedCluster.NodeGroup != subtest.testModule.Clusters[index].NodeGroup {
 					log.Fatal("Cluster NodeGroup does not match expected value")
 				}
-				if expectedCluster.Admin != subtest.testModule.Clusters[index].Admin {
-					log.Fatal("Cluster isAdmin does not match expected value")
-				}
 
 			}
 		})

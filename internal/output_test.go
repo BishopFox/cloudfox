@@ -88,7 +88,7 @@ func TestOutputSelector(t *testing.T) {
 				{"2020", "March"},
 				{"2019", "April"},
 			}
-			OutputSelector(s.verbosity, s.outputType, header, body, s.outputDirectory, fmt.Sprintf("%s%s", s.callingModule, s.fileNameExtension), s.callingModule, false)
+			OutputSelector(s.verbosity, s.outputType, header, body, s.outputDirectory, fmt.Sprintf("%s%s", s.callingModule, s.fileNameExtension), s.callingModule, false, s.prefixIdentifier)
 		})
 	}
 	fmt.Println()

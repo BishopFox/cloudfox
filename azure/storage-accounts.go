@@ -21,7 +21,7 @@ func AzStorageCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, Version stri
 	var err error
 	var header []string
 	var body [][]string
-	var outputDirectory string
+	var outputDirectory, controlMessagePrefix string
 
 	if AzTenantID != "" && AzSubscriptionID == "" {
 		// ./cloudfox azure storage --tenant TENANT_ID
@@ -31,6 +31,7 @@ func AzStorageCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, Version stri
 			color.CyanString(globals.AZ_STORAGE_MODULE_NAME),
 			AzTenantID)
 		header, body, err = getStorageInfoPerTenant(AzTenantID)
+		controlMessagePrefix = fmt.Sprintf("tenant-%s", AzTenantID)
 		outputDirectory = filepath.Join(
 			globals.CLOUDFOX_BASE_DIRECTORY,
 			globals.AZ_DIR_BASE,
@@ -45,6 +46,7 @@ func AzStorageCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, Version stri
 			color.CyanString(globals.AZ_STORAGE_MODULE_NAME),
 			AzSubscriptionID)
 		header, body, err = getStorageInfoPerSubscription(AzSubscriptionID)
+		controlMessagePrefix = fmt.Sprintf("subscription-%s", AzSubscriptionID)
 		outputDirectory = filepath.Join(
 			globals.CLOUDFOX_BASE_DIRECTORY,
 			globals.AZ_DIR_BASE,
@@ -59,7 +61,7 @@ func AzStorageCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, Version stri
 	}
 	fileNameWithoutExtension := globals.AZ_STORAGE_MODULE_NAME
 	if body != nil {
-		internal.OutputSelector(AzVerbosity, AzOutputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_STORAGE_MODULE_NAME, AzWrapTable)
+		internal.OutputSelector(AzVerbosity, AzOutputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_STORAGE_MODULE_NAME, AzWrapTable, controlMessagePrefix)
 	}
 	return nil
 }

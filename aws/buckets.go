@@ -75,17 +75,23 @@ func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string
 	//create a channel to receive the objects
 	dataReceiver := make(chan Bucket)
 
-	go m.Receiver(dataReceiver)
+	// Create a channel to signal to stop
+	receiverDone := make(chan bool)
+
+	go m.Receiver(dataReceiver, receiverDone)
 
 	wg.Add(1)
 	m.CommandCounter.Pending++
 	go m.executeChecks(wg, semaphore, dataReceiver)
 
 	wg.Wait()
+	//time.Sleep(time.Second * 2)
+
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	close(dataReceiver)
+	receiverDone <- true
+	<-receiverDone
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{"Service", "Region", "Name"}
@@ -106,7 +112,7 @@ func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		////m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
+		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		m.writeLoot(m.output.FilePath, verbosity, m.AWSProfile)
 		fmt.Printf("[%s][%s] %s buckets found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
@@ -116,10 +122,16 @@ func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string
 
 }
 
-func (m *BucketsModule) Receiver(receiver chan Bucket) {
-	for data := range receiver {
-		m.Buckets = append(m.Buckets, data)
-
+func (m *BucketsModule) Receiver(receiver chan Bucket, receiverDone chan bool) {
+	defer close(receiverDone)
+	for {
+		select {
+		case data := <-receiver:
+			m.Buckets = append(m.Buckets, data)
+		case <-receiverDone:
+			receiverDone <- true
+			return
+		}
 	}
 }
 

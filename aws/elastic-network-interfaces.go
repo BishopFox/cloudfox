@@ -63,7 +63,11 @@ func (m *ElasticNetworkInterfacesModule) ElasticNetworkInterfaces(outputFormat s
 	go internal.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
 
 	dataReceiver := make(chan MappedENI)
-	go m.Receiver(dataReceiver)
+
+	// Create a channel to signal to stop
+	receiverDone := make(chan bool)
+
+	go m.Receiver(dataReceiver, receiverDone)
 
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
@@ -73,18 +77,27 @@ func (m *ElasticNetworkInterfacesModule) ElasticNetworkInterfaces(outputFormat s
 	}
 
 	wg.Wait()
+	//time.Sleep(time.Second * 2)
+
 	spinnerDone <- true
 	<-spinnerDone
-	close(dataReceiver)
+	receiverDone <- true
+	<-receiverDone
 
 	m.printENIsData(outputFormat, outputDirectory, dataReceiver)
 
 }
 
-func (m *ElasticNetworkInterfacesModule) Receiver(receiver chan MappedENI) {
-	for data := range receiver {
-		m.MappedENIs = append(m.MappedENIs, data)
-
+func (m *ElasticNetworkInterfacesModule) Receiver(receiver chan MappedENI, receiverDone chan bool) {
+	defer close(receiverDone)
+	for {
+		select {
+		case data := <-receiver:
+			m.MappedENIs = append(m.MappedENIs, data)
+		case <-receiverDone:
+			receiverDone <- true
+			return
+		}
 	}
 }
 
@@ -115,7 +128,7 @@ func (m *ElasticNetworkInterfacesModule) printENIsData(outputFormat string, outp
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
+		internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 
 		m.writeLoot(m.output.FilePath)
 		fmt.Printf("[%s][%s] %s elastic network interfaces found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))

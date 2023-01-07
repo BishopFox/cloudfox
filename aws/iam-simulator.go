@@ -92,7 +92,10 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 	//create a channel to receive the objects
 	dataReceiver := make(chan SimulatorResult)
 
-	go m.Receiver(dataReceiver)
+	// Create a channel to signal to stop
+	receiverDone := make(chan bool)
+
+	go m.Receiver(dataReceiver, receiverDone)
 
 	// This double if/else section is here to handle the cases where --principal or --action (or both) are specified.
 	if principal != "" {
@@ -135,10 +138,13 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 	}
 
 	wg.Wait()
+	//time.Sleep(time.Second * 2)
+
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	close(dataReceiver)
+	receiverDone <- true
+	<-receiverDone
 
 	//duration := time.Since(start)
 	//fmt.Printf("\n\n[*] Total execution time %s\n", duration)
@@ -169,7 +175,7 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable)
+		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		fmt.Printf("[%s][%s] We suggest running the pmapper commands in the loot file to get the same information but taking privesc paths into account.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 		// fmt.Printf("[%s]\t\tpmapper --profile %s graph create\n", cyan(m.output.CallingModule),  cyan(m.AWSProfile), m.AWSProfile)
 		// for _, line := range pmapperCommands {
@@ -214,10 +220,16 @@ func (m *IamSimulatorModule) writeLoot(outputDirectory string, verbosity int, pm
 
 }
 
-func (m *IamSimulatorModule) Receiver(receiver chan SimulatorResult) {
-	for data := range receiver {
-		m.SimulatorResults = append(m.SimulatorResults, data)
-
+func (m *IamSimulatorModule) Receiver(receiver chan SimulatorResult, receiverDone chan bool) {
+	defer close(receiverDone)
+	for {
+		select {
+		case data := <-receiver:
+			m.SimulatorResults = append(m.SimulatorResults, data)
+		case <-receiverDone:
+			receiverDone <- true
+			return
+		}
 	}
 }
 

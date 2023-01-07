@@ -85,7 +85,10 @@ func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirector
 	//create a channel to receive the objects
 	dataReceiver := make(chan FilesystemObject)
 
-	go m.Receiver(dataReceiver)
+	// Create a channel to signal to stop
+	receiverDone := make(chan bool)
+
+	go m.Receiver(dataReceiver, receiverDone)
 
 	//execute regional checks
 
@@ -95,10 +98,13 @@ func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirector
 	}
 
 	wg.Wait()
+	//time.Sleep(time.Second * 2)
+
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	close(dataReceiver)
+	receiverDone <- true
+	<-receiverDone
 
 	sort.Slice(m.Filesystems, func(i, j int) bool {
 		return m.Filesystems[i].AWSService < m.Filesystems[j].AWSService
@@ -135,7 +141,7 @@ func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirector
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
+		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		m.writeLoot(m.output.FilePath, verbosity)
 		fmt.Printf("[%s][%s] %s filesystems found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
@@ -145,10 +151,17 @@ func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirector
 
 }
 
-func (m *FilesystemsModule) Receiver(receiver chan FilesystemObject) {
-	for data := range receiver {
-		m.Filesystems = append(m.Filesystems, data)
+func (m *FilesystemsModule) Receiver(receiver chan FilesystemObject, receiverDone chan bool) {
 
+	defer close(receiverDone)
+	for {
+		select {
+		case data := <-receiver:
+			m.Filesystems = append(m.Filesystems, data)
+		case <-receiverDone:
+			receiverDone <- true
+			return
+		}
 	}
 }
 

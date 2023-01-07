@@ -132,17 +132,22 @@ func (m *PmapperModule) PrintPmapperData(outputFormat string, outputDirectory st
 		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
 	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
-	fmt.Printf("[%s][%s] Parsing pmapper data for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
+	fmt.Printf("[%s][%s] Looking for pmapper data for this account and building a PrivEsc graph in golang if it exists.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	pmapperError := m.initPmapperGraph()
+	if pmapperError != nil {
+		fmt.Printf("[%s][%s] No pmapper data found for this account. \n\t\t\t1. Generate pmapper data by running `pmapper --profile %s graph create`\n\t\t\t2. After that completes, this cloudfox command and others will attempt to find and use the pmapper graph data in this and other cloudfox commands\n\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.AWSProfile)
+		m.modLog.Error(pmapperError)
+		return
 
-	err := m.initPmapperGraph()
-	if err != nil {
-		m.modLog.Error(err)
+	} else {
+		fmt.Printf("[%s][%s] Parsing pmapper data for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
+
 	}
 
 	m.output.Headers = []string{
 		"Principal Arn",
-		"isAdmin?",
-		"HasPathToAdmin?",
+		"IsAdmin?",
+		"CanPrivEscToAdmin?",
 	}
 
 	//Table rows
@@ -174,7 +179,7 @@ func (m *PmapperModule) PrintPmapperData(outputFormat string, outputDirectory st
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable)
+		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 
 		fmt.Printf("[%s][%s] %s principals who are admin or have a path to admin identified.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 

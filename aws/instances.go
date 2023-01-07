@@ -111,7 +111,10 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 	//create a channel to receive the objects
 	dataReceiver := make(chan MappedInstance)
 
-	go m.Receiver(dataReceiver)
+	// Create a channel to signal to stop
+	receiverDone := make(chan bool)
+
+	go m.Receiver(dataReceiver, receiverDone)
 	m.getRolesFromInstanceProfiles()
 
 	for _, region := range m.AWSRegions {
@@ -122,6 +125,7 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 	}
 
 	wg.Wait()
+	//time.Sleep(time.Second * 2)
 
 	// Perform role analysis
 	if m.pmapperError == nil {
@@ -137,7 +141,8 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	close(dataReceiver)
+	receiverDone <- true
+	<-receiverDone
 
 	// This conditional block will either dump the userData attribute content or the general instances data, depending on what you select via command line.
 	//fmt.Printf("\n[*] Preparing output...\n\n")
@@ -149,10 +154,16 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 
 }
 
-func (m *InstancesModule) Receiver(receiver chan MappedInstance) {
-	for data := range receiver {
-		m.MappedInstances = append(m.MappedInstances, data)
-
+func (m *InstancesModule) Receiver(receiver chan MappedInstance, receiverDone chan bool) {
+	defer close(receiverDone)
+	for {
+		select {
+		case data := <-receiver:
+			m.MappedInstances = append(m.MappedInstances, data)
+		case <-receiverDone:
+			receiverDone <- true
+			return
+		}
 	}
 }
 
@@ -219,7 +230,7 @@ func (m *InstancesModule) printGeneralInstanceData(outputFormat string, outputDi
 		"External IP",
 		"Internal IP",
 		"Role",
-		"isAdminRole?",
+		"IsAdminRole?",
 		"CanPrivEscToAdmin?",
 	}
 	//Table rows
@@ -246,7 +257,7 @@ func (m *InstancesModule) printGeneralInstanceData(outputFormat string, outputDi
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		////m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
+		internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 
 		m.writeLoot(m.output.FilePath)
 		fmt.Printf("[%s][%s] %s instances found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))

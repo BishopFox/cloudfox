@@ -76,7 +76,10 @@ func (m *ECRModule) PrintECR(outputFormat string, outputDirectory string, verbos
 	//create a channel to receive the objects
 	dataReceiver := make(chan Repository)
 
-	go m.Receiver(dataReceiver)
+	// Create a channel to signal to stop
+	receiverDone := make(chan bool)
+
+	go m.Receiver(dataReceiver, receiverDone)
 
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
@@ -86,10 +89,13 @@ func (m *ECRModule) PrintECR(outputFormat string, outputDirectory string, verbos
 	}
 
 	wg.Wait()
+	//time.Sleep(time.Second * 2)
+
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	close(dataReceiver)
+	receiverDone <- true
+	<-receiverDone
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
@@ -122,7 +128,7 @@ func (m *ECRModule) PrintECR(outputFormat string, outputDirectory string, verbos
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
+		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		m.writeLoot(m.output.FilePath, verbosity)
 		fmt.Printf("[%s][%s] %s repositories found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 	} else {
@@ -148,10 +154,16 @@ func (m *ECRModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan s
 	}
 }
 
-func (m *ECRModule) Receiver(receiver chan Repository) {
-	for data := range receiver {
-		m.Repositories = append(m.Repositories, data)
-
+func (m *ECRModule) Receiver(receiver chan Repository, receiverDone chan bool) {
+	defer close(receiverDone)
+	for {
+		select {
+		case data := <-receiver:
+			m.Repositories = append(m.Repositories, data)
+		case <-receiverDone:
+			receiverDone <- true
+			return
+		}
 	}
 }
 

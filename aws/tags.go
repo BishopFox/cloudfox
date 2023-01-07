@@ -73,7 +73,10 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 	//create a channel to receive the objects
 	dataReceiver := make(chan Tag)
 
-	go m.Receiver(dataReceiver)
+	// Create a channel to signal to stop
+	receiverDone := make(chan bool)
+
+	go m.Receiver(dataReceiver, receiverDone)
 
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
@@ -83,10 +86,13 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 	}
 
 	wg.Wait()
+	//time.Sleep(time.Second * 2)
+
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	close(dataReceiver)
+	receiverDone <- true
+	<-receiverDone
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
@@ -123,7 +129,7 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
+		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		//m.writeLoot(m.output.FilePath, verbosity)
 		fmt.Printf("[%s][%s] %s tags found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 		count := m.countUniqueResourcesWithTags()
@@ -181,10 +187,16 @@ func (m *TagsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan 
 	m.getTagsPerRegion(r, wg, semaphore, dataReceiver)
 }
 
-func (m *TagsModule) Receiver(receiver chan Tag) {
-	for data := range receiver {
-		m.Tags = append(m.Tags, data)
-
+func (m *TagsModule) Receiver(receiver chan Tag, receiverDone chan bool) {
+	defer close(receiverDone)
+	for {
+		select {
+		case data := <-receiver:
+			m.Tags = append(m.Tags, data)
+		case <-receiverDone:
+			receiverDone <- true
+			return
+		}
 	}
 }
 

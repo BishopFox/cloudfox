@@ -135,8 +135,8 @@ func (m *RoleTrustsModule) printPrincipalTrusts(outputFormat string, outputDirec
 		"Role",
 		"Trusted Principal",
 		"ExternalID",
-		"isAdmin",
-		"canPrivEsc",
+		"IsAdmin?",
+		"CanPrivEscToAdmin?",
 	}
 
 	for _, role := range m.AnalyzedRoles {
@@ -156,7 +156,7 @@ func (m *RoleTrustsModule) printPrincipalTrusts(outputFormat string, outputDirec
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		////m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
-		internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable)
+		internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		fmt.Printf("[%s][%s] %s role trusts found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {
@@ -173,8 +173,8 @@ func (m *RoleTrustsModule) printServiceTrusts(outputFormat string, outputDirecto
 		"Role",
 		"Trusted Service",
 		"ExternalID",
-		"isAdmin",
-		"canPrivEsc",
+		"IsAdmin?",
+		"CanPrivEscToAdmin?",
 	}
 
 	for _, role := range m.AnalyzedRoles {
@@ -195,7 +195,7 @@ func (m *RoleTrustsModule) printServiceTrusts(outputFormat string, outputDirecto
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
-		internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable)
+		internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		fmt.Printf("[%s][%s] %s role trusts found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {
@@ -213,8 +213,8 @@ func (m *RoleTrustsModule) printFederatedTrusts(outputFormat string, outputDirec
 		"Role",
 		"Trusted Provider",
 		"Trusted Subject",
-		"isAdmin",
-		"canPrivEsc",
+		"IsAdmin?",
+		"CanPrivEscToAdmin?",
 	}
 
 	for _, role := range m.AnalyzedRoles {
@@ -235,7 +235,7 @@ func (m *RoleTrustsModule) printFederatedTrusts(outputFormat string, outputDirec
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
-		internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable)
+		internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		fmt.Printf("[%s][%s] %s role trusts found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {

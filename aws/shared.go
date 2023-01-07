@@ -9,7 +9,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/fatih/color"
 )
+
+var cyan = color.New(color.FgCyan).SprintFunc()
+var red = color.New(color.FgRed).SprintFunc()
 
 func initIAMSimClient(iamSimPPClient iam.SimulatePrincipalPolicyAPIClient, caller sts.GetCallerIdentityOutput, AWSProfile string, Goroutines int) IamSimulatorModule {
 
@@ -26,7 +30,7 @@ func initIAMSimClient(iamSimPPClient iam.SimulatePrincipalPolicyAPIClient, calle
 
 func GetIamSimResult(SkipAdminCheck bool, roleArnPtr *string, iamSimulatorMod IamSimulatorModule, localAdminMap map[string]bool) (string, string) {
 	var adminRole, canRolePrivEsc string
-	canRolePrivEsc = "No pmapper data"
+	canRolePrivEsc = "Skipping, no pmapper data"
 	if !SkipAdminCheck {
 		var isRoleAdminBool bool
 		// If we've seen the function before, skip the isRoleAdmin function and just pull the value from the localAdminMap
@@ -59,7 +63,7 @@ func GetIamSimResult(SkipAdminCheck bool, roleArnPtr *string, iamSimulatorMod Ia
 		if isRoleAdminBool {
 			adminRole = "YES"
 		} else {
-			adminRole = "-"
+			adminRole = "No"
 		}
 
 	} else {
@@ -152,13 +156,13 @@ func GetPmapperResults(SkipAdminCheck bool, pmapperMod PmapperModule, roleArn *s
 		if canPrivEscBool {
 			canRolePrivEsc = "YES"
 		} else {
-			canRolePrivEsc = "-"
+			canRolePrivEsc = "No"
 		}
 
 		if isRoleAdminBool {
 			adminRole = "YES"
 		} else {
-			adminRole = "-"
+			adminRole = "No"
 		}
 	} else {
 		adminRole = "Skipped"

@@ -76,8 +76,9 @@ func (m *CloudformationModule) PrintCloudformationStacks(outputFormat string, ou
 	dataReceiver := make(chan CFStack)
 
 	// Create a channel to signal to stop
+	receiverDone := make(chan bool)
 
-	go m.Receiver(dataReceiver)
+	go m.Receiver(dataReceiver, receiverDone)
 
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
@@ -87,10 +88,13 @@ func (m *CloudformationModule) PrintCloudformationStacks(outputFormat string, ou
 	}
 
 	wg.Wait()
+	//time.Sleep(time.Second * 2)
+
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	close(dataReceiver)
+	receiverDone <- true
+	<-receiverDone
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
@@ -134,7 +138,7 @@ func (m *CloudformationModule) PrintCloudformationStacks(outputFormat string, ou
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
+		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		m.writeLoot(m.output.FilePath, verbosity)
 		fmt.Printf("[%s][%s] %s cloudformation stacks found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 	} else {
@@ -161,9 +165,16 @@ func (m *CloudformationModule) executeChecks(r string, wg *sync.WaitGroup, semap
 	}
 }
 
-func (m *CloudformationModule) Receiver(receiver chan CFStack) {
-	for data := range receiver {
-		m.CFStacks = append(m.CFStacks, data)
+func (m *CloudformationModule) Receiver(receiver chan CFStack, receiverDone chan bool) {
+	defer close(receiverDone)
+	for {
+		select {
+		case data := <-receiver:
+			m.CFStacks = append(m.CFStacks, data)
+		case <-receiverDone:
+			receiverDone <- true
+			return
+		}
 	}
 }
 

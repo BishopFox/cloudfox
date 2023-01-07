@@ -141,7 +141,10 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 	//create a channel to receive the objects
 	dataReceiver := make(chan GlobalResourceCount2)
 
-	go m.Receiver(dataReceiver)
+	// Create a channel to signal to stop
+	receiverDone := make(chan bool)
+
+	go m.Receiver(dataReceiver, receiverDone)
 
 	for _, region := range m.AWSRegions {
 
@@ -159,6 +162,8 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 	// }
 
 	wg.Wait()
+	//time.Sleep(time.Second * 2)
+
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
@@ -255,14 +260,15 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
+		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		m.PrintGlobalResources(outputFormat, outputDirectory, verbosity, dataReceiver)
 		m.PrintTotalResources(outputFormat)
 	} else {
 		fmt.Printf("[%s][%s] No resources identified, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
 
-	close(dataReceiver)
+	receiverDone <- true
+	<-receiverDone
 }
 
 func (m *Inventory2Module) PrintGlobalResources(outputFormat string, outputDirectory string, verbosity int, dataReceiver chan GlobalResourceCount2) {
@@ -296,14 +302,21 @@ func (m *Inventory2Module) PrintGlobalResources(outputFormat string, outputDirec
 	}
 	//m.globalOutput.FilePath = filepath.Join(path, m.globalOutput.CallingModule)
 	//m.globalOutput.OutputSelector(outputFormat)
-	internal.OutputSelector(verbosity, outputFormat, m.globalOutput.Headers, m.globalOutput.Body, m.globalOutput.FilePath, m.globalOutput.FullFilename, m.globalOutput.CallingModule, false)
+	internal.OutputSelector(verbosity, outputFormat, m.globalOutput.Headers, m.globalOutput.Body, m.globalOutput.FilePath, m.globalOutput.FullFilename, m.globalOutput.CallingModule, false, m.AWSProfile)
 
 }
 
-func (m *Inventory2Module) Receiver(receiver chan GlobalResourceCount2) {
-	for data := range receiver {
-		m.GlobalResourceCounts = append(m.GlobalResourceCounts, data)
+func (m *Inventory2Module) Receiver(receiver chan GlobalResourceCount2, receiverDone chan bool) {
 
+	defer close(receiverDone)
+	for {
+		select {
+		case data := <-receiver:
+			m.GlobalResourceCounts = append(m.GlobalResourceCounts, data)
+		case <-receiverDone:
+			receiverDone <- true
+			return
+		}
 	}
 }
 

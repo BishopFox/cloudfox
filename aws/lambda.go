@@ -58,7 +58,7 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 	// These stuct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
-	m.output.CallingModule = "lambdas"
+	m.output.CallingModule = "lambda"
 	localAdminMap := make(map[string]bool)
 	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
@@ -89,7 +89,10 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 	//create a channel to receive the objects
 	dataReceiver := make(chan Lambda)
 
-	go m.Receiver(dataReceiver)
+	// Create a channel to signal to stop
+	receiverDone := make(chan bool)
+
+	go m.Receiver(dataReceiver, receiverDone)
 
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
@@ -98,6 +101,7 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 
 	}
 	wg.Wait()
+	//time.Sleep(time.Second * 2)
 
 	// Perform role analysis
 	if m.pmapperError == nil {
@@ -113,7 +117,8 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	close(dataReceiver)
+	receiverDone <- true
+	<-receiverDone
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
@@ -122,7 +127,7 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 		//"Type",
 		"Resource Arn",
 		"Role",
-		"isAdminRole?",
+		"IsAdminRole?",
 		"CanPrivEscToAdmin?",
 	}
 
@@ -151,7 +156,7 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
+		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		m.writeLoot(m.output.FilePath, verbosity)
 		fmt.Printf("[%s][%s] %s lambdas found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 	} else {
@@ -177,10 +182,16 @@ func (m *LambdasModule) executeChecks(r string, wg *sync.WaitGroup, semaphore ch
 	}
 }
 
-func (m *LambdasModule) Receiver(receiver chan Lambda) {
-	for data := range receiver {
-		m.Lambdas = append(m.Lambdas, data)
-
+func (m *LambdasModule) Receiver(receiver chan Lambda, receiverDone chan bool) {
+	defer close(receiverDone)
+	for {
+		select {
+		case data := <-receiver:
+			m.Lambdas = append(m.Lambdas, data)
+		case <-receiverDone:
+			receiverDone <- true
+			return
+		}
 	}
 }
 

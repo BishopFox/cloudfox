@@ -38,7 +38,8 @@ type OutputData2 struct {
 // verbosity = 2 (Output and loot printed to file, output printed screen).
 // verbosity = 3 (Output and loot printed to file and screen).
 // outputType = "table", "csv"
-func OutputSelector(verbosity int, outputType string, header []string, body [][]string, outputDirectory string, fileName string, callingModule string, wrapTable bool) {
+// prefixIdentifier = this string gets printed with control message calling module (e.g. aws profile, azure resource group, gcp project, etc)
+func OutputSelector(verbosity int, outputType string, header []string, body [][]string, outputDirectory string, fileName string, callingModule string, wrapTable bool, prefixIdentifier string) {
 
 	switch verbosity {
 	case 2:
@@ -56,7 +57,7 @@ func OutputSelector(verbosity int, outputType string, header []string, body [][]
 			outputType,
 			callingModule)
 		printTableToFile(header, body, outputFileTable)
-		fmt.Printf("[%s] Output written to [%s]\n", cyan(callingModule), outputFileTable.Name())
+		fmt.Printf("[%s][%s] Output written to [%s]\n", cyan(callingModule), cyan(prefixIdentifier), outputFileTable.Name())
 		// Add writeLootToFile function here
 
 	case "csv":
@@ -66,7 +67,7 @@ func OutputSelector(verbosity int, outputType string, header []string, body [][]
 			outputType,
 			callingModule)
 		printCSVtoFile(header, body, outputFileCSV)
-		fmt.Printf("[%s] Output written to [%s]\n", cyan(callingModule), outputFileCSV.Name())
+		fmt.Printf("[%s][%s] Output written to [%s]\n", cyan(callingModule), cyan(prefixIdentifier), outputFileCSV.Name())
 		// Add writeLootToFile function here
 
 	default:
@@ -76,7 +77,7 @@ func OutputSelector(verbosity int, outputType string, header []string, body [][]
 			outputType,
 			callingModule)
 		printTableToFile(header, body, outputFileTable)
-		fmt.Printf("[%s] Output written to [%s]\n", cyan(callingModule), outputFileTable.Name())
+		fmt.Printf("[%s][%s] Output written to [%s]\n", cyan(callingModule), cyan(prefixIdentifier), outputFileTable.Name())
 
 		outputFileCSV := createOutputFile(
 			ptr.String(filepath.Join(outputDirectory, "csv")),
@@ -84,7 +85,7 @@ func OutputSelector(verbosity int, outputType string, header []string, body [][]
 			outputType,
 			callingModule)
 		printCSVtoFile(header, body, outputFileCSV)
-		fmt.Printf("[%s] Output written to [%s]\n", cyan(callingModule), outputFileCSV.Name())
+		fmt.Printf("[%s][%s] Output written to [%s]\n", cyan(callingModule), cyan(prefixIdentifier), outputFileCSV.Name())
 		// Add writeLootToFile function here
 	}
 }

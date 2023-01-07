@@ -71,7 +71,10 @@ func (m *SecretsModule) PrintSecrets(outputFormat string, outputDirectory string
 	//create a channel to receive the objects
 	dataReceiver := make(chan Secret)
 
-	go m.Receiver(dataReceiver)
+	// Create a channel to signal to stop
+	receiverDone := make(chan bool)
+
+	go m.Receiver(dataReceiver, receiverDone)
 
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
@@ -80,10 +83,13 @@ func (m *SecretsModule) PrintSecrets(outputFormat string, outputDirectory string
 	}
 
 	wg.Wait()
+	//time.Sleep(time.Second * 2)
+
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	close(dataReceiver)
+	receiverDone <- true
+	<-receiverDone
 
 	//	fmt.Printf("\nAnalyzed Resources by Region\n\n")
 
@@ -112,7 +118,7 @@ func (m *SecretsModule) PrintSecrets(outputFormat string, outputDirectory string
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
+		internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 
 		m.writeLoot(m.output.FilePath, verbosity)
 		fmt.Printf("[%s][%s] %s secrets found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
@@ -123,10 +129,16 @@ func (m *SecretsModule) PrintSecrets(outputFormat string, outputDirectory string
 
 }
 
-func (m *SecretsModule) Receiver(receiver chan Secret) {
-	for data := range receiver {
-		m.Secrets = append(m.Secrets, data)
-
+func (m *SecretsModule) Receiver(receiver chan Secret, receiverDone chan bool) {
+	defer close(receiverDone)
+	for {
+		select {
+		case data := <-receiver:
+			m.Secrets = append(m.Secrets, data)
+		case <-receiverDone:
+			receiverDone <- true
+			return
+		}
 	}
 }
 

@@ -107,7 +107,10 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 	//create a channel to receive the objects
 	dataReceiver := make(chan Endpoint)
 
-	go m.Receiver(dataReceiver)
+	// Create a channel to signal to stop
+	receiverDone := make(chan bool)
+
+	go m.Receiver(dataReceiver, receiverDone)
 
 	//execute global checks -- removing from now. not sure i want s3 data in here
 	// wg.Add(1)
@@ -129,10 +132,13 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 	// }
 
 	wg.Wait()
+	//time.Sleep(time.Second * 2)
+
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	close(dataReceiver)
+	receiverDone <- true
+	<-receiverDone
 
 	sort.Slice(m.Endpoints, func(i, j int) bool {
 		return m.Endpoints[i].AWSService < m.Endpoints[j].AWSService
@@ -168,7 +174,7 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
+		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		m.writeLoot(m.output.FilePath, verbosity)
 		fmt.Printf("[%s][%s] %s endpoints found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 	} else {
@@ -185,10 +191,16 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 
 }
 
-func (m *EndpointsModule) Receiver(receiver chan Endpoint) {
-	for data := range receiver {
-		m.Endpoints = append(m.Endpoints, data)
-
+func (m *EndpointsModule) Receiver(receiver chan Endpoint, receiverDone chan bool) {
+	defer close(receiverDone)
+	for {
+		select {
+		case data := <-receiver:
+			m.Endpoints = append(m.Endpoints, data)
+		case <-receiverDone:
+			receiverDone <- true
+			return
+		}
 	}
 }
 

@@ -92,7 +92,10 @@ func (m *ECSTasksModule) ECSTasks(outputFormat string, outputDirectory string, v
 
 	dataReceiver := make(chan MappedECSTask)
 
-	go m.Receiver(dataReceiver)
+	// Create a channel to signal to stop
+	receiverDone := make(chan bool)
+
+	go m.Receiver(dataReceiver, receiverDone)
 
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
@@ -102,6 +105,7 @@ func (m *ECSTasksModule) ECSTasks(outputFormat string, outputDirectory string, v
 	}
 
 	wg.Wait()
+	//time.Sleep(time.Second * 2)
 
 	// Perform role analysis
 	if m.pmapperError == nil {
@@ -116,16 +120,23 @@ func (m *ECSTasksModule) ECSTasks(outputFormat string, outputDirectory string, v
 
 	spinnerDone <- true
 	<-spinnerDone
-	close(dataReceiver)
+	receiverDone <- true
+	<-receiverDone
 
 	m.printECSTaskData(outputFormat, outputDirectory, dataReceiver)
 
 }
 
-func (m *ECSTasksModule) Receiver(receiver chan MappedECSTask) {
-	for data := range receiver {
-		m.MappedECSTasks = append(m.MappedECSTasks, data)
-
+func (m *ECSTasksModule) Receiver(receiver chan MappedECSTask, receiverDone chan bool) {
+	defer close(receiverDone)
+	for {
+		select {
+		case data := <-receiver:
+			m.MappedECSTasks = append(m.MappedECSTasks, data)
+		case <-receiverDone:
+			receiverDone <- true
+			return
+		}
 	}
 }
 
@@ -138,7 +149,7 @@ func (m *ECSTasksModule) printECSTaskData(outputFormat string, outputDirectory s
 		"External IP",
 		"Internal IP",
 		"RoleArn",
-		"isAdminRole?",
+		"IsAdminRole?",
 		"CanPrivEscToAdmin?",
 	}
 
@@ -161,7 +172,7 @@ func (m *ECSTasksModule) printECSTaskData(outputFormat string, outputDirectory s
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
+		internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 
 		m.writeLoot(m.output.FilePath)
 		fmt.Printf("[%s][%s] %s ECS tasks found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))

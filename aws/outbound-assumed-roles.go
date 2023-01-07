@@ -141,7 +141,10 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputFor
 	//create a channel to receive the objects
 	dataReceiver := make(chan OutboundAssumeRoleEntry)
 
-	go m.Receiver(dataReceiver)
+	// Create a channel to signal to stop
+	receiverDone := make(chan bool)
+
+	go m.Receiver(dataReceiver, receiverDone)
 
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
@@ -154,7 +157,8 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputFor
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	close(dataReceiver)
+	receiverDone <- true
+	<-receiverDone
 
 	m.output.Headers = []string{
 		"Service",
@@ -189,7 +193,7 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputFor
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable)
+		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		fmt.Printf("[%s][%s] %s log entries found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 		//m.writeLoot()
@@ -199,10 +203,16 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputFor
 
 }
 
-func (m *OutboundAssumedRolesModule) Receiver(receiver chan OutboundAssumeRoleEntry) {
-	for data := range receiver {
-		m.OutboundAssumeRoleEntries = append(m.OutboundAssumeRoleEntries, data)
-
+func (m *OutboundAssumedRolesModule) Receiver(receiver chan OutboundAssumeRoleEntry, receiverDone chan bool) {
+	defer close(receiverDone)
+	for {
+		select {
+		case data := <-receiver:
+			m.OutboundAssumeRoleEntries = append(m.OutboundAssumeRoleEntries, data)
+		case <-receiverDone:
+			receiverDone <- true
+			return
+		}
 	}
 }
 
