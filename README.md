@@ -39,7 +39,7 @@ For the full documentation please refer to our [wiki](https://github.com/BishopF
 | Provider| CloudFox Commands |
 | - | - |
 | AWS | 23 | 
-| Azure | 4 (beta) | 
+| Azure | 4 | 
 | GCP | Support Planned |
 | Kubernetes | Support Planned | 
 
