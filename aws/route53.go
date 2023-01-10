@@ -93,7 +93,7 @@ func (m *Route53Module) PrintRoute53(outputFormat string, outputDirectory string
 	} else {
 		fmt.Printf("[%s][%s] No DNS records found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
-
+	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 }
 
 func (m *Route53Module) writeLoot(outputDirectory string, verbosity int) {

@@ -123,7 +123,7 @@ func (m *RAMModule) PrintRAM(outputFormat string, outputDirectory string, verbos
 	} else {
 		fmt.Printf("[%s][%s] No resources found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
-
+	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 }
 
 func (m *RAMModule) executeChecks(r string, wg *sync.WaitGroup, dataReceiver chan Resource) {

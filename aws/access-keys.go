@@ -88,8 +88,8 @@ func (m *AccessKeysModule) PrintAccessKeys(filter string, outputFormat string, o
 		fmt.Printf("[%s][%s] %s access keys found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 	} else {
 		fmt.Printf("[%s][%s] No  access keys found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
-
 	}
+	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 }
 
 func (m *AccessKeysModule) writeLoot(outputDirectory string, verbosity int) {

@@ -148,6 +148,7 @@ func (m *EnvsModule) PrintEnvs(outputFormat string, outputDirectory string, verb
 	} else {
 		fmt.Printf("[%s][%s] No environment variables found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
+	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 }
 
 func EnvVarsContains(element EnvironmentVariable, array []EnvironmentVariable) bool {

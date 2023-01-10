@@ -136,6 +136,7 @@ func (m *ElasticNetworkInterfacesModule) printENIsData(outputFormat string, outp
 	} else {
 		fmt.Printf("[%s][%s] No elastic network interfaces found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
+	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 }
 
 func (m *ElasticNetworkInterfacesModule) writeLoot(outputDirectory string) {

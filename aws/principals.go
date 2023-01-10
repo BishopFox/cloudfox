@@ -144,7 +144,7 @@ func (m *IamPrincipalsModule) PrintIamPrincipals(outputFormat string, outputDire
 	} else {
 		fmt.Printf("[%s][%s] No IAM principals found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
-
+	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 }
 
 /* UNUSED CODE BLOCK - PLEASE REVIEW AND DELETE IF APPLICABLE

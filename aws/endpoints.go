@@ -180,7 +180,7 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 	} else {
 		fmt.Printf("[%s][%s] No endpoints found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
-
+	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 	// This works great to print errors out after the module but i'm not really sure i want that.
 	// sort.Slice(m.Errors, func(i, j int) bool {
 	// 	return m.Errors[i] < m.Errors[j]

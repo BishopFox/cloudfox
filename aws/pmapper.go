@@ -186,7 +186,7 @@ func (m *PmapperModule) PrintPmapperData(outputFormat string, outputDirectory st
 	} else {
 		fmt.Printf("[%s][%s] No principals who are admin or have a path to admin identified. skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
-
+	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 }
 
 func (m *PmapperModule) doesNodeHavePathToAdmin(startNode Node) bool {

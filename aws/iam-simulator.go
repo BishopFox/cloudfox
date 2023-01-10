@@ -186,7 +186,7 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 	} else if principal != "" || action != "" {
 		fmt.Printf("[%s][%s] No allowed permissions identified, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
-
+	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 }
 
 func (m *IamSimulatorModule) writeLoot(outputDirectory string, verbosity int, pmapperCommands []string) {
