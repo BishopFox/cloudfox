@@ -4,7 +4,6 @@ import (
 	"os"
 
 	"github.com/BishopFox/cloudfox/cli"
-	"github.com/BishopFox/cloudfox/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -16,9 +15,6 @@ var (
 )
 
 func main() {
-	logfile := utils.InitLogging()
-	defer logfile.Close()
-
 	rootCmd.AddCommand(cli.AWSCommands, cli.AzCommands)
 	rootCmd.Execute()
 }

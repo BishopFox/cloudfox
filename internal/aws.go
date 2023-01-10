@@ -1,4 +1,4 @@
-package utils
+package internal
 
 import (
 	"bufio"
@@ -7,12 +7,15 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go/ptr"
+	"github.com/bishopfox/awsservicemap"
 	"github.com/kyokomi/emoji"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/afero"
@@ -56,6 +59,35 @@ func AWSWhoami(awsProfile string, version string) (*sts.GetCallerIdentityOutput,
 
 	}
 	return CallerIdentity, err
+}
+
+func GetEnabledRegions(awsProfile string, version string) []string {
+	var enabledRegions []string
+	ec2Client := ec2.NewFromConfig(AWSConfigFileLoader(awsProfile, version))
+	regions, err := ec2Client.DescribeRegions(
+		context.TODO(),
+		&ec2.DescribeRegionsInput{
+			AllRegions: aws.Bool(false),
+		},
+	)
+
+	if err != nil {
+		servicemap := &awsservicemap.AwsServiceMap{
+			JsonFileSource: "EMBEDDED_IN_PACKAGE",
+		}
+		AWSRegions, err := servicemap.GetAllRegions()
+		if err != nil {
+			TxtLog.Println(err)
+		}
+		return AWSRegions
+	}
+
+	for _, region := range regions.Regions {
+		enabledRegions = append(enabledRegions, *region.RegionName)
+	}
+
+	return enabledRegions
+
 }
 
 // func GetRegionsForService(awsProfile string, service string) []string {
@@ -212,4 +244,29 @@ func BuildAWSPath(Caller sts.GetCallerIdentityOutput) string {
 	var callerUserID = removeBadPathChars(Caller.UserId)
 
 	return fmt.Sprintf("%s-%s", callerAccount, callerUserID)
+}
+
+// this is all for the spinner and command counter
+const clearln = "\r\x1b[2K"
+
+type CommandCounter struct {
+	Total     int
+	Pending   int
+	Complete  int
+	Error     int
+	Executing int
+}
+
+func SpinUntil(callingModuleName string, counter *CommandCounter, done chan bool, spinType string) {
+	defer close(done)
+	for {
+		select {
+		case <-time.After(1 * time.Second):
+			fmt.Printf(clearln+"[%s] Status: %d/%d %s complete (%d errors -- For details check %s)", cyan(callingModuleName), counter.Complete, counter.Total, spinType, counter.Error, fmt.Sprintf("%s/cloudfox-error.log", ptr.ToString(GetLogDirPath())))
+		case <-done:
+			fmt.Printf(clearln+"[%s] Status: %d/%d %s complete (%d errors -- For details check %s)\n", cyan(callingModuleName), counter.Complete, counter.Complete, spinType, counter.Error, fmt.Sprintf("%s/cloudfox-error.log", ptr.ToString(GetLogDirPath())))
+			done <- true
+			return
+		}
+	}
 }

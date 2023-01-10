@@ -8,8 +8,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/BishopFox/cloudfox/console"
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/apprunner"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
@@ -19,6 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/lightsail"
 	"github.com/aws/aws-sdk-go-v2/service/sagemaker"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -38,6 +38,7 @@ type EnvsModule struct {
 	AWSProfile   string
 	OutputFormat string
 	Goroutines   int
+	WrapTable    bool
 
 	// Service Clients
 	ECSClient       *ecs.Client
@@ -48,11 +49,11 @@ type EnvsModule struct {
 
 	// Main module data
 	EnvironmentVariables []EnvironmentVariable
-	CommandCounter       console.CommandCounter
+	CommandCounter       internal.CommandCounter
 	modLog               *logrus.Entry
 
 	// Used to store output data for pretty printing
-	output utils.OutputData2
+	output internal.OutputData2
 }
 
 type EnvironmentVariable struct {
@@ -68,11 +69,11 @@ func (m *EnvsModule) PrintEnvs(outputFormat string, outputDirectory string, verb
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "env-vars"
-	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
+	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-		m.AWSProfile = utils.BuildAWSPath(m.Caller)
+		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
 
 	fmt.Printf("[%s][%s] Enumerating environment variables in all regions for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
@@ -84,13 +85,15 @@ func (m *EnvsModule) PrintEnvs(outputFormat string, outputDirectory string, verb
 	// Create a channel to signal the spinner aka task status goroutine to finish
 	spinnerDone := make(chan bool)
 	//fire up the the task status spinner/updated
-	go console.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
+	go internal.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
 
 	//create a channel to receive the objects
 	dataReceiver := make(chan EnvironmentVariable)
 
 	// Create a channel to signal to stop
 	receiverDone := make(chan bool)
+
+	// Create a channel to signal to stop
 	go m.Receiver(dataReceiver, receiverDone)
 
 	for _, region := range m.AWSRegions {
@@ -101,10 +104,11 @@ func (m *EnvsModule) PrintEnvs(outputFormat string, outputDirectory string, verb
 	}
 
 	wg.Wait()
+	//time.Sleep(time.Second * 2)
+
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	// Send a message to the data receiver goroutine to close the channel and stop
 	receiverDone <- true
 	<-receiverDone
 
@@ -137,12 +141,23 @@ func (m *EnvsModule) PrintEnvs(outputFormat string, outputDirectory string, verb
 
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
-		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		fmt.Printf("[%s][%s] %s environment variables found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {
 		fmt.Printf("[%s][%s] No environment variables found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
+	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
+}
+
+func EnvVarsContains(element EnvironmentVariable, array []EnvironmentVariable) bool {
+	for _, v := range array {
+		if v == element {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *EnvsModule) Receiver(receiver chan EnvironmentVariable, receiverDone chan bool) {
@@ -150,7 +165,9 @@ func (m *EnvsModule) Receiver(receiver chan EnvironmentVariable, receiverDone ch
 	for {
 		select {
 		case data := <-receiver:
-			m.EnvironmentVariables = append(m.EnvironmentVariables, data)
+			if !EnvVarsContains(data, m.EnvironmentVariables) {
+				m.EnvironmentVariables = append(m.EnvironmentVariables, data)
+			}
 		case <-receiverDone:
 			receiverDone <- true
 			return
@@ -160,26 +177,50 @@ func (m *EnvsModule) Receiver(receiver chan EnvironmentVariable, receiverDone ch
 
 func (m *EnvsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan EnvironmentVariable) {
 	defer wg.Done()
+	servicemap := &awsservicemap.AwsServiceMap{
+		JsonFileSource: "EMBEDDED_IN_PACKAGE",
+	}
+	res, _ := servicemap.IsServiceInRegion("ecs", r)
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getECSEnvironmentVariablesPerRegion(r, wg, semaphore, dataReceiver)
+	}
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getECSEnvironmentVariablesPerRegion(r, wg, semaphore, dataReceiver)
+	res, err := servicemap.IsServiceInRegion("lambda", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getLambdaEnvironmentVariablesPerRegion(r, wg, semaphore, dataReceiver)
+	}
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getLambdaEnvironmentVariablesPerRegion(r, wg, semaphore, dataReceiver)
-
+	// AppRunner is not supported in the aws service region catalog so we have to run it in all regions
 	m.CommandCounter.Total++
 	wg.Add(1)
 	go m.getAppRunnerEnvironmentVariablesPerRegion(r, wg, semaphore, dataReceiver)
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getLightsailEnvironmentVariablesPerRegion(r, wg, semaphore, dataReceiver)
+	res, err = servicemap.IsServiceInRegion("lightsail", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getLightsailEnvironmentVariablesPerRegion(r, wg, semaphore, dataReceiver)
+	}
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getSagemakerEnvironmentVariablesPerRegion(r, wg, semaphore, dataReceiver)
+	res, err = servicemap.IsServiceInRegion("sagemaker", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getSagemakerEnvironmentVariablesPerRegion(r, wg, semaphore, dataReceiver)
+	}
 
 }
 
@@ -198,13 +239,41 @@ func (m *EnvsModule) getECSEnvironmentVariablesPerRegion(region string, wg *sync
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
+	//var PaginationMarker *string
+
+	// This new approach takes one active task from each task family and grabs the container envs from that. Ran into a case where every version
+	// of a task was listed as active and it brought cloudfox to a halt for a really long time.
+	for _, familyName := range m.getTaskDefinitionFamilies(region) {
+
+		DescribeTaskDefinition, err := m.ECSClient.DescribeTaskDefinition(
+			context.TODO(),
+			&ecs.DescribeTaskDefinitionInput{
+				TaskDefinition: &familyName,
+			},
+			func(o *ecs.Options) {
+				o.Region = region
+			},
+		)
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			break
+		}
+		for _, containerDefinition := range DescribeTaskDefinition.TaskDefinition.ContainerDefinitions {
+			m.getECSEnvironmentVariablesPerDefinition(containerDefinition, region, dataReceiver)
+		}
+	}
+}
+
+func (m *EnvsModule) getTaskDefinitionFamilies(region string) []string {
+	var allFamilyNames []string
 	var PaginationMarker *string
 
-	// This for loop exits at the end dependeding on whether the output hits its last page (see pagination control block at the end of the loop).
 	for {
-		ListTaskDefinitions, err := m.ECSClient.ListTaskDefinitions(
+
+		ListTaskDefinitionFamilies, err := m.ECSClient.ListTaskDefinitionFamilies(
 			context.TODO(),
-			&ecs.ListTaskDefinitionsInput{
+			&ecs.ListTaskDefinitionFamiliesInput{
 				NextToken: PaginationMarker,
 			},
 			func(o *ecs.Options) {
@@ -217,32 +286,17 @@ func (m *EnvsModule) getECSEnvironmentVariablesPerRegion(region string, wg *sync
 			break
 		}
 
-		for _, taskDefinitionArn := range ListTaskDefinitions.TaskDefinitionArns {
-			DescribeTaskDefinition, err := m.ECSClient.DescribeTaskDefinition(
-				context.TODO(),
-				&ecs.DescribeTaskDefinitionInput{
-					TaskDefinition: &taskDefinitionArn,
-				},
-			)
-			if err != nil {
-				m.modLog.Error(err.Error())
-				m.CommandCounter.Error++
-				break
-			}
-			for _, containerDefinition := range DescribeTaskDefinition.TaskDefinition.ContainerDefinitions {
-				m.getECSEnvironmentVariablesPerDefinition(containerDefinition, region, dataReceiver)
-			}
+		allFamilyNames = append(allFamilyNames, ListTaskDefinitionFamilies.Families...)
 
-		}
-
-		// Pagination control. After the last page of output, the for loop exits.
-		if ListTaskDefinitions.NextToken != nil {
-			PaginationMarker = ListTaskDefinitions.NextToken
+		if ListTaskDefinitionFamilies.NextToken != nil {
+			PaginationMarker = ListTaskDefinitionFamilies.NextToken
 		} else {
 			PaginationMarker = nil
 			break
 		}
 	}
+	return allFamilyNames
+
 }
 
 func (m *EnvsModule) getECSEnvironmentVariablesPerDefinition(containerDefinition ecsTypes.ContainerDefinition, region string, dataReceiver chan EnvironmentVariable) {

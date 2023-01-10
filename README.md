@@ -18,7 +18,7 @@ CloudFox helps you gain situational awareness in unfamiliar cloud environments. 
 * [Video - Tool Talk: CloudFox AWS sub-command walkthroughs](https://youtu.be/KKsYfL5uVU4?t=360) 
 
 ## Quick Start
-CloudFox is modular (you can run one command at a time), but there is an aws `all-checks` command that will run the other aws commands for you with sane defaults: 
+CloudFox is modular (you can run one command at a time), but there is an `aws all-checks` command that will run the other aws commands for you with sane defaults: 
 
 `cloudfox aws --profile [profile-name] all-checks`
 
@@ -38,8 +38,8 @@ For the full documentation please refer to our [wiki](https://github.com/BishopF
 
 | Provider| CloudFox Commands |
 | - | - |
-| AWS | 21 | 
-| Azure | 2 (alpha) | 
+| AWS | 23 | 
+| Azure | 4 | 
 | GCP | Support Planned |
 | Kubernetes | Support Planned | 
 

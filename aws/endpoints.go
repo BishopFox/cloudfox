@@ -11,8 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/BishopFox/cloudfox/console"
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/apigateway"
 	"github.com/aws/aws-sdk-go-v2/service/apigatewayv2"
@@ -24,6 +23,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/grafana"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/lightsail"
+	"github.com/aws/aws-sdk-go-v2/service/lightsail/types"
 	"github.com/aws/aws-sdk-go-v2/service/mq"
 	"github.com/aws/aws-sdk-go-v2/service/opensearch"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
@@ -31,6 +31,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go"
+	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -57,13 +58,14 @@ type EndpointsModule struct {
 	OutputFormat string
 	Goroutines   int
 	AWSProfile   string
+	WrapTable    bool
 
 	// Main module data
 	Endpoints      []Endpoint
-	CommandCounter console.CommandCounter
+	CommandCounter internal.CommandCounter
 	Errors         []string
 	// Used to store output data for pretty printing
-	output utils.OutputData2
+	output internal.OutputData2
 	modLog *logrus.Entry
 }
 
@@ -84,11 +86,11 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "endpoints"
-	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
+	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-		m.AWSProfile = utils.BuildAWSPath(m.Caller)
+		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
 
 	fmt.Printf("[%s][%s] Enumerating endpoints for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
@@ -100,13 +102,14 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 	// Create a channel to signal the spinner aka task status goroutine to finish
 	spinnerDone := make(chan bool)
 	//fire up the the task status spinner/updated
-	go console.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
+	go internal.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
 
 	//create a channel to receive the objects
 	dataReceiver := make(chan Endpoint)
 
 	// Create a channel to signal to stop
 	receiverDone := make(chan bool)
+
 	go m.Receiver(dataReceiver, receiverDone)
 
 	//execute global checks -- removing from now. not sure i want s3 data in here
@@ -116,6 +119,7 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 	go m.getCloudfrontEndpoints(wg, semaphore, dataReceiver)
 
 	//execute regional checks
+
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
 		go m.executeChecks(region, wg, semaphore, dataReceiver)
@@ -128,10 +132,11 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 	// }
 
 	wg.Wait()
+	//time.Sleep(time.Second * 2)
+
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	// Send a message to the data receiver goroutine to close the channel and stop
 	receiverDone <- true
 	<-receiverDone
 
@@ -168,13 +173,14 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
-		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		m.writeLoot(m.output.FilePath, verbosity)
 		fmt.Printf("[%s][%s] %s endpoints found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 	} else {
 		fmt.Printf("[%s][%s] No endpoints found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
-
+	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 	// This works great to print errors out after the module but i'm not really sure i want that.
 	// sort.Slice(m.Errors, func(i, j int) bool {
 	// 	return m.Errors[i] < m.Errors[j]
@@ -206,57 +212,113 @@ func (m *EndpointsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore 
 	// 	<-semaphore
 	// }()
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getLambdaFunctionsPerRegion(r, wg, semaphore, dataReceiver)
+	servicemap := &awsservicemap.AwsServiceMap{
+		JsonFileSource: "EMBEDDED_IN_PACKAGE",
+	}
+	res, err := servicemap.IsServiceInRegion("lambda", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getLambdaFunctionsPerRegion(r, wg, semaphore, dataReceiver)
+	}
+	res, err = servicemap.IsServiceInRegion("eks", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getEksClustersPerRegion(r, wg, semaphore, dataReceiver)
+	}
+	res, err = servicemap.IsServiceInRegion("mq", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getMqBrokersPerRegion(r, wg, semaphore, dataReceiver)
+	}
+	res, err = servicemap.IsServiceInRegion("es", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		m.getOpenSearchPerRegion(r, wg, semaphore, dataReceiver)
+	}
+	res, err = servicemap.IsServiceInRegion("grafana", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		m.getGrafanaEndPointsPerRegion(r, wg, semaphore, dataReceiver)
+	}
+	res, err = servicemap.IsServiceInRegion("elb", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getELBv2ListenersPerRegion(r, wg, semaphore, dataReceiver)
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getEksClustersPerRegion(r, wg, semaphore, dataReceiver)
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getELBListenersPerRegion(r, wg, semaphore, dataReceiver)
+	}
+	res, err = servicemap.IsServiceInRegion("apigateway", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getAPIGatewayAPIsPerRegion(r, wg, semaphore, dataReceiver)
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getMqBrokersPerRegion(r, wg, semaphore, dataReceiver)
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getAPIGatewayv2APIsPerRegion(r, wg, semaphore, dataReceiver)
+	}
+	res, err = servicemap.IsServiceInRegion("rds", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getRdsClustersPerRegion(r, wg, semaphore, dataReceiver)
+	}
+	res, err = servicemap.IsServiceInRegion("redshift", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		m.getRedshiftEndPointsPerRegion(r, wg, semaphore, dataReceiver)
+	}
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	m.getOpenSearchPerRegion(r, wg, semaphore, dataReceiver)
-
-	m.CommandCounter.Total++
-	wg.Add(1)
-	m.getGrafanaEndPointsPerRegion(r, wg, semaphore, dataReceiver)
-
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getELBv2ListenersPerRegion(r, wg, semaphore, dataReceiver)
-
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getELBListenersPerRegion(r, wg, semaphore, dataReceiver)
-
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getAPIGatewayAPIsPerRegion(r, wg, semaphore, dataReceiver)
-
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getAPIGatewayv2APIsPerRegion(r, wg, semaphore, dataReceiver)
-
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getRdsClustersPerRegion(r, wg, semaphore, dataReceiver)
-
-	m.CommandCounter.Total++
-	wg.Add(1)
-	m.getRedshiftEndPointsPerRegion(r, wg, semaphore, dataReceiver)
-
+	//apprunner is not supported by the aws json so we have to call it in every region
 	m.CommandCounter.Total++
 	wg.Add(1)
 	go m.getAppRunnerEndpointsPerRegion(r, wg, semaphore, dataReceiver)
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getLightsailContainerEndpointsPerRegion(r, wg, semaphore, dataReceiver)
+	res, err = servicemap.IsServiceInRegion("lightsail", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getLightsailContainerEndpointsPerRegion(r, wg, semaphore, dataReceiver)
+	}
 }
 
 func (m *EndpointsModule) writeLoot(outputDirectory string, verbosity int) {
@@ -1185,7 +1247,7 @@ func (m *EndpointsModule) getRdsClustersPerRegion(r string, wg *sync.WaitGroup, 
 				name := aws.ToString(instance.DBInstanceIdentifier)
 				port := instance.Endpoint.Port
 				endpoint := aws.ToString(instance.Endpoint.Address)
-				awsService := fmt.Sprintf("RDS")
+				awsService := "RDS"
 
 				if instance.PubliclyAccessible {
 					public = "True"
@@ -1291,80 +1353,83 @@ func (m *EndpointsModule) getRedshiftEndPointsPerRegion(r string, wg *sync.WaitG
 
 }
 
-func (m *EndpointsModule) getS3EndpointsPerRegion(wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Endpoint) {
-	defer func() {
-		m.CommandCounter.Executing--
-		m.CommandCounter.Complete++
-		wg.Done()
+/*
+UNUSED CODE - PLEASE REVIEW AND DELETE IF IT DOESN'T APPLY
 
-	}()
-	semaphore <- struct{}{}
-	defer func() {
-		<-semaphore
-	}()
-	// m.CommandCounter.Total++
-	m.CommandCounter.Pending--
-	m.CommandCounter.Executing++
+	func (m *EndpointsModule) getS3EndpointsPerRegion(wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Endpoint) {
+		defer func() {
+			m.CommandCounter.Executing--
+			m.CommandCounter.Complete++
+			wg.Done()
 
-	// This for loop exits at the end dependeding on whether the output hits its last page (see pagination control block at the end of the loop).
-	ListBuckets, _ := m.S3Client.ListBuckets(
-		context.TODO(),
-		&s3.ListBucketsInput{},
-	)
+		}()
+		semaphore <- struct{}{}
+		defer func() {
+			<-semaphore
+		}()
+		// m.CommandCounter.Total++
+		m.CommandCounter.Pending--
+		m.CommandCounter.Executing++
 
-	var public string
-	for _, bucket := range ListBuckets.Buckets {
-		name := aws.ToString(bucket.Name)
-		endpoint := fmt.Sprintf("https://%s.s3.amazonaws.com", name)
-		awsService := "S3"
-
-		var port int32 = 443
-		protocol := "https"
-		var r string = "Global"
-		public = "False"
-
-		GetBucketPolicyStatus, err := m.S3Client.GetBucketPolicyStatus(
+		// This for loop exits at the end dependeding on whether the output hits its last page (see pagination control block at the end of the loop).
+		ListBuckets, _ := m.S3Client.ListBuckets(
 			context.TODO(),
-			&s3.GetBucketPolicyStatusInput{
-				Bucket: &name,
-			},
+			&s3.ListBucketsInput{},
 		)
 
-		if err == nil {
-			isPublic := GetBucketPolicyStatus.PolicyStatus.IsPublic
-			if isPublic {
-				public = "True"
+		var public string
+		for _, bucket := range ListBuckets.Buckets {
+			name := aws.ToString(bucket.Name)
+			endpoint := fmt.Sprintf("https://%s.s3.amazonaws.com", name)
+			awsService := "S3"
+
+			var port int32 = 443
+			protocol := "https"
+			var r string = "Global"
+			public = "False"
+
+			GetBucketPolicyStatus, err := m.S3Client.GetBucketPolicyStatus(
+				context.TODO(),
+				&s3.GetBucketPolicyStatusInput{
+					Bucket: &name,
+				},
+			)
+
+			if err == nil {
+				isPublic := GetBucketPolicyStatus.PolicyStatus.IsPublic
+				if isPublic {
+					public = "True"
+				}
 			}
+
+			// GetBucketWebsite, err := m.S3Client.GetBucketWebsite(
+			// 	context.TODO(),
+			// 	&s3.GetBucketWebsiteInput{
+			// 		Bucket: &name,
+			// 	},
+			// )
+
+			// if err != nil {
+			// 	index := *GetBucketWebsite.IndexDocument.Suffix
+			// 	if index != "" {
+			// 		public = "True"
+			// 	}
+
+			// }
+
+			dataReceiver <- Endpoint{
+				AWSService: awsService,
+				Region:     r,
+				Name:       name,
+				Endpoint:   endpoint,
+				Port:       port,
+				Protocol:   protocol,
+				Public:     public,
+			}
+
 		}
-
-		// GetBucketWebsite, err := m.S3Client.GetBucketWebsite(
-		// 	context.TODO(),
-		// 	&s3.GetBucketWebsiteInput{
-		// 		Bucket: &name,
-		// 	},
-		// )
-
-		// if err != nil {
-		// 	index := *GetBucketWebsite.IndexDocument.Suffix
-		// 	if index != "" {
-		// 		public = "True"
-		// 	}
-
-		// }
-
-		dataReceiver <- Endpoint{
-			AWSService: awsService,
-			Region:     r,
-			Name:       name,
-			Endpoint:   endpoint,
-			Port:       port,
-			Protocol:   protocol,
-			Public:     public,
-		}
-
 	}
-}
-
+*/
 func (m *EndpointsModule) getCloudfrontEndpoints(wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Endpoint) {
 	defer func() {
 		m.CommandCounter.Executing--
@@ -1584,6 +1649,34 @@ func (m *EndpointsModule) getLightsailContainerEndpointsPerRegion(r string, wg *
 	var protocol string = "https"
 	var port int32 = 443
 
+	containerServices, err := m.getLightsailContainerServices(r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+	}
+
+	if len(containerServices) > 0 {
+
+		for _, containerService := range containerServices {
+			name := aws.ToString(containerService.ContainerServiceName)
+			endpoint := aws.ToString(containerService.Url)
+			awsService := "Lightsail [Container]"
+
+			dataReceiver <- Endpoint{
+				AWSService: awsService,
+				Region:     r,
+				Name:       name,
+				Endpoint:   endpoint,
+				Port:       port,
+				Protocol:   protocol,
+				Public:     public,
+			}
+		}
+	}
+}
+
+func (m *EndpointsModule) getLightsailContainerServices(r string) ([]types.ContainerService, error) {
+	var containerServices []types.ContainerService
 	GetContainerServices, err := m.LightsailClient.GetContainerServices(
 		context.TODO(),
 		&(lightsail.GetContainerServicesInput{}),
@@ -1591,27 +1684,11 @@ func (m *EndpointsModule) getLightsailContainerEndpointsPerRegion(r string, wg *
 			o.Region = r
 		},
 	)
-	if err == nil {
-
-		if len(GetContainerServices.ContainerServices) > 0 {
-
-			for _, containerService := range GetContainerServices.ContainerServices {
-				name := aws.ToString(containerService.ContainerServiceName)
-				//arn := *containerService.Arn
-				endpoint := aws.ToString(containerService.Url)
-				//endpoint := fmt.Sprintf("https//%s", *service.ServiceUrl)
-				awsService := "Lightsail [Container]"
-
-				dataReceiver <- Endpoint{
-					AWSService: awsService,
-					Region:     r,
-					Name:       name,
-					Endpoint:   endpoint,
-					Port:       port,
-					Protocol:   protocol,
-					Public:     public,
-				}
-			}
-		}
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return containerServices, err
 	}
+	containerServices = append(containerServices, GetContainerServices.ContainerServices...)
+	return containerServices, nil
 }

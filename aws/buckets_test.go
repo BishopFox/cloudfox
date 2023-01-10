@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
@@ -51,13 +51,13 @@ func TestListBuckets(t *testing.T) {
 				Goroutines:                   30,
 				AWSRegions:                   AWSRegions,
 			},
-			expectedResult: []Bucket{Bucket{
+			expectedResult: []Bucket{{
 				Name: "mockBucket123",
 			}},
 		},
 	}
 
-	utils.MockFileSystem(true)
+	internal.MockFileSystem(true)
 	for _, subtest := range subtests {
 		t.Run(subtest.name, func(t *testing.T) {
 			subtest.testModule.PrintBuckets(subtest.testModule.OutputFormat, subtest.outputDirectory, subtest.verbosity)

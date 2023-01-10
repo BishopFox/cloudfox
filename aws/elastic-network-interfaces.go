@@ -8,12 +8,12 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/BishopFox/cloudfox/console"
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -25,11 +25,12 @@ type ElasticNetworkInterfacesModule struct {
 	AWSRegions   []string
 	OutputFormat string
 	AWSProfile   string
+	WrapTable    bool
 
 	MappedENIs     []MappedENI
-	CommandCounter console.CommandCounter
+	CommandCounter internal.CommandCounter
 
-	output utils.OutputData2
+	output internal.OutputData2
 	modLog *logrus.Entry
 }
 
@@ -47,11 +48,11 @@ func (m *ElasticNetworkInterfacesModule) ElasticNetworkInterfaces(outputFormat s
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "elastic-network-interfaces"
-	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
+	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-		m.AWSProfile = utils.BuildAWSPath(m.Caller)
+		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
 
 	fmt.Printf("[%s][%s] Enumerating elastic network interfaces in all regions for account %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
@@ -59,10 +60,13 @@ func (m *ElasticNetworkInterfacesModule) ElasticNetworkInterfaces(outputFormat s
 	wg := new(sync.WaitGroup)
 
 	spinnerDone := make(chan bool)
-	go console.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
+	go internal.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
 
 	dataReceiver := make(chan MappedENI)
+
+	// Create a channel to signal to stop
 	receiverDone := make(chan bool)
+
 	go m.Receiver(dataReceiver, receiverDone)
 
 	for _, region := range m.AWSRegions {
@@ -73,6 +77,8 @@ func (m *ElasticNetworkInterfacesModule) ElasticNetworkInterfaces(outputFormat s
 	}
 
 	wg.Wait()
+	//time.Sleep(time.Second * 2)
+
 	spinnerDone <- true
 	<-spinnerDone
 	receiverDone <- true
@@ -121,7 +127,8 @@ func (m *ElasticNetworkInterfacesModule) printENIsData(outputFormat string, outp
 	}
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
-		utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 
 		m.writeLoot(m.output.FilePath)
 		fmt.Printf("[%s][%s] %s elastic network interfaces found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
@@ -129,6 +136,7 @@ func (m *ElasticNetworkInterfacesModule) printENIsData(outputFormat string, outp
 	} else {
 		fmt.Printf("[%s][%s] No elastic network interfaces found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
+	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 }
 
 func (m *ElasticNetworkInterfacesModule) writeLoot(outputDirectory string) {
@@ -171,12 +179,21 @@ func (m *ElasticNetworkInterfacesModule) writeLoot(outputDirectory string) {
 
 func (m *ElasticNetworkInterfacesModule) executeChecks(r string, wg *sync.WaitGroup, dataReceiver chan MappedENI) {
 	defer wg.Done()
-	m.CommandCounter.Total++
-	m.CommandCounter.Pending--
-	m.CommandCounter.Executing++
-	m.getDescribeNetworkInterfaces(r, dataReceiver)
-	m.CommandCounter.Executing--
-	m.CommandCounter.Complete++
+	servicemap := &awsservicemap.AwsServiceMap{
+		JsonFileSource: "EMBEDDED_IN_PACKAGE",
+	}
+	res, err := servicemap.IsServiceInRegion("ec2", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		m.CommandCounter.Pending--
+		m.CommandCounter.Executing++
+		m.getDescribeNetworkInterfaces(r, dataReceiver)
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}
 }
 
 func (m *ElasticNetworkInterfacesModule) getDescribeNetworkInterfaces(region string, dataReceiver chan MappedENI) {
