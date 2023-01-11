@@ -80,7 +80,7 @@ Additional policy notes (as of 09/2022):
 ### Azure
 * Viewer or similar permissions applied. 
 
-# Supported Commands
+# AWS Commands
 | Provider | Command Name | Description 
 | - | - | - | 
 | AWS | [all-checks](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#all-checks) | Run all of the other commands using reasonable defaults. You'll  still want to check out the non-default options of each command, but this is a great place to start.  |
@@ -108,8 +108,15 @@ Additional policy notes (as of 09/2022):
 | AWS | [route53](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#route53) | Enumerate all records from all route53 managed zones. Use this for application and service enumeration. |
 | AWS | [secrets](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#secrets) | List secrets from SecretsManager and SSM. Look for interesting secrets in the list and then see who has access to them using use `cloudfox iam-simulator` and/or `pmapper`. |
 | AWS | [tags](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#tags) | List all resources with tags, and all of the tags. This can be used similar to inventory as another method to identify what types of resources exist in an account. |
-| Azure | [instances-map](https://github.com/BishopFox/cloudfox/wiki/Azure-Commands#instances-map) | Enumerates useful information for Compute instances in all available resource groups and subscriptions | 
-| Azure | [rbac-map](https://github.com/BishopFox/cloudfox/wiki/Azure-Commands#rbac-map) | Enumerates Role Assignments for all tenants | 
+
+
+# Azure Commands
+| Provider | Command Name | Description 
+| - | - | - | 
+| Azure | [whoami](https://github.com/BishopFox/cloudfox/wiki/Azure-Commands#whoami) | Displays information on the tenant, subscriptions and resource groups available to your current Azure CLI session. This is useful to provide situation awareness on what tenant and subscription IDs to use with the other sub commands. | 
+| Azure | [instances](https://github.com/BishopFox/cloudfox/wiki/Azure-Commands#instances) | Enumerates useful information for Compute instances in all available resource groups and subscriptions | 
+| Azure | [rbac](https://github.com/BishopFox/cloudfox/wiki/Azure-Commands#rbac) | Lists Azure RBAC role assignments at subscription or tenant level |
+| Azure | [storage](https://github.com/BishopFox/cloudfox/wiki/Azure-Commands#storage) | The storage command is still under development. Currently it only displays limited data about the storage accounts | 
 
 # Authors
 * [Carlos Vendramini](https://github.com/carlosvendramini-bf)
