@@ -14,7 +14,7 @@ CloudFox helps you gain situational awareness in unfamiliar cloud environments. 
 
 ## Demos, Examples, Walkthroughs
 * [Blog - Introducing: CloudFox](https://bishopfox.com/blog/introducing-cloudfox)
-* [Video - CloudFox Intro Demo's](https://www.youtube.com/watch?v=ReWoUgpUuiQ)
+* [Video - CloudFox Intro Demos](https://www.youtube.com/watch?v=ReWoUgpUuiQ)
 * [Video - Tool Talk: CloudFox AWS sub-command walkthroughs](https://youtu.be/KKsYfL5uVU4?t=360) 
 
 ## Quick Start
