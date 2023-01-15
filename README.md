@@ -31,6 +31,7 @@ CloudFox was designed to be executed by a principal with limited read-only permi
 ### Black Box Enumeration 
 CloudFox can be used with "found" credentials, similar to how you would use [weirdAAL](https://github.com/carnal0wnage/weirdAAL) or [enumerate-iam](https://github.com/andresriancho/enumerate-iam). Checks that fail, do so silently, so any data returned means your "found" creds have the access needed to retrieve it.   
 
+### Documentation
 For the full documentation please refer to our [wiki](https://github.com/BishopFox/CloudFox/wiki).
 
 
