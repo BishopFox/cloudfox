@@ -53,7 +53,7 @@ var (
 		"ssm:GetParameter",
 		"s3:ListBucket",
 		"s3:GetObject",
-		"ssm:sSendCommand",
+		"ssm:SendCommand",
 		"ssm:StartSession",
 		"ecr:BatchGetImage",
 		"ecr:GetAuthorizationToken",
