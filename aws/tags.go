@@ -9,8 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/BishopFox/cloudfox/console"
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/arn"
 	"github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi"
@@ -27,14 +26,15 @@ type TagsModule struct {
 	OutputFormat string
 	Goroutines   int
 	AWSProfile   string
+	WrapTable    bool
 
 	// Main module data
 	Tags               []Tag
-	CommandCounter     console.CommandCounter
+	CommandCounter     internal.CommandCounter
 	ResourceTypeCounts map[string]int
 
 	// Used to store output data for pretty printing
-	output utils.OutputData2
+	output internal.OutputData2
 	modLog *logrus.Entry
 }
 
@@ -53,11 +53,11 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "tags"
-	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
+	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-		m.AWSProfile = utils.BuildAWSPath(m.Caller)
+		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
 
 	fmt.Printf("[%s][%s] Enumerating tags for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
@@ -68,13 +68,14 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 	// Create a channel to signal the spinner aka task status goroutine to finish
 	spinnerDone := make(chan bool)
 	//fire up the the task status spinner/updated
-	go console.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "regions")
+	go internal.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "regions")
 
 	//create a channel to receive the objects
 	dataReceiver := make(chan Tag)
 
 	// Create a channel to signal to stop
 	receiverDone := make(chan bool)
+
 	go m.Receiver(dataReceiver, receiverDone)
 
 	for _, region := range m.AWSRegions {
@@ -85,10 +86,11 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 	}
 
 	wg.Wait()
+	//time.Sleep(time.Second * 2)
+
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	// Send a message to the data receiver goroutine to close the channel and stop
 	receiverDone <- true
 	<-receiverDone
 
@@ -126,7 +128,8 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 	}
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
-		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		//m.writeLoot(m.output.FilePath, verbosity)
 		fmt.Printf("[%s][%s] %s tags found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 		count := m.countUniqueResourcesWithTags()
@@ -134,13 +137,13 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 	} else {
 		fmt.Printf("[%s][%s] No tags found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
-
+	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 }
 
 func (m *TagsModule) countUniqueResourcesWithTags() int {
 	var uniqueResources []string
 	for i := range m.Tags {
-		if !utils.Contains(m.Tags[i].Name, uniqueResources) {
+		if !internal.Contains(m.Tags[i].Name, uniqueResources) {
 			uniqueResources = append(uniqueResources, m.Tags[i].Name)
 		}
 	}

@@ -9,12 +9,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/BishopFox/cloudfox/console"
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudtrail"
 	cloudtrailTypes "github.com/aws/aws-sdk-go-v2/service/cloudtrail/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -27,13 +27,14 @@ type OutboundAssumedRolesModule struct {
 	OutputFormat string
 	Goroutines   int
 	AWSProfile   string
+	WrapTable    bool
 
 	// Main module data
 	OutboundAssumeRoleEntries []OutboundAssumeRoleEntry
 	Days                      int
-	CommandCounter            console.CommandCounter
+	CommandCounter            internal.CommandCounter
 	// Used to store output data for pretty printing
-	output utils.OutputData2
+	output internal.OutputData2
 
 	modLog *logrus.Entry
 }
@@ -118,11 +119,11 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputFor
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "outbound-assumed-roles"
-	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
+	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-		m.AWSProfile = utils.BuildAWSPath(m.Caller)
+		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
 	m.Days = days
 
@@ -135,13 +136,14 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputFor
 	// Create a channel to signal the spinner aka task status goroutine to finish
 	spinnerDone := make(chan bool)
 	//fire up the the task status spinner/updated
-	go console.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "regions")
+	go internal.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "regions")
 
 	//create a channel to receive the objects
 	dataReceiver := make(chan OutboundAssumeRoleEntry)
 
 	// Create a channel to signal to stop
 	receiverDone := make(chan bool)
+
 	go m.Receiver(dataReceiver, receiverDone)
 
 	for _, region := range m.AWSRegions {
@@ -155,7 +157,6 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputFor
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	// Send a message to the data receiver goroutine to close the channel and stop
 	receiverDone <- true
 	<-receiverDone
 
@@ -191,14 +192,15 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputFor
 
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
-		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		fmt.Printf("[%s][%s] %s log entries found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 		//m.writeLoot()
 	} else {
 		fmt.Printf("[%s][%s] No matching log entries found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
-
+	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 }
 
 func (m *OutboundAssumedRolesModule) Receiver(receiver chan OutboundAssumeRoleEntry, receiverDone chan bool) {
@@ -216,9 +218,18 @@ func (m *OutboundAssumedRolesModule) Receiver(receiver chan OutboundAssumeRoleEn
 
 func (m *OutboundAssumedRolesModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan OutboundAssumeRoleEntry) {
 	defer wg.Done()
-	wg.Add(1)
-	m.CommandCounter.Total++
-	m.getAssumeRoleLogEntriesPerRegion(r, wg, semaphore, dataReceiver)
+	servicemap := &awsservicemap.AwsServiceMap{
+		JsonFileSource: "EMBEDDED_IN_PACKAGE",
+	}
+	res, err := servicemap.IsServiceInRegion("cloudtrail", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		wg.Add(1)
+		m.CommandCounter.Total++
+		m.getAssumeRoleLogEntriesPerRegion(r, wg, semaphore, dataReceiver)
+	}
 
 }
 
@@ -249,7 +260,7 @@ func (m *OutboundAssumedRolesModule) getAssumeRoleLogEntriesPerRegion(r string, 
 				EndTime:   endTime,
 				StartTime: &startTime,
 				LookupAttributes: []cloudtrailTypes.LookupAttribute{
-					cloudtrailTypes.LookupAttribute{
+					{
 						AttributeKey:   cloudtrailTypes.LookupAttributeKeyEventName,
 						AttributeValue: aws.String("AssumeRole"),
 					},

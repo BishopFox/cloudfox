@@ -11,8 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/BishopFox/cloudfox/console"
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2_types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
@@ -70,6 +69,7 @@ type NetworkPortsModule struct {
 	OutputFormat string
 	Goroutines   int
 	AWSProfile   string
+	WrapTable    bool
 	Verbosity    int
 
 	// Main module data
@@ -79,9 +79,9 @@ type NetworkPortsModule struct {
 	nacls          map[string]*[]ec2_types.NetworkAcl
 	securityGroups map[string]*[]ec2_types.SecurityGroup
 
-	CommandCounter console.CommandCounter
+	CommandCounter internal.CommandCounter
 	// Used to store output data for pretty printing
-	output utils.OutputData2
+	output internal.OutputData2
 	modLog *logrus.Entry
 }
 
@@ -103,8 +103,8 @@ type NetworkAcl struct {
 	ID      string
 	VpcId   string
 	Subnets []string
-	head    *Node
-	tail    *Node
+	head    *portNode
+	tail    *portNode
 }
 
 type NaclRule struct {
@@ -138,11 +138,11 @@ func (m *NetworkPortsModule) PrintNetworkPorts(outputFormat string, outputDirect
 	m.output.Verbosity = m.Verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "network-ports"
-	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
+	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-		m.AWSProfile = utils.BuildAWSPath(m.Caller)
+		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
 	m.nacls = make(map[string]*[]ec2_types.NetworkAcl)
 	m.securityGroups = make(map[string]*[]ec2_types.SecurityGroup)
@@ -155,7 +155,7 @@ func (m *NetworkPortsModule) PrintNetworkPorts(outputFormat string, outputDirect
 	// Create a channel to signal the spinner aka task status goroutine to finish
 	spinnerDone := make(chan bool)
 	//fire up the the task status spinner/updated
-	go console.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "regions")
+	go internal.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "regions")
 
 	//create a channel to receive the objects
 	dataReceiver := make(chan NetworkServices)
@@ -209,7 +209,7 @@ func (m *NetworkPortsModule) PrintNetworkPorts(outputFormat string, outputDirect
 	if len(m.IPv4_Private) > 0 || len(m.IPv4_Public) > 0 || len(m.IPv6) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
-		utils.OutputSelector(m.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		internal.OutputSelector(m.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		m.writeLoot(m.output.FilePath)
 		fmt.Printf("[%s][%s] %s network services found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
@@ -1854,14 +1854,14 @@ func addHost(arr []string, v string) []string {
 	return arr
 }
 
-type Node struct {
-	prev *Node
-	next *Node
+type portNode struct {
+	prev *portNode
+	next *portNode
 	rule NaclRule
 }
 
 func (l *NetworkAcl) Insert(rule NaclRule) {
-	list := &Node{
+	list := &portNode{
 		next: l.head,
 		rule: rule,
 	}

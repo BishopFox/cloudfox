@@ -9,13 +9,13 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/BishopFox/cloudfox/console"
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/efs"
 	"github.com/aws/aws-sdk-go-v2/service/fsx"
 	fsxTypes "github.com/aws/aws-sdk-go-v2/service/fsx/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/bishopfox/awsservicemap"
 	"github.com/fatih/color"
 	"github.com/sirupsen/logrus"
 )
@@ -33,14 +33,15 @@ type FilesystemsModule struct {
 	OutputFormat string
 	Goroutines   int
 	AWSProfile   string
+	WrapTable    bool
 
 	// Main module data
 	Filesystems []FilesystemObject
 
 	Regions        [30]FilesystemObject
-	CommandCounter console.CommandCounter
+	CommandCounter internal.CommandCounter
 	// Used to store output data for pretty printing
-	output utils.OutputData2
+	output internal.OutputData2
 	modLog *logrus.Entry
 }
 
@@ -59,11 +60,11 @@ func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirector
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "filesystems"
-	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
+	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-		m.AWSProfile = utils.BuildAWSPath(m.Caller)
+		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
 	//populate region in the filesystems module struct
 	for i, region := range m.AWSRegions {
@@ -79,26 +80,29 @@ func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirector
 	// Create a channel to signal the spinner aka task status goroutine to finish
 	spinnerDone := make(chan bool)
 	//fire up the the task status spinner/updated
-	go console.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
+	go internal.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
 
 	//create a channel to receive the objects
 	dataReceiver := make(chan FilesystemObject)
 
 	// Create a channel to signal to stop
 	receiverDone := make(chan bool)
+
 	go m.Receiver(dataReceiver, receiverDone)
 
 	//execute regional checks
+
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
 		m.executeChecks(region, wg, semaphore, dataReceiver)
 	}
 
 	wg.Wait()
+	//time.Sleep(time.Second * 2)
+
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	// Send a message to the data receiver goroutine to close the channel and stop
 	receiverDone <- true
 	<-receiverDone
 
@@ -136,17 +140,19 @@ func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirector
 
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
-		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		m.writeLoot(m.output.FilePath, verbosity)
 		fmt.Printf("[%s][%s] %s filesystems found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {
 		fmt.Printf("[%s][%s] No filesystems found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
-
+	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 }
 
 func (m *FilesystemsModule) Receiver(receiver chan FilesystemObject, receiverDone chan bool) {
+
 	defer close(receiverDone)
 	for {
 		select {
@@ -161,8 +167,18 @@ func (m *FilesystemsModule) Receiver(receiver chan FilesystemObject, receiverDon
 
 func (m *FilesystemsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan FilesystemObject) {
 	defer wg.Done()
-	wg.Add(1)
-	go m.getEFSSharesPerRegion(r, wg, semaphore, dataReceiver)
+	servicemap := &awsservicemap.AwsServiceMap{
+		JsonFileSource: "EMBEDDED_IN_PACKAGE",
+	}
+	res, err := servicemap.IsServiceInRegion("efs", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		wg.Add(1)
+		go m.getEFSSharesPerRegion(r, wg, semaphore, dataReceiver)
+	}
+	//each fsx type has different supported regions so easier to just run this function against all enabled regions.
 	wg.Add(1)
 	go m.getFSxSharesPerRegion(r, wg, semaphore, dataReceiver)
 }
@@ -405,7 +421,7 @@ func (m *FilesystemsModule) getFSxSharesPerRegion(r string, wg *sync.WaitGroup, 
 					context.TODO(),
 					&fsx.DescribeVolumesInput{
 						Filters: []fsxTypes.VolumeFilter{
-							fsxTypes.VolumeFilter{
+							{
 								Name:   "file-system-id",
 								Values: []string{id},
 							}},

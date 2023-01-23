@@ -10,8 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/BishopFox/cloudfox/console"
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -20,19 +19,22 @@ import (
 
 type IamSimulatorModule struct {
 	// General configuration data
-	IAMClient *iam.Client
+	IAMSimulatePrincipalPolicyClient iam.SimulatePrincipalPolicyAPIClient
+	IAMListUsersClient               iam.ListUsersAPIClient
+	IAMListRolesClient               iam.ListRolesAPIClient
 
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
 	OutputFormat string
 	Goroutines   int
 	AWSProfile   string
+	WrapTable    bool
 
 	// Main module data
 	SimulatorResults []SimulatorResult
-	CommandCounter   console.CommandCounter
+	CommandCounter   internal.CommandCounter
 	// Used to store output data for pretty printing
-	output utils.OutputData2
+	output internal.OutputData2
 	modLog *logrus.Entry
 }
 
@@ -51,7 +53,7 @@ var (
 		"ssm:GetParameter",
 		"s3:ListBucket",
 		"s3:GetObject",
-		"ssm:sSendCommand",
+		"ssm:SendCommand",
 		"ssm:StartSession",
 		"ecr:BatchGetImage",
 		"ecr:GetAuthorizationToken",
@@ -61,7 +63,7 @@ var (
 		"apprunner:DescribeService",
 		"ec2:DescribeInstanceAttributeInput",
 	}
-	TxtLogger = utils.TxtLogger()
+	TxtLogger = internal.TxtLogger()
 )
 
 func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, resource string, outputFormat string, outputDirectory string, verbosity int) {
@@ -70,7 +72,7 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "iam-simulator"
-	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
+	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
@@ -79,19 +81,20 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 	var pmapperOutFileName string
 
 	if m.AWSProfile == "" {
-		m.AWSProfile = utils.BuildAWSPath(m.Caller)
+		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
 	wg := new(sync.WaitGroup)
 	// Create a channel to signal the spinner aka task status goroutine to finish
 	spinnerDone := make(chan bool)
 	//fire up the the task status spinner/updated
-	go console.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
+	go internal.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
 
 	//create a channel to receive the objects
 	dataReceiver := make(chan SimulatorResult)
 
 	// Create a channel to signal to stop
 	receiverDone := make(chan bool)
+
 	go m.Receiver(dataReceiver, receiverDone)
 
 	// This double if/else section is here to handle the cases where --principal or --action (or both) are specified.
@@ -135,10 +138,11 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 	}
 
 	wg.Wait()
+	//time.Sleep(time.Second * 2)
+
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	// Send a message to the data receiver goroutine to close the channel and stop
 	receiverDone <- true
 	<-receiverDone
 
@@ -170,7 +174,8 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 	}
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
-		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
+		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
+		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		fmt.Printf("[%s][%s] We suggest running the pmapper commands in the loot file to get the same information but taking privesc paths into account.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 		// fmt.Printf("[%s]\t\tpmapper --profile %s graph create\n", cyan(m.output.CallingModule),  cyan(m.AWSProfile), m.AWSProfile)
 		// for _, line := range pmapperCommands {
@@ -181,7 +186,7 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 	} else if principal != "" || action != "" {
 		fmt.Printf("[%s][%s] No allowed permissions identified, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
-
+	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 }
 
 func (m *IamSimulatorModule) writeLoot(outputDirectory string, verbosity int, pmapperCommands []string) {
@@ -248,7 +253,7 @@ func (m *IamSimulatorModule) getIAMUsers(wg *sync.WaitGroup, actions []string, r
 	var PaginationControl *string
 
 	for {
-		ListUsers, err := m.IAMClient.ListUsers(
+		ListUsers, err := m.IAMListUsersClient.ListUsers(
 			context.TODO(),
 			&iam.ListUsersInput{
 				Marker: PaginationControl,
@@ -265,7 +270,7 @@ func (m *IamSimulatorModule) getIAMUsers(wg *sync.WaitGroup, actions []string, r
 			principal := user.Arn
 			adminCheckResult := m.isPrincipalAnAdmin(principal)
 			if adminCheckResult {
-				query := fmt.Sprintf("Appears to be an administrator")
+				query := "Appears to be an administrator"
 				dataReceiver <- SimulatorResult{
 					AWSService: "IAM",
 					Principal:  aws.ToString(principal),
@@ -302,7 +307,7 @@ func (m *IamSimulatorModule) getIAMRoles(wg *sync.WaitGroup, actions []string, r
 	var PaginationControl *string
 
 	for {
-		ListRoles, err := m.IAMClient.ListRoles(
+		ListRoles, err := m.IAMListRolesClient.ListRoles(
 			context.TODO(),
 			&iam.ListRolesInput{
 				Marker: PaginationControl,
@@ -319,7 +324,7 @@ func (m *IamSimulatorModule) getIAMRoles(wg *sync.WaitGroup, actions []string, r
 			principal := role.Arn
 			adminCheckResult := m.isPrincipalAnAdmin(principal)
 			if adminCheckResult {
-				query := fmt.Sprintf("Appears to be an administrator")
+				query := "Appears to be an administrator"
 				dataReceiver <- SimulatorResult{
 					AWSService: "IAM",
 					Principal:  aws.ToString(principal),
@@ -352,7 +357,7 @@ func (m *IamSimulatorModule) getPolicySimulatorResult(principal *string, actionN
 	//var resourceArns = []string{"*"}
 
 	for {
-		SimulatePrincipalPolicy, err := m.IAMClient.SimulatePrincipalPolicy(
+		SimulatePrincipalPolicy, err := m.IAMSimulatePrincipalPolicyClient.SimulatePrincipalPolicy(
 			context.TODO(),
 			&iam.SimulatePrincipalPolicyInput{
 				Marker:          PaginationControl2,
@@ -407,7 +412,7 @@ func (m *IamSimulatorModule) isPrincipalAnAdmin(principal *string) bool {
 		"ssm:GetDocument",
 	}
 	for {
-		SimulatePrincipalPolicy, err := m.IAMClient.SimulatePrincipalPolicy(
+		SimulatePrincipalPolicy, err := m.IAMSimulatePrincipalPolicyClient.SimulatePrincipalPolicy(
 			context.TODO(),
 			&iam.SimulatePrincipalPolicyInput{
 				Marker:          PaginationControl2,

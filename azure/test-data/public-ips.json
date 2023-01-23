@@ -1,0 +1,32 @@
+[
+    {
+        "id": "/subscriptions/AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA/resourceGroups/ResourceGroupA1/providers/Microsoft.Network/publicIPAddresses/PublicIpAddress1A",
+        "properties": {
+            "ipAddress": "72.88.100.1"
+        }
+    },
+    {
+        "id": "/subscriptions/AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA/resourceGroups/ResourceGroupA1/providers/Microsoft.Network/publicIPAddresses/PublicIpAddress1B",
+        "properties": {
+            "ipAddress": "72.88.100.2"
+        }
+    },
+    {
+        "id": "/subscriptions/AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA/resourceGroups/ResourceGroupB1/providers/Microsoft.Network/publicIPAddresses/PublicIpAddress2A",
+        "properties": {
+            "ipAddress": "72.88.100.3"
+        }
+    },
+    {
+        "id": "/subscriptions/AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA/resourceGroups/ResourceGroupA2/providers/Microsoft.Network/publicIPAddresses/PublicIpAddress3A",
+        "properties": {
+            "ipAddress": "72.88.100.4"
+        }
+    },
+    {
+        "id": "/subscriptions/AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA/resourceGroups/ResourceGroupA1/providers/Microsoft.Network/publicIPAddresses/PublicIpAddress4A",
+        "properties": {
+            "ipAddress": "72.88.100.5"
+        }
+    }
+]

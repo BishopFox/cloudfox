@@ -1,0 +1,86 @@
+[
+    {
+        "id": "/subscriptions/AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA/resourceGroups/ResourceGroupA1/providers/resourceProviderNamespace/resourceType/resourceName",
+        "name": "Storage-12345",
+        "kind": "KindBlobStorage",
+        "location": "eastus",
+        "properties": {
+            "allowBlobPublicAccess": true,
+            "allowCrossTenantReplication": true,
+            "allowSharedKeyAccess": true,
+            "minimumTlsVersion": "TLS1_2",
+            "supportsHttpsTrafficOnly": true
+        },
+        "tags": {}
+    },
+    {
+        "id": "/subscriptions/AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA/resourceGroups/ResourceGroupA1/providers/resourceProviderNamespace/resourceType/resourceName",
+        "name": "Storage-678910",
+        "location": "eastus",
+        "kind": "KindStorageV2",
+        "properties": {
+            "allowBlobPublicAccess": false,
+            "allowCrossTenantReplication": true,
+            "allowSharedKeyAccess": true,
+            "minimumTlsVersion": "TLS1_2",
+            "supportsHttpsTrafficOnly": true
+        },
+        "tags": {}
+    },
+    {
+        "id": "/subscriptions/BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB/resourceGroups/ResourceGroupB1/providers/resourceProviderNamespace/resourceType/resourceName",
+        "name": "Storage-1112131415",
+        "location": "eastus",
+        "kind": "KindStorageV2",
+        "properties": {
+            "allowBlobPublicAccess": true,
+            "allowCrossTenantReplication": true,
+            "allowSharedKeyAccess": true,
+            "minimumTlsVersion": "TLS1_2",
+            "supportsHttpsTrafficOnly": true
+        },
+        "tags": {}
+    },
+    {
+        "id": "/subscriptions/BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB/resourceGroups/ResourceGroupB1/providers/resourceProviderNamespace/resourceType/resourceName",
+        "name": "Storage-16171819",
+        "location": "eastus",
+        "kind": "KindStorageV2",
+        "properties": {
+            "allowBlobPublicAccess": false,
+            "allowCrossTenantReplication": true,
+            "allowSharedKeyAccess": true,
+            "minimumTlsVersion": "TLS1_2",
+            "supportsHttpsTrafficOnly": true
+        },
+        "tags": {}
+    },
+    {
+        "id": "/subscriptions/CCCCCCCC-CCCC-CCCC-CCCCCCCC/resourceGroups/ResourceGroupC1/providers/resourceProviderNamespace/resourceType/resourceName",
+        "name": "Storage-20212223",
+        "location": "eastus",
+        "kind": "KindStorageV2",
+        "properties": {
+            "allowBlobPublicAccess": false,
+            "allowCrossTenantReplication": true,
+            "allowSharedKeyAccess": true,
+            "minimumTlsVersion": "TLS1_2",
+            "supportsHttpsTrafficOnly": true
+        },
+        "tags": {}
+    },
+    {
+        "id": "/subscriptions/CCCCCCCC-CCCC-CCCC-CCCCCCCC/resourceGroups/ResourceGroupC2/providers/resourceProviderNamespace/resourceType/resourceName",
+        "name": "Storage-24252627",
+        "location": "eastus",
+        "kind": "KindStorageV2",
+        "properties": {
+            "allowBlobPublicAccess": false,
+            "allowCrossTenantReplication": true,
+            "allowSharedKeyAccess": true,
+            "minimumTlsVersion": "TLS1_2",
+            "supportsHttpsTrafficOnly": true
+        },
+        "tags": {}
+    }
+]

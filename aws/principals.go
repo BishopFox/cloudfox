@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strconv"
-	"sync"
 
-	"github.com/BishopFox/cloudfox/console"
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -24,14 +22,15 @@ type IamPrincipalsModule struct {
 	OutputFormat string
 	Goroutines   int
 	AWSProfile   string
+	WrapTable    bool
 
 	// Main module data
 	Users          []User
 	Roles          []Role
 	Groups         []Group
-	CommandCounter console.CommandCounter
+	CommandCounter internal.CommandCounter
 	// Used to store output data for pretty printing
-	output utils.OutputData2
+	output internal.OutputData2
 	modLog *logrus.Entry
 }
 
@@ -68,11 +67,11 @@ func (m *IamPrincipalsModule) PrintIamPrincipals(outputFormat string, outputDire
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "principals"
-	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
+	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-		m.AWSProfile = utils.BuildAWSPath(m.Caller)
+		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
 
 	fmt.Printf("[%s][%s] Enumerating IAM Users and Roles for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
@@ -80,7 +79,7 @@ func (m *IamPrincipalsModule) PrintIamPrincipals(outputFormat string, outputDire
 	// wg := new(sync.WaitGroup)
 
 	// done := make(chan bool)
-	// go console.SpinUntil(m.output.CallingModule, &m.CommandCounter, done)
+	// go internal.SpinUntil(m.output.CallingModule, &m.CommandCounter, done)
 	// wg.Add(1)
 	// m.CommandCounter.Pending++
 	//m.executeChecks(wg)
@@ -138,15 +137,17 @@ func (m *IamPrincipalsModule) PrintIamPrincipals(outputFormat string, outputDire
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
-		utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		fmt.Printf("[%s][%s] %s IAM principals found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {
 		fmt.Printf("[%s][%s] No IAM principals found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
-
+	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 }
 
+/* UNUSED CODE BLOCK - PLEASE REVIEW AND DELETE IF APPLICABLE
 func (m *IamPrincipalsModule) executeChecks(wg *sync.WaitGroup) {
 	defer wg.Done()
 	m.CommandCounter.Total++
@@ -157,6 +158,7 @@ func (m *IamPrincipalsModule) executeChecks(wg *sync.WaitGroup) {
 	m.CommandCounter.Executing--
 	m.CommandCounter.Complete++
 }
+*/
 
 func (m *IamPrincipalsModule) getIAMUsers() {
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
