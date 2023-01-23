@@ -28,6 +28,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/rds"
 	rds_types "github.com/aws/aws-sdk-go-v2/service/rds/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -155,7 +156,7 @@ func (m *NetworkPortsModule) PrintNetworkPorts(outputFormat string, outputDirect
 	// Create a channel to signal the spinner aka task status goroutine to finish
 	spinnerDone := make(chan bool)
 	//fire up the the task status spinner/updated
-	go internal.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "regions")
+	go internal.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
 
 	//create a channel to receive the objects
 	dataReceiver := make(chan NetworkServices)
@@ -220,31 +221,73 @@ func (m *NetworkPortsModule) PrintNetworkPorts(outputFormat string, outputDirect
 
 func (m *NetworkPortsModule) executeChecks(r string, wg *sync.WaitGroup, dataReceiver chan NetworkServices) {
 	defer wg.Done()
+	servicemap := &awsservicemap.AwsServiceMap{
+		JsonFileSource: "EMBEDDED_IN_PACKAGE",
+	}
 
-	m.CommandCounter.Total++
-	m.CommandCounter.Pending--
-	m.CommandCounter.Executing++
-	m.getEC2NetworkPortsPerRegion(r, dataReceiver)
-	m.CommandCounter.Pending--
-	m.CommandCounter.Executing++
-	m.getECSNetworkPortsPerRegion(r, dataReceiver)
-	m.CommandCounter.Pending--
-	m.CommandCounter.Executing++
-	m.getEFSNetworkPortsPerRegion(r, dataReceiver)
-	m.CommandCounter.Pending--
-	m.CommandCounter.Executing++
-	m.getElastiCacheNetworkPortsPerRegion(r, dataReceiver)
-	m.CommandCounter.Pending--
-	m.CommandCounter.Executing++
-	m.getLBNetworkPortsPerRegion(r, dataReceiver)
-	m.CommandCounter.Executing--
-	m.CommandCounter.Executing++
-	m.getLightsailNetworkPortsPerRegion(r, dataReceiver)
-	m.CommandCounter.Executing--
-	m.CommandCounter.Executing++
-	m.getRdsNetworkPortsPerRegion(r, dataReceiver)
-	m.CommandCounter.Executing--
-	m.CommandCounter.Complete++
+	res, err := servicemap.IsServiceInRegion("ec2", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		m.getEC2NetworkPortsPerRegion(r, dataReceiver)
+	}
+
+	res, err = servicemap.IsServiceInRegion("ecs", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		m.getECSNetworkPortsPerRegion(r, dataReceiver)
+	}
+
+	res, err = servicemap.IsServiceInRegion("efs", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		m.getEFSNetworkPortsPerRegion(r, dataReceiver)
+	}
+
+	res, err = servicemap.IsServiceInRegion("elasticache", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		m.getElastiCacheNetworkPortsPerRegion(r, dataReceiver)
+	}
+
+	res, err = servicemap.IsServiceInRegion("elb", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		m.getLBNetworkPortsPerRegion(r, dataReceiver)
+	}
+
+	res, err = servicemap.IsServiceInRegion("lightsail", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		m.getLightsailNetworkPortsPerRegion(r, dataReceiver)
+	}
+
+	res, err = servicemap.IsServiceInRegion("rds", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		m.getRdsNetworkPortsPerRegion(r, dataReceiver)
+	}
+
 }
 
 func (m *NetworkPortsModule) Receiver(receiver chan NetworkServices, receiverDone chan bool) {
@@ -328,6 +371,10 @@ func (m *NetworkPortsModule) writeLootFile(filename string, bannner string, ipv4
 }
 
 func (m *NetworkPortsModule) getEC2NetworkPortsPerRegion(r string, dataReceiver chan NetworkServices) {
+	defer func() {
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
 	securityGroups := m.getEC2SecurityGroupsPerRegion(r)
 	nacls := m.getEC2NACLsPerRegion(r)
 
@@ -428,6 +475,10 @@ func (m *NetworkPortsModule) getEC2NetworkPortsPerRegion(r string, dataReceiver 
 }
 
 func (m *NetworkPortsModule) getECSNetworkPortsPerRegion(r string, dataReceiver chan NetworkServices) {
+	defer func() {
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
 	securityGroups := m.getEC2SecurityGroupsPerRegion(r)
 	nacls := m.getEC2NACLsPerRegion(r)
 
@@ -559,6 +610,10 @@ func (m *NetworkPortsModule) getECSNetworkPortsPerRegion(r string, dataReceiver 
 }
 
 func (m *NetworkPortsModule) getEFSNetworkPortsPerRegion(r string, dataReceiver chan NetworkServices) {
+	defer func() {
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
 	securityGroups := m.getEC2SecurityGroupsPerRegion(r)
 	nacls := m.getEC2NACLsPerRegion(r)
 
@@ -618,6 +673,10 @@ func (m *NetworkPortsModule) getEFSNetworkPortsPerRegion(r string, dataReceiver 
 }
 
 func (m *NetworkPortsModule) getElastiCacheNetworkPortsPerRegion(r string, dataReceiver chan NetworkServices) {
+	defer func() {
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
 	securityGroups := m.getEC2SecurityGroupsPerRegion(r)
 	nacls := m.getEC2NACLsPerRegion(r)
 
@@ -726,6 +785,10 @@ func (m *NetworkPortsModule) getElastiCacheNetworkPortsPerRegion(r string, dataR
 }
 
 func (m *NetworkPortsModule) getLBNetworkPortsPerRegion(r string, dataReceiver chan NetworkServices) {
+	defer func() {
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
 	securityGroups := m.getEC2SecurityGroupsPerRegion(r)
 	nacls := m.getEC2NACLsPerRegion(r)
 
@@ -838,6 +901,10 @@ func (m *NetworkPortsModule) getLBNetworkPortsPerRegion(r string, dataReceiver c
 }
 
 func (m *NetworkPortsModule) getLightsailNetworkPortsPerRegion(r string, dataReceiver chan NetworkServices) {
+	defer func() {
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
 	instances := m.getLightsailInstancesPerRegion(r)
 
 	var wg sync.WaitGroup
@@ -945,6 +1012,10 @@ func (m *NetworkPortsModule) getLightsailNetworkPortsPerRegion(r string, dataRec
 }
 
 func (m *NetworkPortsModule) getRdsNetworkPortsPerRegion(r string, dataReceiver chan NetworkServices) {
+	defer func() {
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
 	securityGroups := m.getEC2SecurityGroupsPerRegion(r)
 	nacls := m.getEC2NACLsPerRegion(r)
 
