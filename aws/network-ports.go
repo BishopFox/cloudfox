@@ -147,7 +147,8 @@ func (m *NetworkPortsModule) PrintNetworkPorts(outputFormat string, outputDirect
 	m.nacls = make(map[string]*[]ec2_types.NetworkAcl)
 	m.securityGroups = make(map[string]*[]ec2_types.SecurityGroup)
 
-	fmt.Printf("[%s][%s] Enumerating shared resources for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
+	fmt.Printf("[%s][%s] Enumerating potentially accessible network services for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
+	fmt.Printf("[%s][%s] Supported Services: EC2, EFS, ECS, ElastiCache, ELBv2, Lightsail, RDS  \n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 
 	wg := new(sync.WaitGroup)
 
@@ -384,9 +385,9 @@ func (m *NetworkPortsModule) getEC2NetworkPortsPerRegion(r string, dataReceiver 
 			tcpPortsInts := prettyPorts(tcpPorts)
 			udpPortsInts := prettyPorts(udpPorts)
 
-			if m.Verbosity > 0 {
-				fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), fmt.Sprintf("EC2 Instance: %s, TCP Ports: %v, UDP Ports: %v", aws.ToString(instance.InstanceId), tcpPortsInts, udpPortsInts))
-			}
+			// if m.Verbosity > 0 {
+			// 	fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), fmt.Sprintf("EC2 Instance: %s, TCP Ports: %v, UDP Ports: %v\n", aws.ToString(instance.InstanceId), tcpPortsInts, udpPortsInts))
+			// }
 
 			var networkServices NetworkServices
 
@@ -517,9 +518,9 @@ func (m *NetworkPortsModule) getECSNetworkPortsPerRegion(r string, dataReceiver 
 				tcpPortsInts := prettyPorts(tcpPorts)
 				udpPortsInts := prettyPorts(udpPorts)
 
-				if m.Verbosity > 0 {
-					fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), fmt.Sprintf("ECS: %s, TCP Ports: %v, UDP Ports: %v", taskArn, tcpPortsInts, udpPortsInts))
-				}
+				// if m.Verbosity > 0 {
+				// 	fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), fmt.Sprintf("ECS: %s, TCP Ports: %v, UDP Ports: %v", taskArn, tcpPortsInts, udpPortsInts))
+				// }
 
 				var networkServices NetworkServices
 
@@ -605,9 +606,9 @@ func (m *NetworkPortsModule) getEFSNetworkPortsPerRegion(r string, dataReceiver 
 
 			var networkServices NetworkServices
 			if len(tcpPortsInts) > 0 {
-				if m.Verbosity > 0 {
-					fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), fmt.Sprintf("EFS: %s, TCP Ports: %v, UDP Ports: []", aws.ToString(target.IpAddress), tcpPortsInts))
-				}
+				// if m.Verbosity > 0 {
+				// 	fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), fmt.Sprintf("EFS: %s, TCP Ports: %v, UDP Ports: []", aws.ToString(target.IpAddress), tcpPortsInts))
+				// }
 				networkServices.IPv4_Private = append(networkServices.IPv4_Private, NetworkService{AWSService: "EFS", Region: r, Hosts: []string{aws.ToString(target.IpAddress)}, Ports: prettyPorts(tcpPortsInts), Protocol: "tcp"})
 
 				dataReceiver <- networkServices
@@ -713,9 +714,9 @@ func (m *NetworkPortsModule) getElastiCacheNetworkPortsPerRegion(r string, dataR
 		var networkServices NetworkServices
 		if len(tcp) > 0 {
 			for _, i := range ipv4_private {
-				if m.Verbosity > 0 {
-					fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), fmt.Sprintf("ElastiCache: %s, TCP Ports: %v, UDP Ports: []", i, tcp))
-				}
+				// if m.Verbosity > 0 {
+				// 	fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), fmt.Sprintf("ElastiCache: %s, TCP Ports: %v, UDP Ports: []", i, tcp))
+				// }
 				networkServices.IPv4_Private = append(networkServices.IPv4_Private, NetworkService{AWSService: "ElastiCache", Region: r, Hosts: []string{i}, Ports: prettyPorts(tcp), Protocol: "tcp"})
 			}
 		}
@@ -800,9 +801,9 @@ func (m *NetworkPortsModule) getLBNetworkPortsPerRegion(r string, dataReceiver c
 			tcp := prettyPorts(tcpPortsInts)
 			udp := prettyPorts(udpPortsInts)
 
-			if m.Verbosity > 0 {
-				fmt.Printf("[%s][%s] %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), fmt.Sprintf("LB: %s, TCP Ports: %v, UDP Ports: %v", aws.ToString(lb.LoadBalancerName), tcp, udp))
-			}
+			// if m.Verbosity > 0 {
+			// 	fmt.Printf("[%s][%s] %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), fmt.Sprintf("LB: %s, TCP Ports: %v, UDP Ports: %v", aws.ToString(lb.LoadBalancerName), tcp, udp))
+			// }
 
 			var networkServices NetworkServices
 
@@ -903,9 +904,9 @@ func (m *NetworkPortsModule) getLightsailNetworkPortsPerRegion(r string, dataRec
 			tcpPortsInts := prettyPorts(tcpPorts)
 			udpPortsInts := prettyPorts(udpPorts)
 
-			if m.Verbosity > 0 {
-				fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), fmt.Sprintf("Lightsail Instance: %s, TCP Ports: %v, UDP Ports: %v", aws.ToString(instance.Arn), tcpPortsInts, udpPortsInts))
-			}
+			// if m.Verbosity > 0 {
+			// 	fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), fmt.Sprintf("Lightsail Instance: %s, TCP Ports: %v, UDP Ports: %v", aws.ToString(instance.Arn), tcpPortsInts, udpPortsInts))
+			// }
 
 			var networkServices NetworkServices
 
@@ -982,9 +983,9 @@ func (m *NetworkPortsModule) getRdsNetworkPortsPerRegion(r string, dataReceiver 
 			tcpPorts, _ := m.resolveNetworkAccess(groups, networkAcls)
 			var networkServices NetworkServices
 			if contains(tcpPorts, port) {
-				if m.Verbosity > 0 {
-					fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), fmt.Sprintf("DB Instance: %s, TCP Ports: %d", aws.ToString(instance.Endpoint.Address), port))
-				}
+				// if m.Verbosity > 0 {
+				// 	fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), fmt.Sprintf("DB Instance: %s, TCP Ports: %d", aws.ToString(instance.Endpoint.Address), port))
+				// }
 				networkServices.IPv4_Private = append(networkServices.IPv4_Private, NetworkService{AWSService: "RDS", Region: r, Hosts: host, Ports: []string{fmt.Sprintf("%d", port)}, Protocol: "tcp"})
 
 				// Check clusters
@@ -993,10 +994,10 @@ func (m *NetworkPortsModule) getRdsNetworkPortsPerRegion(r string, dataReceiver 
 					if !strContains(reportedClusters, clusterId) {
 						for _, cluster := range RDSClusters {
 							if aws.ToString(cluster.DBClusterIdentifier) == clusterId {
-								if m.Verbosity > 0 {
-									fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), fmt.Sprintf("DB Instance: %s, TCP Ports: %d", aws.ToString(cluster.Endpoint), port))
-									fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), fmt.Sprintf("DB Instance: %s, TCP Ports: %d", aws.ToString(cluster.ReaderEndpoint), port))
-								}
+								// if m.Verbosity > 0 {
+								// 	fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), fmt.Sprintf("DB Instance: %s, TCP Ports: %d", aws.ToString(cluster.Endpoint), port))
+								// 	fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), fmt.Sprintf("DB Instance: %s, TCP Ports: %d", aws.ToString(cluster.ReaderEndpoint), port))
+								// }
 								networkServices.IPv4_Private = append(networkServices.IPv4_Private, NetworkService{AWSService: "RDS", Region: r, Hosts: []string{aws.ToString(cluster.Endpoint)}, Ports: []string{fmt.Sprintf("%d", port)}, Protocol: "tcp"})
 								networkServices.IPv4_Private = append(networkServices.IPv4_Private, NetworkService{AWSService: "RDS", Region: r, Hosts: []string{aws.ToString(cluster.ReaderEndpoint)}, Ports: []string{fmt.Sprintf("%d", port)}, Protocol: "tcp"})
 
