@@ -1131,21 +1131,23 @@ func (m *NetworkPortsModule) parseSecurityGroup(group ec2_types.SecurityGroup) S
 	var rules []SecurityGroupRule
 	for _, entry := range group.IpPermissions {
 		protocol := aws.ToString(entry.IpProtocol)
-		var cidrs []string
-		for _, i := range entry.IpRanges {
-			cidrs = append(cidrs, aws.ToString(i.CidrIp))
+		if protocol != "icmp" {
+			var cidrs []string
+			for _, i := range entry.IpRanges {
+				cidrs = append(cidrs, aws.ToString(i.CidrIp))
+			}
+			var ports []int32
+			if aws.ToInt32(entry.FromPort) == int32(0) && aws.ToInt32(entry.ToPort) == int32(0) {
+				ports = generateRange(0, 65535)
+			} else {
+				ports = generateRange(aws.ToInt32(entry.FromPort), aws.ToInt32(entry.ToPort))
+			}
+			rules = append(rules, SecurityGroupRule{
+				Protocol: protocol,
+				Cidr:     cidrs,
+				Ports:    ports,
+			})
 		}
-		var ports []int32
-		if aws.ToInt32(entry.FromPort) == int32(0) && aws.ToInt32(entry.ToPort) == int32(0) {
-			ports = generateRange(0, 65535)
-		} else {
-			ports = generateRange(aws.ToInt32(entry.FromPort), aws.ToInt32(entry.ToPort))
-		}
-		rules = append(rules, SecurityGroupRule{
-			Protocol: protocol,
-			Cidr:     cidrs,
-			Ports:    ports,
-		})
 	}
 
 	return SecurityGroup{
