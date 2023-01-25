@@ -33,10 +33,10 @@ import (
 )
 
 var (
-	TCP_4_SCAN string = "sudo nmap -sV"
-	UDP_4_SCAN string = "sudo nmap -sU -sV"
-	TCP_6_SCAN string = "sudo nmap -6 -sV"
-	UDP_6_SCAN string = "sudo nmap -6 -sU -sV"
+	TCP_4_SCAN string = "sudo nmap -Pn -sV"
+	UDP_4_SCAN string = "sudo nmap -Pn -sU -sV"
+	TCP_6_SCAN string = "sudo nmap -6 -Pn -sV"
+	UDP_6_SCAN string = "sudo nmap -6 -Pn -sU -sV"
 
 	IPv4_BANNER string = `#############################################
 # The network services may have various ingress rules depending on your source IP.
@@ -133,6 +133,8 @@ var naclToSG = map[string]string{
 	"6":  "tcp",
 	"17": "udp",
 }
+
+var validSecurityGroupProtocols = []string{"-1", "tcp", "udp"}
 
 func (m *NetworkPortsModule) PrintNetworkPorts(outputFormat string, outputDirectory string) {
 	// These stuct values are used by the output module
@@ -1131,7 +1133,7 @@ func (m *NetworkPortsModule) parseSecurityGroup(group ec2_types.SecurityGroup) S
 	var rules []SecurityGroupRule
 	for _, entry := range group.IpPermissions {
 		protocol := aws.ToString(entry.IpProtocol)
-		if protocol != "icmp" {
+		if strContains(validSecurityGroupProtocols, protocol) {
 			var cidrs []string
 			for _, i := range entry.IpRanges {
 				cidrs = append(cidrs, aws.ToString(i.CidrIp))
