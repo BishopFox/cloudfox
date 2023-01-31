@@ -1961,7 +1961,7 @@ func (m *NetworkPortsModule) Evaluate(l *NetworkAcl, port int32, proto string) (
 					return node.rule.Action, &node.rule
 				}
 			} else {
-				fmt.Printf("[%s][%s] Protocol: %d not supported\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), node.rule.Protocol)
+				fmt.Printf("[%s][%s] Protocol: %s not supported\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), node.rule.Protocol)
 			}
 
 		}
