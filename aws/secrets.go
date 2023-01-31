@@ -8,12 +8,12 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/BishopFox/cloudfox/console"
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -26,13 +26,14 @@ type SecretsModule struct {
 	AWSRegions []string
 	AWSProfile string
 	Goroutines int
+	WrapTable  bool
 
 	// Main module data
 	Secrets []Secret
 
-	CommandCounter console.CommandCounter
+	CommandCounter internal.CommandCounter
 	// Used to store output data for pretty printing
-	output utils.OutputData2
+	output internal.OutputData2
 
 	modLog *logrus.Entry
 }
@@ -49,11 +50,11 @@ func (m *SecretsModule) PrintSecrets(outputFormat string, outputDirectory string
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "secrets"
-	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
+	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-		m.AWSProfile = utils.BuildAWSPath(m.Caller)
+		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
 
 	fmt.Printf("[%s][%s] Enumerating secrets for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
@@ -65,13 +66,14 @@ func (m *SecretsModule) PrintSecrets(outputFormat string, outputDirectory string
 	// Create a channel to signal the spinner aka task status goroutine to finish
 	spinnerDone := make(chan bool)
 	//fire up the the task status spinner/updated
-	go console.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
+	go internal.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
 
 	//create a channel to receive the objects
 	dataReceiver := make(chan Secret)
 
 	// Create a channel to signal to stop
 	receiverDone := make(chan bool)
+
 	go m.Receiver(dataReceiver, receiverDone)
 
 	for _, region := range m.AWSRegions {
@@ -81,10 +83,11 @@ func (m *SecretsModule) PrintSecrets(outputFormat string, outputDirectory string
 	}
 
 	wg.Wait()
+	//time.Sleep(time.Second * 2)
+
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	// Send a message to the data receiver goroutine to close the channel and stop
 	receiverDone <- true
 	<-receiverDone
 
@@ -114,14 +117,16 @@ func (m *SecretsModule) PrintSecrets(outputFormat string, outputDirectory string
 
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//m.output.OutputSelector(outputFormat)
-		utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+
 		m.writeLoot(m.output.FilePath, verbosity)
 		fmt.Printf("[%s][%s] %s secrets found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {
 		fmt.Printf("[%s][%s] No secrets found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
-
+	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 }
 
 func (m *SecretsModule) Receiver(receiver chan Secret, receiverDone chan bool) {
@@ -140,13 +145,27 @@ func (m *SecretsModule) Receiver(receiver chan Secret, receiverDone chan bool) {
 func (m *SecretsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Secret) {
 	defer wg.Done()
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getSecretsManagerSecretsPerRegion(r, wg, semaphore, dataReceiver)
-
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getSSMParametersPerRegion(r, wg, semaphore, dataReceiver)
+	servicemap := &awsservicemap.AwsServiceMap{
+		JsonFileSource: "EMBEDDED_IN_PACKAGE",
+	}
+	res, err := servicemap.IsServiceInRegion("secretsmanager", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getSecretsManagerSecretsPerRegion(r, wg, semaphore, dataReceiver)
+	}
+	res, err = servicemap.IsServiceInRegion("ssm", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getSSMParametersPerRegion(r, wg, semaphore, dataReceiver)
+	}
 
 }
 

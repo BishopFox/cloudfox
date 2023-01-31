@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
@@ -33,8 +33,8 @@ func TestSQSQueues(t *testing.T) {
 		Goroutines: 3,
 	}
 
-	fs := utils.MockFileSystem(true)
-	defer utils.MockFileSystem(false)
+	fs := internal.MockFileSystem(true)
+	defer internal.MockFileSystem(false)
 	tmpDir := "."
 
 	// execute the module with 3 goroutines

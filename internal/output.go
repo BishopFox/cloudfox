@@ -1,4 +1,4 @@
-package utils
+package internal
 
 import (
 	"encoding/csv"
@@ -12,7 +12,7 @@ import (
 	"github.com/aws/smithy-go/ptr"
 	"github.com/fatih/color"
 	"github.com/spf13/afero"
-	"golang.org/x/term"
+	"golang.org/x/crypto/ssh/terminal"
 )
 
 // Used for file system mocking with Afero library. Set:
@@ -38,24 +38,26 @@ type OutputData2 struct {
 // verbosity = 2 (Output and loot printed to file, output printed screen).
 // verbosity = 3 (Output and loot printed to file and screen).
 // outputType = "table", "csv"
-func OutputSelector(verbosity int, outputType string, header []string, body [][]string, outputDirectory string, fileName string, callingModule string) {
+// prefixIdentifier = this string gets printed with control message calling module (e.g. aws profile, azure resource group, gcp project, etc)
+func OutputSelector(verbosity int, outputType string, header []string, body [][]string, outputDirectory string, fileName string, callingModule string, wrapTable bool, prefixIdentifier string) {
 
 	switch verbosity {
 	case 2:
-		printTableToScreen(header, body)
+		PrintTableToScreen(header, body, wrapTable)
 	case 3:
-		printTableToScreen(header, body)
+		PrintTableToScreen(header, body, wrapTable)
 		// Add writeLootToScreen function here
 	}
 	switch outputType {
 	case "table":
+		fmt.Println("")
 		outputFileTable := createOutputFile(
 			ptr.String(filepath.Join(outputDirectory, "table")),
 			ptr.String(fmt.Sprintf("%s.txt", fileName)),
 			outputType,
 			callingModule)
 		printTableToFile(header, body, outputFileTable)
-		fmt.Printf("[%s] Output written to [%s]\n", cyan(callingModule), outputFileTable.Name())
+		fmt.Printf("[%s][%s] Output written to [%s]\n", cyan(callingModule), cyan(prefixIdentifier), outputFileTable.Name())
 		// Add writeLootToFile function here
 
 	case "csv":
@@ -65,8 +67,7 @@ func OutputSelector(verbosity int, outputType string, header []string, body [][]
 			outputType,
 			callingModule)
 		printCSVtoFile(header, body, outputFileCSV)
-		fmt.Printf("[%s] Output written to [%s]\n", cyan(callingModule), outputFileCSV.Name())
-
+		fmt.Printf("[%s][%s] Output written to [%s]\n", cyan(callingModule), cyan(prefixIdentifier), outputFileCSV.Name())
 		// Add writeLootToFile function here
 
 	default:
@@ -76,7 +77,7 @@ func OutputSelector(verbosity int, outputType string, header []string, body [][]
 			outputType,
 			callingModule)
 		printTableToFile(header, body, outputFileTable)
-		fmt.Printf("[%s] Output written to [%s]\n", cyan(callingModule), outputFileTable.Name())
+		fmt.Printf("[%s][%s] Output written to [%s]\n", cyan(callingModule), cyan(prefixIdentifier), outputFileTable.Name())
 
 		outputFileCSV := createOutputFile(
 			ptr.String(filepath.Join(outputDirectory, "csv")),
@@ -84,19 +85,9 @@ func OutputSelector(verbosity int, outputType string, header []string, body [][]
 			outputType,
 			callingModule)
 		printCSVtoFile(header, body, outputFileCSV)
-		fmt.Printf("[%s] Output written to [%s]\n", cyan(callingModule), outputFileCSV.Name())
+		fmt.Printf("[%s][%s] Output written to [%s]\n", cyan(callingModule), cyan(prefixIdentifier), outputFileCSV.Name())
 		// Add writeLootToFile function here
 	}
-
-}
-
-func printCSVtoScreen(header []string, body [][]string) {
-	csvWriter := csv.NewWriter(os.Stdout)
-	csvWriter.Write(header)
-	for _, row := range body {
-		csvWriter.Write(row)
-	}
-	csvWriter.Flush()
 }
 
 func printCSVtoFile(header []string, body [][]string, outputFile afero.File) {
@@ -110,7 +101,6 @@ func printCSVtoFile(header []string, body [][]string, outputFile afero.File) {
 
 func printTableToFile(header []string, body [][]string, outputFile afero.File) {
 	t := table.New(outputFile)
-	t.SetColumnMaxWidth(1000)
 	t.SetHeaders(header...)
 	t.AddRows(body...)
 	t.SetRowLines(false)
@@ -118,12 +108,21 @@ func printTableToFile(header []string, body [][]string, outputFile afero.File) {
 	t.Render()
 }
 
-func printTableToScreen(header []string, body [][]string) {
+func PrintTableToScreen(header []string, body [][]string, wrapLines bool) {
+	standardColumnWidth := 1000
 	t := table.New(os.Stdout)
-	// ColumnMaxWidth needs to be set as a large value so the table doesn't wrap.
-	// If the table wraps it's hard to grep the output from the terminal.
-	// TO-DO: add a flag to make this optional.
-	t.SetColumnMaxWidth(1000)
+	if wrapLines {
+		terminalWidth, _, err := terminal.GetSize(int(os.Stdout.Fd()))
+		if err != nil {
+			fmt.Println("error getting terminal size:", err)
+			return
+		}
+		columnCount := len(header)
+		// The offset value was defined by trial and error to get the best wrapping
+		trialAndErrorOffset := 1
+		standardColumnWidth = terminalWidth / (columnCount + trialAndErrorOffset)
+	}
+	t.SetColumnMaxWidth(standardColumnWidth)
 	t.SetHeaders(header...)
 	t.AddRows(body...)
 	t.SetHeaderStyle(table.StyleBold)
@@ -131,18 +130,6 @@ func printTableToScreen(header []string, body [][]string) {
 	t.SetLineStyle(table.StyleCyan)
 	t.SetDividers(table.UnicodeRoundedDividers)
 	t.Render()
-}
-
-func getTerminalWidth() (int, error) {
-	terminalFileDescriptor := int(os.Stdout.Fd())
-	if term.IsTerminal(terminalFileDescriptor) {
-		width, _, err := term.GetSize(terminalFileDescriptor)
-		if err != nil {
-			return 0, fmt.Errorf("[-] Valid terminal but failed to read width")
-		}
-		return width, nil
-	}
-	return 0, fmt.Errorf("invalid terminal")
 }
 
 // The Afero library enables file system mocking:

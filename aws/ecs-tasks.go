@@ -9,33 +9,43 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/BishopFox/cloudfox/console"
-	"github.com/BishopFox/cloudfox/utils"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/aws/aws-sdk-go-v2/service/ecs/types"
+	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
+type DescribeTasksDefinitionAPIClient interface {
+	DescribeTaskDefinition(context.Context, *ecs.DescribeTaskDefinitionInput, ...func(*ecs.Options)) (*ecs.DescribeTaskDefinitionOutput, error)
+}
 type ECSTasksModule struct {
-	//ECSClient           *ecs.Client
-	DescribeTasksClient ecs.DescribeTasksAPIClient
-	ListTasksClient     ecs.ListTasksAPIClient
-	ListClustersClient  ecs.ListClustersAPIClient
-	//EC2Client                       *ec2.Client
-	DescribeNetworkInterfacesClient ec2.DescribeNetworkInterfacesAPIClient
+	DescribeTaskDefinitionClient     DescribeTasksDefinitionAPIClient
+	DescribeTasksClient              ecs.DescribeTasksAPIClient
+	ListTasksClient                  ecs.ListTasksAPIClient
+	ListClustersClient               ecs.ListClustersAPIClient
+	DescribeNetworkInterfacesClient  ec2.DescribeNetworkInterfacesAPIClient
+	IAMSimulatePrincipalPolicyClient iam.SimulatePrincipalPolicyAPIClient
 
-	Caller       sts.GetCallerIdentityOutput
-	AWSRegions   []string
-	OutputFormat string
-	AWSProfile   string
+	Caller         sts.GetCallerIdentityOutput
+	AWSRegions     []string
+	OutputFormat   string
+	AWSProfile     string
+	Goroutines     int
+	SkipAdminCheck bool
+	WrapTable      bool
+	pmapperMod     PmapperModule
+	pmapperError   error
+	iamSimClient   IamSimulatorModule
 
 	MappedECSTasks []MappedECSTask
-	CommandCounter console.CommandCounter
+	CommandCounter internal.CommandCounter
 
-	output utils.OutputData2
+	output internal.OutputData2
 	modLog *logrus.Entry
 }
 
@@ -46,30 +56,48 @@ type MappedECSTask struct {
 	ID             string
 	ExternalIP     string
 	PrivateIP      string
+	Role           string
+	Admin          string
+	CanPrivEsc     string
 }
 
 func (m *ECSTasksModule) ECSTasks(outputFormat string, outputDirectory string, verbosity int) {
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "ecs-tasks"
-	m.modLog = utils.TxtLog.WithFields(logrus.Fields{
+	localAdminMap := make(map[string]bool)
+	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
 	if m.AWSProfile == "" {
-		m.AWSProfile = utils.BuildAWSPath(m.Caller)
+		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
 
 	fmt.Printf("[%s][%s] Enumerating ECS tasks in all regions for account %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
+	// Initialized the tools we'll need to check if any workload roles are admin or can privesc to admin
+	fmt.Printf("[%s][%s] Attempting to build a PrivEsc graph in memory using local pmapper data if it exists on the filesystem.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	m.pmapperMod, m.pmapperError = initPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines)
+	m.iamSimClient = initIAMSimClient(m.IAMSimulatePrincipalPolicyClient, m.Caller, m.AWSProfile, m.Goroutines)
+
+	if m.pmapperError != nil {
+		fmt.Printf("[%s][%s] No pmapper data found for this account. Using cloudfox's iam-simulator for role analysis.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	} else {
+		fmt.Printf("[%s][%s] Found pmapper data for this account. Using it for role analysis.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	}
+	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 
 	wg := new(sync.WaitGroup)
 
 	spinnerDone := make(chan bool)
-	go console.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
+	go internal.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
 
 	dataReceiver := make(chan MappedECSTask)
 
+	// Create a channel to signal to stop
 	receiverDone := make(chan bool)
+
 	go m.Receiver(dataReceiver, receiverDone)
+
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
 		m.CommandCounter.Pending++
@@ -78,6 +106,19 @@ func (m *ECSTasksModule) ECSTasks(outputFormat string, outputDirectory string, v
 	}
 
 	wg.Wait()
+	//time.Sleep(time.Second * 2)
+
+	// Perform role analysis
+	if m.pmapperError == nil {
+		for i := range m.MappedECSTasks {
+			m.MappedECSTasks[i].Admin, m.MappedECSTasks[i].CanPrivEsc = GetPmapperResults(m.SkipAdminCheck, m.pmapperMod, &m.MappedECSTasks[i].Role)
+		}
+	} else {
+		for i := range m.MappedECSTasks {
+			m.MappedECSTasks[i].Admin, m.MappedECSTasks[i].CanPrivEsc = GetIamSimResult(m.SkipAdminCheck, &m.MappedECSTasks[i].Role, m.iamSimClient, localAdminMap)
+		}
+	}
+
 	spinnerDone <- true
 	<-spinnerDone
 	receiverDone <- true
@@ -108,6 +149,9 @@ func (m *ECSTasksModule) printECSTaskData(outputFormat string, outputDirectory s
 		"ID",
 		"External IP",
 		"Internal IP",
+		"RoleArn",
+		"IsAdminRole?",
+		"CanPrivEscToAdmin?",
 	}
 
 	for _, ecsTask := range m.MappedECSTasks {
@@ -120,12 +164,16 @@ func (m *ECSTasksModule) printECSTaskData(outputFormat string, outputDirectory s
 				ecsTask.ID,
 				ecsTask.ExternalIP,
 				ecsTask.PrivateIP,
+				ecsTask.Role,
+				ecsTask.Admin,
+				ecsTask.CanPrivEsc,
 			},
 		)
 	}
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
-		utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
+		internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 
 		m.writeLoot(m.output.FilePath)
 		fmt.Printf("[%s][%s] %s ECS tasks found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
@@ -175,12 +223,23 @@ func (m *ECSTasksModule) writeLoot(outputDirectory string) {
 
 func (m *ECSTasksModule) executeChecks(r string, wg *sync.WaitGroup, dataReceiver chan MappedECSTask) {
 	defer wg.Done()
-	m.CommandCounter.Total++
-	m.CommandCounter.Pending--
-	m.CommandCounter.Executing++
-	m.getListClusters(r, dataReceiver)
-	m.CommandCounter.Executing--
-	m.CommandCounter.Complete++
+
+	servicemap := &awsservicemap.AwsServiceMap{
+		JsonFileSource: "EMBEDDED_IN_PACKAGE",
+	}
+	res, err := servicemap.IsServiceInRegion("ecs", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+
+		m.CommandCounter.Total++
+		m.CommandCounter.Pending--
+		m.CommandCounter.Executing++
+		m.getListClusters(r, dataReceiver)
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}
 }
 
 func (m *ECSTasksModule) getListClusters(region string, dataReceiver chan MappedECSTask) {
@@ -257,6 +316,7 @@ func (m *ECSTasksModule) getListTasks(clusterARN string, region string, dataRece
 }
 
 func (m *ECSTasksModule) loadTasksData(clusterARN string, taskARNs []string, region string, dataReceiver chan MappedECSTask) {
+
 	if len(taskARNs) == 0 {
 		return
 	}
@@ -298,6 +358,7 @@ func (m *ECSTasksModule) loadTasksData(clusterARN string, taskARNs []string, reg
 			LaunchType:     string(task.LaunchType),
 			ID:             getIDFromECSTask(aws.ToString(task.TaskArn)),
 			PrivateIP:      getPrivateIPv4AddressFromECSTask(task),
+			Role:           m.getTaskRole(aws.ToString(task.TaskDefinitionArn), region),
 		}
 
 		eniID := getElasticNetworkInterfaceIDOfECSTask(task)
@@ -309,6 +370,25 @@ func (m *ECSTasksModule) loadTasksData(clusterARN string, taskARNs []string, reg
 	}
 }
 
+func (m *ECSTasksModule) getTaskRole(taskDefinitionArn string, region string) string {
+	DescribeTaskDefinition, err := m.DescribeTaskDefinitionClient.DescribeTaskDefinition(
+		context.TODO(),
+		&ecs.DescribeTaskDefinitionInput{
+			TaskDefinition: &taskDefinitionArn,
+		},
+		func(o *ecs.Options) {
+			o.Region = region
+		},
+	)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return ""
+	}
+	return aws.ToString(DescribeTaskDefinition.TaskDefinition.TaskRoleArn)
+}
+
+/* UNUSED CODE BLOCK - PLEASE REVIEW AND DELETE IF NOT NEEDED
 func (m *ECSTasksModule) loadAllPublicIPs(eniIDs []string, region string) (map[string]string, error) {
 	eniPublicIPs := make(map[string]string)
 
@@ -333,6 +413,7 @@ func (m *ECSTasksModule) loadAllPublicIPs(eniIDs []string, region string) (map[s
 
 	return eniPublicIPs, nil
 }
+*/
 
 func (m *ECSTasksModule) loadPublicIPs(eniIDs []string, region string) (map[string]string, error) {
 	eniPublicIPs := make(map[string]string)
