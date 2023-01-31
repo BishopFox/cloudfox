@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/aws/aws-sdk-go-v2/service/efs"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	"github.com/aws/aws-sdk-go-v2/service/elasticache"
 	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancing"
 	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	"github.com/aws/aws-sdk-go-v2/service/fsx"
@@ -218,6 +219,16 @@ var (
 		Run:    runLambdasCommand,
 	}
 
+	NetworkPortsCommand = &cobra.Command{
+		Use:     "network-ports",
+		Aliases: []string{"ports", "networkports"},
+		Short:   "Enumerate potentially accessible network ports.",
+		Long: "\nUse case examples:\n" +
+			os.Args[0] + " aws network-ports --profile readonly_profile",
+		PreRun: awsPreRun,
+		Run:    runNetworkPortsCommand,
+	}
+
 	OutboundAssumedRolesDays    int
 	OutboundAssumedRolesCommand = &cobra.Command{
 		Use:     "outbound-assumed-roles",
@@ -388,6 +399,7 @@ func init() {
 		RAMCommand,
 		TagsCommand,
 		LambdasCommand,
+		NetworkPortsCommand,
 		PmapperCommand,
 	)
 
@@ -443,7 +455,7 @@ func runBucketsCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.BucketsModule{
-			//S3Client: s3.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			//S3Client: s3.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
 			S3ClientListBucketsInterface: s3.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
 			Caller:                       *caller,
 			AWSProfile:                   profile,
@@ -915,7 +927,7 @@ func runENICommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.ElasticNetworkInterfacesModule{
-			//EC2Client:                       ec2.NewFromConfig(utils.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			//EC2Client:                       ec2.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
 			DescribeNetworkInterfacesClient: ec2.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
 
 			Caller:     *caller,
@@ -924,6 +936,31 @@ func runENICommand(cmd *cobra.Command, args []string) {
 			WrapTable:  AWSWrapTable,
 		}
 		m.ElasticNetworkInterfaces(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+	}
+}
+
+func runNetworkPortsCommand(cmd *cobra.Command, args []string) {
+	for _, profile := range AWSProfiles {
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
+		if err != nil {
+			continue
+		}
+		m := aws.NetworkPortsModule{
+			EC2Client:         ec2.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			ECSClient:         ecs.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			EFSClient:         efs.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			ElastiCacheClient: elasticache.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			ELBv2Client:       elasticloadbalancingv2.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			LightsailClient:   lightsail.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			RDSClient:         rds.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			Caller:            *caller,
+			AWSRegions:        internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile:        profile,
+			Goroutines:        Goroutines,
+			WrapTable:         AWSWrapTable,
+			Verbosity:         Verbosity,
+		}
+		m.PrintNetworkPorts(AWSOutputFormat, AWSOutputDirectory)
 	}
 }
 
@@ -946,6 +983,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		ecsClient := ecs.NewFromConfig(AWSConfig)
 		efsClient := efs.NewFromConfig(AWSConfig)
 		eksClient := eks.NewFromConfig(AWSConfig)
+		elasticacheClient := elasticache.NewFromConfig(AWSConfig)
 		elbClient := elasticloadbalancing.NewFromConfig(AWSConfig)
 		elbv2Client := elasticloadbalancingv2.NewFromConfig(AWSConfig)
 		fsxClient := fsx.NewFromConfig(AWSConfig)
@@ -1218,6 +1256,21 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			WrapTable:  AWSWrapTable,
 		}
 		ram.PrintRAM(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+
+		networkPorts := aws.NetworkPortsModule{
+			EC2Client:         ec2Client,
+			ECSClient:         ecsClient,
+			EFSClient:         efsClient,
+			ElastiCacheClient: elasticacheClient,
+			ELBv2Client:       elbv2Client,
+			LightsailClient:   lightsailClient,
+			RDSClient:         rdsClient,
+			Caller:            *Caller,
+			AWSProfile:        profile,
+			Goroutines:        Goroutines,
+			AWSRegions:        internal.GetEnabledRegions(profile, cmd.Root().Version),
+		}
+		networkPorts.PrintNetworkPorts(AWSOutputFormat, AWSOutputDirectory)
 
 		// IAM privesc section
 		fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("IAM is complicated. Complicated usually means misconfigurations. You'll want to pay attention here."))

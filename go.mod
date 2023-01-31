@@ -7,7 +7,7 @@ require (
 	github.com/Azure/go-autorest/autorest v0.11.28
 	github.com/Azure/go-autorest/autorest/azure/auth v0.5.11
 	github.com/aquasecurity/table v1.8.0
-	github.com/aws/aws-sdk-go-v2 v1.17.1
+	github.com/aws/aws-sdk-go-v2 v1.17.3
 	github.com/aws/aws-sdk-go-v2/config v1.18.3
 	github.com/aws/aws-sdk-go-v2/service/apigateway v1.15.25
 	github.com/aws/aws-sdk-go-v2/service/apigatewayv2 v1.12.23
@@ -21,6 +21,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ecs v1.20.0
 	github.com/aws/aws-sdk-go-v2/service/efs v1.18.0
 	github.com/aws/aws-sdk-go-v2/service/eks v1.23.0
+	github.com/aws/aws-sdk-go-v2/service/elasticache v1.26.0
 	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancing v1.14.23
 	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.18.26
 	github.com/aws/aws-sdk-go-v2/service/fsx v1.25.4
@@ -43,7 +44,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.19.15
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.33.1
 	github.com/aws/aws-sdk-go-v2/service/sts v1.17.5
-	github.com/aws/smithy-go v1.13.4
+	github.com/aws/smithy-go v1.13.5
 	github.com/bishopfox/awsservicemap v1.0.0
 	github.com/dominikbraun/graph v0.15.0
 	github.com/fatih/color v1.13.0
@@ -68,8 +69,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.4.9 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.13.3 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.12.19 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.1.25 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.4.19 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.1.27 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.4.21 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/ini v1.3.26 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.0.16 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.9.10 // indirect
