@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -137,9 +138,18 @@ func (m *SNSModule) PrintSNS(outputFormat string, outputDirectory string, verbos
 func (m *SNSModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan SNSTopic) {
 	defer wg.Done()
 
-	m.CommandCounter.Total++
-	wg.Add(1)
-	m.getSNSTopicsPerRegion(r, wg, semaphore, dataReceiver)
+	servicemap := &awsservicemap.AwsServiceMap{
+		JsonFileSource: "EMBEDDED_IN_PACKAGE",
+	}
+	res, err := servicemap.IsServiceInRegion("sns", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		m.getSNSTopicsPerRegion(r, wg, semaphore, dataReceiver)
+	}
 }
 
 func (m *SNSModule) Receiver(receiver chan SNSTopic, receiverDone chan bool) {

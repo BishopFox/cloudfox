@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -137,12 +138,19 @@ func (m *SQSModule) PrintSQS(outputFormat string, outputDirectory string, verbos
 
 func (m *SQSModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Queue) {
 	defer wg.Done()
-
-	m.CommandCounter.Total++
-	wg.Add(1)
-	m.getSQSRecordsPerRegion(r, wg, semaphore, dataReceiver)
+	servicemap := &awsservicemap.AwsServiceMap{
+		JsonFileSource: "EMBEDDED_IN_PACKAGE",
+	}
+	res, err := servicemap.IsServiceInRegion("sqs", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		m.getSQSRecordsPerRegion(r, wg, semaphore, dataReceiver)
+	}
 }
-
 func (m *SQSModule) Receiver(receiver chan Queue, receiverDone chan bool) {
 	defer close(receiverDone)
 	for {
