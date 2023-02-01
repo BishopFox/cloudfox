@@ -106,6 +106,7 @@ func getRelevantStorageAccountData(subscriptionID string) ([]string, [][]string,
 		return nil, nil, err
 	}
 	for _, sa := range storageAccounts {
+		// Add blob enumeration function here
 		tableBody = append(tableBody,
 			[]string{
 				subscriptionID,
