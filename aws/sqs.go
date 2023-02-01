@@ -53,6 +53,12 @@ type Queue struct {
 	PolicyJSON            string
 	IsPublic              string
 	IsConditionallyPublic string
+	Statement             string
+	Actions               string
+	ConditionNum          string
+	ConditionVerb         string
+	ConditionType         string
+	ConditionValue        string
 }
 
 func (m *SQSModule) PrintSQS(outputFormat string, outputDirectory string, verbosity int) {
@@ -105,6 +111,11 @@ func (m *SQSModule) PrintSQS(outputFormat string, outputDirectory string, verbos
 		"URL",
 		"Public",
 		"Cond. Public",
+		"Statement",
+		"Actions",
+		"Condition",
+		"Condition Type",
+		"Condition Value",
 	}
 
 	sort.SliceStable(m.Queues, func(i, j int) bool {
@@ -119,6 +130,11 @@ func (m *SQSModule) PrintSQS(outputFormat string, outputDirectory string, verbos
 				m.Queues[i].URL,
 				m.Queues[i].IsPublic,
 				m.Queues[i].IsConditionallyPublic,
+				m.Queues[i].Statement,
+				m.Queues[i].Actions,
+				m.Queues[i].ConditionVerb,
+				m.Queues[i].ConditionType,
+				m.Queues[i].ConditionValue,
 			},
 		)
 
@@ -270,6 +286,28 @@ func (m *SQSModule) analyseQueuePolicy(queue *Queue) {
 		if m.StorePolicies {
 			m.storeAccessPolicy("public-wc", queue)
 		}
+	}
+
+	for i, statement := range queue.Policy.Statement {
+		queue.Statement = strconv.Itoa(i)
+		actions := ""
+		for _, action := range statement.Action {
+			actions = fmt.Sprintf("%s%s\n", actions, action)
+		}
+		queue.Actions = actions
+		for condition, kv := range statement.Condition {
+			arns := ""
+			for k, v := range kv {
+				queue.ConditionVerb = condition
+				queue.ConditionType = k
+				for _, arn := range v {
+					arns = fmt.Sprintf("%s%s\n", arns, arn)
+				}
+				queue.ConditionValue = arns
+			}
+
+		}
+
 	}
 }
 
