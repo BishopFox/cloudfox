@@ -110,12 +110,17 @@ func generatePmapperDataBasePaths(accountId *string) (string, string) {
 
 	} else if runtime.GOOS == "linux" || runtime.GOOS == "freebsd" || runtime.GOOS == "openbsd" {
 		xdg, ok := os.LookupEnv("XDG_DATA_HOME")
-		if !ok {
+		if ok {
 			edgesPath = fmt.Sprintf(xdg + aws.ToString(accountId) + "/graph/edges.json")
 			nodesPath = fmt.Sprintf(xdg + aws.ToString(accountId) + "/graph/nodes.json")
 		} else {
-			edgesPath = fmt.Sprintf("~/.local/share/principalmapper/" + aws.ToString(accountId) + "/graph/edges.json")
-			nodesPath = fmt.Sprintf("~/.local/share/principalmapper/" + aws.ToString(accountId) + "/graph/nodes.json")
+			dir, err := os.UserHomeDir()
+			if err == nil {
+				edgesPath = fmt.Sprintf(dir + "/.local/share/principalmapper/" + aws.ToString(accountId) + "/graph/edges.json")
+				nodesPath = fmt.Sprintf(dir + "/.local/share/principalmapper/" + aws.ToString(accountId) + "/graph/nodes.json")
+			} else {
+				log.Fatal("Could not homedir.")
+			}
 		}
 
 	} else if runtime.GOOS == "windows" {

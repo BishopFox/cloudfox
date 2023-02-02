@@ -219,6 +219,8 @@ func (m *NetworkPortsModule) PrintNetworkPorts(outputFormat string, outputDirect
 	} else {
 		fmt.Printf("[%s][%s] No network services found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
+	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
+
 }
 
 func (m *NetworkPortsModule) executeChecks(r string, wg *sync.WaitGroup, dataReceiver chan NetworkServices) {
@@ -1961,7 +1963,7 @@ func (m *NetworkPortsModule) Evaluate(l *NetworkAcl, port int32, proto string) (
 					return node.rule.Action, &node.rule
 				}
 			} else {
-				fmt.Printf("[%s][%s] Protocol: %d not supported\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), node.rule.Protocol)
+				fmt.Printf("[%s][%s] Protocol: %s not supported\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), node.rule.Protocol)
 			}
 
 		}

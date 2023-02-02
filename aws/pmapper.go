@@ -135,7 +135,8 @@ func (m *PmapperModule) PrintPmapperData(outputFormat string, outputDirectory st
 	fmt.Printf("[%s][%s] Looking for pmapper data for this account and building a PrivEsc graph in golang if it exists.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	pmapperError := m.initPmapperGraph()
 	if pmapperError != nil {
-		fmt.Printf("[%s][%s] No pmapper data found for this account. \n\t\t\t1. Generate pmapper data by running `pmapper --profile %s graph create`\n\t\t\t2. After that completes, this cloudfox command and others will attempt to find and use the pmapper graph data in this and other cloudfox commands\n\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.AWSProfile)
+		fmt.Printf("[%s][%s] No pmapper data found for this account. \n\t\t\t1. Generate pmapper data by running `pmapper --profile %s graph create`\n\t\t\t2. After that completes, cloudfox will attempt to enrich this command and others with pmapper privesc data\n\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.AWSProfile)
+		fmt.Printf("[%s][%s] For more info and troubleshooting steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 		m.modLog.Error(pmapperError)
 		return
 
