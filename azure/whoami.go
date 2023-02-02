@@ -50,6 +50,16 @@ func getWhoamiRelevantDataPerRG() ([]string, [][]string) {
 	return tableHead, tableBody
 }
 
+func GetTenantIDPerSubscription(subscriptionID string) *string {
+	subs := getSubscriptions()
+	for _, s := range subs {
+		if ptr.ToString(s.SubscriptionID) == subscriptionID {
+			return s.TenantID
+		}
+	}
+	return nil
+}
+
 func getSubscriptionsPerTenantID(tenantID string) []subscriptions.Subscription {
 	subs := getSubscriptions()
 	var results []subscriptions.Subscription

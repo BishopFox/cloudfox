@@ -10,6 +10,8 @@ import (
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/resources"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/subscriptions"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/storage/mgmt/storage"
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/Azure/azure-sdk-for-go/services/graphrbac/1.6/graphrbac"
 	"github.com/Azure/go-autorest/autorest"
 	"github.com/Azure/go-autorest/autorest/azure/auth"
@@ -131,4 +133,17 @@ func GetStorageClient(subscriptionID string) storage.AccountsClient {
 	client.Authorizer = a
 	client.AddToUserAgent(globals.CLOUDFOX_USER_AGENT)
 	return client
+}
+
+func GetStorageAccountBlobClient(tenantID, storageAccountName string) (*azblob.Client, error) {
+	serviceURL := fmt.Sprintf("https://%s.blob.core.windows.net/", storageAccountName)
+	cred, err := azidentity.NewAzureCLICredential(&azidentity.AzureCLICredentialOptions{TenantID: tenantID})
+	if err != nil {
+		fmt.Println(err)
+	}
+	client, err := azblob.NewClient(serviceURL, cred, nil)
+	if err != nil {
+		return nil, err
+	}
+	return client, nil
 }

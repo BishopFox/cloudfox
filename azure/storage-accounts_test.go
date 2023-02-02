@@ -1,18 +1,12 @@
 package azure
 
 import (
-	"context"
 	"fmt"
 	"log"
-	"net/http"
 	"testing"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
-	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
-	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/container"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
-	"github.com/aws/smithy-go/ptr"
 )
 
 func TestAzStorageCommand(t *testing.T) {
@@ -84,49 +78,20 @@ func TestAzStorageCommand(t *testing.T) {
 }
 
 func TestEnumeratePublicBlobs(t *testing.T) {
-	tenantID := ""
-	storageAccountName := ""
-	serviceURL := fmt.Sprintf("https://%s.blob.core.windows.net/", storageAccountName)
-	containerName := ""
-	var blobNames []string
+	tenantID := "3617ef9b-98b4-40d9-ba43-e1ed6709cf0d"
+	storageAccountName := "storagenv3rpik908"
 
-	cred, err := azidentity.NewAzureCLICredential(&azidentity.AzureCLICredentialOptions{TenantID: tenantID})
+	blobClient, err := internal.GetStorageAccountBlobClient(tenantID, storageAccountName)
 	if err != nil {
-		fmt.Println(err)
+		return
 	}
-
-	client, err := azblob.NewClient(serviceURL, cred, nil)
+	containers, err := getStorageAccountContainers(blobClient)
 	if err != nil {
-		fmt.Println(err)
+		return
 	}
-
-	pager := client.NewListBlobsFlatPager(containerName, &azblob.ListBlobsFlatOptions{
-		Include: container.ListBlobsInclude{Deleted: true, Versions: true},
-	})
-
-	for pager.More() {
-		resp, err := pager.NextPage(context.TODO())
-		if err != nil {
-			log.Fatal(err)
-		}
-		for _, b := range resp.Segment.BlobItems {
-			blobNames = append(blobNames, ptr.ToString(b.Name))
-		}
+	urls, err := getPublicBlobURLs(blobClient, storageAccountName, containers)
+	if err != nil {
+		return
 	}
-
-	for _, b := range blobNames {
-		blobURL := fmt.Sprintf("https://%s.blob.core.windows.net/%s/%s", storageAccountName, containerName, b)
-
-		response, err := http.Get(blobURL)
-		if err != nil {
-			fmt.Println("Error accessing the blob:", err)
-			return
-		}
-
-		if response.StatusCode == http.StatusOK {
-			fmt.Printf("%s: public\n", b)
-		} else {
-			fmt.Printf("%s: private\n", b)
-		}
-	}
+	fmt.Println(urls)
 }
