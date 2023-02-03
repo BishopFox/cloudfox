@@ -19,10 +19,14 @@ import (
 	"github.com/kyokomi/emoji"
 )
 
+// Color functions
+var cyan = color.New(color.FgCyan).SprintFunc()
+
 func AzStorageCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, Version string, AzVerbosity int, AzWrapTable bool) error {
 	var err error
 	var header []string
 	var body [][]string
+	var publicBlobURLs []string
 	var outputDirectory, controlMessagePrefix string
 
 	if AzTenantID != "" && AzSubscriptionID == "" {
@@ -32,7 +36,7 @@ func AzStorageCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, Version stri
 			color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)),
 			color.CyanString(globals.AZ_STORAGE_MODULE_NAME),
 			AzTenantID)
-		header, body, err = getStorageInfoPerTenant(AzTenantID)
+		header, body, publicBlobURLs, err = getStorageInfoPerTenant(AzTenantID)
 		controlMessagePrefix = fmt.Sprintf("tenant-%s", AzTenantID)
 		outputDirectory = filepath.Join(
 			globals.CLOUDFOX_BASE_DIRECTORY,
@@ -48,7 +52,7 @@ func AzStorageCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, Version stri
 			color.CyanString(globals.AZ_STORAGE_MODULE_NAME),
 			AzSubscriptionID)
 		AzTenantID := ptr.ToString(GetTenantIDPerSubscription(AzSubscriptionID))
-		header, body, err = getStorageInfoPerSubscription(AzTenantID, AzSubscriptionID)
+		header, body, publicBlobURLs, err = getStorageInfoPerSubscription(AzTenantID, AzSubscriptionID)
 		controlMessagePrefix = fmt.Sprintf("subscription-%s", AzSubscriptionID)
 		outputDirectory = filepath.Join(
 			globals.CLOUDFOX_BASE_DIRECTORY,
@@ -66,56 +70,91 @@ func AzStorageCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, Version stri
 	if body != nil {
 		internal.OutputSelector(AzVerbosity, AzOutputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_STORAGE_MODULE_NAME, AzWrapTable, controlMessagePrefix)
 	}
+	if publicBlobURLs != nil {
+		err = writeBlobURLslootFile(globals.AZ_STORAGE_MODULE_NAME, controlMessagePrefix, outputDirectory, publicBlobURLs)
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
-func getStorageInfoPerTenant(AzTenantID string) ([]string, [][]string, error) {
+func writeBlobURLslootFile(callingModule, controlMessagePrefix, outputDirectory string, publicBlobURLs []string) error {
+	lootDirectory := filepath.Join(outputDirectory, "loot")
+	lootFilePath := filepath.Join(lootDirectory, "public-blob-urls.txt")
+
+	err := os.MkdirAll(lootDirectory, os.ModePerm)
+	if err != nil {
+		return err
+	}
+
+	file, err := os.Create(lootFilePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	for _, url := range publicBlobURLs {
+		_, err := file.WriteString(url + "\n")
+		if err != nil {
+			return err
+		}
+	}
+
+	fmt.Printf("[%s][%s] Loot file written to [%s]\n", cyan(callingModule), cyan(controlMessagePrefix), file.Name())
+	return nil
+}
+
+func getStorageInfoPerTenant(AzTenantID string) ([]string, [][]string, []string, error) {
 	var err error
 	var header []string
 	var body, b [][]string
+	var publicBlobURLs []string
 
 	for _, s := range getSubscriptionsPerTenantID(AzTenantID) {
-		header, b, err = getRelevantStorageAccountData(AzTenantID, ptr.ToString(s.SubscriptionID))
+		header, b, publicBlobURLs, err = getRelevantStorageAccountData(AzTenantID, ptr.ToString(s.SubscriptionID))
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		} else {
 			body = append(body, b...)
 		}
 	}
-	return header, body, nil
+	return header, body, publicBlobURLs, nil
 }
 
-func getStorageInfoPerSubscription(AzTenantID, AzSubscriptionID string) ([]string, [][]string, error) {
+func getStorageInfoPerSubscription(AzTenantID, AzSubscriptionID string) ([]string, [][]string, []string, error) {
 	var err error
 	var header []string
 	var body [][]string
+	var publicBlobURLs []string
 
 	for _, s := range getSubscriptions() {
 		if ptr.ToString(s.SubscriptionID) == AzSubscriptionID {
-			header, body, err = getRelevantStorageAccountData(AzTenantID, ptr.ToString(s.SubscriptionID))
+			header, body, publicBlobURLs, err = getRelevantStorageAccountData(AzTenantID, ptr.ToString(s.SubscriptionID))
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 		}
 	}
-	return header, body, nil
+	return header, body, publicBlobURLs, nil
 }
 
-func getRelevantStorageAccountData(tenantID, subscriptionID string) ([]string, [][]string, error) {
+func getRelevantStorageAccountData(tenantID, subscriptionID string) ([]string, [][]string, []string, error) {
 	tableHeader := []string{"Subscription ID", "Storage Account Name", "Container Name", "Access Status"}
 	var tableBody [][]string
+	var publicBlobURLs []string
 	storageAccounts, err := getStorageAccounts(subscriptionID)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	for _, sa := range storageAccounts {
 		blobClient, err := internal.GetStorageAccountBlobClient(tenantID, ptr.ToString(sa.Name))
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		containers, err := getStorageAccountContainers(blobClient)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		for containerName, accessType := range containers {
 			tableBody = append(tableBody,
@@ -125,8 +164,13 @@ func getRelevantStorageAccountData(tenantID, subscriptionID string) ([]string, [
 					containerName,
 					accessType})
 		}
+		urls, err := getPublicBlobURLs(blobClient, ptr.ToString(sa.Name), containers)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		publicBlobURLs = append(publicBlobURLs, urls...)
 	}
-	return tableHeader, tableBody, nil
+	return tableHeader, tableBody, publicBlobURLs, nil
 }
 
 var getStorageAccounts = getStorageAccountsOriginal
@@ -183,6 +227,20 @@ func getStorageAccountContainers(client *azblob.Client) (map[string]string, erro
 	return containers, nil
 }
 
+func getPublicBlobURLs(client *azblob.Client, storageAccountName string, containers map[string]string) ([]string, error) {
+	var publicBlobURLs []string
+	for containerName, accessType := range containers {
+		if accessType == "public" {
+			url, err := getPublicBlobURLsForContainer(client, storageAccountName, containerName)
+			if err != nil {
+				return nil, err
+			}
+			publicBlobURLs = append(publicBlobURLs, url...)
+		}
+	}
+	return publicBlobURLs, nil
+}
+
 func getPublicBlobURLsForContainer(client *azblob.Client, storageAccountName, containerName string) ([]string, error) {
 	blobNames, err := getAllBlobsForContainer(client, containerName)
 	if err != nil {
@@ -228,20 +286,6 @@ func validatePublicBlobURLs(storageAccountName, containerName string, blobNames 
 
 		if response.StatusCode == http.StatusOK {
 			publicBlobURLs = append(publicBlobURLs, blobURL)
-		}
-	}
-	return publicBlobURLs, nil
-}
-
-func getPublicBlobURLs(client *azblob.Client, storageAccountName string, containers map[string]string) ([]string, error) {
-	var publicBlobURLs []string
-	for containerName, accessType := range containers {
-		if accessType == "public" {
-			url, err := getPublicBlobURLsForContainer(client, storageAccountName, containerName)
-			if err != nil {
-				return nil, err
-			}
-			publicBlobURLs = append(publicBlobURLs, url...)
 		}
 	}
 	return publicBlobURLs, nil

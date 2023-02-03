@@ -76,22 +76,3 @@ func TestAzStorageCommand(t *testing.T) {
 		}
 	}
 }
-
-func TestEnumeratePublicBlobs(t *testing.T) {
-	tenantID := "3617ef9b-98b4-40d9-ba43-e1ed6709cf0d"
-	storageAccountName := "storagenv3rpik908"
-
-	blobClient, err := internal.GetStorageAccountBlobClient(tenantID, storageAccountName)
-	if err != nil {
-		return
-	}
-	containers, err := getStorageAccountContainers(blobClient)
-	if err != nil {
-		return
-	}
-	urls, err := getPublicBlobURLs(blobClient, storageAccountName, containers)
-	if err != nil {
-		return
-	}
-	fmt.Println(urls)
-}
