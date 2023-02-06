@@ -1,98 +1,116 @@
 package internal
 
 import (
+	"fmt"
+
 	"github.com/spf13/afero"
 )
+
+type fileName string
+type fileContents string
+type statusMessage string
 
 // Verbosity = 1 (Output and loot printed to file).
 // Verbosity = 2 (Output and loot printed to file, output printed screen).
 // Verbosity = 3 (Output and loot printed to file and screen).
-// Format = "table", "csv"
-// PrefixIdentifier = this string gets printed with control message calling module (e.g. aws profile, azure resource group, gcp project, etc)
+
 type OutputClient struct {
-	WrapTable        bool
 	Verbosity        int
+	CallingModule    string
+	PrefixIdentifier string
+	Base             BaseClient
+	Loot             LootClient
+}
+
+func (o *OutputClient) WriteFullOutput(header []string, body [][]string, lootFiles map[fileName][]fileContents) []statusMessage {
+	if o.Verbosity == 2 && o.Base.Format == "table" {
+		o.Base.printTabletoScreen(header, body)
+
+	} else if o.Verbosity == 2 && o.Base.Format == "csv" {
+		o.Base.printCSVtoScreen(header, body)
+
+	} else if o.Verbosity == 3 && o.Base.Format == "table" {
+		o.Base.printTabletoScreen(header, body)
+		o.Loot.printLoottoScreen(lootFiles)
+
+	} else if o.Verbosity == 3 && o.Base.Format == "csv" {
+		o.Base.printCSVtoScreen(header, body)
+		o.Loot.printLoottoScreen(lootFiles)
+	}
+
+	outputFileTable := o.Base.createTableFile(o.Base.DirectoryName, o.Base.FileName)
+	outputFileCSV := o.Base.createCSVFile(o.Base.DirectoryName, o.Base.FileName)
+	lootFileList := o.Loot.createLootFiles(lootFiles)
+
+	var statusMessages []statusMessage
+	tableOutputFileStatus := o.Base.writeTableFile(header, body, outputFileTable)
+	CSVOutputFileStatus := o.Base.writeCSVFile(header, body, outputFileCSV)
+	lootFileStatuses := o.Loot.writeLootFiles(lootFiles, lootFileList)
+
+	statusMessages = append(statusMessages, tableOutputFileStatus, CSVOutputFileStatus)
+	statusMessages = append(statusMessages, lootFileStatuses...)
+	return statusMessages
+}
+
+type LootClient struct {
+	DirectoryName string
+}
+
+func (b *LootClient) printLoottoScreen(lootFiles map[fileName][]fileContents) {
+	for fileName, fileContents := range lootFiles {
+		fmt.Printf("Printing contents of loot file %s", fileName)
+		for _, line := range fileContents {
+			fmt.Println(line)
+		}
+	}
+}
+
+func (b *LootClient) createLootFiles(lootFiles map[fileName][]fileContents) []afero.File {
+	for fileName, _ := range lootFiles {
+		fmt.Printf("Creating file %s", fileName)
+	}
+	// This will return a pointer to the created file
+	return nil
+}
+
+func (b *LootClient) writeLootFiles(lootFiles map[fileName][]fileContents, outputFiles []afero.File) []statusMessage {
+	for fileName, fileContents := range lootFiles {
+		fmt.Printf("Writing contents of loot file %s", fileName)
+		for _, line := range fileContents {
+			fmt.Println(line)
+		}
+	}
+	return []statusMessage{}
+}
+
+type BaseClient struct {
+	WrapTable        bool
 	Format           string
 	PrefixIdentifier string
-	CallingModule    string
-	OutputFileName   string
-	LootFileName     string
+	FileName         string
 	DirectoryName    string
 }
 
-func (c *OutputClient) PrintOutput(header, loot []string, body [][]string) {
-	if c.Verbosity == 2 && c.Format == "table" {
-		c.printTabletoScreen(header, body)
-
-	} else if c.Verbosity == 2 && c.Format == "csv" {
-		c.printCSVtoScreen(header, body)
-
-	} else if c.Verbosity == 3 && c.Format == "table" {
-		c.printTabletoScreen(header, body)
-		c.printLoottoScreen(loot)
-
-	} else if c.Verbosity == 3 && c.Format == "csv" {
-		c.printCSVtoScreen(header, body)
-		c.printLoottoScreen(loot)
-	}
-
-	outputFileTable := c.createTableFile(c.DirectoryName, c.OutputFileName)
-	outputFileCSV := c.createCSVFile(c.DirectoryName, c.OutputFileName)
-	outputFileLoot := c.createLootFile(c.DirectoryName, c.LootFileName)
-
-	c.writeTableFile(header, body, outputFileTable)
-	c.writeCSVFile(header, body, outputFileCSV)
-	c.writeLootFile(header, body, outputFileLoot)
-}
-
-func (c *OutputClient) printTabletoScreen(header []string, body [][]string) {
+func (b *BaseClient) printTabletoScreen(header []string, body [][]string) {
 
 }
 
-func (c *OutputClient) printCSVtoScreen(header []string, body [][]string) {
+func (b *BaseClient) printCSVtoScreen(header []string, body [][]string) {
 
 }
 
-func (c *OutputClient) printLoottoScreen(loot []string) {
-
-}
-
-// The Afero library enables file system mocking:
-// fileSystem = afero.NewOsFs() if not unit testing (real file system) OR
-// fileSystem = afero.NewMemMapFs() for a mocked file system (when unit testing)
-// outputDirectory = nil (creates the file in the current directory ".")
-
-func (c *OutputClient) createTableFile(outputDirectory, fileName string) afero.File {
+func (b *BaseClient) createTableFile(outputDirectory, fileName string) afero.File {
 	return nil
 }
 
-func (c *OutputClient) createCSVFile(outputDirectory, fileName string) afero.File {
+func (b *BaseClient) writeTableFile(header []string, body [][]string, outputFile afero.File) statusMessage {
+	return statusMessage("")
+}
+
+func (b *BaseClient) createCSVFile(outputDirectory, fileName string) afero.File {
 	return nil
 }
 
-func (c *OutputClient) createLootFile(outputDirectory, fileName string) afero.File {
-	return nil
+func (b *BaseClient) writeCSVFile(header []string, body [][]string, outputFile afero.File) statusMessage {
+	return statusMessage("")
 }
-
-func (c *OutputClient) writeTableFile(header []string, body [][]string, outputFile afero.File) {
-
-}
-
-func (c *OutputClient) writeCSVFile(header []string, body [][]string, outputFile afero.File) {
-
-}
-
-func (c *OutputClient) writeLootFile(header []string, body [][]string, outputFile afero.File) {
-
-}
-
-/*
-func MockFileSystem(switcher bool) {
-	if switcher {
-		fmt.Println("Using mocked file system")
-		fileSystem = afero.NewMemMapFs()
-	} else {
-		fmt.Println("Using OS file system. Make sure to clean up your disk!")
-	}
-}
-*/
