@@ -9,6 +9,8 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 )
 
+// TO-DO: add blob URL enumeration to this table test.
+// This test won't work anymore until blob URL enumeration is added.
 func TestAzStorageCommand(t *testing.T) {
 	fmt.Println()
 	fmt.Println("[test case] Azure Storage Accounts")

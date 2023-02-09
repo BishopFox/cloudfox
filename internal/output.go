@@ -105,6 +105,7 @@ func printTableToFile(header []string, body [][]string, outputFile afero.File) {
 	t.AddRows(body...)
 	t.SetRowLines(false)
 	t.SetDividers(table.UnicodeRoundedDividers)
+	t.SetAlignment(table.AlignLeft)
 	t.Render()
 }
 
@@ -129,6 +130,7 @@ func PrintTableToScreen(header []string, body [][]string, wrapLines bool) {
 	t.SetRowLines(false)
 	t.SetLineStyle(table.StyleCyan)
 	t.SetDividers(table.UnicodeRoundedDividers)
+	t.SetAlignment(table.AlignLeft)
 	t.Render()
 }
 
