@@ -55,26 +55,31 @@ type LootFile struct {
 }
 
 func (o *OutputClient) WriteFullOutput(tables []TableFile, lootFiles []LootFile) {
+
 	switch o.Verbosity {
 	case 2:
 		o.Table.printTablesToScreen(tables)
 	case 3:
 		o.Table.printTablesToScreen(tables)
 		fmt.Println()
-		o.Loot.printLoottoScreen(lootFiles)
+		if lootFiles != nil {
+			o.Loot.printLoottoScreen(lootFiles)
+		}
 	}
 
-	o.Loot.createLootFiles(lootFiles)
-	lootOutputPaths := o.Loot.writeLootFiles()
 	o.Table.createTableFiles(tables)
 	tableOutputPaths := o.Table.writeTableFiles(tables)
 	o.Table.createCSVFiles()
 	csvOutputPaths := o.Table.writeCSVFiles()
-
 	var outputPaths []string
-	outputPaths = append(outputPaths, lootOutputPaths...)
 	outputPaths = append(outputPaths, tableOutputPaths...)
 	outputPaths = append(outputPaths, csvOutputPaths...)
+
+	if lootFiles != nil {
+		o.Loot.createLootFiles(lootFiles)
+		lootOutputPaths := o.Loot.writeLootFiles()
+		outputPaths = append(outputPaths, lootOutputPaths...)
+	}
 
 	for _, path := range outputPaths {
 		fmt.Printf("[%s][%s] Output written to %s\n", cyan(o.CallingModule), cyan(o.PrefixIdentifier), path)

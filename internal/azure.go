@@ -11,6 +11,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/subscriptions"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/storage/mgmt/storage"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/Azure/azure-sdk-for-go/services/graphrbac/1.6/graphrbac"
 	"github.com/Azure/go-autorest/autorest"
@@ -146,4 +147,16 @@ func GetStorageAccountBlobClient(tenantID, storageAccountName string) (*azblob.C
 		return nil, err
 	}
 	return client, nil
+}
+
+func GetARMresourcesClient(tenantID, subscriptionID string) *armresources.Client {
+	cred, err := azidentity.NewAzureCLICredential(&azidentity.AzureCLICredentialOptions{TenantID: tenantID})
+	if err != nil {
+		log.Fatalf("failed to get credentials from Azure CLI: %s", err)
+	}
+	client, err := armresources.NewClient(subscriptionID, cred, nil)
+	if err != nil {
+		log.Fatalf("failed to get ARM resources client: %s", err)
+	}
+	return client
 }

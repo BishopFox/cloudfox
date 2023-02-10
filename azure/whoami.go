@@ -60,7 +60,7 @@ func GetTenantIDPerSubscription(subscriptionID string) *string {
 	return nil
 }
 
-func getSubscriptionsPerTenantID(tenantID string) []subscriptions.Subscription {
+func GetSubscriptionsPerTenantID(tenantID string) []subscriptions.Subscription {
 	subs := getSubscriptions()
 	var results []subscriptions.Subscription
 	for _, s := range subs {

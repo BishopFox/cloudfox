@@ -56,7 +56,7 @@ func getVMsPerTenantID(AzTenantID string) ([]string, [][]string) {
 	var resultsBody, b [][]string
 	var err error
 
-	for _, s := range getSubscriptionsPerTenantID(AzTenantID) {
+	for _, s := range GetSubscriptionsPerTenantID(AzTenantID) {
 		for _, rg := range getResourceGroups(ptr.ToString(s.SubscriptionID)) {
 			resultsHeader, b, err = getComputeRelevantData(s, rg)
 			if err != nil {

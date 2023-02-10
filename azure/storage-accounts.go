@@ -111,7 +111,7 @@ func getStorageInfoPerTenant(AzTenantID string) ([]string, [][]string, []string,
 	var body, b [][]string
 	var publicBlobURLs []string
 
-	for _, s := range getSubscriptionsPerTenantID(AzTenantID) {
+	for _, s := range GetSubscriptionsPerTenantID(AzTenantID) {
 		header, b, publicBlobURLs, err = getRelevantStorageAccountData(AzTenantID, ptr.ToString(s.SubscriptionID))
 		if err != nil {
 			return nil, nil, nil, err

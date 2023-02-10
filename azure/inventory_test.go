@@ -12,7 +12,7 @@ import (
 	"github.com/aws/smithy-go/ptr"
 )
 
-func TestAzInventoryCommand(t *testing.T) {
+func TestAzInventoryPoC(t *testing.T) {
 	// Using the new version implementation
 	// https://github.com/Azure/azure-sdk-for-go/blob/main/documentation/MIGRATION_GUIDE.md
 
