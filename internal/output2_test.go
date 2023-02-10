@@ -35,19 +35,16 @@ func TestOutput2(t *testing.T) {
 
 	lootFiles := []LootFile{
 		{
-			Name:        "loot1",
-			FilePointer: nil,
-			Contents:    "This is a loot file\nline1\nline2\n",
+			Name:     "loot1",
+			Contents: "This is a loot file\nline1\nline2\n",
 		},
 		{
-			Name:        "loot2",
-			FilePointer: nil,
-			Contents:    "This is a loot file\nline1\nline2\nline3\nline4\n",
+			Name:     "loot2",
+			Contents: "This is a loot file\nline1\nline2\nline3\nline4\n",
 		},
 		{
-			Name:        "loot3",
-			FilePointer: nil,
-			Contents:    "This is a loot file\nline1\nline2\nline3\n",
+			Name:     "loot3",
+			Contents: "This is a loot file\nline1\nline2\nline3\n",
 		},
 	}
 
@@ -60,12 +57,12 @@ func TestOutput2(t *testing.T) {
 			DirectoryName: filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE),
 		},
 		Loot: LootClient{
-			DirectoryName: filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, "loot"),
+			DirectoryName: filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, globals.LOOT_DIRECTORY_NAME),
 			LootFiles:     nil,
 		},
 	}
 
 	MockFileSystem(false)
-	fmt.Printf("Verbose level: %d", o.Verbosity)
+	fmt.Printf("Verbose level: %d\n", o.Verbosity)
 	o.WriteFullOutput(tables, lootFiles)
 }
