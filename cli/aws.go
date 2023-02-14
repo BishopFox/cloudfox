@@ -486,11 +486,14 @@ func runBucketsCommand(cmd *cobra.Command, args []string) {
 		}
 		m := aws.BucketsModule{
 			//S3Client: s3.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			S3ClientListBucketsInterface: s3.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			Caller:                       *caller,
-			AWSProfile:                   profile,
-			Goroutines:                   Goroutines,
-			WrapTable:                    AWSWrapTable,
+			S3ClientListBucketsInterface:       s3.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			S3ClientGetBucketPolicyInterface:   s3.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			S3ClientGetBucketLocationInterface: s3.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+
+			Caller:     *caller,
+			AWSProfile: profile,
+			Goroutines: Goroutines,
+			WrapTable:  AWSWrapTable,
 		}
 		m.PrintBuckets(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 	}
@@ -1289,11 +1292,13 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Arming you with the data you'll need for privesc quests."))
 
 		buckets := aws.BucketsModule{
-			S3ClientListBucketsInterface: s3Client,
-			Caller:                       *Caller,
-			AWSProfile:                   profile,
-			Goroutines:                   Goroutines,
-			WrapTable:                    AWSWrapTable,
+			S3ClientListBucketsInterface:       s3Client,
+			S3ClientGetBucketPolicyInterface:   s3Client,
+			S3ClientGetBucketLocationInterface: s3Client,
+			Caller:                             *Caller,
+			AWSProfile:                         profile,
+			Goroutines:                         Goroutines,
+			WrapTable:                          AWSWrapTable,
 		}
 		buckets.PrintBuckets(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
