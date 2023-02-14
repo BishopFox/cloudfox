@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/BishopFox/cloudfox/internal/aws/policy"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
@@ -21,12 +22,23 @@ import (
 type S3ListBucketsAPI interface {
 	ListBuckets(ctx context.Context, params *s3.ListBucketsInput, optFns ...func(*s3.Options)) (*s3.ListBucketsOutput, error)
 }
+
+type S3GetBucketPolicyAPI interface {
+	GetBucketPolicy(ctx context.Context, params *s3.GetBucketPolicyInput, optFns ...func(*s3.Options)) (*s3.GetBucketPolicyOutput, error)
+}
+
+type S3GetBucketLocationAPI interface {
+	GetBucketLocation(ctx context.Context, params *s3.GetBucketLocationInput, optFns ...func(*s3.Options)) (*s3.GetBucketLocationOutput, error)
+}
+
 type BucketsModule struct {
 	// General configuration data
 	S3Client *s3.Client
 
 	// This interface is used for unit testing
-	S3ClientListBucketsInterface S3ListBucketsAPI
+	S3ClientListBucketsInterface       S3ListBucketsAPI
+	S3ClientGetBucketPolicyInterface   S3GetBucketPolicyAPI
+	S3ClientGetBucketLocationInterface S3GetBucketLocationAPI
 
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
@@ -44,9 +56,17 @@ type BucketsModule struct {
 }
 
 type Bucket struct {
-	AWSService string
-	Region     string
-	Name       string
+	AWSService            string
+	Region                string
+	Name                  string
+	Policy                policy.Policy
+	PolicyJSON            string
+	Access                string
+	IsPublic              string
+	IsConditionallyPublic string
+	Statement             string
+	Actions               string
+	ConditionText         string
 }
 
 func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string, verbosity int) {
@@ -94,16 +114,32 @@ func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string
 	<-receiverDone
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
-	m.output.Headers = []string{"Service", "Region", "Name"}
+	m.output.Headers = []string{
+		//"Service",
+		"Name",
+		"Public?",
+		"Region",
+		"Stmt",
+		"Who?",
+		//"Cond. Public",
+		"Can do what?",
+		"Conditions?"}
 
 	// Table rows
 	for i := range m.Buckets {
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
-				m.Buckets[i].AWSService,
-				m.Buckets[i].Region,
+				//m.Buckets[i].AWSService,
 				m.Buckets[i].Name,
+				m.Buckets[i].IsPublic,
+				m.Buckets[i].Region,
+
+				m.Buckets[i].Statement,
+				m.Buckets[i].Access,
+				//m.Buckets[i].IsConditionallyPublic,
+				m.Buckets[i].Actions,
+				m.Buckets[i].ConditionText,
 			},
 		)
 
@@ -199,7 +235,7 @@ func (m *BucketsModule) createBucketsRows(verbosity int, wg *sync.WaitGroup, sem
 	defer func() {
 		<-semaphore
 	}()
-	var r string = "Global"
+	var region string = "Global"
 	var name string
 	ListBuckets, err := m.listBuckets()
 	if err != nil {
@@ -207,14 +243,41 @@ func (m *BucketsModule) createBucketsRows(verbosity int, wg *sync.WaitGroup, sem
 		return
 	}
 
-	for _, bucket := range ListBuckets {
-		name = aws.ToString(bucket.Name)
-		// Send Bucket object through the channel to the receiver
-		dataReceiver <- Bucket{
+	for _, b := range ListBuckets {
+		bucket := &Bucket{
+			Name:       aws.ToString(b.Name),
 			AWSService: "S3",
-			Name:       name,
-			Region:     r,
 		}
+		region, err = m.getBucketRegion(aws.ToString(b.Name))
+		if err != nil {
+			m.modLog.Error(err.Error())
+		}
+		bucket.Region = region
+
+		policyJSON, err := m.getBucketPolicy(aws.ToString(b.Name), region)
+		if err != nil {
+			m.modLog.Error(err.Error())
+		} else {
+			bucket.PolicyJSON = policyJSON
+		}
+
+		policy, err := policy.ParseJSONPolicy([]byte(policyJSON))
+		if err != nil {
+			m.modLog.Error("parsing bucket access policy (%s) as JSON: %s", name, err)
+		} else {
+			bucket.Policy = policy
+		}
+
+		bucket.IsPublic = "No"
+		if !bucket.Policy.IsEmpty() {
+			m.analyseBucketPolicy(bucket, dataReceiver)
+		} else {
+			bucket.Access = "No resource policy"
+			dataReceiver <- *bucket
+		}
+
+		// Send Bucket object through the channel to the receiver
+
 	}
 
 }
@@ -234,4 +297,74 @@ func (m *BucketsModule) listBuckets() ([]types.Bucket, error) {
 	buckets = append(buckets, ListBuckets.Buckets...)
 	return buckets, nil
 
+}
+
+func (m *BucketsModule) getBucketRegion(bucketName string) (string, error) {
+	GetBucketRegion, err := m.S3ClientGetBucketLocationInterface.GetBucketLocation(
+		context.TODO(),
+		&s3.GetBucketLocationInput{
+			Bucket: &bucketName,
+		},
+	)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		return "", err
+	}
+	location := string(GetBucketRegion.LocationConstraint)
+	if location == "" {
+		location = "us-east-1"
+	}
+	return location, err
+}
+
+func (m *BucketsModule) getBucketPolicy(bucketName string, r string) (string, error) {
+
+	BucketPolicyObject, err := m.S3ClientGetBucketPolicyInterface.GetBucketPolicy(
+		context.TODO(),
+		&s3.GetBucketPolicyInput{
+			Bucket: &bucketName,
+		},
+		func(o *s3.Options) {
+			o.Region = r
+		},
+	)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		return "", err
+	}
+
+	return *BucketPolicyObject.Policy, nil
+
+}
+
+func (m *BucketsModule) analyseBucketPolicy(bucket *Bucket, dataReceiver chan Bucket) {
+	if bucket.Policy.IsPublic() {
+		bucket.Access = "Anyone"
+		//bucket.IsPublic = "public"
+
+		// if m.StorePolicies {
+		// 	m.storeAccessPolicy("public", bucket)
+		// }
+
+	}
+	if bucket.Policy.IsConditionallyPublic() {
+		bucket.IsConditionallyPublic = "public-wc"
+
+		// if m.StorePolicies {
+		// 	m.storeAccessPolicy("public-wc", bucket)
+		// }
+	}
+	if bucket.Policy.IsPublic() && !bucket.Policy.IsConditionallyPublic() {
+		bucket.IsPublic = "YES"
+	}
+
+	for i, statement := range bucket.Policy.Statement {
+
+		bucket.Statement = strconv.Itoa(i)
+		bucket.Actions = statement.GetAllActionsAsString()
+		bucket.Access = statement.GetAllPrincipalsAsString()
+		bucket.ConditionText = statement.GetConditionsInEnglish()
+
+		dataReceiver <- *bucket
+	}
 }

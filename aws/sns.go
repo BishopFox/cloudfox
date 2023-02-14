@@ -13,6 +13,7 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/BishopFox/cloudfox/internal/aws/policy"
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/arn"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/bishopfox/awsservicemap"
@@ -46,12 +47,18 @@ type AWSSNSClient interface {
 }
 
 type SNSTopic struct {
-	ARN string
-
+	ARN                   string
+	Name                  string
+	Region                string
 	Policy                policy.Policy
 	PolicyJSON            string
+	Access                string
 	IsPublic              string
 	IsConditionallyPublic string
+	Statement             string
+	Actions               string
+	ConditionText         string
+	ResourcePolicySummary string
 }
 
 func (m *SNSModule) PrintSNS(outputFormat string, outputDirectory string, verbosity int) {
@@ -101,9 +108,17 @@ func (m *SNSModule) PrintSNS(outputFormat string, outputDirectory string, verbos
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
-		"ARN",
-		"Public",
-		"Cond. Public",
+
+		//"ARN",
+		"Name",
+		"Region",
+		"Public?",
+		//"Stmt",
+		"Resource Policy Summary",
+		//"Who?",
+		//"Cond. Public",
+		//"Can do what?",
+		//"Conditions?",
 	}
 
 	sort.SliceStable(m.Topics, func(i, j int) bool {
@@ -115,9 +130,17 @@ func (m *SNSModule) PrintSNS(outputFormat string, outputDirectory string, verbos
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
-				m.Topics[i].ARN,
+				m.Topics[i].Name,
+				m.Topics[i].Region,
 				m.Topics[i].IsPublic,
-				m.Topics[i].IsConditionallyPublic,
+				//m.Topics[i].ARN,
+				//m.Topics[i].Statement,
+				m.Topics[i].ResourcePolicySummary,
+				//m.Topics[i].Access,
+				//m.Topics[i].IsConditionallyPublic,
+				//m.Topics[i].Actions,
+				//m.Topics[i].ConditionText,
+
 			},
 		)
 
@@ -202,12 +225,25 @@ func (m *SNSModule) getSNSTopicsPerRegion(r string, wg *sync.WaitGroup, semaphor
 				m.CommandCounter.Error++
 				break
 			}
-
-			if !topic.Policy.IsEmpty() {
-				m.analyseTopicPolicy(topic)
+			parsedArn, err := arn.Parse(aws.ToString(t.TopicArn))
+			if err != nil {
+				topic.Name = aws.ToString(t.TopicArn)
 			}
+			topic.Name = parsedArn.Resource
+			topic.Region = parsedArn.Region
 
-			dataReceiver <- *topic
+			// easier to just set the default state to be no and only flip it to yes if we have a case that matches
+			topic.IsPublic = "No"
+			if !topic.Policy.IsEmpty() {
+				m.analyseTopicPolicy(topic, dataReceiver)
+			} else {
+				// If the topic policy "resource policy" is empty, the only principals that have permisisons
+				// are those that are granted access by IAM policies
+				//topic.Access = "Private. Access allowed by IAM policies"
+				topic.Access = "Only intra-account access (via IAM) allowed"
+				dataReceiver <- *topic
+
+			}
 
 		}
 
@@ -252,9 +288,10 @@ func (m *SNSModule) getTopicWithAttributes(topicARN string, region string) (*SNS
 	return topic, nil
 }
 
-func (m *SNSModule) analyseTopicPolicy(topic *SNSTopic) {
+func (m *SNSModule) analyseTopicPolicy(topic *SNSTopic, dataReceiver chan SNSTopic) {
 	if topic.Policy.IsPublic() {
-		topic.IsPublic = "public"
+		topic.Access = "Anyone"
+		//topic.IsPublic = "public"
 
 		if m.StorePolicies {
 			m.storeAccessPolicy("public", topic)
@@ -267,6 +304,37 @@ func (m *SNSModule) analyseTopicPolicy(topic *SNSTopic) {
 		if m.StorePolicies {
 			m.storeAccessPolicy("public-wc", topic)
 		}
+	}
+	if topic.Policy.IsPublic() && !topic.Policy.IsConditionallyPublic() {
+		topic.IsPublic = "YES"
+	}
+
+	for i, statement := range topic.Policy.Statement {
+		var prefix string = ""
+		if len(topic.Policy.Statement) > 1 {
+			prefix = fmt.Sprintf("Statement %d says: ", i)
+		}
+		//topic.Statement = strconv.Itoa(i)
+		topic.ConditionText = statement.GetConditionsInEnglish()
+		topic.Actions = statement.GetAllActionsAsString()
+		topic.Access = statement.GetAllPrincipalsAsString()
+
+		if topic.ConditionText == "Default resource policy: Not exploitable\n" {
+			//topic.Actions = ""
+			//topic.Access = ""
+			topic.ResourcePolicySummary = prefix + "Default resource policy: Not exploitable\n"
+		} else if topic.ConditionText != "\n" && topic.ConditionText != "" {
+			//topic.Actions = statement.GetAllActionsAsString()
+			//topic.Access = statement.GetAllPrincipalsAsString()
+			topic.ResourcePolicySummary = fmt.Sprintf("%s%s can %s %s", prefix, strings.TrimSuffix(topic.Access, "\n"), topic.Actions, topic.ConditionText)
+
+		} else {
+			//topic.ResourcePolicySummary = topic.ConditionText
+			topic.ResourcePolicySummary = fmt.Sprintf("%s%s can %s", prefix, strings.TrimSuffix(topic.Access, "\n"), topic.Actions)
+
+		}
+
+		dataReceiver <- *topic
 	}
 }
 

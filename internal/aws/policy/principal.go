@@ -66,6 +66,15 @@ func (pspo *PolicyStatementPrincipalObject) IsPublic() bool {
 	return false
 }
 
+func (pspo *PolicyStatementPrincipalObject) GetListOfPrincipals() []string {
+	var allPrincipals []string
+	allPrincipals = append(allPrincipals, pspo.AWS...)
+	allPrincipals = append(allPrincipals, pspo.CanonicalUser...)
+	allPrincipals = append(allPrincipals, pspo.Federated...)
+	allPrincipals = append(allPrincipals, pspo.Service...)
+	return allPrincipals
+}
+
 type ListOrString []string
 
 func (ls *ListOrString) UnmarshalJSON(b []byte) error {

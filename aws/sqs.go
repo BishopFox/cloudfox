@@ -13,6 +13,7 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/BishopFox/cloudfox/internal/aws/policy"
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/arn"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -47,18 +48,18 @@ type AWSSQSClient interface {
 }
 
 type Queue struct {
-	URL string
-
+	URL                   string
+	Name                  string
+	Region                string
 	Policy                policy.Policy
 	PolicyJSON            string
+	Access                string
 	IsPublic              string
 	IsConditionallyPublic string
 	Statement             string
 	Actions               string
-	ConditionNum          string
-	ConditionVerb         string
-	ConditionType         string
-	ConditionValue        string
+	ConditionText         string
+	ResourcePolicySummary string
 }
 
 func (m *SQSModule) PrintSQS(outputFormat string, outputDirectory string, verbosity int) {
@@ -108,14 +109,16 @@ func (m *SQSModule) PrintSQS(outputFormat string, outputDirectory string, verbos
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
-		"URL",
-		"Public",
-		"Cond. Public",
-		"Statement",
-		"Actions",
-		"Condition",
-		"Condition Type",
-		"Condition Value",
+		// "URL",
+		"Name",
+		"Region",
+		"Public?",
+		//"Stmt",
+		//"Who?",
+		//"Cond. Public",
+		//"Can do what?",
+		//"Conditions?",
+		"Resource Policy Summary",
 	}
 
 	sort.SliceStable(m.Queues, func(i, j int) bool {
@@ -127,14 +130,16 @@ func (m *SQSModule) PrintSQS(outputFormat string, outputDirectory string, verbos
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
-				m.Queues[i].URL,
+				//	 m.Queues[i].URL,
+				m.Queues[i].Name,
+				m.Queues[i].Region,
 				m.Queues[i].IsPublic,
-				m.Queues[i].IsConditionallyPublic,
-				m.Queues[i].Statement,
-				m.Queues[i].Actions,
-				m.Queues[i].ConditionVerb,
-				m.Queues[i].ConditionType,
-				m.Queues[i].ConditionValue,
+				//m.Queues[i].Statement,
+				//m.Queues[i].Access,
+				//m.Queues[i].IsConditionallyPublic,
+				//m.Queues[i].Actions,
+				//m.Queues[i].ConditionText,
+				m.Queues[i].ResourcePolicySummary,
 			},
 		)
 
@@ -219,11 +224,19 @@ func (m *SQSModule) getSQSRecordsPerRegion(r string, wg *sync.WaitGroup, semapho
 				break
 			}
 
-			if !queue.Policy.IsEmpty() {
-				m.analyseQueuePolicy(queue)
-			}
+			// easier to just set the default state to be no and only flip it to yes if we have a case that matches
+			queue.IsPublic = "No"
 
-			dataReceiver <- *queue
+			if !queue.Policy.IsEmpty() {
+				m.analyseQueuePolicy(queue, dataReceiver)
+			} else {
+				// If the queue policy "resource policy" is empty, the only principals that have permisisons
+				// are those that are granted access by IAM policies
+				//queue.Access = "Private. Access allowed by IAM policies"
+				queue.Access = "Only intra-account access (via IAM) allowed"
+				dataReceiver <- *queue
+
+			}
 
 		}
 
@@ -248,6 +261,7 @@ func (m *SQSModule) getQueueWithAttributes(queueURL string, region string) (*Que
 			QueueUrl: aws.String(queueURL),
 			AttributeNames: []types.QueueAttributeName{
 				types.QueueAttributeNamePolicy,
+				types.QueueAttributeNameQueueArn,
 			},
 		},
 		func(o *sqs.Options) {
@@ -256,6 +270,15 @@ func (m *SQSModule) getQueueWithAttributes(queueURL string, region string) (*Que
 	)
 	if err != nil {
 		return nil, fmt.Errorf("GetQueueAttributes(%s) failed: %s", queueURL, err)
+	}
+
+	if queueArn, ok := GetQueueAttributes.Attributes[string(types.QueueAttributeNameQueueArn)]; ok {
+		parsedArn, err := arn.Parse(queueArn)
+		if err != nil {
+			queue.Name = queueArn
+		}
+		queue.Name = parsedArn.Resource
+		queue.Region = parsedArn.Region
 	}
 
 	if policyJSON, ok := GetQueueAttributes.Attributes[string(types.QueueAttributeNamePolicy)]; ok {
@@ -271,43 +294,56 @@ func (m *SQSModule) getQueueWithAttributes(queueURL string, region string) (*Que
 	return queue, nil
 }
 
-func (m *SQSModule) analyseQueuePolicy(queue *Queue) {
+func (m *SQSModule) analyseQueuePolicy(queue *Queue, dataReceiver chan Queue) {
 	if queue.Policy.IsPublic() {
-		queue.IsPublic = "public"
+		queue.Access = "Anyone"
 
 		if m.StorePolicies {
 			m.storeAccessPolicy("public", queue)
 		}
 
-	}
-	if queue.Policy.IsConditionallyPublic() {
+	} else if queue.Policy.IsConditionallyPublic() {
+
 		queue.IsConditionallyPublic = "public-wc"
+		queue.Access = "Access restricted by conditions"
 
 		if m.StorePolicies {
 			m.storeAccessPolicy("public-wc", queue)
 		}
 	}
 
+	if queue.Policy.IsPublic() && !queue.Policy.IsConditionallyPublic() {
+		queue.IsPublic = "YES"
+	}
+
 	for i, statement := range queue.Policy.Statement {
-		queue.Statement = strconv.Itoa(i)
-		actions := ""
-		for _, action := range statement.Action {
-			actions = fmt.Sprintf("%s%s\n", actions, action)
+		var prefix string = ""
+		if len(queue.Policy.Statement) > 1 {
+			prefix = fmt.Sprintf("Statement %d says: ", i)
 		}
-		queue.Actions = actions
-		for condition, kv := range statement.Condition {
-			arns := ""
-			for k, v := range kv {
-				queue.ConditionVerb = condition
-				queue.ConditionType = k
-				for _, arn := range v {
-					arns = fmt.Sprintf("%s%s\n", arns, arn)
-				}
-				queue.ConditionValue = arns
-			}
+
+		//queue.Statement = strconv.Itoa(i)
+		queue.Actions = statement.GetAllActionsAsString()
+		queue.Access = statement.GetAllPrincipalsAsString()
+		queue.ConditionText = statement.GetConditionsInEnglish()
+
+		if queue.ConditionText == "Default resource policy: Not exploitable\n" {
+			//queue.Actions = ""
+			//queue.Access = ""
+			queue.ResourcePolicySummary = prefix + "Default resource policy: Not exploitable\n"
+		} else if queue.ConditionText != "\n" && queue.ConditionText != "" {
+			//queue.Actions = statement.GetAllActionsAsString()
+			//queue.Access = statement.GetAllPrincipalsAsString()
+			queue.ResourcePolicySummary = fmt.Sprintf("%s%s can %s when the following conditions are met: %s", prefix, strings.TrimSuffix(queue.Access, "\n"), queue.Actions, queue.ConditionText)
+
+		} else {
+			//queue.ResourcePolicySummary = queue.ConditionText
+			//queue.ResourcePolicySummary = fmt.Sprintf("%s%s can %s when the following conditions are met: %s", prefix, strings.TrimSuffix(queue.Access, "\n"), queue.Actions, queue.ConditionText)
+			queue.ResourcePolicySummary = fmt.Sprintf("%s%s can %s", prefix, strings.TrimSuffix(queue.Access, "\n"), queue.Actions)
 
 		}
 
+		dataReceiver <- *queue
 	}
 }
 
