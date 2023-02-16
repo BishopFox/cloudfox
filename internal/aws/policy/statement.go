@@ -31,27 +31,27 @@ func (ps *PolicyStatement) GetAllActionsAsString() string {
 	actions := ""
 	for _, action := range ps.Action {
 		if ps.Effect == "Allow" {
-			actions = fmt.Sprintf("%s%s\n", actions, action)
+			actions = fmt.Sprintf("%scan %s & ", actions, action)
 		} else if ps.Effect == "Deny" {
-			actions = fmt.Sprintf("%snot %s\n", actions, action)
+			actions = fmt.Sprintf("%sis denied %s & ", actions, action)
 		}
 	}
-	return actions
+	return strings.TrimSuffix(actions, " & ")
 }
 
 func (ps *PolicyStatement) GetAllPrincipalsAsString() string {
 	principals := ""
 	for _, principal := range ps.Principal.O.GetListOfPrincipals() {
-		principals = fmt.Sprintf("%s%s\n", principals, principal)
+		principals = fmt.Sprintf("%s%s & ", principals, principal)
 	}
 	if principals == "" && ps.Principal.S == "*" {
 		principals = "Everyone"
 
 	}
-	return principals
+	return strings.TrimSuffix(principals, " & ")
 }
 
-func (ps *PolicyStatement) GetConditionsInEnglish() string {
+func (ps *PolicyStatement) GetConditionsInEnglish(caller string) string {
 	conditionTextAll := ""
 	for condition, kv := range ps.Condition {
 		if condition == "StringEquals" || condition == "ArnEquals" {
@@ -62,7 +62,7 @@ func (ps *PolicyStatement) GetConditionsInEnglish() string {
 		for k, v := range kv {
 			for _, arn := range v {
 				var conditionText string
-				if k == "AWS:SourceOwner" || k == "AWS:SourceAccount" {
+				if (k == "AWS:SourceOwner" || k == "AWS:SourceAccount") && contains(v, caller) {
 					conditionText = "Default resource policy: Not exploitable"
 				} else {
 					conditionText = fmt.Sprintf("Only when %s %s %s", k, condition, arn)
@@ -75,4 +75,23 @@ func (ps *PolicyStatement) GetConditionsInEnglish() string {
 
 	}
 	return conditionTextAll
+}
+
+func (ps *PolicyStatement) GetStatementSummaryInEnglish(caller string) string {
+
+	var statementSummary string
+	actions := ps.GetAllActionsAsString()
+	principals := ps.GetAllPrincipalsAsString()
+	conditions := ps.GetConditionsInEnglish(caller)
+
+	if conditions == "Default resource policy: Not exploitable\n" {
+		statementSummary = "Default resource policy: Not exploitable\n" + "\n"
+	} else if conditions != "\n" && conditions != "" {
+		statementSummary = fmt.Sprintf("%s %s when the following conditions are met:\n\t\t %s", strings.TrimSuffix(principals, "\n"), actions, conditions) + "\n"
+
+	} else {
+		statementSummary = fmt.Sprintf("%s %s", strings.TrimSuffix(principals, "\n"), actions) + "\n"
+
+	}
+	return statementSummary
 }

@@ -50,6 +50,7 @@ type AWSSQSClient interface {
 type Queue struct {
 	URL                   string
 	Name                  string
+	Arn                   string
 	Region                string
 	Policy                policy.Policy
 	PolicyJSON            string
@@ -110,8 +111,8 @@ func (m *SQSModule) PrintSQS(outputFormat string, outputDirectory string, verbos
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
 		// "URL",
-		"Name",
-		"Region",
+		"Arn",
+		//"Region",
 		"Public?",
 		//"Stmt",
 		//"Who?",
@@ -131,8 +132,8 @@ func (m *SQSModule) PrintSQS(outputFormat string, outputDirectory string, verbos
 			m.output.Body,
 			[]string{
 				//	 m.Queues[i].URL,
-				m.Queues[i].Name,
-				m.Queues[i].Region,
+				m.Queues[i].Arn,
+				//m.Queues[i].Region,
 				m.Queues[i].IsPublic,
 				//m.Queues[i].Statement,
 				//m.Queues[i].Access,
@@ -148,12 +149,11 @@ func (m *SQSModule) PrintSQS(outputFormat string, outputDirectory string, verbos
 		//m.output.OutputSelector(outputFormat)
 		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		fmt.Printf("[%s][%s] %s queues found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
-		if m.StorePolicies {
-			fmt.Printf("[%s][%s] Access policies stored to: %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.getLootDir())
-		}
+		fmt.Printf("[%s][%s] Access policies stored to: %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.getLootDir())
 	} else {
 		fmt.Printf("[%s][%s] No queues found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
+	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 
 }
 
@@ -277,6 +277,7 @@ func (m *SQSModule) getQueueWithAttributes(queueURL string, region string) (*Que
 		if err != nil {
 			queue.Name = queueArn
 		}
+		queue.Arn = queueArn
 		queue.Name = parsedArn.Resource
 		queue.Region = parsedArn.Region
 	}
@@ -295,22 +296,7 @@ func (m *SQSModule) getQueueWithAttributes(queueURL string, region string) (*Que
 }
 
 func (m *SQSModule) analyseQueuePolicy(queue *Queue, dataReceiver chan Queue) {
-	if queue.Policy.IsPublic() {
-		queue.Access = "Anyone"
-
-		if m.StorePolicies {
-			m.storeAccessPolicy("public", queue)
-		}
-
-	} else if queue.Policy.IsConditionallyPublic() {
-
-		queue.IsConditionallyPublic = "public-wc"
-		queue.Access = "Access restricted by conditions"
-
-		if m.StorePolicies {
-			m.storeAccessPolicy("public-wc", queue)
-		}
-	}
+	m.storeAccessPolicy(queue)
 
 	if queue.Policy.IsPublic() && !queue.Policy.IsConditionallyPublic() {
 		queue.IsPublic = "YES"
@@ -320,35 +306,18 @@ func (m *SQSModule) analyseQueuePolicy(queue *Queue, dataReceiver chan Queue) {
 		var prefix string = ""
 		if len(queue.Policy.Statement) > 1 {
 			prefix = fmt.Sprintf("Statement %d says: ", i)
-		}
-
-		//queue.Statement = strconv.Itoa(i)
-		queue.Actions = statement.GetAllActionsAsString()
-		queue.Access = statement.GetAllPrincipalsAsString()
-		queue.ConditionText = statement.GetConditionsInEnglish()
-
-		if queue.ConditionText == "Default resource policy: Not exploitable\n" {
-			//queue.Actions = ""
-			//queue.Access = ""
-			queue.ResourcePolicySummary = prefix + "Default resource policy: Not exploitable\n"
-		} else if queue.ConditionText != "\n" && queue.ConditionText != "" {
-			//queue.Actions = statement.GetAllActionsAsString()
-			//queue.Access = statement.GetAllPrincipalsAsString()
-			queue.ResourcePolicySummary = fmt.Sprintf("%s%s can %s when the following conditions are met: %s", prefix, strings.TrimSuffix(queue.Access, "\n"), queue.Actions, queue.ConditionText)
-
+			queue.ResourcePolicySummary = queue.ResourcePolicySummary + prefix + statement.GetStatementSummaryInEnglish(*m.Caller.Account)
 		} else {
-			//queue.ResourcePolicySummary = queue.ConditionText
-			//queue.ResourcePolicySummary = fmt.Sprintf("%s%s can %s when the following conditions are met: %s", prefix, strings.TrimSuffix(queue.Access, "\n"), queue.Actions, queue.ConditionText)
-			queue.ResourcePolicySummary = fmt.Sprintf("%s%s can %s", prefix, strings.TrimSuffix(queue.Access, "\n"), queue.Actions)
-
+			queue.ResourcePolicySummary = statement.GetStatementSummaryInEnglish(*m.Caller.Account)
 		}
+		queue.ResourcePolicySummary = strings.TrimSuffix(queue.ResourcePolicySummary, "\n")
 
-		dataReceiver <- *queue
 	}
+	dataReceiver <- *queue
 }
 
-func (m *SQSModule) storeAccessPolicy(dir string, queue *Queue) {
-	f := filepath.Join(m.getLootDir(), dir, fmt.Sprintf("%s.json", m.getQueueName(queue.URL)))
+func (m *SQSModule) storeAccessPolicy(queue *Queue) {
+	f := filepath.Join(m.getLootDir(), fmt.Sprintf("%s.json", m.getQueueName(queue.URL)))
 
 	if err := m.storeFile(f, queue.PolicyJSON); err != nil {
 		m.modLog.Error(err.Error())

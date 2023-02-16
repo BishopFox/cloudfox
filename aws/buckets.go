@@ -31,14 +31,19 @@ type S3GetBucketLocationAPI interface {
 	GetBucketLocation(ctx context.Context, params *s3.GetBucketLocationInput, optFns ...func(*s3.Options)) (*s3.GetBucketLocationOutput, error)
 }
 
+type S3GetPublicAccessBlockAPI interface {
+	GetPublicAccessBlock(ctx context.Context, params *s3.GetPublicAccessBlockInput, optFns ...func(*s3.Options)) (*s3.GetPublicAccessBlockOutput, error)
+}
+
 type BucketsModule struct {
 	// General configuration data
 	S3Client *s3.Client
 
 	// This interface is used for unit testing
-	S3ClientListBucketsInterface       S3ListBucketsAPI
-	S3ClientGetBucketPolicyInterface   S3GetBucketPolicyAPI
-	S3ClientGetBucketLocationInterface S3GetBucketLocationAPI
+	S3ClientListBucketsInterface          S3ListBucketsAPI
+	S3ClientGetBucketPolicyInterface      S3GetBucketPolicyAPI
+	S3ClientGetBucketLocationInterface    S3GetBucketLocationAPI
+	S3ClientGetPublicAccessBlockInterface S3GetPublicAccessBlockAPI
 
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
@@ -56,6 +61,7 @@ type BucketsModule struct {
 }
 
 type Bucket struct {
+	Arn                   string
 	AWSService            string
 	Region                string
 	Name                  string
@@ -67,6 +73,7 @@ type Bucket struct {
 	Statement             string
 	Actions               string
 	ConditionText         string
+	ResourcePolicySummary string
 }
 
 func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string, verbosity int) {
@@ -77,6 +84,7 @@ func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string
 	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
+	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 
 	if m.AWSProfile == "" {
 		m.AWSProfile = internal.BuildAWSPath(m.Caller)
@@ -116,14 +124,17 @@ func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
 		//"Service",
-		"Name",
 		"Public?",
+		//"Arn",
+		"Name",
 		"Region",
-		"Stmt",
-		"Who?",
+		//"Stmt",
+		//"Who?",
 		//"Cond. Public",
-		"Can do what?",
-		"Conditions?"}
+		//"Can do what?",
+		//"Conditions?",
+		"Resource Policy Summary",
+	}
 
 	// Table rows
 	for i := range m.Buckets {
@@ -131,26 +142,26 @@ func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string
 			m.output.Body,
 			[]string{
 				//m.Buckets[i].AWSService,
-				m.Buckets[i].Name,
 				m.Buckets[i].IsPublic,
+				m.Buckets[i].Name,
 				m.Buckets[i].Region,
-
-				m.Buckets[i].Statement,
-				m.Buckets[i].Access,
+				//m.Buckets[i].Arn,
+				//m.Buckets[i].Statement,
+				//m.Buckets[i].Access,
 				//m.Buckets[i].IsConditionallyPublic,
-				m.Buckets[i].Actions,
-				m.Buckets[i].ConditionText,
+				//m.Buckets[i].Actions,
+				//m.Buckets[i].ConditionText,
+				m.Buckets[i].ResourcePolicySummary,
 			},
 		)
 
 	}
 	if len(m.output.Body) > 0 {
-		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
-		////m.output.OutputSelector(outputFormat)
-		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
 		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		m.writeLoot(m.output.FilePath, verbosity, m.AWSProfile)
 		fmt.Printf("[%s][%s] %s buckets found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
+		fmt.Printf("[%s][%s] Bucket policies written to: %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.getLootDir())
+
 	} else {
 		fmt.Printf("[%s][%s] No buckets found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
@@ -254,7 +265,7 @@ func (m *BucketsModule) createBucketsRows(verbosity int, wg *sync.WaitGroup, sem
 		}
 		bucket.Region = region
 
-		policyJSON, err := m.getBucketPolicy(aws.ToString(b.Name), region)
+		policyJSON, err := m.getBucketPolicy(aws.ToString(b.Name))
 		if err != nil {
 			m.modLog.Error(err.Error())
 		} else {
@@ -317,8 +328,13 @@ func (m *BucketsModule) getBucketRegion(bucketName string) (string, error) {
 	return location, err
 }
 
-func (m *BucketsModule) getBucketPolicy(bucketName string, r string) (string, error) {
+func (m *BucketsModule) getBucketPolicy(bucketName string) (string, error) {
 
+	r, err := m.getBucketRegion(bucketName)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		return "", err
+	}
 	BucketPolicyObject, err := m.S3ClientGetBucketPolicyInterface.GetBucketPolicy(
 		context.TODO(),
 		&s3.GetBucketPolicyInput{
@@ -337,34 +353,73 @@ func (m *BucketsModule) getBucketPolicy(bucketName string, r string) (string, er
 
 }
 
+func (m *BucketsModule) getPublicAccessBlock(bucketName string) (*types.PublicAccessBlockConfiguration, error) {
+	r, err := m.getBucketRegion(bucketName)
+	PublicAccessBlock, err := m.S3ClientGetPublicAccessBlockInterface.GetPublicAccessBlock(
+		context.TODO(),
+		&s3.GetPublicAccessBlockInput{
+			Bucket: &bucketName,
+		},
+		func(o *s3.Options) {
+			o.Region = r
+		},
+	)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		return nil, err
+	}
+	return PublicAccessBlock.PublicAccessBlockConfiguration, err
+}
+
+func (m *BucketsModule) isPublicAccessBlocked(bucketName string) bool {
+	publicAccessBlock, err := m.getPublicAccessBlock(bucketName)
+	if err != nil {
+		return false
+	}
+	return publicAccessBlock.IgnorePublicAcls
+
+}
+
 func (m *BucketsModule) analyseBucketPolicy(bucket *Bucket, dataReceiver chan Bucket) {
-	if bucket.Policy.IsPublic() {
-		bucket.Access = "Anyone"
-		//bucket.IsPublic = "public"
+	m.storeAccessPolicy(bucket)
 
-		// if m.StorePolicies {
-		// 	m.storeAccessPolicy("public", bucket)
-		// }
-
-	}
-	if bucket.Policy.IsConditionallyPublic() {
-		bucket.IsConditionallyPublic = "public-wc"
-
-		// if m.StorePolicies {
-		// 	m.storeAccessPolicy("public-wc", bucket)
-		// }
-	}
-	if bucket.Policy.IsPublic() && !bucket.Policy.IsConditionallyPublic() {
+	if bucket.Policy.IsPublic() && !bucket.Policy.IsConditionallyPublic() && !m.isPublicAccessBlocked(bucket.Name) {
 		bucket.IsPublic = "YES"
 	}
 
 	for i, statement := range bucket.Policy.Statement {
+		var prefix string = ""
+		if len(bucket.Policy.Statement) > 1 {
+			prefix = fmt.Sprintf("Statement %d says: ", i)
+			bucket.ResourcePolicySummary = bucket.ResourcePolicySummary + prefix + statement.GetStatementSummaryInEnglish(*m.Caller.Account)
+		} else {
+			bucket.ResourcePolicySummary = statement.GetStatementSummaryInEnglish(*m.Caller.Account)
+		}
 
-		bucket.Statement = strconv.Itoa(i)
-		bucket.Actions = statement.GetAllActionsAsString()
-		bucket.Access = statement.GetAllPrincipalsAsString()
-		bucket.ConditionText = statement.GetConditionsInEnglish()
-
-		dataReceiver <- *bucket
 	}
+	dataReceiver <- *bucket
+
+}
+
+func (m *BucketsModule) storeAccessPolicy(bucket *Bucket) {
+	f := filepath.Join(m.getLootDir(), fmt.Sprintf("%s.json", bucket.Name))
+
+	if err := m.storeFile(f, bucket.PolicyJSON); err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+	}
+}
+
+func (m *BucketsModule) getLootDir() string {
+	return filepath.Join(m.output.FilePath, "loot", "bucket-policies")
+}
+
+func (m *BucketsModule) storeFile(filename string, policy string) error {
+	err := os.MkdirAll(filepath.Dir(filename), 0750)
+	if err != nil && !os.IsExist(err) {
+		return fmt.Errorf("creating parent dirs: %s", err)
+	}
+
+	return os.WriteFile(filename, []byte(policy), 0644)
+
 }

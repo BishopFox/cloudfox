@@ -109,9 +109,9 @@ func (m *SNSModule) PrintSNS(outputFormat string, outputDirectory string, verbos
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
 
-		//"ARN",
-		"Name",
-		"Region",
+		"ARN",
+		//"Name",
+		//"Region",
 		"Public?",
 		//"Stmt",
 		"Resource Policy Summary",
@@ -130,10 +130,11 @@ func (m *SNSModule) PrintSNS(outputFormat string, outputDirectory string, verbos
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
-				m.Topics[i].Name,
-				m.Topics[i].Region,
+				//m.Topics[i].Name,
+				//m.Topics[i].Region,
+				m.Topics[i].ARN,
 				m.Topics[i].IsPublic,
-				//m.Topics[i].ARN,
+
 				//m.Topics[i].Statement,
 				m.Topics[i].ResourcePolicySummary,
 				//m.Topics[i].Access,
@@ -149,12 +150,11 @@ func (m *SNSModule) PrintSNS(outputFormat string, outputDirectory string, verbos
 		//m.output.OutputSelector(outputFormat)
 		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		fmt.Printf("[%s][%s] %s topics found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
-		if m.StorePolicies {
-			fmt.Printf("[%s][%s] Access policies stored to: %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.getLootDir())
-		}
+		fmt.Printf("[%s][%s] Access policies stored to: %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.getLootDir())
 	} else {
 		fmt.Printf("[%s][%s] No topics found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
+	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 
 }
 
@@ -289,22 +289,8 @@ func (m *SNSModule) getTopicWithAttributes(topicARN string, region string) (*SNS
 }
 
 func (m *SNSModule) analyseTopicPolicy(topic *SNSTopic, dataReceiver chan SNSTopic) {
-	if topic.Policy.IsPublic() {
-		topic.Access = "Anyone"
-		//topic.IsPublic = "public"
+	m.storeAccessPolicy(topic)
 
-		if m.StorePolicies {
-			m.storeAccessPolicy("public", topic)
-		}
-
-	}
-	if topic.Policy.IsConditionallyPublic() {
-		topic.IsConditionallyPublic = "public-wc"
-
-		if m.StorePolicies {
-			m.storeAccessPolicy("public-wc", topic)
-		}
-	}
 	if topic.Policy.IsPublic() && !topic.Policy.IsConditionallyPublic() {
 		topic.IsPublic = "YES"
 	}
@@ -313,33 +299,19 @@ func (m *SNSModule) analyseTopicPolicy(topic *SNSTopic, dataReceiver chan SNSTop
 		var prefix string = ""
 		if len(topic.Policy.Statement) > 1 {
 			prefix = fmt.Sprintf("Statement %d says: ", i)
-		}
-		//topic.Statement = strconv.Itoa(i)
-		topic.ConditionText = statement.GetConditionsInEnglish()
-		topic.Actions = statement.GetAllActionsAsString()
-		topic.Access = statement.GetAllPrincipalsAsString()
-
-		if topic.ConditionText == "Default resource policy: Not exploitable\n" {
-			//topic.Actions = ""
-			//topic.Access = ""
-			topic.ResourcePolicySummary = prefix + "Default resource policy: Not exploitable\n"
-		} else if topic.ConditionText != "\n" && topic.ConditionText != "" {
-			//topic.Actions = statement.GetAllActionsAsString()
-			//topic.Access = statement.GetAllPrincipalsAsString()
-			topic.ResourcePolicySummary = fmt.Sprintf("%s%s can %s %s", prefix, strings.TrimSuffix(topic.Access, "\n"), topic.Actions, topic.ConditionText)
-
+			topic.ResourcePolicySummary = topic.ResourcePolicySummary + prefix + statement.GetStatementSummaryInEnglish(*m.Caller.Account)
 		} else {
-			//topic.ResourcePolicySummary = topic.ConditionText
-			topic.ResourcePolicySummary = fmt.Sprintf("%s%s can %s", prefix, strings.TrimSuffix(topic.Access, "\n"), topic.Actions)
-
+			topic.ResourcePolicySummary = statement.GetStatementSummaryInEnglish(*m.Caller.Account)
 		}
+		topic.ResourcePolicySummary = strings.TrimSuffix(topic.ResourcePolicySummary, "\n")
 
-		dataReceiver <- *topic
 	}
+	dataReceiver <- *topic
+
 }
 
-func (m *SNSModule) storeAccessPolicy(dir string, topic *SNSTopic) {
-	f := filepath.Join(m.getLootDir(), dir, fmt.Sprintf("%s.json", m.getTopicName(topic.ARN)))
+func (m *SNSModule) storeAccessPolicy(topic *SNSTopic) {
+	f := filepath.Join(m.getLootDir(), fmt.Sprintf("%s.json", m.getTopicName(topic.ARN)))
 
 	if err := m.storeFile(f, topic.PolicyJSON); err != nil {
 		m.modLog.Error(err.Error())
