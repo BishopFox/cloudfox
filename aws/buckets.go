@@ -123,16 +123,9 @@ func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
-		//"Service",
-		"Public?",
-		//"Arn",
 		"Name",
 		"Region",
-		//"Stmt",
-		//"Who?",
-		//"Cond. Public",
-		//"Can do what?",
-		//"Conditions?",
+		"Public?",
 		"Resource Policy Summary",
 	}
 
@@ -141,16 +134,9 @@ func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
-				//m.Buckets[i].AWSService,
-				m.Buckets[i].IsPublic,
 				m.Buckets[i].Name,
 				m.Buckets[i].Region,
-				//m.Buckets[i].Arn,
-				//m.Buckets[i].Statement,
-				//m.Buckets[i].Access,
-				//m.Buckets[i].IsConditionallyPublic,
-				//m.Buckets[i].Actions,
-				//m.Buckets[i].ConditionText,
+				m.Buckets[i].IsPublic,
 				m.Buckets[i].ResourcePolicySummary,
 			},
 		)
@@ -395,6 +381,7 @@ func (m *BucketsModule) analyseBucketPolicy(bucket *Bucket, dataReceiver chan Bu
 		} else {
 			bucket.ResourcePolicySummary = statement.GetStatementSummaryInEnglish(*m.Caller.Account)
 		}
+		bucket.ResourcePolicySummary = strings.TrimSuffix(bucket.ResourcePolicySummary, "\n")
 
 	}
 	dataReceiver <- *bucket

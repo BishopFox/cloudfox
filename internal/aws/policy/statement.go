@@ -29,14 +29,26 @@ func (ps *PolicyStatement) IsAllow() bool {
 
 func (ps *PolicyStatement) GetAllActionsAsString() string {
 	actions := ""
-	for _, action := range ps.Action {
+	if len(ps.Action) < 2 {
+		for _, action := range ps.Action {
+			if ps.Effect == "Allow" {
+				actions = fmt.Sprintf("%scan %s & ", actions, action)
+			} else if ps.Effect == "Deny" {
+				actions = fmt.Sprintf("%sis denied %s & ", actions, action)
+			}
+		}
+	} else {
 		if ps.Effect == "Allow" {
-			actions = fmt.Sprintf("%scan %s & ", actions, action)
+			actions = fmt.Sprintf("can perform %d actions", len(ps.Action))
 		} else if ps.Effect == "Deny" {
-			actions = fmt.Sprintf("%sis denied %s & ", actions, action)
+			actions = fmt.Sprintf("is denied %d actions", len(ps.Action))
+
 		}
 	}
-	return strings.TrimSuffix(actions, " & ")
+	actions = strings.TrimSuffix(actions, " & ")
+	actions = actions + "\n"
+
+	return actions
 }
 
 func (ps *PolicyStatement) GetAllPrincipalsAsString() string {
@@ -65,7 +77,7 @@ func (ps *PolicyStatement) GetConditionsInEnglish(caller string) string {
 				if (k == "AWS:SourceOwner" || k == "AWS:SourceAccount") && contains(v, caller) {
 					conditionText = "Default resource policy: Not exploitable"
 				} else {
-					conditionText = fmt.Sprintf("Only when %s %s %s", k, condition, arn)
+					conditionText = fmt.Sprintf("->   Only when %s %s %s", k, condition, arn)
 				}
 
 				conditionTextAll = fmt.Sprintf("%s%s\n", conditionTextAll, conditionText)
@@ -87,10 +99,10 @@ func (ps *PolicyStatement) GetStatementSummaryInEnglish(caller string) string {
 	if conditions == "Default resource policy: Not exploitable\n" {
 		statementSummary = "Default resource policy: Not exploitable\n" + "\n"
 	} else if conditions != "\n" && conditions != "" {
-		statementSummary = fmt.Sprintf("%s %s when the following conditions are met:\n\t\t %s", strings.TrimSuffix(principals, "\n"), actions, conditions) + "\n"
+		statementSummary = fmt.Sprintf("%s %s %s", strings.TrimSuffix(principals, "\n"), actions, conditions) + "\n"
 
 	} else {
-		statementSummary = fmt.Sprintf("%s %s", strings.TrimSuffix(principals, "\n"), actions) + "\n"
+		statementSummary = fmt.Sprintf("%s %s\n", strings.TrimSuffix(principals, "\n"), actions)
 
 	}
 	return statementSummary

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/BishopFox/cloudfox/internal/aws/policy"
@@ -110,15 +111,8 @@ func (m *SQSModule) PrintSQS(outputFormat string, outputDirectory string, verbos
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
-		// "URL",
 		"Arn",
-		//"Region",
 		"Public?",
-		//"Stmt",
-		//"Who?",
-		//"Cond. Public",
-		//"Can do what?",
-		//"Conditions?",
 		"Resource Policy Summary",
 	}
 
@@ -131,15 +125,8 @@ func (m *SQSModule) PrintSQS(outputFormat string, outputDirectory string, verbos
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
-				//	 m.Queues[i].URL,
 				m.Queues[i].Arn,
-				//m.Queues[i].Region,
 				m.Queues[i].IsPublic,
-				//m.Queues[i].Statement,
-				//m.Queues[i].Access,
-				//m.Queues[i].IsConditionallyPublic,
-				//m.Queues[i].Actions,
-				//m.Queues[i].ConditionText,
 				m.Queues[i].ResourcePolicySummary,
 			},
 		)
@@ -148,6 +135,7 @@ func (m *SQSModule) PrintSQS(outputFormat string, outputDirectory string, verbos
 	if len(m.output.Body) > 0 {
 		//m.output.OutputSelector(outputFormat)
 		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+		m.writeLoot(m.output.FilePath, verbosity, m.AWSProfile)
 		fmt.Printf("[%s][%s] %s queues found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 		fmt.Printf("[%s][%s] Access policies stored to: %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.getLootDir())
 	} else {
@@ -183,6 +171,66 @@ func (m *SQSModule) Receiver(receiver chan Queue, receiverDone chan bool) {
 			return
 		}
 	}
+}
+
+func (m *SQSModule) writeLoot(outputDirectory string, verbosity int, profile string) {
+	path := filepath.Join(outputDirectory, "loot")
+	err := os.MkdirAll(path, os.ModePerm)
+	if err != nil {
+		m.modLog.Error(err.Error())
+	}
+	lootCommandsFile := filepath.Join(path, "sqs-commands.txt")
+
+	var out string
+	out = out + fmt.Sprintln("#############################################")
+	out = out + fmt.Sprintln("# The profile you will use to perform these commands is most likely not the profile you used to run CloudFox")
+	out = out + fmt.Sprintln("# Set the $profile environment variable to the profile you are going to use to inspect the buckets.")
+	out = out + fmt.Sprintln("# E.g., export profile=dev-prod.")
+	out = out + fmt.Sprintln("#############################################")
+	out = out + fmt.Sprintln("")
+
+	for _, queue := range m.Queues {
+
+		out = out + fmt.Sprintln("# "+strings.Repeat("-", utf8.RuneCountInString(queue.Name)+7))
+		out = out + fmt.Sprintf("# Queue: %s\n", queue.Name)
+		out = out + fmt.Sprintln("# "+strings.Repeat("-", utf8.RuneCountInString(queue.Name)+7))
+		out = out + fmt.Sprintln("# Receive a message from the queue ")
+		out = out + fmt.Sprintln("")
+		out = out + fmt.Sprintln("# WARNING: The following command can cause adverse effects in the environment. In production environments, use this command with caution")
+		out = out + fmt.Sprintln("# WARNING: and in coordination with application owners. Receiving a message does not delete it from the queue, but this action")
+		out = out + fmt.Sprintln("# WARNING: can potentially cause latency or it could DoS applications that consume the queue messages")
+		out = out + fmt.Sprintln("")
+		out = out + fmt.Sprintf("aws --profile $profile --region %s sqs receive-message --queue-url  %s --attribute-names All --message-attribute-names All --max-number-of-messages 5 --visibility-timeout 0\n\n", queue.Region, queue.URL)
+		out = out + fmt.Sprintln("# Send a message to the queue without attributes file")
+		out = out + fmt.Sprintln("")
+		out = out + fmt.Sprintln("# WARNING: The following command can cause adverse effects in the environment. Like fuzzing a web application, if you inject")
+		out = out + fmt.Sprintln("# WARNING: malicious data you might find a vulnerability, but you also might break something. Unless you really know how the")
+		out = out + fmt.Sprintln("# WARNING: messages are consumed, you should leave fuzzing to non-production environments.")
+		out = out + fmt.Sprintf("aws --profile $profile --region %s sqs send-message --queue-url %s --message-body \"[INSERT MESSAGE BODY]\"\n\n", queue.Region, queue.URL)
+		out = out + fmt.Sprintln("")
+		out = out + fmt.Sprintln("# Send message to the queue with attributes file (You'll have to create and populate the file)")
+		out = out + fmt.Sprintln("")
+		out = out + fmt.Sprintln("# WARNING: The following command can cause adverse effects in the environment. Like fuzzing a web application, if you inject")
+		out = out + fmt.Sprintln("# WARNING: malicious data you might find a vulnerability, but you also might break something. Unless you really know how the")
+		out = out + fmt.Sprintln("# WARNING: messages are consumed, you should leave fuzzing to non-production environments.")
+		out = out + fmt.Sprintf("aws --profile $profile --region %s sqs send-message --queue-url %s --message-body \"[INSERT MESSAGE BODY] --message-attributes file://./file.json\"\n\n", queue.Region, queue.URL)
+
+	}
+
+	err = os.WriteFile(lootCommandsFile, []byte(out), 0644)
+	if err != nil {
+		m.modLog.Error(err.Error())
+	}
+
+	if verbosity > 2 {
+		fmt.Println()
+		fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("Use the commands below to send/receive sqs messages if you have right permissions."))
+		fmt.Print(out)
+		fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("End of loot file."))
+	}
+
+	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), lootCommandsFile)
+
 }
 
 func (m *SQSModule) getSQSRecordsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Queue) {
@@ -310,7 +358,6 @@ func (m *SQSModule) analyseQueuePolicy(queue *Queue, dataReceiver chan Queue) {
 		} else {
 			queue.ResourcePolicySummary = statement.GetStatementSummaryInEnglish(*m.Caller.Account)
 		}
-		queue.ResourcePolicySummary = strings.TrimSuffix(queue.ResourcePolicySummary, "\n")
 
 	}
 	dataReceiver <- *queue
