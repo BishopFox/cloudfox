@@ -304,7 +304,8 @@ var (
 		Run:    runSecretsCommand,
 	}
 
-	TagsCommand = &cobra.Command{
+	MaxResourcesPerRegion int
+	TagsCommand           = &cobra.Command{
 		Use:     "tags",
 		Aliases: []string{"tag"},
 		Short:   "Enumerate resources with tags.",
@@ -362,6 +363,9 @@ func init() {
 
 	//  iam-simulator module flags
 	PermissionsCommand.Flags().StringVar(&PermissionsPrincipal, "principal", "", "Principal Arn")
+
+	// tags module flags
+	TagsCommand.Flags().IntVarP(&MaxResourcesPerRegion, "max-resources-per-region", "m", 0, "Maximum number of resources to enumerate per region. Set to 0 to enumerate all resources.")
 
 	// Global flags for the AWS modules
 	AWSCommands.PersistentFlags().StringVarP(&AWSProfile, "profile", "p", "", "AWS CLI Profile Name")
@@ -884,12 +888,13 @@ func runTagsCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.TagsModule{
-			ResourceGroupsTaggingApiClient: resourcegroupstaggingapi.NewFromConfig(AWSConfig),
-			Caller:                         *caller,
-			AWSRegions:                     internal.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile:                     profile,
-			Goroutines:                     Goroutines,
-			WrapTable:                      AWSWrapTable,
+			ResourceGroupsTaggingApiInterface: resourcegroupstaggingapi.NewFromConfig(AWSConfig),
+			Caller:                            *caller,
+			AWSRegions:                        internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile:                        profile,
+			Goroutines:                        Goroutines,
+			WrapTable:                         AWSWrapTable,
+			MaxResourcesPerRegion:             MaxResourcesPerRegion,
 		}
 		m.PrintTags(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 	}
@@ -1043,13 +1048,15 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		inventory2.PrintInventoryPerRegion(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
 		tagsMod := aws.TagsModule{
-			ResourceGroupsTaggingApiClient: resourceClient,
-			Caller:                         *Caller,
-			AWSRegions:                     internal.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile:                     profile,
-			Goroutines:                     Goroutines,
+			ResourceGroupsTaggingApiInterface: resourceClient,
+			Caller:                            *Caller,
+			AWSRegions:                        internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile:                        profile,
+			Goroutines:                        Goroutines,
+			MaxResourcesPerRegion:             1000,
 		}
-		tagsMod.PrintTags(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		var verbosityOverride int = 1
+		tagsMod.PrintTags(AWSOutputFormat, AWSOutputDirectory, verbosityOverride)
 
 		// Service and endpoint enum section
 		fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Gathering the info you'll want for your application & service enumeration needs."))
