@@ -59,9 +59,9 @@ var (
 		"ecr:GetAuthorizationToken",
 		"eks:UpdateClusterConfig",
 		"lambda:ListFunctions",
-		"ecs:DescribeTaskDefinition",
-		"apprunner:DescribeService",
 		"ec2:DescribeInstanceAttributeInput",
+		"sns:Subscribe",
+		"sqs:SendMessage",
 	}
 	TxtLogger = internal.TxtLogger()
 )
