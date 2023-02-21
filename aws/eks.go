@@ -129,37 +129,71 @@ func (m *EKSModule) EKS(outputFormat string, outputDirectory string, verbosity i
 	}
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
-	m.output.Headers = []string{
-		"Service",
-		"Region",
-		"Name",
-		//"Endpoint",
-		"Public",
-		//"OIDC",
-		"NodeGroup",
-		"Role",
-		"IsAdminRole?",
-		"CanPrivEscToAdmin?",
+	if m.pmapperError == nil {
+		m.output.Headers = []string{
+			"Service",
+			"Region",
+			"Name",
+			//"Endpoint",
+			"Public",
+			//"OIDC",
+			"NodeGroup",
+			"Role",
+			"IsAdminRole?",
+			"CanPrivEscToAdmin?",
+		}
+	} else {
+		m.output.Headers = []string{
+			"Service",
+			"Region",
+			"Name",
+			//"Endpoint",
+			"Public",
+			//"OIDC",
+			"NodeGroup",
+			"Role",
+			"IsAdminRole?",
+			//"CanPrivEscToAdmin?",
+		}
 	}
 
 	// Table rows
-	for i := range m.Clusters {
-		m.output.Body = append(
-			m.output.Body,
-			[]string{
-				m.Clusters[i].AWSService,
-				m.Clusters[i].Region,
-				m.Clusters[i].Name,
-				//m.Clusters[i].Endpoint,
-				m.Clusters[i].Public,
-				//m.Clusters[i].OIDC,
-				m.Clusters[i].NodeGroup,
-				m.Clusters[i].Role,
-				m.Clusters[i].Admin,
-				m.Clusters[i].CanPrivEsc,
-			},
-		)
 
+	for i := range m.Clusters {
+		if m.pmapperError == nil {
+			m.output.Body = append(
+				m.output.Body,
+				[]string{
+					m.Clusters[i].AWSService,
+					m.Clusters[i].Region,
+					m.Clusters[i].Name,
+					//m.Clusters[i].Endpoint,
+					m.Clusters[i].Public,
+					//m.Clusters[i].OIDC,
+					m.Clusters[i].NodeGroup,
+					m.Clusters[i].Role,
+					m.Clusters[i].Admin,
+					m.Clusters[i].CanPrivEsc,
+				},
+			)
+		} else {
+			m.output.Body = append(
+				m.output.Body,
+				[]string{
+					m.Clusters[i].AWSService,
+					m.Clusters[i].Region,
+					m.Clusters[i].Name,
+					//m.Clusters[i].Endpoint,
+					m.Clusters[i].Public,
+					//m.Clusters[i].OIDC,
+					m.Clusters[i].NodeGroup,
+					m.Clusters[i].Role,
+					m.Clusters[i].Admin,
+					//m.Clusters[i].CanPrivEsc,
+				},
+			)
+
+		}
 	}
 
 	var seen []string

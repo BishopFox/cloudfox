@@ -142,34 +142,68 @@ func (m *ECSTasksModule) Receiver(receiver chan MappedECSTask, receiverDone chan
 }
 
 func (m *ECSTasksModule) printECSTaskData(outputFormat string, outputDirectory string, dataReceiver chan MappedECSTask) {
-	m.output.Headers = []string{
-		"Cluster",
-		"TaskDefinition",
-		"LaunchType",
-		"ID",
-		"External IP",
-		"Internal IP",
-		"RoleArn",
-		"IsAdminRole?",
-		"CanPrivEscToAdmin?",
+	if m.pmapperError == nil {
+		m.output.Headers = []string{
+			"Cluster",
+			"TaskDefinition",
+			"LaunchType",
+			"ID",
+			"External IP",
+			"Internal IP",
+			"RoleArn",
+			"IsAdminRole?",
+			"CanPrivEscToAdmin?",
+		}
+	} else {
+		m.output.Headers = []string{
+			"Cluster",
+			"TaskDefinition",
+			"LaunchType",
+			"ID",
+			"External IP",
+			"Internal IP",
+			"RoleArn",
+			"IsAdminRole?",
+			//"CanPrivEscToAdmin?",
+		}
 	}
 
-	for _, ecsTask := range m.MappedECSTasks {
-		m.output.Body = append(
-			m.output.Body,
-			[]string{
-				ecsTask.Cluster,
-				ecsTask.TaskDefinition,
-				ecsTask.LaunchType,
-				ecsTask.ID,
-				ecsTask.ExternalIP,
-				ecsTask.PrivateIP,
-				ecsTask.Role,
-				ecsTask.Admin,
-				ecsTask.CanPrivEsc,
-			},
-		)
+	if m.pmapperError == nil {
+		for _, ecsTask := range m.MappedECSTasks {
+			m.output.Body = append(
+				m.output.Body,
+				[]string{
+					ecsTask.Cluster,
+					ecsTask.TaskDefinition,
+					ecsTask.LaunchType,
+					ecsTask.ID,
+					ecsTask.ExternalIP,
+					ecsTask.PrivateIP,
+					ecsTask.Role,
+					ecsTask.Admin,
+					ecsTask.CanPrivEsc,
+				},
+			)
+		}
+	} else {
+		for _, ecsTask := range m.MappedECSTasks {
+			m.output.Body = append(
+				m.output.Body,
+				[]string{
+					ecsTask.Cluster,
+					ecsTask.TaskDefinition,
+					ecsTask.LaunchType,
+					ecsTask.ID,
+					ecsTask.ExternalIP,
+					ecsTask.PrivateIP,
+					ecsTask.Role,
+					ecsTask.Admin,
+					//ecsTask.CanPrivEsc,
+				},
+			)
+		}
 	}
+
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)

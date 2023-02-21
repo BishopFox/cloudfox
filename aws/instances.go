@@ -220,39 +220,81 @@ func (m *InstancesModule) printInstancesUserDataAttributesOnly(outputFormat stri
 func (m *InstancesModule) printGeneralInstanceData(outputFormat string, outputDirectory string, dataReceiver chan MappedInstance) {
 	// Prepare Table headers
 	//m.output.Headers = table.Row{
-	m.output.Headers = []string{
-		//"ID",
-		"Name",
-		//"Arn",
-		"ID",
-		"Zone",
-		"State",
-		"External IP",
-		"Internal IP",
-		"Role",
-		"IsAdminRole?",
-		"CanPrivEscToAdmin?",
+	if m.pmapperError == nil {
+
+		m.output.Headers = []string{
+			//"ID",
+			"Name",
+			//"Arn",
+			"ID",
+			"Zone",
+			"State",
+			"External IP",
+			"Internal IP",
+			"Role",
+			"IsAdminRole?",
+			"CanPrivEscToAdmin?",
+		}
+	} else {
+		m.output.Headers = []string{
+			//"ID",
+			"Name",
+			//"Arn",
+			"ID",
+			"Zone",
+			"State",
+			"External IP",
+			"Internal IP",
+			"Role",
+			"IsAdminRole?",
+			//"CanPrivEscToAdmin?",
+		}
 	}
+
 	//Table rows
-	for _, instance := range m.MappedInstances {
-		m.output.Body = append(
-			m.output.Body,
-			//table.Row{
-			[]string{
-				//instance.ID,
-				instance.Name,
-				//instance.Arn,
-				instance.ID,
-				instance.AvailabilityZone,
-				instance.State,
-				instance.ExternalIP,
-				instance.PrivateIP,
-				instance.Role,
-				instance.Admin,
-				instance.CanPrivEsc,
-			},
-		)
+	if m.pmapperError == nil {
+
+		for _, instance := range m.MappedInstances {
+			m.output.Body = append(
+				m.output.Body,
+				//table.Row{
+				[]string{
+					//instance.ID,
+					instance.Name,
+					//instance.Arn,
+					instance.ID,
+					instance.AvailabilityZone,
+					instance.State,
+					instance.ExternalIP,
+					instance.PrivateIP,
+					instance.Role,
+					instance.Admin,
+					instance.CanPrivEsc,
+				},
+			)
+		}
+	} else {
+		for _, instance := range m.MappedInstances {
+			m.output.Body = append(
+				m.output.Body,
+				//table.Row{
+				[]string{
+					//instance.ID,
+					instance.Name,
+					//instance.Arn,
+					instance.ID,
+					instance.AvailabilityZone,
+					instance.State,
+					instance.ExternalIP,
+					instance.PrivateIP,
+					instance.Role,
+					instance.Admin,
+					//instance.CanPrivEsc,
+				},
+			)
+		}
 	}
+
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		////m.output.OutputSelector(outputFormat)

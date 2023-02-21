@@ -131,12 +131,23 @@ func (m *RoleTrustsModule) printPrincipalTrusts(outputFormat string, outputDirec
 	m.output.Body = nil
 	m.output.CallingModule = "role-trusts"
 	m.output.FullFilename = "role-trusts-principals"
-	m.output.Headers = []string{
-		"Role",
-		"Trusted Principal",
-		"ExternalID",
-		"IsAdmin?",
-		"CanPrivEscToAdmin?",
+	if m.pmapperError == nil {
+		m.output.Headers = []string{
+			"Role",
+			"Trusted Principal",
+			"ExternalID",
+			"IsAdmin?",
+			"CanPrivEscToAdmin?",
+		}
+	} else {
+		m.output.Headers = []string{
+			"Role",
+			"Trusted Principal",
+			"ExternalID",
+			"IsAdmin?",
+			//"CanPrivEscToAdmin?",
+		}
+
 	}
 
 	for _, role := range m.AnalyzedRoles {
@@ -147,7 +158,12 @@ func (m *RoleTrustsModule) printPrincipalTrusts(outputFormat string, outputDirec
 				column3 := statement.Condition.StringEquals.StsExternalID
 				column4 := role.Admin
 				column5 := role.CanPrivEsc
-				m.output.Body = append(m.output.Body, []string{column1, column2, column3, column4, column5})
+				if m.pmapperError == nil {
+					m.output.Body = append(m.output.Body, []string{column1, column2, column3, column4, column5})
+				} else {
+					m.output.Body = append(m.output.Body, []string{column1, column2, column3, column4})
+				}
+
 			}
 		}
 	}
@@ -170,12 +186,22 @@ func (m *RoleTrustsModule) printServiceTrusts(outputFormat string, outputDirecto
 	m.output.Body = nil
 	m.output.CallingModule = "role-trusts"
 	m.output.FullFilename = "role-trusts-services"
-	m.output.Headers = []string{
-		"Role",
-		"Trusted Service",
-		"ExternalID",
-		"IsAdmin?",
-		"CanPrivEscToAdmin?",
+	if m.pmapperError == nil {
+		m.output.Headers = []string{
+			"Role",
+			"Trusted Service",
+			"ExternalID",
+			"IsAdmin?",
+			"CanPrivEscToAdmin?",
+		}
+	} else {
+		m.output.Headers = []string{
+			"Role",
+			"Trusted Service",
+			"ExternalID",
+			"IsAdmin?",
+			//"CanPrivEscToAdmin?",
+		}
 	}
 
 	for _, role := range m.AnalyzedRoles {
@@ -186,7 +212,11 @@ func (m *RoleTrustsModule) printServiceTrusts(outputFormat string, outputDirecto
 				column3 := statement.Condition.StringEquals.StsExternalID
 				column4 := role.Admin
 				column5 := role.CanPrivEsc
-				m.output.Body = append(m.output.Body, []string{column1, column2, column3, column4, column5})
+				if m.pmapperError == nil {
+					m.output.Body = append(m.output.Body, []string{column1, column2, column3, column4, column5})
+				} else {
+					m.output.Body = append(m.output.Body, []string{column1, column2, column3, column4})
+				}
 			}
 		}
 	}
@@ -210,12 +240,23 @@ func (m *RoleTrustsModule) printFederatedTrusts(outputFormat string, outputDirec
 	m.output.CallingModule = "role-trusts"
 	m.output.FullFilename = "role-trusts-federated"
 	var column3, column2 string
-	m.output.Headers = []string{
-		"Role",
-		"Trusted Provider",
-		"Trusted Subject",
-		"IsAdmin?",
-		"CanPrivEscToAdmin?",
+	if m.pmapperError == nil {
+
+		m.output.Headers = []string{
+			"Role",
+			"Trusted Provider",
+			"Trusted Subject",
+			"IsAdmin?",
+			"CanPrivEscToAdmin?",
+		}
+	} else {
+		m.output.Headers = []string{
+			"Role",
+			"Trusted Provider",
+			"Trusted Subject",
+			"IsAdmin?",
+			//"CanPrivEscToAdmin?",
+		}
 	}
 
 	for _, role := range m.AnalyzedRoles {
@@ -226,7 +267,11 @@ func (m *RoleTrustsModule) printFederatedTrusts(outputFormat string, outputDirec
 				column2, column3 = parseFederatedTrustPolicy(statement)
 				column4 := role.Admin
 				column5 := role.CanPrivEsc
-				m.output.Body = append(m.output.Body, []string{column1, column2, column3, column4, column5})
+				if m.pmapperError == nil {
+					m.output.Body = append(m.output.Body, []string{column1, column2, column3, column4, column5})
+				} else {
+					m.output.Body = append(m.output.Body, []string{column1, column2, column3, column4})
+				}
 			}
 		}
 	}
