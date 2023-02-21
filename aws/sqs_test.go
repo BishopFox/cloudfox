@@ -34,7 +34,7 @@ func TestSQSQueues(t *testing.T) {
 
 	m := SQSModule{
 		SQSClient:  c,
-		AWSProfile: "default",
+		AWSProfile: "unittesting",
 		AWSRegions: []string{"us-east-1", "us-west-1", "us-west-2"},
 		Caller: sts.GetCallerIdentityOutput{
 			Arn:     aws.String("arn:aws:iam::123456789012:user/cloudfox_unit_tests"),
@@ -50,7 +50,7 @@ func TestSQSQueues(t *testing.T) {
 	// execute the module with verbosity set to 2
 	m.PrintSQS("table", tmpDir, 2)
 
-	resultsFilePath := filepath.Join(tmpDir, "cloudfox-output/aws/default/table/sqs.txt")
+	resultsFilePath := filepath.Join(tmpDir, "cloudfox-output/aws/unittesting/table/sqs.txt")
 	resultsFile, err := afero.ReadFile(fs, resultsFilePath)
 	if err != nil {
 		t.Fatalf("Cannot read output file at %s: %s", resultsFilePath, err)

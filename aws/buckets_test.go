@@ -3,6 +3,8 @@ package aws
 import (
 	"context"
 	"log"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/spf13/afero"
 )
 
 type MockedS3Buckets struct {
@@ -63,7 +66,7 @@ func (m *MockedS3Buckets) GetPublicAccessBlock(ctx context.Context, params *s3.G
 		PublicAccessBlockConfiguration: &types.PublicAccessBlockConfiguration{
 			BlockPublicAcls:       true,
 			BlockPublicPolicy:     true,
-			IgnorePublicAcls:      true,
+			IgnorePublicAcls:      false,
 			RestrictPublicBuckets: true,
 		},
 	}
@@ -89,7 +92,7 @@ func TestListBuckets(t *testing.T) {
 					Account: aws.String("123456789012"),
 				},
 				OutputFormat: "table",
-				AWSProfile:   "test",
+				AWSProfile:   "unittesting",
 				Goroutines:   30,
 				AWSRegions:   []string{"us-east-1", "us-west-1", "us-west-2"},
 			},
@@ -99,11 +102,31 @@ func TestListBuckets(t *testing.T) {
 		},
 	}
 
-	internal.MockFileSystem(true)
+	fs := internal.MockFileSystem(true)
+	defer internal.MockFileSystem(false)
+	tmpDir := "."
+
 	for _, subtest := range subtests {
 		t.Run(subtest.name, func(t *testing.T) {
 			subtest.testModule.PrintBuckets(subtest.testModule.OutputFormat, subtest.outputDirectory, subtest.verbosity)
 			for index, expectedBucket := range subtest.expectedResult {
+				resultsFilePath := filepath.Join(tmpDir, "cloudfox-output/aws/unittesting/table/buckets.txt")
+				resultsFile, err := afero.ReadFile(fs, resultsFilePath)
+				if err != nil {
+					t.Fatalf("Cannot read output file at %s: %s", resultsFilePath, err)
+				}
+
+				expectedResults := strings.TrimLeft(`
+╭───────────────┬───────────┬─────────┬───────────────────────────╮
+│     Name      │  Region   │ Public? │  Resource Policy Summary  │
+├───────────────┼───────────┼─────────┼───────────────────────────┤
+│ mockBucket123 │ us-east-2 │ YES     │ Everyone can s3:GetObject │
+╰───────────────┴───────────┴─────────┴───────────────────────────╯
+`, "\n")
+				if string(resultsFile) != expectedResults {
+					t.Fatalf("Unexpected results:\n%s\n", resultsFile)
+				}
+
 				if expectedBucket.Name != subtest.testModule.Buckets[index].Name {
 					log.Fatal("Bucket name does not match expected name")
 				}

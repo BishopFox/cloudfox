@@ -28,7 +28,7 @@ func TestSNSQueues(t *testing.T) {
 	m := SNSModule{
 		SNSClient:     c,
 		StorePolicies: true,
-		AWSProfile:    "default",
+		AWSProfile:    "unittesting",
 		AWSRegions:    []string{"us-east-1", "us-west-1", "us-west-2"},
 		Caller: sts.GetCallerIdentityOutput{
 			Arn:     aws.String("arn:aws:iam::123456789012:user/cloudfox_unit_tests"),
@@ -44,7 +44,7 @@ func TestSNSQueues(t *testing.T) {
 	// execute the module with verbosity = 2
 	m.PrintSNS("table", tmpDir, 2)
 
-	resultsFilePath := filepath.Join(tmpDir, "cloudfox-output/aws/default/table/sns.txt")
+	resultsFilePath := filepath.Join(tmpDir, "cloudfox-output/aws/unittesting/table/sns.txt")
 	resultsFile, err := afero.ReadFile(fs, resultsFilePath)
 	if err != nil {
 		t.Fatalf("Cannot read output file at %s: %s", resultsFilePath, err)
