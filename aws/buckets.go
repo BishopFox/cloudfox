@@ -19,31 +19,22 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type S3ListBucketsAPI interface {
+type AWSS3Client interface {
 	ListBuckets(ctx context.Context, params *s3.ListBucketsInput, optFns ...func(*s3.Options)) (*s3.ListBucketsOutput, error)
-}
-
-type S3GetBucketPolicyAPI interface {
 	GetBucketPolicy(ctx context.Context, params *s3.GetBucketPolicyInput, optFns ...func(*s3.Options)) (*s3.GetBucketPolicyOutput, error)
-}
-
-type S3GetBucketLocationAPI interface {
 	GetBucketLocation(ctx context.Context, params *s3.GetBucketLocationInput, optFns ...func(*s3.Options)) (*s3.GetBucketLocationOutput, error)
-}
-
-type S3GetPublicAccessBlockAPI interface {
 	GetPublicAccessBlock(ctx context.Context, params *s3.GetPublicAccessBlockInput, optFns ...func(*s3.Options)) (*s3.GetPublicAccessBlockOutput, error)
 }
 
 type BucketsModule struct {
 	// General configuration data
-	S3Client *s3.Client
+	S3Client AWSS3Client
 
 	// This interface is used for unit testing
-	S3ClientListBucketsInterface          S3ListBucketsAPI
-	S3ClientGetBucketPolicyInterface      S3GetBucketPolicyAPI
-	S3ClientGetBucketLocationInterface    S3GetBucketLocationAPI
-	S3ClientGetPublicAccessBlockInterface S3GetPublicAccessBlockAPI
+	// S3ClientListBucketsInterface          AWSS3Client
+	// S3ClientGetBucketPolicyInterface      AWSS3Client
+	// S3ClientGetBucketLocationInterface    AWSS3Client
+	// S3ClientGetPublicAccessBlockInterface AWSS3Client
 
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
@@ -260,7 +251,7 @@ func (m *BucketsModule) createBucketsRows(verbosity int, wg *sync.WaitGroup, sem
 
 		policy, err := policy.ParseJSONPolicy([]byte(policyJSON))
 		if err != nil {
-			m.modLog.Error("parsing bucket access policy (%s) as JSON: %s", name, err)
+			m.modLog.Error(fmt.Sprintf("parsing bucket access policy (%s) as JSON: %s", name, err))
 		} else {
 			bucket.Policy = policy
 		}
@@ -282,7 +273,7 @@ func (m *BucketsModule) createBucketsRows(verbosity int, wg *sync.WaitGroup, sem
 func (m *BucketsModule) listBuckets() ([]types.Bucket, error) {
 
 	var buckets []types.Bucket
-	ListBuckets, err := m.S3ClientListBucketsInterface.ListBuckets(
+	ListBuckets, err := m.S3Client.ListBuckets(
 		context.TODO(),
 		&s3.ListBucketsInput{},
 	)
@@ -297,7 +288,7 @@ func (m *BucketsModule) listBuckets() ([]types.Bucket, error) {
 }
 
 func (m *BucketsModule) getBucketRegion(bucketName string) (string, error) {
-	GetBucketRegion, err := m.S3ClientGetBucketLocationInterface.GetBucketLocation(
+	GetBucketRegion, err := m.S3Client.GetBucketLocation(
 		context.TODO(),
 		&s3.GetBucketLocationInput{
 			Bucket: &bucketName,
@@ -321,7 +312,7 @@ func (m *BucketsModule) getBucketPolicy(bucketName string) (string, error) {
 		m.modLog.Error(err.Error())
 		return "", err
 	}
-	BucketPolicyObject, err := m.S3ClientGetBucketPolicyInterface.GetBucketPolicy(
+	BucketPolicyObject, err := m.S3Client.GetBucketPolicy(
 		context.TODO(),
 		&s3.GetBucketPolicyInput{
 			Bucket: &bucketName,
@@ -341,7 +332,7 @@ func (m *BucketsModule) getBucketPolicy(bucketName string) (string, error) {
 
 func (m *BucketsModule) getPublicAccessBlock(bucketName string) (*types.PublicAccessBlockConfiguration, error) {
 	r, err := m.getBucketRegion(bucketName)
-	PublicAccessBlock, err := m.S3ClientGetPublicAccessBlockInterface.GetPublicAccessBlock(
+	PublicAccessBlock, err := m.S3Client.GetPublicAccessBlock(
 		context.TODO(),
 		&s3.GetPublicAccessBlockInput{
 			Bucket: &bucketName,

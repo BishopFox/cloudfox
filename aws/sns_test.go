@@ -26,10 +26,14 @@ func TestSNSQueues(t *testing.T) {
 	}
 
 	m := SNSModule{
-		SNSClient:  c,
-		AWSProfile: "default",
-		AWSRegions: []string{"us-east-1", "us-west-1", "us-west-2"},
-		Caller:     sts.GetCallerIdentityOutput{Arn: aws.String("arn:aws:iam::123456789012:user/cloudfox_unit_tests")},
+		SNSClient:     c,
+		StorePolicies: true,
+		AWSProfile:    "default",
+		AWSRegions:    []string{"us-east-1", "us-west-1", "us-west-2"},
+		Caller: sts.GetCallerIdentityOutput{
+			Arn:     aws.String("arn:aws:iam::123456789012:user/cloudfox_unit_tests"),
+			Account: aws.String("123456789012"),
+		},
 		Goroutines: 3,
 	}
 
@@ -37,8 +41,8 @@ func TestSNSQueues(t *testing.T) {
 	defer internal.MockFileSystem(false)
 	tmpDir := "."
 
-	// execute the module with 3 goroutines
-	m.PrintSNS("table", tmpDir, 3)
+	// execute the module with verbosity = 2
+	m.PrintSNS("table", tmpDir, 2)
 
 	resultsFilePath := filepath.Join(tmpDir, "cloudfox-output/aws/default/table/sns.txt")
 	resultsFile, err := afero.ReadFile(fs, resultsFilePath)
@@ -46,12 +50,13 @@ func TestSNSQueues(t *testing.T) {
 		t.Fatalf("Cannot read output file at %s: %s", resultsFilePath, err)
 	}
 	expectedResults := strings.TrimLeft(`
-╭──────────────────────────────────────────────────┬────────┬──────────────╮
-│                       ARN                        │ Public │ Cond. Public │
-├──────────────────────────────────────────────────┼────────┼──────────────┤
-│ arn:aws:sns:us-east-1:123456789012:MyFirstTopic  │        │ public-wc    │
-│ arn:aws:sns:us-west-2:123456789012:MySecondTopic │        │              │
-╰──────────────────────────────────────────────────┴────────┴──────────────╯
+╭──────────────────────────────────────────────────┬─────────┬─────────────────────────────────────────────╮
+│                       ARN                        │ Public? │           Resource Policy Summary           │
+├──────────────────────────────────────────────────┼─────────┼─────────────────────────────────────────────┤
+│ arn:aws:sns:us-east-1:123456789012:MyFirstTopic  │ No      │ Everyone can SNS:Publish                    │
+│                                                  │         │ -> Only when aws:sourceVpce = vpce-1a2b3c4d │
+│ arn:aws:sns:us-west-2:123456789012:MySecondTopic │ No      │                                             │
+╰──────────────────────────────────────────────────┴─────────┴─────────────────────────────────────────────╯
 `, "\n")
 	if string(resultsFile) != expectedResults {
 		t.Fatalf("Unexpected results:\n%s\n", resultsFile)

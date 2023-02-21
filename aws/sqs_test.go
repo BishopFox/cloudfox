@@ -18,10 +18,17 @@ import (
 func TestSQSQueues(t *testing.T) {
 	c := &mockedSQSClient{
 		Queues: map[string]map[string]string{
-			"https://sqs.us-east-1.amazonaws.com/123456789012/some-name": {
-				string(types.QueueAttributeNamePolicy): `{"Version": "2012-10-17","Id": "anyID","Statement": [{"Sid":"unconditionally_public","Effect": "Allow","Principal": {"AWS": "*"},"Action": "sqs:*","Resource": "arn:aws:sqs:*:123456789012:some-queue"}]}`,
+			"https://sqs.us-east-1.amazonaws.com/123456789012/policy-queue": {
+				string(types.QueueAttributeNamePolicy):   `{"Version": "2012-10-17","Id": "anyID","Statement": [{"Sid":"unconditionally_public","Effect": "Allow","Principal": {"AWS": "*"},"Action": "sqs:*","Resource": "arn:aws:sqs:*:123456789012:some-queue"}]}`,
+				string(types.QueueAttributeNameQueueArn): `arn:aws:sqs:us-east-1:123456789012:policy-queue`,
 			},
-			"https://sqs.us-west-1.amazonaws.com/123456789012/another-name": {},
+			"https://sqs.us-west-1.amazonaws.com/123456789012/no-policy-queue": {
+				string(types.QueueAttributeNameQueueArn): `arn:aws:sqs:us-east-1:123456789012:no-policy-queue`,
+			},
+			"https://sqs.us-east-1.amazonaws.com/123456789012/condition-queue": {
+				string(types.QueueAttributeNamePolicy):   `{"Version":"2012-10-17","Id":"SQS-Account-Policy","Statement":[{"Sid":"Allows3Access","Effect":"Allow","Principal":{"Service":"s3.amazonaws.com"},"Action":"SQS:SendMessage","Resource":"arn:aws:sqs:us-west-2:123456789012:terraform-example-queue"},{"Sid":"AllowRoleAccess","Effect":"Allow","Principal":{"AWS":"arn:aws:iam::123456789012:root"},"Action":"SQS:*","Resource":"arn:aws:sqs:us-west-2:123456789012:terraform-example-queue"},{"Sid":"AllowFullAccess","Effect":"Allow","Principal":"*","Action":["SQS:SendMessage","SQS:ReceiveMessage"],"Resource":"arn:aws:sqs:us-west-2:123456789012:terraform-example-queue"}]}`,
+				string(types.QueueAttributeNameQueueArn): `arn:aws:sqs:us-east-1:123456789012:condition-queue`,
+			},
 		},
 	}
 
@@ -29,7 +36,10 @@ func TestSQSQueues(t *testing.T) {
 		SQSClient:  c,
 		AWSProfile: "default",
 		AWSRegions: []string{"us-east-1", "us-west-1", "us-west-2"},
-		Caller:     sts.GetCallerIdentityOutput{Arn: aws.String("arn:aws:iam::123456789012:user/cloudfox_unit_tests")},
+		Caller: sts.GetCallerIdentityOutput{
+			Arn:     aws.String("arn:aws:iam::123456789012:user/cloudfox_unit_tests"),
+			Account: aws.String("123456789012"),
+		},
 		Goroutines: 3,
 	}
 
@@ -37,8 +47,8 @@ func TestSQSQueues(t *testing.T) {
 	defer internal.MockFileSystem(false)
 	tmpDir := "."
 
-	// execute the module with 3 goroutines
-	m.PrintSQS("table", tmpDir, 3)
+	// execute the module with verbosity set to 2
+	m.PrintSQS("table", tmpDir, 2)
 
 	resultsFilePath := filepath.Join(tmpDir, "cloudfox-output/aws/default/table/sqs.txt")
 	resultsFile, err := afero.ReadFile(fs, resultsFilePath)
@@ -46,12 +56,19 @@ func TestSQSQueues(t *testing.T) {
 		t.Fatalf("Cannot read output file at %s: %s", resultsFilePath, err)
 	}
 	expectedResults := strings.TrimLeft(`
-╭───────────────────────────────────────────────────────────────┬────────┬──────────────╮
-│                              URL                              │ Public │ Cond. Public │
-├───────────────────────────────────────────────────────────────┼────────┼──────────────┤
-│ https://sqs.us-east-1.amazonaws.com/123456789012/some-name    │ public │              │
-│ https://sqs.us-west-1.amazonaws.com/123456789012/another-name │        │              │
-╰───────────────────────────────────────────────────────────────┴────────┴──────────────╯
+╭────────────────────────────────────────────────────┬─────────┬────────────────────────────────────────────────────────────╮
+│                        Arn                         │ Public? │                  Resource Policy Summary                   │
+├────────────────────────────────────────────────────┼─────────┼────────────────────────────────────────────────────────────┤
+│ arn:aws:sqs:us-east-1:123456789012:condition-queue │ YES     │ Statement 0 says: s3.amazonaws.com can SQS:SendMessage     │
+│                                                    │         │                                                            │
+│                                                    │         │ Statement 1 says: arn:aws:iam::123456789012:root can SQS:* │
+│                                                    │         │                                                            │
+│                                                    │         │ Statement 2 says: Everyone can perform 2 actions           │
+│                                                    │         │                                                            │
+│ arn:aws:sqs:us-east-1:123456789012:policy-queue    │ YES     │ * can sqs:*                                                │
+│                                                    │         │                                                            │
+│ arn:aws:sqs:us-east-1:123456789012:no-policy-queue │ No      │                                                            │
+╰────────────────────────────────────────────────────┴─────────┴────────────────────────────────────────────────────────────╯
 `, "\n")
 	if string(resultsFile) != expectedResults {
 		t.Fatalf("Unexpected results:\n%s\n", resultsFile)
