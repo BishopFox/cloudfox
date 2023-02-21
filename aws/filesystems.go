@@ -168,7 +168,7 @@ func (m *FilesystemsModule) Receiver(receiver chan FilesystemObject, receiverDon
 func (m *FilesystemsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan FilesystemObject) {
 	defer wg.Done()
 	servicemap := &awsservicemap.AwsServiceMap{
-		JsonFileSource: "EMBEDDED_IN_PACKAGE",
+		JsonFileSource: "DOWNLOAD_FROM_AWS",
 	}
 	res, err := servicemap.IsServiceInRegion("efs", r)
 	if err != nil {

@@ -195,7 +195,7 @@ func (m *LambdasModule) executeChecks(r string, wg *sync.WaitGroup, semaphore ch
 	defer wg.Done()
 
 	servicemap := &awsservicemap.AwsServiceMap{
-		JsonFileSource: "EMBEDDED_IN_PACKAGE",
+		JsonFileSource: "DOWNLOAD_FROM_AWS",
 	}
 	res, err := servicemap.IsServiceInRegion("lambda", r)
 	if err != nil {
