@@ -150,7 +150,7 @@ func (m *CloudformationModule) PrintCloudformationStacks(outputFormat string, ou
 func (m *CloudformationModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan CFStack) {
 	defer wg.Done()
 	servicemap := &awsservicemap.AwsServiceMap{
-		JsonFileSource: "EMBEDDED_IN_PACKAGE",
+		JsonFileSource: "DOWNLOAD_FROM_AWS",
 	}
 	serviceRegions, err := servicemap.GetRegionsForService("cloudformation")
 	if err != nil {

@@ -73,7 +73,7 @@ func GetEnabledRegions(awsProfile string, version string) []string {
 
 	if err != nil {
 		servicemap := &awsservicemap.AwsServiceMap{
-			JsonFileSource: "EMBEDDED_IN_PACKAGE",
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
 		}
 		AWSRegions, err := servicemap.GetAllRegions()
 		if err != nil {

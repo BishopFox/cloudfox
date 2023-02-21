@@ -178,7 +178,7 @@ func (m *EnvsModule) Receiver(receiver chan EnvironmentVariable, receiverDone ch
 func (m *EnvsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan EnvironmentVariable) {
 	defer wg.Done()
 	servicemap := &awsservicemap.AwsServiceMap{
-		JsonFileSource: "EMBEDDED_IN_PACKAGE",
+		JsonFileSource: "DOWNLOAD_FROM_AWS",
 	}
 	res, _ := servicemap.IsServiceInRegion("ecs", r)
 	if res {

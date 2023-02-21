@@ -180,7 +180,7 @@ func (m *ElasticNetworkInterfacesModule) writeLoot(outputDirectory string) {
 func (m *ElasticNetworkInterfacesModule) executeChecks(r string, wg *sync.WaitGroup, dataReceiver chan MappedENI) {
 	defer wg.Done()
 	servicemap := &awsservicemap.AwsServiceMap{
-		JsonFileSource: "EMBEDDED_IN_PACKAGE",
+		JsonFileSource: "DOWNLOAD_FROM_AWS",
 	}
 	res, err := servicemap.IsServiceInRegion("ec2", r)
 	if err != nil {

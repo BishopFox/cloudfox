@@ -91,15 +91,15 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 	fmt.Printf("[%s][%s] Enumerating EC2 instances in all regions for account %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 
 	// Initialized the tools we'll need to check if any workload roles are admin or can privesc to admin
-	fmt.Printf("[%s][%s] Attempting to build a PrivEsc graph in memory using local pmapper data if it exists on the filesystem.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	//fmt.Printf("[%s][%s] Attempting to build a PrivEsc graph in memory using local pmapper data if it exists on the filesystem.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	m.pmapperMod, m.pmapperError = initPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines)
 	m.iamSimClient = initIAMSimClient(m.IAMSimulatePrincipalPolicyClient, m.Caller, m.AWSProfile, m.Goroutines)
 
-	if m.pmapperError != nil {
-		fmt.Printf("[%s][%s] No pmapper data found for this account. Using cloudfox's iam-simulator for role analysis.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
-	} else {
-		fmt.Printf("[%s][%s] Found pmapper data for this account. Using it for role analysis.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
-	}
+	// if m.pmapperError != nil {
+	// 	fmt.Printf("[%s][%s] No pmapper data found for this account. Using cloudfox's iam-simulator for role analysis.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	// } else {
+	// 	fmt.Printf("[%s][%s] Found pmapper data for this account. Using it for role analysis.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	// }
 	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 	wg := new(sync.WaitGroup)
 
@@ -220,39 +220,81 @@ func (m *InstancesModule) printInstancesUserDataAttributesOnly(outputFormat stri
 func (m *InstancesModule) printGeneralInstanceData(outputFormat string, outputDirectory string, dataReceiver chan MappedInstance) {
 	// Prepare Table headers
 	//m.output.Headers = table.Row{
-	m.output.Headers = []string{
-		//"ID",
-		"Name",
-		//"Arn",
-		"ID",
-		"Zone",
-		"State",
-		"External IP",
-		"Internal IP",
-		"Role",
-		"IsAdminRole?",
-		"CanPrivEscToAdmin?",
+	if m.pmapperError == nil {
+
+		m.output.Headers = []string{
+			//"ID",
+			"Name",
+			//"Arn",
+			"ID",
+			"Zone",
+			"State",
+			"External IP",
+			"Internal IP",
+			"Role",
+			"IsAdminRole?",
+			"CanPrivEscToAdmin?",
+		}
+	} else {
+		m.output.Headers = []string{
+			//"ID",
+			"Name",
+			//"Arn",
+			"ID",
+			"Zone",
+			"State",
+			"External IP",
+			"Internal IP",
+			"Role",
+			"IsAdminRole?",
+			//"CanPrivEscToAdmin?",
+		}
 	}
+
 	//Table rows
-	for _, instance := range m.MappedInstances {
-		m.output.Body = append(
-			m.output.Body,
-			//table.Row{
-			[]string{
-				//instance.ID,
-				instance.Name,
-				//instance.Arn,
-				instance.ID,
-				instance.AvailabilityZone,
-				instance.State,
-				instance.ExternalIP,
-				instance.PrivateIP,
-				instance.Role,
-				instance.Admin,
-				instance.CanPrivEsc,
-			},
-		)
+	if m.pmapperError == nil {
+
+		for _, instance := range m.MappedInstances {
+			m.output.Body = append(
+				m.output.Body,
+				//table.Row{
+				[]string{
+					//instance.ID,
+					instance.Name,
+					//instance.Arn,
+					instance.ID,
+					instance.AvailabilityZone,
+					instance.State,
+					instance.ExternalIP,
+					instance.PrivateIP,
+					instance.Role,
+					instance.Admin,
+					instance.CanPrivEsc,
+				},
+			)
+		}
+	} else {
+		for _, instance := range m.MappedInstances {
+			m.output.Body = append(
+				m.output.Body,
+				//table.Row{
+				[]string{
+					//instance.ID,
+					instance.Name,
+					//instance.Arn,
+					instance.ID,
+					instance.AvailabilityZone,
+					instance.State,
+					instance.ExternalIP,
+					instance.PrivateIP,
+					instance.Role,
+					instance.Admin,
+					//instance.CanPrivEsc,
+				},
+			)
+		}
 	}
+
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 		////m.output.OutputSelector(outputFormat)
@@ -308,7 +350,7 @@ func (m *InstancesModule) writeLoot(outputDirectory string) {
 func (m *InstancesModule) executeChecks(instancesToSearch []string, r string, wg *sync.WaitGroup, dataReceiver chan MappedInstance) {
 	defer wg.Done()
 	servicemap := &awsservicemap.AwsServiceMap{
-		JsonFileSource: "EMBEDDED_IN_PACKAGE",
+		JsonFileSource: "DOWNLOAD_FROM_AWS",
 	}
 	res, err := servicemap.IsServiceInRegion("ec2", r)
 	if err != nil {

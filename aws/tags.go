@@ -13,20 +13,26 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/arn"
 	"github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi"
+	"github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/sirupsen/logrus"
 )
 
+type TagsGetResourcesAPI interface {
+	GetResources(ctx context.Context, params *resourcegroupstaggingapi.GetResourcesInput, optFns ...func(*resourcegroupstaggingapi.Options)) (*resourcegroupstaggingapi.GetResourcesOutput, error)
+}
+
 type TagsModule struct {
 	// General configuration data
-	ResourceGroupsTaggingApiClient *resourcegroupstaggingapi.Client
+	ResourceGroupsTaggingApiInterface TagsGetResourcesAPI
 
-	Caller       sts.GetCallerIdentityOutput
-	AWSRegions   []string
-	OutputFormat string
-	Goroutines   int
-	AWSProfile   string
-	WrapTable    bool
+	Caller                sts.GetCallerIdentityOutput
+	AWSRegions            []string
+	OutputFormat          string
+	Goroutines            int
+	AWSProfile            string
+	WrapTable             bool
+	MaxResourcesPerRegion int
 
 	// Main module data
 	Tags               []Tag
@@ -134,6 +140,10 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 		fmt.Printf("[%s][%s] %s tags found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 		count := m.countUniqueResourcesWithTags()
 		fmt.Printf("[%s][%s] %d unique resources with tags found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), count)
+		if m.MaxResourcesPerRegion != 0 {
+			fmt.Printf("[%s][%s] NOTE: Only looked at %d resources per region. To enum all tags for all resources,\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.MaxResourcesPerRegion)
+			fmt.Printf("[%s][%s] NOTE: run the tags command without the -m/--max-resources-per-region flag set.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+		}
 	} else {
 		fmt.Printf("[%s][%s] No tags found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
@@ -212,62 +222,84 @@ func (m *TagsModule) getTagsPerRegion(r string, wg *sync.WaitGroup, semaphore ch
 		<-semaphore
 	}()
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
 
-	for {
-		GetResources, err := m.ResourceGroupsTaggingApiClient.GetResources(
-			context.TODO(),
-			&resourcegroupstaggingapi.GetResourcesInput{
-				PaginationToken: PaginationControl,
-			},
-			func(o *resourcegroupstaggingapi.Options) {
-				o.Region = r
-			},
-		)
+	resources, err := m.getResources(r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+	}
+	//var parsedArn types.Arn
+	for _, resource := range resources {
+		var resourceType string
+		resourceArn := aws.ToString(resource.ResourceARN)
+		parsedArn, err := arn.Parse(resourceArn)
+		if parsedArn.Service != "s3" {
+			resourceType = strings.Split(parsedArn.Resource, ":")[0]
+			resourceType = strings.Split(resourceType, "/")[0]
+		} else {
+			resourceType = "bucket"
+		}
+		//resourceName := strings.Split(parsedArn.Resource, ":")[]
 		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
 			break
 		}
-		//var parsedArn types.Arn
-		for _, resource := range GetResources.ResourceTagMappingList {
-			var resourceType string
-			resourceArn := aws.ToString(resource.ResourceARN)
-			parsedArn, err := arn.Parse(resourceArn)
-			if parsedArn.Service != "s3" {
-				resourceType = strings.Split(parsedArn.Resource, ":")[0]
-				resourceType = strings.Split(resourceType, "/")[0]
-			} else {
-				resourceType = "bucket"
+
+		for _, tag := range resource.Tags {
+			key := aws.ToString(tag.Key)
+			value := aws.ToString(tag.Value)
+
+			dataReceiver <- Tag{
+				AWSService: parsedArn.Service,
+				Arn:        resourceArn,
+				Name:       parsedArn.Resource,
+				Region:     r,
+				Type:       resourceType,
+				Key:        key,
+				Value:      value,
 			}
-			//resourceName := strings.Split(parsedArn.Resource, ":")[]
+
+		}
+
+	}
+
+}
+
+func (m *TagsModule) getResources(r string) ([]types.ResourceTagMapping, error) {
+	var PaginationControl *string
+	var resources []types.ResourceTagMapping
+
+	// a for loop that accepts user input. If no user input, it will continue to paginate until there are no mor pages. If there is user input, it will paginate until the user input is reached.
+
+	for {
+		if len(resources) < m.MaxResourcesPerRegion || m.MaxResourcesPerRegion == 0 {
+			GetResources, err := m.ResourceGroupsTaggingApiInterface.GetResources(
+				context.TODO(),
+				&resourcegroupstaggingapi.GetResourcesInput{
+					PaginationToken: PaginationControl,
+				},
+				func(o *resourcegroupstaggingapi.Options) {
+					o.Region = r
+				},
+			)
 			if err != nil {
+				m.modLog.Error(err.Error())
+				m.CommandCounter.Error++
+				return resources, err
+			}
+
+			resources = append(resources, GetResources.ResourceTagMappingList...)
+
+			if aws.ToString(GetResources.PaginationToken) != "" {
+				PaginationControl = GetResources.PaginationToken
+			} else {
+				PaginationControl = nil
 				break
 			}
 
-			for _, tag := range resource.Tags {
-				key := aws.ToString(tag.Key)
-				value := aws.ToString(tag.Value)
-
-				dataReceiver <- Tag{
-					AWSService: parsedArn.Service,
-					Arn:        resourceArn,
-					Name:       parsedArn.Resource,
-					Region:     r,
-					Type:       resourceType,
-					Key:        key,
-					Value:      value,
-				}
-
-			}
-
-		}
-
-		if aws.ToString(GetResources.PaginationToken) != "" {
-			PaginationControl = GetResources.PaginationToken
 		} else {
-			PaginationControl = nil
-			break
+			return resources, nil
 		}
+
 	}
+	return resources, nil
 }
