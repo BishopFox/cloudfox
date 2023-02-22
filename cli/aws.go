@@ -114,6 +114,28 @@ var (
 		Run:    runECRCommand,
 	}
 
+	StoreSQSAccessPolicies bool
+	SQSCommand             = &cobra.Command{
+		Use:     "sqs",
+		Aliases: []string{},
+		Short:   "Enumerate SQS Queues.",
+		Long: "\nUse case examples:\n" +
+			os.Args[0] + " aws sqs --profile readonly_profile",
+		PreRun: awsPreRun,
+		Run:    runSQSCommand,
+	}
+
+	StoreSNSAccessPolicies bool
+	SNSCommand             = &cobra.Command{
+		Use:     "sns",
+		Aliases: []string{},
+		Short:   "Enumerate SNS Queues.",
+		Long: "\nUse case examples:\n" +
+			os.Args[0] + " aws sns --profile readonly_profile",
+		PreRun: awsPreRun,
+		Run:    runSNSCommand,
+	}
+
 	EKSCommand = &cobra.Command{
 		Use:     "eks",
 		Aliases: []string{"EKS", "clusters"},
@@ -352,6 +374,12 @@ func init() {
 	InstancesCommand.Flags().StringVarP(&InstancesFilter, "filter", "t", "all", "[InstanceID | InstanceIDsFile]")
 	InstancesCommand.Flags().BoolVarP(&InstanceMapUserDataAttributesOnly, "userdata", "u", false, "Use this flag to retrieve only the userData attribute from EC2 instances.")
 
+	// SQS module flags
+	SQSCommand.Flags().BoolVarP(&StoreSQSAccessPolicies, "policies", "", false, "Store all flagged access policies along with the output")
+
+	// SNS module flags
+	SNSCommand.Flags().BoolVarP(&StoreSNSAccessPolicies, "policies", "", false, "Store all flagged access policies along with the output")
+
 	//  outbound-assumed-roles module flags
 	OutboundAssumedRolesCommand.Flags().IntVarP(&OutboundAssumedRolesDays, "days", "d", 7, "How many days of CloudTrail events should we go back and look at.")
 
@@ -387,6 +415,8 @@ func init() {
 		SecretsCommand,
 		Route53Command,
 		ECRCommand,
+		SQSCommand,
+		SNSCommand,
 		EKSCommand,
 		OutboundAssumedRolesCommand,
 		EnvsCommand,
@@ -455,12 +485,11 @@ func runBucketsCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.BucketsModule{
-			//S3Client: s3.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			S3ClientListBucketsInterface: s3.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			Caller:                       *caller,
-			AWSProfile:                   profile,
-			Goroutines:                   Goroutines,
-			WrapTable:                    AWSWrapTable,
+			S3Client:   s3.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			Caller:     *caller,
+			AWSProfile: profile,
+			Goroutines: Goroutines,
+			WrapTable:  AWSWrapTable,
 		}
 		m.PrintBuckets(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 	}
@@ -506,6 +535,50 @@ func runECRCommand(cmd *cobra.Command, args []string) {
 			WrapTable:  AWSWrapTable,
 		}
 		m.PrintECR(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+	}
+}
+
+func runSQSCommand(cmd *cobra.Command, args []string) {
+	for _, profile := range AWSProfiles {
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
+		if err != nil {
+			continue
+		}
+		m := aws.SQSModule{
+			SQSClient: sqs.NewFromConfig(AWSConfig),
+
+			StorePolicies: StoreSQSAccessPolicies,
+
+			Caller:     *caller,
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile: profile,
+			Goroutines: Goroutines,
+			WrapTable:  AWSWrapTable,
+		}
+		m.PrintSQS(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+	}
+}
+
+func runSNSCommand(cmd *cobra.Command, args []string) {
+	for _, profile := range AWSProfiles {
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
+		if err != nil {
+			continue
+		}
+		m := aws.SNSModule{
+			SNSClient: sns.NewFromConfig(AWSConfig),
+
+			StorePolicies: StoreSNSAccessPolicies,
+
+			Caller:     *caller,
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile: profile,
+			Goroutines: Goroutines,
+			WrapTable:  AWSWrapTable,
+		}
+		m.PrintSNS(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -1215,11 +1288,11 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Arming you with the data you'll need for privesc quests."))
 
 		buckets := aws.BucketsModule{
-			S3ClientListBucketsInterface: s3Client,
-			Caller:                       *Caller,
-			AWSProfile:                   profile,
-			Goroutines:                   Goroutines,
-			WrapTable:                    AWSWrapTable,
+			S3Client:   s3Client,
+			Caller:     *Caller,
+			AWSProfile: profile,
+			Goroutines: Goroutines,
+			WrapTable:  AWSWrapTable,
 		}
 		buckets.PrintBuckets(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 

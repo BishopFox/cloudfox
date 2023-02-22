@@ -159,11 +159,14 @@ func createOutputFile(outputDirectory *string, fileName *string, outputType stri
 	return outputFile
 }
 
-func MockFileSystem(switcher bool) {
+func MockFileSystem(switcher bool) afero.Fs {
 	if switcher {
 		fmt.Println("Using mocked file system")
 		fileSystem = afero.NewMemMapFs()
+		return fileSystem
 	} else {
 		fmt.Println("Using OS file system. Make sure to clean up your disk!")
+		fileSystem = afero.NewOsFs()
+		return fileSystem
 	}
 }
