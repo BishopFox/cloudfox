@@ -74,15 +74,15 @@ func (m *EKSModule) EKS(outputFormat string, outputDirectory string, verbosity i
 
 	fmt.Printf("[%s][%s] Enumerating EKS clusters for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 	// Initialized the tools we'll need to check if any workload roles are admin or can privesc to admin
-	fmt.Printf("[%s][%s] Attempting to build a PrivEsc graph in memory using local pmapper data if it exists on the filesystem.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	//fmt.Printf("[%s][%s] Attempting to build a PrivEsc graph in memory using local pmapper data if it exists on the filesystem.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	m.pmapperMod, m.pmapperError = initPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines)
 	m.iamSimClient = initIAMSimClient(m.IAMSimulatePrincipalPolicyClient, m.Caller, m.AWSProfile, m.Goroutines)
 
-	if m.pmapperError != nil {
-		fmt.Printf("[%s][%s] No pmapper data found for this account. Using cloudfox's iam-simulator for role analysis.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
-	} else {
-		fmt.Printf("[%s][%s] Found pmapper data for this account. Using it for role analysis.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
-	}
+	// if m.pmapperError != nil {
+	// 	fmt.Printf("[%s][%s] No pmapper data found for this account. Using cloudfox's iam-simulator for role analysis.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	// } else {
+	// 	fmt.Printf("[%s][%s] Found pmapper data for this account. Using it for role analysis.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	// }
 	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 
 	wg := new(sync.WaitGroup)
@@ -129,37 +129,71 @@ func (m *EKSModule) EKS(outputFormat string, outputDirectory string, verbosity i
 	}
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
-	m.output.Headers = []string{
-		"Service",
-		"Region",
-		"Name",
-		//"Endpoint",
-		"Public",
-		//"OIDC",
-		"NodeGroup",
-		"Role",
-		"IsAdminRole?",
-		"CanPrivEscToAdmin?",
+	if m.pmapperError == nil {
+		m.output.Headers = []string{
+			"Service",
+			"Region",
+			"Name",
+			//"Endpoint",
+			"Public",
+			//"OIDC",
+			"NodeGroup",
+			"Role",
+			"IsAdminRole?",
+			"CanPrivEscToAdmin?",
+		}
+	} else {
+		m.output.Headers = []string{
+			"Service",
+			"Region",
+			"Name",
+			//"Endpoint",
+			"Public",
+			//"OIDC",
+			"NodeGroup",
+			"Role",
+			"IsAdminRole?",
+			//"CanPrivEscToAdmin?",
+		}
 	}
 
 	// Table rows
-	for i := range m.Clusters {
-		m.output.Body = append(
-			m.output.Body,
-			[]string{
-				m.Clusters[i].AWSService,
-				m.Clusters[i].Region,
-				m.Clusters[i].Name,
-				//m.Clusters[i].Endpoint,
-				m.Clusters[i].Public,
-				//m.Clusters[i].OIDC,
-				m.Clusters[i].NodeGroup,
-				m.Clusters[i].Role,
-				m.Clusters[i].Admin,
-				m.Clusters[i].CanPrivEsc,
-			},
-		)
 
+	for i := range m.Clusters {
+		if m.pmapperError == nil {
+			m.output.Body = append(
+				m.output.Body,
+				[]string{
+					m.Clusters[i].AWSService,
+					m.Clusters[i].Region,
+					m.Clusters[i].Name,
+					//m.Clusters[i].Endpoint,
+					m.Clusters[i].Public,
+					//m.Clusters[i].OIDC,
+					m.Clusters[i].NodeGroup,
+					m.Clusters[i].Role,
+					m.Clusters[i].Admin,
+					m.Clusters[i].CanPrivEsc,
+				},
+			)
+		} else {
+			m.output.Body = append(
+				m.output.Body,
+				[]string{
+					m.Clusters[i].AWSService,
+					m.Clusters[i].Region,
+					m.Clusters[i].Name,
+					//m.Clusters[i].Endpoint,
+					m.Clusters[i].Public,
+					//m.Clusters[i].OIDC,
+					m.Clusters[i].NodeGroup,
+					m.Clusters[i].Role,
+					m.Clusters[i].Admin,
+					//m.Clusters[i].CanPrivEsc,
+				},
+			)
+
+		}
 	}
 
 	var seen []string
@@ -186,7 +220,7 @@ func (m *EKSModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan s
 	defer wg.Done()
 
 	servicemap := &awsservicemap.AwsServiceMap{
-		JsonFileSource: "EMBEDDED_IN_PACKAGE",
+		JsonFileSource: "DOWNLOAD_FROM_AWS",
 	}
 	res, err := servicemap.IsServiceInRegion("eks", r)
 	if err != nil {

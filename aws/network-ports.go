@@ -226,7 +226,7 @@ func (m *NetworkPortsModule) PrintNetworkPorts(outputFormat string, outputDirect
 func (m *NetworkPortsModule) executeChecks(r string, wg *sync.WaitGroup, dataReceiver chan NetworkServices) {
 	defer wg.Done()
 	servicemap := &awsservicemap.AwsServiceMap{
-		JsonFileSource: "EMBEDDED_IN_PACKAGE",
+		JsonFileSource: "DOWNLOAD_FROM_AWS",
 	}
 
 	res, err := servicemap.IsServiceInRegion("ec2", r)

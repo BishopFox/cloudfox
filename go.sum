@@ -179,8 +179,8 @@ github.com/aws/aws-sdk-go-v2/service/sts v1.17.5/go.mod h1:bXcN3koeVYiJcdDU89n3k
 github.com/aws/smithy-go v1.13.4/go.mod h1:Tg+OJXh4MB2R/uN61Ko2f6hTZwB/ZYGOtib8J3gBHzA=
 github.com/aws/smithy-go v1.13.5 h1:hgz0X/DX0dGqTYpGALqXJoRKRj5oQ7150i5FdTePzO8=
 github.com/aws/smithy-go v1.13.5/go.mod h1:Tg+OJXh4MB2R/uN61Ko2f6hTZwB/ZYGOtib8J3gBHzA=
-github.com/bishopfox/awsservicemap v1.0.0 h1:iZOPsMPfMmugLhOctLJUqcCrkT5+NflF5DIv7EFomMs=
-github.com/bishopfox/awsservicemap v1.0.0/go.mod h1:oy9Fyqh6AozQjShSx+zRNouTlp7k3z3YEMoFkN8rquc=
+github.com/bishopfox/awsservicemap v1.0.1 h1:TBsT2GlG22se6GXkcYS3jrb/sew62LuwN4kYg8InnJ4=
+github.com/bishopfox/awsservicemap v1.0.1/go.mod h1:oy9Fyqh6AozQjShSx+zRNouTlp7k3z3YEMoFkN8rquc=
 github.com/census-instrumentation/opencensus-proto v0.2.1/go.mod h1:f6KPmirojxKA12rnyqOA5BBL4O983OfeGPqjHWSTneU=
 github.com/chzyer/logex v1.1.10/go.mod h1:+Ywpsq7O8HXn0nuIou7OrIPyXbp3wmkHB+jjWRnGsAI=
 github.com/chzyer/readline v0.0.0-20180603132655-2972be24d48e/go.mod h1:nSuG5e5PlCu98SY8svDHJxuZscDgtXS6KTTbou5AhLI=

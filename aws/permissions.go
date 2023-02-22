@@ -317,23 +317,46 @@ func (m *IamPermissionsModule) getPermissionsFromAttachedPolicy(arn string, atta
 					for _, s = range parsedPolicyDocument.Statement {
 						//version := parsedPolicyDocument.Version
 						effect := s.Effect
-						for _, action := range s.Action {
-							for _, resource := range s.Resource {
-								m.Rows = append(
-									m.Rows,
-									PermissionsRow{
-										AWSService: AWSService,
-										Arn:        arn,
-										Name:       name,
-										Type:       IAMtype,
-										PolicyType: "Managed",
-										PolicyName: p.Name,
-										Effect:     effect,
-										Action:     action,
-										Resource:   resource,
-									})
+						if s.Action != nil {
+							for _, action := range s.Action {
+								for _, resource := range s.Resource {
+									m.Rows = append(
+										m.Rows,
+										PermissionsRow{
+											AWSService: AWSService,
+											Arn:        arn,
+											Name:       name,
+											Type:       IAMtype,
+											PolicyType: "Managed",
+											PolicyName: p.Name,
+											Effect:     effect,
+											Action:     action,
+											Resource:   resource,
+										})
+								}
 							}
 						}
+
+						if s.NotAction != nil {
+							for _, action := range s.NotAction {
+								for _, resource := range s.Resource {
+									m.Rows = append(
+										m.Rows,
+										PermissionsRow{
+											AWSService: AWSService,
+											Arn:        arn,
+											Name:       name,
+											Type:       IAMtype,
+											PolicyType: "Managed",
+											PolicyName: p.Name,
+											Effect:     effect,
+											Action:     "[NotAction] " + action,
+											Resource:   resource,
+										})
+								}
+							}
+						}
+
 					}
 				}
 			}
@@ -350,23 +373,45 @@ func (m *IamPermissionsModule) getPermissionsFromInlinePolicy(arn string, inline
 	for _, s = range parsedPolicyDocument.Statement {
 		//version := parsedPolicyDocument.Version
 		effect := s.Effect
-		for _, action := range s.Action {
-			for _, resource := range s.Resource {
-				m.Rows = append(
-					m.Rows,
-					PermissionsRow{
-						AWSService: AWSService,
-						Arn:        arn,
-						Name:       name,
-						Type:       IAMtype,
-						PolicyType: "Inline",
-						PolicyName: aws.ToString(inlinePolicy.PolicyName),
-						Effect:     effect,
-						Action:     action,
-						Resource:   resource,
-					})
+		if s.Action != nil {
+			for _, action := range s.Action {
+				for _, resource := range s.Resource {
+					m.Rows = append(
+						m.Rows,
+						PermissionsRow{
+							AWSService: AWSService,
+							Arn:        arn,
+							Name:       name,
+							Type:       IAMtype,
+							PolicyType: "Inline",
+							PolicyName: aws.ToString(inlinePolicy.PolicyName),
+							Effect:     effect,
+							Action:     action,
+							Resource:   resource,
+						})
+				}
 			}
 		}
+		if s.NotAction != nil {
+			for _, action := range s.NotAction {
+				for _, resource := range s.Resource {
+					m.Rows = append(
+						m.Rows,
+						PermissionsRow{
+							AWSService: AWSService,
+							Arn:        arn,
+							Name:       name,
+							Type:       IAMtype,
+							PolicyType: "Inline",
+							PolicyName: aws.ToString(inlinePolicy.PolicyName),
+							Effect:     effect,
+							Action:     "notaction" + action,
+							Resource:   resource,
+						})
+				}
+			}
+		}
+
 	}
 }
 
@@ -377,7 +422,8 @@ type policyDocument struct {
 
 type StatementEntry struct {
 	Effect    string      `json:"Effect"`
-	Action    ListOfItems `json:"Action"`
+	Action    ListOfItems `json:"Action,omitempty"`
+	NotAction ListOfItems `json:"NotAction,omitempty"`
 	Resource  ListOfItems `json:"Resource"`
 	Condition ListOfItems `json:"Condition"`
 }
