@@ -1,0 +1,16 @@
+{
+   "Version": "2012-10-17",
+   "Id": "anyID",
+   "Statement": [{
+      "Sid":"conditionally_public",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": "sqs:*",
+      "Resource": "arn:aws:sqs:*:111122223333:queue1",
+      "Condition" : {
+         "IpAddress" : {
+            "aws:SourceIp":"192.0.2.0/24"
+         }
+      }
+   }]
+}
