@@ -129,8 +129,6 @@ Additional policy notes (as of 09/2022):
 # Contributing
 [Wiki - How to Contribute](https://github.com/BishopFox/cloudfox/wiki#how-to-contribute)
 
-# TODO
-* AWS - Add support for GovCloud and China regions
 
 # FAQ
 
