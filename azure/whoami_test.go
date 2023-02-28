@@ -6,6 +6,7 @@ import (
 
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/aws/smithy-go/ptr"
 )
 
 func TestAzWhoamiCommand(t *testing.T) {
@@ -47,4 +48,8 @@ func TestAzWhoamiCommand(t *testing.T) {
 		fmt.Printf("[subtest] %s\n", s.name)
 		AzWhoamiCommand(s.version, s.wrapTableOutput)
 	}
+}
+
+func TestTest(t *testing.T) {
+	fmt.Println(ptr.ToString(GetTenantIDPerSubscription("4cedc5dd-e3ad-468d-bf66-32e31bdb9148")))
 }

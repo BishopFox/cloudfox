@@ -36,6 +36,24 @@ Display Available Azure CLI Sessions:
 			azure.AzWhoamiCommand(cmd.Root().Version, AzWrapTable)
 		},
 	}
+	AzInventoryCommand = &cobra.Command{
+		Use:     "inventory",
+		Aliases: []string{"inv"},
+		Short:   "Display an inventory table of all resources per location",
+		Long: `
+Enumerate inventory for a specific tenant:
+./cloudfox az inventory --tenant TENANT_ID
+
+Enumerate inventory for a specific subscription:
+./cloudfox az inventory --subscription SUBSCRIPTION_ID
+`,
+		Run: func(cmd *cobra.Command, args []string) {
+			err := azure.AzInventoryCommand(AzTenantID, AzSubscriptionID, cmd.Root().Version, AzVerbosity, AzWrapTable)
+			if err != nil {
+				log.Fatal(err)
+			}
+		},
+	}
 	AzRBACCommand = &cobra.Command{
 		Use:     "rbac",
 		Aliases: []string{},
@@ -131,5 +149,6 @@ func init() {
 		AzWhoamiCommand,
 		AzRBACCommand,
 		AzInstancesCommand,
-		AzStorageCommand)
+		AzStorageCommand,
+		AzInventoryCommand)
 }

@@ -10,18 +10,9 @@ import (
 
 	"github.com/aquasecurity/table"
 	"github.com/aws/smithy-go/ptr"
-	"github.com/fatih/color"
 	"github.com/spf13/afero"
 	"golang.org/x/crypto/ssh/terminal"
 )
-
-// Used for file system mocking with Afero library. Set:
-// fileSystem = afero.NewOsFs() if not unit testing (code will use real file system) OR
-// fileSystem = afero.NewMemMapFs() for a mocked file system (when unit testing)
-var fileSystem = afero.NewOsFs()
-
-// Color functions
-var cyan = color.New(color.FgCyan).SprintFunc()
 
 // This struct is here to mantain compatibility with legacy cloudfox code
 type OutputData2 struct {
@@ -105,6 +96,7 @@ func printTableToFile(header []string, body [][]string, outputFile afero.File) {
 	t.AddRows(body...)
 	t.SetRowLines(false)
 	t.SetDividers(table.UnicodeRoundedDividers)
+	t.SetAlignment(table.AlignLeft)
 	t.Render()
 }
 
@@ -129,6 +121,7 @@ func PrintTableToScreen(header []string, body [][]string, wrapLines bool) {
 	t.SetRowLines(false)
 	t.SetLineStyle(table.StyleCyan)
 	t.SetDividers(table.UnicodeRoundedDividers)
+	t.SetAlignment(table.AlignLeft)
 	t.Render()
 }
 

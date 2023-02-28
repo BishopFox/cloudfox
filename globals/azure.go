@@ -17,7 +17,7 @@ var AAD_USERS_TEST_FILE string
 
 // Module names
 const AZ_WHOAMI_MODULE_NAME = "whoami"
-const AZ_INTERACTIVE_MENU_MODULE_NAME = "interactive-menu"
+const AZ_INVENTORY_MODULE_NAME = "inventory"
 const AZ_INSTANCES_MODULE_NAME = "instances"
 const AZ_RBAC_MODULE_NAME = "rbac"
 const AZ_STORAGE_MODULE_NAME = "storage"

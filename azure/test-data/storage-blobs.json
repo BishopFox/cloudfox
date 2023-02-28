@@ -1,0 +1,20 @@
+[
+  {
+    "storage_account_name": "storagedo89vl86ey",
+    "blob_urls": [
+      "https://storagedo89vl86ey.blob.core.windows.net/containercfuyyey5nm/test1.txt",
+      "https://storagedo89vl86ey.blob.core.windows.net/containercfuyyey5nm/test2.txt",
+      "https://storagedo89vl86ey.blob.core.windows.net/containercfuyyey5nm/test3.txt",
+      "https://storagedo89vl86ey.blob.core.windows.net/containercfuyyey5nm/test4.txt"
+    ]
+  },
+  {
+    "storage_account_name": "storagedo89vl86ey",
+    "blob_urls": [
+      "https://storagedo89vl86ey.blob.core.windows.net/containercfuyyey5nm/test1.txt",
+      "https://storagedo89vl86ey.blob.core.windows.net/containercfuyyey5nm/test2.txt",
+      "https://storagedo89vl86ey.blob.core.windows.net/containercfuyyey5nm/test3.txt",
+      "https://storagedo89vl86ey.blob.core.windows.net/containercfuyyey5nm/test4.txt"
+    ]
+  }
+]
