@@ -12,6 +12,7 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/efs"
+	"github.com/aws/aws-sdk-go-v2/service/efs/types"
 	"github.com/aws/aws-sdk-go-v2/service/fsx"
 	fsxTypes "github.com/aws/aws-sdk-go-v2/service/fsx/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -53,6 +54,7 @@ type FilesystemObject struct {
 	IP          string
 	Policy      string
 	MountTarget string
+	Permissions string
 }
 
 func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirectory string, verbosity int) {
@@ -118,6 +120,7 @@ func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirector
 		//"IP",
 		"Mount Target",
 		"Policy",
+		"Permissions",
 	}
 
 	// Table rows
@@ -132,6 +135,7 @@ func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirector
 				//m.Filesystems[i].IP,
 				m.Filesystems[i].MountTarget,
 				m.Filesystems[i].Policy,
+				m.Filesystems[i].Permissions,
 			},
 		)
 
@@ -198,8 +202,8 @@ func (m *FilesystemsModule) writeLoot(outputDirectory string, verbosity int) {
 		switch m.Filesystems[i].AWSService {
 		case "EFS":
 			out = out + fmt.Sprintf("##########  Mount instructions for %s - %s ##########\n", m.Filesystems[i].AWSService, m.Filesystems[i].Name)
-			out = out + fmt.Sprintf("mkdir -p /efs/%s/\n", m.Filesystems[i].MountTarget)
-			out = out + fmt.Sprintf("sudo mount -t nfs -o nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport %s:/ /efs/%s\n\n", m.Filesystems[i].DnsName, m.Filesystems[i].MountTarget)
+			out = out + fmt.Sprintf("mkdir -p /efs%s/\n", m.Filesystems[i].MountTarget)
+			out = out + fmt.Sprintf("sudo mount -t nfs -o nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport %s:/ /efs%s\n\n", m.Filesystems[i].DnsName, m.Filesystems[i].MountTarget)
 		case "FSx [LUSTRE]":
 			out = out + fmt.Sprintf("##########  Mount instructions for %s - %s ##########\n", m.Filesystems[i].AWSService, m.Filesystems[i].Name)
 			out = out + fmt.Sprintln("#sudo amazon-linux-extras install -y lustre2.10")
@@ -247,94 +251,64 @@ func (m *FilesystemsModule) getEFSSharesPerRegion(r string, wg *sync.WaitGroup, 
 	m.CommandCounter.Total++
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
-	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationMarker *string
-	var PaginationMarker2 *string
-
 	var policy string
-	// This for loop exits at the end dependeding on whether the output hits its last page (see pagination control block at the end of the loop).
-	for {
-		DescribeFileSystems, err := m.EFSClient.DescribeFileSystems(
+
+	DescribeFileSystems, err := m.describeEFSFilesystems(r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	for _, filesystem := range DescribeFileSystems {
+		name := filesystem.Name
+		id := aws.ToString(filesystem.FileSystemId)
+
+		_, err := m.EFSClient.DescribeFileSystemPolicy(
 			context.TODO(),
-			&efs.DescribeFileSystemsInput{
-				Marker: PaginationMarker,
+			&efs.DescribeFileSystemPolicyInput{
+				FileSystemId: filesystem.FileSystemId,
 			},
 			func(o *efs.Options) {
 				o.Region = r
 			},
 		)
 		if err != nil {
+			policy = "Default (No IAM auth)"
+		}
+
+		DescribeMountTargets, err := m.describeEFSMountTargets(id, r)
+		if err != nil {
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
 			break
 		}
 
-		for _, filesystem := range DescribeFileSystems.FileSystems {
-			name := filesystem.Name
-			id := filesystem.FileSystemId
-			//dnsName := fmt.Sprintf("%s.efs.%s.amazonaws.com", *id, r)
+		for _, mountTarget := range DescribeMountTargets {
+			ip := *mountTarget.IpAddress
+			awsService := "EFS"
 
-			_, err := m.EFSClient.DescribeFileSystemPolicy(
-				context.TODO(),
-				&efs.DescribeFileSystemPolicyInput{
-					FileSystemId: id,
-				},
-				func(o *efs.Options) {
-					o.Region = r
-				},
-			)
+			accessPoints, err := m.describeEFSAccessPoints(id, r)
 			if err != nil {
-				policy = "Default (No IAM auth)"
+				m.modLog.Error(err.Error())
+				m.CommandCounter.Error++
+				break
 			}
 
-			for {
-				DescribeMountTargets, err := m.EFSClient.DescribeMountTargets(
-					context.TODO(),
-					&efs.DescribeMountTargetsInput{
-						FileSystemId: id,
-						Marker:       PaginationMarker2,
-					},
-					func(o *efs.Options) {
-						o.Region = r
-					},
-				)
-				if err != nil {
-					m.modLog.Error(err.Error())
-					m.CommandCounter.Error++
-					break
-				}
-				for _, mountTarget := range DescribeMountTargets.MountTargets {
-					mountTargetId := mountTarget.MountTargetId
-					ip := *mountTarget.IpAddress
-					awsService := "EFS"
+			for _, accessPoint := range accessPoints {
+				path, permissions := m.getEFSfilesystemPermissions(accessPoint)
 
-					dataReceiver <- FilesystemObject{
-						AWSService:  awsService,
-						Region:      r,
-						Name:        aws.ToString(name),
-						DnsName:     ip,
-						Policy:      policy,
-						MountTarget: aws.ToString(mountTargetId),
-					}
+				dataReceiver <- FilesystemObject{
+					AWSService:  awsService,
+					Region:      r,
+					Name:        aws.ToString(name),
+					DnsName:     ip,
+					Policy:      policy,
+					MountTarget: path,
+					Permissions: permissions,
 				}
-				if DescribeMountTargets.NextMarker != nil {
-					PaginationMarker2 = DescribeMountTargets.NextMarker
-				} else {
-					PaginationMarker2 = nil
-					break
-				}
+
 			}
-
-			//awsService := fmt.Sprintf("EFS [%s]", fsType)
-
-		}
-
-		// Pagination control. After the last page of output, the for loop exits.
-		if DescribeFileSystems.NextMarker != nil {
-			PaginationMarker = DescribeFileSystems.NextMarker
-		} else {
-			PaginationMarker = nil
-			break
 		}
 	}
 
@@ -482,5 +456,118 @@ func (m *FilesystemsModule) getFSxSharesPerRegion(r string, wg *sync.WaitGroup, 
 			break
 		}
 	}
+
+}
+
+func (m *FilesystemsModule) describeEFSFilesystems(r string) ([]types.FileSystemDescription, error) {
+	var PaginationMarker *string
+	var filesystems []types.FileSystemDescription
+	var err error
+	for {
+		DescribeFileSystems, err := m.EFSClient.DescribeFileSystems(
+			context.TODO(),
+			&efs.DescribeFileSystemsInput{
+				Marker: PaginationMarker,
+			},
+			func(o *efs.Options) {
+				o.Region = r
+			},
+		)
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			return nil, err
+		}
+
+		filesystems = append(filesystems, DescribeFileSystems.FileSystems...)
+
+		// Pagination control. After the last page of output, the for loop exits.
+		if DescribeFileSystems.Marker != nil {
+			PaginationMarker = DescribeFileSystems.Marker
+		} else {
+			PaginationMarker = nil
+			break
+		}
+	}
+	return filesystems, err
+}
+
+func (m *FilesystemsModule) describeEFSMountTargets(filesystemId string, r string) ([]types.MountTargetDescription, error) {
+	var PaginationMarker *string
+	var mountTargets []types.MountTargetDescription
+	var err error
+	for {
+		DescribeMountTargets, err := m.EFSClient.DescribeMountTargets(
+			context.TODO(),
+			&efs.DescribeMountTargetsInput{
+				FileSystemId: aws.String(filesystemId),
+				Marker:       PaginationMarker,
+			},
+			func(o *efs.Options) {
+				o.Region = r
+			},
+		)
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			return nil, err
+		}
+
+		mountTargets = append(mountTargets, DescribeMountTargets.MountTargets...)
+
+		// Pagination control. After the last page of output, the for loop exits.
+		if DescribeMountTargets.Marker != nil {
+			PaginationMarker = DescribeMountTargets.Marker
+		} else {
+			PaginationMarker = nil
+			break
+		}
+	}
+	return mountTargets, err
+}
+
+func (m *FilesystemsModule) describeEFSAccessPoints(filesystemId string, r string) ([]types.AccessPointDescription, error) {
+	var PaginationMarker *string
+	var accessPoints []types.AccessPointDescription
+	var err error
+	for {
+		DescribeAccessPoints, err := m.EFSClient.DescribeAccessPoints(
+			context.TODO(),
+			&efs.DescribeAccessPointsInput{
+				FileSystemId: aws.String(filesystemId),
+				NextToken:    PaginationMarker,
+			},
+			func(o *efs.Options) {
+				o.Region = r
+			},
+		)
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			return nil, err
+		}
+
+		accessPoints = append(accessPoints, DescribeAccessPoints.AccessPoints...)
+
+		// Pagination control. After the last page of output, the for loop exits.
+		if DescribeAccessPoints.NextToken != nil {
+			PaginationMarker = DescribeAccessPoints.NextToken
+		} else {
+			PaginationMarker = nil
+			break
+		}
+	}
+	return accessPoints, err
+}
+
+func (m *FilesystemsModule) getEFSfilesystemPermissions(accessPoint types.AccessPointDescription) (string, string) {
+	var path string
+	var permissions string
+
+	if accessPoint.AccessPointId != nil {
+		path = aws.ToString(accessPoint.RootDirectory.Path)
+		permissions = aws.ToString(accessPoint.RootDirectory.CreationInfo.Permissions)
+	}
+	return path, permissions
 
 }
