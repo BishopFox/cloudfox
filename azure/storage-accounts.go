@@ -279,7 +279,7 @@ func validatePublicBlobURLs(storageAccountName, containerName string, blobNames 
 	for _, b := range blobNames {
 		blobURL := fmt.Sprintf("https://%s.blob.core.windows.net/%s/%s", storageAccountName, containerName, b)
 
-		response, err := http.Get(blobURL)
+		response, err := http.Head(blobURL)
 		if err != nil {
 			return nil, err
 		}
