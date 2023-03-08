@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/apprunner"
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
+	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
@@ -68,6 +69,7 @@ type Inventory2Module struct {
 	SNSClient            *sns.Client
 	SQSClient            *sqs.Client
 	DynamoDBClient       *dynamodb.Client
+	CodeBuildClient      CodeBuildClientInterface
 
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
@@ -109,7 +111,7 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 	},
 	)
 	// def change this to build dynamically in the future.
-	m.services = []string{"total", "APIGateway RestAPIs", "APIGatewayv2 APIs", "AppRunner Services", "CloudFormation Stacks", "Cloudfront Distributions", "DynamoDB Tables", "EC2 Instances", "ECS Tasks", "EKS Clusters", "ELB Load Balancers", "ELBv2 Load Balancers", "Glue Dev Endpoints", "Glue Jobs", "Grafana Workspaces", "Lambda Functions", "Lightsail Instances/Containers", "MQ Brokers", "OpenSearch DomainNames", "RDS DB Instances", "SecretsManager Secrets", "SNS Topics", "SQS Queues", "SSM Parameters"}
+	m.services = []string{"total", "APIGateway RestAPIs", "APIGatewayv2 APIs", "AppRunner Services", "CloudFormation Stacks", "Cloudfront Distributions", "CodeBuild Projects", "DynamoDB Tables", "EC2 Instances", "ECS Tasks", "EKS Clusters", "ELB Load Balancers", "ELBv2 Load Balancers", "Glue Dev Endpoints", "Glue Jobs", "Grafana Workspaces", "Lambda Functions", "Lightsail Instances/Containers", "MQ Brokers", "OpenSearch DomainNames", "RDS DB Instances", "SecretsManager Secrets", "SNS Topics", "SQS Queues", "SSM Parameters"}
 	m.serviceMap = map[string]map[string]int{}
 	m.totalRegionCounts = map[string]int{}
 
@@ -128,7 +130,7 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 	}
 
 	fmt.Printf("[%s][%s] Enumerating selected services in all regions for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
-	fmt.Printf("[%s][%s] Supported Services: ApiGateway, ApiGatewayv2, AppRunner, CloudFormation, Cloudfront, DynamoDB,  \n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	fmt.Printf("[%s][%s] Supported Services: ApiGateway, ApiGatewayv2, AppRunner, CloudFormation, Cloudfront, CodeBuild, DynamoDB,  \n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	fmt.Printf("[%s][%s] \t\t\tEC2, ECS, EKS, ELB, ELBv2, Glue, Grafana, IAM, Lambda, Lightsail, MQ, \n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	fmt.Printf("[%s][%s] \t\t\tOpenSearch, RDS, S3, SecretsManager, SNS, SQS, SSM\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 
@@ -560,6 +562,16 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 		wg.Add(1)
 		go m.getDynamoDBTablesPerRegion(r, wg, semaphore)
 	}
+	res, err = servicemap.IsServiceInRegion("codebuild", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getCodeBuildProjectsPerRegion(r, wg, semaphore)
+	}
+
 }
 
 func (m *Inventory2Module) getLambdaFunctionsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
@@ -1933,6 +1945,49 @@ func (m *Inventory2Module) getDynamoDBTablesPerRegion(r string, wg *sync.WaitGro
 	m.mu.Unlock()
 }
 
+func (m *Inventory2Module) getCodeBuildProjectsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+	var totalCountThisServiceThisRegion = 0
+	var service = "CodeBuild Projects"
+	var resourceNames []string
+
+	projects, err := m.getcodeBuildProjects(r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(projects)
+
+	// Add this page of resources to the module's resource list
+	for _, project := range projects {
+		arn := "arn:aws:codebuild:" + r + ":" + aws.ToString(m.Caller.Account) + ":project/" + project
+		resourceNames = append(resourceNames, arn)
+	}
+
+	// No more pages, update the module's service map
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+
+	m.mu.Unlock()
+}
+
 // Global Resources
 
 func (m *Inventory2Module) getBuckets(verbosity int, dataReceiver chan GlobalResourceCount2) {
@@ -2122,4 +2177,20 @@ func (m *Inventory2Module) PrintTotalResources(outputFormat string) {
 		totalResources = totalResources + m.GlobalResourceCounts[i].count
 	}
 	fmt.Printf("[%s][%s] %d resources found in the services we looked at. This is NOT the total number of resources in the account.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), totalResources)
+}
+
+func (m *Inventory2Module) getcodeBuildProjects(r string) ([]string, error) {
+	CodeBuildProjects, err := m.CodeBuildClient.ListProjects(
+		context.TODO(),
+		&codebuild.ListProjectsInput{},
+		func(options *codebuild.Options) {
+			options.Region = r
+		},
+	)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return nil, err
+	}
+	return CodeBuildProjects.Projects, nil
 }

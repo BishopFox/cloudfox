@@ -9,6 +9,7 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
+	"github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/sirupsen/logrus"
 )
@@ -87,8 +88,8 @@ func (m *IamPrincipalsModule) PrintIamPrincipals(outputFormat string, outputDire
 	// done <- true
 	// <-done
 
-	m.getIAMUsers()
-	m.getIAMRoles()
+	m.addIAMUsersToTable()
+	m.addIAMRolesToTable()
 
 	//fmt.Printf("\nAnalyzed Resources by Region\n\n")
 
@@ -160,14 +161,36 @@ func (m *IamPrincipalsModule) executeChecks(wg *sync.WaitGroup) {
 }
 */
 
-func (m *IamPrincipalsModule) getIAMUsers() {
-	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
+func (m *IamPrincipalsModule) addIAMUsersToTable() {
 	var AWSService = "IAM"
-
 	var IAMtype = "User"
 	var attachedPolicies []string
 	var inlinePolicies []string
+
+	users := m.getIAMUsers()
+
+	for _, user := range users {
+		arn := user.Arn
+		name := user.UserName
+
+		m.Users = append(
+			m.Users,
+			User{
+				AWSService:       AWSService,
+				Arn:              aws.ToString(arn),
+				Name:             aws.ToString(name),
+				Type:             IAMtype,
+				AttachedPolicies: attachedPolicies,
+				InlinePolicies:   inlinePolicies,
+			})
+	}
+
+}
+
+func (m *IamPrincipalsModule) getIAMUsers() []types.User {
+	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
+	var PaginationControl *string
+	var users []types.User
 
 	for {
 		ListUsers, err := m.IAMClient.ListUsers(
@@ -183,19 +206,7 @@ func (m *IamPrincipalsModule) getIAMUsers() {
 		}
 
 		for _, user := range ListUsers.Users {
-			arn := user.Arn
-			name := user.UserName
-
-			m.Users = append(
-				m.Users,
-				User{
-					AWSService:       AWSService,
-					Arn:              aws.ToString(arn),
-					Name:             aws.ToString(name),
-					Type:             IAMtype,
-					AttachedPolicies: attachedPolicies,
-					InlinePolicies:   inlinePolicies,
-				})
+			users = append(users, user)
 		}
 
 		// Pagination control. After the last page of output, the for loop exits.
@@ -207,16 +218,41 @@ func (m *IamPrincipalsModule) getIAMUsers() {
 		}
 	}
 
+	return users
 }
 
-func (m *IamPrincipalsModule) getIAMRoles() {
-	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
+func (m *IamPrincipalsModule) addIAMRolesToTable() {
+
 	//var totalRoles int
 	var AWSService = "IAM"
 	var IAMtype = "Role"
 	var attachedPolicies []string
 	var inlinePolicies []string
+
+	roles := m.getIAMRoles()
+
+	for _, role := range roles {
+		arn := role.Arn
+		name := role.RoleName
+
+		m.Roles = append(
+			m.Roles,
+			Role{
+				AWSService:       AWSService,
+				Arn:              aws.ToString(arn),
+				Name:             aws.ToString(name),
+				Type:             IAMtype,
+				AttachedPolicies: attachedPolicies,
+				InlinePolicies:   inlinePolicies,
+			})
+	}
+
+}
+
+func (m *IamPrincipalsModule) getIAMRoles() []types.Role {
+	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
+	var PaginationControl *string
+	var roles []types.Role
 
 	for {
 		ListRoles, err := m.IAMClient.ListRoles(
@@ -230,21 +266,8 @@ func (m *IamPrincipalsModule) getIAMRoles() {
 			m.CommandCounter.Error++
 			break
 		}
-		for _, role := range ListRoles.Roles {
-			arn := role.Arn
-			name := role.RoleName
 
-			m.Roles = append(
-				m.Roles,
-				Role{
-					AWSService:       AWSService,
-					Arn:              aws.ToString(arn),
-					Name:             aws.ToString(name),
-					Type:             IAMtype,
-					AttachedPolicies: attachedPolicies,
-					InlinePolicies:   inlinePolicies,
-				})
-		}
+		roles = append(roles, ListRoles.Roles...)
 
 		// Pagination control. After the last page of output, the for loop exits.
 		if ListRoles.Marker != nil {
@@ -255,5 +278,5 @@ func (m *IamPrincipalsModule) getIAMRoles() {
 			break
 		}
 	}
-
+	return roles
 }

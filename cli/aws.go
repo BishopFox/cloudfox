@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
 	"github.com/aws/aws-sdk-go-v2/service/cloudtrail"
+	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
@@ -102,6 +103,15 @@ var (
 			os.Args[0] + " aws ecr --profile readonly_profile",
 		PreRun: awsPreRun,
 		Run:    runCloudformationCommand,
+	}
+
+	CodeBuildCommand = &cobra.Command{
+		Use:   "codebuild",
+		Short: "Enumerate CodeBuild projects.",
+		Long: "\nUse case examples:\n" +
+			os.Args[0] + " aws codebuild --profile readonly_profile",
+		PreRun: awsPreRun,
+		Run:    runCodeBuildCommand,
 	}
 
 	ECRCommand = &cobra.Command{
@@ -430,6 +440,7 @@ func init() {
 		BucketsCommand,
 		PermissionsCommand,
 		CloudformationCommand,
+		CodeBuildCommand,
 		RAMCommand,
 		TagsCommand,
 		LambdasCommand,
@@ -517,6 +528,26 @@ func runCloudformationCommand(cmd *cobra.Command, args []string) {
 			WrapTable:                             AWSWrapTable,
 		}
 		m.PrintCloudformationStacks(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+	}
+}
+
+func runCodeBuildCommand(cmd *cobra.Command, args []string) {
+	for _, profile := range AWSProfiles {
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
+		if err != nil {
+			continue
+		}
+		m := aws.CodeBuildModule{
+			CodeBuildClient: codebuild.NewFromConfig(AWSConfig),
+			Caller:          *caller,
+			AWSRegions:      internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile:      profile,
+			Goroutines:      Goroutines,
+			SkipAdminCheck:  AWSSkipAdminCheck,
+			WrapTable:       AWSWrapTable,
+		}
+		m.PrintCodeBuildProjects(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -747,6 +778,7 @@ func runInventoryCommand(cmd *cobra.Command, args []string) {
 			AppRunnerClient:      apprunner.NewFromConfig(AWSConfig),
 			CloudFormationClient: cloudformation.NewFromConfig(AWSConfig),
 			CloudfrontClient:     cloudfront.NewFromConfig(AWSConfig),
+			CodeBuildClient:      codebuild.NewFromConfig(AWSConfig),
 			DynamoDBClient:       dynamodb.NewFromConfig(AWSConfig),
 			EC2Client:            ec2.NewFromConfig(AWSConfig),
 			ECSClient:            ecs.NewFromConfig(AWSConfig),
@@ -1055,6 +1087,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		appRunnerClient := apprunner.NewFromConfig(AWSConfig)
 		cloudFormationClient := cloudformation.NewFromConfig(AWSConfig)
 		cloudfrontClient := cloudfront.NewFromConfig(AWSConfig)
+		codeBuildClient := codebuild.NewFromConfig(AWSConfig)
 		dynamodbClient := dynamodb.NewFromConfig(AWSConfig)
 		ec2Client := ec2.NewFromConfig(AWSConfig)
 		ecrClient := ecr.NewFromConfig(AWSConfig)
@@ -1091,6 +1124,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			AppRunnerClient:      appRunnerClient,
 			CloudFormationClient: cloudFormationClient,
 			CloudfrontClient:     cloudfrontClient,
+			CodeBuildClient:      codeBuildClient,
 			DynamoDBClient:       dynamodbClient,
 			EC2Client:            ec2Client,
 			ECSClient:            ecsClient,
