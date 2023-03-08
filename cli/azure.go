@@ -33,7 +33,10 @@ var (
 Display Available Azure CLI Sessions:
 ./cloudfox az whoami`,
 		Run: func(cmd *cobra.Command, args []string) {
-			azure.AzWhoamiCommand(cmd.Root().Version, AzWrapTable)
+			err := azure.AzWhoamiCommand(cmd.Root().Version, AzWrapTable)
+			if err != nil {
+				log.Fatal(err)
+			}
 		},
 	}
 	AzInventoryCommand = &cobra.Command{
@@ -101,7 +104,10 @@ Enumerate storage accounts for a specific subscription:
 ./cloudfox az storage --subscription SUBSCRIPTION_ID
 `,
 		Run: func(cmd *cobra.Command, args []string) {
-			azure.AzStorageCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, cmd.Root().Version, AzVerbosity, AzWrapTable)
+			err := azure.AzStorageCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, cmd.Root().Version, AzVerbosity, AzWrapTable)
+			if err != nil {
+				log.Fatal(err)
+			}
 		},
 	}
 )
