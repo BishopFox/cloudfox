@@ -68,10 +68,6 @@ func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirector
 	if m.AWSProfile == "" {
 		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
-	//populate region in the filesystems module struct
-	for i, region := range m.AWSRegions {
-		m.Regions[i].Region = region
-	}
 
 	fmt.Printf("[%s][%s] Enumerating filesystems for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 	fmt.Printf("[%s][%s] Supported Services: EFS, FSx \n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
