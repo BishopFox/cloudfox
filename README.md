@@ -39,7 +39,7 @@ For the full documentation please refer to our [wiki](https://github.com/BishopF
 
 | Provider| CloudFox Commands |
 | - | - |
-| AWS | 23 | 
+| AWS | 26 | 
 | Azure | 4 | 
 | GCP | Support Planned |
 | Kubernetes | Support Planned | 
@@ -99,6 +99,7 @@ Additional policy notes (as of 09/2022):
 | AWS | [instances](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#instances) | Enumerates useful information for EC2 Instances in all regions like name, public/private IPs, and instance profiles. Generates loot files you can feed to nmap and other tools for service enumeration.  |
 | AWS | [inventory](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#inventory) | Gain a rough understanding of size of the account and preferred regions.  |
 | AWS | [lambda](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#lambda)  | Lists the lambda functions in the account, including which one's have admin roles attached. Also gives you handy commands for downloading each function.  |
+| AWS | [network-ports](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#network-ports) | Enumerates AWS services that are potentially exposing a network service. The security groups and the network ACLs are parsed for each resource to determine what ports are potentially exposed. |
 | AWS | [outbound-assumed-roles](#outbound-assumed-roles)  |  List the roles that have been assumed by principals in this account. This is an excellent way to find outbound attack paths that lead into other accounts. |
 | AWS | [permissions](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#permissions) | Enumerates IAM permissions associated with all users and roles. Grep this output to figure out what permissions a particular principal has rather than logging into the AWS console and painstakingly expanding each policy attached to the principal you are investigating. |
 | AWS | [principals](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#principals) | Enumerates IAM users and Roles so you have the data at your fingertips. |
@@ -108,6 +109,8 @@ Additional policy notes (as of 09/2022):
 | AWS | [role-trusts](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#role-trusts) | Enumerates IAM role trust policies so you can look for overly permissive role trusts or find roles that trust a specific service. |
 | AWS | [route53](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#route53) | Enumerate all records from all route53 managed zones. Use this for application and service enumeration. |
 | AWS | [secrets](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#secrets) | List secrets from SecretsManager and SSM. Look for interesting secrets in the list and then see who has access to them using use `cloudfox iam-simulator` and/or `pmapper`. |
+| AWS | [sns](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#sns) | This command enumerates all of the sns topics and gives you the commands to subscribe to a topic or send messages to a topic (if you have the permissions needed). This command only deals with topics, and not the SMS functionality. This command also attempts to summarize topic resource policies if they exist.|
+| AWS | [sqs](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#sqs) | This command enumerates all of the sqs queues and gives you the commands to receive messages from a queue and send messages to a queue (if you have the permissions needed). This command also attempts to summarize queue resource policies if they exist.|
 | AWS | [tags](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#tags) | List all resources with tags, and all of the tags. This can be used similar to inventory as another method to identify what types of resources exist in an account. |
 
 
@@ -126,8 +129,6 @@ Additional policy notes (as of 09/2022):
 # Contributing
 [Wiki - How to Contribute](https://github.com/BishopFox/cloudfox/wiki#how-to-contribute)
 
-# TODO
-* AWS - Add support for GovCloud and China regions
 
 # FAQ
 

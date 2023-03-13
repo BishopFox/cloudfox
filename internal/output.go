@@ -47,7 +47,7 @@ func OutputSelector(verbosity int, outputType string, header []string, body [][]
 			ptr.String(fmt.Sprintf("%s.txt", fileName)),
 			outputType,
 			callingModule)
-		printTableToFile(header, body, outputFileTable)
+		printTableToFile(header, body, wrapTable, outputFileTable)
 		fmt.Printf("[%s][%s] Output written to [%s]\n", cyan(callingModule), cyan(prefixIdentifier), outputFileTable.Name())
 		// Add writeLootToFile function here
 
@@ -67,7 +67,7 @@ func OutputSelector(verbosity int, outputType string, header []string, body [][]
 			ptr.String(fmt.Sprintf("%s.txt", fileName)),
 			outputType,
 			callingModule)
-		printTableToFile(header, body, outputFileTable)
+		printTableToFile(header, body, wrapTable, outputFileTable)
 		fmt.Printf("[%s][%s] Output written to [%s]\n", cyan(callingModule), cyan(prefixIdentifier), outputFileTable.Name())
 
 		outputFileCSV := createOutputFile(
@@ -90,8 +90,21 @@ func printCSVtoFile(header []string, body [][]string, outputFile afero.File) {
 	csvWriter.Flush()
 }
 
-func printTableToFile(header []string, body [][]string, outputFile afero.File) {
+func printTableToFile(header []string, body [][]string, wrapLines bool, outputFile afero.File) {
+	standardColumnWidth := 1000
 	t := table.New(outputFile)
+	if wrapLines {
+		terminalWidth, _, err := terminal.GetSize(int(os.Stdout.Fd()))
+		if err != nil {
+			fmt.Println("error getting terminal size:", err)
+			return
+		}
+		columnCount := len(header)
+		// The offset value was defined by trial and error to get the best wrapping
+		trialAndErrorOffset := 1
+		standardColumnWidth = terminalWidth / (columnCount + trialAndErrorOffset)
+	}
+	t.SetColumnMaxWidth(standardColumnWidth)
 	t.SetHeaders(header...)
 	t.AddRows(body...)
 	t.SetRowLines(false)
@@ -152,11 +165,14 @@ func createOutputFile(outputDirectory *string, fileName *string, outputType stri
 	return outputFile
 }
 
-func MockFileSystem(switcher bool) {
+func MockFileSystem(switcher bool) afero.Fs {
 	if switcher {
 		fmt.Println("Using mocked file system")
 		fileSystem = afero.NewMemMapFs()
+		return fileSystem
 	} else {
 		fmt.Println("Using OS file system. Make sure to clean up your disk!")
+		fileSystem = afero.NewOsFs()
+		return fileSystem
 	}
 }
