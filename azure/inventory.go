@@ -27,26 +27,6 @@ func AzInventoryCommand(AzTenantID, AzSubscriptionID, Version string, AzVerbosit
 		// To-Do: implement per tentant
 		fmt.Println("Inventory per tenant not yet implemented. Please use the --subscription flag instead.")
 
-		// ./cloudfox azure inventory --tenant TENANT_ID
-		/*
-			fmt.Printf(
-				"[%s][%s] Gathering inventory for tenant %s\n",
-				color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)),
-				color.CyanString(o.CallingModule),
-				AzTenantID)
-
-			for _, sub := range GetSubscriptionsPerTenantID(AzTenantID) {
-				header, body, err := ... // Figure out how to run multiple outputs for this part
-			}
-
-			o.PrefixIdentifier = fmt.Sprintf("tenant-%s", AzTenantID)
-			o.Table.DirectoryName = filepath.Join(
-				globals.CLOUDFOX_BASE_DIRECTORY,
-				globals.AZ_DIR_BASE,
-				"tenants",
-				AzTenantID)
-		*/
-
 	} else if AzTenantID == "" && AzSubscriptionID != "" {
 
 		// ./cloudfox azure storage --subscription SUBSCRIPTION_ID

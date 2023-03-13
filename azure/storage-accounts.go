@@ -276,6 +276,10 @@ func getAllBlobsForContainer(blobClient *azblob.Client, containerName string) ([
 func validatePublicBlobURLs(storageAccountName, containerName string, blobNames []string) ([]string, error) {
 	var publicBlobURLs []string
 
+	if blobNames == nil {
+		return nil, nil
+	}
+
 	for _, b := range blobNames {
 		blobURL := fmt.Sprintf("https://%s.blob.core.windows.net/%s/%s", storageAccountName, containerName, b)
 
