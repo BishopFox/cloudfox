@@ -282,13 +282,22 @@ func (m *FilesystemsModule) getEFSSharesPerRegion(r string, wg *sync.WaitGroup, 
 
 		for _, mountTarget := range DescribeMountTargets {
 			ip := *mountTarget.IpAddress
+			mountTarget := aws.ToString(mountTarget.MountTargetId)
 			awsService := "EFS"
 
 			accessPoints, err := m.describeEFSAccessPoints(id, r)
 			if err != nil {
 				m.modLog.Error(err.Error())
 				m.CommandCounter.Error++
-				break
+				dataReceiver <- FilesystemObject{
+					AWSService:  awsService,
+					Region:      r,
+					Name:        aws.ToString(name),
+					DnsName:     ip,
+					Policy:      policy,
+					MountTarget: mountTarget,
+					Permissions: "access denied",
+				}
 			}
 
 			for _, accessPoint := range accessPoints {
