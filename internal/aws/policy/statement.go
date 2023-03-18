@@ -10,6 +10,7 @@ type PolicyStatement struct {
 	Effect    string                   `json:"Effect"`
 	Principal PolicyStatementPrincipal `json:"Principal,omitempty"`
 	Action    ListOrString             `json:"Action"`
+	NotAction ListOrString             `json:"NotAction,omitempty"`
 	Resource  ListOrString             `json:"Resource,omitempty"`
 	Condition PolicyStatementCondition `json:"Condition,omitempty"`
 }

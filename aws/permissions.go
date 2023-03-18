@@ -2,8 +2,6 @@ package aws
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"net/url"
 	"path/filepath"
@@ -11,6 +9,7 @@ import (
 	"time"
 
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/BishopFox/cloudfox/internal/aws/policy"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/iam/types"
@@ -80,6 +79,7 @@ type PermissionsRow struct {
 	Effect     string
 	Action     string
 	Resource   string
+	Condition  string
 }
 
 func (m *IamPermissionsModule) PrintIamPermissions(outputFormat string, outputDirectory string, verbosity int, principal string) {
@@ -306,14 +306,16 @@ func (m *IamPermissionsModule) parsePermissions() {
 
 func (m *IamPermissionsModule) getPermissionsFromAttachedPolicy(arn string, attachedPolicy types.AttachedPolicy, IAMtype string, name string) {
 	//var policies []types.ManagedPolicyDetail
-	var s StatementEntry
+	var s policy.PolicyStatement
 	var AWSService = "IAM"
 
 	for _, p := range m.Policies {
 		if p.Name == aws.ToString(attachedPolicy.PolicyName) {
 			for _, d := range p.PolicyVersionList {
 				if d.IsDefaultVersion {
-					parsedPolicyDocument, _ := parsePolicyDocument(d.Document)
+					//parsedPolicyDocument, _ := parsePolicyDocument(d.Document)
+					document, _ := url.QueryUnescape(aws.ToString(d.Document))
+					parsedPolicyDocument, _ := policy.ParseJSONPolicy([]byte(document))
 					for _, s = range parsedPolicyDocument.Statement {
 						//version := parsedPolicyDocument.Version
 						effect := s.Effect
@@ -366,12 +368,14 @@ func (m *IamPermissionsModule) getPermissionsFromAttachedPolicy(arn string, atta
 
 func (m *IamPermissionsModule) getPermissionsFromInlinePolicy(arn string, inlinePolicy types.PolicyDetail, IAMtype string, name string) {
 	//var policies []types.ManagedPolicyDetail
-	var s StatementEntry
+	var s policy.PolicyStatement
 	var AWSService = "IAM"
 
-	parsedPolicyDocument, _ := parsePolicyDocument(inlinePolicy.PolicyDocument)
+	//parsedPolicyDocument, _ := parsePolicyDocument(inlinePolicy.PolicyDocument)
+	document, _ := url.QueryUnescape(aws.ToString(inlinePolicy.PolicyDocument))
+	parsedPolicyDocument, _ := policy.ParseJSONPolicy([]byte(document))
+
 	for _, s = range parsedPolicyDocument.Statement {
-		//version := parsedPolicyDocument.Version
 		effect := s.Effect
 		if s.Action != nil {
 			for _, action := range s.Action {
@@ -413,42 +417,4 @@ func (m *IamPermissionsModule) getPermissionsFromInlinePolicy(arn string, inline
 		}
 
 	}
-}
-
-type policyDocument struct {
-	Version   string           `json:"Version"`
-	Statement []StatementEntry `json:"Statement"`
-}
-
-type StatementEntry struct {
-	Effect    string      `json:"Effect"`
-	Action    ListOfItems `json:"Action,omitempty"`
-	NotAction ListOfItems `json:"NotAction,omitempty"`
-	Resource  ListOfItems `json:"Resource"`
-	Condition ListOfItems `json:"Condition"`
-}
-
-func parsePolicyDocument(doc *string) (policyDocument, error) {
-	document, _ := url.QueryUnescape(aws.ToString(doc))
-	var parsedDocumentToJSON policyDocument
-	_ = json.Unmarshal([]byte(document), &parsedDocumentToJSON)
-	return parsedDocumentToJSON, nil
-}
-
-// A custom unmarshaller is necessary because the list of principals can be an array of strings or a string.
-// https://stackoverflow.com/questions/65854778/parsing-arn-from-iam-policy-using-regex
-type ListOfItems []string
-
-func (r *ListOfItems) UnmarshalJSON(b []byte) error {
-	var s string
-	if err := json.Unmarshal(b, &s); err == nil {
-		*r = append(*r, s)
-		return nil
-	}
-	var ss []string
-	if err := json.Unmarshal(b, &ss); err == nil {
-		*r = ss
-		return nil
-	}
-	return errors.New("cannot unmarshal neither to a string nor a slice of strings")
 }
