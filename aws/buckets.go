@@ -19,7 +19,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type AWSS3Client interface {
+type AWSS3ClientInterface interface {
 	ListBuckets(ctx context.Context, params *s3.ListBucketsInput, optFns ...func(*s3.Options)) (*s3.ListBucketsOutput, error)
 	GetBucketPolicy(ctx context.Context, params *s3.GetBucketPolicyInput, optFns ...func(*s3.Options)) (*s3.GetBucketPolicyOutput, error)
 	GetBucketLocation(ctx context.Context, params *s3.GetBucketLocationInput, optFns ...func(*s3.Options)) (*s3.GetBucketLocationOutput, error)
@@ -28,19 +28,10 @@ type AWSS3Client interface {
 
 type BucketsModule struct {
 	// General configuration data
-	S3Client AWSS3Client
+	BucketsS3Client CloudFoxS3Client
 
-	// This interface is used for unit testing
-	// S3ClientListBucketsInterface          AWSS3Client
-	// S3ClientGetBucketPolicyInterface      AWSS3Client
-	// S3ClientGetBucketLocationInterface    AWSS3Client
-	// S3ClientGetPublicAccessBlockInterface AWSS3Client
-
-	Caller       sts.GetCallerIdentityOutput
-	AWSRegions   []string
 	OutputFormat string
 	Goroutines   int
-	AWSProfile   string
 	WrapTable    bool
 
 	// Main module data
@@ -49,6 +40,13 @@ type BucketsModule struct {
 	// Used to store output data for pretty printing
 	output internal.OutputData2
 	modLog *logrus.Entry
+}
+
+type CloudFoxS3Client struct {
+	S3Client   AWSS3ClientInterface
+	AWSRegions []string
+	AWSProfile string
+	Caller     sts.GetCallerIdentityOutput
 }
 
 type Bucket struct {
@@ -75,13 +73,13 @@ func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string
 	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
-	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
+	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.BucketsS3Client.AWSProfile)
 
-	if m.AWSProfile == "" {
-		m.AWSProfile = internal.BuildAWSPath(m.Caller)
+	if m.BucketsS3Client.AWSProfile == "" {
+		m.BucketsS3Client.AWSProfile = internal.BuildAWSPath(m.BucketsS3Client.Caller)
 	}
 
-	fmt.Printf("[%s][%s] Enumerating buckets for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
+	fmt.Printf("[%s][%s] Enumerating buckets for account %s.\n", cyan(m.output.CallingModule), cyan(m.BucketsS3Client.AWSProfile), aws.ToString(m.BucketsS3Client.Caller.Account))
 
 	wg := new(sync.WaitGroup)
 	semaphore := make(chan struct{}, m.Goroutines)
@@ -134,15 +132,15 @@ func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string
 
 	}
 	if len(m.output.Body) > 0 {
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		m.writeLoot(m.output.FilePath, verbosity, m.AWSProfile)
-		fmt.Printf("[%s][%s] %s buckets found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
-		fmt.Printf("[%s][%s] Bucket policies written to: %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.getLootDir())
+		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.BucketsS3Client.AWSProfile)
+		m.writeLoot(m.output.FilePath, verbosity, m.BucketsS3Client.AWSProfile)
+		fmt.Printf("[%s][%s] %s buckets found.\n", cyan(m.output.CallingModule), cyan(m.BucketsS3Client.AWSProfile), strconv.Itoa(len(m.output.Body)))
+		fmt.Printf("[%s][%s] Bucket policies written to: %s\n", cyan(m.output.CallingModule), cyan(m.BucketsS3Client.AWSProfile), m.getLootDir())
 
 	} else {
-		fmt.Printf("[%s][%s] No buckets found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+		fmt.Printf("[%s][%s] No buckets found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.BucketsS3Client.AWSProfile))
 	}
-	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
+	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.BucketsS3Client.AWSProfile), m.output.CallingModule)
 }
 
 func (m *BucketsModule) Receiver(receiver chan Bucket, receiverDone chan bool) {
@@ -203,12 +201,12 @@ func (m *BucketsModule) writeLoot(outputDirectory string, verbosity int, profile
 
 	if verbosity > 2 {
 		fmt.Println()
-		fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("Use the commands below to manually inspect certain buckets of interest."))
+		fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.BucketsS3Client.AWSProfile), green("Use the commands below to manually inspect certain buckets of interest."))
 		fmt.Print(out)
-		fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("End of loot file."))
+		fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.BucketsS3Client.AWSProfile), green("End of loot file."))
 	}
 
-	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), pullFile)
+	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.BucketsS3Client.AWSProfile), pullFile)
 
 }
 
@@ -225,7 +223,7 @@ func (m *BucketsModule) createBucketsRows(verbosity int, wg *sync.WaitGroup, sem
 	}()
 	var region string = "Global"
 	var name string
-	ListBuckets, err := m.listBuckets()
+	ListBuckets, err := m.BucketsS3Client.listBuckets()
 	if err != nil {
 		m.modLog.Error(err.Error())
 		return
@@ -236,13 +234,13 @@ func (m *BucketsModule) createBucketsRows(verbosity int, wg *sync.WaitGroup, sem
 			Name:       aws.ToString(b.Name),
 			AWSService: "S3",
 		}
-		region, err = m.getBucketRegion(aws.ToString(b.Name))
+		region, err = m.BucketsS3Client.getBucketRegion(aws.ToString(b.Name))
 		if err != nil {
 			m.modLog.Error(err.Error())
 		}
 		bucket.Region = region
 
-		policyJSON, err := m.getBucketPolicy(aws.ToString(b.Name))
+		policyJSON, err := m.BucketsS3Client.getBucketPolicy(aws.ToString(b.Name))
 		if err != nil {
 			m.modLog.Error(err.Error())
 		} else {
@@ -270,7 +268,7 @@ func (m *BucketsModule) createBucketsRows(verbosity int, wg *sync.WaitGroup, sem
 
 }
 
-func (m *BucketsModule) listBuckets() ([]types.Bucket, error) {
+func (m *CloudFoxS3Client) listBuckets() ([]types.Bucket, error) {
 
 	var buckets []types.Bucket
 	ListBuckets, err := m.S3Client.ListBuckets(
@@ -278,7 +276,6 @@ func (m *BucketsModule) listBuckets() ([]types.Bucket, error) {
 		&s3.ListBucketsInput{},
 	)
 	if err != nil {
-		m.modLog.Error(err.Error())
 		return buckets, err
 	}
 
@@ -287,7 +284,7 @@ func (m *BucketsModule) listBuckets() ([]types.Bucket, error) {
 
 }
 
-func (m *BucketsModule) getBucketRegion(bucketName string) (string, error) {
+func (m *CloudFoxS3Client) getBucketRegion(bucketName string) (string, error) {
 	GetBucketRegion, err := m.S3Client.GetBucketLocation(
 		context.TODO(),
 		&s3.GetBucketLocationInput{
@@ -295,7 +292,6 @@ func (m *BucketsModule) getBucketRegion(bucketName string) (string, error) {
 		},
 	)
 	if err != nil {
-		m.modLog.Error(err.Error())
 		return "", err
 	}
 	location := string(GetBucketRegion.LocationConstraint)
@@ -305,11 +301,10 @@ func (m *BucketsModule) getBucketRegion(bucketName string) (string, error) {
 	return location, err
 }
 
-func (m *BucketsModule) getBucketPolicy(bucketName string) (string, error) {
+func (m *CloudFoxS3Client) getBucketPolicy(bucketName string) (string, error) {
 
 	r, err := m.getBucketRegion(bucketName)
 	if err != nil {
-		m.modLog.Error(err.Error())
 		return "", err
 	}
 	BucketPolicyObject, err := m.S3Client.GetBucketPolicy(
@@ -322,7 +317,6 @@ func (m *BucketsModule) getBucketPolicy(bucketName string) (string, error) {
 		},
 	)
 	if err != nil {
-		m.modLog.Error(err.Error())
 		return "", err
 	}
 
@@ -330,7 +324,7 @@ func (m *BucketsModule) getBucketPolicy(bucketName string) (string, error) {
 
 }
 
-func (m *BucketsModule) getPublicAccessBlock(bucketName string) (*types.PublicAccessBlockConfiguration, error) {
+func (m *CloudFoxS3Client) getPublicAccessBlock(bucketName string) (*types.PublicAccessBlockConfiguration, error) {
 	r, err := m.getBucketRegion(bucketName)
 	PublicAccessBlock, err := m.S3Client.GetPublicAccessBlock(
 		context.TODO(),
@@ -342,13 +336,12 @@ func (m *BucketsModule) getPublicAccessBlock(bucketName string) (*types.PublicAc
 		},
 	)
 	if err != nil {
-		m.modLog.Error(err.Error())
 		return nil, err
 	}
 	return PublicAccessBlock.PublicAccessBlockConfiguration, err
 }
 
-func (m *BucketsModule) isPublicAccessBlocked(bucketName string) bool {
+func (m *CloudFoxS3Client) isPublicAccessBlocked(bucketName string) bool {
 	publicAccessBlock, err := m.getPublicAccessBlock(bucketName)
 	if err != nil {
 		return false
@@ -360,7 +353,7 @@ func (m *BucketsModule) isPublicAccessBlocked(bucketName string) bool {
 func (m *BucketsModule) analyseBucketPolicy(bucket *Bucket, dataReceiver chan Bucket) {
 	m.storeAccessPolicy(bucket)
 
-	if bucket.Policy.IsPublic() && !bucket.Policy.IsConditionallyPublic() && !m.isPublicAccessBlocked(bucket.Name) {
+	if bucket.Policy.IsPublic() && !bucket.Policy.IsConditionallyPublic() && !m.BucketsS3Client.isPublicAccessBlocked(bucket.Name) {
 		bucket.IsPublic = "YES"
 	}
 
@@ -368,9 +361,9 @@ func (m *BucketsModule) analyseBucketPolicy(bucket *Bucket, dataReceiver chan Bu
 		var prefix string = ""
 		if len(bucket.Policy.Statement) > 1 {
 			prefix = fmt.Sprintf("Statement %d says: ", i)
-			bucket.ResourcePolicySummary = bucket.ResourcePolicySummary + prefix + statement.GetStatementSummaryInEnglish(*m.Caller.Account)
+			bucket.ResourcePolicySummary = bucket.ResourcePolicySummary + prefix + statement.GetStatementSummaryInEnglish(*m.BucketsS3Client.Caller.Account)
 		} else {
-			bucket.ResourcePolicySummary = statement.GetStatementSummaryInEnglish(*m.Caller.Account)
+			bucket.ResourcePolicySummary = statement.GetStatementSummaryInEnglish(*m.BucketsS3Client.Caller.Account)
 		}
 		bucket.ResourcePolicySummary = strings.TrimSuffix(bucket.ResourcePolicySummary, "\n")
 

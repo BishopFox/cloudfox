@@ -303,6 +303,16 @@ var (
 		Run:    runRAMCommand,
 	}
 
+	ResourceTrustsCommand = &cobra.Command{
+		Use:     "resource-trusts",
+		Aliases: []string{"resourcetrusts", "resourcetrust"},
+		Short:   "Enumerate all resource trusts",
+		Long: "\nUse case examples:\n" +
+			os.Args[0] + " aws resource-trusts --profile readonly_profile",
+		PreRun: awsPreRun,
+		Run:    runResourceTrustsCommand,
+	}
+
 	// The filter is set to "all" when the flag "--filter" is not used
 	RoleTrustFilter  string
 	RoleTrustCommand = &cobra.Command{
@@ -446,6 +456,7 @@ func init() {
 		LambdasCommand,
 		NetworkPortsCommand,
 		PmapperCommand,
+		ResourceTrustsCommand,
 	)
 
 }
@@ -499,12 +510,18 @@ func runBucketsCommand(cmd *cobra.Command, args []string) {
 		if err != nil {
 			continue
 		}
-		m := aws.BucketsModule{
+
+		cloudFoxS3Client := aws.CloudFoxS3Client{
 			S3Client:   s3.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
 			Caller:     *caller,
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile: profile,
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
+		}
+
+		m := aws.BucketsModule{
+			BucketsS3Client: cloudFoxS3Client,
+			Goroutines:      Goroutines,
+			WrapTable:       AWSWrapTable,
 		}
 		m.PrintBuckets(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 	}
@@ -559,10 +576,7 @@ func runECRCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.ECRModule{
-			//ECRClient:                       ecr.NewFromConfig(AWSConfig),
-			ECRClientDescribeReposInterface:  ecr.NewFromConfig(AWSConfig),
-			ECRClientDescribeImagesInterface: ecr.NewFromConfig(AWSConfig),
-
+			ECRClient:  ecr.NewFromConfig(AWSConfig),
 			Caller:     *caller,
 			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile: profile,
@@ -597,21 +611,17 @@ func runSQSCommand(cmd *cobra.Command, args []string) {
 
 func runSNSCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
-		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
 		if err != nil {
 			continue
 		}
+		cloudFoxSNSClient := aws.InitCloudFoxSNSClient(*caller, profile, cmd.Root().Version)
+
 		m := aws.SNSModule{
-			SNSClient: sns.NewFromConfig(AWSConfig),
-
+			SNSClient:     cloudFoxSNSClient,
 			StorePolicies: StoreSNSAccessPolicies,
-
-			Caller:     *caller,
-			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
+			Goroutines:    Goroutines,
+			WrapTable:     AWSWrapTable,
 		}
 		m.PrintSNS(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 	}
@@ -920,6 +930,24 @@ func runRAMCommand(cmd *cobra.Command, args []string) {
 		}
 		ram.PrintRAM(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
+	}
+}
+
+func runResourceTrustsCommand(cmd *cobra.Command, args []string) {
+	for _, profile := range AWSProfiles {
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
+		if err != nil {
+			continue
+		}
+		m := aws.ResourceTrustsModule{
+			Caller:          *caller,
+			AWSProfile:      profile,
+			Goroutines:      Goroutines,
+			AWSRegions:      internal.GetEnabledRegions(profile, cmd.Root().Version),
+			WrapTable:       AWSWrapTable,
+			CloudFoxVersion: cmd.Root().Version,
+		}
+		m.PrintResources(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -1328,24 +1356,28 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		//fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Gathering some other info that is often useful."))
 		fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Arming you with the data you'll need for privesc quests."))
 
-		buckets := aws.BucketsModule{
-			S3Client:   s3Client,
+		cloudFoxS3Client := aws.CloudFoxS3Client{
+			S3Client:   s3.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
 			Caller:     *Caller,
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile: profile,
+		}
+
+		buckets := aws.BucketsModule{
+			BucketsS3Client: cloudFoxS3Client,
+
 			Goroutines: Goroutines,
 			WrapTable:  AWSWrapTable,
 		}
 		buckets.PrintBuckets(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
 		ecr := aws.ECRModule{
-			//ECRClient:  ecrClient,
-			ECRClientDescribeReposInterface:  ecrClient,
-			ECRClientDescribeImagesInterface: ecrClient,
-			Caller:                           *Caller,
-			AWSRegions:                       internal.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile:                       profile,
-			Goroutines:                       Goroutines,
-			WrapTable:                        AWSWrapTable,
+			ECRClient:  ecrClient,
+			Caller:     *Caller,
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile: profile,
+			Goroutines: Goroutines,
+			WrapTable:  AWSWrapTable,
 		}
 		ecr.PrintECR(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 

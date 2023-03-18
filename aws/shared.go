@@ -7,26 +7,12 @@ import (
 	"runtime"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/fatih/color"
 )
 
 var cyan = color.New(color.FgCyan).SprintFunc()
 var red = color.New(color.FgRed).SprintFunc()
-
-func initIAMSimClient(iamSimPPClient iam.SimulatePrincipalPolicyAPIClient, caller sts.GetCallerIdentityOutput, AWSProfile string, Goroutines int) IamSimulatorModule {
-
-	iamSimMod := IamSimulatorModule{
-		IAMSimulatePrincipalPolicyClient: iamSimPPClient,
-		Caller:                           caller,
-		AWSProfile:                       AWSProfile,
-		Goroutines:                       Goroutines,
-	}
-
-	return iamSimMod
-
-}
 
 func GetIamSimResult(SkipAdminCheck bool, roleArnPtr *string, iamSimulatorMod IamSimulatorModule, localAdminMap map[string]bool) (string, string) {
 	var adminRole, canRolePrivEsc string

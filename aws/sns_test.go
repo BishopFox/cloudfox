@@ -26,15 +26,17 @@ func TestSNSQueues(t *testing.T) {
 	}
 
 	m := SNSModule{
-		SNSClient:     c,
-		StorePolicies: true,
-		AWSProfile:    "unittesting",
-		AWSRegions:    []string{"us-east-1", "us-west-1", "us-west-2"},
-		Caller: sts.GetCallerIdentityOutput{
-			Arn:     aws.String("arn:aws:iam::123456789012:user/cloudfox_unit_tests"),
-			Account: aws.String("123456789012"),
+		SNSClient: CloudFoxSNSClient{
+			SNSClient: c,
+			Caller: sts.GetCallerIdentityOutput{
+				Arn:     aws.String("arn:aws:iam::123456789012:user/cloudfox_unit_tests"),
+				Account: aws.String("123456789012"),
+			},
+			AWSRegions: []string{"us-east-1", "us-west-1", "us-west-2"},
+			AWSProfile: "unittesting",
 		},
-		Goroutines: 3,
+		StorePolicies: true,
+		Goroutines:    3,
 	}
 
 	fs := internal.MockFileSystem(true)

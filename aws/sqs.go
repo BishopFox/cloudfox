@@ -244,8 +244,44 @@ func (m *SQSModule) getSQSRecordsPerRegion(r string, wg *sync.WaitGroup, semapho
 	defer func() {
 		<-semaphore
 	}()
-	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
+
+	ListQueues, err := m.listQueues(r)
+
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	for _, url := range ListQueues {
+		queue, err := m.getQueueWithAttributes(url, r)
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			break
+		}
+
+		// easier to just set the default state to be no and only flip it to yes if we have a case that matches
+		queue.IsPublic = "No"
+
+		if !queue.Policy.IsEmpty() {
+			m.analyseQueuePolicy(queue, dataReceiver)
+		} else {
+			// If the queue policy "resource policy" is empty, the only principals that have permisisons
+			// are those that are granted access by IAM policies
+			//queue.Access = "Private. Access allowed by IAM policies"
+			queue.Access = "Only intra-account access (via IAM) allowed"
+			dataReceiver <- *queue
+
+		}
+
+	}
+
+}
+
+func (m *SQSModule) listQueues(region string) ([]string, error) {
 	var PaginationControl *string
+	var queues []string
 
 	for {
 		ListQueues, err := m.SQSClient.ListQueues(
@@ -255,37 +291,15 @@ func (m *SQSModule) getSQSRecordsPerRegion(r string, wg *sync.WaitGroup, semapho
 				NextToken:  PaginationControl,
 			},
 			func(o *sqs.Options) {
-				o.Region = r
+				o.Region = region
 			},
 		)
 		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
+			return nil, fmt.Errorf("ListQueues() failed: %s", err)
 		}
 
 		for _, url := range ListQueues.QueueUrls {
-			queue, err := m.getQueueWithAttributes(url, r)
-			if err != nil {
-				m.modLog.Error(err.Error())
-				m.CommandCounter.Error++
-				break
-			}
-
-			// easier to just set the default state to be no and only flip it to yes if we have a case that matches
-			queue.IsPublic = "No"
-
-			if !queue.Policy.IsEmpty() {
-				m.analyseQueuePolicy(queue, dataReceiver)
-			} else {
-				// If the queue policy "resource policy" is empty, the only principals that have permisisons
-				// are those that are granted access by IAM policies
-				//queue.Access = "Private. Access allowed by IAM policies"
-				queue.Access = "Only intra-account access (via IAM) allowed"
-				dataReceiver <- *queue
-
-			}
-
+			queues = append(queues, url)
 		}
 
 		// The "NextToken" value is nil when there's no more data to return.
@@ -296,6 +310,8 @@ func (m *SQSModule) getSQSRecordsPerRegion(r string, wg *sync.WaitGroup, semapho
 			break
 		}
 	}
+
+	return queues, nil
 }
 
 func (m *SQSModule) getQueueWithAttributes(queueURL string, region string) (*Queue, error) {
