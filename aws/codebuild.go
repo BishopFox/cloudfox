@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/BishopFox/cloudfox/internal/aws/policy"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild/types"
@@ -43,6 +44,7 @@ type CodeBuildModule struct {
 type CodeBuildClientInterface interface {
 	ListProjects(ctx context.Context, params *codebuild.ListProjectsInput, optFns ...func(*codebuild.Options)) (*codebuild.ListProjectsOutput, error)
 	BatchGetProjects(ctx context.Context, params *codebuild.BatchGetProjectsInput, optFns ...func(*codebuild.Options)) (*codebuild.BatchGetProjectsOutput, error)
+	GetResourcePolicy(ctx context.Context, params *codebuild.GetResourcePolicyInput, optFns ...func(*codebuild.Options)) (*codebuild.GetResourcePolicyOutput, error)
 }
 
 type Project struct {
@@ -275,4 +277,30 @@ func (m *CodeBuildModule) getProjectDetails(project string, r string) (types.Pro
 	}
 
 	return Project.Projects[0], nil
+}
+
+func (m *CodeBuildModule) getResourcePolicy(r string, project string) (policy.Policy, error) {
+	var projectPolicy policy.Policy
+	var policyJSON string
+	Policy, err := m.CodeBuildClient.GetResourcePolicy(
+		context.TODO(),
+		&codebuild.GetResourcePolicyInput{
+			ResourceArn: aws.String("arn:aws:codebuild:" + r + ":" + *m.Caller.Account + ":project/" + project),
+		},
+		func(options *codebuild.Options) {
+			options.Region = r
+		},
+	)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return projectPolicy, err
+	}
+
+	policyJSON = aws.ToString(Policy.Policy)
+	projectPolicy, err = policy.ParseJSONPolicy([]byte(policyJSON))
+	if err != nil {
+		return projectPolicy, fmt.Errorf("parsing policy (%s) as JSON: %s", project, err)
+	}
+	return projectPolicy, nil
 }

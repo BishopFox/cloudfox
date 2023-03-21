@@ -75,7 +75,7 @@ func InitLambdaClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfV
 	return lambdaClient
 }
 
-func InitCodeBuildClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string) CodeBuildModule {
+func InitCodeBuildClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int) CodeBuildModule {
 	var AWSConfig = internal.AWSConfigFileLoader(AWSProfile, cfVersion)
 	codeBuildClient := CodeBuildModule{
 		CodeBuildClient: codebuild.NewFromConfig(AWSConfig),

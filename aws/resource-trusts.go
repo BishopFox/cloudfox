@@ -56,6 +56,7 @@ func (m *ResourceTrustsModule) PrintResources(outputFormat string, outputDirecto
 	}
 
 	fmt.Printf("[%s][%s] Enumerating Resources with resource policies for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
+	fmt.Printf("[%s][%s] Supported Services: CodeBuild, ECR, S3, SNS, SQS\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	wg := new(sync.WaitGroup)
 	semaphore := make(chan struct{}, m.Goroutines)
 
@@ -153,6 +154,16 @@ func (m *ResourceTrustsModule) executeChecks(r string, wg *sync.WaitGroup, semap
 		m.CommandCounter.Total++
 		wg.Add(1)
 		m.getECRRecordsPerRegion(r, wg, semaphore, dataReceiver)
+	}
+
+	res, err = servicemap.IsServiceInRegion("codebuild", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		m.getCodeBuildResourcePoliciesPerRegion(r, wg, semaphore, dataReceiver)
 	}
 
 }
@@ -343,6 +354,53 @@ func (m *ResourceTrustsModule) getECRRecordsPerRegion(r string, wg *sync.WaitGro
 					dataReceiver <- Resource2{
 						AccountID:             aws.ToString(m.Caller.Account),
 						ARN:                   aws.ToString(repo.RepositoryArn),
+						ResourcePolicySummary: statementInEnglish,
+					}
+				}
+			}
+
+		}
+
+	}
+}
+
+func (m *ResourceTrustsModule) getCodeBuildResourcePoliciesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Resource2) {
+	defer wg.Done()
+	semaphore <- struct{}{}
+	defer func() { <-semaphore }()
+
+	cloudFoxCodeBuildClient := InitCodeBuildClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines)
+
+	ListProjects, err := cloudFoxCodeBuildClient.getcodeBuildProjects(r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		return
+	}
+
+	for _, p := range ListProjects {
+		project, err := cloudFoxCodeBuildClient.getProjectDetails(p, r)
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			break
+		}
+
+		policy, err := cloudFoxCodeBuildClient.getResourcePolicy(r, p)
+		if err != nil {
+			m.modLog.Error(err.Error())
+			return
+		}
+
+		if !policy.IsEmpty() {
+			for _, statement := range policy.Statement {
+				statementInEnglish := statement.GetStatementSummaryInEnglish(*m.Caller.Account)
+				// check if statementInEnglish contains an AWS ARN other than caller.Arn
+				if (strings.Contains(statementInEnglish, "arn:aws") && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
+					((strings.Contains(statementInEnglish, "AWS:SourceOwner") || strings.Contains(statementInEnglish, "AWS:SourceAccount")) && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) {
+					statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
+					dataReceiver <- Resource2{
+						AccountID:             aws.ToString(m.Caller.Account),
+						ARN:                   aws.ToString(project.Arn),
 						ResourcePolicySummary: statementInEnglish,
 					}
 				}
