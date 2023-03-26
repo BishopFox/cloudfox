@@ -2,6 +2,7 @@ package aws
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -50,15 +51,16 @@ type ECSTasksModule struct {
 }
 
 type MappedECSTask struct {
-	Cluster        string
-	TaskDefinition string
-	LaunchType     string
-	ID             string
-	ExternalIP     string
-	PrivateIP      string
-	Role           string
-	Admin          string
-	CanPrivEsc     string
+	Cluster               string
+	TaskDefinitionName    string
+	TaskDefinitionContent string
+	LaunchType            string
+	ID                    string
+	ExternalIP            string
+	PrivateIP             string
+	Role                  string
+	Admin                 string
+	CanPrivEsc            string
 }
 
 func (m *ECSTasksModule) ECSTasks(outputFormat string, outputDirectory string, verbosity int) {
@@ -174,7 +176,7 @@ func (m *ECSTasksModule) printECSTaskData(outputFormat string, outputDirectory s
 				m.output.Body,
 				[]string{
 					ecsTask.Cluster,
-					ecsTask.TaskDefinition,
+					ecsTask.TaskDefinitionName,
 					ecsTask.LaunchType,
 					ecsTask.ID,
 					ecsTask.ExternalIP,
@@ -191,7 +193,7 @@ func (m *ECSTasksModule) printECSTaskData(outputFormat string, outputDirectory s
 				m.output.Body,
 				[]string{
 					ecsTask.Cluster,
-					ecsTask.TaskDefinition,
+					ecsTask.TaskDefinitionName,
 					ecsTask.LaunchType,
 					ecsTask.ID,
 					ecsTask.ExternalIP,
@@ -248,6 +250,24 @@ func (m *ECSTasksModule) writeLoot(outputDirectory string) {
 	if err != nil {
 		m.modLog.Error(err.Error())
 		m.CommandCounter.Error++
+	}
+
+	for _, task := range m.MappedECSTasks {
+		if task.TaskDefinitionContent != "" {
+			path := filepath.Join(path, "task-definitions")
+			err := os.MkdirAll(path, os.ModePerm)
+			if err != nil {
+				m.modLog.Error(err.Error())
+				m.CommandCounter.Error++
+			}
+			taskDefinitionFilename := filepath.Join(path, task.TaskDefinitionName+".json")
+
+			err = os.WriteFile(taskDefinitionFilename, []byte(task.TaskDefinitionContent), 0644)
+			if err != nil {
+				m.modLog.Error(err.Error())
+				m.CommandCounter.Error++
+			}
+		}
 	}
 
 	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), privateIPsFilename)
@@ -386,13 +406,20 @@ func (m *ECSTasksModule) loadTasksData(clusterARN string, taskARNs []string, reg
 	}
 
 	for _, task := range DescribeTasks.Tasks {
+		taskDefinition, err := m.describeTaskDefinition(aws.ToString(task.TaskDefinitionArn), region)
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			return
+		}
 		mappedTask := MappedECSTask{
-			Cluster:        getNameFromARN(clusterARN),
-			TaskDefinition: getNameFromARN(aws.ToString(task.TaskDefinitionArn)),
-			LaunchType:     string(task.LaunchType),
-			ID:             getIDFromECSTask(aws.ToString(task.TaskArn)),
-			PrivateIP:      getPrivateIPv4AddressFromECSTask(task),
-			Role:           m.getTaskRole(aws.ToString(task.TaskDefinitionArn), region),
+			Cluster:               getNameFromARN(clusterARN),
+			TaskDefinitionName:    getNameFromARN(aws.ToString(task.TaskDefinitionArn)),
+			TaskDefinitionContent: getTaskDefinitionContent(taskDefinition),
+			LaunchType:            string(task.LaunchType),
+			ID:                    getIDFromECSTask(aws.ToString(task.TaskArn)),
+			PrivateIP:             getPrivateIPv4AddressFromECSTask(task),
+			Role:                  getTaskRole(taskDefinition),
 		}
 
 		eniID := getElasticNetworkInterfaceIDOfECSTask(task)
@@ -404,7 +431,21 @@ func (m *ECSTasksModule) loadTasksData(clusterARN string, taskARNs []string, reg
 	}
 }
 
-func (m *ECSTasksModule) getTaskRole(taskDefinitionArn string, region string) string {
+func getTaskRole(taskDefinition types.TaskDefinition) string {
+	return aws.ToString(taskDefinition.TaskRoleArn)
+}
+
+func getTaskDefinitionContent(taskDefinition types.TaskDefinition) string {
+	// return taskDefinition as a json string
+
+	taskDefinitionContent, err := json.Marshal(taskDefinition)
+	if err != nil {
+		return ""
+	}
+	return string(taskDefinitionContent)
+}
+
+func (m *ECSTasksModule) describeTaskDefinition(taskDefinitionArn string, region string) (types.TaskDefinition, error) {
 	DescribeTaskDefinition, err := m.DescribeTaskDefinitionClient.DescribeTaskDefinition(
 		context.TODO(),
 		&ecs.DescribeTaskDefinitionInput{
@@ -417,9 +458,9 @@ func (m *ECSTasksModule) getTaskRole(taskDefinitionArn string, region string) st
 	if err != nil {
 		m.modLog.Error(err.Error())
 		m.CommandCounter.Error++
-		return ""
+		return types.TaskDefinition{}, err
 	}
-	return aws.ToString(DescribeTaskDefinition.TaskDefinition.TaskRoleArn)
+	return *DescribeTaskDefinition.TaskDefinition, nil
 }
 
 /* UNUSED CODE BLOCK - PLEASE REVIEW AND DELETE IF NOT NEEDED

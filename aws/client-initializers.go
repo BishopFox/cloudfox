@@ -4,6 +4,8 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
+	"github.com/aws/aws-sdk-go-v2/service/efs"
+	"github.com/aws/aws-sdk-go-v2/service/fsx"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -64,7 +66,7 @@ func InitSQSClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVers
 
 }
 
-func InitLambdaClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string) LambdasModule {
+func InitLambdaClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int) LambdasModule {
 	var AWSConfig = internal.AWSConfigFileLoader(AWSProfile, cfVersion)
 	lambdaClient := LambdasModule{
 		LambdaClient: lambda.NewFromConfig(AWSConfig),
@@ -95,4 +97,16 @@ func InitECRClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVers
 		AWSRegions: internal.GetEnabledRegions(AWSProfile, cfVersion),
 	}
 	return ecrClient
+}
+
+func InitFileSystemsClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int) FilesystemsModule {
+	var AWSConfig = internal.AWSConfigFileLoader(AWSProfile, cfVersion)
+	fileSystemsClient := FilesystemsModule{
+		EFSClient:  efs.NewFromConfig(AWSConfig),
+		FSxClient:  fsx.NewFromConfig(AWSConfig),
+		Caller:     caller,
+		AWSProfile: AWSProfile,
+		AWSRegions: internal.GetEnabledRegions(AWSProfile, cfVersion),
+	}
+	return fileSystemsClient
 }

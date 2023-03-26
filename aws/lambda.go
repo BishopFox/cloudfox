@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/BishopFox/cloudfox/internal/aws/policy"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
@@ -319,7 +320,7 @@ func (m *LambdasModule) listFunctions(r string) ([]types.FunctionConfiguration, 
 			},
 		)
 		if err != nil {
-			m.modLog.Error(err.Error())
+			sharedLogger.Error(err.Error())
 			m.CommandCounter.Error++
 			return functions, err
 		}
@@ -333,4 +334,30 @@ func (m *LambdasModule) listFunctions(r string) ([]types.FunctionConfiguration, 
 		}
 	}
 	return functions, nil
+}
+
+func (m *LambdasModule) getResourcePolicy(r string, functionName string) (policy.Policy, error) {
+	var projectPolicy policy.Policy
+	var policyJSON string
+	Policy, err := m.LambdaClient.GetPolicy(
+		context.TODO(),
+		&lambda.GetPolicyInput{
+			FunctionName: &functionName,
+		},
+		func(options *lambda.Options) {
+			options.Region = r
+		},
+	)
+	if err != nil {
+		sharedLogger.Error(err.Error())
+		m.CommandCounter.Error++
+		return projectPolicy, err
+	}
+
+	policyJSON = aws.ToString(Policy.Policy)
+	projectPolicy, err = policy.ParseJSONPolicy([]byte(policyJSON))
+	if err != nil {
+		return projectPolicy, fmt.Errorf("parsing policy (%s) as JSON: %s", functionName, err)
+	}
+	return projectPolicy, nil
 }

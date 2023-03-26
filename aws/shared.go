@@ -6,6 +6,7 @@ import (
 	"os"
 	"runtime"
 
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/fatih/color"
@@ -13,6 +14,7 @@ import (
 
 var cyan = color.New(color.FgCyan).SprintFunc()
 var red = color.New(color.FgRed).SprintFunc()
+var sharedLogger = internal.TxtLogger()
 
 func GetIamSimResult(SkipAdminCheck bool, roleArnPtr *string, iamSimulatorMod IamSimulatorModule, localAdminMap map[string]bool) (string, string) {
 	var adminRole, canRolePrivEsc string

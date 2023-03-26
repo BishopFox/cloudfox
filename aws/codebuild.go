@@ -224,13 +224,13 @@ func (m *CodeBuildModule) getcodeBuildProjectsPerRegion(r string, wg *sync.WaitG
 
 	projects, err := m.getcodeBuildProjects(r)
 	if err != nil {
-		m.modLog.Error(err)
+		sharedLogger.Error(err.Error())
 	}
 
 	for _, project := range projects {
 		details, err := m.getProjectDetails(project, r)
 		if err != nil {
-			m.modLog.Error(err)
+			sharedLogger.Error(err.Error())
 		}
 
 		dataReceiver <- Project{
@@ -254,7 +254,7 @@ func (m *CodeBuildModule) getcodeBuildProjects(r string) ([]string, error) {
 		},
 	)
 	if err != nil {
-		m.modLog.Error(err.Error())
+		sharedLogger.Error(err.Error())
 		m.CommandCounter.Error++
 		return nil, err
 	}
@@ -272,7 +272,7 @@ func (m *CodeBuildModule) getProjectDetails(project string, r string) (types.Pro
 		},
 	)
 	if err != nil {
-		m.modLog.Error(err.Error())
+		sharedLogger.Error(err.Error())
 		m.CommandCounter.Error++
 	}
 
@@ -292,7 +292,7 @@ func (m *CodeBuildModule) getResourcePolicy(r string, project string) (policy.Po
 		},
 	)
 	if err != nil {
-		m.modLog.Error(err.Error())
+		sharedLogger.Error(err.Error())
 		m.CommandCounter.Error++
 		return projectPolicy, err
 	}

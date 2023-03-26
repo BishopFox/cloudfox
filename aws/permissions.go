@@ -409,7 +409,7 @@ func (m *IamPermissionsModule) getPermissionsFromInlinePolicy(arn string, inline
 							PolicyType: "Inline",
 							PolicyName: aws.ToString(inlinePolicy.PolicyName),
 							Effect:     effect,
-							Action:     "notaction" + action,
+							Action:     "[NotAction] " + action,
 							Resource:   resource,
 						})
 				}

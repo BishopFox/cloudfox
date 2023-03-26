@@ -151,7 +151,7 @@ func (m *SNSModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan s
 	defer wg.Done()
 
 	servicemap := &awsservicemap.AwsServiceMap{
-		JsonFileSource: "EMBEDDED_IN_PACKAGE",
+		JsonFileSource: "DOWNLOAD_FROM_AWS",
 	}
 	res, err := servicemap.IsServiceInRegion("sns", r)
 	if err != nil {

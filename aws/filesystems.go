@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/BishopFox/cloudfox/internal/aws/policy"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/efs"
 	"github.com/aws/aws-sdk-go-v2/service/efs/types"
@@ -187,7 +188,8 @@ func (m *FilesystemsModule) writeLoot(outputDirectory string, verbosity int) {
 	path := filepath.Join(outputDirectory, "loot")
 	err := os.MkdirAll(path, os.ModePerm)
 	if err != nil {
-		m.modLog.Error(err.Error())
+		sharedLogger.Error(err.Error())
+
 		m.CommandCounter.Error++
 	}
 	f := filepath.Join(path, "filesystems-mount-commands.txt")
@@ -224,7 +226,8 @@ func (m *FilesystemsModule) writeLoot(outputDirectory string, verbosity int) {
 
 	err = os.WriteFile(f, []byte(out), 0644)
 	if err != nil {
-		m.modLog.Error(err.Error())
+		sharedLogger.Error(err.Error())
+
 		m.CommandCounter.Error++
 	}
 	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), f)
@@ -251,7 +254,7 @@ func (m *FilesystemsModule) getEFSSharesPerRegion(r string, wg *sync.WaitGroup, 
 
 	DescribeFileSystems, err := m.describeEFSFilesystems(r)
 	if err != nil {
-		m.modLog.Error(err.Error())
+		sharedLogger.Error(err.Error())
 		m.CommandCounter.Error++
 		return
 	}
@@ -275,7 +278,8 @@ func (m *FilesystemsModule) getEFSSharesPerRegion(r string, wg *sync.WaitGroup, 
 
 		DescribeMountTargets, err := m.describeEFSMountTargets(id, r)
 		if err != nil {
-			m.modLog.Error(err.Error())
+			sharedLogger.Error(err.Error())
+
 			m.CommandCounter.Error++
 			break
 		}
@@ -287,7 +291,8 @@ func (m *FilesystemsModule) getEFSSharesPerRegion(r string, wg *sync.WaitGroup, 
 
 			accessPoints, err := m.describeEFSAccessPoints(id, r)
 			if err != nil {
-				m.modLog.Error(err.Error())
+				sharedLogger.Error(err.Error())
+
 				m.CommandCounter.Error++
 				dataReceiver <- FilesystemObject{
 					AWSService:  awsService,
@@ -348,7 +353,8 @@ func (m *FilesystemsModule) getFSxSharesPerRegion(r string, wg *sync.WaitGroup, 
 			},
 		)
 		if err != nil {
-			m.modLog.Error(err.Error())
+			sharedLogger.Error(err.Error())
+
 			m.CommandCounter.Error++
 			break
 		}
@@ -479,7 +485,8 @@ func (m *FilesystemsModule) describeEFSFilesystems(r string) ([]types.FileSystem
 			},
 		)
 		if err != nil {
-			m.modLog.Error(err.Error())
+			sharedLogger.Error(err.Error())
+
 			m.CommandCounter.Error++
 			return nil, err
 		}
@@ -513,7 +520,7 @@ func (m *FilesystemsModule) describeEFSMountTargets(filesystemId string, r strin
 			},
 		)
 		if err != nil {
-			m.modLog.Error(err.Error())
+			sharedLogger.Error(err.Error())
 			m.CommandCounter.Error++
 			return nil, err
 		}
@@ -547,7 +554,7 @@ func (m *FilesystemsModule) describeEFSAccessPoints(filesystemId string, r strin
 			},
 		)
 		if err != nil {
-			m.modLog.Error(err.Error())
+			sharedLogger.Error(err.Error())
 			m.CommandCounter.Error++
 			return nil, err
 		}
@@ -575,4 +582,30 @@ func (m *FilesystemsModule) getEFSfilesystemPermissions(accessPoint types.Access
 	}
 	return path, permissions
 
+}
+
+func (m *FilesystemsModule) getEFSResourcePolicy(filesystemId string, r string) (policy.Policy, error) {
+	var efsPolicy policy.Policy
+	var policyJSON string
+	Policy, err := m.EFSClient.DescribeFileSystemPolicy(
+		context.TODO(),
+		&efs.DescribeFileSystemPolicyInput{
+			FileSystemId: aws.String(filesystemId),
+		},
+		func(o *efs.Options) {
+			o.Region = r
+		},
+	)
+	if err != nil {
+		sharedLogger.Error(err.Error())
+		m.CommandCounter.Error++
+		return efsPolicy, err
+	}
+
+	policyJSON = aws.ToString(Policy.Policy)
+	efsPolicy, err = policy.ParseJSONPolicy([]byte(policyJSON))
+	if err != nil {
+		return efsPolicy, fmt.Errorf("parsing policy (%s) as JSON: %s", filesystemId, err)
+	}
+	return efsPolicy, nil
 }
