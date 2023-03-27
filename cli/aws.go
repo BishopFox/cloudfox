@@ -1352,6 +1352,32 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		}
 		networkPorts.PrintNetworkPorts(AWSOutputFormat, AWSOutputDirectory)
 
+		sqsMod := aws.SQSModule{
+			SQSClient: sqsClient,
+
+			StorePolicies: StoreSQSAccessPolicies,
+
+			Caller:     *Caller,
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile: profile,
+			Goroutines: Goroutines,
+			WrapTable:  AWSWrapTable,
+		}
+		sqsMod.PrintSQS(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+
+		snsMod := aws.SNSModule{
+			SNSClient: snsClient,
+
+			StorePolicies: StoreSNSAccessPolicies,
+
+			Caller:     *Caller,
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile: profile,
+			Goroutines: Goroutines,
+			WrapTable:  AWSWrapTable,
+		}
+		snsMod.PrintSNS(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+
 		// IAM privesc section
 		fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("IAM is complicated. Complicated usually means misconfigurations. You'll want to pay attention here."))
 		principals := aws.IamPrincipalsModule{
@@ -1409,32 +1435,6 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			WrapTable:                        AWSWrapTable,
 		}
 		iamSimulator.PrintIamSimulator(SimulatorPrincipal, SimulatorAction, SimulatorResource, AWSOutputFormat, AWSOutputDirectory, Verbosity)
-
-		sqsMod := aws.SQSModule{
-			SQSClient: sqsClient,
-
-			StorePolicies: StoreSQSAccessPolicies,
-
-			Caller:     *Caller,
-			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
-		}
-		sqsMod.PrintSQS(AWSOutputFormat, AWSOutputDirectory, Verbosity)
-
-		snsMod := aws.SNSModule{
-			SNSClient: snsClient,
-
-			StorePolicies: StoreSNSAccessPolicies,
-
-			Caller:     *Caller,
-			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
-		}
-		snsMod.PrintSNS(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
 		fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("That's it! Check your output files for situational awareness and check your loot files for next steps."))
 		fmt.Printf("[%s] %s\n\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("FYI, we skipped the outbound-assumed-roles module in all-checks (really long run time). Make sure to try it out manually."))
