@@ -39,9 +39,9 @@ func InitCloudFoxSNSClient(caller sts.GetCallerIdentityOutput, AWSProfile string
 
 }
 
-func initCloudFoxS3Client(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string) CloudFoxS3Client {
+func initCloudFoxS3Client(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string) BucketsModule {
 	var AWSConfig = internal.AWSConfigFileLoader(AWSProfile, cfVersion)
-	cloudFoxS3Client := CloudFoxS3Client{
+	cloudFoxS3Client := BucketsModule{
 		S3Client:   s3.NewFromConfig(AWSConfig),
 		Caller:     caller,
 		AWSProfile: AWSProfile,

@@ -72,10 +72,10 @@ func (m *SQSModule) PrintSQS(outputFormat string, outputDirectory string, verbos
 	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
-	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 	if m.AWSProfile == "" {
 		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
+	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 
 	fmt.Printf("[%s][%s] Enumerating SQS queues for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 

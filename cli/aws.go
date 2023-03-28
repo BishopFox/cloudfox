@@ -511,17 +511,20 @@ func runBucketsCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 
-		cloudFoxS3Client := aws.CloudFoxS3Client{
+		// cloudFoxS3Client := aws.CloudFoxS3Client{
+		// 	S3Client:   s3.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+		// 	Caller:     *caller,
+		// 	AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
+		// 	AWSProfile: profile,
+		// }
+
+		m := aws.BucketsModule{
 			S3Client:   s3.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
 			Caller:     *caller,
 			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile: profile,
-		}
-
-		m := aws.BucketsModule{
-			BucketsS3Client: cloudFoxS3Client,
-			Goroutines:      Goroutines,
-			WrapTable:       AWSWrapTable,
+			Goroutines: Goroutines,
+			WrapTable:  AWSWrapTable,
 		}
 		m.PrintBuckets(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 	}
@@ -1356,16 +1359,18 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		//fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Gathering some other info that is often useful."))
 		fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Arming you with the data you'll need for privesc quests."))
 
-		cloudFoxS3Client := aws.CloudFoxS3Client{
+		// cloudFoxS3Client := aws.CloudFoxS3Client{
+		// 	S3Client:   s3.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+		// 	Caller:     *Caller,
+		// 	AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
+		// 	AWSProfile: profile,
+		// }
+
+		buckets := aws.BucketsModule{
 			S3Client:   s3.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
 			Caller:     *Caller,
 			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile: profile,
-		}
-
-		buckets := aws.BucketsModule{
-			BucketsS3Client: cloudFoxS3Client,
-
 			Goroutines: Goroutines,
 			WrapTable:  AWSWrapTable,
 		}

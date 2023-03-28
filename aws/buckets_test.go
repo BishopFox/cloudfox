@@ -75,15 +75,14 @@ func (m *MockedS3Client) GetPublicAccessBlock(ctx context.Context, params *s3.Ge
 func TestListBuckets(t *testing.T) {
 
 	m := BucketsModule{
-		BucketsS3Client: CloudFoxS3Client{
-			S3Client: &MockedS3Client{},
-			Caller: sts.GetCallerIdentityOutput{
-				Arn:     aws.String("arn:aws:iam::123456789012:user/cloudfox_unit_tests"),
-				Account: aws.String("123456789012"),
-			},
-			AWSRegions: []string{"us-east-1", "us-west-1", "us-west-2"},
-			AWSProfile: "unittesting",
+
+		S3Client: &MockedS3Client{},
+		Caller: sts.GetCallerIdentityOutput{
+			Arn:     aws.String("arn:aws:iam::123456789012:user/cloudfox_unit_tests"),
+			Account: aws.String("123456789012"),
 		},
+		AWSRegions: []string{"us-east-1", "us-west-1", "us-west-2"},
+		AWSProfile: "unittesting",
 		Goroutines: 3,
 	}
 

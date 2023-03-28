@@ -73,10 +73,10 @@ func (m *SNSModule) PrintSNS(outputFormat string, outputDirectory string, verbos
 	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
-	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.SNSClient.AWSProfile)
 	if m.SNSClient.AWSProfile == "" {
 		m.SNSClient.AWSProfile = internal.BuildAWSPath(m.SNSClient.Caller)
 	}
+	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.SNSClient.AWSProfile)
 
 	fmt.Printf("[%s][%s] Enumerating SNS topics for account %s.\n", cyan(m.output.CallingModule), cyan(m.SNSClient.AWSProfile), aws.ToString(m.SNSClient.Caller.Account))
 
