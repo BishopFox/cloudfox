@@ -31,6 +31,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/lightsail"
 	"github.com/aws/aws-sdk-go-v2/service/mq"
 	"github.com/aws/aws-sdk-go-v2/service/opensearch"
+	"github.com/aws/aws-sdk-go-v2/service/organizations"
 	"github.com/aws/aws-sdk-go-v2/service/ram"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
 	"github.com/aws/aws-sdk-go-v2/service/redshift"
@@ -272,6 +273,16 @@ var (
 		Run:    runOutboundAssumedRolesCommand,
 	}
 
+	OrgsCommand = &cobra.Command{
+		Use:     "orgs",
+		Aliases: []string{"org", "organizations", "accounts", "account"},
+		Short:   "Enumerate accounts in an organization",
+		Long: "\nUse case examples:\n" +
+			os.Args[0] + " aws orgs --profile readonly_profile",
+		PreRun: awsPreRun,
+		Run:    runOrgsCommand,
+	}
+
 	PermissionsPrincipal string
 	PermissionsCommand   = &cobra.Command{
 		Use:     "permissions",
@@ -457,6 +468,7 @@ func init() {
 		NetworkPortsCommand,
 		PmapperCommand,
 		ResourceTrustsCommand,
+		OrgsCommand,
 	)
 
 }
@@ -861,6 +873,23 @@ func runOutboundAssumedRolesCommand(cmd *cobra.Command, args []string) {
 			WrapTable:  AWSWrapTable,
 		}
 		m.PrintOutboundRoleTrusts(OutboundAssumedRolesDays, AWSOutputFormat, AWSOutputDirectory, Verbosity)
+	}
+}
+
+func runOrgsCommand(cmd *cobra.Command, args []string) {
+	for _, profile := range AWSProfiles {
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
+		if err != nil {
+			continue
+		}
+		m := aws.OrgModule{
+			OrganizationsClient: organizations.NewFromConfig(AWSConfig),
+			Caller:              *caller,
+			AWSProfile:          profile,
+			WrapTable:           AWSWrapTable,
+		}
+		m.PrintOrgAccounts(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 	}
 }
 
