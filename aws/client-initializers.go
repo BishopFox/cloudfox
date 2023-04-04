@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/fsx"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
+	"github.com/aws/aws-sdk-go-v2/service/organizations"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
@@ -109,4 +110,15 @@ func InitFileSystemsClient(caller sts.GetCallerIdentityOutput, AWSProfile string
 		AWSRegions: internal.GetEnabledRegions(AWSProfile, cfVersion),
 	}
 	return fileSystemsClient
+}
+
+func InitOrgClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int) OrgModule {
+	var AWSConfig = internal.AWSConfigFileLoader(AWSProfile, cfVersion)
+	orgClient := OrgModule{
+		OrganizationsClient: organizations.NewFromConfig(AWSConfig),
+		Caller:              caller,
+		AWSProfile:          AWSProfile,
+		AWSRegions:          internal.GetEnabledRegions(AWSProfile, cfVersion),
+	}
+	return orgClient
 }

@@ -270,3 +270,15 @@ func SpinUntil(callingModuleName string, counter *CommandCounter, done chan bool
 		}
 	}
 }
+
+func ReorganizeAWSProfiles(allProfiles []string, mgmtProfile string) []string {
+	// take the mgmt profile, move it from its current position to the front of the list
+	var newProfiles []string
+	newProfiles = append(newProfiles, mgmtProfile)
+	for _, profile := range allProfiles {
+		if profile != mgmtProfile {
+			newProfiles = append(newProfiles, profile)
+		}
+	}
+	return newProfiles
+}

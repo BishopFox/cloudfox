@@ -287,19 +287,33 @@ func (m *IamPermissionsModule) parsePermissions() {
 			m.getPermissionsFromInlinePolicy(m.Users[i].Arn, inlinePolicy, "User", m.Users[i].Name)
 		}
 
-		for j, group := range m.Users[i].GroupList {
-			for _, gaadGroup := range m.Groups {
-				if gaadGroup.Name == group {
-					for _, attachedPolicy := range m.Groups[j].AttachedPolicies {
+		// for each group in the user's group list, get the attached and inline policy names, and then get the permissions from those policies
+		for g := range m.Users[i].GroupList {
+			for _, group := range m.Groups {
+				if group.Name == m.Users[i].GroupList[g] {
+					for _, attachedPolicy := range group.AttachedPolicies {
 						m.getPermissionsFromAttachedPolicy(m.Users[i].Arn, attachedPolicy, "User", m.Users[i].Name)
 					}
-					for _, inlinePolicy := range m.Groups[j].InlinePolicies {
+					for _, inlinePolicy := range group.InlinePolicies {
 						m.getPermissionsFromInlinePolicy(m.Users[i].Arn, inlinePolicy, "User", m.Users[i].Name)
 					}
 				}
 			}
-
 		}
+
+		// for group := range m.Users[i].GroupList {
+		// 	for _, gaadGroup := range m.Groups {
+		// 		if gaadGroup.Name == group {
+		// 			for _, attachedPolicy := range m.Groups[j].AttachedPolicies {
+		// 				m.getPermissionsFromAttachedPolicy(m.Users[i].Arn, attachedPolicy, "User", m.Users[i].Name)
+		// 			}
+		// 			for _, inlinePolicy := range m.Groups[j].InlinePolicies {
+		// 				m.getPermissionsFromInlinePolicy(m.Users[i].Arn, inlinePolicy, "User", m.Users[i].Name)
+		// 			}
+		// 		}
+		// 	}
+
+		// }
 	}
 
 }

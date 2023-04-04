@@ -43,6 +43,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
+	"github.com/aws/smithy-go/ptr"
 	"github.com/fatih/color"
 	"github.com/kyokomi/emoji"
 	"github.com/spf13/cobra"
@@ -489,7 +490,35 @@ func initAWSProfiles() {
 	}
 }
 
+func FindOrgMgmtAccount(AWSProfiles []string, version string) []string {
+	for _, profile := range AWSProfiles {
+		caller, err := internal.AWSWhoami(profile, version)
+		if err != nil {
+			continue
+		}
+		orgModuleClient := aws.InitOrgClient(*caller, profile, version, Goroutines)
+		orgModuleClient.DescribeOrgOutput, err = orgModuleClient.DescribeOrganization()
+		if err != nil {
+			continue
+		}
+		isMgmtAccount := orgModuleClient.IsManagementAccount(orgModuleClient.DescribeOrgOutput, ptr.ToString(caller.Account))
+		if isMgmtAccount {
+			mgmtAccount := ptr.ToString(caller.Account)
+			fmt.Printf("[%s] Found Organization Management Account: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), mgmtAccount)
+			AWSProfiles = internal.ReorganizeAWSProfiles(AWSProfiles, profile)
+		} else {
+			continue
+		}
+	}
+	return AWSProfiles
+}
+
 func awsPreRun(cmd *cobra.Command, args []string) {
+	fmt.Printf("[%s] Looking to see if the included account(s) are part of an Organization\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)))
+	if AWSProfilesList != "" || AWSAllProfiles {
+		AWSProfiles = FindOrgMgmtAccount(AWSProfiles, cmd.Root().Version)
+	}
+
 	for _, profile := range AWSProfiles {
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
 		if err != nil {
@@ -497,6 +526,7 @@ func awsPreRun(cmd *cobra.Command, args []string) {
 		}
 		fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
 	}
+
 }
 
 func runAccessKeysCommand(cmd *cobra.Command, args []string) {

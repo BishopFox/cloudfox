@@ -23,6 +23,7 @@ type OrgModule struct {
 	AWSProfile          string
 	SkipAdminCheck      bool
 	WrapTable           bool
+	DescribeOrgOutput   *organizations.DescribeOrganizationOutput
 
 	// Main module data
 	Accounts       []Account
@@ -47,6 +48,7 @@ type Account struct {
 
 func (m *OrgModule) PrintOrgAccounts(outputFormat string, outputDirectory string, verbosity int) {
 	// These stuct values are used by the output module
+	var err error
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "org"
@@ -58,75 +60,62 @@ func (m *OrgModule) PrintOrgAccounts(outputFormat string, outputDirectory string
 		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
 
-	fmt.Printf("[%s][%s] Checking if account %s is the management account in an organization %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
-
-	// wg := new(sync.WaitGroup)
-	// semaphore := make(chan struct{}, m.Goroutines)
-
-	// // Create a channel to signal the spinner aka task status goroutine to finish
-	// spinnerDone := make(chan bool)
-	// //fire up the the task status spinner/updated
-	// go internal.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
-
-	// //create a channel to receive the objects
-	// dataReceiver := make(chan Project)
-
-	// // Create a channel to signal to stop
-	// receiverDone := make(chan bool)
-
-	// go m.Receiver(dataReceiver, receiverDone)
-
-	// // for _, region := range m.AWSRegions {
-	// // 	wg.Add(1)
-	// // 	m.CommandCounter.Pending++
-	// // 	go m.executeChecks(region, wg, semaphore, dataReceiver)
-
-	// // }
-
-	// wg.Wait()
-
-	// // Send a message to the spinner goroutine to close the channel and stop
-	// spinnerDone <- true
-	// <-spinnerDone
-	// receiverDone <- true
-	// <-receiverDone
-
-	m.addOrgAccounts()
-
-	m.output.Headers = []string{
-		"Name",
-		"ID",
-		"isManagementAccount?",
-		"Status",
-		"Email",
-	}
-
-	// Table rows
-
-	for i := range m.Accounts {
-		m.output.Body = append(
-			m.output.Body,
-			[]string{
-				m.Accounts[i].Name,
-				m.Accounts[i].Id,
-				strconv.FormatBool(m.Accounts[i].isManagementAccount),
-				m.Accounts[i].Status,
-				m.Accounts[i].Email,
-			},
-		)
-	}
-
-	if len(m.output.Body) > 0 {
-		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		//m.writeLoot(m.output.FilePath, verbosity)
-		fmt.Printf("[%s][%s] %d accounts found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), len(m.output.Body))
-		fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
-
+	fmt.Printf("[%s][%s] Checking if account %s is the management account in an organization.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
+	m.DescribeOrgOutput, err = m.DescribeOrganization()
+	if err != nil {
+		m.modLog.Errorf("Failed to describe organization: %s", err)
+		fmt.Printf("[%s][%s] Account %s is either not associated with an organization, or you do not have the organizations:DescribeOrganization permission.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 	} else {
-		fmt.Printf("[%s][%s] No accounts found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
-	}
 
+		if m.IsManagementAccount(m.DescribeOrgOutput, aws.ToString(m.Caller.Account)) {
+			m.addOrgAccounts()
+		} else {
+			m.addOrgAccount()
+			//fmt.Printf("[%s][%s] Account %s is not the management account in an organization %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
+		}
+
+		m.output.Headers = []string{
+			"Name",
+			"ID",
+			"isManagementAccount?",
+			"Status",
+			"Email",
+		}
+
+		// Table rows
+
+		for i := range m.Accounts {
+			m.output.Body = append(
+				m.output.Body,
+				[]string{
+					m.Accounts[i].Name,
+					m.Accounts[i].Id,
+					strconv.FormatBool(m.Accounts[i].isManagementAccount),
+					m.Accounts[i].Status,
+					m.Accounts[i].Email,
+				},
+			)
+		}
+
+		if len(m.output.Body) > 0 {
+			m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
+			internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+			//m.writeLoot(m.output.FilePath, verbosity)
+			fmt.Printf("[%s][%s] %d accounts found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), len(m.output.Body))
+			fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
+
+		}
+	}
+}
+
+// need to rework this to make it more efficient. It's currently making a call to describe organization for each account
+func (m *OrgModule) IsManagementAccount(DescribeOrganization *organizations.DescribeOrganizationOutput, account string) bool {
+	// Check if the account is the management account
+	// https://docs.aws.amazon.com/organizations/latest/APIReference/API_DescribeOrganization.html
+	if aws.ToString(DescribeOrganization.Organization.MasterAccountId) == account {
+		return true
+	}
+	return false
 }
 
 func (m *OrgModule) addOrgAccounts() {
@@ -137,7 +126,7 @@ func (m *OrgModule) addOrgAccounts() {
 	}
 	for _, account := range accounts {
 		m.Accounts = append(m.Accounts, Account{
-			isManagementAccount: false,
+			isManagementAccount: m.IsManagementAccount(m.DescribeOrgOutput, aws.ToString(account.Id)),
 			Name:                aws.ToString(account.Name),
 			Id:                  aws.ToString(account.Id),
 			Email:               aws.ToString(account.Email),
@@ -145,6 +134,21 @@ func (m *OrgModule) addOrgAccounts() {
 			Status:              string(account.Status),
 		})
 	}
+}
+
+func (m *OrgModule) addOrgAccount() {
+	DescribeOrganization, err := m.DescribeOrganization()
+	if err != nil {
+		m.modLog.Errorf("Failed to describe organization: %s", err)
+	}
+	m.Accounts = append(m.Accounts, Account{
+		isManagementAccount: true,
+		Name:                "Unkown",
+		Id:                  aws.ToString(DescribeOrganization.Organization.MasterAccountId),
+		Email:               aws.ToString(DescribeOrganization.Organization.MasterAccountEmail),
+		Arn:                 aws.ToString(DescribeOrganization.Organization.MasterAccountArn),
+		Status:              "ACTIVE",
+	})
 }
 
 func (m *OrgModule) listAccounts() ([]types.Account, error) {
@@ -176,4 +180,18 @@ func (m *OrgModule) listAccounts() ([]types.Account, error) {
 
 	}
 	return accounts, nil
+}
+
+func (m *OrgModule) DescribeOrganization() (*organizations.DescribeOrganizationOutput, error) {
+	return m.OrganizationsClient.DescribeOrganization(context.TODO(), &organizations.DescribeOrganizationInput{})
+}
+
+func (m *OrgModule) IsCallerAccountPartofAnOrg() bool {
+	var err error
+	m.DescribeOrgOutput, err = m.DescribeOrganization()
+	if err != nil {
+		m.modLog.Errorf("Failed to describe organization: %s", err)
+		return false
+	}
+	return true
 }
