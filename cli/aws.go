@@ -1482,6 +1482,32 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		}
 		networkPorts.PrintNetworkPorts(AWSOutputFormat, AWSOutputDirectory)
 
+		sqsMod := aws.SQSModule{
+			SQSClient: sqsClient,
+
+			StorePolicies: StoreSQSAccessPolicies,
+
+			Caller:     *Caller,
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile: profile,
+			Goroutines: Goroutines,
+			WrapTable:  AWSWrapTable,
+		}
+		sqsMod.PrintSQS(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+
+		snsMod := aws.SNSModule{
+			SNSClient: snsClient,
+
+			StorePolicies: StoreSNSAccessPolicies,
+
+			Caller:     *Caller,
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile: profile,
+			Goroutines: Goroutines,
+			WrapTable:  AWSWrapTable,
+		}
+		snsMod.PrintSNS(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+
 		// IAM privesc section
 		fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("IAM is complicated. Complicated usually means misconfigurations. You'll want to pay attention here."))
 		principals := aws.IamPrincipalsModule{

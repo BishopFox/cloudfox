@@ -750,7 +750,10 @@ func (m *EnvsModule) getSagemakerEnvironmentVariablesPerRegion(r string, wg *syn
 				m.CommandCounter.Error++
 				break
 			}
-			if err == nil {
+
+			// find the number of environment variables in the model in a pointer safe way
+
+			if DescribeModel.PrimaryContainer != nil {
 
 				if len(DescribeModel.PrimaryContainer.Environment) > 0 {
 					name := fmt.Sprintf("[Model] %s", aws.ToString(DescribeModel.ModelName))

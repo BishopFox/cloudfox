@@ -209,7 +209,7 @@ func (b *TableClient) writeTableFiles(files []TableFile) []string {
 		t.SetAlignment(table.AlignLeft)
 		t.Render()
 
-		fullPath := path.Join(b.DirectoryName, fmt.Sprintf("%s.txt", file.Name))
+		fullPath := path.Join(b.DirectoryName, "table", fmt.Sprintf("%s.txt", file.Name))
 		fullFilePaths = append(fullFilePaths, fullPath)
 	}
 
@@ -257,7 +257,7 @@ func (b *TableClient) writeCSVFiles() []string {
 		}
 		csvWriter.Flush()
 
-		fullPath := path.Join(b.DirectoryName, fmt.Sprintf("%s.csv", file.Name))
+		fullPath := path.Join(b.DirectoryName, "csv", fmt.Sprintf("%s.csv", file.Name))
 		fullFilePaths = append(fullFilePaths, fullPath)
 	}
 
