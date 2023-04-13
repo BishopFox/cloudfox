@@ -318,9 +318,14 @@ func (m *InstancesModule) writeLoot(outputDirectory string) {
 	}
 	privateIPsFilename := filepath.Join(path, "instances-ec2PrivateIPs.txt")
 	publicIPsFilename := filepath.Join(path, "instances-ec2PublicIPs.txt")
+	ssmCommandsFilename := filepath.Join(path, "instances-ssmCommands.txt")
+	ec2InstanceConnectCommandsFilename := filepath.Join(path, "instances-ec2InstanceConnectCommands.txt")
 
 	var publicIPs string
 	var privateIPs string
+	var ssmCommands string
+	var ec2InstanceConnectCommands string
+	var headlineName string
 
 	for _, instance := range m.MappedInstances {
 		if instance.ExternalIP != "NoExternalIP" {
@@ -329,6 +334,32 @@ func (m *InstancesModule) writeLoot(outputDirectory string) {
 		if instance.PrivateIP != "" {
 			privateIPs = privateIPs + fmt.Sprintln(instance.PrivateIP)
 		}
+
+		if instance.Name != "" {
+			headlineName = fmt.Sprintf("%s/%s", instance.Name, instance.ID)
+		} else {
+			headlineName = fmt.Sprintf("%s", instance.ID)
+		}
+
+		ssmCommands = ssmCommands + fmt.Sprintf("-----------------------------------------------------------------------\n")
+		ssmCommands = ssmCommands + fmt.Sprintf("############## Instance: %s  ##############\n", headlineName)
+		ssmCommands = ssmCommands + fmt.Sprintf("-----------------------------------------------------------------------\n")
+
+		ssmCommands = ssmCommands + fmt.Sprintf("### SSM start-session to %s ###\n", headlineName)
+		ssmCommands = ssmCommands + fmt.Sprintf("# You'll need the AWS CLI session manager plugin installed: https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html\n")
+		ssmCommands = ssmCommands + fmt.Sprintf("aws --profile $profile --region %s ssm start-session --target %s\n\n", instance.Region, instance.ID)
+		ssmCommands = ssmCommands + fmt.Sprintf("### SSM send-command to %s ###\n", headlineName)
+		ssmCommands = ssmCommands + fmt.Sprintf("# If you just want to run one command you can use send-command, but really, start-session is way easier\n")
+		ssmCommands = ssmCommands + fmt.Sprintf("aws --profile $profile --region %s ssm send-command --instance-ids %s --document-name AWS-RunShellScript --parameters commands=\"aws sts get-caller-identity\" \n", instance.Region, instance.ID)
+		ssmCommands = ssmCommands + fmt.Sprintf("aws --profile $profile --region %s ssm get-command-invocation --output text --instance-id %s --command-id <command-id-from-previous-command>\n\n", instance.Region, instance.ID)
+
+		ec2InstanceConnectCommands = ec2InstanceConnectCommands + fmt.Sprintf("-----------------------------------------------------------------------\n")
+		ec2InstanceConnectCommands = ec2InstanceConnectCommands + fmt.Sprintf("############## Instance: %s  ##############\n", headlineName)
+		ec2InstanceConnectCommands = ec2InstanceConnectCommands + fmt.Sprintf("-----------------------------------------------------------------------\n")
+
+		ec2InstanceConnectCommands = ec2InstanceConnectCommands + fmt.Sprintf("### EC2 Instance Connect to %s ###\n", instance.ID)
+		ec2InstanceConnectCommands = ec2InstanceConnectCommands + fmt.Sprintf("# You'll need to change the --instance-os-user and --ssh-public-key parameters to match your own setup\n")
+		ec2InstanceConnectCommands = ec2InstanceConnectCommands + fmt.Sprintf("aws --profile $profile --region %s ec2-instance-connect send-ssh-public-key --instance-id %s --instance-os-user ec2-user --ssh-public-key file://~/.ssh/id_rsa.pub\n\n", instance.Region, instance.ID)
 
 	}
 	err = os.WriteFile(privateIPsFilename, []byte(privateIPs), 0644)
@@ -341,9 +372,21 @@ func (m *InstancesModule) writeLoot(outputDirectory string) {
 		m.modLog.Error(err.Error())
 		m.CommandCounter.Error++
 	}
+	err = os.WriteFile(ssmCommandsFilename, []byte(ssmCommands), 0644)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+	}
+	err = os.WriteFile(ec2InstanceConnectCommandsFilename, []byte(ec2InstanceConnectCommands), 0644)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+	}
 
 	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), privateIPsFilename)
 	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), publicIPsFilename)
+	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), ssmCommandsFilename)
+	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), ec2InstanceConnectCommandsFilename)
 
 }
 
