@@ -1,17 +1,17 @@
 package aws
 
 import (
-	"context"
 	"fmt"
 	"net/url"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/BishopFox/cloudfox/internal/aws/policy"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/sirupsen/logrus"
@@ -19,7 +19,7 @@ import (
 
 type IamPermissionsModule struct {
 	// General configuration data
-	IAMClient *iam.Client
+	IAMClient sdk.AWSIAMClientInterface
 
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
@@ -149,70 +149,83 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputFormat string, outputDi
 }
 
 func (m *IamPermissionsModule) getGAAD(principal string) {
-	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
-	//var totalRoles int
+	var inputArn string
+	GAAD, err := sdk.CachedIAMGetAccountAuthorizationDetails(m.IAMClient, aws.ToString(m.Caller.Account))
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
 
-	// var attachedPolicies []types.AttachedPolicy
-	// var inlinePolicies []types.PolicyDetail
+	// // if user supplied a principal name without the arn, try to create the arn
+	// if !strings.Contains(principal, "arn:") {
+	// 	principal = fmt.Sprintf("arn:aws:iam::%s:user/%s", aws.ToString(m.Caller.Account), principal)
+	// }
 
-	for {
-		GAAD, err := m.IAMClient.GetAccountAuthorizationDetails(
-			context.TODO(),
-			&iam.GetAccountAuthorizationDetailsInput{
-				Marker: PaginationControl,
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
+	for _, policy := range GAAD.Policies {
+		//var IAMtype = "Role"
+		arn := aws.ToString(policy.Arn)
+		name := aws.ToString(policy.PolicyName)
 
-		for _, policy := range GAAD.Policies {
-			//var IAMtype = "Role"
-			arn := aws.ToString(policy.Arn)
-			name := aws.ToString(policy.PolicyName)
+		m.Policies = append(m.Policies, GAADPolicy{
+			Arn:               arn,
+			Name:              name,
+			PolicyVersionList: policy.PolicyVersionList,
+		})
 
-			m.Policies = append(m.Policies, GAADPolicy{
-				Arn:               arn,
-				Name:              name,
-				PolicyVersionList: policy.PolicyVersionList,
+	}
+
+	for _, role := range GAAD.RoleDetailList {
+		arn := aws.ToString(role.Arn)
+		name := aws.ToString(role.RoleName)
+		if principal == "" {
+			m.Roles = append(m.Roles, GAADRole{
+				Arn:              arn,
+				Name:             name,
+				AttachedPolicies: role.AttachedManagedPolicies,
+				InlinePolicies:   role.RolePolicyList,
 			})
-
-		}
-
-		for _, role := range GAAD.RoleDetailList {
-			arn := aws.ToString(role.Arn)
-			name := aws.ToString(role.RoleName)
-			if principal == "" {
+		} else {
+			// if user supplied a principal name without the arn, try to create the arn
+			if !strings.Contains(principal, "arn:") {
+				inputArn = fmt.Sprintf("arn:aws:iam::%s:role/%s", aws.ToString(m.Caller.Account), principal)
+			} else {
+				inputArn = principal
+			}
+			//
+			if strings.ToLower(arn) == strings.ToLower(inputArn) {
 				m.Roles = append(m.Roles, GAADRole{
 					Arn:              arn,
 					Name:             name,
 					AttachedPolicies: role.AttachedManagedPolicies,
 					InlinePolicies:   role.RolePolicyList,
 				})
-			} else {
-				if arn == principal {
-					m.Roles = append(m.Roles, GAADRole{
-						Arn:              arn,
-						Name:             name,
-						AttachedPolicies: role.AttachedManagedPolicies,
-						InlinePolicies:   role.RolePolicyList,
-					})
-				}
-
 			}
+
 		}
+	}
 
-		// i think the error here is pagination!!
-
-		for _, user := range GAAD.UserDetailList {
-			//var IAMtype = "User"
-			arn := aws.ToString(user.Arn)
-			name := aws.ToString(user.UserName)
-			groupList := user.GroupList
-			if principal == "" {
+	for _, user := range GAAD.UserDetailList {
+		//var IAMtype = "User"
+		arn := aws.ToString(user.Arn)
+		name := aws.ToString(user.UserName)
+		groupList := user.GroupList
+		if principal == "" {
+			m.Users = append(m.Users, GAADUser{
+				Arn:              arn,
+				Name:             name,
+				AttachedPolicies: user.AttachedManagedPolicies,
+				InlinePolicies:   user.UserPolicyList,
+				GroupList:        groupList,
+			})
+		} else {
+			// if user supplied a principal name without the arn, try to create the arn
+			if !strings.Contains(principal, "arn:") {
+				inputArn = fmt.Sprintf("arn:aws:iam::%s:user/%s", aws.ToString(m.Caller.Account), principal)
+			} else {
+				inputArn = principal
+			}
+			if strings.ToLower(arn) == strings.ToLower(inputArn) {
 				m.Users = append(m.Users, GAADUser{
 					Arn:              arn,
 					Name:             name,
@@ -220,49 +233,62 @@ func (m *IamPermissionsModule) getGAAD(principal string) {
 					InlinePolicies:   user.UserPolicyList,
 					GroupList:        groupList,
 				})
-			} else {
-				if arn == principal {
-					m.Users = append(m.Users, GAADUser{
-						Arn:              arn,
-						Name:             name,
-						AttachedPolicies: user.AttachedManagedPolicies,
-						InlinePolicies:   user.UserPolicyList,
-						GroupList:        groupList,
-					})
-				}
 			}
 		}
+	}
 
-		for _, group := range GAAD.GroupDetailList {
-			arn := aws.ToString(group.Arn)
-			name := aws.ToString(group.GroupName)
-			if principal == "" {
+	for _, group := range GAAD.GroupDetailList {
+		arn := aws.ToString(group.Arn)
+		name := aws.ToString(group.GroupName)
+		if principal == "" {
+			m.Groups = append(m.Groups, GAADGroup{
+				Arn:              arn,
+				Name:             name,
+				AttachedPolicies: group.AttachedManagedPolicies,
+				InlinePolicies:   group.GroupPolicyList,
+			})
+		} else {
+			// if user supplied a principal name without the arn, try to create the arn
+			if !strings.Contains(principal, "arn:") {
+				inputArn = fmt.Sprintf("arn:aws:iam::%s:user/%s", aws.ToString(m.Caller.Account), principal)
+			} else {
+				inputArn = principal
+			}
+			if strings.ToLower(arn) == strings.ToLower(inputArn) {
 				m.Groups = append(m.Groups, GAADGroup{
 					Arn:              arn,
 					Name:             name,
 					AttachedPolicies: group.AttachedManagedPolicies,
 					InlinePolicies:   group.GroupPolicyList,
 				})
-			} else {
-				if arn == principal {
-					m.Groups = append(m.Groups, GAADGroup{
-						Arn:              arn,
-						Name:             name,
-						AttachedPolicies: group.AttachedManagedPolicies,
-						InlinePolicies:   group.GroupPolicyList,
-					})
-				}
 			}
 		}
+	}
 
-		// Pagination control. After the last page of output, the for loop exits.
-		if GAAD.Marker != nil {
-			PaginationControl = GAAD.Marker
-		} else {
-			PaginationControl = nil
-			break
+}
+
+// create a function that will take a principal name and try to see if it is a role, user, or group and return the arn of the principal
+func (m *IamPermissionsModule) getPrincipalArn(principal string) string {
+	var arn string
+	for _, role := range m.Roles {
+		if role.Name == principal {
+			arn = role.Arn
 		}
 	}
+
+	for _, user := range m.Users {
+		if user.Name == principal {
+			arn = user.Arn
+		}
+	}
+
+	for _, group := range m.Groups {
+		if group.Name == principal {
+			arn = group.Arn
+		}
+	}
+
+	return arn
 }
 
 func (m *IamPermissionsModule) parsePermissions() {
