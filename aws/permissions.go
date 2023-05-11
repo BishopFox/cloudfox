@@ -114,6 +114,7 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputFormat string, outputDi
 		"Effect",
 		"Action",
 		"Resource",
+		"Condition",
 	}
 
 	//Table rows
@@ -130,6 +131,7 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputFormat string, outputDi
 				m.Rows[i].Effect,
 				m.Rows[i].Action,
 				m.Rows[i].Resource,
+				m.Rows[i].Condition,
 			},
 		)
 
@@ -348,6 +350,7 @@ func (m *IamPermissionsModule) getPermissionsFromAttachedPolicy(arn string, atta
 	//var policies []types.ManagedPolicyDetail
 	var s policy.PolicyStatement
 	var AWSService = "IAM"
+	var hasConditions string
 
 	for _, p := range m.Policies {
 		if p.Name == aws.ToString(attachedPolicy.PolicyName) {
@@ -362,6 +365,11 @@ func (m *IamPermissionsModule) getPermissionsFromAttachedPolicy(arn string, atta
 						if s.Action != nil {
 							for _, action := range s.Action {
 								for _, resource := range s.Resource {
+									if s.Condition != nil {
+										hasConditions = "Yes"
+									} else {
+										hasConditions = "No"
+									}
 									m.Rows = append(
 										m.Rows,
 										PermissionsRow{
@@ -374,6 +382,7 @@ func (m *IamPermissionsModule) getPermissionsFromAttachedPolicy(arn string, atta
 											Effect:     effect,
 											Action:     action,
 											Resource:   resource,
+											Condition:  hasConditions,
 										})
 								}
 							}
@@ -382,6 +391,11 @@ func (m *IamPermissionsModule) getPermissionsFromAttachedPolicy(arn string, atta
 						if s.NotAction != nil {
 							for _, action := range s.NotAction {
 								for _, resource := range s.Resource {
+									if s.Condition != nil {
+										hasConditions = "Yes"
+									} else {
+										hasConditions = "No"
+									}
 									m.Rows = append(
 										m.Rows,
 										PermissionsRow{
@@ -394,6 +408,7 @@ func (m *IamPermissionsModule) getPermissionsFromAttachedPolicy(arn string, atta
 											Effect:     effect,
 											Action:     "[NotAction] " + action,
 											Resource:   resource,
+											Condition:  hasConditions,
 										})
 								}
 							}
@@ -410,6 +425,7 @@ func (m *IamPermissionsModule) getPermissionsFromInlinePolicy(arn string, inline
 	//var policies []types.ManagedPolicyDetail
 	var s policy.PolicyStatement
 	var AWSService = "IAM"
+	var hasConditions string
 
 	//parsedPolicyDocument, _ := parsePolicyDocument(inlinePolicy.PolicyDocument)
 	document, _ := url.QueryUnescape(aws.ToString(inlinePolicy.PolicyDocument))
@@ -420,6 +436,11 @@ func (m *IamPermissionsModule) getPermissionsFromInlinePolicy(arn string, inline
 		if s.Action != nil {
 			for _, action := range s.Action {
 				for _, resource := range s.Resource {
+					if s.Condition != nil {
+						hasConditions = "Yes"
+					} else {
+						hasConditions = "No"
+					}
 					m.Rows = append(
 						m.Rows,
 						PermissionsRow{
@@ -432,6 +453,7 @@ func (m *IamPermissionsModule) getPermissionsFromInlinePolicy(arn string, inline
 							Effect:     effect,
 							Action:     action,
 							Resource:   resource,
+							Condition:  hasConditions,
 						})
 				}
 			}
@@ -439,6 +461,11 @@ func (m *IamPermissionsModule) getPermissionsFromInlinePolicy(arn string, inline
 		if s.NotAction != nil {
 			for _, action := range s.NotAction {
 				for _, resource := range s.Resource {
+					if s.Condition != nil {
+						hasConditions = "Yes"
+					} else {
+						hasConditions = "No"
+					}
 					m.Rows = append(
 						m.Rows,
 						PermissionsRow{
@@ -451,6 +478,7 @@ func (m *IamPermissionsModule) getPermissionsFromInlinePolicy(arn string, inline
 							Effect:     effect,
 							Action:     "[NotAction] " + action,
 							Resource:   resource,
+							Condition:  hasConditions,
 						})
 				}
 			}
