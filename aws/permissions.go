@@ -101,8 +101,8 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputFormat string, outputDi
 		m.output.FullFilename = filepath.Join(fmt.Sprintf("%s-custom-%s", m.output.CallingModule, strconv.FormatInt((time.Now().Unix()), 10)))
 	}
 
-	m.getGAAD(principal)
-	m.parsePermissions()
+	m.getGAAD()
+	m.parsePermissions(principal)
 
 	m.output.Headers = []string{
 		"Service",
@@ -150,8 +150,7 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputFormat string, outputDi
 	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 }
 
-func (m *IamPermissionsModule) getGAAD(principal string) {
-	var inputArn string
+func (m *IamPermissionsModule) getGAAD() {
 	GAAD, err := sdk.CachedIAMGetAccountAuthorizationDetails(m.IAMClient, aws.ToString(m.Caller.Account))
 	if err != nil {
 		m.modLog.Error(err.Error())
@@ -180,31 +179,13 @@ func (m *IamPermissionsModule) getGAAD(principal string) {
 	for _, role := range GAAD.RoleDetailList {
 		arn := aws.ToString(role.Arn)
 		name := aws.ToString(role.RoleName)
-		if principal == "" {
-			m.Roles = append(m.Roles, GAADRole{
-				Arn:              arn,
-				Name:             name,
-				AttachedPolicies: role.AttachedManagedPolicies,
-				InlinePolicies:   role.RolePolicyList,
-			})
-		} else {
-			// if user supplied a principal name without the arn, try to create the arn
-			if !strings.Contains(principal, "arn:") {
-				inputArn = fmt.Sprintf("arn:aws:iam::%s:role/%s", aws.ToString(m.Caller.Account), principal)
-			} else {
-				inputArn = principal
-			}
-			//
-			if strings.ToLower(arn) == strings.ToLower(inputArn) {
-				m.Roles = append(m.Roles, GAADRole{
-					Arn:              arn,
-					Name:             name,
-					AttachedPolicies: role.AttachedManagedPolicies,
-					InlinePolicies:   role.RolePolicyList,
-				})
-			}
+		m.Roles = append(m.Roles, GAADRole{
+			Arn:              arn,
+			Name:             name,
+			AttachedPolicies: role.AttachedManagedPolicies,
+			InlinePolicies:   role.RolePolicyList,
+		})
 
-		}
 	}
 
 	for _, user := range GAAD.UserDetailList {
@@ -212,59 +193,26 @@ func (m *IamPermissionsModule) getGAAD(principal string) {
 		arn := aws.ToString(user.Arn)
 		name := aws.ToString(user.UserName)
 		groupList := user.GroupList
-		if principal == "" {
-			m.Users = append(m.Users, GAADUser{
-				Arn:              arn,
-				Name:             name,
-				AttachedPolicies: user.AttachedManagedPolicies,
-				InlinePolicies:   user.UserPolicyList,
-				GroupList:        groupList,
-			})
-		} else {
-			// if user supplied a principal name without the arn, try to create the arn
-			if !strings.Contains(principal, "arn:") {
-				inputArn = fmt.Sprintf("arn:aws:iam::%s:user/%s", aws.ToString(m.Caller.Account), principal)
-			} else {
-				inputArn = principal
-			}
-			if strings.ToLower(arn) == strings.ToLower(inputArn) {
-				m.Users = append(m.Users, GAADUser{
-					Arn:              arn,
-					Name:             name,
-					AttachedPolicies: user.AttachedManagedPolicies,
-					InlinePolicies:   user.UserPolicyList,
-					GroupList:        groupList,
-				})
-			}
-		}
+		m.Users = append(m.Users, GAADUser{
+			Arn:              arn,
+			Name:             name,
+			AttachedPolicies: user.AttachedManagedPolicies,
+			InlinePolicies:   user.UserPolicyList,
+			GroupList:        groupList,
+		})
 	}
 
 	for _, group := range GAAD.GroupDetailList {
 		arn := aws.ToString(group.Arn)
 		name := aws.ToString(group.GroupName)
-		if principal == "" {
-			m.Groups = append(m.Groups, GAADGroup{
-				Arn:              arn,
-				Name:             name,
-				AttachedPolicies: group.AttachedManagedPolicies,
-				InlinePolicies:   group.GroupPolicyList,
-			})
-		} else {
-			// if user supplied a principal name without the arn, try to create the arn
-			if !strings.Contains(principal, "arn:") {
-				inputArn = fmt.Sprintf("arn:aws:iam::%s:user/%s", aws.ToString(m.Caller.Account), principal)
-			} else {
-				inputArn = principal
-			}
-			if strings.ToLower(arn) == strings.ToLower(inputArn) {
-				m.Groups = append(m.Groups, GAADGroup{
-					Arn:              arn,
-					Name:             name,
-					AttachedPolicies: group.AttachedManagedPolicies,
-					InlinePolicies:   group.GroupPolicyList,
-				})
-			}
-		}
+
+		m.Groups = append(m.Groups, GAADGroup{
+			Arn:              arn,
+			Name:             name,
+			AttachedPolicies: group.AttachedManagedPolicies,
+			InlinePolicies:   group.GroupPolicyList,
+		})
+
 	}
 
 }
@@ -293,40 +241,99 @@ func (m *IamPermissionsModule) getPrincipalArn(principal string) string {
 	return arn
 }
 
-func (m *IamPermissionsModule) parsePermissions() {
-
+func (m *IamPermissionsModule) parsePermissions(principal string) {
+	var inputArn string
 	for i := range m.Roles {
+		if principal == "" {
+			for _, attachedPolicy := range m.Roles[i].AttachedPolicies {
+				m.getPermissionsFromAttachedPolicy(m.Roles[i].Arn, attachedPolicy, "Role", m.Roles[i].Name)
+			}
 
-		for _, attachedPolicy := range m.Roles[i].AttachedPolicies {
-			m.getPermissionsFromAttachedPolicy(m.Roles[i].Arn, attachedPolicy, "Role", m.Roles[i].Name)
+			for _, inlinePolicy := range m.Roles[i].InlinePolicies {
+				m.getPermissionsFromInlinePolicy(m.Roles[i].Arn, inlinePolicy, "Role", m.Roles[i].Name)
+			}
+		} else {
+			// if user supplied a principal name without the arn, try to create the arn
+			if !strings.Contains(principal, "arn:") {
+				inputArn = fmt.Sprintf("arn:aws:iam::%s:role/%s", aws.ToString(m.Caller.Account), principal)
+			} else {
+				inputArn = principal
+			}
+
+			if strings.ToLower(m.Roles[i].Arn) == strings.ToLower(inputArn) {
+				for _, attachedPolicy := range m.Roles[i].AttachedPolicies {
+					m.getPermissionsFromAttachedPolicy(m.Roles[i].Arn, attachedPolicy, "Role", m.Roles[i].Name)
+				}
+
+				for _, inlinePolicy := range m.Roles[i].InlinePolicies {
+					m.getPermissionsFromInlinePolicy(m.Roles[i].Arn, inlinePolicy, "Role", m.Roles[i].Name)
+				}
+			}
 		}
 
-		for _, inlinePolicy := range m.Roles[i].InlinePolicies {
-			m.getPermissionsFromInlinePolicy(m.Roles[i].Arn, inlinePolicy, "Role", m.Roles[i].Name)
-		}
 	}
 
 	for i := range m.Users {
-		for _, attachedPolicy := range m.Users[i].AttachedPolicies {
-			m.getPermissionsFromAttachedPolicy(m.Users[i].Arn, attachedPolicy, "User", m.Users[i].Name)
-		}
+		if principal == "" {
+			for _, attachedPolicy := range m.Users[i].AttachedPolicies {
+				m.getPermissionsFromAttachedPolicy(m.Users[i].Arn, attachedPolicy, "User", m.Users[i].Name)
+			}
 
-		for _, inlinePolicy := range m.Users[i].InlinePolicies {
-			m.getPermissionsFromInlinePolicy(m.Users[i].Arn, inlinePolicy, "User", m.Users[i].Name)
+			for _, inlinePolicy := range m.Users[i].InlinePolicies {
+				m.getPermissionsFromInlinePolicy(m.Users[i].Arn, inlinePolicy, "User", m.Users[i].Name)
+			}
+		} else {
+			// if user supplied a principal name without the arn, try to create the arn
+			if !strings.Contains(principal, "arn:") {
+				inputArn = fmt.Sprintf("arn:aws:iam::%s:user/%s", aws.ToString(m.Caller.Account), principal)
+			} else {
+				inputArn = principal
+			}
+			if strings.ToLower(m.Users[i].Arn) == strings.ToLower(inputArn) {
+				for _, attachedPolicy := range m.Users[i].AttachedPolicies {
+					m.getPermissionsFromAttachedPolicy(m.Users[i].Arn, attachedPolicy, "User", m.Users[i].Name)
+				}
+
+				for _, inlinePolicy := range m.Users[i].InlinePolicies {
+					m.getPermissionsFromInlinePolicy(m.Users[i].Arn, inlinePolicy, "User", m.Users[i].Name)
+				}
+			}
 		}
 
 		// for each group in the user's group list, get the attached and inline policy names, and then get the permissions from those policies
 		for g := range m.Users[i].GroupList {
-			for _, group := range m.Groups {
-				if group.Name == m.Users[i].GroupList[g] {
-					for _, attachedPolicy := range group.AttachedPolicies {
-						m.getPermissionsFromAttachedPolicy(m.Users[i].Arn, attachedPolicy, "User", m.Users[i].Name)
+			if principal == "" {
+				for _, group := range m.Groups {
+					if group.Name == m.Users[i].GroupList[g] {
+						for _, attachedPolicy := range group.AttachedPolicies {
+							m.getPermissionsFromAttachedPolicy(m.Users[i].Arn, attachedPolicy, "User", m.Users[i].Name)
+						}
+						for _, inlinePolicy := range group.InlinePolicies {
+							m.getPermissionsFromInlinePolicy(m.Users[i].Arn, inlinePolicy, "User", m.Users[i].Name)
+						}
 					}
-					for _, inlinePolicy := range group.InlinePolicies {
-						m.getPermissionsFromInlinePolicy(m.Users[i].Arn, inlinePolicy, "User", m.Users[i].Name)
+				}
+			} else {
+				// if user supplied a principal name without the arn, try to create the arn
+				if !strings.Contains(principal, "arn:") {
+					inputArn = fmt.Sprintf("arn:aws:iam::%s:user/%s", aws.ToString(m.Caller.Account), principal)
+				} else {
+					inputArn = principal
+				}
+				if strings.ToLower(m.Users[i].Arn) == strings.ToLower(inputArn) {
+					for _, group := range m.Groups {
+						if group.Name == m.Users[i].GroupList[g] {
+							for _, attachedPolicy := range group.AttachedPolicies {
+								m.getPermissionsFromAttachedPolicy(m.Users[i].Arn, attachedPolicy, "User", m.Users[i].Name)
+							}
+							for _, inlinePolicy := range group.InlinePolicies {
+								m.getPermissionsFromInlinePolicy(m.Users[i].Arn, inlinePolicy, "User", m.Users[i].Name)
+							}
+						}
 					}
 				}
 			}
+
 		}
 
 		// for group := range m.Users[i].GroupList {
