@@ -10,12 +10,12 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/aws/aws-sdk-go-v2/service/ecs/types"
-	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
@@ -25,12 +25,12 @@ type DescribeTasksDefinitionAPIClient interface {
 	DescribeTaskDefinition(context.Context, *ecs.DescribeTaskDefinitionInput, ...func(*ecs.Options)) (*ecs.DescribeTaskDefinitionOutput, error)
 }
 type ECSTasksModule struct {
-	DescribeTaskDefinitionClient     DescribeTasksDefinitionAPIClient
-	DescribeTasksClient              ecs.DescribeTasksAPIClient
-	ListTasksClient                  ecs.ListTasksAPIClient
-	ListClustersClient               ecs.ListClustersAPIClient
-	DescribeNetworkInterfacesClient  ec2.DescribeNetworkInterfacesAPIClient
-	IAMSimulatePrincipalPolicyClient iam.SimulatePrincipalPolicyAPIClient
+	DescribeTaskDefinitionClient    DescribeTasksDefinitionAPIClient
+	DescribeTasksClient             ecs.DescribeTasksAPIClient
+	ListTasksClient                 ecs.ListTasksAPIClient
+	ListClustersClient              ecs.ListClustersAPIClient
+	DescribeNetworkInterfacesClient ec2.DescribeNetworkInterfacesAPIClient
+	IAMClient                       sdk.AWSIAMClientInterface
 
 	Caller         sts.GetCallerIdentityOutput
 	AWSRegions     []string
@@ -79,7 +79,7 @@ func (m *ECSTasksModule) ECSTasks(outputFormat string, outputDirectory string, v
 	// Initialized the tools we'll need to check if any workload roles are admin or can privesc to admin
 	//fmt.Printf("[%s][%s] Attempting to build a PrivEsc graph in memory using local pmapper data if it exists on the filesystem.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	m.pmapperMod, m.pmapperError = initPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines)
-	m.iamSimClient = initIAMSimClient(m.IAMSimulatePrincipalPolicyClient, m.Caller, m.AWSProfile, m.Goroutines)
+	m.iamSimClient = initIAMSimClient(m.IAMClient, m.Caller, m.AWSProfile, m.Goroutines)
 
 	// if m.pmapperError != nil {
 	// 	fmt.Printf("[%s][%s] No pmapper data found for this account. Using cloudfox's iam-simulator for role analysis.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
@@ -126,7 +126,7 @@ func (m *ECSTasksModule) ECSTasks(outputFormat string, outputDirectory string, v
 	receiverDone <- true
 	<-receiverDone
 
-	m.printECSTaskData(outputFormat, outputDirectory, dataReceiver)
+	m.printECSTaskData(outputFormat, outputDirectory, dataReceiver, verbosity)
 
 }
 
@@ -143,7 +143,7 @@ func (m *ECSTasksModule) Receiver(receiver chan MappedECSTask, receiverDone chan
 	}
 }
 
-func (m *ECSTasksModule) printECSTaskData(outputFormat string, outputDirectory string, dataReceiver chan MappedECSTask) {
+func (m *ECSTasksModule) printECSTaskData(outputFormat string, outputDirectory string, dataReceiver chan MappedECSTask, verbosity int) {
 	if m.pmapperError == nil {
 		m.output.Headers = []string{
 			"Cluster",
@@ -207,11 +207,26 @@ func (m *ECSTasksModule) printECSTaskData(outputFormat string, outputDirectory s
 	}
 
 	if len(m.output.Body) > 0 {
-		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
+		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
 		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-
-		m.writeLoot(m.output.FilePath)
+		//internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+		//m.writeLoot(m.output.FilePath)
+		o := internal.OutputClient{
+			Verbosity:     verbosity,
+			CallingModule: m.output.CallingModule,
+			Table: internal.TableClient{
+				Wrap: m.WrapTable,
+			},
+		}
+		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
+			Header: m.output.Headers,
+			Body:   m.output.Body,
+			Name:   m.output.CallingModule,
+		})
+		o.PrefixIdentifier = m.AWSProfile
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		o.WriteFullOutput(o.Table.TableFiles, nil)
+		m.writeLoot(o.Table.DirectoryName)
 		fmt.Printf("[%s][%s] %s ECS tasks found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {

@@ -66,4 +66,7 @@ output/*
 cloudfox
 *.log
 *.bak
-table_output.txt
+*.txt
+*.json
+*.csv
+*.log

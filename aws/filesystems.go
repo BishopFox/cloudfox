@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
-	"github.com/BishopFox/cloudfox/internal/aws/policy"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/efs"
 	"github.com/aws/aws-sdk-go-v2/service/efs/types"
@@ -18,11 +18,8 @@ import (
 	fsxTypes "github.com/aws/aws-sdk-go-v2/service/fsx/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/bishopfox/awsservicemap"
-	"github.com/fatih/color"
 	"github.com/sirupsen/logrus"
 )
-
-var green = color.New(color.FgGreen).SprintFunc()
 
 type FilesystemsModule struct {
 	// General configuration data
@@ -139,11 +136,27 @@ func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirector
 	}
 	if len(m.output.Body) > 0 {
 
-		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
+		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		m.writeLoot(m.output.FilePath, verbosity)
+		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+		//m.writeLoot(m.output.FilePath, verbosity)
+		o := internal.OutputClient{
+			Verbosity:     verbosity,
+			CallingModule: m.output.CallingModule,
+			Table: internal.TableClient{
+				Wrap: m.WrapTable,
+			},
+		}
+		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
+			Header: m.output.Headers,
+			Body:   m.output.Body,
+			Name:   m.output.CallingModule,
+		})
+		o.PrefixIdentifier = m.AWSProfile
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		o.WriteFullOutput(o.Table.TableFiles, nil)
+		m.writeLoot(o.Table.DirectoryName, verbosity)
 		fmt.Printf("[%s][%s] %s filesystems found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {
@@ -252,7 +265,7 @@ func (m *FilesystemsModule) getEFSSharesPerRegion(r string, wg *sync.WaitGroup, 
 	m.CommandCounter.Executing++
 	var policy string
 
-	DescribeFileSystems, err := m.describeEFSFilesystems(r)
+	DescribeFileSystems, err := sdk.CachedDescribeFileSystems(m.EFSClient, aws.ToString(m.Caller.Account), r)
 	if err != nil {
 		sharedLogger.Error(err.Error())
 		m.CommandCounter.Error++
@@ -276,7 +289,7 @@ func (m *FilesystemsModule) getEFSSharesPerRegion(r string, wg *sync.WaitGroup, 
 			policy = "Default (No IAM auth)"
 		}
 
-		DescribeMountTargets, err := m.describeEFSMountTargets(id, r)
+		DescribeMountTargets, err := sdk.CachedDescribeMountTargets(m.EFSClient, aws.ToString(m.Caller.Account), r, id)
 		if err != nil {
 			sharedLogger.Error(err.Error())
 
@@ -289,7 +302,7 @@ func (m *FilesystemsModule) getEFSSharesPerRegion(r string, wg *sync.WaitGroup, 
 			mountTarget := aws.ToString(mountTarget.MountTargetId)
 			awsService := "EFS"
 
-			accessPoints, err := m.describeEFSAccessPoints(id, r)
+			accessPoints, err := sdk.CachedDescribeAccessPoints(m.EFSClient, aws.ToString(m.Caller.Account), r, id)
 			if err != nil {
 				sharedLogger.Error(err.Error())
 
@@ -307,7 +320,6 @@ func (m *FilesystemsModule) getEFSSharesPerRegion(r string, wg *sync.WaitGroup, 
 
 			for _, accessPoint := range accessPoints {
 				path, permissions := m.getEFSfilesystemPermissions(accessPoint)
-
 				dataReceiver <- FilesystemObject{
 					AWSService:  awsService,
 					Region:      r,
@@ -470,108 +482,6 @@ func (m *FilesystemsModule) getFSxSharesPerRegion(r string, wg *sync.WaitGroup, 
 
 }
 
-func (m *FilesystemsModule) describeEFSFilesystems(r string) ([]types.FileSystemDescription, error) {
-	var PaginationMarker *string
-	var filesystems []types.FileSystemDescription
-	var err error
-	for {
-		DescribeFileSystems, err := m.EFSClient.DescribeFileSystems(
-			context.TODO(),
-			&efs.DescribeFileSystemsInput{
-				Marker: PaginationMarker,
-			},
-			func(o *efs.Options) {
-				o.Region = r
-			},
-		)
-		if err != nil {
-			sharedLogger.Error(err.Error())
-
-			m.CommandCounter.Error++
-			return nil, err
-		}
-
-		filesystems = append(filesystems, DescribeFileSystems.FileSystems...)
-
-		// Pagination control. After the last page of output, the for loop exits.
-		if DescribeFileSystems.Marker != nil {
-			PaginationMarker = DescribeFileSystems.Marker
-		} else {
-			PaginationMarker = nil
-			break
-		}
-	}
-	return filesystems, err
-}
-
-func (m *FilesystemsModule) describeEFSMountTargets(filesystemId string, r string) ([]types.MountTargetDescription, error) {
-	var PaginationMarker *string
-	var mountTargets []types.MountTargetDescription
-	var err error
-	for {
-		DescribeMountTargets, err := m.EFSClient.DescribeMountTargets(
-			context.TODO(),
-			&efs.DescribeMountTargetsInput{
-				FileSystemId: aws.String(filesystemId),
-				Marker:       PaginationMarker,
-			},
-			func(o *efs.Options) {
-				o.Region = r
-			},
-		)
-		if err != nil {
-			sharedLogger.Error(err.Error())
-			m.CommandCounter.Error++
-			return nil, err
-		}
-
-		mountTargets = append(mountTargets, DescribeMountTargets.MountTargets...)
-
-		// Pagination control. After the last page of output, the for loop exits.
-		if DescribeMountTargets.Marker != nil {
-			PaginationMarker = DescribeMountTargets.Marker
-		} else {
-			PaginationMarker = nil
-			break
-		}
-	}
-	return mountTargets, err
-}
-
-func (m *FilesystemsModule) describeEFSAccessPoints(filesystemId string, r string) ([]types.AccessPointDescription, error) {
-	var PaginationMarker *string
-	var accessPoints []types.AccessPointDescription
-	var err error
-	for {
-		DescribeAccessPoints, err := m.EFSClient.DescribeAccessPoints(
-			context.TODO(),
-			&efs.DescribeAccessPointsInput{
-				FileSystemId: aws.String(filesystemId),
-				NextToken:    PaginationMarker,
-			},
-			func(o *efs.Options) {
-				o.Region = r
-			},
-		)
-		if err != nil {
-			sharedLogger.Error(err.Error())
-			m.CommandCounter.Error++
-			return nil, err
-		}
-
-		accessPoints = append(accessPoints, DescribeAccessPoints.AccessPoints...)
-
-		// Pagination control. After the last page of output, the for loop exits.
-		if DescribeAccessPoints.NextToken != nil {
-			PaginationMarker = DescribeAccessPoints.NextToken
-		} else {
-			PaginationMarker = nil
-			break
-		}
-	}
-	return accessPoints, err
-}
-
 func (m *FilesystemsModule) getEFSfilesystemPermissions(accessPoint types.AccessPointDescription) (string, string) {
 	var path string
 	var permissions string
@@ -582,30 +492,4 @@ func (m *FilesystemsModule) getEFSfilesystemPermissions(accessPoint types.Access
 	}
 	return path, permissions
 
-}
-
-func (m *FilesystemsModule) getEFSResourcePolicy(filesystemId string, r string) (policy.Policy, error) {
-	var efsPolicy policy.Policy
-	var policyJSON string
-	Policy, err := m.EFSClient.DescribeFileSystemPolicy(
-		context.TODO(),
-		&efs.DescribeFileSystemPolicyInput{
-			FileSystemId: aws.String(filesystemId),
-		},
-		func(o *efs.Options) {
-			o.Region = r
-		},
-	)
-	if err != nil {
-		sharedLogger.Error(err.Error())
-		m.CommandCounter.Error++
-		return efsPolicy, err
-	}
-
-	policyJSON = aws.ToString(Policy.Policy)
-	efsPolicy, err = policy.ParseJSONPolicy([]byte(policyJSON))
-	if err != nil {
-		return efsPolicy, fmt.Errorf("parsing policy (%s) as JSON: %s", filesystemId, err)
-	}
-	return efsPolicy, nil
 }

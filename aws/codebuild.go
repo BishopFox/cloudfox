@@ -6,12 +6,10 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
-	"github.com/BishopFox/cloudfox/internal/aws/policy"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
-	"github.com/aws/aws-sdk-go-v2/service/codebuild/types"
-	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
@@ -19,8 +17,8 @@ import (
 
 type CodeBuildModule struct {
 	// General configuration data
-	CodeBuildClient                  CodeBuildClientInterface
-	IAMSimulatePrincipalPolicyClient iam.SimulatePrincipalPolicyAPIClient
+	CodeBuildClient sdk.CodeBuildClientInterface
+	IAMClient       sdk.AWSIAMClientInterface
 
 	Caller         sts.GetCallerIdentityOutput
 	AWSRegions     []string
@@ -72,7 +70,7 @@ func (m *CodeBuildModule) PrintCodeBuildProjects(outputFormat string, outputDire
 
 	fmt.Printf("[%s][%s] Enumerating CodeBuild projects for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 	m.pmapperMod, m.pmapperError = initPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines)
-	m.iamSimClient = initIAMSimClient(m.IAMSimulatePrincipalPolicyClient, m.Caller, m.AWSProfile, m.Goroutines)
+	m.iamSimClient = initIAMSimClient(m.IAMClient, m.Caller, m.AWSProfile, m.Goroutines)
 
 	wg := new(sync.WaitGroup)
 	semaphore := make(chan struct{}, m.Goroutines)
@@ -171,12 +169,28 @@ func (m *CodeBuildModule) PrintCodeBuildProjects(outputFormat string, outputDire
 	}
 
 	if len(m.output.Body) > 0 {
-		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
+		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		//m.writeLoot(m.output.FilePath, verbosity)
 		//fmt.Printf("[%s][%s] %d projects with a total of %d node groups found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), len(seen), len(m.output.Body))
+		o := internal.OutputClient{
+			Verbosity:     verbosity,
+			CallingModule: m.output.CallingModule,
+			Table: internal.TableClient{
+				Wrap: m.WrapTable,
+			},
+		}
+		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
+			Header: m.output.Headers,
+			Body:   m.output.Body,
+			Name:   m.output.CallingModule,
+		})
+		o.PrefixIdentifier = m.AWSProfile
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		o.WriteFullOutput(o.Table.TableFiles, nil)
+		//m.writeLoot(o.Table.DirectoryName, verbosity)
 		fmt.Printf("[%s][%s] %d projects found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), len(m.output.Body))
 		fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 
@@ -222,13 +236,13 @@ func (m *CodeBuildModule) getcodeBuildProjectsPerRegion(r string, wg *sync.WaitG
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	projects, err := m.getcodeBuildProjects(r)
+	projects, err := sdk.CachedCodeBuildListProjects(m.CodeBuildClient, aws.ToString(m.Caller.Account), r)
 	if err != nil {
 		sharedLogger.Error(err.Error())
 	}
 
 	for _, project := range projects {
-		details, err := m.getProjectDetails(project, r)
+		details, err := sdk.CachedCodeBuildBatchGetProjects(m.CodeBuildClient, aws.ToString(m.Caller.Account), r, project)
 		if err != nil {
 			sharedLogger.Error(err.Error())
 		}
@@ -245,62 +259,28 @@ func (m *CodeBuildModule) getcodeBuildProjectsPerRegion(r string, wg *sync.WaitG
 
 }
 
-func (m *CodeBuildModule) getcodeBuildProjects(r string) ([]string, error) {
-	CodeBuildProjects, err := m.CodeBuildClient.ListProjects(
-		context.TODO(),
-		&codebuild.ListProjectsInput{},
-		func(options *codebuild.Options) {
-			options.Region = r
-		},
-	)
-	if err != nil {
-		sharedLogger.Error(err.Error())
-		m.CommandCounter.Error++
-		return nil, err
-	}
-	return CodeBuildProjects.Projects, nil
-}
+// func (m *CodeBuildModule) getResourcePolicy(r string, project string) (policy.Policy, error) {
+// 	var projectPolicy policy.Policy
+// 	var policyJSON string
+// 	Policy, err := m.CodeBuildClient.GetResourcePolicy(
+// 		context.TODO(),
+// 		&codebuild.GetResourcePolicyInput{
+// 			ResourceArn: aws.String("arn:aws:codebuild:" + r + ":" + *m.Caller.Account + ":project/" + project),
+// 		},
+// 		func(options *codebuild.Options) {
+// 			options.Region = r
+// 		},
+// 	)
+// 	if err != nil {
+// 		sharedLogger.Error(err.Error())
+// 		m.CommandCounter.Error++
+// 		return projectPolicy, err
+// 	}
 
-func (m *CodeBuildModule) getProjectDetails(project string, r string) (types.Project, error) {
-	Project, err := m.CodeBuildClient.BatchGetProjects(
-		context.TODO(),
-		&codebuild.BatchGetProjectsInput{
-			Names: []string{project},
-		},
-		func(options *codebuild.Options) {
-			options.Region = r
-		},
-	)
-	if err != nil {
-		sharedLogger.Error(err.Error())
-		m.CommandCounter.Error++
-	}
-
-	return Project.Projects[0], nil
-}
-
-func (m *CodeBuildModule) getResourcePolicy(r string, project string) (policy.Policy, error) {
-	var projectPolicy policy.Policy
-	var policyJSON string
-	Policy, err := m.CodeBuildClient.GetResourcePolicy(
-		context.TODO(),
-		&codebuild.GetResourcePolicyInput{
-			ResourceArn: aws.String("arn:aws:codebuild:" + r + ":" + *m.Caller.Account + ":project/" + project),
-		},
-		func(options *codebuild.Options) {
-			options.Region = r
-		},
-	)
-	if err != nil {
-		sharedLogger.Error(err.Error())
-		m.CommandCounter.Error++
-		return projectPolicy, err
-	}
-
-	policyJSON = aws.ToString(Policy.Policy)
-	projectPolicy, err = policy.ParseJSONPolicy([]byte(policyJSON))
-	if err != nil {
-		return projectPolicy, fmt.Errorf("parsing policy (%s) as JSON: %s", project, err)
-	}
-	return projectPolicy, nil
-}
+// 	policyJSON = aws.ToString(Policy.Policy)
+// 	projectPolicy, err = policy.ParseJSONPolicy([]byte(policyJSON))
+// 	if err != nil {
+// 		return projectPolicy, fmt.Errorf("parsing policy (%s) as JSON: %s", project, err)
+// 	}
+// 	return projectPolicy, nil
+// }

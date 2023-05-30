@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/gob"
 	"fmt"
 	"log"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
 	"github.com/aws/aws-sdk-go-v2/service/cloudtrail"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
+	"github.com/aws/aws-sdk-go-v2/service/docdb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
@@ -438,89 +440,6 @@ var (
 	}
 )
 
-func init() {
-	cobra.OnInitialize(initAWSProfiles)
-	// Role Trusts Module Flags
-	RoleTrustCommand.Flags().StringVarP(&RoleTrustFilter, "filter", "t", "all", "[AccountNumber | PrincipalARN | PrincipalName | ServiceName]")
-
-	// Map Access Keys Module Flags
-	AccessKeysCommand.Flags().StringVarP(&AccessKeysFilter, "filter", "t", "none", "Access key ID to search for")
-
-	// IAM Simulator Module Flags
-	//IamSimulatorCommand.Flags().StringVarP(&IamSimulatorFilter, "filter", "f", "none", "Access key ID to search for")
-
-	// Instances Map Module Flags
-	InstancesCommand.Flags().StringVarP(&InstancesFilter, "filter", "t", "all", "[InstanceID | InstanceIDsFile]")
-	InstancesCommand.Flags().BoolVarP(&InstanceMapUserDataAttributesOnly, "userdata", "u", false, "Use this flag to retrieve only the userData attribute from EC2 instances.")
-
-	// SQS module flags
-	SQSCommand.Flags().BoolVarP(&StoreSQSAccessPolicies, "policies", "", false, "Store all flagged access policies along with the output")
-
-	// SNS module flags
-	SNSCommand.Flags().BoolVarP(&StoreSNSAccessPolicies, "policies", "", false, "Store all flagged access policies along with the output")
-
-	//  outbound-assumed-roles module flags
-	OutboundAssumedRolesCommand.Flags().IntVarP(&OutboundAssumedRolesDays, "days", "d", 7, "How many days of CloudTrail events should we go back and look at.")
-
-	//  iam-simulator module flags
-	IamSimulatorCommand.Flags().StringVar(&SimulatorPrincipal, "principal", "", "Principal Arn")
-	IamSimulatorCommand.Flags().StringVar(&SimulatorAction, "action", "", "Action")
-	IamSimulatorCommand.Flags().StringVar(&SimulatorResource, "resource", "*", "Resource")
-
-	//  iam-simulator module flags
-	PermissionsCommand.Flags().StringVar(&PermissionsPrincipal, "principal", "", "Principal Arn")
-
-	// tags module flags
-	TagsCommand.Flags().IntVarP(&MaxResourcesPerRegion, "max-resources-per-region", "m", 0, "Maximum number of resources to enumerate per region. Set to 0 to enumerate all resources.")
-
-	// Global flags for the AWS modules
-	AWSCommands.PersistentFlags().StringVarP(&AWSProfile, "profile", "p", "", "AWS CLI Profile Name")
-	AWSCommands.PersistentFlags().StringVarP(&AWSProfilesList, "profiles-list", "l", "", "File containing a AWS CLI profile names separated by newlines")
-	AWSCommands.PersistentFlags().BoolVarP(&AWSAllProfiles, "all-profiles", "a", false, "Use all AWS CLI profiles in AWS credentials file")
-	AWSCommands.PersistentFlags().BoolVarP(&AWSConfirm, "yes", "y", false, "Non-interactive mode (like apt/yum)")
-	AWSCommands.PersistentFlags().StringVarP(&AWSOutputFormat, "output", "o", "all", "[\"table\" | \"csv\" | \"all\" ]")
-	AWSCommands.PersistentFlags().IntVarP(&Verbosity, "verbosity", "v", 1, "1 = Print control messages only\n2 = Print control messages, module output\n3 = Print control messages, module output, and loot file output\n")
-	AWSCommands.PersistentFlags().StringVar(&AWSOutputDirectory, "outdir", defaultOutputDir, "Output Directory ")
-	AWSCommands.PersistentFlags().IntVarP(&Goroutines, "max-goroutines", "g", 30, "Maximum number of concurrent goroutines")
-	AWSCommands.PersistentFlags().BoolVar(&AWSSkipAdminCheck, "skip-admin-check", false, "Skip check to determine if role is an Admin")
-	AWSCommands.PersistentFlags().BoolVarP(&AWSWrapTable, "wrap", "w", false, "Wrap table to fit in terminal (complicates grepping)")
-
-	AWSCommands.AddCommand(
-		AllChecksCommand,
-		RoleTrustCommand,
-		AccessKeysCommand,
-		InstancesCommand,
-		ECSTasksCommand,
-		ElasticNetworkInterfacesCommand,
-		InventoryCommand,
-		EndpointsCommand,
-		SecretsCommand,
-		Route53Command,
-		ECRCommand,
-		SQSCommand,
-		SNSCommand,
-		EKSCommand,
-		OutboundAssumedRolesCommand,
-		EnvsCommand,
-		PrincipalsCommand,
-		IamSimulatorCommand,
-		FilesystemsCommand,
-		BucketsCommand,
-		PermissionsCommand,
-		CloudformationCommand,
-		CodeBuildCommand,
-		RAMCommand,
-		TagsCommand,
-		LambdasCommand,
-		NetworkPortsCommand,
-		PmapperCommand,
-		ResourceTrustsCommand,
-		OrgsCommand,
-		DatabasesCommand,
-	)
-
-}
-
 func initAWSProfiles() {
 	// Ensure only one profile setting is chosen
 	if AWSProfile != "" && AWSProfilesList != "" || AWSProfile != "" && AWSAllProfiles || AWSProfilesList != "" && AWSAllProfiles {
@@ -543,8 +462,7 @@ type OrgAccounts struct {
 }
 
 func awsPreRun(cmd *cobra.Command, args []string) {
-
-	//orgAccountsMap := make(map[string]*OrgAccounts)
+	gob.Register(&types.Organization{})
 
 	// if multiple profiles were used, ensure the management account is first
 	if AWSProfilesList != "" || AWSAllProfiles {
@@ -559,12 +477,12 @@ func awsPreRun(cmd *cobra.Command, args []string) {
 				continue
 			}
 			fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
-			//cacheDirectory := filepath.Join(AWSOutputDirectory, "cloudfox-output", "aws", "cached-data", ptr.ToString(caller.Account))
-			// err = internal.LoadCacheFromFiles(cacheDirectory)
-			// if err != nil {
-			// 	log.Fatalf("[%s] No cache data for %s. Error: %v", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), ptr.ToString(caller.Account), err)
-			// }
-			// fmt.Printf("[%s] Loaded cached AWS data for to %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), ptr.ToString(caller.Account))
+			cacheDirectory := filepath.Join(AWSOutputDirectory, "cloudfox-output", "aws", "cached-data", ptr.ToString(caller.Account))
+			err = internal.LoadCacheFromGobFiles(cacheDirectory)
+			if err != nil {
+				log.Fatalf("[%s] No cache data for %s. Error: %v", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), ptr.ToString(caller.Account), err)
+			}
+			fmt.Printf("[%s] Loaded cached AWS data for to %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), ptr.ToString(caller.Account))
 
 			orgModuleClient := aws.InitOrgClient(*caller, profile, cmd.Root().Version, Goroutines)
 			isPartOfOrg := orgModuleClient.IsCallerAccountPartOfAnOrg()
@@ -589,7 +507,7 @@ func awsPostRun(cmd *cobra.Command, args []string) {
 			continue
 		}
 		outputDirectory := filepath.Join(AWSOutputDirectory, "cloudfox-output", "aws", "cached-data", ptr.ToString(caller.Account))
-		err = internal.SaveCacheToFiles(outputDirectory, *caller.Account)
+		err = internal.SaveCacheToGobFiles(outputDirectory, *caller.Account)
 		if err != nil {
 			log.Fatalf("failed to save cache: %v", err)
 		}
@@ -722,6 +640,8 @@ func runDatabasesCommand(cmd *cobra.Command, args []string) {
 		m := aws.DatabasesModule{
 			RDSClient:      rds.NewFromConfig(AWSConfig),
 			RedshiftClient: redshift.NewFromConfig(AWSConfig),
+			DynamoDBClient: dynamodb.NewFromConfig(AWSConfig),
+			DocDBClient:    docdb.NewFromConfig(AWSConfig),
 			Caller:         *caller,
 			AWSRegions:     internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSProfile:     profile,
@@ -1286,6 +1206,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		cloudFormationClient := cloudformation.NewFromConfig(AWSConfig)
 		cloudfrontClient := cloudfront.NewFromConfig(AWSConfig)
 		codeBuildClient := codebuild.NewFromConfig(AWSConfig)
+		docdbClient := docdb.NewFromConfig(AWSConfig)
 		dynamodbClient := dynamodb.NewFromConfig(AWSConfig)
 		ec2Client := ec2.NewFromConfig(AWSConfig)
 		ecrClient := ecr.NewFromConfig(AWSConfig)
@@ -1442,6 +1363,8 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		databases := aws.DatabasesModule{
 			RDSClient:      rdsClient,
 			RedshiftClient: redshiftClient,
+			DynamoDBClient: dynamodbClient,
+			DocDBClient:    docdbClient,
 			Caller:         *caller,
 			AWSProfile:     profile,
 			AWSRegions:     internal.GetEnabledRegions(profile, cmd.Root().Version),
@@ -1684,4 +1607,110 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("That's it! Check your output files for situational awareness and check your loot files for next steps."))
 		fmt.Printf("[%s] %s\n\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("FYI, we skipped the outbound-assumed-roles module in all-checks (really long run time). Make sure to try it out manually."))
 	}
+}
+
+func init() {
+	cobra.OnInitialize(initAWSProfiles)
+	sdk.RegisterApiGatewayTypes()
+	sdk.RegisterApiGatewayV2Types()
+	sdk.RegisterCloudFormationTypes()
+	sdk.RegisterCodeBuildTypes()
+	sdk.RegisterDocDBTypes()
+	sdk.RegisterDynamoDBTypes()
+	sdk.RegisterEC2Types()
+	sdk.RegisterEFSTypes()
+	sdk.RegisterEKSTypes()
+	sdk.RegisterELBTypes()
+	sdk.RegisterELBv2Types()
+	sdk.RegisterGrafanaTypes()
+	sdk.RegisterIamTypes()
+	sdk.RegisterLambdaTypes()
+	sdk.RegisterMQTypes()
+	sdk.RegisterOpenSearchTypes()
+	sdk.RegisterOrganizationsTypes()
+	sdk.RegisterRDSTypes()
+	sdk.RegisterRedShiftTypes()
+	sdk.RegisterS3Types()
+	sdk.RegisterSecretsManagerTypes()
+	sdk.RegisterStepFunctionsTypes()
+
+	// Role Trusts Module Flags
+	RoleTrustCommand.Flags().StringVarP(&RoleTrustFilter, "filter", "t", "all", "[AccountNumber | PrincipalARN | PrincipalName | ServiceName]")
+
+	// Map Access Keys Module Flags
+	AccessKeysCommand.Flags().StringVarP(&AccessKeysFilter, "filter", "t", "none", "Access key ID to search for")
+
+	// IAM Simulator Module Flags
+	//IamSimulatorCommand.Flags().StringVarP(&IamSimulatorFilter, "filter", "f", "none", "Access key ID to search for")
+
+	// Instances Map Module Flags
+	InstancesCommand.Flags().StringVarP(&InstancesFilter, "filter", "t", "all", "[InstanceID | InstanceIDsFile]")
+	InstancesCommand.Flags().BoolVarP(&InstanceMapUserDataAttributesOnly, "userdata", "u", false, "Use this flag to retrieve only the userData attribute from EC2 instances.")
+
+	// SQS module flags
+	SQSCommand.Flags().BoolVarP(&StoreSQSAccessPolicies, "policies", "", false, "Store all flagged access policies along with the output")
+
+	// SNS module flags
+	SNSCommand.Flags().BoolVarP(&StoreSNSAccessPolicies, "policies", "", false, "Store all flagged access policies along with the output")
+
+	//  outbound-assumed-roles module flags
+	OutboundAssumedRolesCommand.Flags().IntVarP(&OutboundAssumedRolesDays, "days", "d", 7, "How many days of CloudTrail events should we go back and look at.")
+
+	//  iam-simulator module flags
+	IamSimulatorCommand.Flags().StringVar(&SimulatorPrincipal, "principal", "", "Principal Arn")
+	IamSimulatorCommand.Flags().StringVar(&SimulatorAction, "action", "", "Action")
+	IamSimulatorCommand.Flags().StringVar(&SimulatorResource, "resource", "*", "Resource")
+
+	//  iam-simulator module flags
+	PermissionsCommand.Flags().StringVar(&PermissionsPrincipal, "principal", "", "Principal Arn")
+
+	// tags module flags
+	TagsCommand.Flags().IntVarP(&MaxResourcesPerRegion, "max-resources-per-region", "m", 0, "Maximum number of resources to enumerate per region. Set to 0 to enumerate all resources.")
+
+	// Global flags for the AWS modules
+	AWSCommands.PersistentFlags().StringVarP(&AWSProfile, "profile", "p", "", "AWS CLI Profile Name")
+	AWSCommands.PersistentFlags().StringVarP(&AWSProfilesList, "profiles-list", "l", "", "File containing a AWS CLI profile names separated by newlines")
+	AWSCommands.PersistentFlags().BoolVarP(&AWSAllProfiles, "all-profiles", "a", false, "Use all AWS CLI profiles in AWS credentials file")
+	AWSCommands.PersistentFlags().BoolVarP(&AWSConfirm, "yes", "y", false, "Non-interactive mode (like apt/yum)")
+	AWSCommands.PersistentFlags().StringVarP(&AWSOutputFormat, "output", "o", "brief", "[\"brief\" | \"wide\" ]")
+	AWSCommands.PersistentFlags().IntVarP(&Verbosity, "verbosity", "v", 1, "1 = Print control messages only\n2 = Print control messages, module output\n3 = Print control messages, module output, and loot file output\n")
+	AWSCommands.PersistentFlags().StringVar(&AWSOutputDirectory, "outdir", defaultOutputDir, "Output Directory ")
+	AWSCommands.PersistentFlags().IntVarP(&Goroutines, "max-goroutines", "g", 30, "Maximum number of concurrent goroutines")
+	AWSCommands.PersistentFlags().BoolVar(&AWSSkipAdminCheck, "skip-admin-check", false, "Skip check to determine if role is an Admin")
+	AWSCommands.PersistentFlags().BoolVarP(&AWSWrapTable, "wrap", "w", false, "Wrap table to fit in terminal (complicates grepping)")
+
+	AWSCommands.AddCommand(
+		AllChecksCommand,
+		RoleTrustCommand,
+		AccessKeysCommand,
+		InstancesCommand,
+		ECSTasksCommand,
+		ElasticNetworkInterfacesCommand,
+		InventoryCommand,
+		EndpointsCommand,
+		SecretsCommand,
+		Route53Command,
+		ECRCommand,
+		SQSCommand,
+		SNSCommand,
+		EKSCommand,
+		OutboundAssumedRolesCommand,
+		EnvsCommand,
+		PrincipalsCommand,
+		IamSimulatorCommand,
+		FilesystemsCommand,
+		BucketsCommand,
+		PermissionsCommand,
+		CloudformationCommand,
+		CodeBuildCommand,
+		RAMCommand,
+		TagsCommand,
+		LambdasCommand,
+		NetworkPortsCommand,
+		PmapperCommand,
+		ResourceTrustsCommand,
+		OrgsCommand,
+		DatabasesCommand,
+	)
+
 }

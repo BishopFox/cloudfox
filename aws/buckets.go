@@ -1,7 +1,6 @@
 package aws
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,26 +9,18 @@ import (
 	"sync"
 	"unicode/utf8"
 
+	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/BishopFox/cloudfox/internal/aws/policy"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/sirupsen/logrus"
 )
 
-type AWSS3ClientInterface interface {
-	ListBuckets(ctx context.Context, params *s3.ListBucketsInput, optFns ...func(*s3.Options)) (*s3.ListBucketsOutput, error)
-	GetBucketPolicy(ctx context.Context, params *s3.GetBucketPolicyInput, optFns ...func(*s3.Options)) (*s3.GetBucketPolicyOutput, error)
-	GetBucketLocation(ctx context.Context, params *s3.GetBucketLocationInput, optFns ...func(*s3.Options)) (*s3.GetBucketLocationOutput, error)
-	GetPublicAccessBlock(ctx context.Context, params *s3.GetPublicAccessBlockInput, optFns ...func(*s3.Options)) (*s3.GetPublicAccessBlockOutput, error)
-}
-
 type BucketsModule struct {
 	// General configuration data
 	//BucketsS3Client CloudFoxS3Client
-	S3Client   AWSS3ClientInterface
+	S3Client   sdk.AWSS3ClientInterface
 	AWSRegions []string
 	AWSProfile string
 	Caller     sts.GetCallerIdentityOutput
@@ -45,13 +36,6 @@ type BucketsModule struct {
 	output internal.OutputData2
 	modLog *logrus.Entry
 }
-
-// type CloudFoxS3Client struct {
-// 	S3Client   AWSS3ClientInterface
-// 	AWSRegions []string
-// 	AWSProfile string
-// 	Caller     sts.GetCallerIdentityOutput
-// }
 
 type Bucket struct {
 	Arn                   string
@@ -81,7 +65,7 @@ func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string
 	if m.AWSProfile == "" {
 		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
-	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
+	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
 
 	fmt.Printf("[%s][%s] Enumerating buckets for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 
@@ -136,8 +120,25 @@ func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string
 
 	}
 	if len(m.output.Body) > 0 {
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		m.writeLoot(m.output.FilePath, verbosity, m.AWSProfile)
+		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+		//m.writeLoot(m.output.FilePath, verbosity, m.AWSProfile)
+		o := internal.OutputClient{
+			Verbosity:     verbosity,
+			CallingModule: m.output.CallingModule,
+			Table: internal.TableClient{
+				Wrap: m.WrapTable,
+			},
+		}
+		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
+			Header: m.output.Headers,
+			Body:   m.output.Body,
+			Name:   m.output.CallingModule,
+		})
+		o.PrefixIdentifier = m.AWSProfile
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		o.WriteFullOutput(o.Table.TableFiles, nil)
+		m.writeLoot(o.Table.DirectoryName, verbosity, m.AWSProfile)
+
 		fmt.Printf("[%s][%s] %s buckets found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 		fmt.Printf("[%s][%s] Bucket policies written to: %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.getLootDir())
 
@@ -227,7 +228,9 @@ func (m *BucketsModule) createBucketsRows(verbosity int, wg *sync.WaitGroup, sem
 	}()
 	var region string = "Global"
 	var name string
-	ListBuckets, err := m.listBuckets()
+
+	ListBuckets, err := sdk.CachedListBuckets(m.S3Client, aws.ToString(m.Caller.Account))
+
 	if err != nil {
 		m.modLog.Error(err.Error())
 		return
@@ -238,13 +241,13 @@ func (m *BucketsModule) createBucketsRows(verbosity int, wg *sync.WaitGroup, sem
 			Name:       aws.ToString(b.Name),
 			AWSService: "S3",
 		}
-		region, err = m.getBucketRegion(aws.ToString(b.Name))
+		region, err = sdk.CachedGetBucketLocation(m.S3Client, aws.ToString(m.Caller.Account), aws.ToString(b.Name))
 		if err != nil {
 			m.modLog.Error(err.Error())
 		}
 		bucket.Region = region
 
-		policyJSON, err := m.getBucketPolicy(aws.ToString(b.Name))
+		policyJSON, err := sdk.CachedGetBucketPolicy(m.S3Client, aws.ToString(m.Caller.Account), region, aws.ToString(b.Name))
 		if err != nil {
 			m.modLog.Error(err.Error())
 		} else {
@@ -272,81 +275,8 @@ func (m *BucketsModule) createBucketsRows(verbosity int, wg *sync.WaitGroup, sem
 
 }
 
-func (m *BucketsModule) listBuckets() ([]types.Bucket, error) {
-
-	var buckets []types.Bucket
-	ListBuckets, err := m.S3Client.ListBuckets(
-		context.TODO(),
-		&s3.ListBucketsInput{},
-	)
-	if err != nil {
-		return buckets, err
-	}
-
-	buckets = append(buckets, ListBuckets.Buckets...)
-	return buckets, nil
-
-}
-
-func (m *BucketsModule) getBucketRegion(bucketName string) (string, error) {
-	GetBucketRegion, err := m.S3Client.GetBucketLocation(
-		context.TODO(),
-		&s3.GetBucketLocationInput{
-			Bucket: &bucketName,
-		},
-	)
-	if err != nil {
-		return "", err
-	}
-	location := string(GetBucketRegion.LocationConstraint)
-	if location == "" {
-		location = "us-east-1"
-	}
-	return location, err
-}
-
-func (m *BucketsModule) getBucketPolicy(bucketName string) (string, error) {
-
-	r, err := m.getBucketRegion(bucketName)
-	if err != nil {
-		return "", err
-	}
-	BucketPolicyObject, err := m.S3Client.GetBucketPolicy(
-		context.TODO(),
-		&s3.GetBucketPolicyInput{
-			Bucket: &bucketName,
-		},
-		func(o *s3.Options) {
-			o.Region = r
-		},
-	)
-	if err != nil {
-		return "", err
-	}
-
-	return *BucketPolicyObject.Policy, nil
-
-}
-
-func (m *BucketsModule) getPublicAccessBlock(bucketName string) (*types.PublicAccessBlockConfiguration, error) {
-	r, err := m.getBucketRegion(bucketName)
-	PublicAccessBlock, err := m.S3Client.GetPublicAccessBlock(
-		context.TODO(),
-		&s3.GetPublicAccessBlockInput{
-			Bucket: &bucketName,
-		},
-		func(o *s3.Options) {
-			o.Region = r
-		},
-	)
-	if err != nil {
-		return nil, err
-	}
-	return PublicAccessBlock.PublicAccessBlockConfiguration, err
-}
-
-func (m *BucketsModule) isPublicAccessBlocked(bucketName string) bool {
-	publicAccessBlock, err := m.getPublicAccessBlock(bucketName)
+func (m *BucketsModule) isPublicAccessBlocked(bucketName string, r string) bool {
+	publicAccessBlock, err := sdk.CachedGetPublicAccessBlock(m.S3Client, aws.ToString(m.Caller.Account), r, bucketName)
 	if err != nil {
 		return false
 	}
@@ -357,7 +287,7 @@ func (m *BucketsModule) isPublicAccessBlocked(bucketName string) bool {
 func (m *BucketsModule) analyseBucketPolicy(bucket *Bucket, dataReceiver chan Bucket) {
 	m.storeAccessPolicy(bucket)
 
-	if bucket.Policy.IsPublic() && !bucket.Policy.IsConditionallyPublic() && !m.isPublicAccessBlocked(bucket.Name) {
+	if bucket.Policy.IsPublic() && !bucket.Policy.IsConditionallyPublic() && !m.isPublicAccessBlocked(bucket.Name, bucket.Region) {
 		bucket.IsPublic = "YES"
 	}
 

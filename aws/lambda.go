@@ -9,10 +9,10 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/BishopFox/cloudfox/internal/aws/policy"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -22,8 +22,8 @@ import (
 
 type LambdasModule struct {
 	// General configuration data
-	LambdaClient                     *lambda.Client
-	IAMSimulatePrincipalPolicyClient iam.SimulatePrincipalPolicyAPIClient
+	LambdaClient *lambda.Client
+	IAMClient    sdk.AWSIAMClientInterface
 
 	Caller         sts.GetCallerIdentityOutput
 	AWSRegions     []string
@@ -56,6 +56,7 @@ type Lambda struct {
 }
 
 func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string, verbosity int) {
+
 	// These stuct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
@@ -71,7 +72,7 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 	fmt.Printf("[%s][%s] Enumerating lambdas for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 	//fmt.Printf("[%s][%s] Attempting to build a PrivEsc graph in memory using local pmapper data if it exists on the filesystem.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	m.pmapperMod, m.pmapperError = initPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines)
-	m.iamSimClient = initIAMSimClient(m.IAMSimulatePrincipalPolicyClient, m.Caller, m.AWSProfile, m.Goroutines)
+	m.iamSimClient = initIAMSimClient(m.IAMClient, m.Caller, m.AWSProfile, m.Goroutines)
 
 	// if m.pmapperError != nil {
 	// 	fmt.Printf("[%s][%s] No pmapper data found for this account. Using cloudfox's iam-simulator for role analysis.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
@@ -127,7 +128,7 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 			"Service",
 			"Region",
 			//"Type",
-			"Resource Arn",
+			"Resource",
 			"Role",
 			"IsAdminRole?",
 			"CanPrivEscToAdmin?",
@@ -181,10 +182,25 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 
 	}
 	if len(m.output.Body) > 0 {
-		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
+		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		m.writeLoot(m.output.FilePath, verbosity)
+		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+		o := internal.OutputClient{
+			Verbosity:     verbosity,
+			CallingModule: m.output.CallingModule,
+			Table: internal.TableClient{
+				Wrap: m.WrapTable,
+			},
+		}
+		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
+			Header: m.output.Headers,
+			Body:   m.output.Body,
+			Name:   m.output.CallingModule,
+		})
+		o.PrefixIdentifier = m.AWSProfile
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		o.WriteFullOutput(o.Table.TableFiles, nil)
+		m.writeLoot(o.Table.DirectoryName, verbosity)
 		fmt.Printf("[%s][%s] %s lambdas found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 	} else {
 		fmt.Printf("[%s][%s] No lambdas found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
@@ -246,7 +262,7 @@ func (m *LambdasModule) writeLoot(outputDirectory string, verbosity int) {
 		out = out + fmt.Sprintf("aws --profile $profile --region %s lambda get-function --function-name %s\n", function.Region, function.Name)
 		out = out + "# Download function code to to disk (requires jq and curl) \n"
 		out = out + fmt.Sprintf("mkdir -p ./lambdas/%s\n", function.Name)
-		out = out + fmt.Sprintf("url=`aws --profile $profile lambda get-function --region %s --function-name %s | jq .Code.Location | sed s/\"//g` && curl \"$url\" -o ./lambdas/%s.zip\n", function.Region, function.Name, function.Name)
+		out = out + fmt.Sprintf("url=`aws --profile $profile lambda get-function --region %s --function-name %s | jq .Code.Location | sed s/\\\"//g` && curl \"$url\" -o ./lambdas/%s.zip\n", function.Region, function.Name, function.Name)
 	}
 	err = os.WriteFile(pullFile, []byte(out), 0644)
 	if err != nil {

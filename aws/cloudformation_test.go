@@ -38,15 +38,12 @@ type TemplateBody struct {
 	TemplateBody string `json:"TemplateBody"`
 }
 
-type MockedCloudformationClientDescribeStacks struct {
-	describeStacks Stacks
-}
-
-type MockedCloudformationClientGetTemplate struct {
+type MockedCloudformationClient struct {
+	describeStacks  Stacks
 	getTemplateBody TemplateBody
 }
 
-func (m *MockedCloudformationClientDescribeStacks) DescribeStacks(ctx context.Context, params *cloudformation.DescribeStacksInput, optFns ...func(*cloudformation.Options)) (*cloudformation.DescribeStacksOutput, error) {
+func (m *MockedCloudformationClient) DescribeStacks(ctx context.Context, params *cloudformation.DescribeStacksInput, optFns ...func(*cloudformation.Options)) (*cloudformation.DescribeStacksOutput, error) {
 
 	err := json.Unmarshal(readTestFile(DESCRIBE_STACKS_TEST_FILE), &m.describeStacks)
 	if err != nil {
@@ -66,13 +63,17 @@ func (m *MockedCloudformationClientDescribeStacks) DescribeStacks(ctx context.Co
 	return &cloudformation.DescribeStacksOutput{Stacks: stacks}, nil
 }
 
-func (m *MockedCloudformationClientGetTemplate) GetTemplate(ctx context.Context, params *cloudformation.GetTemplateInput, optFns ...func(*cloudformation.Options)) (*cloudformation.GetTemplateOutput, error) {
+func (m *MockedCloudformationClient) GetTemplate(ctx context.Context, params *cloudformation.GetTemplateInput, optFns ...func(*cloudformation.Options)) (*cloudformation.GetTemplateOutput, error) {
 	err := json.Unmarshal(readTestFile(DESCRIBE_STACKS_TEST_FILE), &m.getTemplateBody)
 	if err != nil {
 		log.Fatalf("can't unmarshall file %s", TEMPLATE_BODY_TEST_FILE)
 	}
 
 	return &cloudformation.GetTemplateOutput{TemplateBody: &m.getTemplateBody.TemplateBody}, nil
+}
+
+func (m *MockedCloudformationClient) ListStacks(ctx context.Context, params *cloudformation.ListStacksInput, optFns ...func(*cloudformation.Options)) (*cloudformation.ListStacksOutput, error) {
+	return &cloudformation.ListStacksOutput{}, nil
 }
 
 func TestCloudFormation(t *testing.T) {
@@ -88,13 +89,12 @@ func TestCloudFormation(t *testing.T) {
 			outputDirectory: ".",
 			verbosity:       2,
 			testModule: CloudformationModule{
-				CloudFormationDescribeStacksInterface: &MockedCloudformationClientDescribeStacks{},
-				CloudFormationGetTemplateInterface:    &MockedCloudformationClientGetTemplate{},
-				Caller:                                sts.GetCallerIdentityOutput{Arn: aws.String("test")},
-				OutputFormat:                          "table",
-				AWSProfile:                            "test",
-				Goroutines:                            30,
-				AWSRegions:                            AWSRegions,
+				CloudFormationClient: &MockedCloudformationClient{},
+				Caller:               sts.GetCallerIdentityOutput{Arn: aws.String("test")},
+				OutputFormat:         "table",
+				AWSProfile:           "test",
+				Goroutines:           30,
+				AWSRegions:           AWSRegions,
 			},
 			expectedResult: []CFStack{{
 				Name: "myteststack",

@@ -26,15 +26,13 @@ func TestSNSQueues(t *testing.T) {
 	}
 
 	m := SNSModule{
-		SNSClient: CloudFoxSNSClient{
-			SNSClient: c,
-			Caller: sts.GetCallerIdentityOutput{
-				Arn:     aws.String("arn:aws:iam::123456789012:user/cloudfox_unit_tests"),
-				Account: aws.String("123456789012"),
-			},
-			AWSRegions: []string{"us-east-1", "us-west-1", "us-west-2"},
-			AWSProfile: "unittesting",
+		SNSClient: c,
+		Caller: sts.GetCallerIdentityOutput{
+			Arn:     aws.String("arn:aws:iam::123456789012:user/cloudfox_unit_tests"),
+			Account: aws.String("123456789012"),
 		},
+		AWSRegions:    []string{"us-east-1", "us-west-1", "us-west-2"},
+		AWSProfile:    "unittesting",
 		StorePolicies: true,
 		Goroutines:    3,
 	}

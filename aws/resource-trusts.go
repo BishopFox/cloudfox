@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/BishopFox/cloudfox/internal/aws/policy"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -40,6 +41,7 @@ type Resource2 struct {
 	Policy                policy.Policy
 	PolicyJSON            string
 	ResourcePolicySummary string
+	Public                string
 }
 
 func (m *ResourceTrustsModule) PrintResources(outputFormat string, outputDirectory string, verbosity int) {
@@ -50,7 +52,7 @@ func (m *ResourceTrustsModule) PrintResources(outputFormat string, outputDirecto
 	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
-	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
+	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
 	if m.AWSProfile == "" {
 		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
@@ -91,8 +93,9 @@ func (m *ResourceTrustsModule) PrintResources(outputFormat string, outputDirecto
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
-		"Account ID",
+		//"Account ID",
 		"ARN",
+		"Public",
 		"Resource Policy Summary",
 	}
 
@@ -101,16 +104,33 @@ func (m *ResourceTrustsModule) PrintResources(outputFormat string, outputDirecto
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
-				m.Resources2[i].AccountID,
+				//m.Resources2[i].AccountID,
 				m.Resources2[i].ARN,
+				m.Resources2[i].Public,
 				m.Resources2[i].ResourcePolicySummary,
 			},
 		)
 
 	}
 	if len(m.output.Body) > 0 {
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		//m.writeLoot(m.output.FilePath, verbosity, m.AWSProfile)
+		o := internal.OutputClient{
+			Verbosity:     verbosity,
+			CallingModule: m.output.CallingModule,
+			Table: internal.TableClient{
+				Wrap: m.WrapTable,
+			},
+		}
+		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
+			Header: m.output.Headers,
+			Body:   m.output.Body,
+			Name:   m.output.CallingModule,
+		})
+		o.PrefixIdentifier = m.AWSProfile
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		o.WriteFullOutput(o.Table.TableFiles, nil)
+		//m.writeLoot(o.Table.DirectoryName, verbosity)
 		fmt.Printf("[%s][%s] %s resource policies found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 		//fmt.Printf("[%s][%s] Resource policies stored to: %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.getLootDir())
 	} else {
@@ -200,11 +220,16 @@ func (m *ResourceTrustsModule) Receiver(receiver chan Resource2, receiverDone ch
 }
 
 func (m *ResourceTrustsModule) getSNSTopicsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Resource2) {
-	defer wg.Done()
+	defer func() {
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+		wg.Done()
+
+	}()
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	cloudFoxSNSClient := InitCloudFoxSNSClient(m.Caller, m.AWSProfile, m.CloudFoxVersion)
+	cloudFoxSNSClient := InitCloudFoxSNSClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines)
 
 	ListTopics, err := cloudFoxSNSClient.listTopics(r)
 	if err != nil {
@@ -226,42 +251,62 @@ func (m *ResourceTrustsModule) getSNSTopicsPerRegion(r string, wg *sync.WaitGrou
 		topic.Name = parsedArn.Resource
 		topic.Region = parsedArn.Region
 		if topic.Policy.IsPublic() {
-			dataReceiver <- Resource2{
-				AccountID:             aws.ToString(m.Caller.Account),
-				ARN:                   aws.ToString(t.TopicArn),
-				ResourcePolicySummary: "Public",
-			}
-		}
-		if !topic.Policy.IsEmpty() {
 			for _, statement := range topic.Policy.Statement {
 				statementInEnglish := statement.GetStatementSummaryInEnglish(*m.Caller.Account)
-				// check if statementInEnglish contains an AWS ARN other than caller.Arn
-				if (strings.Contains(statementInEnglish, "arn:aws") && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
-					((strings.Contains(statementInEnglish, "AWS:SourceOwner") || strings.Contains(statementInEnglish, "AWS:SourceAccount")) && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
-					strings.Contains(statementInEnglish, "*") {
-					statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
-					dataReceiver <- Resource2{
-						AccountID:             aws.ToString(m.Caller.Account),
-						ARN:                   aws.ToString(t.TopicArn),
-						ResourcePolicySummary: statementInEnglish,
+				statementInEnglish = strings.TrimSuffix(statementInEnglish, "\n")
+
+				dataReceiver <- Resource2{
+					AccountID:             aws.ToString(m.Caller.Account),
+					ARN:                   aws.ToString(t.TopicArn),
+					ResourcePolicySummary: red(statementInEnglish),
+					Public:                red("True"),
+				}
+			}
+		} else {
+			if !topic.Policy.IsEmpty() {
+				for _, statement := range topic.Policy.Statement {
+					statementInEnglish := statement.GetStatementSummaryInEnglish(*m.Caller.Account)
+					// check if statementInEnglish contains an AWS ARN other than caller.Arn
+					if (strings.Contains(statementInEnglish, "arn:aws") && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
+						((strings.Contains(statementInEnglish, "AWS:SourceOwner") || strings.Contains(statementInEnglish, "AWS:SourceAccount")) && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
+						strings.Contains(statementInEnglish, "*") {
+						statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
+						statementInEnglish = red(statementInEnglish)
+						dataReceiver <- Resource2{
+							AccountID:             aws.ToString(m.Caller.Account),
+							ARN:                   aws.ToString(t.TopicArn),
+							ResourcePolicySummary: statementInEnglish,
+						}
+					} else {
+						statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
+						dataReceiver <- Resource2{
+							AccountID:             aws.ToString(m.Caller.Account),
+							ARN:                   aws.ToString(t.TopicArn),
+							ResourcePolicySummary: statementInEnglish,
+						}
 					}
+
 				}
 
 			}
 
 		}
-
 	}
 }
 
 func (m *ResourceTrustsModule) getS3Buckets(wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Resource2) {
-	defer wg.Done()
+	defer func() {
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+		wg.Done()
+
+	}()
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
 	cloudFoxS3Client := initCloudFoxS3Client(m.Caller, m.AWSProfile, m.CloudFoxVersion)
 
-	ListBuckets, err := cloudFoxS3Client.listBuckets()
+	ListBuckets, err := sdk.CachedListBuckets(cloudFoxS3Client.S3Client, aws.ToString(m.Caller.Account))
 	if err != nil {
 		m.modLog.Error(err.Error())
 		return
@@ -272,8 +317,12 @@ func (m *ResourceTrustsModule) getS3Buckets(wg *sync.WaitGroup, semaphore chan s
 			Arn: fmt.Sprintf("arn:aws:s3:::%s", aws.ToString(b.Name)),
 		}
 		name := aws.ToString(b.Name)
+		region, err := sdk.CachedGetBucketLocation(cloudFoxS3Client.S3Client, aws.ToString(m.Caller.Account), name)
+		if err != nil {
+			m.modLog.Error(err.Error())
+		}
 
-		policyJSON, err := cloudFoxS3Client.getBucketPolicy(aws.ToString(b.Name))
+		policyJSON, err := sdk.CachedGetBucketPolicy(cloudFoxS3Client.S3Client, aws.ToString(m.Caller.Account), region, aws.ToString(b.Name))
 		if err != nil {
 			m.modLog.Error(err.Error())
 		} else {
@@ -288,38 +337,59 @@ func (m *ResourceTrustsModule) getS3Buckets(wg *sync.WaitGroup, semaphore chan s
 		}
 		// easier to just set the default state to be no and only flip it to yes if we have a case that matches
 		if policy.IsPublic() {
-			dataReceiver <- Resource2{
-				AccountID:             aws.ToString(m.Caller.Account),
-				ARN:                   bucket.Arn,
-				ResourcePolicySummary: "Public",
-			}
-		}
-
-		if !bucket.Policy.IsEmpty() {
 			for _, statement := range bucket.Policy.Statement {
 				statementInEnglish := statement.GetStatementSummaryInEnglish(*m.Caller.Account)
-				// check if statementInEnglish contains an AWS ARN other than caller.Arn
-				if (strings.Contains(statementInEnglish, "arn:aws") && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
-					((strings.Contains(statementInEnglish, "AWS:SourceOwner") || strings.Contains(statementInEnglish, "AWS:SourceAccount")) && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
-					strings.Contains(statementInEnglish, "*") {
-					statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
-					dataReceiver <- Resource2{
-						AccountID:             aws.ToString(m.Caller.Account),
-						ARN:                   bucket.Arn,
-						ResourcePolicySummary: statementInEnglish,
+				statementInEnglish = strings.TrimSuffix(statementInEnglish, "\n")
+
+				dataReceiver <- Resource2{
+					AccountID:             aws.ToString(m.Caller.Account),
+					ARN:                   bucket.Arn,
+					ResourcePolicySummary: red(statementInEnglish),
+					Public:                red("True"),
+				}
+			}
+		} else {
+
+			if !bucket.Policy.IsEmpty() {
+				for _, statement := range bucket.Policy.Statement {
+					statementInEnglish := statement.GetStatementSummaryInEnglish(*m.Caller.Account)
+					// check if statementInEnglish contains an AWS ARN other than caller.Arn
+					if (strings.Contains(statementInEnglish, "arn:aws") && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
+						((strings.Contains(statementInEnglish, "AWS:SourceOwner") || strings.Contains(statementInEnglish, "AWS:SourceAccount")) && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
+						strings.Contains(statementInEnglish, "*") {
+						statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
+						statementInEnglish = red(statementInEnglish)
+						dataReceiver <- Resource2{
+							AccountID:             aws.ToString(m.Caller.Account),
+							ARN:                   bucket.Arn,
+							ResourcePolicySummary: statementInEnglish,
+						}
+					} else {
+						statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
+						dataReceiver <- Resource2{
+							AccountID:             aws.ToString(m.Caller.Account),
+							ARN:                   bucket.Arn,
+							ResourcePolicySummary: statementInEnglish,
+						}
 					}
 				}
+
 			}
 
 		}
-
 	}
 }
 
 func (m *ResourceTrustsModule) getSQSQueuesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Resource2) {
-	defer wg.Done()
+	defer func() {
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+		wg.Done()
+
+	}()
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
+	var statementInEnglish string
 
 	cloudFoxSQSClient := InitSQSClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines)
 
@@ -337,35 +407,62 @@ func (m *ResourceTrustsModule) getSQSQueuesPerRegion(r string, wg *sync.WaitGrou
 			break
 		}
 		if queue.Policy.IsPublic() {
-			dataReceiver <- Resource2{
-				AccountID:             aws.ToString(m.Caller.Account),
-				ARN:                   aws.ToString(&queue.Arn),
-				ResourcePolicySummary: "Public",
-			}
-		}
-		if !queue.Policy.IsEmpty() {
 			for _, statement := range queue.Policy.Statement {
 				statementInEnglish := statement.GetStatementSummaryInEnglish(*m.Caller.Account)
-				// check if statementInEnglish contains an AWS ARN other than caller.Arn
-				if (strings.Contains(statementInEnglish, "arn:aws") && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
-					((strings.Contains(statementInEnglish, "AWS:SourceOwner") || strings.Contains(statementInEnglish, "AWS:SourceAccount")) && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
-					strings.Contains(statementInEnglish, "*") {
-					statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
-					dataReceiver <- Resource2{
-						AccountID:             aws.ToString(m.Caller.Account),
-						ARN:                   aws.ToString(&queue.Arn),
-						ResourcePolicySummary: statementInEnglish,
-					}
+				statementInEnglish = strings.TrimSuffix(statementInEnglish, "\n")
+				statementInEnglish = red(statementInEnglish)
+				dataReceiver <- Resource2{
+					AccountID:             aws.ToString(m.Caller.Account),
+					ARN:                   aws.ToString(&queue.Arn),
+					ResourcePolicySummary: statementInEnglish,
+					Public:                red("True"),
 				}
 			}
+		} else {
 
+			if !queue.Policy.IsEmpty() {
+				for i, statement := range queue.Policy.Statement {
+					var prefix string = ""
+					if len(queue.Policy.Statement) > 1 {
+						prefix = fmt.Sprintf("Statement %d says: ", i)
+						statementInEnglish = prefix + statement.GetStatementSummaryInEnglish(*m.Caller.Account)
+					} else {
+						statementInEnglish = statement.GetStatementSummaryInEnglish(*m.Caller.Account)
+					}
+					// check if statementInEnglish contains an AWS ARN other than caller.Arn
+					if (strings.Contains(statementInEnglish, "arn:aws") && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
+						((strings.Contains(statementInEnglish, "AWS:SourceOwner") || strings.Contains(statementInEnglish, "AWS:SourceAccount")) && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
+						strings.Contains(statementInEnglish, "*") ||
+						strings.Contains(statementInEnglish, "Everyone") {
+						statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
+						statementInEnglish = red(statementInEnglish)
+						dataReceiver <- Resource2{
+							AccountID:             aws.ToString(m.Caller.Account),
+							ARN:                   aws.ToString(&queue.Arn),
+							ResourcePolicySummary: statementInEnglish,
+						}
+					} else {
+						statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
+						dataReceiver <- Resource2{
+							AccountID:             aws.ToString(m.Caller.Account),
+							ARN:                   aws.ToString(&queue.Arn),
+							ResourcePolicySummary: statementInEnglish,
+						}
+					}
+				}
+
+			}
 		}
-
 	}
 }
 
 func (m *ResourceTrustsModule) getECRRecordsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Resource2) {
-	defer wg.Done()
+	defer func() {
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+		wg.Done()
+
+	}()
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
@@ -385,78 +482,119 @@ func (m *ResourceTrustsModule) getECRRecordsPerRegion(r string, wg *sync.WaitGro
 			break
 		}
 		if repoPolicy.IsPublic() {
-			dataReceiver <- Resource2{
-				AccountID:             aws.ToString(m.Caller.Account),
-				ARN:                   aws.ToString(repo.RepositoryArn),
-				ResourcePolicySummary: "Public",
-			}
-		}
-		if !repoPolicy.IsEmpty() {
 			for _, statement := range repoPolicy.Statement {
 				statementInEnglish := statement.GetStatementSummaryInEnglish(*m.Caller.Account)
-				// check if statementInEnglish contains an AWS ARN other than caller.Arn
-				if (strings.Contains(statementInEnglish, "arn:aws") && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
-					((strings.Contains(statementInEnglish, "AWS:SourceOwner") || strings.Contains(statementInEnglish, "AWS:SourceAccount")) && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
-					strings.Contains(statementInEnglish, "*") {
-					statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
-					dataReceiver <- Resource2{
-						AccountID:             aws.ToString(m.Caller.Account),
-						ARN:                   aws.ToString(repo.RepositoryArn),
-						ResourcePolicySummary: statementInEnglish,
-					}
+				statementInEnglish = strings.TrimSuffix(statementInEnglish, "\n")
+				statementInEnglish = red(statementInEnglish)
+				dataReceiver <- Resource2{
+					AccountID:             aws.ToString(m.Caller.Account),
+					ARN:                   aws.ToString(repo.RepositoryArn),
+					ResourcePolicySummary: statementInEnglish,
+					Public:                red("True"),
 				}
 			}
+		} else {
 
+			if !repoPolicy.IsEmpty() {
+				for _, statement := range repoPolicy.Statement {
+					statementInEnglish := statement.GetStatementSummaryInEnglish(*m.Caller.Account)
+					// check if statementInEnglish contains an AWS ARN other than caller.Arn
+					if (strings.Contains(statementInEnglish, "arn:aws") && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
+						((strings.Contains(statementInEnglish, "AWS:SourceOwner") || strings.Contains(statementInEnglish, "AWS:SourceAccount")) && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
+						strings.Contains(statementInEnglish, "*") {
+						statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
+						statementInEnglish = red(statementInEnglish)
+						dataReceiver <- Resource2{
+							AccountID:             aws.ToString(m.Caller.Account),
+							ARN:                   aws.ToString(repo.RepositoryArn),
+							ResourcePolicySummary: statementInEnglish,
+						}
+					} else {
+						statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
+						dataReceiver <- Resource2{
+							AccountID:             aws.ToString(m.Caller.Account),
+							ARN:                   aws.ToString(repo.RepositoryArn),
+							ResourcePolicySummary: statementInEnglish,
+						}
+					}
+
+				}
+			}
 		}
 
 	}
 }
 
 func (m *ResourceTrustsModule) getCodeBuildResourcePoliciesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Resource2) {
-	defer wg.Done()
+	defer func() {
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+		wg.Done()
+
+	}()
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
+	var projectPolicy policy.Policy
+
 	cloudFoxCodeBuildClient := InitCodeBuildClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines)
 
-	ListProjects, err := cloudFoxCodeBuildClient.getcodeBuildProjects(r)
+	ListProjects, err := sdk.CachedCodeBuildListProjects(cloudFoxCodeBuildClient.CodeBuildClient, aws.ToString(cloudFoxCodeBuildClient.Caller.Account), r)
 	if err != nil {
 		m.modLog.Error(err.Error())
 		return
 	}
 
 	for _, p := range ListProjects {
-		project, err := cloudFoxCodeBuildClient.getProjectDetails(p, r)
+		project, err := sdk.CachedCodeBuildBatchGetProjects(cloudFoxCodeBuildClient.CodeBuildClient, aws.ToString(cloudFoxCodeBuildClient.Caller.Account), r, p)
 		if err != nil {
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
 			break
 		}
 
-		policy, err := cloudFoxCodeBuildClient.getResourcePolicy(r, p)
+		policyJSON, err := sdk.CachedCodeBuildGetResourcePolicy(cloudFoxCodeBuildClient.CodeBuildClient, aws.ToString(cloudFoxCodeBuildClient.Caller.Account), r, p)
 		if err != nil {
 			m.modLog.Error(err.Error())
 			return
 		}
-		if policy.IsPublic() {
-			dataReceiver <- Resource2{
-				AccountID:             aws.ToString(m.Caller.Account),
-				ARN:                   aws.ToString(project.Arn),
-				ResourcePolicySummary: "Public",
-			}
-		}
-		if !policy.IsEmpty() {
-			for _, statement := range policy.Statement {
+
+		projectPolicy, err = policy.ParseJSONPolicy([]byte(policyJSON))
+
+		if projectPolicy.IsPublic() {
+			for _, statement := range projectPolicy.Statement {
 				statementInEnglish := statement.GetStatementSummaryInEnglish(*m.Caller.Account)
-				// check if statementInEnglish contains an AWS ARN other than caller.Arn
-				if (strings.Contains(statementInEnglish, "arn:aws") && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
-					((strings.Contains(statementInEnglish, "AWS:SourceOwner") || strings.Contains(statementInEnglish, "AWS:SourceAccount")) && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
-					strings.Contains(statementInEnglish, "*") {
-					statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
-					dataReceiver <- Resource2{
-						AccountID:             aws.ToString(m.Caller.Account),
-						ARN:                   aws.ToString(project.Arn),
-						ResourcePolicySummary: statementInEnglish,
+				statementInEnglish = strings.TrimSuffix(statementInEnglish, "\n")
+				statementInEnglish = red(statementInEnglish)
+				dataReceiver <- Resource2{
+					AccountID:             aws.ToString(m.Caller.Account),
+					ARN:                   aws.ToString(project.Arn),
+					ResourcePolicySummary: statementInEnglish,
+					Public:                red("True"),
+				}
+			}
+		} else {
+			if !projectPolicy.IsEmpty() {
+				for _, statement := range projectPolicy.Statement {
+					statementInEnglish := statement.GetStatementSummaryInEnglish(*m.Caller.Account)
+					// check if statementInEnglish contains an AWS ARN other than caller.Arn
+					if (strings.Contains(statementInEnglish, "arn:aws") && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
+						((strings.Contains(statementInEnglish, "AWS:SourceOwner") || strings.Contains(statementInEnglish, "AWS:SourceAccount")) && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
+						strings.Contains(statementInEnglish, "*") {
+						statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
+						statementInEnglish = red(statementInEnglish)
+						dataReceiver <- Resource2{
+							AccountID:             aws.ToString(m.Caller.Account),
+							ARN:                   aws.ToString(project.Arn),
+							ResourcePolicySummary: statementInEnglish,
+						}
+					} else {
+						statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
+						dataReceiver <- Resource2{
+							AccountID:             aws.ToString(m.Caller.Account),
+							ARN:                   aws.ToString(project.Arn),
+							ResourcePolicySummary: statementInEnglish,
+						}
 					}
 				}
 			}
@@ -467,7 +605,12 @@ func (m *ResourceTrustsModule) getCodeBuildResourcePoliciesPerRegion(r string, w
 }
 
 func (m *ResourceTrustsModule) getLambdaPolicyPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Resource2) {
-	defer wg.Done()
+	defer func() {
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+		wg.Done()
+
+	}()
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
@@ -488,27 +631,42 @@ func (m *ResourceTrustsModule) getLambdaPolicyPerRegion(r string, wg *sync.WaitG
 		}
 
 		if functionPolicy.IsPublic() {
-			dataReceiver <- Resource2{
-				AccountID:             aws.ToString(m.Caller.Account),
-				ARN:                   aws.ToString(f.FunctionArn),
-				ResourcePolicySummary: "Public",
-			}
-		}
-		if !functionPolicy.IsEmpty() {
 			for _, statement := range functionPolicy.Statement {
 				statementInEnglish := statement.GetStatementSummaryInEnglish(*m.Caller.Account)
-				// check if statementInEnglish contains an AWS ARN other than caller.Arn
-				if (strings.Contains(statementInEnglish, "arn:aws") && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
-					((strings.Contains(statementInEnglish, "AWS:SourceOwner") || strings.Contains(statementInEnglish, "AWS:SourceAccount")) && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
-					strings.Contains(statementInEnglish, "*") {
-					statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
-					dataReceiver <- Resource2{
-						AccountID:             aws.ToString(m.Caller.Account),
-						ARN:                   aws.ToString(f.FunctionArn),
-						ResourcePolicySummary: statementInEnglish,
+				statementInEnglish = strings.TrimSuffix(statementInEnglish, "\n")
+				statementInEnglish = red(statementInEnglish)
+				dataReceiver <- Resource2{
+					AccountID:             aws.ToString(m.Caller.Account),
+					ARN:                   aws.ToString(f.FunctionArn),
+					ResourcePolicySummary: statementInEnglish,
+					Public:                red("True"),
+				}
+			}
+		} else {
+
+			if !functionPolicy.IsEmpty() {
+				for _, statement := range functionPolicy.Statement {
+					statementInEnglish := statement.GetStatementSummaryInEnglish(*m.Caller.Account)
+					// check if statementInEnglish contains an AWS ARN other than caller.Arn
+					if (strings.Contains(statementInEnglish, "arn:aws") && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
+						((strings.Contains(statementInEnglish, "AWS:SourceOwner") || strings.Contains(statementInEnglish, "AWS:SourceAccount")) && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
+						strings.Contains(statementInEnglish, "*") {
+						statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
+						statementInEnglish = red(statementInEnglish)
+						dataReceiver <- Resource2{
+							AccountID:             aws.ToString(m.Caller.Account),
+							ARN:                   aws.ToString(f.FunctionArn),
+							ResourcePolicySummary: statementInEnglish,
+						}
+					} else {
+						statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
+						dataReceiver <- Resource2{
+							AccountID:             aws.ToString(m.Caller.Account),
+							ARN:                   aws.ToString(f.FunctionArn),
+							ResourcePolicySummary: statementInEnglish,
+						}
 					}
 				}
-
 			}
 
 		}
@@ -517,20 +675,25 @@ func (m *ResourceTrustsModule) getLambdaPolicyPerRegion(r string, wg *sync.WaitG
 }
 
 func (m *ResourceTrustsModule) getEFSfilesystemPoliciesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Resource2) {
-	defer wg.Done()
+	defer func() {
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+		wg.Done()
+
+	}()
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
 	cloudFoxEFSClient := InitFileSystemsClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines)
 
-	ListFileSystems, err := cloudFoxEFSClient.describeEFSFilesystems(r)
+	ListFileSystems, err := sdk.CachedDescribeFileSystems(cloudFoxEFSClient.EFSClient, aws.ToString(m.Caller.Account), r)
 	if err != nil {
 		sharedLogger.Error(err.Error())
 		return
 	}
 
 	for _, fs := range ListFileSystems {
-		fsPolicy, err := cloudFoxEFSClient.getEFSResourcePolicy(r, aws.ToString(fs.FileSystemId))
+		fsPolicy, err := sdk.CachedDescribeFileSystemPolicy(cloudFoxEFSClient.EFSClient, aws.ToString(fs.FileSystemId), r, aws.ToString(m.Caller.Account))
 		if err != nil {
 			sharedLogger.Error(err.Error())
 			m.CommandCounter.Error++
@@ -538,25 +701,40 @@ func (m *ResourceTrustsModule) getEFSfilesystemPoliciesPerRegion(r string, wg *s
 		}
 
 		if fsPolicy.IsPublic() {
-			dataReceiver <- Resource2{
-				AccountID:             aws.ToString(m.Caller.Account),
-				ARN:                   aws.ToString(fs.FileSystemArn),
-				ResourcePolicySummary: "Public",
-			}
-		}
-
-		if !fsPolicy.IsEmpty() {
 			for _, statement := range fsPolicy.Statement {
 				statementInEnglish := statement.GetStatementSummaryInEnglish(*m.Caller.Account)
-				// check if statementInEnglish contains an AWS ARN other than caller.Arn
-				if (strings.Contains(statementInEnglish, "arn:aws") && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
-					((strings.Contains(statementInEnglish, "AWS:SourceOwner") || strings.Contains(statementInEnglish, "AWS:SourceAccount")) && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
-					strings.Contains(statementInEnglish, "*") {
-					statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
-					dataReceiver <- Resource2{
-						AccountID:             aws.ToString(m.Caller.Account),
-						ARN:                   aws.ToString(fs.FileSystemArn),
-						ResourcePolicySummary: statementInEnglish,
+				statementInEnglish = strings.TrimSuffix(statementInEnglish, "\n")
+				statementInEnglish = red(statementInEnglish)
+				dataReceiver <- Resource2{
+					AccountID:             aws.ToString(m.Caller.Account),
+					ARN:                   aws.ToString(fs.FileSystemArn),
+					ResourcePolicySummary: statementInEnglish,
+					Public:                red("True"),
+				}
+			}
+		} else {
+
+			if !fsPolicy.IsEmpty() {
+				for _, statement := range fsPolicy.Statement {
+					statementInEnglish := statement.GetStatementSummaryInEnglish(*m.Caller.Account)
+					// check if statementInEnglish contains an AWS ARN other than caller.Arn
+					if (strings.Contains(statementInEnglish, "arn:aws") && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
+						((strings.Contains(statementInEnglish, "AWS:SourceOwner") || strings.Contains(statementInEnglish, "AWS:SourceAccount")) && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
+						strings.Contains(statementInEnglish, "*") {
+						statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
+						statementInEnglish = red(statementInEnglish)
+						dataReceiver <- Resource2{
+							AccountID:             aws.ToString(m.Caller.Account),
+							ARN:                   aws.ToString(fs.FileSystemArn),
+							ResourcePolicySummary: statementInEnglish,
+						}
+					} else {
+						statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
+						dataReceiver <- Resource2{
+							AccountID:             aws.ToString(m.Caller.Account),
+							ARN:                   aws.ToString(fs.FileSystemArn),
+							ResourcePolicySummary: statementInEnglish,
+						}
 					}
 				}
 			}

@@ -2,10 +2,12 @@ package internal
 
 import (
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"path"
+	"regexp"
 
 	"github.com/aquasecurity/table"
 	"github.com/fatih/color"
@@ -39,6 +41,7 @@ type TableFile struct {
 	Name             string
 	TableFilePointer afero.File
 	CSVFilePointer   afero.File
+	JSONFilePointer  afero.File
 	Header           []string
 	Body             [][]string
 }
@@ -52,6 +55,43 @@ type LootFile struct {
 	Name        string
 	FilePointer afero.File
 	Contents    string
+}
+
+func removeColorCodes(input string) string {
+	// Regular expression to match ANSI color codes
+	ansiRegExp := regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	return ansiRegExp.ReplaceAllString(input, "")
+}
+
+func removeColorCodesFromSlice(input []string) []string {
+	// Regular expression to match ANSI color codes
+	ansiRegExp := regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+	// Create a new slice to store the strings with color codes removed
+	noColorSlice := make([]string, len(input))
+
+	for i, str := range input {
+		noColorSlice[i] = ansiRegExp.ReplaceAllString(str, "")
+	}
+
+	return noColorSlice
+}
+
+func removeColorCodesFromNestedSlice(input [][]string) [][]string {
+	// Regular expression to match ANSI color codes
+	ansiRegExp := regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+	// Create a new slice to store the slices with color codes removed
+	noColorNestedSlice := make([][]string, len(input))
+
+	for i, strSlice := range input {
+		noColorNestedSlice[i] = make([]string, len(strSlice))
+		for j, str := range strSlice {
+			noColorNestedSlice[i][j] = ansiRegExp.ReplaceAllString(str, "")
+		}
+	}
+
+	return noColorNestedSlice
 }
 
 func (o *OutputClient) WriteFullOutput(tables []TableFile, lootFiles []LootFile) {
@@ -71,9 +111,12 @@ func (o *OutputClient) WriteFullOutput(tables []TableFile, lootFiles []LootFile)
 	tableOutputPaths := o.Table.writeTableFiles(tables)
 	o.Table.createCSVFiles()
 	csvOutputPaths := o.Table.writeCSVFiles()
+	o.Table.createJSONFiles()
+	jsonOutputPaths := o.Table.writeJSONFiles()
 	var outputPaths []string
 	outputPaths = append(outputPaths, tableOutputPaths...)
 	outputPaths = append(outputPaths, csvOutputPaths...)
+	outputPaths = append(outputPaths, jsonOutputPaths...)
 
 	if lootFiles != nil {
 		o.Loot.createLootFiles(lootFiles)
@@ -201,8 +244,8 @@ func (b *TableClient) writeTableFiles(files []TableFile) []string {
 
 	for _, file := range b.TableFiles {
 		t := table.New(file.TableFilePointer)
-
 		t.SetHeaders(file.Header...)
+		file.Body = removeColorCodesFromNestedSlice(file.Body)
 		t.AddRows(file.Body...)
 		t.SetRowLines(false)
 		t.SetDividers(table.UnicodeRoundedDividers)
@@ -253,11 +296,94 @@ func (b *TableClient) writeCSVFiles() []string {
 		csvWriter := csv.NewWriter(file.CSVFilePointer)
 		csvWriter.Write(file.Header)
 		for _, row := range file.Body {
+			row = removeColorCodesFromSlice(row)
 			csvWriter.Write(row)
 		}
 		csvWriter.Flush()
 
 		fullPath := path.Join(b.DirectoryName, "csv", fmt.Sprintf("%s.csv", file.Name))
+		fullFilePaths = append(fullFilePaths, fullPath)
+	}
+
+	return fullFilePaths
+}
+
+func (b *TableClient) createJSONFiles() {
+	for i, file := range b.TableFiles {
+		if b.DirectoryName == "" {
+			b.DirectoryName = "."
+		}
+
+		jsonDirectory := path.Join(b.DirectoryName, "json")
+
+		if _, err := fileSystem.Stat(jsonDirectory); os.IsNotExist(err) {
+			err = fileSystem.MkdirAll(jsonDirectory, 0700)
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
+
+		if file.Name == "" {
+			log.Fatalf("error creating json file: no file name was specified")
+		}
+
+		fileNameWithExt := fmt.Sprintf("%s.json", file.Name)
+
+		filePointer, err := fileSystem.OpenFile(path.Join(jsonDirectory, fileNameWithExt), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+		if err != nil {
+			log.Fatalf("error creating json file: %s", err)
+		}
+
+		b.TableFiles[i].JSONFilePointer = filePointer
+	}
+}
+
+// func (b *TableClient) writeJSONFiles() []string {
+// 	var fullFilePaths []string
+
+// 	for _, file := range b.TableFiles {
+// 		file.Body = removeColorCodesFromNestedSlice(file.Body)
+// 		jsonBytes, err := json.Marshal(file.Body)
+// 		if err != nil {
+// 			log.Fatalf("error marshalling json: %s", err)
+// 		}
+
+// 		_, err = file.JSONFilePointer.Write(jsonBytes)
+// 		if err != nil {
+// 			log.Fatalf("error writing json: %s", err)
+// 		}
+
+// 		fullPath := path.Join(b.DirectoryName, "json", fmt.Sprintf("%s.json", file.Name))
+// 		fullFilePaths = append(fullFilePaths, fullPath)
+// 	}
+
+// 	return fullFilePaths
+// }
+
+func (b *TableClient) writeJSONFiles() []string {
+	var fullFilePaths []string
+
+	for _, file := range b.TableFiles {
+		file.Body = removeColorCodesFromNestedSlice(file.Body)
+		jsonData := make([]map[string]string, len(file.Body))
+		for i, row := range file.Body {
+			jsonData[i] = make(map[string]string)
+			for j, column := range row {
+				jsonData[i][file.Header[j]] = column
+			}
+		}
+
+		jsonBytes, err := json.MarshalIndent(jsonData, "", "  ")
+		if err != nil {
+			fmt.Println("error marshalling json:", err)
+		}
+
+		_, err = file.JSONFilePointer.Write(jsonBytes)
+		if err != nil {
+			log.Fatalf("error writing json: %s", err)
+		}
+
+		fullPath := path.Join(b.DirectoryName, "json", fmt.Sprintf("%s.json", file.Name))
 		fullFilePaths = append(fullFilePaths, fullPath)
 	}
 

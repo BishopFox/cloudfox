@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/apigateway"
@@ -70,6 +71,7 @@ type Inventory2Module struct {
 	SQSClient            *sqs.Client
 	DynamoDBClient       *dynamodb.Client
 	CodeBuildClient      CodeBuildClientInterface
+	StepFunctionClient   sdk.StepFunctionsClientInterface
 
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
@@ -111,7 +113,7 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 	},
 	)
 	// def change this to build dynamically in the future.
-	m.services = []string{"total", "APIGateway RestAPIs", "APIGatewayv2 APIs", "AppRunner Services", "CloudFormation Stacks", "Cloudfront Distributions", "CodeBuild Projects", "DynamoDB Tables", "EC2 Instances", "ECS Tasks", "EKS Clusters", "ELB Load Balancers", "ELBv2 Load Balancers", "Glue Dev Endpoints", "Glue Jobs", "Grafana Workspaces", "Lambda Functions", "Lightsail Instances/Containers", "MQ Brokers", "OpenSearch DomainNames", "RDS DB Instances", "SecretsManager Secrets", "SNS Topics", "SQS Queues", "SSM Parameters"}
+	m.services = []string{"total", "APIGateway RestAPIs", "APIGatewayv2 APIs", "AppRunner Services", "CloudFormation Stacks", "Cloudfront Distributions", "CodeBuild Projects", "DynamoDB Tables", "EC2 Instances", "ECS Tasks", "EKS Clusters", "ELB Load Balancers", "ELBv2 Load Balancers", "Glue Dev Endpoints", "Glue Jobs", "Grafana Workspaces", "Lambda Functions", "Lightsail Instances/Containers", "MQ Brokers", "OpenSearch DomainNames", "RDS DB Instances", "SecretsManager Secrets", "SNS Topics", "SQS Queues", "SSM Parameters", "StepFunctions State Machines"}
 	m.serviceMap = map[string]map[string]int{}
 	m.totalRegionCounts = map[string]int{}
 
@@ -132,7 +134,7 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 	fmt.Printf("[%s][%s] Enumerating selected services in all regions for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 	fmt.Printf("[%s][%s] Supported Services: ApiGateway, ApiGatewayv2, AppRunner, CloudFormation, Cloudfront, CodeBuild, DynamoDB,  \n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	fmt.Printf("[%s][%s] \t\t\tEC2, ECS, EKS, ELB, ELBv2, Glue, Grafana, IAM, Lambda, Lightsail, MQ, \n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
-	fmt.Printf("[%s][%s] \t\t\tOpenSearch, RDS, S3, SecretsManager, SNS, SQS, SSM\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	fmt.Printf("[%s][%s] \t\t\tOpenSearch, RDS, S3, SecretsManager, SNS, SQS, SSM, Step Functions\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 
 	wg := new(sync.WaitGroup)
 	semaphore := make(chan struct{}, m.Goroutines)
@@ -255,7 +257,7 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 		}
 	}
 
-	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
+	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
 
 	// if verbosity > 1 {
 	// 	fmt.Printf("\nAnalyzed Global Resources\n\n")
@@ -264,10 +266,35 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		m.PrintGlobalResources(outputFormat, outputDirectory, verbosity, dataReceiver)
+		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+		o := internal.OutputClient{
+			Verbosity:     verbosity,
+			CallingModule: m.output.CallingModule,
+			Table: internal.TableClient{
+				Wrap: m.WrapTable,
+			},
+		}
+		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
+			Header: m.output.Headers,
+			Body:   m.output.Body,
+			Name:   m.output.CallingModule,
+		})
+
+		o.PrefixIdentifier = m.AWSProfile
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		var header []string
+		var body [][]string
+		header, body = m.PrintGlobalResources(outputFormat, outputDirectory, verbosity, dataReceiver)
+		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
+			Header: header,
+			Body:   body,
+			Name:   "inventory-global",
+		})
+		o.WriteFullOutput(o.Table.TableFiles, nil)
+		m.writeLoot(o.Table.DirectoryName, verbosity)
+
 		m.PrintTotalResources(outputFormat)
-		m.writeLoot(m.output.FilePath, verbosity)
+		//m.writeLoot(m.output.FilePath, verbosity)
 	} else {
 		fmt.Printf("[%s][%s] No resources identified, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
@@ -276,7 +303,7 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 	<-receiverDone
 }
 
-func (m *Inventory2Module) PrintGlobalResources(outputFormat string, outputDirectory string, verbosity int, dataReceiver chan GlobalResourceCount2) {
+func (m *Inventory2Module) PrintGlobalResources(outputFormat string, outputDirectory string, verbosity int, dataReceiver chan GlobalResourceCount2) ([]string, [][]string) {
 	m.globalOutput.Verbosity = verbosity
 	m.globalOutput.CallingModule = "inventory"
 	m.globalOutput.FullFilename = "inventory-global"
@@ -307,7 +334,8 @@ func (m *Inventory2Module) PrintGlobalResources(outputFormat string, outputDirec
 	}
 	//m.globalOutput.FilePath = filepath.Join(path, m.globalOutput.CallingModule)
 	//m.globalOutput.OutputSelector(outputFormat)
-	internal.OutputSelector(verbosity, outputFormat, m.globalOutput.Headers, m.globalOutput.Body, m.globalOutput.FilePath, m.globalOutput.FullFilename, m.globalOutput.CallingModule, false, m.AWSProfile)
+	//internal.OutputSelector(verbosity, outputFormat, m.globalOutput.Headers, m.globalOutput.Body, m.globalOutput.FilePath, m.globalOutput.FullFilename, m.globalOutput.CallingModule, false, m.AWSProfile)
+	return m.globalOutput.Headers, m.globalOutput.Body
 
 }
 
@@ -571,6 +599,15 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 		wg.Add(1)
 		go m.getCodeBuildProjectsPerRegion(r, wg, semaphore)
 	}
+	res, err = servicemap.IsServiceInRegion("stepfunctions", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		m.getStepFunctionsPerRegion(r, wg, semaphore)
+	}
 
 }
 
@@ -587,55 +624,31 @@ func (m *Inventory2Module) getLambdaFunctionsPerRegion(r string, wg *sync.WaitGr
 	// m.CommandCounter.Total++
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
-	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationMarker *string
 	var totalCountThisServiceThisRegion = 0
 	var service = "Lambda Functions"
 	var resourceNames []string
 
-	// This for loop exits at the end depending on whether the output hits its last page (see pagination control block at the end of the loop).
-	for {
-		functions, err := m.LambdaClient.ListFunctions(
-			context.TODO(),
-			&lambda.ListFunctionsInput{
-				Marker: PaginationMarker,
-			},
-			func(o *lambda.Options) {
-				o.Region = r
-			},
-		)
-		if err != nil {
-			//modLog.Error(err.Error())
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
-
-		// Add this page of resources to the total count
-		totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(functions.Functions)
-
-		// Add this page of resources to the module's resource list
-		for _, f := range functions.Functions {
-			resourceNames = append(resourceNames, aws.ToString(f.FunctionArn))
-		}
-
-		// Pagination control. After the last page of output, the for loop exits.
-		if functions.NextMarker != nil {
-			PaginationMarker = functions.NextMarker
-		} else {
-			PaginationMarker = nil
-			// No more pages, update the module's service map
-
-			m.mu.Lock()
-			m.resources = append(m.resources, resourceNames...)
-			m.serviceMap[service][r] = totalCountThisServiceThisRegion
-			m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
-			m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
-			m.mu.Unlock()
-
-			break
-		}
+	ListFunctions, err := sdk.CachedLambdaListFunctions(m.LambdaClient, aws.ToString(m.Caller.Account), r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
 	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListFunctions)
+
+	// Add this page of resources to the module's resource list
+	for _, f := range ListFunctions {
+		resourceNames = append(resourceNames, aws.ToString(f.FunctionArn))
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
 
 }
 
@@ -653,54 +666,35 @@ func (m *Inventory2Module) getEc2InstancesPerRegion(r string, wg *sync.WaitGroup
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
 	var totalCountThisServiceThisRegion = 0
 	var service = "EC2 Instances"
 	var resourceNames []string
 
-	for {
-		DescribeInstances, err := m.EC2Client.DescribeInstances(
-			context.TODO(),
-			&(ec2.DescribeInstancesInput{
-				NextToken: PaginationControl,
-			}),
-			func(o *ec2.Options) {
-				o.Region = r
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
+	// used CachedDescribeInstancesInput to avoid the need to call DescribeInstancesInput
+	DescribeInstances, err := sdk.CachedEC2DescribeInstances(m.EC2Client, aws.ToString(m.Caller.Account), r)
 
-		// Add this page of resources to the total count
-		totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(DescribeInstances.Reservations)
-
-		// Add this page of resources to the module's resource list
-		for _, reservation := range DescribeInstances.Reservations {
-			for _, instance := range reservation.Instances {
-				arn := "arn:aws:ec2:" + r + ":" + aws.ToString(m.Caller.Account) + ":instance/" + aws.ToString(instance.InstanceId)
-				resourceNames = append(resourceNames, arn)
-			}
-		}
-
-		// The "NextToken" value is nil when there's no more data to return.
-		if DescribeInstances.NextToken != nil {
-			PaginationControl = DescribeInstances.NextToken
-		} else {
-			PaginationControl = nil
-			// No more pages, update the module's service map
-
-			m.mu.Lock()
-			m.resources = append(m.resources, resourceNames...)
-			m.serviceMap[service][r] = totalCountThisServiceThisRegion
-			m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
-			m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
-			m.mu.Unlock()
-			break
-		}
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
 	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(DescribeInstances)
+
+	// Add this page of resources to the module's resource list
+
+	for _, instance := range DescribeInstances {
+		arn := "arn:aws:ec2:" + r + ":" + aws.ToString(m.Caller.Account) + ":instance/" + aws.ToString(instance.InstanceId)
+		resourceNames = append(resourceNames, arn)
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
 }
 
 func (m *Inventory2Module) getEksClustersPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
@@ -717,52 +711,33 @@ func (m *Inventory2Module) getEksClustersPerRegion(r string, wg *sync.WaitGroup,
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
 	var totalCountThisServiceThisRegion = 0
 	var service = "EKS Clusters"
 	var resourceNames []string
 
-	for {
-		ListClusters, err := m.EKSClient.ListClusters(
-			context.TODO(),
-			&(eks.ListClustersInput{
-				NextToken: PaginationControl,
-			}),
-			func(o *eks.Options) {
-				o.Region = r
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
-
-		// Add this page of resources to the total count
-		totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListClusters.Clusters)
-
-		// Add this page of resources to the module's resource list
-		for _, cluster := range ListClusters.Clusters {
-			arn := "arn:aws:eks:" + r + ":" + aws.ToString(m.Caller.Account) + ":cluster/" + cluster
-			resourceNames = append(resourceNames, arn)
-		}
-
-		// The "NextToken" value is nil when there's no more data to return.
-		if ListClusters.NextToken != nil {
-			PaginationControl = ListClusters.NextToken
-		} else {
-			PaginationControl = nil
-			// No more pages, update the module's service map
-
-			m.mu.Lock()
-			m.resources = append(m.resources, resourceNames...)
-			m.serviceMap[service][r] = totalCountThisServiceThisRegion
-			m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
-			m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
-			m.mu.Unlock()
-			break
-		}
+	ListClusters, err := sdk.CachedEKSListClusters(m.EKSClient, aws.ToString(m.Caller.Account), r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
 	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListClusters)
+
+	// Add this page of resources to the module's resource list
+	for _, cluster := range ListClusters {
+		arn := "arn:aws:eks:" + r + ":" + aws.ToString(m.Caller.Account) + ":cluster/" + cluster
+		resourceNames = append(resourceNames, arn)
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
+
 }
 
 func (m *Inventory2Module) getCloudFormationStacksPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
@@ -779,52 +754,35 @@ func (m *Inventory2Module) getCloudFormationStacksPerRegion(r string, wg *sync.W
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
 	var totalCountThisServiceThisRegion = 0
 	var service = "CloudFormation Stacks"
 	var resourceNames []string
 
-	for {
-		ListStacks, err := m.CloudFormationClient.ListStacks(
-			context.TODO(),
-			&(cloudformation.ListStacksInput{
-				NextToken: PaginationControl,
-			}),
-			func(o *cloudformation.Options) {
-				o.Region = r
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
+	ListStacks, err := sdk.CachedCloudFormationListStacks(m.CloudFormationClient, aws.ToString(m.Caller.Account), r)
 
-		// Add this page of resources to the total count
-		// Currently this counts both active and deleted stacks as they technically still exist. Might
-		// change this to only count active ones in the future.
-		totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListStacks.StackSummaries)
-
-		// Add this page of resources to the module's resource list
-		for _, stack := range ListStacks.StackSummaries {
-			resourceNames = append(resourceNames, aws.ToString(stack.StackId))
-		}
-
-		// The "NextToken" value is nil when there's no more data to return.
-		if ListStacks.NextToken != nil {
-			PaginationControl = ListStacks.NextToken
-		} else {
-			PaginationControl = nil
-			// No more pages, update the module's service map
-			m.mu.Lock()
-			m.resources = append(m.resources, resourceNames...)
-			m.serviceMap[service][r] = totalCountThisServiceThisRegion
-			m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
-			m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
-			m.mu.Unlock()
-			break
-		}
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
 	}
+
+	// Add this page of resources to the total count
+	// Currently this counts both active and deleted stacks as they technically still exist. Might
+	// change this to only count active ones in the future.
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListStacks)
+
+	// Add this page of resources to the module's resource list
+	for _, stack := range ListStacks {
+		resourceNames = append(resourceNames, aws.ToString(stack.StackId))
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
+
 }
 
 func (m *Inventory2Module) getSecretsManagerSecretsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
@@ -841,50 +799,34 @@ func (m *Inventory2Module) getSecretsManagerSecretsPerRegion(r string, wg *sync.
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
 	var totalCountThisServiceThisRegion = 0
 	var service = "SecretsManager Secrets"
 	var resourceNames []string
 
-	for {
-		ListSecrets, err := m.SecretsManagerClient.ListSecrets(
-			context.TODO(),
-			&(secretsmanager.ListSecretsInput{
-				NextToken: PaginationControl,
-			}),
-			func(o *secretsmanager.Options) {
-				o.Region = r
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
+	ListSecrets, err := sdk.CachedSecretsManagerListSecrets(m.SecretsManagerClient, aws.ToString(m.Caller.Account), r)
 
-		// Add this page of results to the total count
-		totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListSecrets.SecretList)
-
-		// Add this page of resources to the module's resource list
-		for _, secret := range ListSecrets.SecretList {
-			resourceNames = append(resourceNames, aws.ToString(secret.ARN))
-		}
-
-		// The "NextToken" value is nil when there's no more data to return.
-		if ListSecrets.NextToken != nil {
-			PaginationControl = ListSecrets.NextToken
-		} else {
-			PaginationControl = nil
-			// No more pages, update the module's service map
-			m.mu.Lock()
-			m.resources = append(m.resources, resourceNames...)
-			m.serviceMap[service][r] = totalCountThisServiceThisRegion
-			m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
-			m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
-			m.mu.Unlock()
-			break
-		}
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
 	}
+
+	// Add this page of results to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListSecrets)
+
+	// Add this page of resources to the module's resource list
+	for _, secret := range ListSecrets {
+		resourceNames = append(resourceNames, aws.ToString(secret.ARN))
+	}
+
+	// No more pages, update the module's service map
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
+
 }
 
 func (m *Inventory2Module) getRdsClustersPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
@@ -901,49 +843,31 @@ func (m *Inventory2Module) getRdsClustersPerRegion(r string, wg *sync.WaitGroup,
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
 	var totalCountThisServiceThisRegion = 0
 	var service = "RDS DB Instances"
 	var resourceNames []string
 
-	for {
-		DescribeDBInstances, err := m.RDSClient.DescribeDBInstances(
-			context.TODO(),
-			&(rds.DescribeDBInstancesInput{
-				Marker: PaginationControl,
-			}),
-			func(o *rds.Options) {
-				o.Region = r
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
-
-		// Add this page of resources to the total count
-		totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(DescribeDBInstances.DBInstances)
-
-		// Add this page of resources to the module's resource list
-		for _, instance := range DescribeDBInstances.DBInstances {
-			resourceNames = append(resourceNames, aws.ToString(instance.DBInstanceArn))
-		}
-
-		// The "NextToken" value is nil when there's no more data to return.
-		if DescribeDBInstances.Marker != nil {
-			PaginationControl = DescribeDBInstances.Marker
-		} else {
-			PaginationControl = nil
-			m.mu.Lock()
-			m.resources = append(m.resources, resourceNames...)
-			m.serviceMap[service][r] = totalCountThisServiceThisRegion
-			m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
-			m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
-			m.mu.Unlock()
-			break
-		}
+	DescribeDBInstances, err := sdk.CachedRDSDescribeDBInstances(m.RDSClient, aws.ToString(m.Caller.Account), r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
 	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(DescribeDBInstances)
+
+	// Add this page of resources to the module's resource list
+	for _, instance := range DescribeDBInstances {
+		resourceNames = append(resourceNames, aws.ToString(instance.DBInstanceArn))
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
 }
 
 func (m *Inventory2Module) getAPIGatewayvAPIsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
@@ -960,52 +884,33 @@ func (m *Inventory2Module) getAPIGatewayvAPIsPerRegion(r string, wg *sync.WaitGr
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
 	var totalCountThisServiceThisRegion = 0
 	var service = "APIGateway RestAPIs"
 	var resourceNames []string
 
-	// This for loop exits at the end depending on whether the output hits its last page (see pagination control block at the end of the loop).
-	for {
-		GetRestApis, err := m.APIGatewayClient.GetRestApis(
-			context.TODO(),
-			&apigateway.GetRestApisInput{
-				Position: PaginationControl,
-			},
-			func(o *apigateway.Options) {
-				o.Region = r
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
+	GetRestApis, err := sdk.CachedApiGatewayGetRestAPIs(m.APIGatewayClient, aws.ToString(m.Caller.Account), r)
 
-		// Add this page of resources to the total count
-		totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(GetRestApis.Items)
-
-		// Add this page of resources to the module's resource list
-		for _, restAPI := range GetRestApis.Items {
-			arn := aws.ToString(restAPI.Id)
-			resourceNames = append(resourceNames, arn)
-		}
-
-		// Pagination control. After the last page of output, the for loop exits.
-		if GetRestApis.Position != nil {
-			PaginationControl = GetRestApis.Position
-		} else {
-			PaginationControl = nil
-			m.mu.Lock()
-			m.resources = append(m.resources, resourceNames...)
-			m.serviceMap[service][r] = totalCountThisServiceThisRegion
-			m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
-			m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
-			m.mu.Unlock()
-			break
-		}
-
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
 	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(GetRestApis)
+
+	// Add this page of resources to the module's resource list
+	for _, restAPI := range GetRestApis {
+		arn := aws.ToString(restAPI.Id)
+		resourceNames = append(resourceNames, arn)
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
 }
 
 func (m *Inventory2Module) getAPIGatewayv2APIsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
@@ -1022,52 +927,33 @@ func (m *Inventory2Module) getAPIGatewayv2APIsPerRegion(r string, wg *sync.WaitG
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
 	var totalCountThisServiceThisRegion = 0
 	var service = "APIGatewayv2 APIs"
 	var resourceNames []string
 
-	// This for loop exits at the end depending on whether the output hits its last page (see pagination control block at the end of the loop).
-	for {
-		GetApis, err := m.APIGatewayv2Client.GetApis(
-			context.TODO(),
-			&apigatewayv2.GetApisInput{
-				NextToken: PaginationControl,
-			},
-			func(o *apigatewayv2.Options) {
-				o.Region = r
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
+	GetApis, err := sdk.CachedAPIGatewayv2GetAPIs(m.APIGatewayv2Client, aws.ToString(m.Caller.Account), r)
 
-		// Add this page of resources to the total count
-		totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(GetApis.Items)
-
-		// Add this page of resources to the module's resource list
-		for _, api := range GetApis.Items {
-			arn := aws.ToString(api.ApiId)
-			resourceNames = append(resourceNames, arn)
-		}
-
-		// Pagination control. After the last page of output, the for loop exits.
-		if GetApis.NextToken != nil {
-			PaginationControl = GetApis.NextToken
-		} else {
-			PaginationControl = nil
-			m.mu.Lock()
-			m.resources = append(m.resources, resourceNames...)
-			m.serviceMap[service][r] = totalCountThisServiceThisRegion
-			m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
-			m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
-			m.mu.Unlock()
-			break
-		}
-
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
 	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(GetApis)
+
+	// Add this page of resources to the module's resource list
+	for _, api := range GetApis {
+		arn := aws.ToString(api.ApiId)
+		resourceNames = append(resourceNames, arn)
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
 }
 
 func (m *Inventory2Module) getELBv2ListenersPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
@@ -1080,57 +966,34 @@ func (m *Inventory2Module) getELBv2ListenersPerRegion(r string, wg *sync.WaitGro
 	defer func() {
 		<-semaphore
 	}()
-	// m.CommandCounter.Total++
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
-	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
 	var totalCountThisServiceThisRegion = 0
 	var service = "ELBv2 Load Balancers"
 	var resourceNames []string
 
-	// This for loop exits at the end depending on whether the output hits its last page (see pagination control block at the end of the loop).
-	for {
-		DescribeLoadBalancers, err := m.ELBv2Client.DescribeLoadBalancers(
-			context.TODO(),
-			&elasticloadbalancingv2.DescribeLoadBalancersInput{
-				Marker: PaginationControl,
-			},
-			func(o *elasticloadbalancingv2.Options) {
-				o.Region = r
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
-
-		// Add this page of resources to the total count
-		totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(DescribeLoadBalancers.LoadBalancers)
-
-		// Add this page of resources to the module's resource list
-		for _, loadBalancer := range DescribeLoadBalancers.LoadBalancers {
-			arn := aws.ToString(loadBalancer.LoadBalancerArn)
-			resourceNames = append(resourceNames, arn)
-		}
-
-		// Pagination control. After the last page of output, the for loop exits.
-		if DescribeLoadBalancers.NextMarker != nil {
-			PaginationControl = DescribeLoadBalancers.NextMarker
-		} else {
-			PaginationControl = nil
-			// No more pages, update the module's service map
-			m.mu.Lock()
-			m.resources = append(m.resources, resourceNames...)
-			m.serviceMap[service][r] = totalCountThisServiceThisRegion
-			m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
-			m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
-			m.mu.Unlock()
-			break
-		}
+	DescribeLoadBalancers, err := sdk.CachedELBv2DescribeLoadBalancers(m.ELBv2Client, aws.ToString(m.Caller.Account), r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
 	}
 
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(DescribeLoadBalancers)
+
+	// Add this page of resources to the module's resource list
+	for _, loadBalancer := range DescribeLoadBalancers {
+		arn := aws.ToString(loadBalancer.LoadBalancerArn)
+		resourceNames = append(resourceNames, arn)
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
 }
 
 func (m *Inventory2Module) getELBListenersPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
@@ -1147,53 +1010,33 @@ func (m *Inventory2Module) getELBListenersPerRegion(r string, wg *sync.WaitGroup
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
 	var totalCountThisServiceThisRegion = 0
 	var service = "ELB Load Balancers"
 	var resourceNames []string
 
-	// This for loop exits at the end depending on whether the output hits its last page (see pagination control block at the end of the loop).
-	for {
-		DescribeLoadBalancers, err := m.ELBClient.DescribeLoadBalancers(
-			context.TODO(),
-			&elasticloadbalancing.DescribeLoadBalancersInput{
-				Marker: PaginationControl,
-			},
-			func(o *elasticloadbalancing.Options) {
-				o.Region = r
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
+	DescribeLoadBalancers, err := sdk.CachedELBDescribeLoadBalancers(m.ELBClient, aws.ToString(m.Caller.Account), r)
 
-		// Add this page of resources to the total count
-		totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(DescribeLoadBalancers.LoadBalancerDescriptions)
-
-		// Add this page of resources to the module's resource list
-		for _, loadBalancer := range DescribeLoadBalancers.LoadBalancerDescriptions {
-			arn := "arn:aws:elasticloadbalancing:" + r + ":" + aws.ToString(m.Caller.Account) + ":loadbalancer/" + aws.ToString(loadBalancer.LoadBalancerName)
-			resourceNames = append(resourceNames, arn)
-		}
-
-		// Pagination control. After the last page of output, the for loop exits.
-		if DescribeLoadBalancers.NextMarker != nil {
-			PaginationControl = DescribeLoadBalancers.NextMarker
-		} else {
-			PaginationControl = nil
-			// No more pages, update the module's service map
-			m.mu.Lock()
-			m.resources = append(m.resources, resourceNames...)
-			m.serviceMap[service][r] = totalCountThisServiceThisRegion
-			m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
-			m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
-			m.mu.Unlock()
-			break
-		}
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
 	}
 
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(DescribeLoadBalancers)
+
+	// Add this page of resources to the module's resource list
+	for _, loadBalancer := range DescribeLoadBalancers {
+		arn := "arn:aws:elasticloadbalancing:" + r + ":" + aws.ToString(m.Caller.Account) + ":loadbalancer/" + aws.ToString(loadBalancer.LoadBalancerName)
+		resourceNames = append(resourceNames, arn)
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
 }
 
 func (m *Inventory2Module) getMqBrokersPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
@@ -1206,55 +1049,34 @@ func (m *Inventory2Module) getMqBrokersPerRegion(r string, wg *sync.WaitGroup, s
 	defer func() {
 		<-semaphore
 	}()
-	// m.CommandCounter.Total++
+
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
-	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
 	var totalCountThisServiceThisRegion = 0
 	var service = "MQ Brokers"
 	var resourceNames []string
 
-	// This for loop exits at the end depending on whether the output hits its last page (see pagination control block at the end of the loop).
-	for {
-		ListBrokers, err := m.MQClient.ListBrokers(
-			context.TODO(),
-			&mq.ListBrokersInput{
-				NextToken: PaginationControl,
-			},
-			func(o *mq.Options) {
-				o.Region = r
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
-
-		// Add this page of resources to the total count
-		totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListBrokers.BrokerSummaries)
-
-		// Add this page of resources to the module's resource list
-		for _, broker := range ListBrokers.BrokerSummaries {
-			resourceNames = append(resourceNames, aws.ToString(broker.BrokerArn))
-		}
-
-		// Pagination control. After the last page of output, the for loop exits.
-		if ListBrokers.NextToken != nil {
-			PaginationControl = ListBrokers.NextToken
-		} else {
-			PaginationControl = nil
-			m.mu.Lock()
-			m.resources = append(m.resources, resourceNames...)
-			m.serviceMap[service][r] = totalCountThisServiceThisRegion
-			m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
-			m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
-			m.mu.Unlock()
-			break
-		}
-
+	ListBrokers, err := sdk.CachedMQListBrokers(m.MQClient, aws.ToString(m.Caller.Account), r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
 	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListBrokers)
+
+	// Add this page of resources to the module's resource list
+	for _, broker := range ListBrokers {
+		resourceNames = append(resourceNames, aws.ToString(broker.BrokerArn))
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
 }
 
 func (m *Inventory2Module) getOpenSearchPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
@@ -1275,40 +1097,29 @@ func (m *Inventory2Module) getOpenSearchPerRegion(r string, wg *sync.WaitGroup, 
 	var service = "OpenSearch DomainNames"
 	var resourceNames []string
 
-	// This for loop exits at the end depending on whether the output hits its last page (see pagination control block at the end of the loop).
-	for {
-		ListDomainNames, err := m.OpenSearchClient.ListDomainNames(
-			context.TODO(),
-			&opensearch.ListDomainNamesInput{},
-			func(o *opensearch.Options) {
-				o.Region = r
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
-
-		// Add this page of resources to the total count
-		totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListDomainNames.DomainNames)
-
-		// Add this page of resources to the module's resource list
-		for _, domain := range ListDomainNames.DomainNames {
-			arn := "arn:aws:opensearch:" + r + ":" + aws.ToString(m.Caller.Account) + ":domain/" + aws.ToString(domain.DomainName)
-			resourceNames = append(resourceNames, arn)
-		}
-
-		// Pagination control. After the last page of output, the for loop exits.
-
-		m.mu.Lock()
-		m.resources = append(m.resources, resourceNames...)
-		m.serviceMap[service][r] = totalCountThisServiceThisRegion
-		m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
-		m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
-		m.mu.Unlock()
-		break
+	ListDomainNames, err := sdk.CachedOpenSearchListDomainNames(m.OpenSearchClient, aws.ToString(m.Caller.Account), r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
 	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListDomainNames)
+
+	// Add this page of resources to the module's resource list
+	for _, domain := range ListDomainNames {
+		arn := "arn:aws:opensearch:" + r + ":" + aws.ToString(m.Caller.Account) + ":domain/" + aws.ToString(domain.DomainName)
+		resourceNames = append(resourceNames, arn)
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
+
 }
 
 func (m *Inventory2Module) getGrafanaWorkspacesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
@@ -1325,53 +1136,34 @@ func (m *Inventory2Module) getGrafanaWorkspacesPerRegion(r string, wg *sync.Wait
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
 	var totalCountThisServiceThisRegion = 0
 	var service = "Grafana Workspaces"
 	var resourceNames []string
 
+	ListWorkspaces, err := sdk.CachedGrafanaListWorkspaces(m.GrafanaClient, aws.ToString(m.Caller.Account), r)
 	// This for loop exits at the end depending on whether the output hits its last page (see pagination control block at the end of the loop).
-	for {
 
-		ListWorkspaces, err := m.GrafanaClient.ListWorkspaces(
-			context.TODO(),
-			&grafana.ListWorkspacesInput{
-				NextToken: PaginationControl,
-			},
-			func(o *grafana.Options) {
-				o.Region = r
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
-
-		// Add this page of resources to the total count
-		totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListWorkspaces.Workspaces)
-
-		// Add this page of resources to the module's resource list
-		for _, workspace := range ListWorkspaces.Workspaces {
-			arn := "arn:aws:grafana:" + r + ":" + aws.ToString(m.Caller.Account) + ":workspace/" + aws.ToString(workspace.Id)
-			resourceNames = append(resourceNames, arn)
-		}
-
-		// Pagination control. After the last page of output, the for loop exits.
-		if ListWorkspaces.NextToken != nil {
-			PaginationControl = ListWorkspaces.NextToken
-		} else {
-			PaginationControl = nil
-			m.mu.Lock()
-			m.resources = append(m.resources, resourceNames...)
-			m.serviceMap[service][r] = totalCountThisServiceThisRegion
-			m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
-			m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
-			m.mu.Unlock()
-			break
-		}
-
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
 	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListWorkspaces)
+
+	// Add this page of resources to the module's resource list
+	for _, workspace := range ListWorkspaces {
+		arn := "arn:aws:grafana:" + r + ":" + aws.ToString(m.Caller.Account) + ":workspace/" + aws.ToString(workspace.Id)
+		resourceNames = append(resourceNames, arn)
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
 }
 
 func (m *Inventory2Module) getAppRunnerServicesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
@@ -1913,13 +1705,7 @@ func (m *Inventory2Module) getDynamoDBTablesPerRegion(r string, wg *sync.WaitGro
 	var service = "DynamoDB Tables"
 	var resourceNames []string
 
-	ListTables, err := m.DynamoDBClient.ListTables(
-		context.TODO(),
-		&(dynamodb.ListTablesInput{}),
-		func(o *dynamodb.Options) {
-			o.Region = r
-		},
-	)
+	TableNames, err := sdk.CachedDynamoDBListTables(m.DynamoDBClient, aws.ToString(m.Caller.Account), r)
 	if err != nil {
 		m.modLog.Error(err.Error())
 		m.CommandCounter.Error++
@@ -1927,10 +1713,10 @@ func (m *Inventory2Module) getDynamoDBTablesPerRegion(r string, wg *sync.WaitGro
 	}
 
 	// Add this page of resources to the total count
-	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListTables.TableNames)
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(TableNames)
 
 	// Add this page of resources to the module's resource list
-	for _, table := range ListTables.TableNames {
+	for _, table := range TableNames {
 		arn := "arn:aws:dynamodb:" + r + ":" + aws.ToString(m.Caller.Account) + ":table/" + table
 		resourceNames = append(resourceNames, arn)
 	}
@@ -1985,6 +1771,48 @@ func (m *Inventory2Module) getCodeBuildProjectsPerRegion(r string, wg *sync.Wait
 	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
 	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
 
+	m.mu.Unlock()
+}
+
+func (m *Inventory2Module) getStepFunctionsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+	var totalCountThisServiceThisRegion = 0
+	var service = "StepFunctions State Machines"
+	var resourceNames []string
+
+	ListStateMachines, err := sdk.CachedStepFunctionsListStateMachines(m.StepFunctionClient, aws.ToString(m.Caller.Account), r)
+
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListStateMachines)
+
+	// Add this page of resources to the module's resource list
+	for _, stateMachine := range ListStateMachines {
+		arn := "arn:aws:states:" + r + ":" + aws.ToString(m.Caller.Account) + ":stateMachine:" + aws.ToString(stateMachine.Name)
+		resourceNames = append(resourceNames, arn)
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
 	m.mu.Unlock()
 }
 

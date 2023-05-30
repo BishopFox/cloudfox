@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"runtime"
+	"strings"
 
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -14,6 +15,8 @@ import (
 
 var cyan = color.New(color.FgCyan).SprintFunc()
 var red = color.New(color.FgRed).SprintFunc()
+var green = color.New(color.FgGreen).SprintFunc()
+
 var sharedLogger = internal.TxtLogger()
 
 func GetIamSimResult(SkipAdminCheck bool, roleArnPtr *string, iamSimulatorMod IamSimulatorModule, localAdminMap map[string]bool) (string, string) {
@@ -162,4 +165,12 @@ func GetPmapperResults(SkipAdminCheck bool, pmapperMod PmapperModule, roleArn *s
 		canRolePrivEsc = "Skipped"
 	}
 	return adminRole, canRolePrivEsc
+}
+
+// take an arn and return the resource name
+func GetResourceNameFromArn(arn string) string {
+	parts := strings.Split(arn, "/")
+	resourceName := parts[len(parts)-1]
+
+	return resourceName
 }

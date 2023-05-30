@@ -1,12 +1,12 @@
 package aws
 
 import (
+	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/aws/aws-sdk-go-v2/service/efs"
 	"github.com/aws/aws-sdk-go-v2/service/fsx"
-	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/organizations"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -15,26 +15,27 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
-func initIAMSimClient(iamSimPPClient iam.SimulatePrincipalPolicyAPIClient, caller sts.GetCallerIdentityOutput, AWSProfile string, Goroutines int) IamSimulatorModule {
+func initIAMSimClient(iamSimPPClient sdk.AWSIAMClientInterface, caller sts.GetCallerIdentityOutput, AWSProfile string, Goroutines int) IamSimulatorModule {
 
 	iamSimMod := IamSimulatorModule{
-		IAMSimulatePrincipalPolicyClient: iamSimPPClient,
-		Caller:                           caller,
-		AWSProfile:                       AWSProfile,
-		Goroutines:                       Goroutines,
+		IAMClient:  iamSimPPClient,
+		Caller:     caller,
+		AWSProfile: AWSProfile,
+		Goroutines: Goroutines,
 	}
 
 	return iamSimMod
 
 }
 
-func InitCloudFoxSNSClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string) CloudFoxSNSClient {
+func InitCloudFoxSNSClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int) SNSModule {
 	var AWSConfig = internal.AWSConfigFileLoader(AWSProfile, cfVersion)
-	cloudFoxSNSClient := CloudFoxSNSClient{
+	cloudFoxSNSClient := SNSModule{
 		SNSClient:  sns.NewFromConfig(AWSConfig),
 		Caller:     caller,
 		AWSProfile: AWSProfile,
 		AWSRegions: internal.GetEnabledRegions(AWSProfile, cfVersion),
+		Goroutines: Goroutines,
 	}
 	return cloudFoxSNSClient
 

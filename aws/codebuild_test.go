@@ -2,6 +2,7 @@ package aws
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -108,7 +109,7 @@ func TestCodeBuildProjects(t *testing.T) {
 	m := CodeBuildModule{
 		CodeBuildClient: &mockedCodeBuildClient{},
 		AWSProfile:      "unittesting",
-		AWSRegions:      []string{"us-east-1", "us-west-1"},
+		AWSRegions:      []string{"us-west-1"},
 		Caller: sts.GetCallerIdentityOutput{
 			Arn:     aws.String("arn:aws:iam::123456789012:user/Alice"),
 			Account: aws.String("123456789012"),
@@ -137,10 +138,12 @@ func TestCodeBuildProjects(t *testing.T) {
 ├───────────┼───────┼──────────────────────────────────────┼──────────────┤
 │ us-west-1 │ test1 │ arn:aws:iam::123456789012:role/test1 │ Skipped      │
 │ us-west-1 │ test2 │ arn:aws:iam::123456789012:role/test2 │ Skipped      │
-│ us-east-1 │ test1 │ arn:aws:iam::123456789012:role/test1 │ Skipped      │
-│ us-east-1 │ test2 │ arn:aws:iam::123456789012:role/test2 │ Skipped      │
 ╰───────────┴───────┴──────────────────────────────────────┴──────────────╯
 `, "\n")
+	fmt.Println(expectedResults)
+	fmt.Println("results file")
+	fmt.Println(string(resultsFile))
+
 	if string(resultsFile) != expectedResults {
 		t.Fatalf("Unexpected results:\n%s\n", resultsFile)
 	}

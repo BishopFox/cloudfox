@@ -30,7 +30,7 @@ func (ps *PolicyStatement) IsAllow() bool {
 
 func (ps *PolicyStatement) GetAllActionsAsString() string {
 	actions := ""
-	if len(ps.Action) < 2 {
+	if len(ps.Action) < 3 {
 		for _, action := range ps.Action {
 			if ps.Effect == "Allow" {
 				actions = fmt.Sprintf("%scan %s & ", actions, action)

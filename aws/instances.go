@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -23,21 +24,20 @@ import (
 
 type InstancesModule struct {
 	// General configuration data
-	EC2Client                        *ec2.Client
-	IAMSimulatePrincipalPolicyClient iam.SimulatePrincipalPolicyAPIClient
-	IAMListInstanceProfilesClient    iam.ListInstanceProfilesAPIClient
-	Caller                           sts.GetCallerIdentityOutput
-	AWSRegions                       []string
-	OutputFormat                     string
-	Goroutines                       int
-	UserDataAttributesOnly           bool
-	AWSProfile                       string
-	WrapTable                        bool
-	InstanceProfileToRolesMap        map[string][]iamTypes.Role
-	SkipAdminCheck                   bool
-	pmapperMod                       PmapperModule
-	pmapperError                     error
-	iamSimClient                     IamSimulatorModule
+	EC2Client                 *ec2.Client
+	IAMClient                 sdk.AWSIAMClientInterface
+	Caller                    sts.GetCallerIdentityOutput
+	AWSRegions                []string
+	OutputFormat              string
+	Goroutines                int
+	UserDataAttributesOnly    bool
+	AWSProfile                string
+	WrapTable                 bool
+	InstanceProfileToRolesMap map[string][]iamTypes.Role
+	SkipAdminCheck            bool
+	pmapperMod                PmapperModule
+	pmapperError              error
+	iamSimClient              IamSimulatorModule
 
 	// Module's Results
 	MappedInstances []MappedInstance
@@ -93,7 +93,7 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 	// Initialized the tools we'll need to check if any workload roles are admin or can privesc to admin
 	//fmt.Printf("[%s][%s] Attempting to build a PrivEsc graph in memory using local pmapper data if it exists on the filesystem.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	m.pmapperMod, m.pmapperError = initPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines)
-	m.iamSimClient = initIAMSimClient(m.IAMSimulatePrincipalPolicyClient, m.Caller, m.AWSProfile, m.Goroutines)
+	m.iamSimClient = initIAMSimClient(m.IAMClient, m.Caller, m.AWSProfile, m.Goroutines)
 
 	// if m.pmapperError != nil {
 	// 	fmt.Printf("[%s][%s] No pmapper data found for this account. Using cloudfox's iam-simulator for role analysis.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
@@ -149,7 +149,7 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 	if m.UserDataAttributesOnly {
 		m.printInstancesUserDataAttributesOnly(outputFormat, outputDirectory, dataReceiver)
 	} else {
-		m.printGeneralInstanceData(outputFormat, outputDirectory, dataReceiver)
+		m.printGeneralInstanceData(outputFormat, outputDirectory, dataReceiver, verbosity)
 	}
 
 }
@@ -217,7 +217,7 @@ func (m *InstancesModule) printInstancesUserDataAttributesOnly(outputFormat stri
 	}
 }
 
-func (m *InstancesModule) printGeneralInstanceData(outputFormat string, outputDirectory string, dataReceiver chan MappedInstance) {
+func (m *InstancesModule) printGeneralInstanceData(outputFormat string, outputDirectory string, dataReceiver chan MappedInstance, verbosity int) {
 	// Prepare Table headers
 	//m.output.Headers = table.Row{
 	if m.pmapperError == nil {
@@ -296,12 +296,28 @@ func (m *InstancesModule) printGeneralInstanceData(outputFormat string, outputDi
 	}
 
 	if len(m.output.Body) > 0 {
-		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
+		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
 		////m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+		//internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 
-		m.writeLoot(m.output.FilePath)
+		//m.writeLoot(m.output.FilePath)
+		o := internal.OutputClient{
+			Verbosity:     verbosity,
+			CallingModule: m.output.CallingModule,
+			Table: internal.TableClient{
+				Wrap: m.WrapTable,
+			},
+		}
+		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
+			Header: m.output.Headers,
+			Body:   m.output.Body,
+			Name:   m.output.CallingModule,
+		})
+		o.PrefixIdentifier = m.AWSProfile
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		o.WriteFullOutput(o.Table.TableFiles, nil)
+		m.writeLoot(o.Table.DirectoryName, verbosity)
 		fmt.Printf("[%s][%s] %s instances found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {
@@ -309,7 +325,7 @@ func (m *InstancesModule) printGeneralInstanceData(outputFormat string, outputDi
 	}
 }
 
-func (m *InstancesModule) writeLoot(outputDirectory string) {
+func (m *InstancesModule) writeLoot(outputDirectory string, verbosity int) {
 	path := filepath.Join(outputDirectory, "loot")
 	err := os.MkdirAll(path, os.ModePerm)
 	if err != nil {
@@ -387,6 +403,20 @@ func (m *InstancesModule) writeLoot(outputDirectory string) {
 	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), publicIPsFilename)
 	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), ssmCommandsFilename)
 	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), ec2InstanceConnectCommandsFilename)
+
+	if verbosity > 2 {
+		fmt.Println()
+		fmt.Printf("[%s][%s] %s \n\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("Loot file for instance command:"))
+		fmt.Printf("Private IPs:\n\n")
+		fmt.Print(privateIPs)
+		fmt.Printf("Public IPs:\n\n")
+		fmt.Print(publicIPs)
+		fmt.Printf("SSM Commands:\n\n")
+		fmt.Print(ssmCommands)
+		fmt.Printf("EC2 Instance Connect Commands:\n\n")
+		fmt.Print(ec2InstanceConnectCommands)
+		fmt.Printf("[%s][%s] %s \n\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("End of loot file."))
+	}
 
 }
 
@@ -522,6 +552,7 @@ func (m *InstancesModule) loadInstanceData(instance types.Instance, region strin
 	dataReceiver <- MappedInstance{
 		ID:               aws.ToString(instance.InstanceId),
 		Name:             aws.ToString(&name),
+		Arn:              fmt.Sprintf("arn:aws:ec2:%s:%s:instance/%s", region, aws.ToString(accountId), aws.ToString(instance.InstanceId)),
 		AvailabilityZone: aws.ToString(instance.Placement.AvailabilityZone),
 		State:            string(instance.State.Name),
 		ExternalIP:       externalIP,
@@ -543,7 +574,7 @@ func (m *InstancesModule) getRolesFromInstanceProfiles() {
 	m.InstanceProfileToRolesMap = map[string][]iamTypes.Role{}
 
 	for PaginationControl {
-		ListInstanceProfiles, err := m.IAMListInstanceProfilesClient.ListInstanceProfiles(
+		ListInstanceProfiles, err := m.IAMClient.ListInstanceProfiles(
 			context.TODO(),
 			&(iam.ListInstanceProfilesInput{
 				Marker: PaginationMarker,

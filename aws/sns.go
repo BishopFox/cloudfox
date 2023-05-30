@@ -24,7 +24,10 @@ import (
 
 type SNSModule struct {
 	// General configuration data
-	SNSClient     CloudFoxSNSClient
+	SNSClient     SNSClientInterface
+	AWSRegions    []string
+	AWSProfile    string
+	Caller        sts.GetCallerIdentityOutput
 	StorePolicies bool
 	OutputFormat  string
 	Goroutines    int
@@ -41,13 +44,6 @@ type SNSModule struct {
 type SNSClientInterface interface {
 	ListTopics(ctx context.Context, params *sns.ListTopicsInput, optFns ...func(*sns.Options)) (*sns.ListTopicsOutput, error)
 	GetTopicAttributes(ctx context.Context, params *sns.GetTopicAttributesInput, optFns ...func(*sns.Options)) (*sns.GetTopicAttributesOutput, error)
-}
-
-type CloudFoxSNSClient struct {
-	SNSClient  SNSClientInterface
-	AWSRegions []string
-	AWSProfile string
-	Caller     sts.GetCallerIdentityOutput
 }
 
 type SNSTopic struct {
@@ -73,12 +69,12 @@ func (m *SNSModule) PrintSNS(outputFormat string, outputDirectory string, verbos
 	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
-	if m.SNSClient.AWSProfile == "" {
-		m.SNSClient.AWSProfile = internal.BuildAWSPath(m.SNSClient.Caller)
+	if m.AWSProfile == "" {
+		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
-	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.SNSClient.AWSProfile)
+	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
 
-	fmt.Printf("[%s][%s] Enumerating SNS topics for account %s.\n", cyan(m.output.CallingModule), cyan(m.SNSClient.AWSProfile), aws.ToString(m.SNSClient.Caller.Account))
+	fmt.Printf("[%s][%s] Enumerating SNS topics for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 
 	wg := new(sync.WaitGroup)
 	semaphore := make(chan struct{}, m.Goroutines)
@@ -95,7 +91,7 @@ func (m *SNSModule) PrintSNS(outputFormat string, outputDirectory string, verbos
 	receiverDone := make(chan bool)
 	go m.Receiver(dataReceiver, receiverDone)
 
-	for _, region := range m.SNSClient.AWSRegions {
+	for _, region := range m.AWSRegions {
 		wg.Add(1)
 		m.CommandCounter.Pending++
 		go m.executeChecks(region, wg, semaphore, dataReceiver)
@@ -136,14 +132,30 @@ func (m *SNSModule) PrintSNS(outputFormat string, outputDirectory string, verbos
 	}
 	if len(m.output.Body) > 0 {
 		//m.output.OutputSelector(outputFormat)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.SNSClient.AWSProfile)
-		m.writeLoot(m.output.FilePath, verbosity, m.SNSClient.AWSProfile)
-		fmt.Printf("[%s][%s] %s topics found.\n", cyan(m.output.CallingModule), cyan(m.SNSClient.AWSProfile), strconv.Itoa(len(m.output.Body)))
-		fmt.Printf("[%s][%s] Access policies stored to: %s\n", cyan(m.output.CallingModule), cyan(m.SNSClient.AWSProfile), m.getLootDir())
+		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+		//m.writeLoot(m.output.FilePath, verbosity, m.AWSProfile)
+		o := internal.OutputClient{
+			Verbosity:     verbosity,
+			CallingModule: m.output.CallingModule,
+			Table: internal.TableClient{
+				Wrap: m.WrapTable,
+			},
+		}
+		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
+			Header: m.output.Headers,
+			Body:   m.output.Body,
+			Name:   m.output.CallingModule,
+		})
+		o.PrefixIdentifier = m.AWSProfile
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		o.WriteFullOutput(o.Table.TableFiles, nil)
+		m.writeLoot(o.Table.DirectoryName, verbosity, m.AWSProfile)
+		fmt.Printf("[%s][%s] %s topics found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
+		fmt.Printf("[%s][%s] Access policies stored to: %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.getLootDir())
 	} else {
-		fmt.Printf("[%s][%s] No topics found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.SNSClient.AWSProfile))
+		fmt.Printf("[%s][%s] No topics found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
-	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.SNSClient.AWSProfile), m.output.CallingModule)
+	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 
 }
 
@@ -214,7 +226,7 @@ func (m *SNSModule) writeLoot(outputDirectory string, verbosity int, profile str
 		out = out + fmt.Sprintln("# WARNING: messages are consumed, you should leave fuzzing to non-production environments.")
 		out = out + fmt.Sprintf("aws --profile $profile --region %s sns publish --topic-arn %s --message \"[INSERT MESSAGE BODY]\"\n\n", topic.Region, topic.ARN)
 		out = out + fmt.Sprintln("")
-		out = out + fmt.Sprintln("# Send message to the queue with attributes file (You'll have to create and populate the file)")
+		out = out + fmt.Sprintln("# Send message to the topic with attributes file (You'll have to create and populate the file)")
 		out = out + fmt.Sprintln("")
 		out = out + fmt.Sprintln("# WARNING: The following command can cause adverse effects in the environment. Like fuzzing a web application, if you inject")
 		out = out + fmt.Sprintln("# WARNING: malicious data you might find a vulnerability, but you also might break something. Unless you really know how the")
@@ -230,12 +242,12 @@ func (m *SNSModule) writeLoot(outputDirectory string, verbosity int, profile str
 
 	if verbosity > 2 {
 		fmt.Println()
-		fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.SNSClient.AWSProfile), green("Use the commands below to send/receive sqs messages if you have right permissions."))
+		fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("Use the commands below to send/receive sqs messages if you have right permissions."))
 		fmt.Print(out)
-		fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.SNSClient.AWSProfile), green("End of loot file."))
+		fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("End of loot file."))
 	}
 
-	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.SNSClient.AWSProfile), lootCommandsFile)
+	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), lootCommandsFile)
 
 }
 
@@ -251,14 +263,14 @@ func (m *SNSModule) getSNSTopicsPerRegion(r string, wg *sync.WaitGroup, semaphor
 		<-semaphore
 	}()
 
-	ListTopics, err := m.SNSClient.listTopics(r)
+	ListTopics, err := m.listTopics(r)
 	if err != nil {
 		m.modLog.Error(err.Error())
 		return
 	}
 
 	for _, t := range ListTopics {
-		topic, err := m.SNSClient.getTopicWithAttributes(aws.ToString(t.TopicArn), r)
+		topic, err := m.getTopicWithAttributes(aws.ToString(t.TopicArn), r)
 		if err != nil {
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
@@ -288,7 +300,7 @@ func (m *SNSModule) getSNSTopicsPerRegion(r string, wg *sync.WaitGroup, semaphor
 
 }
 
-func (m *CloudFoxSNSClient) listTopics(region string) ([]types.Topic, error) {
+func (m *SNSModule) listTopics(region string) ([]types.Topic, error) {
 	var PaginationControl *string
 	var topics []types.Topic
 
@@ -322,7 +334,7 @@ func (m *CloudFoxSNSClient) listTopics(region string) ([]types.Topic, error) {
 	return topics, nil
 }
 
-func (m *CloudFoxSNSClient) getTopicWithAttributes(topicARN string, region string) (*SNSTopic, error) {
+func (m *SNSModule) getTopicWithAttributes(topicARN string, region string) (*SNSTopic, error) {
 	topic := &SNSTopic{
 		ARN: topicARN,
 	}
@@ -364,9 +376,9 @@ func (m *SNSModule) analyseTopicPolicy(topic *SNSTopic, dataReceiver chan SNSTop
 		var prefix string = ""
 		if len(topic.Policy.Statement) > 1 {
 			prefix = fmt.Sprintf("Statement %d says: ", i)
-			topic.ResourcePolicySummary = topic.ResourcePolicySummary + prefix + statement.GetStatementSummaryInEnglish(*m.SNSClient.Caller.Account)
+			topic.ResourcePolicySummary = topic.ResourcePolicySummary + prefix + statement.GetStatementSummaryInEnglish(*m.Caller.Account)
 		} else {
-			topic.ResourcePolicySummary = statement.GetStatementSummaryInEnglish(*m.SNSClient.Caller.Account)
+			topic.ResourcePolicySummary = statement.GetStatementSummaryInEnglish(*m.Caller.Account)
 		}
 		topic.ResourcePolicySummary = strings.TrimSuffix(topic.ResourcePolicySummary, "\n")
 
