@@ -3,6 +3,7 @@ package internal
 import (
 	"encoding/gob"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -13,7 +14,8 @@ import (
 	"github.com/patrickmn/go-cache"
 )
 
-var Cache = cache.New(30*time.Minute, 0)
+var Cache = cache.New(120*time.Minute, 0)
+var sharedLogger = TxtLogger()
 
 func SaveCacheToFiles(directory string, accountID string) error {
 	err := os.MkdirAll(directory, 0755)
@@ -112,6 +114,7 @@ func SaveCacheToGobFiles(directory string, accountID string) error {
 			encoder := gob.NewEncoder(file)
 			err = encoder.Encode(entry)
 			if err != nil {
+				sharedLogger.Errorf("Could not encode the following key: %s", key)
 				return err
 			}
 		}
@@ -119,11 +122,13 @@ func SaveCacheToGobFiles(directory string, accountID string) error {
 	return nil
 }
 
+var ErrDirectoryDoesNotExist = errors.New("directory does not exist")
+
 func LoadCacheFromGobFiles(directory string) error {
 	_, err := os.Stat(directory)
 	if os.IsNotExist(err) {
 		// Directory doesn't exist, skip loading cache
-		return nil
+		return ErrDirectoryDoesNotExist
 	} else if err != nil {
 		return err
 	}
@@ -149,10 +154,10 @@ func LoadCacheFromGobFiles(directory string) error {
 		decoder := gob.NewDecoder(file)
 		err = decoder.Decode(&entry)
 		if err != nil {
+			sharedLogger.Errorf("Could not decode the following file: %s", filename)
 			return err
 		}
 
-		//key := strings.TrimSuffix(file.Name(), ".gob")
 		// the key should remove the directory and the .json suffix from the filename and also trim the first slash
 		key := strings.TrimSuffix(strings.TrimPrefix(filename, directory), ".gob")[1:]
 

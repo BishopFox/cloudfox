@@ -229,7 +229,7 @@ func (m *ResourceTrustsModule) getSNSTopicsPerRegion(r string, wg *sync.WaitGrou
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	cloudFoxSNSClient := InitCloudFoxSNSClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines)
+	cloudFoxSNSClient := InitCloudFoxSNSClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines, m.WrapTable)
 
 	ListTopics, err := cloudFoxSNSClient.listTopics(r)
 	if err != nil {

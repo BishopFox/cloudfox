@@ -1,7 +1,6 @@
 package aws
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -9,7 +8,6 @@ import (
 	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
@@ -37,12 +35,6 @@ type CodeBuildModule struct {
 	// Used to store output data for pretty printing
 	output internal.OutputData2
 	modLog *logrus.Entry
-}
-
-type CodeBuildClientInterface interface {
-	ListProjects(ctx context.Context, params *codebuild.ListProjectsInput, optFns ...func(*codebuild.Options)) (*codebuild.ListProjectsOutput, error)
-	BatchGetProjects(ctx context.Context, params *codebuild.BatchGetProjectsInput, optFns ...func(*codebuild.Options)) (*codebuild.BatchGetProjectsOutput, error)
-	GetResourcePolicy(ctx context.Context, params *codebuild.GetResourcePolicyInput, optFns ...func(*codebuild.Options)) (*codebuild.GetResourcePolicyOutput, error)
 }
 
 type Project struct {
@@ -258,29 +250,3 @@ func (m *CodeBuildModule) getcodeBuildProjectsPerRegion(r string, wg *sync.WaitG
 	}
 
 }
-
-// func (m *CodeBuildModule) getResourcePolicy(r string, project string) (policy.Policy, error) {
-// 	var projectPolicy policy.Policy
-// 	var policyJSON string
-// 	Policy, err := m.CodeBuildClient.GetResourcePolicy(
-// 		context.TODO(),
-// 		&codebuild.GetResourcePolicyInput{
-// 			ResourceArn: aws.String("arn:aws:codebuild:" + r + ":" + *m.Caller.Account + ":project/" + project),
-// 		},
-// 		func(options *codebuild.Options) {
-// 			options.Region = r
-// 		},
-// 	)
-// 	if err != nil {
-// 		sharedLogger.Error(err.Error())
-// 		m.CommandCounter.Error++
-// 		return projectPolicy, err
-// 	}
-
-// 	policyJSON = aws.ToString(Policy.Policy)
-// 	projectPolicy, err = policy.ParseJSONPolicy([]byte(policyJSON))
-// 	if err != nil {
-// 		return projectPolicy, fmt.Errorf("parsing policy (%s) as JSON: %s", project, err)
-// 	}
-// 	return projectPolicy, nil
-// }

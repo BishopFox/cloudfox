@@ -477,12 +477,18 @@ func awsPreRun(cmd *cobra.Command, args []string) {
 				continue
 			}
 			fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
-			cacheDirectory := filepath.Join(AWSOutputDirectory, "cloudfox-output", "aws", "cached-data", ptr.ToString(caller.Account))
-			err = internal.LoadCacheFromGobFiles(cacheDirectory)
-			if err != nil {
-				log.Fatalf("[%s] No cache data for %s. Error: %v", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), ptr.ToString(caller.Account), err)
-			}
-			fmt.Printf("[%s] Loaded cached AWS data for to %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), ptr.ToString(caller.Account))
+			// cacheDirectory := filepath.Join(AWSOutputDirectory, "cached-data", "aws", ptr.ToString(caller.Account))
+			// err = internal.LoadCacheFromGobFiles(cacheDirectory)
+			// if err != nil {
+			// 	if err == internal.ErrDirectoryDoesNotExist {
+			// 		fmt.Printf("[%s] No cache directory for %s. Skipping loading cached data.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), ptr.ToString(caller.Account))
+			// 	} else {
+			// 		fmt.Printf("[%s] No cache data for %s. Error: %v\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), ptr.ToString(caller.Account), err)
+			// 		// Possibly return/exit here, depending on your requirements.
+			// 	}
+			// } else {
+			// 	fmt.Printf("[%s] Loaded cached AWS data for to %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), ptr.ToString(caller.Account))
+			// }
 
 			orgModuleClient := aws.InitOrgClient(*caller, profile, cmd.Root().Version, Goroutines)
 			isPartOfOrg := orgModuleClient.IsCallerAccountPartOfAnOrg()
@@ -506,7 +512,7 @@ func awsPostRun(cmd *cobra.Command, args []string) {
 		if err != nil {
 			continue
 		}
-		outputDirectory := filepath.Join(AWSOutputDirectory, "cloudfox-output", "aws", "cached-data", ptr.ToString(caller.Account))
+		outputDirectory := filepath.Join(AWSOutputDirectory, "cached-data", "aws", ptr.ToString(caller.Account))
 		err = internal.SaveCacheToGobFiles(outputDirectory, *caller.Account)
 		if err != nil {
 			log.Fatalf("failed to save cache: %v", err)
@@ -525,7 +531,18 @@ func FindOrgMgmtAccountAndReorderAccounts(AWSProfiles []string, version string) 
 			continue
 		}
 		fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), *caller.Arn)
-
+		cacheDirectory := filepath.Join(AWSOutputDirectory, "cached-data", "aws", ptr.ToString(caller.Account))
+		err = internal.LoadCacheFromGobFiles(cacheDirectory)
+		if err != nil {
+			if err == internal.ErrDirectoryDoesNotExist {
+				fmt.Printf("[%s] No cache directory for %s. Skipping loading cached data.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), ptr.ToString(caller.Account))
+			} else {
+				fmt.Printf("[%s] No cache data for %s. Error: %v\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), ptr.ToString(caller.Account), err)
+				// Possibly return/exit here, depending on your requirements.
+			}
+		} else {
+			fmt.Printf("[%s] Loaded cached AWS data for to %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), ptr.ToString(caller.Account))
+		}
 		orgModuleClient := aws.InitOrgClient(*caller, profile, version, Goroutines)
 		orgModuleClient.DescribeOrgOutput, err = sdk.CachedOrganizationsDescribeOrganization(orgModuleClient.OrganizationsClient, ptr.ToString(caller.Account))
 		if err != nil {
@@ -699,7 +716,7 @@ func runSNSCommand(cmd *cobra.Command, args []string) {
 		if err != nil {
 			continue
 		}
-		cloudFoxSNSClient := aws.InitCloudFoxSNSClient(*caller, profile, cmd.Root().Version, Goroutines)
+		cloudFoxSNSClient := aws.InitCloudFoxSNSClient(*caller, profile, cmd.Root().Version, Goroutines, AWSWrapTable)
 		cloudFoxSNSClient.PrintSNS(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 	}
 }
@@ -1537,7 +1554,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		}
 		sqsMod.PrintSQS(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
-		cloudFoxSNSClient := aws.InitCloudFoxSNSClient(*caller, profile, cmd.Root().Version, Goroutines)
+		cloudFoxSNSClient := aws.InitCloudFoxSNSClient(*caller, profile, cmd.Root().Version, Goroutines, AWSWrapTable)
 		cloudFoxSNSClient.PrintSNS(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
 		resourceTrustsCommand := aws.ResourceTrustsModule{
@@ -1618,6 +1635,7 @@ func init() {
 	sdk.RegisterDocDBTypes()
 	sdk.RegisterDynamoDBTypes()
 	sdk.RegisterEC2Types()
+	sdk.RegisterECRTypes()
 	sdk.RegisterEFSTypes()
 	sdk.RegisterEKSTypes()
 	sdk.RegisterELBTypes()

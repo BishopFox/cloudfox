@@ -28,7 +28,7 @@ func initIAMSimClient(iamSimPPClient sdk.AWSIAMClientInterface, caller sts.GetCa
 
 }
 
-func InitCloudFoxSNSClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int) SNSModule {
+func InitCloudFoxSNSClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int, AWSWrapTable bool) SNSModule {
 	var AWSConfig = internal.AWSConfigFileLoader(AWSProfile, cfVersion)
 	cloudFoxSNSClient := SNSModule{
 		SNSClient:  sns.NewFromConfig(AWSConfig),
@@ -36,6 +36,7 @@ func InitCloudFoxSNSClient(caller sts.GetCallerIdentityOutput, AWSProfile string
 		AWSProfile: AWSProfile,
 		AWSRegions: internal.GetEnabledRegions(AWSProfile, cfVersion),
 		Goroutines: Goroutines,
+		WrapTable:  AWSWrapTable,
 	}
 	return cloudFoxSNSClient
 

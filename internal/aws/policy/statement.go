@@ -81,7 +81,7 @@ func (ps *PolicyStatement) GetConditionsInEnglish(caller string) string {
 					conditionText = fmt.Sprintf("->   Only when %s %s %s", k, condition, arn)
 				}
 
-				conditionTextAll = fmt.Sprintf("%s%s\n", conditionTextAll, conditionText)
+				conditionTextAll = fmt.Sprintf("%s%s", conditionTextAll, conditionText)
 
 			}
 		}
@@ -100,7 +100,7 @@ func (ps *PolicyStatement) GetStatementSummaryInEnglish(caller string) string {
 	if conditions == "Default resource policy: Not exploitable\n" {
 		statementSummary = "Default resource policy: Not exploitable\n" + "\n"
 	} else if conditions != "\n" && conditions != "" {
-		statementSummary = fmt.Sprintf("%s %s %s", strings.TrimSuffix(principals, "\n"), actions, conditions) + "\n"
+		statementSummary = fmt.Sprintf("%s %s %s", strings.TrimSuffix(principals, "\n"), actions, conditions)
 
 	} else {
 		statementSummary = fmt.Sprintf("%s %s\n", strings.TrimSuffix(principals, "\n"), actions)

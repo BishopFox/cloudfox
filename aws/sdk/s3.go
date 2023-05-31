@@ -22,7 +22,7 @@ type AWSS3ClientInterface interface {
 func RegisterS3Types() {
 	gob.Register([]s3Types.Bucket{})
 	gob.Register(s3Types.Bucket{})
-	gob.Register(s3Types.PublicAccessBlockConfiguration{})
+	gob.Register(&s3Types.PublicAccessBlockConfiguration{})
 }
 
 func CachedListBuckets(S3Client AWSS3ClientInterface, accountID string) ([]s3Types.Bucket, error) {

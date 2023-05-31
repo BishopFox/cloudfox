@@ -70,7 +70,7 @@ type Inventory2Module struct {
 	SNSClient            *sns.Client
 	SQSClient            *sqs.Client
 	DynamoDBClient       *dynamodb.Client
-	CodeBuildClient      CodeBuildClientInterface
+	CodeBuildClient      sdk.CodeBuildClientInterface
 	StepFunctionClient   sdk.StepFunctionsClientInterface
 
 	Caller       sts.GetCallerIdentityOutput

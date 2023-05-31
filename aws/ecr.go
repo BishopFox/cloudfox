@@ -1,7 +1,6 @@
 package aws
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,10 +9,10 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/BishopFox/cloudfox/internal/aws/policy"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/aws/aws-sdk-go-v2/service/ecr/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/bishopfox/awsservicemap"
@@ -22,7 +21,7 @@ import (
 
 type ECRModule struct {
 	// General configuration data
-	ECRClient    AWSECRClientInterface
+	ECRClient    sdk.AWSECRClientInterface
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
 	OutputFormat string
@@ -36,12 +35,6 @@ type ECRModule struct {
 	// Used to store output data for pretty printing
 	output internal.OutputData2
 	modLog *logrus.Entry
-}
-
-type AWSECRClientInterface interface {
-	DescribeRepositories(ctx context.Context, params *ecr.DescribeRepositoriesInput, optFns ...func(*ecr.Options)) (*ecr.DescribeRepositoriesOutput, error)
-	DescribeImages(ctx context.Context, params *ecr.DescribeImagesInput, optFns ...func(*ecr.Options)) (*ecr.DescribeImagesOutput, error)
-	GetRepositoryPolicy(ctx context.Context, params *ecr.GetRepositoryPolicyInput, optFns ...func(*ecr.Options)) (*ecr.GetRepositoryPolicyOutput, error)
 }
 
 type Repository struct {
@@ -308,86 +301,39 @@ func (m *ECRModule) getECRRecordsPerRegion(r string, wg *sync.WaitGroup, semapho
 }
 
 func (m *ECRModule) describeRepositories(r string) ([]types.Repository, error) {
-	var PaginationControl *string
+
 	var repositories []types.Repository
-	for {
-		DescribeRepositories, err := m.ECRClient.DescribeRepositories(
-			context.TODO(),
-			&ecr.DescribeRepositoriesInput{
-				NextToken: PaginationControl,
-			},
-			func(o *ecr.Options) {
-				o.Region = r
-			},
-		)
-		if err != nil {
-			m.CommandCounter.Error++
-			break
-		}
-
-		repositories = append(repositories, DescribeRepositories.Repositories...)
-
-		// The "NextToken" value is nil when there's no more data to return.
-		if DescribeRepositories.NextToken != nil {
-			PaginationControl = DescribeRepositories.NextToken
-		} else {
-			PaginationControl = nil
-			break
-		}
+	Repositories, err := sdk.CachedECRDescribeRepositories(m.ECRClient, aws.ToString(m.Caller.Account), r)
+	if err != nil {
+		m.CommandCounter.Error++
+		return nil, err
 	}
+
+	repositories = append(repositories, Repositories...)
+
 	return repositories, nil
 }
 
 func (m *ECRModule) describeImages(r string, repoName string) ([]types.ImageDetail, error) {
-	var PaginationControl *string
 	var images []types.ImageDetail
-	for {
-		DescribeImages, err := m.ECRClient.DescribeImages(
-			context.TODO(),
-			&ecr.DescribeImagesInput{
-				RepositoryName: &repoName,
-				NextToken:      PaginationControl,
-			},
-			func(o *ecr.Options) {
-				o.Region = r
-			},
-		)
-		if err != nil {
-			m.CommandCounter.Error++
-			return nil, err
-		}
 
-		images = append(images, DescribeImages.ImageDetails...)
-
-		// The "NextToken" value is nil when there's no more data to return.
-		if DescribeImages.NextToken != nil {
-			PaginationControl = DescribeImages.NextToken
-		} else {
-			PaginationControl = nil
-			break
-		}
+	ImageDetails, err := sdk.CachedECRDescribeImages(m.ECRClient, aws.ToString(m.Caller.Account), r, repoName)
+	if err != nil {
+		m.CommandCounter.Error++
+		return nil, err
 	}
+	images = append(images, ImageDetails...)
 	return images, nil
 }
 
 func (m *ECRModule) getECRRepositoryPolicy(r string, repository string) (policy.Policy, error) {
 	var repoPolicy policy.Policy
-	var policyJSON string
-	Policy, err := m.ECRClient.GetRepositoryPolicy(
-		context.TODO(),
-		&ecr.GetRepositoryPolicyInput{
-			RepositoryName: &repository,
-		},
-		func(o *ecr.Options) {
-			o.Region = r
-		},
-	)
+	Policy, err := sdk.CachedECRGetRepositoryPolicy(m.ECRClient, aws.ToString(m.Caller.Account), r, repository)
 	if err != nil {
 		m.CommandCounter.Error++
 		return repoPolicy, err
 	}
-	policyJSON = aws.ToString(Policy.PolicyText)
-	repoPolicy, err = policy.ParseJSONPolicy([]byte(policyJSON))
+	repoPolicy, err = policy.ParseJSONPolicy([]byte(aws.ToString(Policy)))
 	if err != nil {
 		return repoPolicy, fmt.Errorf("parsing policy (%s) as JSON: %s", repository, err)
 	}

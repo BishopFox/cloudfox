@@ -390,6 +390,7 @@ func (m *SQSModule) analyseQueuePolicy(queue *Queue, dataReceiver chan Queue) {
 		} else {
 			queue.ResourcePolicySummary = statement.GetStatementSummaryInEnglish(*m.Caller.Account)
 		}
+		queue.ResourcePolicySummary = strings.TrimSuffix(queue.ResourcePolicySummary, "\n")
 
 	}
 	dataReceiver <- *queue
