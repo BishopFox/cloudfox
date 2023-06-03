@@ -21,7 +21,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
-	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancing"
 	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	"github.com/aws/aws-sdk-go-v2/service/glue"
@@ -48,7 +47,7 @@ type Inventory2Module struct {
 	LambdaClient         *lambda.Client
 	EC2Client            *ec2.Client
 	ECSClient            *ecs.Client
-	EKSClient            *eks.Client
+	EKSClient            sdk.EKSClientInterface
 	S3Client             *s3.Client
 	CloudFormationClient *cloudformation.Client
 	SecretsManagerClient *secretsmanager.Client
@@ -1179,53 +1178,34 @@ func (m *Inventory2Module) getAppRunnerServicesPerRegion(r string, wg *sync.Wait
 	// m.CommandCounter.Total++
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
-	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
+
 	var totalCountThisServiceThisRegion = 0
 	var service = "AppRunner Services"
 	var resourceNames []string
 
-	// This for loop exits at the end depending on whether the output hits its last page (see pagination control block at the end of the loop).
-	for {
-		ListServices, err := m.AppRunnerClient.ListServices(
-			context.TODO(),
-			&(apprunner.ListServicesInput{
-				NextToken: PaginationControl,
-			}),
-			func(o *apprunner.Options) {
-				o.Region = r
-			},
-		)
-		if err != nil {
-			//modLog.Error(err.Error())
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
+	ServiceSummaryList, err := sdk.CachedAppRunnerListServices(m.AppRunnerClient, aws.ToString(m.Caller.Account), r)
 
-		// Add this page of resources to the total count
-		totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListServices.ServiceSummaryList)
-
-		// Add this page of resources to the module's resource list
-		for _, service := range ListServices.ServiceSummaryList {
-			resourceNames = append(resourceNames, aws.ToString(service.ServiceArn))
-		}
-
-		// Pagination control. After the last page of output, the for loop exits.
-		if ListServices.NextToken != nil {
-			PaginationControl = ListServices.NextToken
-		} else {
-			PaginationControl = nil
-			m.mu.Lock()
-			m.resources = append(m.resources, resourceNames...)
-			m.serviceMap[service][r] = totalCountThisServiceThisRegion
-			m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
-			m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
-			m.mu.Unlock()
-			break
-		}
-
+	if err != nil {
+		//modLog.Error(err.Error())
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
 	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ServiceSummaryList)
+
+	// Add this page of resources to the module's resource list
+	for _, service := range ServiceSummaryList {
+		resourceNames = append(resourceNames, aws.ToString(service.ServiceArn))
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
 }
 
 func (m *Inventory2Module) getLightsailInstancesAndContainersPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
@@ -1246,35 +1226,23 @@ func (m *Inventory2Module) getLightsailInstancesAndContainersPerRegion(r string,
 	var service = "Lightsail Instances/Containers"
 	var resourceNames []string
 
-	// This for loop exits at the end depending on whether the output hits its last page (see pagination control block at the end of the loop).
-	GetContainerServices, err := m.LightsailClient.GetContainerServices(
-		context.TODO(),
-		&(lightsail.GetContainerServicesInput{}),
-		func(o *lightsail.Options) {
-			o.Region = r
-		},
-	)
+	ContainerServices, err := sdk.CachedLightsailGetContainerServices(m.LightsailClient, aws.ToString(m.Caller.Account), r)
+
 	if err != nil {
 		m.modLog.Error(err.Error())
 		m.CommandCounter.Error++
 		return
+	} else {
+		// Add this page of resources to the total count
+		totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ContainerServices)
+
+		// Add this page of resources to the module's resource list
+		for _, containerService := range ContainerServices {
+			resourceNames = append(resourceNames, aws.ToString(containerService.Arn))
+		}
 	}
 
-	// Add this page of resources to the total count
-	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(GetContainerServices.ContainerServices)
-
-	// Add this page of resources to the module's resource list
-	for _, containerService := range GetContainerServices.ContainerServices {
-		resourceNames = append(resourceNames, aws.ToString(containerService.Arn))
-	}
-
-	GetInstances, err := m.LightsailClient.GetInstances(
-		context.TODO(),
-		&(lightsail.GetInstancesInput{}),
-		func(o *lightsail.Options) {
-			o.Region = r
-		},
-	)
+	Instances, err := sdk.CachedLightsailGetInstances(m.LightsailClient, aws.ToString(m.Caller.Account), r)
 
 	if err != nil {
 		m.modLog.Error(err.Error())
@@ -1283,10 +1251,10 @@ func (m *Inventory2Module) getLightsailInstancesAndContainersPerRegion(r string,
 	}
 
 	// Add this page of resources to the total count
-	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(GetInstances.Instances)
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(Instances)
 
 	// Add this page of resources to the module's resource list
-	for _, instance := range GetInstances.Instances {
+	for _, instance := range Instances {
 		resourceNames = append(resourceNames, aws.ToString(instance.Arn))
 	}
 

@@ -19,12 +19,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/apprunner"
 	apprunnerTypes "github.com/aws/aws-sdk-go-v2/service/apprunner/types"
 	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
-	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancing"
 	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	"github.com/aws/aws-sdk-go-v2/service/grafana"
 	"github.com/aws/aws-sdk-go-v2/service/lightsail"
-	"github.com/aws/aws-sdk-go-v2/service/lightsail/types"
 	"github.com/aws/aws-sdk-go-v2/service/mq"
 	"github.com/aws/aws-sdk-go-v2/service/opensearch"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
@@ -39,7 +37,7 @@ import (
 type EndpointsModule struct {
 	// General configuration data
 	LambdaClient       sdk.LambdaClientInterface
-	EKSClient          *eks.Client
+	EKSClient          sdk.EKSClientInterface
 	MQClient           *mq.Client
 	OpenSearchClient   *opensearch.Client
 	GrafanaClient      *grafana.Client
@@ -444,80 +442,52 @@ func (m *EndpointsModule) getEksClustersPerRegion(r string, wg *sync.WaitGroup, 
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
 
-	for {
-		ListClusters, err := m.EKSClient.ListClusters(
-			context.TODO(),
-			&(eks.ListClustersInput{
-				NextToken: PaginationControl,
-			}),
-			func(o *eks.Options) {
-				o.Region = r
-			},
-		)
+	Clusters, err := sdk.CachedEKSListClusters(m.EKSClient, aws.ToString(m.Caller.Account), r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	for _, cluster := range Clusters {
+		ClusterDetails, err := sdk.CachedEKSDescribeCluster(m.EKSClient, aws.ToString(m.Caller.Account), r, cluster)
+
 		if err != nil {
 			if errors.As(err, &oe) {
 				m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
 			}
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
-			break
+			continue
+		}
+		var endpoint string
+		var name string
+		var public string
+		vpcConfig := ClusterDetails.ResourcesVpcConfig.EndpointPublicAccess
+		if vpcConfig {
+			//
+			if ClusterDetails.ResourcesVpcConfig.PublicAccessCidrs[0] == "0.0.0.0/0" {
+				public = "True"
+			} else {
+				public = "False"
+			}
 		}
 
-		for _, cluster := range ListClusters.Clusters {
-			ClusterDetails, err := m.EKSClient.DescribeCluster(
-				context.TODO(),
-				&(eks.DescribeClusterInput{
-					Name: &cluster,
-				}),
-				func(o *eks.Options) {
-					o.Region = r
-				},
-			)
-			if err != nil {
-				if errors.As(err, &oe) {
-					m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
-				}
-				m.modLog.Error(err.Error())
-				m.CommandCounter.Error++
-				continue
-			}
-			var endpoint string
-			var name string
-			var public string
-			vpcConfig := ClusterDetails.Cluster.ResourcesVpcConfig.EndpointPublicAccess
-			if vpcConfig {
-				//
-				if ClusterDetails.Cluster.ResourcesVpcConfig.PublicAccessCidrs[0] == "0.0.0.0/0" {
-					public = "True"
-				} else {
-					public = "False"
-				}
-			}
-
-			endpoint = aws.ToString(ClusterDetails.Cluster.Endpoint)
-			name = aws.ToString(ClusterDetails.Cluster.Name)
-			dataReceiver <- Endpoint{
-				AWSService: "Eks",
-				Region:     r,
-				Name:       name,
-				Endpoint:   endpoint,
-				Port:       443,
-				Protocol:   "https",
-				Public:     public,
-			}
-
+		endpoint = aws.ToString(ClusterDetails.Endpoint)
+		name = aws.ToString(ClusterDetails.Name)
+		dataReceiver <- Endpoint{
+			AWSService: "Eks",
+			Region:     r,
+			Name:       name,
+			Endpoint:   endpoint,
+			Port:       443,
+			Protocol:   "https",
+			Public:     public,
 		}
 
-		// The "NextToken" value is nil when there's no more data to return.
-		if ListClusters.NextToken != nil {
-			PaginationControl = ListClusters.NextToken
-		} else {
-			PaginationControl = nil
-			break
-		}
 	}
+
 }
 
 func (m *EndpointsModule) getMqBrokersPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Endpoint) {
@@ -534,16 +504,24 @@ func (m *EndpointsModule) getMqBrokersPerRegion(r string, wg *sync.WaitGroup, se
 	// m.CommandCounter.Total++
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
-	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
 
-	// This for loop exits at the end depending on whether the output hits its last page (see pagination control block at the end of the loop).
-	for {
-		ListBrokers, err := m.MQClient.ListBrokers(
+	BrokerSummaries, err := sdk.CachedMQListBrokers(m.MQClient, aws.ToString(m.Caller.Account), r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	var public string
+	for _, broker := range BrokerSummaries {
+		name := aws.ToString(broker.BrokerName)
+		id := broker.BrokerId
+
+		BrokerDetails, err := m.MQClient.DescribeBroker(
 			context.TODO(),
-			&mq.ListBrokersInput{
-				NextToken: PaginationControl,
-			},
+			&(mq.DescribeBrokerInput{
+				BrokerId: id,
+			}),
 			func(o *mq.Options) {
 				o.Region = r
 			},
@@ -554,58 +532,26 @@ func (m *EndpointsModule) getMqBrokersPerRegion(r string, wg *sync.WaitGroup, se
 			}
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
-			break
+			continue
 		}
-
-		var public string
-		for _, broker := range ListBrokers.BrokerSummaries {
-			name := aws.ToString(broker.BrokerName)
-			id := broker.BrokerId
-
-			BrokerDetails, err := m.MQClient.DescribeBroker(
-				context.TODO(),
-				&(mq.DescribeBrokerInput{
-					BrokerId: id,
-				}),
-				func(o *mq.Options) {
-					o.Region = r
-				},
-			)
-			if err != nil {
-				if errors.As(err, &oe) {
-					m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
-				}
-				m.modLog.Error(err.Error())
-				m.CommandCounter.Error++
-				continue
-			}
-			if BrokerDetails.PubliclyAccessible {
-				public = "True"
-			} else {
-				public = "False"
-			}
-
-			endpoint := aws.ToString(BrokerDetails.BrokerInstances[0].ConsoleURL)
-
-			dataReceiver <- Endpoint{
-				AWSService: "Amazon MQ",
-				Region:     r,
-				Name:       name,
-				Endpoint:   endpoint,
-				Port:       443,
-				Protocol:   "https",
-				Public:     public,
-			}
-
-		}
-
-		// Pagination control. After the last page of output, the for loop exits.
-		if ListBrokers.NextToken != nil {
-			PaginationControl = ListBrokers.NextToken
+		if BrokerDetails.PubliclyAccessible {
+			public = "True"
 		} else {
-			PaginationControl = nil
-			break
+			public = "False"
 		}
+
+		endpoint := aws.ToString(BrokerDetails.BrokerInstances[0].ConsoleURL)
+
+		dataReceiver <- Endpoint{
+			AWSService: "Amazon MQ",
+			Region:     r,
+			Name:       name,
+			Endpoint:   endpoint,
+			Port:       443,
+			Protocol:   "https",
+			Public:     public,
+		}
+
 	}
 
 }
@@ -624,30 +570,18 @@ func (m *EndpointsModule) getOpenSearchPerRegion(r string, wg *sync.WaitGroup, s
 	// m.CommandCounter.Total++
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
-	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	//var PaginationControl *string
 
-	// This for loop exits at the end dependeding on whether the output hits its last page (see pagination control block at the end of the loop).
-
-	ListDomainNames, err := m.OpenSearchClient.ListDomainNames(
-		context.TODO(),
-		&opensearch.ListDomainNamesInput{},
-		func(o *opensearch.Options) {
-			o.Region = r
-		},
-	)
+	DomainNames, err := sdk.CachedOpenSearchListDomainNames(m.OpenSearchClient, aws.ToString(m.Caller.Account), r)
 	if err != nil {
-		if errors.As(err, &oe) {
-			m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
-		}
 		m.modLog.Error(err.Error())
 		m.CommandCounter.Error++
 		return
 	}
 
-	for _, domainName := range ListDomainNames.DomainNames {
+	for _, domainName := range DomainNames {
 		name := aws.ToString(domainName.DomainName)
 
+		//TODO: convert this to cacehd function
 		DomainNameDetails, err := m.OpenSearchClient.DescribeDomain(
 			context.TODO(),
 			&(opensearch.DescribeDomainInput{
@@ -731,59 +665,34 @@ func (m *EndpointsModule) getGrafanaEndPointsPerRegion(r string, wg *sync.WaitGr
 	// m.CommandCounter.Total++
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
-	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
 
-	// This for loop exits at the end dependeding on whether the output hits its last page (see pagination control block at the end of the loop).
-	for {
-		ListWorkspaces, err := m.GrafanaClient.ListWorkspaces(
-			context.TODO(),
-			&grafana.ListWorkspacesInput{
-				NextToken: PaginationControl,
-			},
-			func(o *grafana.Options) {
-				o.Region = r
-			},
-		)
-		if err != nil {
-			if errors.As(err, &oe) {
-				m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
-			}
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
+	ListWorkspaces, err := sdk.CachedGrafanaListWorkspaces(m.GrafanaClient, aws.ToString(m.Caller.Account), r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	var public string
+	for _, workspace := range ListWorkspaces {
+		name := aws.ToString(workspace.Name)
+		endpoint := aws.ToString(workspace.Endpoint)
+		awsService := "Grafana"
+
+		public = "Unknown"
+		protocol := "https"
+		var port int32 = 443
+
+		dataReceiver <- Endpoint{
+			AWSService: awsService,
+			Region:     r,
+			Name:       name,
+			Endpoint:   endpoint,
+			Port:       port,
+			Protocol:   protocol,
+			Public:     public,
 		}
 
-		var public string
-		for _, workspace := range ListWorkspaces.Workspaces {
-			name := aws.ToString(workspace.Name)
-			//id := workspace.Id
-			endpoint := aws.ToString(workspace.Endpoint)
-			awsService := "Grafana"
-
-			public = "Unknown"
-			protocol := "https"
-			var port int32 = 443
-
-			dataReceiver <- Endpoint{
-				AWSService: awsService,
-				Region:     r,
-				Name:       name,
-				Endpoint:   endpoint,
-				Port:       port,
-				Protocol:   protocol,
-				Public:     public,
-			}
-
-		}
-
-		// Pagination control. After the last page of output, the for loop exits.
-		if ListWorkspaces.NextToken != nil {
-			PaginationControl = ListWorkspaces.NextToken
-		} else {
-			PaginationControl = nil
-			break
-		}
 	}
 
 }
@@ -803,16 +712,28 @@ func (m *EndpointsModule) getELBv2ListenersPerRegion(r string, wg *sync.WaitGrou
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
 	awsService := "ELBv2"
 
-	// This for loop exits at the end dependeding on whether the output hits its last page (see pagination control block at the end of the loop).
-	for {
-		DescribeLoadBalancers, err := m.ELBv2Client.DescribeLoadBalancers(
+	LoadBalancers, err := sdk.CachedELBv2DescribeLoadBalancers(m.ELBv2Client, aws.ToString(m.Caller.Account), r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	var public string
+	for _, lb := range LoadBalancers {
+
+		name := aws.ToString(lb.LoadBalancerName)
+		arn := aws.ToString(lb.LoadBalancerArn)
+		scheme := lb.Scheme
+
+		//TODO: Convert to cacehd function
+		ListenerDetails, err := m.ELBv2Client.DescribeListeners(
 			context.TODO(),
-			&elasticloadbalancingv2.DescribeLoadBalancersInput{
-				Marker: PaginationControl,
-			},
+			&(elasticloadbalancingv2.DescribeListenersInput{
+				LoadBalancerArn: &arn,
+			}),
 			func(o *elasticloadbalancingv2.Options) {
 				o.Region = r
 			},
@@ -823,69 +744,35 @@ func (m *EndpointsModule) getELBv2ListenersPerRegion(r string, wg *sync.WaitGrou
 			}
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
-			break
+			continue
 		}
-
-		var public string
-		for _, lb := range DescribeLoadBalancers.LoadBalancers {
-
-			name := aws.ToString(lb.LoadBalancerName)
-			arn := aws.ToString(lb.LoadBalancerArn)
-			scheme := lb.Scheme
-
-			ListenerDetails, err := m.ELBv2Client.DescribeListeners(
-				context.TODO(),
-				&(elasticloadbalancingv2.DescribeListenersInput{
-					LoadBalancerArn: &arn,
-				}),
-				func(o *elasticloadbalancingv2.Options) {
-					o.Region = r
-				},
-			)
-			if err != nil {
-				if errors.As(err, &oe) {
-					m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
-				}
-				m.modLog.Error(err.Error())
-				m.CommandCounter.Error++
-				continue
-			}
-			if scheme == "internet-facing" {
-				public = "True"
-			} else {
-				public = "False"
-			}
-
-			for _, listener := range ListenerDetails.Listeners {
-				endpoint := aws.ToString(lb.DNSName)
-				port := aws.ToInt32(listener.Port)
-				protocol := string(listener.Protocol)
-				if protocol == "HTTPS" {
-					endpoint = fmt.Sprintf("https://%s:%s", endpoint, strconv.Itoa(int(port)))
-				} else if protocol == "HTTP" {
-					endpoint = fmt.Sprintf("http://%s:%s", endpoint, strconv.Itoa(int(port)))
-				}
-
-				dataReceiver <- Endpoint{
-					AWSService: awsService,
-					Region:     r,
-					Name:       name,
-					Endpoint:   endpoint,
-					Port:       port,
-					Protocol:   protocol,
-					Public:     public,
-				}
-			}
-
-		}
-
-		// Pagination control. After the last page of output, the for loop exits.
-		if DescribeLoadBalancers.NextMarker != nil {
-			PaginationControl = DescribeLoadBalancers.NextMarker
+		if scheme == "internet-facing" {
+			public = "True"
 		} else {
-			PaginationControl = nil
-			break
+			public = "False"
 		}
+
+		for _, listener := range ListenerDetails.Listeners {
+			endpoint := aws.ToString(lb.DNSName)
+			port := aws.ToInt32(listener.Port)
+			protocol := string(listener.Protocol)
+			if protocol == "HTTPS" {
+				endpoint = fmt.Sprintf("https://%s:%s", endpoint, strconv.Itoa(int(port)))
+			} else if protocol == "HTTP" {
+				endpoint = fmt.Sprintf("http://%s:%s", endpoint, strconv.Itoa(int(port)))
+			}
+
+			dataReceiver <- Endpoint{
+				AWSService: awsService,
+				Region:     r,
+				Name:       name,
+				Endpoint:   endpoint,
+				Port:       port,
+				Protocol:   protocol,
+				Public:     public,
+			}
+		}
+
 	}
 
 }
@@ -904,72 +791,48 @@ func (m *EndpointsModule) getELBListenersPerRegion(r string, wg *sync.WaitGroup,
 	// m.CommandCounter.Total++
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
-	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
 	awsService := "ELB"
 
-	// This for loop exits at the end dependeding on whether the output hits its last page (see pagination control block at the end of the loop).
-	for {
-		DescribeLoadBalancers, err := m.ELBClient.DescribeLoadBalancers(
-			context.TODO(),
-			&elasticloadbalancing.DescribeLoadBalancersInput{
-				Marker: PaginationControl,
-			},
-			func(o *elasticloadbalancing.Options) {
-				o.Region = r
-			},
-		)
-		if err != nil {
-			if errors.As(err, &oe) {
-				m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
-			}
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
+	LoadBalancerDescriptions, err := sdk.CachedELBDescribeLoadBalancers(m.ELBClient, aws.ToString(m.Caller.Account), r)
 
-		var public string
-		for _, lb := range DescribeLoadBalancers.LoadBalancerDescriptions {
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+	var public string
+	for _, lb := range LoadBalancerDescriptions {
 
-			name := aws.ToString(lb.LoadBalancerName)
-			scheme := aws.ToString(lb.Scheme)
+		name := aws.ToString(lb.LoadBalancerName)
+		scheme := aws.ToString(lb.Scheme)
 
-			if scheme == "internet-facing" {
-				public = "True"
-			} else {
-				public = "False"
-			}
-
-			for _, listener := range lb.ListenerDescriptions {
-				endpoint := aws.ToString(lb.DNSName)
-				port := listener.Listener.LoadBalancerPort
-				protocol := aws.ToString(listener.Listener.Protocol)
-				if protocol == "HTTPS" {
-					endpoint = fmt.Sprintf("https://%s:%s", endpoint, strconv.Itoa(int(port)))
-				} else if protocol == "HTTP" {
-					endpoint = fmt.Sprintf("http://%s:%s", endpoint, strconv.Itoa(int(port)))
-				}
-
-				dataReceiver <- Endpoint{
-					AWSService: awsService,
-					Region:     r,
-					Name:       name,
-					Endpoint:   endpoint,
-					Port:       port,
-					Protocol:   protocol,
-					Public:     public,
-				}
-			}
-
-		}
-
-		// Pagination control. After the last page of output, the for loop exits.
-		if DescribeLoadBalancers.NextMarker != nil {
-			PaginationControl = DescribeLoadBalancers.NextMarker
+		if scheme == "internet-facing" {
+			public = "True"
 		} else {
-			PaginationControl = nil
-			break
+			public = "False"
 		}
+
+		for _, listener := range lb.ListenerDescriptions {
+			endpoint := aws.ToString(lb.DNSName)
+			port := listener.Listener.LoadBalancerPort
+			protocol := aws.ToString(listener.Listener.Protocol)
+			if protocol == "HTTPS" {
+				endpoint = fmt.Sprintf("https://%s:%s", endpoint, strconv.Itoa(int(port)))
+			} else if protocol == "HTTP" {
+				endpoint = fmt.Sprintf("http://%s:%s", endpoint, strconv.Itoa(int(port)))
+			}
+
+			dataReceiver <- Endpoint{
+				AWSService: awsService,
+				Region:     r,
+				Name:       name,
+				Endpoint:   endpoint,
+				Port:       port,
+				Protocol:   protocol,
+				Public:     public,
+			}
+		}
+
 	}
 
 }
@@ -989,109 +852,89 @@ func (m *EndpointsModule) getAPIGatewayAPIsPerRegion(r string, wg *sync.WaitGrou
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
+
 	var PaginationControl2 *string
 	awsService := "APIGateway"
 
-	// This for loop exits at the end dependeding on whether the output hits its last page (see pagination control block at the end of the loop).
-	for {
-		GetRestApis, err := m.APIGatewayClient.GetRestApis(
-			context.TODO(),
-			&apigateway.GetRestApisInput{
-				Position: PaginationControl,
-			},
-			func(o *apigateway.Options) {
-				o.Region = r
-			},
-		)
-		if err != nil {
-			if errors.As(err, &oe) {
-				m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
-			}
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
+	Items, err := sdk.CachedApiGatewayGetRestAPIs(m.APIGatewayClient, aws.ToString(m.Caller.Account), r)
 
-		var public string
-		for _, api := range GetRestApis.Items {
-
-			name := aws.ToString(api.Name)
-			id := aws.ToString(api.Id)
-			raw_endpoint := fmt.Sprintf("https://%s.execute-api.%s.amazonaws.com", id, r)
-			var port int32 = 443
-			protocol := "https"
-
-			endpointType := *api.EndpointConfiguration
-			//fmt.Println(endpointType)
-			if endpointType.Types[0] == "PRIVATE" {
-				public = "False"
-			} else {
-				public = "True"
-			}
-
-			for {
-				GetResources, err := m.APIGatewayClient.GetResources(
-					context.TODO(),
-					&apigateway.GetResourcesInput{
-						RestApiId: &id,
-						Position:  PaginationControl2,
-					},
-					func(o *apigateway.Options) {
-						o.Region = r
-					},
-				)
-
-				if err != nil {
-					if errors.As(err, &oe) {
-						m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
-					}
-					m.modLog.Error(err.Error())
-					m.CommandCounter.Error++
-					break
-				}
-
-				for _, resource := range GetResources.Items {
-
-					path := resource.Path
-					//pathPart := resource.PathPart
-					//fmt.Printf(*path, *pathPart)
-					//var path string
-
-					// if len(strings.Fields(*routeKey)) == 2 {
-					// 	path = strings.Fields(*routeKey)[1]
-					// }
-					endpoint := fmt.Sprintf("%s%s", raw_endpoint, aws.ToString(path))
-
-					dataReceiver <- Endpoint{
-						AWSService: awsService,
-						Region:     r,
-						Name:       name,
-						Endpoint:   endpoint,
-						Port:       port,
-						Protocol:   protocol,
-						Public:     public,
-					}
-
-				}
-				if GetResources.Position != nil {
-					PaginationControl2 = GetResources.Position
-				} else {
-					PaginationControl2 = nil
-					break
-				}
-
-			}
-		}
-		// Pagination control. After the last page of output, the for loop exits.
-		if GetRestApis.Position != nil {
-			PaginationControl = GetRestApis.Position
-		} else {
-			PaginationControl = nil
-			break
-		}
-
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
 	}
+
+	var public string
+	for _, api := range Items {
+
+		name := aws.ToString(api.Name)
+		id := aws.ToString(api.Id)
+		raw_endpoint := fmt.Sprintf("https://%s.execute-api.%s.amazonaws.com", id, r)
+		var port int32 = 443
+		protocol := "https"
+
+		endpointType := *api.EndpointConfiguration
+		//fmt.Println(endpointType)
+		if endpointType.Types[0] == "PRIVATE" {
+			public = "False"
+		} else {
+			public = "True"
+		}
+
+		for {
+			GetResources, err := m.APIGatewayClient.GetResources(
+				context.TODO(),
+				&apigateway.GetResourcesInput{
+					RestApiId: &id,
+					Position:  PaginationControl2,
+				},
+				func(o *apigateway.Options) {
+					o.Region = r
+				},
+			)
+
+			if err != nil {
+				if errors.As(err, &oe) {
+					m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
+				}
+				m.modLog.Error(err.Error())
+				m.CommandCounter.Error++
+				break
+			}
+
+			for _, resource := range GetResources.Items {
+
+				path := resource.Path
+				//pathPart := resource.PathPart
+				//fmt.Printf(*path, *pathPart)
+				//var path string
+
+				// if len(strings.Fields(*routeKey)) == 2 {
+				// 	path = strings.Fields(*routeKey)[1]
+				// }
+				endpoint := fmt.Sprintf("%s%s", raw_endpoint, aws.ToString(path))
+
+				dataReceiver <- Endpoint{
+					AWSService: awsService,
+					Region:     r,
+					Name:       name,
+					Endpoint:   endpoint,
+					Port:       port,
+					Protocol:   protocol,
+					Public:     public,
+				}
+
+			}
+			if GetResources.Position != nil {
+				PaginationControl2 = GetResources.Position
+			} else {
+				PaginationControl2 = nil
+				break
+			}
+
+		}
+	}
+
 }
 
 func (m *EndpointsModule) getAPIGatewayv2APIsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Endpoint) {
@@ -1109,98 +952,76 @@ func (m *EndpointsModule) getAPIGatewayv2APIsPerRegion(r string, wg *sync.WaitGr
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
 	var PaginationControl2 *string
 	awsService := "APIGatewayv2"
 
-	// This for loop exits at the end dependeding on whether the output hits its last page (see pagination control block at the end of the loop).
-	for {
-		GetApis, err := m.APIGatewayv2Client.GetApis(
-			context.TODO(),
-			&apigatewayv2.GetApisInput{
-				NextToken: PaginationControl,
-			},
-			func(o *apigatewayv2.Options) {
-				o.Region = r
-			},
-		)
-		if err != nil {
-			if errors.As(err, &oe) {
-				m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
-			}
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
+	Items, err := sdk.CachedAPIGatewayv2GetAPIs(m.APIGatewayv2Client, aws.ToString(m.Caller.Account), r)
 
-		var public string
-		for _, api := range GetApis.Items {
-
-			name := aws.ToString(api.Name)
-			raw_endpoint := aws.ToString(api.ApiEndpoint)
-			id := aws.ToString(api.ApiId)
-			var port int32 = 443
-			protocol := "https"
-
-			for {
-				GetRoutes, err := m.APIGatewayv2Client.GetRoutes(
-					context.TODO(),
-					&apigatewayv2.GetRoutesInput{
-						ApiId:     &id,
-						NextToken: PaginationControl2,
-					},
-					func(o *apigatewayv2.Options) {
-						o.Region = r
-					},
-				)
-
-				if err != nil {
-					if errors.As(err, &oe) {
-						m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
-					}
-					m.modLog.Error(err.Error())
-					m.CommandCounter.Error++
-					continue
-				}
-
-				for _, route := range GetRoutes.Items {
-					routeKey := route.RouteKey
-					var path string
-					if len(strings.Fields(*routeKey)) == 2 {
-						path = strings.Fields(*routeKey)[1]
-					}
-					endpoint := fmt.Sprintf("%s%s", raw_endpoint, path)
-					public = "True"
-
-					dataReceiver <- Endpoint{
-						AWSService: awsService,
-						Region:     r,
-						Name:       name,
-						Endpoint:   endpoint,
-						Port:       port,
-						Protocol:   protocol,
-						Public:     public,
-					}
-
-				}
-				if GetRoutes.NextToken != nil {
-					PaginationControl2 = GetRoutes.NextToken
-				} else {
-					PaginationControl2 = nil
-					break
-				}
-
-			}
-		}
-		// Pagination control. After the last page of output, the for loop exits.
-		if GetApis.NextToken != nil {
-			PaginationControl = GetApis.NextToken
-		} else {
-			PaginationControl = nil
-			break
-		}
-
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
 	}
+	var public string
+	for _, api := range Items {
+
+		name := aws.ToString(api.Name)
+		raw_endpoint := aws.ToString(api.ApiEndpoint)
+		id := aws.ToString(api.ApiId)
+		var port int32 = 443
+		protocol := "https"
+
+		for {
+			GetRoutes, err := m.APIGatewayv2Client.GetRoutes(
+				context.TODO(),
+				&apigatewayv2.GetRoutesInput{
+					ApiId:     &id,
+					NextToken: PaginationControl2,
+				},
+				func(o *apigatewayv2.Options) {
+					o.Region = r
+				},
+			)
+
+			if err != nil {
+				if errors.As(err, &oe) {
+					m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
+				}
+				m.modLog.Error(err.Error())
+				m.CommandCounter.Error++
+				continue
+			}
+
+			for _, route := range GetRoutes.Items {
+				routeKey := route.RouteKey
+				var path string
+				if len(strings.Fields(*routeKey)) == 2 {
+					path = strings.Fields(*routeKey)[1]
+				}
+				endpoint := fmt.Sprintf("%s%s", raw_endpoint, path)
+				public = "True"
+
+				dataReceiver <- Endpoint{
+					AWSService: awsService,
+					Region:     r,
+					Name:       name,
+					Endpoint:   endpoint,
+					Port:       port,
+					Protocol:   protocol,
+					Public:     public,
+				}
+
+			}
+			if GetRoutes.NextToken != nil {
+				PaginationControl2 = GetRoutes.NextToken
+			} else {
+				PaginationControl2 = nil
+				break
+			}
+
+		}
+	}
+
 }
 
 func (m *EndpointsModule) getRdsClustersPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Endpoint) {
@@ -1513,15 +1334,15 @@ func (m *EndpointsModule) getAppRunnerEndpointsPerRegion(r string, wg *sync.Wait
 	// m.CommandCounter.Total++
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
-	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
 
-	ListServices, err := m.appRunnerListServices(r)
+	ServiceSummaryList, err := sdk.CachedAppRunnerListServices(m.AppRunnerClient, aws.ToString(m.Caller.Account), r)
+
 	if err != nil {
 		m.modLog.Error(err.Error())
 		m.CommandCounter.Error++
 		return
 	}
-	for _, service := range ListServices {
+	for _, service := range ServiceSummaryList {
 
 		endpoint := &Endpoint{
 			AWSService: "App Runner",
@@ -1585,39 +1406,6 @@ func (m *EndpointsModule) getAppRunnerEndpointsPerRegion(r string, wg *sync.Wait
 	}
 }
 
-func (m *EndpointsModule) appRunnerListServices(r string) ([]apprunnerTypes.ServiceSummary, error) {
-	var PaginationControl *string
-	var services []apprunnerTypes.ServiceSummary
-	for {
-		ListServices, err := m.AppRunnerClient.ListServices(
-			context.TODO(),
-			&(apprunner.ListServicesInput{
-				NextToken: PaginationControl,
-			}),
-			func(o *apprunner.Options) {
-				o.Region = r
-			},
-		)
-		if err != nil {
-			return services, err
-		}
-		if len(ListServices.ServiceSummaryList) > 0 {
-			for _, service := range ListServices.ServiceSummaryList {
-				services = append(services, service)
-			}
-		}
-
-		// The "NextToken" value is nil when there's no more data to return.
-		if ListServices.NextToken != nil {
-			PaginationControl = ListServices.NextToken
-		} else {
-			PaginationControl = nil
-			break
-		}
-	}
-	return services, nil
-}
-
 func (m *EndpointsModule) appRunnerDescribeCustomDomain(r string, serviceArn string) ([]apprunnerTypes.CustomDomain, error) {
 	var PaginationControl *string
 	var domains []apprunnerTypes.CustomDomain
@@ -1671,12 +1459,13 @@ func (m *EndpointsModule) getLightsailContainerEndpointsPerRegion(r string, wg *
 	var protocol string = "https"
 	var port int32 = 443
 
-	containerServices, err := m.getLightsailContainerServices(r)
+	containerServices, err := sdk.CachedLightsailGetContainerServices(m.LightsailClient, aws.ToString(m.Caller.Account), r)
+
 	if err != nil {
 		m.modLog.Error(err.Error())
 		m.CommandCounter.Error++
+		return
 	}
-
 	if len(containerServices) > 0 {
 
 		for _, containerService := range containerServices {
@@ -1695,22 +1484,4 @@ func (m *EndpointsModule) getLightsailContainerEndpointsPerRegion(r string, wg *
 			}
 		}
 	}
-}
-
-func (m *EndpointsModule) getLightsailContainerServices(r string) ([]types.ContainerService, error) {
-	var containerServices []types.ContainerService
-	GetContainerServices, err := m.LightsailClient.GetContainerServices(
-		context.TODO(),
-		&(lightsail.GetContainerServicesInput{}),
-		func(o *lightsail.Options) {
-			o.Region = r
-		},
-	)
-	if err != nil {
-		m.modLog.Error(err.Error())
-		m.CommandCounter.Error++
-		return containerServices, err
-	}
-	containerServices = append(containerServices, GetContainerServices.ContainerServices...)
-	return containerServices, nil
 }

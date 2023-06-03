@@ -729,11 +729,8 @@ func runEKSCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.EKSModule{
-			EKSClientListClustersInterface:      eks.NewFromConfig(AWSConfig),
-			EKSClientDescribeClusterInterface:   eks.NewFromConfig(AWSConfig),
-			EKSClientListNodeGroupsInterface:    eks.NewFromConfig(AWSConfig),
-			EKSClientDescribeNodeGroupInterface: eks.NewFromConfig(AWSConfig),
-			IAMClient:                           iam.NewFromConfig(AWSConfig),
+			IAMClient: iam.NewFromConfig(AWSConfig),
+			EKSClient: eks.NewFromConfig(AWSConfig),
 
 			Caller:         *caller,
 			AWSRegions:     internal.GetEnabledRegions(profile, cmd.Root().Version),
@@ -1241,6 +1238,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		lightsailClient := lightsail.NewFromConfig(AWSConfig)
 		mqClient := mq.NewFromConfig(AWSConfig)
 		openSearchClient := opensearch.NewFromConfig(AWSConfig)
+		orgClient := organizations.NewFromConfig(AWSConfig)
 		ramClient := ram.NewFromConfig(AWSConfig)
 		rdsClient := rds.NewFromConfig(AWSConfig)
 		redshiftClient := redshift.NewFromConfig(AWSConfig)
@@ -1302,6 +1300,16 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		}
 		var verbosityOverride int = 1
 		tagsMod.PrintTags(AWSOutputFormat, AWSOutputDirectory, verbosityOverride)
+
+		orgMod := aws.OrgModule{
+			OrganizationsClient: orgClient,
+			Caller:              *caller,
+			AWSRegions:          internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile:          profile,
+			Goroutines:          Goroutines,
+			WrapTable:           AWSWrapTable,
+		}
+		orgMod.PrintOrgAccounts(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
 		// Service and endpoint enum section
 		fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Gathering the info you'll want for your application & service enumeration needs."))
@@ -1409,11 +1417,8 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		ecstasks.ECSTasks(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
 		eksCommand := aws.EKSModule{
-			EKSClientListClustersInterface:      eksClient,
-			EKSClientDescribeClusterInterface:   eksClient,
-			EKSClientListNodeGroupsInterface:    eksClient,
-			EKSClientDescribeNodeGroupInterface: eksClient,
-			IAMClient:                           iamClient,
+			EKSClient: eksClient,
+			IAMClient: iamClient,
 
 			Caller:         *caller,
 			AWSRegions:     internal.GetEnabledRegions(profile, cmd.Root().Version),
@@ -1567,6 +1572,16 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		}
 		resourceTrustsCommand.PrintResources(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
+		codeBuildCommand := aws.CodeBuildModule{
+			CodeBuildClient: codeBuildClient,
+			Caller:          *caller,
+			AWSProfile:      profile,
+			Goroutines:      Goroutines,
+			AWSRegions:      internal.GetEnabledRegions(profile, cmd.Root().Version),
+			WrapTable:       AWSWrapTable,
+		}
+		codeBuildCommand.PrintCodeBuildProjects(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+
 		// IAM privesc section
 		fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("IAM is complicated. Complicated usually means misconfigurations. You'll want to pay attention here."))
 		principals := aws.IamPrincipalsModule{
@@ -1630,6 +1645,7 @@ func init() {
 	cobra.OnInitialize(initAWSProfiles)
 	sdk.RegisterApiGatewayTypes()
 	sdk.RegisterApiGatewayV2Types()
+	sdk.RegisterApprunnerTypes()
 	sdk.RegisterCloudFormationTypes()
 	sdk.RegisterCodeBuildTypes()
 	sdk.RegisterDocDBTypes()
@@ -1643,6 +1659,7 @@ func init() {
 	sdk.RegisterGrafanaTypes()
 	sdk.RegisterIamTypes()
 	sdk.RegisterLambdaTypes()
+	sdk.RegisterLightsailTypes()
 	sdk.RegisterMQTypes()
 	sdk.RegisterOpenSearchTypes()
 	sdk.RegisterOrganizationsTypes()

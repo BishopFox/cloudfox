@@ -1,7 +1,6 @@
 package aws
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,8 +10,6 @@ import (
 	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/eks"
-	"github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
@@ -21,11 +18,8 @@ import (
 type EKSModule struct {
 	// General configuration data
 	// These interfaces are used for unit testing
-	EKSClientListClustersInterface      eks.ListClustersAPIClient
-	EKSClientDescribeClusterInterface   eks.DescribeClusterAPIClient
-	EKSClientListNodeGroupsInterface    eks.ListNodegroupsAPIClient
-	EKSClientDescribeNodeGroupInterface eks.DescribeNodegroupAPIClient
-	IAMClient                           sdk.AWSIAMClientInterface
+	EKSClient sdk.EKSClientInterface
+	IAMClient sdk.AWSIAMClientInterface
 
 	Caller         sts.GetCallerIdentityOutput
 	AWSRegions     []string
@@ -322,14 +316,15 @@ func (m *EKSModule) getEKSRecordsPerRegion(r string, wg *sync.WaitGroup, semapho
 	var clusters []string
 	var role string
 
-	clusters, err := m.listClusters(r)
+	clusters, err := sdk.CachedEKSListClusters(m.EKSClient, aws.ToString(m.Caller.Account), r)
 	if err != nil {
 		m.modLog.Error(err.Error())
 		m.CommandCounter.Error++
+		return
 	}
 
 	for _, clusterName := range clusters {
-		clusterDetails, err := m.describeCluster(clusterName, r)
+		clusterDetails, err := sdk.CachedEKSDescribeCluster(m.EKSClient, aws.ToString(m.Caller.Account), clusterName, r)
 		if err != nil {
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
@@ -345,12 +340,12 @@ func (m *EKSModule) getEKSRecordsPerRegion(r string, wg *sync.WaitGroup, semapho
 		// 	publicCIDRs := "specific IPs"
 		// }
 
-		ListNodeGroups := m.listNodeGroups(clusterName, r)
+		ListNodeGroups, err := sdk.CachedEKSListNodeGroups(m.EKSClient, aws.ToString(m.Caller.Account), clusterName, r)
 
 		if len(ListNodeGroups) > 0 {
 			for _, nodeGroup := range ListNodeGroups {
 
-				nodeGroupDetails, err := m.describeNodegroup(clusterName, nodeGroup, r)
+				nodeGroupDetails, err := sdk.CachedEKSDescribeNodeGroup(m.EKSClient, aws.ToString(m.Caller.Account), clusterName, nodeGroup, r)
 				if err != nil {
 					m.modLog.Error(err.Error())
 					m.CommandCounter.Error++
@@ -390,110 +385,4 @@ func (m *EKSModule) getEKSRecordsPerRegion(r string, wg *sync.WaitGroup, semapho
 
 	}
 
-}
-
-func (m *EKSModule) listClusters(r string) ([]string, error) {
-	var PaginationControl *string
-	var clusters []string
-
-	for {
-		ListClusters, err := m.EKSClientListClustersInterface.ListClusters(
-			context.TODO(),
-			&eks.ListClustersInput{
-				NextToken: PaginationControl,
-			},
-			func(o *eks.Options) {
-				o.Region = r
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			return clusters, err
-		}
-
-		clusters = append(clusters, ListClusters.Clusters...)
-		// The "NextToken" value is nil when there's no more data to return.
-		if ListClusters.NextToken != nil {
-			PaginationControl = ListClusters.NextToken
-		} else {
-			PaginationControl = nil
-			break
-		}
-
-	}
-	return clusters, nil
-}
-
-func (m *EKSModule) listNodeGroups(clusterName string, r string) []string {
-	var PaginationControl *string
-	var nodeGroups []string
-	for {
-		ListNodeGroups, err := m.EKSClientListNodeGroupsInterface.ListNodegroups(
-			context.TODO(),
-			&eks.ListNodegroupsInput{
-				ClusterName: &clusterName,
-				NextToken:   PaginationControl,
-			},
-			func(o *eks.Options) {
-				o.Region = r
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
-
-		nodeGroups = append(nodeGroups, ListNodeGroups.Nodegroups...)
-		if ListNodeGroups.NextToken != nil {
-			PaginationControl = ListNodeGroups.NextToken
-		} else {
-			PaginationControl = nil
-			break
-		}
-
-	}
-	return nodeGroups
-}
-
-func (m *EKSModule) describeCluster(clusterName string, r string) (*types.Cluster, error) {
-
-	var err error
-	//var clusterDetails types.Cluster
-	DescribeCluster, err := m.EKSClientDescribeClusterInterface.DescribeCluster(
-		context.TODO(),
-		&eks.DescribeClusterInput{
-			Name: &clusterName,
-		},
-		func(o *eks.Options) {
-			o.Region = r
-		},
-	)
-	if err != nil {
-		m.modLog.Error(err.Error())
-		m.CommandCounter.Error++
-	}
-
-	return DescribeCluster.Cluster, err
-
-}
-
-func (m *EKSModule) describeNodegroup(clusterName string, nodeGroup string, r string) (*types.Nodegroup, error) {
-	DescribeNodegroup, err := m.EKSClientDescribeNodeGroupInterface.DescribeNodegroup(
-		context.TODO(),
-		&eks.DescribeNodegroupInput{
-			ClusterName:   &clusterName,
-			NodegroupName: &nodeGroup,
-		},
-		func(o *eks.Options) {
-			o.Region = r
-		},
-	)
-	if err != nil {
-		m.modLog.Error(err.Error())
-		m.CommandCounter.Error++
-
-	}
-	return DescribeNodegroup.Nodegroup, err
 }
