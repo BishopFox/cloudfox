@@ -3,6 +3,7 @@ package aws
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -42,6 +43,7 @@ type Resource2 struct {
 	PolicyJSON            string
 	ResourcePolicySummary string
 	Public                string
+	Interesting           string
 }
 
 func (m *ResourceTrustsModule) PrintResources(outputFormat string, outputDirectory string, verbosity int) {
@@ -58,7 +60,7 @@ func (m *ResourceTrustsModule) PrintResources(outputFormat string, outputDirecto
 	}
 
 	fmt.Printf("[%s][%s] Enumerating Resources with resource policies for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
-	fmt.Printf("[%s][%s] Supported Services: CodeBuild, ECR, Lambda, S3, SNS, SQS\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	fmt.Printf("[%s][%s] Supported Services: CodeBuild, ECR, EFS, Lambda, S3, SNS, SQS\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	wg := new(sync.WaitGroup)
 	semaphore := make(chan struct{}, m.Goroutines)
 
@@ -96,8 +98,14 @@ func (m *ResourceTrustsModule) PrintResources(outputFormat string, outputDirecto
 		//"Account ID",
 		"ARN",
 		"Public",
+		"Interesting",
 		"Resource Policy Summary",
 	}
+
+	// sort the table roles by Interesting
+	sort.Slice(m.Resources2, func(i, j int) bool {
+		return m.Resources2[j].Interesting > m.Resources2[i].Interesting
+	})
 
 	// Table rows
 	for i := range m.Resources2 {
@@ -107,6 +115,7 @@ func (m *ResourceTrustsModule) PrintResources(outputFormat string, outputDirecto
 				//m.Resources2[i].AccountID,
 				m.Resources2[i].ARN,
 				m.Resources2[i].Public,
+				m.Resources2[i].Interesting,
 				m.Resources2[i].ResourcePolicySummary,
 			},
 		)
@@ -238,6 +247,8 @@ func (m *ResourceTrustsModule) getSNSTopicsPerRegion(r string, wg *sync.WaitGrou
 	}
 
 	for _, t := range ListTopics {
+		var statementSummaryInEnglish string
+		var isInteresting string = "No"
 		topic, err := cloudFoxSNSClient.getTopicWithAttributes(aws.ToString(t.TopicArn), r)
 		if err != nil {
 			m.modLog.Error(err.Error())
@@ -250,48 +261,47 @@ func (m *ResourceTrustsModule) getSNSTopicsPerRegion(r string, wg *sync.WaitGrou
 		}
 		topic.Name = parsedArn.Resource
 		topic.Region = parsedArn.Region
+
+		// check if topic is public or not
 		if topic.Policy.IsPublic() {
-			for _, statement := range topic.Policy.Statement {
-				statementInEnglish := statement.GetStatementSummaryInEnglish(*m.Caller.Account)
-				statementInEnglish = strings.TrimSuffix(statementInEnglish, "\n")
-
-				dataReceiver <- Resource2{
-					AccountID:             aws.ToString(m.Caller.Account),
-					ARN:                   aws.ToString(t.TopicArn),
-					ResourcePolicySummary: red(statementInEnglish),
-					Public:                red("True"),
-				}
-			}
+			topic.IsPublic = magenta("Yes")
+			isInteresting = magenta("Yes")
 		} else {
-			if !topic.Policy.IsEmpty() {
-				for _, statement := range topic.Policy.Statement {
-					statementInEnglish := statement.GetStatementSummaryInEnglish(*m.Caller.Account)
-					// check if statementInEnglish contains an AWS ARN other than caller.Arn
-					if (strings.Contains(statementInEnglish, "arn:aws") && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
-						((strings.Contains(statementInEnglish, "AWS:SourceOwner") || strings.Contains(statementInEnglish, "AWS:SourceAccount")) && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
-						strings.Contains(statementInEnglish, "*") {
-						statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
-						statementInEnglish = red(statementInEnglish)
-						dataReceiver <- Resource2{
-							AccountID:             aws.ToString(m.Caller.Account),
-							ARN:                   aws.ToString(t.TopicArn),
-							ResourcePolicySummary: statementInEnglish,
-						}
-					} else {
-						statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
-						dataReceiver <- Resource2{
-							AccountID:             aws.ToString(m.Caller.Account),
-							ARN:                   aws.ToString(t.TopicArn),
-							ResourcePolicySummary: statementInEnglish,
-						}
-					}
+			topic.IsPublic = "No"
+		}
 
+		// If there is a resouce policy, convert the resource policy into plain english
+		if !topic.Policy.IsEmpty() {
+
+			for i, statement := range topic.Policy.Statement {
+				var prefix string = ""
+				if len(topic.Policy.Statement) > 1 {
+					prefix = fmt.Sprintf("Statement %d says: ", i)
+					statementSummaryInEnglish = statementSummaryInEnglish + prefix + statement.GetStatementSummaryInEnglish(*m.Caller.Account) + "\n"
+				} else {
+					statementSummaryInEnglish = statement.GetStatementSummaryInEnglish(*m.Caller.Account)
 				}
 
+			}
+			statementSummaryInEnglish = strings.TrimSuffix(statementSummaryInEnglish, "\n")
+			if isResourcePolicyInteresting(statementSummaryInEnglish) {
+				//magenta(statementSummaryInEnglish)
+				isInteresting = magenta("Yes")
+			}
+
+			dataReceiver <- Resource2{
+				AccountID:             aws.ToString(m.Caller.Account),
+				ARN:                   aws.ToString(t.TopicArn),
+				ResourcePolicySummary: statementSummaryInEnglish,
+				Public:                topic.IsPublic,
+				Region:                parsedArn.Region,
+				Name:                  topic.Name,
+				Interesting:           isInteresting,
 			}
 
 		}
 	}
+
 }
 
 func (m *ResourceTrustsModule) getS3Buckets(wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Resource2) {
@@ -313,6 +323,8 @@ func (m *ResourceTrustsModule) getS3Buckets(wg *sync.WaitGroup, semaphore chan s
 	}
 
 	for _, b := range ListBuckets {
+		var statementSummaryInEnglish string
+		var isInteresting string = "No"
 		bucket := &Bucket{
 			Arn: fmt.Sprintf("arn:aws:s3:::%s", aws.ToString(b.Name)),
 		}
@@ -337,45 +349,38 @@ func (m *ResourceTrustsModule) getS3Buckets(wg *sync.WaitGroup, semaphore chan s
 		}
 		// easier to just set the default state to be no and only flip it to yes if we have a case that matches
 		if policy.IsPublic() {
-			for _, statement := range bucket.Policy.Statement {
-				statementInEnglish := statement.GetStatementSummaryInEnglish(*m.Caller.Account)
-				statementInEnglish = strings.TrimSuffix(statementInEnglish, "\n")
-
-				dataReceiver <- Resource2{
-					AccountID:             aws.ToString(m.Caller.Account),
-					ARN:                   bucket.Arn,
-					ResourcePolicySummary: red(statementInEnglish),
-					Public:                red("True"),
-				}
-			}
+			bucket.IsPublic = magenta("Yes")
+			isInteresting = magenta("Yes")
 		} else {
+			bucket.IsPublic = "No"
+		}
 
-			if !bucket.Policy.IsEmpty() {
-				for _, statement := range bucket.Policy.Statement {
-					statementInEnglish := statement.GetStatementSummaryInEnglish(*m.Caller.Account)
-					// check if statementInEnglish contains an AWS ARN other than caller.Arn
-					if (strings.Contains(statementInEnglish, "arn:aws") && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
-						((strings.Contains(statementInEnglish, "AWS:SourceOwner") || strings.Contains(statementInEnglish, "AWS:SourceAccount")) && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
-						strings.Contains(statementInEnglish, "*") {
-						statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
-						statementInEnglish = red(statementInEnglish)
-						dataReceiver <- Resource2{
-							AccountID:             aws.ToString(m.Caller.Account),
-							ARN:                   bucket.Arn,
-							ResourcePolicySummary: statementInEnglish,
-						}
-					} else {
-						statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
-						dataReceiver <- Resource2{
-							AccountID:             aws.ToString(m.Caller.Account),
-							ARN:                   bucket.Arn,
-							ResourcePolicySummary: statementInEnglish,
-						}
-					}
+		// If there is a resouce policy, convert the resource policy into plain english
+		if !bucket.Policy.IsEmpty() {
+			for i, statement := range bucket.Policy.Statement {
+				var prefix string = ""
+				if len(bucket.Policy.Statement) > 1 {
+					prefix = fmt.Sprintf("Statement %d says: ", i)
+					statementSummaryInEnglish = statementSummaryInEnglish + prefix + statement.GetStatementSummaryInEnglish(*m.Caller.Account) + "\n"
+				} else {
+					statementSummaryInEnglish = statement.GetStatementSummaryInEnglish(*m.Caller.Account)
 				}
-
+			}
+			statementSummaryInEnglish = strings.TrimSuffix(statementSummaryInEnglish, "\n")
+			if isResourcePolicyInteresting(statementSummaryInEnglish) {
+				//magenta(statementSummaryInEnglish)
+				isInteresting = magenta("Yes")
 			}
 
+			dataReceiver <- Resource2{
+				AccountID:             aws.ToString(m.Caller.Account),
+				ARN:                   bucket.Arn,
+				ResourcePolicySummary: statementSummaryInEnglish,
+				Public:                bucket.IsPublic,
+				Region:                region,
+				Name:                  name,
+				Interesting:           isInteresting,
+			}
 		}
 	}
 }
@@ -389,7 +394,6 @@ func (m *ResourceTrustsModule) getSQSQueuesPerRegion(r string, wg *sync.WaitGrou
 	}()
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
-	var statementInEnglish string
 
 	cloudFoxSQSClient := InitSQSClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines)
 
@@ -400,6 +404,9 @@ func (m *ResourceTrustsModule) getSQSQueuesPerRegion(r string, wg *sync.WaitGrou
 	}
 
 	for _, q := range ListQueues {
+		var statementSummaryInEnglish string
+		var isInteresting string = "No"
+		var isPublic string = "No"
 		queue, err := cloudFoxSQSClient.getQueueWithAttributes(q, r)
 		if err != nil {
 			m.modLog.Error(err.Error())
@@ -407,50 +414,34 @@ func (m *ResourceTrustsModule) getSQSQueuesPerRegion(r string, wg *sync.WaitGrou
 			break
 		}
 		if queue.Policy.IsPublic() {
-			for _, statement := range queue.Policy.Statement {
-				statementInEnglish := statement.GetStatementSummaryInEnglish(*m.Caller.Account)
-				statementInEnglish = strings.TrimSuffix(statementInEnglish, "\n")
-				statementInEnglish = red(statementInEnglish)
+			isPublic = magenta("Yes")
+			isInteresting = magenta("Yes")
+		}
+
+		if !queue.Policy.IsEmpty() {
+			for i, statement := range queue.Policy.Statement {
+				prefix := ""
+				if len(queue.Policy.Statement) > 1 {
+					prefix = fmt.Sprintf("Statement %d says: ", i)
+					statementSummaryInEnglish = prefix + statement.GetStatementSummaryInEnglish(*m.Caller.Account) + "\n"
+				} else {
+					statementSummaryInEnglish = statement.GetStatementSummaryInEnglish(*m.Caller.Account)
+				}
+				statementSummaryInEnglish = strings.TrimSuffix(statementSummaryInEnglish, "\n")
+				if isResourcePolicyInteresting(statementSummaryInEnglish) {
+					//magenta(statementSummaryInEnglish)
+					isInteresting = magenta("Yes")
+				}
+
 				dataReceiver <- Resource2{
 					AccountID:             aws.ToString(m.Caller.Account),
 					ARN:                   aws.ToString(&queue.Arn),
-					ResourcePolicySummary: statementInEnglish,
-					Public:                red("True"),
+					ResourcePolicySummary: statementSummaryInEnglish,
+					Public:                isPublic,
+					Name:                  q,
+					Region:                r,
+					Interesting:           isInteresting,
 				}
-			}
-		} else {
-
-			if !queue.Policy.IsEmpty() {
-				for i, statement := range queue.Policy.Statement {
-					var prefix string = ""
-					if len(queue.Policy.Statement) > 1 {
-						prefix = fmt.Sprintf("Statement %d says: ", i)
-						statementInEnglish = prefix + statement.GetStatementSummaryInEnglish(*m.Caller.Account)
-					} else {
-						statementInEnglish = statement.GetStatementSummaryInEnglish(*m.Caller.Account)
-					}
-					// check if statementInEnglish contains an AWS ARN other than caller.Arn
-					if (strings.Contains(statementInEnglish, "arn:aws") && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
-						((strings.Contains(statementInEnglish, "AWS:SourceOwner") || strings.Contains(statementInEnglish, "AWS:SourceAccount")) && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
-						strings.Contains(statementInEnglish, "*") ||
-						strings.Contains(statementInEnglish, "Everyone") {
-						statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
-						statementInEnglish = red(statementInEnglish)
-						dataReceiver <- Resource2{
-							AccountID:             aws.ToString(m.Caller.Account),
-							ARN:                   aws.ToString(&queue.Arn),
-							ResourcePolicySummary: statementInEnglish,
-						}
-					} else {
-						statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
-						dataReceiver <- Resource2{
-							AccountID:             aws.ToString(m.Caller.Account),
-							ARN:                   aws.ToString(&queue.Arn),
-							ResourcePolicySummary: statementInEnglish,
-						}
-					}
-				}
-
 			}
 		}
 	}
@@ -475,6 +466,9 @@ func (m *ResourceTrustsModule) getECRRecordsPerRegion(r string, wg *sync.WaitGro
 	}
 
 	for _, repo := range DescribeRepositories {
+		var isPublic string
+		var statementSummaryInEnglish string
+		var isInteresting string = "No"
 		repoPolicy, err := cloudFoxECRClient.getECRRepositoryPolicy(r, aws.ToString(repo.RepositoryName))
 		if err != nil {
 			m.modLog.Error(err.Error())
@@ -482,46 +476,38 @@ func (m *ResourceTrustsModule) getECRRecordsPerRegion(r string, wg *sync.WaitGro
 			break
 		}
 		if repoPolicy.IsPublic() {
-			for _, statement := range repoPolicy.Statement {
-				statementInEnglish := statement.GetStatementSummaryInEnglish(*m.Caller.Account)
-				statementInEnglish = strings.TrimSuffix(statementInEnglish, "\n")
-				statementInEnglish = red(statementInEnglish)
+			isPublic = magenta("Yes")
+			isInteresting = magenta("Yes")
+		} else {
+			isPublic = "No"
+		}
+
+		if !repoPolicy.IsEmpty() {
+			for i, statement := range repoPolicy.Statement {
+				prefix := ""
+				if len(repoPolicy.Statement) > 1 {
+					prefix = fmt.Sprintf("Statement %d says: ", i)
+					statementSummaryInEnglish = prefix + statement.GetStatementSummaryInEnglish(*m.Caller.Account) + "\n"
+				} else {
+					statementSummaryInEnglish = statement.GetStatementSummaryInEnglish(*m.Caller.Account)
+				}
+				statementSummaryInEnglish = strings.TrimSuffix(statementSummaryInEnglish, "\n")
+				if isResourcePolicyInteresting(statementSummaryInEnglish) {
+					//magenta(statementSummaryInEnglish)
+					isInteresting = magenta("Yes")
+				}
+
 				dataReceiver <- Resource2{
 					AccountID:             aws.ToString(m.Caller.Account),
 					ARN:                   aws.ToString(repo.RepositoryArn),
-					ResourcePolicySummary: statementInEnglish,
-					Public:                red("True"),
-				}
-			}
-		} else {
-
-			if !repoPolicy.IsEmpty() {
-				for _, statement := range repoPolicy.Statement {
-					statementInEnglish := statement.GetStatementSummaryInEnglish(*m.Caller.Account)
-					// check if statementInEnglish contains an AWS ARN other than caller.Arn
-					if (strings.Contains(statementInEnglish, "arn:aws") && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
-						((strings.Contains(statementInEnglish, "AWS:SourceOwner") || strings.Contains(statementInEnglish, "AWS:SourceAccount")) && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
-						strings.Contains(statementInEnglish, "*") {
-						statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
-						statementInEnglish = red(statementInEnglish)
-						dataReceiver <- Resource2{
-							AccountID:             aws.ToString(m.Caller.Account),
-							ARN:                   aws.ToString(repo.RepositoryArn),
-							ResourcePolicySummary: statementInEnglish,
-						}
-					} else {
-						statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
-						dataReceiver <- Resource2{
-							AccountID:             aws.ToString(m.Caller.Account),
-							ARN:                   aws.ToString(repo.RepositoryArn),
-							ResourcePolicySummary: statementInEnglish,
-						}
-					}
-
+					ResourcePolicySummary: statementSummaryInEnglish,
+					Public:                isPublic,
+					Name:                  aws.ToString(repo.RepositoryName),
+					Region:                r,
+					Interesting:           isInteresting,
 				}
 			}
 		}
-
 	}
 }
 
@@ -535,8 +521,6 @@ func (m *ResourceTrustsModule) getCodeBuildResourcePoliciesPerRegion(r string, w
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	var projectPolicy policy.Policy
-
 	cloudFoxCodeBuildClient := InitCodeBuildClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines)
 
 	ListProjects, err := sdk.CachedCodeBuildListProjects(cloudFoxCodeBuildClient.CodeBuildClient, aws.ToString(cloudFoxCodeBuildClient.Caller.Account), r)
@@ -546,6 +530,10 @@ func (m *ResourceTrustsModule) getCodeBuildResourcePoliciesPerRegion(r string, w
 	}
 
 	for _, p := range ListProjects {
+		var projectPolicy policy.Policy
+		var statementSummaryInEnglish string
+		var isPublic string
+		var isInteresting string = "No"
 		project, err := sdk.CachedCodeBuildBatchGetProjects(cloudFoxCodeBuildClient.CodeBuildClient, aws.ToString(cloudFoxCodeBuildClient.Caller.Account), r, p)
 		if err != nil {
 			m.modLog.Error(err.Error())
@@ -562,45 +550,39 @@ func (m *ResourceTrustsModule) getCodeBuildResourcePoliciesPerRegion(r string, w
 		projectPolicy, err = policy.ParseJSONPolicy([]byte(policyJSON))
 
 		if projectPolicy.IsPublic() {
-			for _, statement := range projectPolicy.Statement {
-				statementInEnglish := statement.GetStatementSummaryInEnglish(*m.Caller.Account)
-				statementInEnglish = strings.TrimSuffix(statementInEnglish, "\n")
-				statementInEnglish = red(statementInEnglish)
+			isPublic = magenta("Yes")
+			isInteresting = magenta("Yes")
+
+		} else {
+			isPublic = "No"
+		}
+
+		if !projectPolicy.IsEmpty() {
+			for i, statement := range projectPolicy.Statement {
+				prefix := ""
+				if len(projectPolicy.Statement) > 1 {
+					prefix = fmt.Sprintf("Statement %d says: ", i)
+					statementSummaryInEnglish = prefix + statement.GetStatementSummaryInEnglish(*m.Caller.Account) + "\n"
+				} else {
+					statementSummaryInEnglish = statement.GetStatementSummaryInEnglish(*m.Caller.Account)
+				}
+				statementSummaryInEnglish = strings.TrimSuffix(statementSummaryInEnglish, "\n")
+				if isResourcePolicyInteresting(statementSummaryInEnglish) {
+					//magenta(statementSummaryInEnglish)
+					isInteresting = magenta("Yes")
+				}
+
 				dataReceiver <- Resource2{
 					AccountID:             aws.ToString(m.Caller.Account),
 					ARN:                   aws.ToString(project.Arn),
-					ResourcePolicySummary: statementInEnglish,
-					Public:                red("True"),
+					ResourcePolicySummary: statementSummaryInEnglish,
+					Public:                isPublic,
+					Name:                  aws.ToString(project.Name),
+					Region:                r,
+					Interesting:           isInteresting,
 				}
 			}
-		} else {
-			if !projectPolicy.IsEmpty() {
-				for _, statement := range projectPolicy.Statement {
-					statementInEnglish := statement.GetStatementSummaryInEnglish(*m.Caller.Account)
-					// check if statementInEnglish contains an AWS ARN other than caller.Arn
-					if (strings.Contains(statementInEnglish, "arn:aws") && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
-						((strings.Contains(statementInEnglish, "AWS:SourceOwner") || strings.Contains(statementInEnglish, "AWS:SourceAccount")) && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
-						strings.Contains(statementInEnglish, "*") {
-						statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
-						statementInEnglish = red(statementInEnglish)
-						dataReceiver <- Resource2{
-							AccountID:             aws.ToString(m.Caller.Account),
-							ARN:                   aws.ToString(project.Arn),
-							ResourcePolicySummary: statementInEnglish,
-						}
-					} else {
-						statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
-						dataReceiver <- Resource2{
-							AccountID:             aws.ToString(m.Caller.Account),
-							ARN:                   aws.ToString(project.Arn),
-							ResourcePolicySummary: statementInEnglish,
-						}
-					}
-				}
-			}
-
 		}
-
 	}
 }
 
@@ -623,6 +605,9 @@ func (m *ResourceTrustsModule) getLambdaPolicyPerRegion(r string, wg *sync.WaitG
 	}
 
 	for _, f := range ListFunctions {
+		var isPublic string
+		var statementSummaryInEnglish string
+		var isInteresting string = "No"
 		functionPolicy, err := cloudFoxLambdaClient.getResourcePolicy(r, aws.ToString(f.FunctionName))
 		if err != nil {
 			sharedLogger.Error(err.Error())
@@ -631,46 +616,39 @@ func (m *ResourceTrustsModule) getLambdaPolicyPerRegion(r string, wg *sync.WaitG
 		}
 
 		if functionPolicy.IsPublic() {
-			for _, statement := range functionPolicy.Statement {
-				statementInEnglish := statement.GetStatementSummaryInEnglish(*m.Caller.Account)
-				statementInEnglish = strings.TrimSuffix(statementInEnglish, "\n")
-				statementInEnglish = red(statementInEnglish)
+			isPublic = magenta("Yes")
+			isInteresting = magenta("Yes")
+
+		} else {
+			isPublic = "No"
+		}
+
+		if !functionPolicy.IsEmpty() {
+			for i, statement := range functionPolicy.Statement {
+				prefix := ""
+				if len(functionPolicy.Statement) > 1 {
+					prefix = fmt.Sprintf("Statement %d says: ", i)
+					statementSummaryInEnglish = prefix + statement.GetStatementSummaryInEnglish(*m.Caller.Account) + "\n"
+				} else {
+					statementSummaryInEnglish = statement.GetStatementSummaryInEnglish(*m.Caller.Account)
+				}
+				statementSummaryInEnglish = strings.TrimSuffix(statementSummaryInEnglish, "\n")
+				if isResourcePolicyInteresting(statementSummaryInEnglish) {
+					//magenta(statementSummaryInEnglish)
+					isInteresting = magenta("Yes")
+				}
+
 				dataReceiver <- Resource2{
 					AccountID:             aws.ToString(m.Caller.Account),
 					ARN:                   aws.ToString(f.FunctionArn),
-					ResourcePolicySummary: statementInEnglish,
-					Public:                red("True"),
+					ResourcePolicySummary: statementSummaryInEnglish,
+					Public:                isPublic,
+					Name:                  aws.ToString(f.FunctionName),
+					Region:                r,
+					Interesting:           isInteresting,
 				}
 			}
-		} else {
-
-			if !functionPolicy.IsEmpty() {
-				for _, statement := range functionPolicy.Statement {
-					statementInEnglish := statement.GetStatementSummaryInEnglish(*m.Caller.Account)
-					// check if statementInEnglish contains an AWS ARN other than caller.Arn
-					if (strings.Contains(statementInEnglish, "arn:aws") && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
-						((strings.Contains(statementInEnglish, "AWS:SourceOwner") || strings.Contains(statementInEnglish, "AWS:SourceAccount")) && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
-						strings.Contains(statementInEnglish, "*") {
-						statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
-						statementInEnglish = red(statementInEnglish)
-						dataReceiver <- Resource2{
-							AccountID:             aws.ToString(m.Caller.Account),
-							ARN:                   aws.ToString(f.FunctionArn),
-							ResourcePolicySummary: statementInEnglish,
-						}
-					} else {
-						statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
-						dataReceiver <- Resource2{
-							AccountID:             aws.ToString(m.Caller.Account),
-							ARN:                   aws.ToString(f.FunctionArn),
-							ResourcePolicySummary: statementInEnglish,
-						}
-					}
-				}
-			}
-
 		}
-
 	}
 }
 
@@ -693,6 +671,9 @@ func (m *ResourceTrustsModule) getEFSfilesystemPoliciesPerRegion(r string, wg *s
 	}
 
 	for _, fs := range ListFileSystems {
+		var isPublic string
+		var statementSummaryInEnglish string
+		var isInteresting string = "No"
 		fsPolicy, err := sdk.CachedDescribeFileSystemPolicy(cloudFoxEFSClient.EFSClient, aws.ToString(fs.FileSystemId), r, aws.ToString(m.Caller.Account))
 		if err != nil {
 			sharedLogger.Error(err.Error())
@@ -701,45 +682,58 @@ func (m *ResourceTrustsModule) getEFSfilesystemPoliciesPerRegion(r string, wg *s
 		}
 
 		if fsPolicy.IsPublic() {
-			for _, statement := range fsPolicy.Statement {
-				statementInEnglish := statement.GetStatementSummaryInEnglish(*m.Caller.Account)
-				statementInEnglish = strings.TrimSuffix(statementInEnglish, "\n")
-				statementInEnglish = red(statementInEnglish)
+			isPublic = magenta("Yes")
+			isInteresting = magenta("Yes")
+
+		} else {
+			isPublic = "No"
+		}
+
+		if !fsPolicy.IsEmpty() {
+			for i, statement := range fsPolicy.Statement {
+				prefix := ""
+				if len(fsPolicy.Statement) > 1 {
+					prefix = fmt.Sprintf("Statement %d says: ", i)
+					statementSummaryInEnglish = prefix + statement.GetStatementSummaryInEnglish(*m.Caller.Account) + "\n"
+				} else {
+					statementSummaryInEnglish = statement.GetStatementSummaryInEnglish(*m.Caller.Account)
+				}
+				statementSummaryInEnglish = strings.TrimSuffix(statementSummaryInEnglish, "\n")
+				if isResourcePolicyInteresting(statementSummaryInEnglish) {
+					//magenta(statementSummaryInEnglish)
+					isInteresting = magenta("Yes")
+				}
+
 				dataReceiver <- Resource2{
 					AccountID:             aws.ToString(m.Caller.Account),
 					ARN:                   aws.ToString(fs.FileSystemArn),
-					ResourcePolicySummary: statementInEnglish,
-					Public:                red("True"),
+					ResourcePolicySummary: statementSummaryInEnglish,
+					Public:                isPublic,
+					Name:                  aws.ToString(fs.Name),
+					Region:                r,
+					Interesting:           isInteresting,
 				}
 			}
-		} else {
-
-			if !fsPolicy.IsEmpty() {
-				for _, statement := range fsPolicy.Statement {
-					statementInEnglish := statement.GetStatementSummaryInEnglish(*m.Caller.Account)
-					// check if statementInEnglish contains an AWS ARN other than caller.Arn
-					if (strings.Contains(statementInEnglish, "arn:aws") && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
-						((strings.Contains(statementInEnglish, "AWS:SourceOwner") || strings.Contains(statementInEnglish, "AWS:SourceAccount")) && !strings.Contains(statementInEnglish, aws.ToString(m.Caller.Account))) ||
-						strings.Contains(statementInEnglish, "*") {
-						statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
-						statementInEnglish = red(statementInEnglish)
-						dataReceiver <- Resource2{
-							AccountID:             aws.ToString(m.Caller.Account),
-							ARN:                   aws.ToString(fs.FileSystemArn),
-							ResourcePolicySummary: statementInEnglish,
-						}
-					} else {
-						statementInEnglish := strings.TrimSuffix(statementInEnglish, "\n")
-						dataReceiver <- Resource2{
-							AccountID:             aws.ToString(m.Caller.Account),
-							ARN:                   aws.ToString(fs.FileSystemArn),
-							ResourcePolicySummary: statementInEnglish,
-						}
-					}
-				}
-			}
-
 		}
-
 	}
+}
+
+func isResourcePolicyInteresting(statementSummaryInEnglish string) bool {
+	// check if the statement has any of the following items, but make sure the check is case insensitive
+	// if it does, then return true
+	// if it doesn't, then return false
+
+	if //(strings.Contains(strings.ToLower(statementSummaryInEnglish), "*") && !strings.Contains(strings.ToLower(statementSummaryInEnglish), "denied")) ||
+	(strings.Contains(strings.ToLower(statementSummaryInEnglish), strings.ToLower("Everyone")) && !strings.Contains(strings.ToLower(statementSummaryInEnglish), "denied")) ||
+		strings.Contains(strings.ToLower(statementSummaryInEnglish), strings.ToLower("aws:PrincipalOrgID")) ||
+		strings.Contains(strings.ToLower(statementSummaryInEnglish), strings.ToLower("aws:PrincipalAccount")) ||
+		strings.Contains(strings.ToLower(statementSummaryInEnglish), strings.ToLower("aws:PrincipalOrgPaths")) ||
+		strings.Contains(strings.ToLower(statementSummaryInEnglish), strings.ToLower("role")) ||
+		strings.Contains(strings.ToLower(statementSummaryInEnglish), strings.ToLower("root")) ||
+		(strings.Contains(strings.ToLower(statementSummaryInEnglish), strings.ToLower("aws:arn")) && !strings.Contains(strings.ToLower(statementSummaryInEnglish), strings.ToLower("SourceArn"))) ||
+		(strings.Contains(strings.ToLower(statementSummaryInEnglish), strings.ToLower("aws:arn")) && !strings.Contains(strings.ToLower(statementSummaryInEnglish), strings.ToLower("SourceAccount"))) {
+
+		return true
+	}
+	return false
 }

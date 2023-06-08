@@ -333,7 +333,7 @@ func (m *ECRModule) getECRRepositoryPolicy(r string, repository string) (policy.
 		m.CommandCounter.Error++
 		return repoPolicy, err
 	}
-	repoPolicy, err = policy.ParseJSONPolicy([]byte(aws.ToString(Policy)))
+	repoPolicy, err = policy.ParseJSONPolicy([]byte(Policy))
 	if err != nil {
 		return repoPolicy, fmt.Errorf("parsing policy (%s) as JSON: %s", repository, err)
 	}

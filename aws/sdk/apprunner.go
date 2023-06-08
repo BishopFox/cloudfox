@@ -17,6 +17,7 @@ type AppRunnerClientInterface interface {
 
 func RegisterApprunnerTypes() {
 	gob.Register([]apprunnerTypes.Service{})
+	gob.Register([]apprunnerTypes.ServiceSummary{})
 }
 
 func CachedAppRunnerListServices(client AppRunnerClientInterface, accountID string, region string) ([]apprunnerTypes.ServiceSummary, error) {

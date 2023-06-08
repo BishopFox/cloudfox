@@ -54,14 +54,34 @@ func (ps *PolicyStatement) GetAllActionsAsString() string {
 
 func (ps *PolicyStatement) GetAllPrincipalsAsString() string {
 	principals := ""
+	// if len(ps.Principal.O.GetListOfPrincipals()) < 3 {
+	// 	for _, principal := range ps.Principal.O.GetListOfPrincipals() {
+	// 		principals = fmt.Sprintf("%s%s & ", principals, principal)
+	// 	}
+	// } else {
+	// 	principals = fmt.Sprintf("%s%d principals", principals, len(ps.Principal.O.GetListOfPrincipals()))
+	// }
+	// principals = strings.TrimSuffix(principals, " & ")
+	// principals = principals + "\n"
+
+	// return principals
+
 	for _, principal := range ps.Principal.O.GetListOfPrincipals() {
-		principals = fmt.Sprintf("%s%s & ", principals, principal)
+		if len(ps.Principal.O.GetListOfPrincipals()) > 1 {
+			principals = fmt.Sprintf("%s%s \n& ", principals, principal)
+		} else {
+			principals = fmt.Sprintf("%s%s", principals, principal)
+		}
 	}
+
 	if principals == "" && ps.Principal.S == "*" {
 		principals = "Everyone"
 
 	}
-	return strings.TrimSuffix(principals, " & ")
+	// replace " &\n--" in principals with just a newline
+	principals = strings.TrimSuffix(principals, " \n& ")
+	principals = principals + "\n"
+	return principals
 }
 
 func (ps *PolicyStatement) GetConditionsInEnglish(caller string) string {
@@ -78,10 +98,12 @@ func (ps *PolicyStatement) GetConditionsInEnglish(caller string) string {
 				if (k == "AWS:SourceOwner" || k == "AWS:SourceAccount") && contains(v, caller) {
 					conditionText = "Default resource policy: Not exploitable"
 				} else {
-					conditionText = fmt.Sprintf("->   Only when %s %s %s", k, condition, arn)
+					conditionText = fmt.Sprintf("->   Only when %s %s %s\n", k, condition, arn)
 				}
 
 				conditionTextAll = fmt.Sprintf("%s%s", conditionTextAll, conditionText)
+				// trim the last newline character
+				//conditionTextAll = strings.TrimSuffix(conditionTextAll, "\n")
 
 			}
 		}
@@ -97,14 +119,17 @@ func (ps *PolicyStatement) GetStatementSummaryInEnglish(caller string) string {
 	principals := ps.GetAllPrincipalsAsString()
 	conditions := ps.GetConditionsInEnglish(caller)
 
-	if conditions == "Default resource policy: Not exploitable\n" {
+	if conditions == "Default resource policy: Not exploitable" {
 		statementSummary = "Default resource policy: Not exploitable\n" + "\n"
-	} else if conditions != "\n" && conditions != "" {
+	} else if conditions != "\n" {
 		statementSummary = fmt.Sprintf("%s %s %s", strings.TrimSuffix(principals, "\n"), actions, conditions)
 
 	} else {
 		statementSummary = fmt.Sprintf("%s %s\n", strings.TrimSuffix(principals, "\n"), actions)
 
 	}
+	// trim the last newline character
+	//statementSummary = strings.TrimSuffix(statementSummary, "\n")
+
 	return statementSummary
 }

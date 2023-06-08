@@ -15,6 +15,10 @@ import (
 
 var cyan = color.New(color.FgCyan).SprintFunc()
 var red = color.New(color.FgRed).SprintFunc()
+var yellow = color.New(color.FgRed).SprintFunc()
+var blue = color.New(color.FgBlue).SprintFunc()
+var magenta = color.New(color.FgMagenta).SprintFunc()
+
 var green = color.New(color.FgGreen).SprintFunc()
 
 var sharedLogger = internal.TxtLogger()

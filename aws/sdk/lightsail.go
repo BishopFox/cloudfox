@@ -25,11 +25,13 @@ func RegisterLightsailTypes() {
 func CachedLightsailGetInstances(client lightsailClientInterface, accountID string, region string) ([]lightsailTypes.Instance, error) {
 	var PaginationControl *string
 	var services []lightsailTypes.Instance
-	cacheKey := fmt.Sprintf("%s-lightsail-GetInstances-%s", accountID, region)
-	cached, found := internal.Cache.Get(cacheKey)
-	if found {
-		return cached.([]lightsailTypes.Instance), nil
-	}
+
+	// TODO: When caching is enabled, this []lightsailTypes.Instance type clashes with the EC instance type when it comes to gob.Register. need to figure out how to register both types
+	// cacheKey := fmt.Sprintf("%s-lightsail-GetInstances-%s", accountID, region)
+	// cached, found := internal.Cache.Get(cacheKey)
+	// if found {
+	// 	return cached.([]lightsailTypes.Instance), nil
+	// }
 	for {
 		GetInstances, err := client.GetInstances(
 			context.TODO(),
@@ -54,7 +56,8 @@ func CachedLightsailGetInstances(client lightsailClientInterface, accountID stri
 		PaginationControl = GetInstances.NextPageToken
 	}
 
-	internal.Cache.Set(cacheKey, services, cache.DefaultExpiration)
+	// TODO: When caching is enabled, this []lightsailTypes.Instance type clashes with the EC instance type when it comes to gob.Register. need to figure out how to register both types
+	//internal.Cache.Set(cacheKey, services, cache.DefaultExpiration)
 	return services, nil
 }
 

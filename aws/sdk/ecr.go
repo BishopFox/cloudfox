@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/gob"
 	"fmt"
+	"strings"
 
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	ecrTypes "github.com/aws/aws-sdk-go-v2/service/ecr/types"
 	"github.com/patrickmn/go-cache"
@@ -67,7 +69,7 @@ func CachedECRDescribeRepositories(ECRClient AWSECRClientInterface, accountID st
 func CachedECRDescribeImages(ECRClient AWSECRClientInterface, accountID string, region string, repositoryName string) ([]ecrTypes.ImageDetail, error) {
 	var PaginationControl *string
 	var images []ecrTypes.ImageDetail
-	cacheKey := fmt.Sprintf("%s-efs-DescribImages-%s-%s", accountID, region, repositoryName)
+	cacheKey := fmt.Sprintf("%s-efs-DescribImages-%s-%s", accountID, region, strings.ReplaceAll(repositoryName, "/", "-"))
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
 		sharedLogger.Debug("Using cached Images data")
@@ -105,12 +107,13 @@ func CachedECRDescribeImages(ECRClient AWSECRClientInterface, accountID string, 
 }
 
 // create a CachedECRGetRepositoryPolicy function that uses go-cache line the other Cached* functions. It should accept a ecr client, account id, and region. Make sure it handles the region option and pagination if needed
-func CachedECRGetRepositoryPolicy(ECRClient AWSECRClientInterface, accountID string, region string, repositoryName string) (*string, error) {
-	cacheKey := fmt.Sprintf("%s-ecr-GetRepositoryPolicy-%s-%s", accountID, region, repositoryName)
+func CachedECRGetRepositoryPolicy(ECRClient AWSECRClientInterface, accountID string, region string, repositoryName string) (string, error) {
+	// in repositoryName, replace "/" with "-"
+	cacheKey := fmt.Sprintf("%s-ecr-GetRepositoryPolicy-%s-%s", accountID, region, strings.ReplaceAll(repositoryName, "/", "-"))
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
 		sharedLogger.Debug("Using cached ECR repository policy data")
-		return cached.(*string), nil
+		return cached.(string), nil
 	}
 
 	GetRepositoryPolicy, err := ECRClient.GetRepositoryPolicy(
@@ -124,9 +127,10 @@ func CachedECRGetRepositoryPolicy(ECRClient AWSECRClientInterface, accountID str
 	)
 	if err != nil {
 		sharedLogger.Error(err.Error())
-		return nil, err
+		return "", err
 	}
+	PolicyText := aws.ToString(GetRepositoryPolicy.PolicyText)
 
-	internal.Cache.Set(cacheKey, GetRepositoryPolicy.PolicyText, cache.DefaultExpiration)
-	return GetRepositoryPolicy.PolicyText, nil
+	internal.Cache.Set(cacheKey, PolicyText, cache.DefaultExpiration)
+	return PolicyText, nil
 }

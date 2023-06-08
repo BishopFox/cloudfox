@@ -70,6 +70,7 @@ var (
 	AWSOutputDirectory string
 	AWSSkipAdminCheck  bool
 	AWSWrapTable       bool
+	AWSIgnoreCache     bool
 	Goroutines         int
 	Verbosity          int
 	AWSCommands        = &cobra.Command{
@@ -477,18 +478,21 @@ func awsPreRun(cmd *cobra.Command, args []string) {
 				continue
 			}
 			fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
-			// cacheDirectory := filepath.Join(AWSOutputDirectory, "cached-data", "aws", ptr.ToString(caller.Account))
-			// err = internal.LoadCacheFromGobFiles(cacheDirectory)
-			// if err != nil {
-			// 	if err == internal.ErrDirectoryDoesNotExist {
-			// 		fmt.Printf("[%s] No cache directory for %s. Skipping loading cached data.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), ptr.ToString(caller.Account))
-			// 	} else {
-			// 		fmt.Printf("[%s] No cache data for %s. Error: %v\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), ptr.ToString(caller.Account), err)
-			// 		// Possibly return/exit here, depending on your requirements.
-			// 	}
-			// } else {
-			// 	fmt.Printf("[%s] Loaded cached AWS data for to %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), ptr.ToString(caller.Account))
-			// }
+
+			if !AWSIgnoreCache {
+				cacheDirectory := filepath.Join(AWSOutputDirectory, "cached-data", "aws", ptr.ToString(caller.Account))
+				err = internal.LoadCacheFromGobFiles(cacheDirectory)
+				if err != nil {
+					if err == internal.ErrDirectoryDoesNotExist {
+						fmt.Printf("[%s] No cache directory for %s. Skipping loading cached data.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), ptr.ToString(caller.Account))
+					} else {
+						fmt.Printf("[%s] No cache data for %s. Error: %v\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), ptr.ToString(caller.Account), err)
+						// Possibly return/exit here, depending on your requirements.
+					}
+				} else {
+					fmt.Printf("[%s] Loaded cached AWS data for to %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), ptr.ToString(caller.Account))
+				}
+			}
 
 			orgModuleClient := aws.InitOrgClient(*caller, profile, cmd.Root().Version, Goroutines)
 			isPartOfOrg := orgModuleClient.IsCallerAccountPartOfAnOrg()
@@ -531,17 +535,19 @@ func FindOrgMgmtAccountAndReorderAccounts(AWSProfiles []string, version string) 
 			continue
 		}
 		fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), *caller.Arn)
-		cacheDirectory := filepath.Join(AWSOutputDirectory, "cached-data", "aws", ptr.ToString(caller.Account))
-		err = internal.LoadCacheFromGobFiles(cacheDirectory)
-		if err != nil {
-			if err == internal.ErrDirectoryDoesNotExist {
-				fmt.Printf("[%s] No cache directory for %s. Skipping loading cached data.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), ptr.ToString(caller.Account))
+		if !AWSIgnoreCache {
+			cacheDirectory := filepath.Join(AWSOutputDirectory, "cached-data", "aws", ptr.ToString(caller.Account))
+			err = internal.LoadCacheFromGobFiles(cacheDirectory)
+			if err != nil {
+				if err == internal.ErrDirectoryDoesNotExist {
+					fmt.Printf("[%s] No cache directory for %s. Skipping loading cached data.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), ptr.ToString(caller.Account))
+				} else {
+					fmt.Printf("[%s] No cache data for %s. Error: %v\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), ptr.ToString(caller.Account), err)
+					// Possibly return/exit here, depending on your requirements.
+				}
 			} else {
-				fmt.Printf("[%s] No cache data for %s. Error: %v\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), ptr.ToString(caller.Account), err)
-				// Possibly return/exit here, depending on your requirements.
+				fmt.Printf("[%s] Loaded cached AWS data for to %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), ptr.ToString(caller.Account))
 			}
-		} else {
-			fmt.Printf("[%s] Loaded cached AWS data for to %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), ptr.ToString(caller.Account))
 		}
 		orgModuleClient := aws.InitOrgClient(*caller, profile, version, Goroutines)
 		orgModuleClient.DescribeOrgOutput, err = sdk.CachedOrganizationsDescribeOrganization(orgModuleClient.OrganizationsClient, ptr.ToString(caller.Account))
@@ -1713,6 +1719,7 @@ func init() {
 	AWSCommands.PersistentFlags().IntVarP(&Goroutines, "max-goroutines", "g", 30, "Maximum number of concurrent goroutines")
 	AWSCommands.PersistentFlags().BoolVar(&AWSSkipAdminCheck, "skip-admin-check", false, "Skip check to determine if role is an Admin")
 	AWSCommands.PersistentFlags().BoolVarP(&AWSWrapTable, "wrap", "w", false, "Wrap table to fit in terminal (complicates grepping)")
+	AWSCommands.PersistentFlags().BoolVar(&AWSIgnoreCache, "ignore-cache", false, "Disable loading of cached data. Slower, but important if changes have been recently made")
 
 	AWSCommands.AddCommand(
 		AllChecksCommand,
