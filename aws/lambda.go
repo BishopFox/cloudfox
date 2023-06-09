@@ -127,7 +127,6 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 		m.output.Headers = []string{
 			"Service",
 			"Region",
-			//"Type",
 			"Resource",
 			"Role",
 			"IsAdminRole?",
@@ -137,7 +136,7 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 		m.output.Headers = []string{
 			"Service",
 			"Region",
-			"Resource Arn",
+			"Resource",
 			"Role",
 			"IsAdminRole?",
 		}
