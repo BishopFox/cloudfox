@@ -12,7 +12,6 @@ import (
 	"github.com/aquasecurity/table"
 	"github.com/fatih/color"
 	"github.com/spf13/afero"
-	"golang.org/x/crypto/ssh/terminal"
 )
 
 // Used for file system mocking with Afero library. Set:
@@ -183,19 +182,22 @@ func (b *TableClient) printTablesToScreen(tableFiles []TableFile) {
 		standardColumnWidth := 1000
 		t := table.New(os.Stdout)
 
-		if b.Wrap {
-			terminalWidth, _, err := terminal.GetSize(int(os.Stdout.Fd()))
-			if err != nil {
-				fmt.Printf("error getting terminal size: %s, please set the --wrap flag to false\n", err)
-				return
-			}
-			columnCount := len(tf.Header)
-			// The offset value was defined by trial and error to get the best wrapping
-			trialAndErrorOffset := 1
-			standardColumnWidth = terminalWidth / (columnCount + trialAndErrorOffset)
+		// if b.Wrap {
+		// 	terminalWidth, _, err := terminal.GetSize(int(os.Stdout.Fd()))
+		// 	if err != nil {
+		// 		fmt.Printf("error getting terminal size: %s, please set the --wrap flag to false\n", err)
+		// 		return
+		// 	}
+		// 	columnCount := len(tf.Header)
+		// 	// The offset value was defined by trial and error to get the best wrapping
+		// 	trialAndErrorOffset := 1
+		// 	standardColumnWidth = terminalWidth / (columnCount + trialAndErrorOffset)
+		// }
+		if !b.Wrap {
+			t.SetColumnMaxWidth(standardColumnWidth)
 		}
 
-		t.SetColumnMaxWidth(standardColumnWidth)
+		//t.SetColumnMaxWidth(standardColumnWidth)
 		t.SetHeaders(tf.Header...)
 		t.AddRows(tf.Body...)
 		t.SetHeaderStyle(table.StyleBold)
@@ -243,7 +245,13 @@ func (b *TableClient) writeTableFiles(files []TableFile) []string {
 	var fullFilePaths []string
 
 	for _, file := range b.TableFiles {
+		standardColumnWidth := 1000
 		t := table.New(file.TableFilePointer)
+
+		if !b.Wrap {
+			t.SetColumnMaxWidth(standardColumnWidth)
+		}
+
 		t.SetHeaders(file.Header...)
 		file.Body = removeColorCodesFromNestedSlice(file.Body)
 		t.AddRows(file.Body...)
