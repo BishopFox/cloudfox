@@ -60,13 +60,9 @@ func TestSQSQueues(t *testing.T) {
 │                        Arn                         │ Public? │                         Resource Policy Summary                         │
 ├────────────────────────────────────────────────────┼─────────┼─────────────────────────────────────────────────────────────────────────┤
 │ arn:aws:sqs:us-east-1:123456789012:condition-queue │ YES     │ Statement 0 says: s3.amazonaws.com can SQS:SendMessage                  │
-│                                                    │         │                                                                         │
 │                                                    │         │ Statement 1 says: arn:aws:iam::123456789012:root can SQS:*              │
-│                                                    │         │                                                                         │
 │                                                    │         │ Statement 2 says: Everyone can SQS:SendMessage & can SQS:ReceiveMessage │
-│                                                    │         │                                                                         │
 │ arn:aws:sqs:us-east-1:123456789012:policy-queue    │ YES     │ * can sqs:*                                                             │
-│                                                    │         │                                                                         │
 │ arn:aws:sqs:us-east-1:123456789012:no-policy-queue │ No      │                                                                         │
 ╰────────────────────────────────────────────────────┴─────────┴─────────────────────────────────────────────────────────────────────────╯
 `, "\n")
