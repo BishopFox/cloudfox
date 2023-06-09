@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/apprunner"
@@ -139,10 +140,25 @@ func (m *EnvsModule) PrintEnvs(outputFormat string, outputDirectory string, verb
 	}
 	if len(m.output.Body) > 0 {
 
-		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
+		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+		o := internal.OutputClient{
+			Verbosity:     verbosity,
+			CallingModule: m.output.CallingModule,
+			Table: internal.TableClient{
+				Wrap: m.WrapTable,
+			},
+		}
+		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
+			Header: m.output.Headers,
+			Body:   m.output.Body,
+			Name:   m.output.CallingModule,
+		})
+		o.PrefixIdentifier = m.AWSProfile
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		o.WriteFullOutput(o.Table.TableFiles, nil)
 		fmt.Printf("[%s][%s] %s environment variables found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {
@@ -328,38 +344,18 @@ func (m *EnvsModule) getLambdaEnvironmentVariablesPerRegion(region string, wg *s
 	// m.CommandCounter.Total++
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
-	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationMarker *string
 
-	// This for loop exits at the end dependeding on whether the output hits its last page (see pagination control block at the end of the loop).
-	for {
-		functions, err := m.LambdaClient.ListFunctions(
-			context.TODO(),
-			&lambda.ListFunctionsInput{
-				Marker: PaginationMarker,
-			},
-			func(o *lambda.Options) {
-				o.Region = region
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
-
-		for _, function := range functions.Functions {
-			m.getLambdaEnvironmentVariablesPerFunction(function, region, dataReceiver)
-		}
-
-		// Pagination control. After the last page of output, the for loop exits.
-		if functions.NextMarker != nil {
-			PaginationMarker = functions.NextMarker
-		} else {
-			PaginationMarker = nil
-			break
-		}
+	Functions, err := sdk.CachedLambdaListFunctions(m.LambdaClient, aws.ToString(m.Caller.Account), region)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
 	}
+
+	for _, function := range Functions {
+		m.getLambdaEnvironmentVariablesPerFunction(function, region, dataReceiver)
+	}
+
 }
 
 func (m *EnvsModule) getLambdaEnvironmentVariablesPerFunction(function lambdaTypes.FunctionConfiguration, region string, dataReceiver chan EnvironmentVariable) {
@@ -390,69 +386,51 @@ func (m *EnvsModule) getAppRunnerEnvironmentVariablesPerRegion(r string, wg *syn
 	// m.CommandCounter.Total++
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
-	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
 
-	for {
-		ListServices, err := m.AppRunnerClient.ListServices(
-			context.TODO(),
-			&(apprunner.ListServicesInput{
-				NextToken: PaginationControl,
-			}),
-			func(o *apprunner.Options) {
-				o.Region = r
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
-		if len(ListServices.ServiceSummaryList) > 0 {
+	ServiceSummaryList, err := sdk.CachedAppRunnerListServices(m.AppRunnerClient, aws.ToString(m.Caller.Account), r)
 
-			for _, service := range ListServices.ServiceSummaryList {
-				name := aws.ToString(service.ServiceName)
-				arn := aws.ToString(service.ServiceArn)
-				awsService := "App Runner"
+	if err != nil {
+		//modLog.Error(err.Error())
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+	if len(ServiceSummaryList) > 0 {
 
-				DescribeService, err := m.AppRunnerClient.DescribeService(
-					context.TODO(),
-					&apprunner.DescribeServiceInput{
-						ServiceArn: &arn,
-					},
-					func(o *apprunner.Options) {
-						o.Region = r
-					},
-				)
-				if err != nil {
-					m.modLog.Error(err.Error())
-					m.CommandCounter.Error++
-					break
+		for _, service := range ServiceSummaryList {
+			name := aws.ToString(service.ServiceName)
+			arn := aws.ToString(service.ServiceArn)
+			awsService := "App Runner"
 
-				}
-
-				if len(DescribeService.Service.SourceConfiguration.ImageRepository.ImageConfiguration.RuntimeEnvironmentVariables) > 0 {
-					for k, v := range DescribeService.Service.SourceConfiguration.ImageRepository.ImageConfiguration.RuntimeEnvironmentVariables {
-						//fmt.Printf("%s - %s", k, v)
-						dataReceiver <- EnvironmentVariable{
-							service:             awsService,
-							name:                name,
-							region:              r,
-							environmentVarName:  k,
-							environmentVarValue: v,
-						}
-					}
-				}
+			DescribeService, err := m.AppRunnerClient.DescribeService(
+				context.TODO(),
+				&apprunner.DescribeServiceInput{
+					ServiceArn: &arn,
+				},
+				func(o *apprunner.Options) {
+					o.Region = r
+				},
+			)
+			if err != nil {
+				m.modLog.Error(err.Error())
+				m.CommandCounter.Error++
+				break
 
 			}
-		}
 
-		// The "NextToken" value is nil when there's no more data to return.
-		if ListServices.NextToken != nil {
-			PaginationControl = ListServices.NextToken
-		} else {
-			PaginationControl = nil
-			break
+			if len(DescribeService.Service.SourceConfiguration.ImageRepository.ImageConfiguration.RuntimeEnvironmentVariables) > 0 {
+				for k, v := range DescribeService.Service.SourceConfiguration.ImageRepository.ImageConfiguration.RuntimeEnvironmentVariables {
+					//fmt.Printf("%s - %s", k, v)
+					dataReceiver <- EnvironmentVariable{
+						service:             awsService,
+						name:                name,
+						region:              r,
+						environmentVarName:  k,
+						environmentVarValue: v,
+					}
+				}
+			}
+
 		}
 	}
 }
@@ -473,13 +451,7 @@ func (m *EnvsModule) getLightsailEnvironmentVariablesPerRegion(r string, wg *syn
 	m.CommandCounter.Executing++
 	awsService := "Lightsail [Container]"
 
-	GetContainerServices, err := m.LightsailClient.GetContainerServices(
-		context.TODO(),
-		&(lightsail.GetContainerServicesInput{}),
-		func(o *lightsail.Options) {
-			o.Region = r
-		},
-	)
+	ContainerServices, err := sdk.CachedLightsailGetContainerServices(m.LightsailClient, aws.ToString(m.Caller.Account), r)
 
 	if err != nil {
 		m.modLog.Error(err.Error())
@@ -489,9 +461,9 @@ func (m *EnvsModule) getLightsailEnvironmentVariablesPerRegion(r string, wg *syn
 
 	if err == nil {
 
-		if len(GetContainerServices.ContainerServices) > 0 {
+		if len(ContainerServices) > 0 {
 
-			for _, containerService := range GetContainerServices.ContainerServices {
+			for _, containerService := range ContainerServices {
 				for _, container := range containerService.CurrentDeployment.Containers {
 					for k, v := range container.Environment {
 						name := aws.ToString(containerService.ContainerServiceName)

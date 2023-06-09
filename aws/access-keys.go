@@ -1,22 +1,21 @@
 package aws
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 
+	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/sirupsen/logrus"
 )
 
 type AccessKeysModule struct {
 	// General configuration data
-	IAMClient      *iam.Client
+	IAMClient      sdk.AWSIAMClientInterface
 	Caller         sts.GetCallerIdentityOutput
 	AWSProfile     string
 	OutputFormat   string
@@ -79,12 +78,27 @@ func (m *AccessKeysModule) PrintAccessKeys(filter string, outputFormat string, o
 		fmt.Printf("[%s][%s] Only active access keys are shown.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 		//fmt.Printf("[%s][%s] Preparing output.\n\n")
 
-		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
+		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-
-		m.writeLoot(m.output.FilePath, verbosity)
+		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+		o := internal.OutputClient{
+			Verbosity:     verbosity,
+			CallingModule: m.output.CallingModule,
+			Table: internal.TableClient{
+				Wrap: m.WrapTable,
+			},
+		}
+		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
+			Header: m.output.Headers,
+			Body:   m.output.Body,
+			Name:   m.output.CallingModule,
+		})
+		o.PrefixIdentifier = m.AWSProfile
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		o.WriteFullOutput(o.Table.TableFiles, nil)
+		m.writeLoot(o.Table.DirectoryName, verbosity)
+		//m.writeLoot(m.output.FilePath, verbosity)
 		fmt.Printf("[%s][%s] %s access keys found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 	} else {
 		fmt.Printf("[%s][%s] No  access keys found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
@@ -116,50 +130,30 @@ func (m *AccessKeysModule) writeLoot(outputDirectory string, verbosity int) {
 
 func (m *AccessKeysModule) getAccessKeysForAllUsers() {
 
-	// The "PaginationControl" value remains true until all data is received (default is 100 results per page).
-	// "" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationMarker *string
-	PaginationControl := true
+	ListUsers, err := sdk.CachedIamListUsers(m.IAMClient, aws.ToString(m.Caller.Account))
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+	}
 
-	for PaginationControl {
+	// added this to break out if there no users
+	if len(ListUsers) != 0 {
+		for _, user := range ListUsers {
 
-		IAMQuery, err := m.IAMClient.ListUsers(context.TODO(), &iam.ListUsersInput{Marker: PaginationMarker})
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
+			results, err := sdk.CachedIamListAccessKeys(m.IAMClient, aws.ToString(m.Caller.Account), aws.ToString(user.UserName))
+			if err != nil {
+				m.modLog.Error(err.Error())
+				m.CommandCounter.Error++
+				break
+			}
 
-		// added this to break out if there no users
-		if len(IAMQuery.Users) == 0 {
-			break
-		}
+			// This for loop extracts relevant information for each access key and adds to output array
+			for _, key := range results {
 
-		// This for loop iterates through all users.
-		for PaginationControl {
-			PaginationMarker = nil
-			for _, user := range IAMQuery.Users {
-
-				results, err := m.IAMClient.ListAccessKeys(context.TODO(), &iam.ListAccessKeysInput{UserName: user.UserName, Marker: PaginationMarker})
-				if err != nil {
-					m.modLog.Error(err.Error())
-					m.CommandCounter.Error++
-					break
+				if key.Status == "Active" {
+					m.AnalyzedUsers = append(m.AnalyzedUsers, UserKeys{Username: *user.UserName, Key: *key.AccessKeyId})
 				}
-
-				// This for loop extracts relevant information for each access key and adds to output array
-				for _, key := range results.AccessKeyMetadata {
-
-					if key.Status == "Active" {
-						m.AnalyzedUsers = append(m.AnalyzedUsers, UserKeys{Username: *user.UserName, Key: *key.AccessKeyId})
-					}
-				}
-				PaginationControl = results.IsTruncated
-				PaginationMarker = results.Marker
 			}
 		}
-
-		PaginationControl = IAMQuery.IsTruncated
-		PaginationMarker = IAMQuery.Marker
 	}
 }

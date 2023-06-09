@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/arn"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
+	"github.com/aws/aws-sdk-go-v2/service/sns/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
@@ -23,16 +24,14 @@ import (
 
 type SNSModule struct {
 	// General configuration data
-	SNSClient AWSSNSClient
-
+	SNSClient     SNSClientInterface
+	AWSRegions    []string
+	AWSProfile    string
+	Caller        sts.GetCallerIdentityOutput
 	StorePolicies bool
-
-	Caller       sts.GetCallerIdentityOutput
-	AWSRegions   []string
-	OutputFormat string
-	Goroutines   int
-	AWSProfile   string
-	WrapTable    bool
+	OutputFormat  string
+	Goroutines    int
+	WrapTable     bool
 
 	// Main module data
 	Topics         []SNSTopic
@@ -42,7 +41,7 @@ type SNSModule struct {
 	modLog *logrus.Entry
 }
 
-type AWSSNSClient interface {
+type SNSClientInterface interface {
 	ListTopics(ctx context.Context, params *sns.ListTopicsInput, optFns ...func(*sns.Options)) (*sns.ListTopicsOutput, error)
 	GetTopicAttributes(ctx context.Context, params *sns.GetTopicAttributesInput, optFns ...func(*sns.Options)) (*sns.GetTopicAttributesOutput, error)
 }
@@ -70,10 +69,10 @@ func (m *SNSModule) PrintSNS(outputFormat string, outputDirectory string, verbos
 	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
-	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 	if m.AWSProfile == "" {
 		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
+	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
 
 	fmt.Printf("[%s][%s] Enumerating SNS topics for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 
@@ -133,8 +132,24 @@ func (m *SNSModule) PrintSNS(outputFormat string, outputDirectory string, verbos
 	}
 	if len(m.output.Body) > 0 {
 		//m.output.OutputSelector(outputFormat)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		m.writeLoot(m.output.FilePath, verbosity, m.AWSProfile)
+		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+		//m.writeLoot(m.output.FilePath, verbosity, m.AWSProfile)
+		o := internal.OutputClient{
+			Verbosity:     verbosity,
+			CallingModule: m.output.CallingModule,
+			Table: internal.TableClient{
+				Wrap: m.WrapTable,
+			},
+		}
+		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
+			Header: m.output.Headers,
+			Body:   m.output.Body,
+			Name:   m.output.CallingModule,
+		})
+		o.PrefixIdentifier = m.AWSProfile
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		o.WriteFullOutput(o.Table.TableFiles, nil)
+		m.writeLoot(o.Table.DirectoryName, verbosity, m.AWSProfile)
 		fmt.Printf("[%s][%s] %s topics found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 		fmt.Printf("[%s][%s] Access policies stored to: %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.getLootDir())
 	} else {
@@ -148,7 +163,7 @@ func (m *SNSModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan s
 	defer wg.Done()
 
 	servicemap := &awsservicemap.AwsServiceMap{
-		JsonFileSource: "EMBEDDED_IN_PACKAGE",
+		JsonFileSource: "DOWNLOAD_FROM_AWS",
 	}
 	res, err := servicemap.IsServiceInRegion("sns", r)
 	if err != nil {
@@ -211,7 +226,7 @@ func (m *SNSModule) writeLoot(outputDirectory string, verbosity int, profile str
 		out = out + fmt.Sprintln("# WARNING: messages are consumed, you should leave fuzzing to non-production environments.")
 		out = out + fmt.Sprintf("aws --profile $profile --region %s sns publish --topic-arn %s --message \"[INSERT MESSAGE BODY]\"\n\n", topic.Region, topic.ARN)
 		out = out + fmt.Sprintln("")
-		out = out + fmt.Sprintln("# Send message to the queue with attributes file (You'll have to create and populate the file)")
+		out = out + fmt.Sprintln("# Send message to the topic with attributes file (You'll have to create and populate the file)")
 		out = out + fmt.Sprintln("")
 		out = out + fmt.Sprintln("# WARNING: The following command can cause adverse effects in the environment. Like fuzzing a web application, if you inject")
 		out = out + fmt.Sprintln("# WARNING: malicious data you might find a vulnerability, but you also might break something. Unless you really know how the")
@@ -247,8 +262,47 @@ func (m *SNSModule) getSNSTopicsPerRegion(r string, wg *sync.WaitGroup, semaphor
 	defer func() {
 		<-semaphore
 	}()
-	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
+
+	ListTopics, err := m.listTopics(r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		return
+	}
+
+	for _, t := range ListTopics {
+		topic, err := m.getTopicWithAttributes(aws.ToString(t.TopicArn), r)
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			break
+		}
+		parsedArn, err := arn.Parse(aws.ToString(t.TopicArn))
+		if err != nil {
+			topic.Name = aws.ToString(t.TopicArn)
+		}
+		topic.Name = parsedArn.Resource
+		topic.Region = parsedArn.Region
+
+		// easier to just set the default state to be no and only flip it to yes if we have a case that matches
+		topic.IsPublic = "No"
+		if !topic.Policy.IsEmpty() {
+			m.analyseTopicPolicy(topic, dataReceiver)
+		} else {
+			// If the topic policy "resource policy" is empty, the only principals that have permisisons
+			// are those that are granted access by IAM policies
+			//topic.Access = "Private. Access allowed by IAM policies"
+			topic.Access = "Only intra-account access (via IAM) allowed"
+			dataReceiver <- *topic
+
+		}
+
+	}
+
+}
+
+func (m *SNSModule) listTopics(region string) ([]types.Topic, error) {
 	var PaginationControl *string
+	var topics []types.Topic
 
 	for {
 		ListTopics, err := m.SNSClient.ListTopics(
@@ -257,42 +311,15 @@ func (m *SNSModule) getSNSTopicsPerRegion(r string, wg *sync.WaitGroup, semaphor
 				NextToken: PaginationControl,
 			},
 			func(o *sns.Options) {
-				o.Region = r
+				o.Region = region
 			},
 		)
 		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
+			return nil, err
 		}
 
 		for _, t := range ListTopics.Topics {
-			topic, err := m.getTopicWithAttributes(aws.ToString(t.TopicArn), r)
-			if err != nil {
-				m.modLog.Error(err.Error())
-				m.CommandCounter.Error++
-				break
-			}
-			parsedArn, err := arn.Parse(aws.ToString(t.TopicArn))
-			if err != nil {
-				topic.Name = aws.ToString(t.TopicArn)
-			}
-			topic.Name = parsedArn.Resource
-			topic.Region = parsedArn.Region
-
-			// easier to just set the default state to be no and only flip it to yes if we have a case that matches
-			topic.IsPublic = "No"
-			if !topic.Policy.IsEmpty() {
-				m.analyseTopicPolicy(topic, dataReceiver)
-			} else {
-				// If the topic policy "resource policy" is empty, the only principals that have permisisons
-				// are those that are granted access by IAM policies
-				//topic.Access = "Private. Access allowed by IAM policies"
-				topic.Access = "Only intra-account access (via IAM) allowed"
-				dataReceiver <- *topic
-
-			}
-
+			topics = append(topics, t)
 		}
 
 		// The "NextToken" value is nil when there's no more data to return.
@@ -303,6 +330,8 @@ func (m *SNSModule) getSNSTopicsPerRegion(r string, wg *sync.WaitGroup, semaphor
 			break
 		}
 	}
+
+	return topics, nil
 }
 
 func (m *SNSModule) getTopicWithAttributes(topicARN string, region string) (*SNSTopic, error) {

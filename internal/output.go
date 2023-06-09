@@ -2,6 +2,7 @@ package internal
 
 import (
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -40,6 +41,9 @@ func OutputSelector(verbosity int, outputType string, header []string, body [][]
 		// Add writeLootToScreen function here
 	}
 	switch outputType {
+
+	case "wide":
+
 	case "table":
 		fmt.Println("")
 		outputFileTable := createOutputFile(
@@ -78,6 +82,14 @@ func OutputSelector(verbosity int, outputType string, header []string, body [][]
 		printCSVtoFile(header, body, outputFileCSV)
 		fmt.Printf("[%s][%s] Output written to [%s]\n", cyan(callingModule), cyan(prefixIdentifier), outputFileCSV.Name())
 		// Add writeLootToFile function here
+
+		outputFileJSON := createOutputFile(
+			ptr.String(filepath.Join(outputDirectory, "json")),
+			ptr.String(fmt.Sprintf("%s.json", fileName)),
+			outputType,
+			callingModule)
+		printJsonToFile(header, body, outputFileJSON)
+		fmt.Printf("[%s][%s] Output written to [%s]\n", cyan(callingModule), cyan(prefixIdentifier), outputFileJSON.Name())
 	}
 }
 
@@ -85,14 +97,35 @@ func printCSVtoFile(header []string, body [][]string, outputFile afero.File) {
 	csvWriter := csv.NewWriter(outputFile)
 	csvWriter.Write(header)
 	for _, row := range body {
+		row = removeColorCodesFromSlice(row)
 		csvWriter.Write(row)
 	}
 	csvWriter.Flush()
 }
 
+func printJsonToFile(header []string, body [][]string, outputFile afero.File) {
+	body = removeColorCodesFromNestedSlice(body)
+	jsonData := make([]map[string]string, len(body))
+	for i, row := range body {
+		jsonData[i] = make(map[string]string)
+		for j, column := range row {
+			jsonData[i][header[j]] = column
+		}
+	}
+	jsonBytes, err := json.MarshalIndent(jsonData, "", "  ")
+	if err != nil {
+		fmt.Println("error marshalling json:", err)
+		return
+	}
+	outputFile.Write(jsonBytes)
+
+}
+
 func printTableToFile(header []string, body [][]string, wrapLines bool, outputFile afero.File) {
+	body = removeColorCodesFromNestedSlice(body)
 	standardColumnWidth := 1000
 	t := table.New(outputFile)
+
 	if wrapLines {
 		terminalWidth, _, err := terminal.GetSize(int(os.Stdout.Fd()))
 		if err != nil {
@@ -106,6 +139,7 @@ func printTableToFile(header []string, body [][]string, wrapLines bool, outputFi
 	}
 	t.SetColumnMaxWidth(standardColumnWidth)
 	t.SetHeaders(header...)
+
 	t.AddRows(body...)
 	t.SetRowLines(false)
 	t.SetDividers(table.UnicodeRoundedDividers)

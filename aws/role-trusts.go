@@ -1,7 +1,6 @@
 package aws
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
@@ -22,8 +22,7 @@ import (
 
 type RoleTrustsModule struct {
 	// General configuration data
-	IAMClientListRoles               iam.ListRolesAPIClient
-	IAMClient                        *iam.Client
+	IAMClient                        sdk.AWSIAMClientInterface
 	IAMSimulatePrincipalPolicyClient iam.SimulatePrincipalPolicyAPIClient
 
 	Caller         sts.GetCallerIdentityOutput
@@ -101,7 +100,7 @@ func (m *RoleTrustsModule) PrintRoleTrusts(outputFormat string, outputDirectory 
 	fmt.Printf("[%s][%s] Enumerating role trusts for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 	//fmt.Printf("[%s][%s] Looking for pmapper data for this account and building a PrivEsc graph in golang if it exists.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	m.pmapperMod, m.pmapperError = initPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines)
-	m.iamSimClient = initIAMSimClient(m.IAMSimulatePrincipalPolicyClient, m.Caller, m.AWSProfile, m.Goroutines)
+	m.iamSimClient = initIAMSimClient(m.IAMClient, m.Caller, m.AWSProfile, m.Goroutines)
 	// if m.pmapperError != nil {
 	// 	fmt.Printf("[%s][%s] No pmapper data found for this account. Using cloudfox's iam-simulator for role analysis\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	// } else {
@@ -119,19 +118,67 @@ func (m *RoleTrustsModule) PrintRoleTrusts(outputFormat string, outputDirectory 
 
 		}
 	}
+	o := internal.OutputClient{
+		Verbosity:     verbosity,
+		CallingModule: m.output.CallingModule,
+		Table: internal.TableClient{
+			Wrap: m.WrapTable,
+		},
+	}
 
-	m.printPrincipalTrusts(outputFormat, outputDirectory)
-	m.printServiceTrusts(outputFormat, outputDirectory)
-	m.printFederatedTrusts(outputFormat, outputDirectory)
+	o.PrefixIdentifier = m.AWSProfile
+	o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+
+	principalsHeader, principalsBody := m.printPrincipalTrusts(outputFormat, outputDirectory)
+	o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
+		Header: principalsHeader,
+		Body:   principalsBody,
+		Name:   "role-trusts-principals",
+	})
+
+	servicesHeader, servicesBody := m.printServiceTrusts(outputFormat, outputDirectory)
+	o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
+		Header: servicesHeader,
+		Body:   servicesBody,
+		Name:   "role-trusts-services",
+	})
+
+	federatedHeader, federatedBody := m.printFederatedTrusts(outputFormat, outputDirectory)
+	o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
+		Header: federatedHeader,
+		Body:   federatedBody,
+		Name:   "role-trusts-federated",
+	})
+
+	o.WriteFullOutput(o.Table.TableFiles, nil)
+	if len(principalsBody) > 0 {
+		fmt.Printf("[%s][%s] %s principal role trusts found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(principalsBody)))
+	} else {
+		fmt.Printf("[%s][%s] No role trusts found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	}
+	if len(servicesBody) > 0 {
+		fmt.Printf("[%s][%s] %s principal role trusts found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(servicesBody)))
+	} else {
+		fmt.Printf("[%s][%s] No role trusts found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	}
+	if len(federatedBody) > 0 {
+		fmt.Printf("[%s][%s] %s principal role trusts found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(federatedBody)))
+	} else {
+		fmt.Printf("[%s][%s] No role trusts found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	}
+
 }
 
-func (m *RoleTrustsModule) printPrincipalTrusts(outputFormat string, outputDirectory string) {
+func (m *RoleTrustsModule) printPrincipalTrusts(outputFormat string, outputDirectory string) ([]string, [][]string) {
+	var header []string
+	var body [][]string
 	m.output.FullFilename = ""
 	m.output.Body = nil
 	m.output.CallingModule = "role-trusts"
 	m.output.FullFilename = "role-trusts-principals"
+	var column1 string
 	if m.pmapperError == nil {
-		m.output.Headers = []string{
+		header = []string{
 			"Role",
 			"Trusted Principal",
 			"ExternalID",
@@ -139,7 +186,7 @@ func (m *RoleTrustsModule) printPrincipalTrusts(outputFormat string, outputDirec
 			"CanPrivEscToAdmin?",
 		}
 	} else {
-		m.output.Headers = []string{
+		header = []string{
 			"Role",
 			"Trusted Principal",
 			"ExternalID",
@@ -152,41 +199,49 @@ func (m *RoleTrustsModule) printPrincipalTrusts(outputFormat string, outputDirec
 	for _, role := range m.AnalyzedRoles {
 		for _, statement := range role.trustsDoc.Statement {
 			for _, principal := range statement.Principal.AWS {
-				column1 := aws.ToString(role.roleARN)
+				if outputFormat == "wide" {
+					column1 = aws.ToString(role.roleARN)
+				} else {
+					column1 = GetResourceNameFromArn(aws.ToString(role.roleARN))
+				}
 				column2 := principal
 				column3 := statement.Condition.StringEquals.StsExternalID
 				column4 := role.Admin
 				column5 := role.CanPrivEsc
 				if m.pmapperError == nil {
-					m.output.Body = append(m.output.Body, []string{column1, column2, column3, column4, column5})
+					body = append(body, []string{column1, column2, column3, column4, column5})
 				} else {
-					m.output.Body = append(m.output.Body, []string{column1, column2, column3, column4})
+					body = append(body, []string{column1, column2, column3, column4})
 				}
 
 			}
 		}
 	}
 	m.sortTrustsTablePerTrustedPrincipal()
-	if len(m.output.Body) > 0 {
-		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
-		////m.output.OutputSelector(outputFormat)
-		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
-		internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		fmt.Printf("[%s][%s] %s role trusts found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
+	return header, body
+	// if len(m.output.Body) > 0 {
+	// 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account),m.AWSProfile))
+	// 	////m.output.OutputSelector(outputFormat)
+	// 	//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
+	// 	//internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+	// 	fmt.Printf("[%s][%s] %s role trusts found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
-	} else {
-		fmt.Printf("[%s][%s] No role trusts found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
-	}
-	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
+	// } else {
+	// 	fmt.Printf("[%s][%s] No role trusts found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	// }
+	// fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 }
 
-func (m *RoleTrustsModule) printServiceTrusts(outputFormat string, outputDirectory string) {
+func (m *RoleTrustsModule) printServiceTrusts(outputFormat string, outputDirectory string) ([]string, [][]string) {
+	var header []string
+	var body [][]string
 	m.output.FullFilename = ""
 	m.output.Body = nil
 	m.output.CallingModule = "role-trusts"
 	m.output.FullFilename = "role-trusts-services"
+	var column1 string
 	if m.pmapperError == nil {
-		m.output.Headers = []string{
+		header = []string{
 			"Role",
 			"Trusted Service",
 			"ExternalID",
@@ -194,7 +249,7 @@ func (m *RoleTrustsModule) printServiceTrusts(outputFormat string, outputDirecto
 			"CanPrivEscToAdmin?",
 		}
 	} else {
-		m.output.Headers = []string{
+		header = []string{
 			"Role",
 			"Trusted Service",
 			"ExternalID",
@@ -206,42 +261,50 @@ func (m *RoleTrustsModule) printServiceTrusts(outputFormat string, outputDirecto
 	for _, role := range m.AnalyzedRoles {
 		for _, statement := range role.trustsDoc.Statement {
 			for _, service := range statement.Principal.Service {
-				column1 := aws.ToString(role.roleARN)
+				if outputFormat == "wide" {
+					column1 = aws.ToString(role.roleARN)
+				} else {
+					column1 = GetResourceNameFromArn(aws.ToString(role.roleARN))
+				}
 				column2 := service
 				column3 := statement.Condition.StringEquals.StsExternalID
 				column4 := role.Admin
 				column5 := role.CanPrivEsc
 				if m.pmapperError == nil {
-					m.output.Body = append(m.output.Body, []string{column1, column2, column3, column4, column5})
+					body = append(body, []string{column1, column2, column3, column4, column5})
 				} else {
-					m.output.Body = append(m.output.Body, []string{column1, column2, column3, column4})
+					body = append(body, []string{column1, column2, column3, column4})
 				}
 			}
 		}
 	}
 
 	m.sortTrustsTablePerTrustedPrincipal()
-	if len(m.output.Body) > 0 {
-		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
-		//m.output.OutputSelector(outputFormat)
-		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
-		internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		fmt.Printf("[%s][%s] %s role trusts found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
+	return header, body
 
-	} else {
-		fmt.Printf("[%s][%s] No role trusts found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
-	}
+	// if len(m.output.Body) > 0 {
+	// 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account),m.AWSProfile))
+	// 	//m.output.OutputSelector(outputFormat)
+	// 	//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
+	// 	internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+	// 	fmt.Printf("[%s][%s] %s role trusts found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
+
+	// } else {
+	// 	fmt.Printf("[%s][%s] No role trusts found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	// }
 }
 
-func (m *RoleTrustsModule) printFederatedTrusts(outputFormat string, outputDirectory string) {
+func (m *RoleTrustsModule) printFederatedTrusts(outputFormat string, outputDirectory string) ([]string, [][]string) {
+	var header []string
+	var body [][]string
 	m.output.FullFilename = ""
 	m.output.Body = nil
 	m.output.CallingModule = "role-trusts"
 	m.output.FullFilename = "role-trusts-federated"
-	var column3, column2 string
+	var column1, column3, column2 string
 	if m.pmapperError == nil {
 
-		m.output.Headers = []string{
+		header = []string{
 			"Role",
 			"Trusted Provider",
 			"Trusted Subject",
@@ -249,7 +312,7 @@ func (m *RoleTrustsModule) printFederatedTrusts(outputFormat string, outputDirec
 			"CanPrivEscToAdmin?",
 		}
 	} else {
-		m.output.Headers = []string{
+		header = []string{
 			"Role",
 			"Trusted Provider",
 			"Trusted Subject",
@@ -259,39 +322,44 @@ func (m *RoleTrustsModule) printFederatedTrusts(outputFormat string, outputDirec
 	}
 
 	for _, role := range m.AnalyzedRoles {
-		column1 := aws.ToString(role.roleARN)
-
+		if outputFormat == "wide" {
+			column1 = aws.ToString(role.roleARN)
+		} else {
+			column1 = GetResourceNameFromArn(aws.ToString(role.roleARN))
+		}
 		for _, statement := range role.trustsDoc.Statement {
 			if len(statement.Principal.Federated) > 0 {
 				column2, column3 = parseFederatedTrustPolicy(statement)
 				column4 := role.Admin
 				column5 := role.CanPrivEsc
 				if m.pmapperError == nil {
-					m.output.Body = append(m.output.Body, []string{column1, column2, column3, column4, column5})
+					body = append(body, []string{column1, column2, column3, column4, column5})
 				} else {
-					m.output.Body = append(m.output.Body, []string{column1, column2, column3, column4})
+					body = append(body, []string{column1, column2, column3, column4})
 				}
 			}
 		}
 	}
 
 	m.sortTrustsTablePerTrustedPrincipal()
-	if len(m.output.Body) > 0 {
-		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
-		//m.output.OutputSelector(outputFormat)
-		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
-		internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		fmt.Printf("[%s][%s] %s role trusts found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
+	return header, body
 
-	} else {
-		fmt.Printf("[%s][%s] No role trusts found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
-	}
+	// if len(m.output.Body) > 0 {
+	// 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account),m.AWSProfile))
+	// 	//m.output.OutputSelector(outputFormat)
+	// 	//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
+	// 	internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+	// 	fmt.Printf("[%s][%s] %s role trusts found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
+
+	// } else {
+	// 	fmt.Printf("[%s][%s] No role trusts found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	// }
 }
 
 func parseFederatedTrustPolicy(statement RoleTrustStatementEntry) (string, string) {
 	var column2, column3 string
 	if statement.Condition.StringLike.TokenActionsGithubusercontentComAud != "" || len(statement.Condition.StringLike.TokenActionsGithubusercontentComSub) > 0 {
-		column2 = "GitHub Actions  (" + statement.Principal.Federated[0] + ")"
+		column2 = "GitHub Actions" //  (" + statement.Principal.Federated[0] + ")"
 		trustedRepos := strings.Join(statement.Condition.StringLike.TokenActionsGithubusercontentComSub, "\n")
 		if trustedRepos == "" {
 			column3 = "ALL REPOS!!!"
@@ -300,13 +368,13 @@ func parseFederatedTrustPolicy(statement RoleTrustStatementEntry) (string, strin
 		}
 	} else if statement.Condition.StringEquals.SAMLAud == "https://signin.aws.amazon.com/saml" {
 		if strings.Contains(statement.Principal.Federated[0], "AWSSSO") {
-			column2 = "AWS SSO (" + statement.Principal.Federated[0] + ")"
+			column2 = "AWS SSO" // (" + statement.Principal.Federated[0] + ")"
 		} else if strings.Contains(statement.Principal.Federated[0], "Okta") {
-			column2 = "Okta  (" + statement.Principal.Federated[0] + ")"
+			column2 = "Okta" //  (" + statement.Principal.Federated[0] + ")"
 		}
 		column3 = "Not applicable"
 	} else if statement.Condition.StringEquals.OidcEksAud != "" || statement.Condition.StringEquals.OidcEksSub != "" || statement.Condition.StringLike.OidcEksAud != "" || statement.Condition.StringLike.OidcEksSub != "" {
-		column2 = "EKS (" + statement.Principal.Federated[0] + ")"
+		column2 = "EKS" // (" + statement.Principal.Federated[0] + ")"
 		if statement.Condition.StringEquals.OidcEksSub != "" {
 			column3 = statement.Condition.StringEquals.OidcEksSub
 		} else if statement.Condition.StringLike.OidcEksSub != "" {
@@ -315,16 +383,16 @@ func parseFederatedTrustPolicy(statement RoleTrustStatementEntry) (string, strin
 			column3 = "ALL SERVICE ACCOUNTS!"
 		}
 	} else if statement.Principal.Federated[0] == "cognito-identity.amazonaws.com" {
-		column2 = "Cognito (" + statement.Principal.Federated[0] + ")"
+		column2 = "Cognito" // (" + statement.Principal.Federated[0] + ")"
 		if statement.Condition.ForAnyValueStringLike.CognitoAMR != "" {
 			column3 = statement.Condition.ForAnyValueStringLike.CognitoAMR
 		}
 	} else {
 		if column2 == "" && strings.Contains(statement.Principal.Federated[0], "oidc.eks") {
-			column2 = "EKS (" + statement.Principal.Federated[0] + ")"
+			column2 = "EKS" // (" + statement.Principal.Federated[0] + ")"
 			column3 = "ALL SERVICE ACCOUNTS!"
 		} else if column2 == "" && strings.Contains(statement.Principal.Federated[0], "AWSSSO") {
-			column2 = "AWS SSO (" + statement.Principal.Federated[0] + ")"
+			column2 = "AWS SSO" // (" + statement.Principal.Federated[0] + ")"
 		}
 
 	}
@@ -341,50 +409,31 @@ func (m *RoleTrustsModule) sortTrustsTablePerTrustedPrincipal() {
 }
 
 func (m *RoleTrustsModule) getAllRoleTrusts() {
-	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationMarker *string
+	ListRoles, err := sdk.CachedIamListRoles(m.IAMClient, aws.ToString(m.Caller.Account))
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+	}
 
-	// This for loop exits at the end depending on whether the output hits its last page (see pagination control block at the end of the loop).
-	for {
-		results, err := m.IAMClientListRoles.ListRoles(
-			context.TODO(),
-			&iam.ListRolesInput{
-				Marker: PaginationMarker,
-			},
-		)
+	for _, role := range ListRoles {
+		trustsdoc, err := parseRoleTrustPolicyDocument(role)
 		if err != nil {
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
 			break
 		}
 
-		for _, role := range results.Roles {
-			trustsdoc, err := parseRoleTrustPolicyDocument(role)
-			if err != nil {
-				m.modLog.Error(err.Error())
-				m.CommandCounter.Error++
-				break
-			}
-
-			if role.Arn != nil {
-				m.AnalyzedRoles = append(m.AnalyzedRoles, AnalyzedRole{
-					roleARN:    role.Arn,
-					trustsDoc:  trustsdoc,
-					Admin:      "",
-					CanPrivEsc: "",
-				})
-			}
-
+		if role.Arn != nil {
+			m.AnalyzedRoles = append(m.AnalyzedRoles, AnalyzedRole{
+				roleARN:    role.Arn,
+				trustsDoc:  trustsdoc,
+				Admin:      "",
+				CanPrivEsc: "",
+			})
 		}
 
-		// Pagination control. After the last page of output, the for loop exits.
-		if results.IsTruncated {
-			PaginationMarker = results.Marker
-		} else {
-			PaginationMarker = nil
-			break
-		}
 	}
+
 }
 
 func parseRoleTrustPolicyDocument(role types.Role) (trustPolicyDocument, error) {

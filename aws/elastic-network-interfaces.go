@@ -84,7 +84,7 @@ func (m *ElasticNetworkInterfacesModule) ElasticNetworkInterfaces(outputFormat s
 	receiverDone <- true
 	<-receiverDone
 
-	m.printENIsData(outputFormat, outputDirectory, dataReceiver)
+	m.printENIsData(outputFormat, outputDirectory, dataReceiver, verbosity)
 
 }
 
@@ -101,7 +101,7 @@ func (m *ElasticNetworkInterfacesModule) Receiver(receiver chan MappedENI, recei
 	}
 }
 
-func (m *ElasticNetworkInterfacesModule) printENIsData(outputFormat string, outputDirectory string, dataReceiver chan MappedENI) {
+func (m *ElasticNetworkInterfacesModule) printENIsData(outputFormat string, outputDirectory string, dataReceiver chan MappedENI, verbosity int) {
 	m.output.Headers = []string{
 		"ID",
 		"Type",
@@ -126,11 +126,27 @@ func (m *ElasticNetworkInterfacesModule) printENIsData(outputFormat string, outp
 		)
 	}
 	if len(m.output.Body) > 0 {
-		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
+		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
 		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+		//internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 
-		m.writeLoot(m.output.FilePath)
+		//m.writeLoot(m.output.FilePath)
+		o := internal.OutputClient{
+			Verbosity:     verbosity,
+			CallingModule: m.output.CallingModule,
+			Table: internal.TableClient{
+				Wrap: m.WrapTable,
+			},
+		}
+		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
+			Header: m.output.Headers,
+			Body:   m.output.Body,
+			Name:   m.output.CallingModule,
+		})
+		o.PrefixIdentifier = m.AWSProfile
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		o.WriteFullOutput(o.Table.TableFiles, nil)
+		m.writeLoot(o.Table.DirectoryName)
 		fmt.Printf("[%s][%s] %s elastic network interfaces found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {

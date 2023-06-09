@@ -1,7 +1,6 @@
 package aws
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,9 +9,10 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/BishopFox/cloudfox/internal/aws/policy"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/aws/aws-sdk-go-v2/service/ecr/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/bishopfox/awsservicemap"
@@ -21,11 +21,7 @@ import (
 
 type ECRModule struct {
 	// General configuration data
-	ECRClient *ecr.Client
-	// These interfaces are used for unit testing
-	ECRClientDescribeReposInterface  ecr.DescribeRepositoriesAPIClient
-	ECRClientDescribeImagesInterface ecr.DescribeImagesAPIClient
-
+	ECRClient    sdk.AWSECRClientInterface
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
 	OutputFormat string
@@ -49,6 +45,8 @@ type Repository struct {
 	PushedAt   string
 	ImageTags  string
 	ImageSize  int64
+	Policy     policy.Policy
+	PolicyJSON string
 }
 
 func (m *ECRModule) PrintECR(outputFormat string, outputDirectory string, verbosity int) {
@@ -125,11 +123,27 @@ func (m *ECRModule) PrintECR(outputFormat string, outputDirectory string, verbos
 
 	}
 	if len(m.output.Body) > 0 {
-		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
+		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		m.writeLoot(m.output.FilePath, verbosity)
+		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+		//m.writeLoot(m.output.FilePath, verbosity)
+		o := internal.OutputClient{
+			Verbosity:     verbosity,
+			CallingModule: m.output.CallingModule,
+			Table: internal.TableClient{
+				Wrap: m.WrapTable,
+			},
+		}
+		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
+			Header: m.output.Headers,
+			Body:   m.output.Body,
+			Name:   m.output.CallingModule,
+		})
+		o.PrefixIdentifier = m.AWSProfile
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		o.WriteFullOutput(o.Table.TableFiles, nil)
+		m.writeLoot(o.Table.DirectoryName, verbosity)
 		fmt.Printf("[%s][%s] %s repositories found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 	} else {
 		fmt.Printf("[%s][%s] No repositories found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
@@ -224,107 +238,104 @@ func (m *ECRModule) getECRRecordsPerRegion(r string, wg *sync.WaitGroup, semapho
 	defer func() {
 		<-semaphore
 	}()
-	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
-	var PaginationControl2 *string
 
-	for {
-		DescribeRepositories, err := m.ECRClientDescribeReposInterface.DescribeRepositories(
-			context.TODO(),
-			&ecr.DescribeRepositoriesInput{
-				NextToken: PaginationControl,
-			},
-			func(o *ecr.Options) {
-				o.Region = r
-			},
-		)
+	var allImages []types.ImageDetail
+	var repoURI string
+	var repoName string
+
+	DescribeRepositories, err := m.describeRepositories(r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	for _, repo := range DescribeRepositories {
+		repoName = aws.ToString(repo.RepositoryName)
+		repoURI = aws.ToString(repo.RepositoryUri)
+		//created := *repo.CreatedAt
+		//fmt.Printf("%s, %s, %s", repoName, repoURI, created)
+
+		images, err := m.describeImages(r, repoName)
 		if err != nil {
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
-			break
+			return
 		}
-
-		for _, repo := range DescribeRepositories.Repositories {
-			repoName := aws.ToString(repo.RepositoryName)
-			repoURI := aws.ToString(repo.RepositoryUri)
-			//created := *repo.CreatedAt
-			//fmt.Printf("%s, %s, %s", repoName, repoURI, created)
-			var images []types.ImageDetail
-			for {
-				DescribeImages, err := m.ECRClientDescribeImagesInterface.DescribeImages(
-					context.TODO(),
-					&ecr.DescribeImagesInput{
-						RepositoryName: &repoName,
-						NextToken:      PaginationControl2,
-					},
-					func(o *ecr.Options) {
-						o.Region = r
-					},
-				)
-				if err != nil {
-					m.modLog.Error(err.Error())
-					m.CommandCounter.Error++
-					break
-				}
-
-				//images := DescribeImages.ImageDetails
-				images = append(images, DescribeImages.ImageDetails...)
-
-				if DescribeImages.NextToken != nil {
-					PaginationControl2 = DescribeImages.NextToken
-				} else {
-
-					// not sure if this is the right way to do this, but adding this code here was the only way i could
-					// sort the results from all pages to look for the latest push.
-					PaginationControl2 = nil
-
-					sort.Slice(images, func(i, j int) bool {
-						return images[i].ImagePushedAt.Format("2006-01-02 15:04:05") < images[j].ImagePushedAt.Format("2006-01-02 15:04:05")
-					})
-
-					var image types.ImageDetail
-					var imageTags string
-
-					if len(images) > 1 {
-						image = images[len(images)-1]
-					} else if len(images) == 1 {
-						image = images[0]
-					} else {
-
-						break
-					}
-
-					if len(image.ImageTags) > 0 {
-						imageTags = image.ImageTags[0]
-					}
-					//imageTags := image.ImageTags[0]
-					pushedAt := image.ImagePushedAt.Format("2006-01-02 15:04:05")
-					imageSize := aws.ToInt64(image.ImageSizeInBytes)
-					pullURI := fmt.Sprintf("%s:%s", repoURI, imageTags)
-
-					dataReceiver <- Repository{
-						AWSService: "ECR",
-						Name:       repoName,
-						Region:     r,
-						URI:        pullURI,
-						PushedAt:   pushedAt,
-						ImageTags:  imageTags,
-						ImageSize:  imageSize,
-					}
-
-					// }
-					break
-				}
-
-			}
-		}
-
-		// The "NextToken" value is nil when there's no more data to return.
-		if DescribeRepositories.NextToken != nil {
-			PaginationControl = DescribeRepositories.NextToken
-		} else {
-			PaginationControl = nil
-			break
-		}
+		allImages = append(allImages, images...)
 	}
+
+	sort.Slice(allImages, func(i, j int) bool {
+		return allImages[i].ImagePushedAt.Format("2006-01-02 15:04:05") < allImages[j].ImagePushedAt.Format("2006-01-02 15:04:05")
+	})
+
+	var image types.ImageDetail
+	var imageTags string
+
+	if len(allImages) > 1 {
+		image = allImages[len(allImages)-1]
+	} else if len(allImages) == 1 {
+		image = allImages[0]
+	} else {
+		return
+	}
+
+	if len(image.ImageTags) > 0 {
+		imageTags = image.ImageTags[0]
+	}
+	//imageTags := image.ImageTags[0]
+	pushedAt := image.ImagePushedAt.Format("2006-01-02 15:04:05")
+	imageSize := aws.ToInt64(image.ImageSizeInBytes)
+	pullURI := fmt.Sprintf("%s:%s", repoURI, imageTags)
+
+	dataReceiver <- Repository{
+		AWSService: "ECR",
+		Name:       repoName,
+		Region:     r,
+		URI:        pullURI,
+		PushedAt:   pushedAt,
+		ImageTags:  imageTags,
+		ImageSize:  imageSize,
+	}
+
+}
+
+func (m *ECRModule) describeRepositories(r string) ([]types.Repository, error) {
+
+	var repositories []types.Repository
+	Repositories, err := sdk.CachedECRDescribeRepositories(m.ECRClient, aws.ToString(m.Caller.Account), r)
+	if err != nil {
+		m.CommandCounter.Error++
+		return nil, err
+	}
+
+	repositories = append(repositories, Repositories...)
+
+	return repositories, nil
+}
+
+func (m *ECRModule) describeImages(r string, repoName string) ([]types.ImageDetail, error) {
+	var images []types.ImageDetail
+
+	ImageDetails, err := sdk.CachedECRDescribeImages(m.ECRClient, aws.ToString(m.Caller.Account), r, repoName)
+	if err != nil {
+		m.CommandCounter.Error++
+		return nil, err
+	}
+	images = append(images, ImageDetails...)
+	return images, nil
+}
+
+func (m *ECRModule) getECRRepositoryPolicy(r string, repository string) (policy.Policy, error) {
+	var repoPolicy policy.Policy
+	Policy, err := sdk.CachedECRGetRepositoryPolicy(m.ECRClient, aws.ToString(m.Caller.Account), r, repository)
+	if err != nil {
+		m.CommandCounter.Error++
+		return repoPolicy, err
+	}
+	repoPolicy, err = policy.ParseJSONPolicy([]byte(Policy))
+	if err != nil {
+		return repoPolicy, fmt.Errorf("parsing policy (%s) as JSON: %s", repository, err)
+	}
+	return repoPolicy, nil
 }

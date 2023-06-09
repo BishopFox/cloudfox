@@ -1,29 +1,24 @@
 package aws
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
 
+	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
 )
 
-type CloudFormationGetTemplateAPIClient interface {
-	GetTemplate(context.Context, *cloudformation.GetTemplateInput, ...func(*cloudformation.Options)) (*cloudformation.GetTemplateOutput, error)
-}
 type CloudformationModule struct {
 	// General configuration data
-	CloudFormationDescribeStacksInterface cloudformation.DescribeStacksAPIClient
-	CloudFormationGetTemplateInterface    CloudFormationGetTemplateAPIClient
+	CloudFormationClient sdk.CloudFormationClientInterface
 
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
@@ -135,11 +130,27 @@ func (m *CloudformationModule) PrintCloudformationStacks(outputFormat string, ou
 
 	}
 	if len(m.output.Body) > 0 {
-		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
+		//	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account),m.AWSProfile))
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		m.writeLoot(m.output.FilePath, verbosity)
+		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+
+		o := internal.OutputClient{
+			Verbosity:     verbosity,
+			CallingModule: m.output.CallingModule,
+			Table: internal.TableClient{
+				Wrap: m.WrapTable,
+			},
+		}
+		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
+			Header: m.output.Headers,
+			Body:   m.output.Body,
+			Name:   m.output.CallingModule,
+		})
+		o.PrefixIdentifier = m.AWSProfile
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		o.WriteFullOutput(o.Table.TableFiles, nil)
+		m.writeLoot(o.Table.DirectoryName, verbosity)
 		fmt.Printf("[%s][%s] %s cloudformation stacks found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 	} else {
 		fmt.Printf("[%s][%s] No cloudformation stacks found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
@@ -251,7 +262,7 @@ func (m *CloudformationModule) createCFStackRowsPerRegion(r string, wg *sync.Wai
 	}()
 	var stackTemplateBody string = ""
 
-	DescribeStacks, err := m.describeStacks(r)
+	DescribeStacks, err := sdk.CachedCloudFormationDescribeStacks(m.CloudFormationClient, aws.ToString(m.Caller.Account), r)
 	if err != nil {
 		m.modLog.Error(err.Error())
 		m.CommandCounter.Error++
@@ -263,7 +274,7 @@ func (m *CloudformationModule) createCFStackRowsPerRegion(r string, wg *sync.Wai
 		stackOutputs := stack.Outputs
 		stackParameters := stack.Parameters
 
-		stackTemplateBody, err = m.getTemplateBody(r, stackName)
+		stackTemplateBody, err = sdk.CachedCloudFormationGetTemplate(m.CloudFormationClient, aws.ToString(m.Caller.Account), r, stackName)
 		if err != nil {
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
@@ -280,62 +291,4 @@ func (m *CloudformationModule) createCFStackRowsPerRegion(r string, wg *sync.Wai
 		}
 	}
 
-}
-
-func (m *CloudformationModule) describeStacks(r string) ([]types.Stack, error) {
-
-	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
-	var stacks []types.Stack
-
-	for {
-		DescribeStacks, err := m.CloudFormationDescribeStacksInterface.DescribeStacks(
-			context.TODO(),
-			&cloudformation.DescribeStacksInput{
-				NextToken: PaginationControl,
-			},
-			func(o *cloudformation.Options) {
-				o.Region = r
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			return stacks, err
-		}
-
-		stacks = append(stacks, DescribeStacks.Stacks...)
-
-		// The "NextToken" value is nil when there's no more data to return.
-		if DescribeStacks.NextToken != nil {
-			PaginationControl = DescribeStacks.NextToken
-		} else {
-			PaginationControl = nil
-			break
-		}
-	}
-	return stacks, nil
-}
-
-func (m *CloudformationModule) getTemplateBody(r string, stackName string) (string, error) {
-
-	var stackTemplateBody string
-	GetTemplate, err := m.CloudFormationGetTemplateInterface.GetTemplate(
-		context.TODO(),
-		&cloudformation.GetTemplateInput{
-			StackName: &stackName,
-		},
-		func(o *cloudformation.Options) {
-			o.Region = r
-		},
-	)
-	if err != nil {
-		m.modLog.Error(err.Error())
-		m.CommandCounter.Error++
-		return stackTemplateBody, err
-	}
-
-	stackTemplateBody = aws.ToString(GetTemplate.TemplateBody)
-
-	return stackTemplateBody, nil
 }

@@ -1,21 +1,20 @@
 package aws
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
 	"strconv"
 
+	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/sirupsen/logrus"
 )
 
 type IamPrincipalsModule struct {
 	// General configuration data
-	IAMClient *iam.Client
+	IAMClient sdk.AWSIAMClientInterface
 
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
@@ -87,8 +86,8 @@ func (m *IamPrincipalsModule) PrintIamPrincipals(outputFormat string, outputDire
 	// done <- true
 	// <-done
 
-	m.getIAMUsers()
-	m.getIAMRoles()
+	m.addIAMUsersToTable()
+	m.addIAMRolesToTable()
 
 	//fmt.Printf("\nAnalyzed Resources by Region\n\n")
 
@@ -135,10 +134,26 @@ func (m *IamPrincipalsModule) PrintIamPrincipals(outputFormat string, outputDire
 
 	}
 	if len(m.output.Body) > 0 {
-		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
+		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+		o := internal.OutputClient{
+			Verbosity:     verbosity,
+			CallingModule: m.output.CallingModule,
+			Table: internal.TableClient{
+				Wrap: m.WrapTable,
+			},
+		}
+		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
+			Header: m.output.Headers,
+			Body:   m.output.Body,
+			Name:   m.output.CallingModule,
+		})
+		o.PrefixIdentifier = m.AWSProfile
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		o.WriteFullOutput(o.Table.TableFiles, nil)
+		//m.writeLoot(o.Table.DirectoryName, verbosity)
 		fmt.Printf("[%s][%s] %s IAM principals found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {
@@ -160,100 +175,64 @@ func (m *IamPrincipalsModule) executeChecks(wg *sync.WaitGroup) {
 }
 */
 
-func (m *IamPrincipalsModule) getIAMUsers() {
-	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
+func (m *IamPrincipalsModule) addIAMUsersToTable() {
 	var AWSService = "IAM"
-
 	var IAMtype = "User"
 	var attachedPolicies []string
 	var inlinePolicies []string
 
-	for {
-		ListUsers, err := m.IAMClient.ListUsers(
-			context.TODO(),
-			&iam.ListUsersInput{
-				Marker: PaginationControl,
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
+	ListUsers, err := sdk.CachedIamListUsers(m.IAMClient, aws.ToString(m.Caller.Account))
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+	}
 
-		for _, user := range ListUsers.Users {
-			arn := user.Arn
-			name := user.UserName
+	for _, user := range ListUsers {
+		arn := user.Arn
+		name := user.UserName
 
-			m.Users = append(
-				m.Users,
-				User{
-					AWSService:       AWSService,
-					Arn:              aws.ToString(arn),
-					Name:             aws.ToString(name),
-					Type:             IAMtype,
-					AttachedPolicies: attachedPolicies,
-					InlinePolicies:   inlinePolicies,
-				})
-		}
-
-		// Pagination control. After the last page of output, the for loop exits.
-		if ListUsers.Marker != nil {
-			PaginationControl = ListUsers.Marker
-		} else {
-			PaginationControl = nil
-			break
-		}
+		m.Users = append(
+			m.Users,
+			User{
+				AWSService:       AWSService,
+				Arn:              aws.ToString(arn),
+				Name:             aws.ToString(name),
+				Type:             IAMtype,
+				AttachedPolicies: attachedPolicies,
+				InlinePolicies:   inlinePolicies,
+			})
 	}
 
 }
 
-func (m *IamPrincipalsModule) getIAMRoles() {
-	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
+func (m *IamPrincipalsModule) addIAMRolesToTable() {
+
 	//var totalRoles int
 	var AWSService = "IAM"
 	var IAMtype = "Role"
 	var attachedPolicies []string
 	var inlinePolicies []string
 
-	for {
-		ListRoles, err := m.IAMClient.ListRoles(
-			context.TODO(),
-			&iam.ListRolesInput{
-				Marker: PaginationControl,
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
-		for _, role := range ListRoles.Roles {
-			arn := role.Arn
-			name := role.RoleName
+	ListRoles, err := sdk.CachedIamListRoles(m.IAMClient, aws.ToString(m.Caller.Account))
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+	}
 
-			m.Roles = append(
-				m.Roles,
-				Role{
-					AWSService:       AWSService,
-					Arn:              aws.ToString(arn),
-					Name:             aws.ToString(name),
-					Type:             IAMtype,
-					AttachedPolicies: attachedPolicies,
-					InlinePolicies:   inlinePolicies,
-				})
-		}
+	for _, role := range ListRoles {
+		arn := role.Arn
+		name := role.RoleName
 
-		// Pagination control. After the last page of output, the for loop exits.
-		if ListRoles.Marker != nil {
-			PaginationControl = ListRoles.Marker
-		} else {
-			PaginationControl = nil
-			//fmt.Printf("IAM Roles: %d\n\n", totalRoles)
-			break
-		}
+		m.Roles = append(
+			m.Roles,
+			Role{
+				AWSService:       AWSService,
+				Arn:              aws.ToString(arn),
+				Name:             aws.ToString(name),
+				Type:             IAMtype,
+				AttachedPolicies: attachedPolicies,
+				InlinePolicies:   inlinePolicies,
+			})
 	}
 
 }

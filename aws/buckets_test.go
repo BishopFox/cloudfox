@@ -16,11 +16,10 @@ import (
 	"github.com/spf13/afero"
 )
 
-type MockedS3Buckets struct {
-	AWSRegions []string
+type MockedS3Client struct {
 }
 
-func (m *MockedS3Buckets) ListBuckets(ctx context.Context, params *s3.ListBucketsInput, optFns ...func(*s3.Options)) (*s3.ListBucketsOutput, error) {
+func (m *MockedS3Client) ListBuckets(ctx context.Context, params *s3.ListBucketsInput, optFns ...func(*s3.Options)) (*s3.ListBucketsOutput, error) {
 	buckets := make([]types.Bucket, 1)
 	mockBucket := types.Bucket{
 		CreationDate: aws.Time(time.Now()),
@@ -34,7 +33,7 @@ func (m *MockedS3Buckets) ListBuckets(ctx context.Context, params *s3.ListBucket
 
 }
 
-func (m *MockedS3Buckets) GetBucketPolicy(ctx context.Context, params *s3.GetBucketPolicyInput, optFns ...func(*s3.Options)) (*s3.GetBucketPolicyOutput, error) {
+func (m *MockedS3Client) GetBucketPolicy(ctx context.Context, params *s3.GetBucketPolicyInput, optFns ...func(*s3.Options)) (*s3.GetBucketPolicyOutput, error) {
 	bucketPolicy := `{
 		"Version": "2012-10-17",
 		"Statement": [
@@ -53,7 +52,7 @@ func (m *MockedS3Buckets) GetBucketPolicy(ctx context.Context, params *s3.GetBuc
 	return output, nil
 }
 
-func (m *MockedS3Buckets) GetBucketLocation(ctx context.Context, params *s3.GetBucketLocationInput, optFns ...func(*s3.Options)) (*s3.GetBucketLocationOutput, error) {
+func (m *MockedS3Client) GetBucketLocation(ctx context.Context, params *s3.GetBucketLocationInput, optFns ...func(*s3.Options)) (*s3.GetBucketLocationOutput, error) {
 	locationConstraint := types.BucketLocationConstraint("us-east-2")
 	output := &s3.GetBucketLocationOutput{
 		LocationConstraint: locationConstraint,
@@ -61,7 +60,7 @@ func (m *MockedS3Buckets) GetBucketLocation(ctx context.Context, params *s3.GetB
 	return output, nil
 }
 
-func (m *MockedS3Buckets) GetPublicAccessBlock(ctx context.Context, params *s3.GetPublicAccessBlockInput, optFns ...func(*s3.Options)) (*s3.GetPublicAccessBlockOutput, error) {
+func (m *MockedS3Client) GetPublicAccessBlock(ctx context.Context, params *s3.GetPublicAccessBlockInput, optFns ...func(*s3.Options)) (*s3.GetPublicAccessBlockOutput, error) {
 	output := &s3.GetPublicAccessBlockOutput{
 		PublicAccessBlockConfiguration: &types.PublicAccessBlockConfiguration{
 			BlockPublicAcls:       true,
@@ -74,6 +73,19 @@ func (m *MockedS3Buckets) GetPublicAccessBlock(ctx context.Context, params *s3.G
 }
 
 func TestListBuckets(t *testing.T) {
+
+	m := BucketsModule{
+
+		S3Client: &MockedS3Client{},
+		Caller: sts.GetCallerIdentityOutput{
+			Arn:     aws.String("arn:aws:iam::123456789012:user/cloudfox_unit_tests"),
+			Account: aws.String("123456789012"),
+		},
+		AWSRegions: []string{"us-east-1", "us-west-1", "us-west-2"},
+		AWSProfile: "unittesting",
+		Goroutines: 3,
+	}
+
 	subtests := []struct {
 		name            string
 		outputDirectory string
@@ -85,17 +97,7 @@ func TestListBuckets(t *testing.T) {
 			name:            "test1",
 			outputDirectory: ".",
 			verbosity:       2,
-			testModule: BucketsModule{
-				S3Client: &MockedS3Buckets{},
-				Caller: sts.GetCallerIdentityOutput{
-					Arn:     aws.String("arn:aws:iam::123456789012:user/cloudfox_unit_tests"),
-					Account: aws.String("123456789012"),
-				},
-				OutputFormat: "table",
-				AWSProfile:   "unittesting",
-				Goroutines:   30,
-				AWSRegions:   []string{"us-east-1", "us-west-1", "us-west-2"},
-			},
+			testModule:      m,
 			expectedResult: []Bucket{{
 				Name: "mockBucket123",
 			}},
@@ -110,7 +112,7 @@ func TestListBuckets(t *testing.T) {
 		t.Run(subtest.name, func(t *testing.T) {
 			subtest.testModule.PrintBuckets(subtest.testModule.OutputFormat, subtest.outputDirectory, subtest.verbosity)
 			for index, expectedBucket := range subtest.expectedResult {
-				resultsFilePath := filepath.Join(tmpDir, "cloudfox-output/aws/unittesting/table/buckets.txt")
+				resultsFilePath := filepath.Join(tmpDir, "cloudfox-output/aws/123456789012-unittesting/table/buckets.txt")
 				resultsFile, err := afero.ReadFile(fs, resultsFilePath)
 				if err != nil {
 					t.Fatalf("Cannot read output file at %s: %s", resultsFilePath, err)

@@ -12,22 +12,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
-type MockedEKSClientListClusters struct {
+type MockedEKSClientInterface struct {
 }
 
-type MockedEKSClientDescribeCluster struct {
-}
-
-type MockedEKSClientListNodegroups struct {
-}
-
-type MockedEKSClientDescribeNodegroup struct {
-}
-
-type MockedIAMSimulatePrincipalPolicy struct {
-}
-
-func (m *MockedEKSClientListClusters) ListClusters(ctx context.Context, params *eks.ListClustersInput, optFns ...func(*eks.Options)) (*eks.ListClustersOutput, error) {
+func (m *MockedEKSClientInterface) ListClusters(ctx context.Context, params *eks.ListClustersInput, optFns ...func(*eks.Options)) (*eks.ListClustersOutput, error) {
 	testClusters := []string{}
 	testClusters = append(testClusters, "test1")
 
@@ -38,7 +26,7 @@ func (m *MockedEKSClientListClusters) ListClusters(ctx context.Context, params *
 	return testListClustersOutput, nil
 }
 
-func (m *MockedEKSClientDescribeCluster) DescribeCluster(context.Context, *eks.DescribeClusterInput, ...func(*eks.Options)) (*eks.DescribeClusterOutput, error) {
+func (m *MockedEKSClientInterface) DescribeCluster(context.Context, *eks.DescribeClusterInput, ...func(*eks.Options)) (*eks.DescribeClusterOutput, error) {
 	testIdentity := types.Identity{
 		Oidc: &types.OIDC{
 			Issuer: aws.String("abc123"),
@@ -61,7 +49,7 @@ func (m *MockedEKSClientDescribeCluster) DescribeCluster(context.Context, *eks.D
 	return testDescribeClusterOutput, nil
 }
 
-func (m *MockedEKSClientListNodegroups) ListNodegroups(ctx context.Context, params *eks.ListNodegroupsInput, optFns ...func(*eks.Options)) (*eks.ListNodegroupsOutput, error) {
+func (m *MockedEKSClientInterface) ListNodegroups(ctx context.Context, params *eks.ListNodegroupsInput, optFns ...func(*eks.Options)) (*eks.ListNodegroupsOutput, error) {
 	testNodegroups := []string{}
 	testNodegroups = append(testNodegroups, "test1")
 
@@ -72,7 +60,7 @@ func (m *MockedEKSClientListNodegroups) ListNodegroups(ctx context.Context, para
 	return testListNodegroupsOutput, nil
 }
 
-func (m *MockedEKSClientDescribeNodegroup) DescribeNodegroup(context.Context, *eks.DescribeNodegroupInput, ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
+func (m *MockedEKSClientInterface) DescribeNodegroup(context.Context, *eks.DescribeNodegroupInput, ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
 	testNodegroup := types.Nodegroup{}
 	testNodegroup.NodeRole = aws.String("roleABC")
 	testDescribeNodegroupOutput := &eks.DescribeNodegroupOutput{
@@ -95,10 +83,7 @@ func TestEks(t *testing.T) {
 			outputDirectory: ".",
 			verbosity:       2,
 			testModule: EKSModule{
-				EKSClientListClustersInterface:      &MockedEKSClientListClusters{},
-				EKSClientDescribeClusterInterface:   &MockedEKSClientDescribeCluster{},
-				EKSClientListNodeGroupsInterface:    &MockedEKSClientListNodegroups{},
-				EKSClientDescribeNodeGroupInterface: &MockedEKSClientDescribeNodegroup{},
+				EKSClient: &MockedEKSClientInterface{},
 				//IAMSimulatePrincipalPolicyClient:    iam.SimulatePrincipalPolicyAPIClient,
 				Caller:         sts.GetCallerIdentityOutput{Arn: aws.String("test")},
 				OutputFormat:   "table",

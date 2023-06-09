@@ -1,18 +1,17 @@
 package aws
 
 import (
-	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"net/url"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/BishopFox/cloudfox/internal/aws/policy"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/sirupsen/logrus"
@@ -20,7 +19,7 @@ import (
 
 type IamPermissionsModule struct {
 	// General configuration data
-	IAMClient *iam.Client
+	IAMClient sdk.AWSIAMClientInterface
 
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
@@ -80,6 +79,7 @@ type PermissionsRow struct {
 	Effect     string
 	Action     string
 	Resource   string
+	Condition  string
 }
 
 func (m *IamPermissionsModule) PrintIamPermissions(outputFormat string, outputDirectory string, verbosity int, principal string) {
@@ -94,26 +94,27 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputFormat string, outputDi
 	if m.AWSProfile == "" {
 		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
-	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
+	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
 	fmt.Printf("[%s][%s] Enumerating IAM permissions for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 
 	if principal != "" {
 		m.output.FullFilename = filepath.Join(fmt.Sprintf("%s-custom-%s", m.output.CallingModule, strconv.FormatInt((time.Now().Unix()), 10)))
 	}
 
-	m.getGAAD(principal)
-	m.parsePermissions()
+	m.getGAAD()
+	m.parsePermissions(principal)
 
 	m.output.Headers = []string{
-		"Service",
-		"Principal Type",
+		//"Service",
+		"Type",
 		"Name",
 		//"Arn",
-		"Policy Type",
+		"Policy",
 		"Policy Name",
 		"Effect",
 		"Action",
 		"Resource",
+		"Condition",
 	}
 
 	//Table rows
@@ -121,7 +122,7 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputFormat string, outputDi
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
-				m.Rows[i].AWSService,
+				//m.Rows[i].AWSService,
 				m.Rows[i].Type,
 				m.Rows[i].Name,
 				//m.Rows[i].Arn,
@@ -130,16 +131,33 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputFormat string, outputDi
 				m.Rows[i].Effect,
 				m.Rows[i].Action,
 				m.Rows[i].Resource,
+				m.Rows[i].Condition,
 			},
 		)
 
 	}
 
 	if len(m.output.Body) > 0 {
-		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
+		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
 		//m.output.OutputSelector3(outputFormat)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+		o := internal.OutputClient{
+			Verbosity:     verbosity,
+			CallingModule: m.output.CallingModule,
+			Table: internal.TableClient{
+				Wrap: m.WrapTable,
+			},
+		}
+		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
+			Header: m.output.Headers,
+			Body:   m.output.Body,
+			Name:   m.output.CallingModule,
+		})
+		o.PrefixIdentifier = m.AWSProfile
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		o.WriteFullOutput(o.Table.TableFiles, nil)
+		//m.writeLoot(o.Table.DirectoryName, verbosity)
 		fmt.Printf("[%s][%s] %s unique permissions identified.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
 	} else {
@@ -148,178 +166,233 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputFormat string, outputDi
 	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 }
 
-func (m *IamPermissionsModule) getGAAD(principal string) {
-	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
-	//var totalRoles int
-
-	// var attachedPolicies []types.AttachedPolicy
-	// var inlinePolicies []types.PolicyDetail
-
-	for {
-		GAAD, err := m.IAMClient.GetAccountAuthorizationDetails(
-			context.TODO(),
-			&iam.GetAccountAuthorizationDetailsInput{
-				Marker: PaginationControl,
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
-
-		for _, policy := range GAAD.Policies {
-			//var IAMtype = "Role"
-			arn := aws.ToString(policy.Arn)
-			name := aws.ToString(policy.PolicyName)
-
-			m.Policies = append(m.Policies, GAADPolicy{
-				Arn:               arn,
-				Name:              name,
-				PolicyVersionList: policy.PolicyVersionList,
-			})
-
-		}
-
-		for _, role := range GAAD.RoleDetailList {
-			arn := aws.ToString(role.Arn)
-			name := aws.ToString(role.RoleName)
-			if principal == "" {
-				m.Roles = append(m.Roles, GAADRole{
-					Arn:              arn,
-					Name:             name,
-					AttachedPolicies: role.AttachedManagedPolicies,
-					InlinePolicies:   role.RolePolicyList,
-				})
-			} else {
-				if arn == principal {
-					m.Roles = append(m.Roles, GAADRole{
-						Arn:              arn,
-						Name:             name,
-						AttachedPolicies: role.AttachedManagedPolicies,
-						InlinePolicies:   role.RolePolicyList,
-					})
-				}
-
-			}
-		}
-
-		// i think the error here is pagination!!
-
-		for _, user := range GAAD.UserDetailList {
-			//var IAMtype = "User"
-			arn := aws.ToString(user.Arn)
-			name := aws.ToString(user.UserName)
-			groupList := user.GroupList
-			if principal == "" {
-				m.Users = append(m.Users, GAADUser{
-					Arn:              arn,
-					Name:             name,
-					AttachedPolicies: user.AttachedManagedPolicies,
-					InlinePolicies:   user.UserPolicyList,
-					GroupList:        groupList,
-				})
-			} else {
-				if arn == principal {
-					m.Users = append(m.Users, GAADUser{
-						Arn:              arn,
-						Name:             name,
-						AttachedPolicies: user.AttachedManagedPolicies,
-						InlinePolicies:   user.UserPolicyList,
-						GroupList:        groupList,
-					})
-				}
-			}
-		}
-
-		for _, group := range GAAD.GroupDetailList {
-			arn := aws.ToString(group.Arn)
-			name := aws.ToString(group.GroupName)
-			if principal == "" {
-				m.Groups = append(m.Groups, GAADGroup{
-					Arn:              arn,
-					Name:             name,
-					AttachedPolicies: group.AttachedManagedPolicies,
-					InlinePolicies:   group.GroupPolicyList,
-				})
-			} else {
-				if arn == principal {
-					m.Groups = append(m.Groups, GAADGroup{
-						Arn:              arn,
-						Name:             name,
-						AttachedPolicies: group.AttachedManagedPolicies,
-						InlinePolicies:   group.GroupPolicyList,
-					})
-				}
-			}
-		}
-
-		// Pagination control. After the last page of output, the for loop exits.
-		if GAAD.Marker != nil {
-			PaginationControl = GAAD.Marker
-		} else {
-			PaginationControl = nil
-			break
-		}
+func (m *IamPermissionsModule) getGAAD() {
+	GAAD, err := sdk.CachedIAMGetAccountAuthorizationDetails(m.IAMClient, aws.ToString(m.Caller.Account))
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
 	}
+
+	// // if user supplied a principal name without the arn, try to create the arn
+	// if !strings.Contains(principal, "arn:") {
+	// 	principal = fmt.Sprintf("arn:aws:iam::%s:user/%s", aws.ToString(m.Caller.Account), principal)
+	// }
+
+	for _, policy := range GAAD.Policies {
+		//var IAMtype = "Role"
+		arn := aws.ToString(policy.Arn)
+		name := aws.ToString(policy.PolicyName)
+
+		m.Policies = append(m.Policies, GAADPolicy{
+			Arn:               arn,
+			Name:              name,
+			PolicyVersionList: policy.PolicyVersionList,
+		})
+
+	}
+
+	for _, role := range GAAD.RoleDetailList {
+		arn := aws.ToString(role.Arn)
+		name := aws.ToString(role.RoleName)
+		m.Roles = append(m.Roles, GAADRole{
+			Arn:              arn,
+			Name:             name,
+			AttachedPolicies: role.AttachedManagedPolicies,
+			InlinePolicies:   role.RolePolicyList,
+		})
+
+	}
+
+	for _, user := range GAAD.UserDetailList {
+		//var IAMtype = "User"
+		arn := aws.ToString(user.Arn)
+		name := aws.ToString(user.UserName)
+		groupList := user.GroupList
+		m.Users = append(m.Users, GAADUser{
+			Arn:              arn,
+			Name:             name,
+			AttachedPolicies: user.AttachedManagedPolicies,
+			InlinePolicies:   user.UserPolicyList,
+			GroupList:        groupList,
+		})
+	}
+
+	for _, group := range GAAD.GroupDetailList {
+		arn := aws.ToString(group.Arn)
+		name := aws.ToString(group.GroupName)
+
+		m.Groups = append(m.Groups, GAADGroup{
+			Arn:              arn,
+			Name:             name,
+			AttachedPolicies: group.AttachedManagedPolicies,
+			InlinePolicies:   group.GroupPolicyList,
+		})
+
+	}
+
 }
 
-func (m *IamPermissionsModule) parsePermissions() {
+// create a function that will take a principal name and try to see if it is a role, user, or group and return the arn of the principal
+func (m *IamPermissionsModule) getPrincipalArn(principal string) string {
+	var arn string
+	for _, role := range m.Roles {
+		if role.Name == principal {
+			arn = role.Arn
+		}
+	}
 
+	for _, user := range m.Users {
+		if user.Name == principal {
+			arn = user.Arn
+		}
+	}
+
+	for _, group := range m.Groups {
+		if group.Name == principal {
+			arn = group.Arn
+		}
+	}
+
+	return arn
+}
+
+func (m *IamPermissionsModule) parsePermissions(principal string) {
+	var inputArn string
 	for i := range m.Roles {
+		if principal == "" {
+			for _, attachedPolicy := range m.Roles[i].AttachedPolicies {
+				m.getPermissionsFromAttachedPolicy(m.Roles[i].Arn, attachedPolicy, "Role", m.Roles[i].Name)
+			}
 
-		for _, attachedPolicy := range m.Roles[i].AttachedPolicies {
-			m.getPermissionsFromAttachedPolicy(m.Roles[i].Arn, attachedPolicy, "Role", m.Roles[i].Name)
+			for _, inlinePolicy := range m.Roles[i].InlinePolicies {
+				m.getPermissionsFromInlinePolicy(m.Roles[i].Arn, inlinePolicy, "Role", m.Roles[i].Name)
+			}
+		} else {
+			// if user supplied a principal name without the arn, try to create the arn
+			if !strings.Contains(principal, "arn:") {
+				inputArn = fmt.Sprintf("arn:aws:iam::%s:role/%s", aws.ToString(m.Caller.Account), principal)
+			} else {
+				inputArn = principal
+			}
+
+			if strings.ToLower(m.Roles[i].Arn) == strings.ToLower(inputArn) {
+				for _, attachedPolicy := range m.Roles[i].AttachedPolicies {
+					m.getPermissionsFromAttachedPolicy(m.Roles[i].Arn, attachedPolicy, "Role", m.Roles[i].Name)
+				}
+
+				for _, inlinePolicy := range m.Roles[i].InlinePolicies {
+					m.getPermissionsFromInlinePolicy(m.Roles[i].Arn, inlinePolicy, "Role", m.Roles[i].Name)
+				}
+			}
 		}
 
-		for _, inlinePolicy := range m.Roles[i].InlinePolicies {
-			m.getPermissionsFromInlinePolicy(m.Roles[i].Arn, inlinePolicy, "Role", m.Roles[i].Name)
-		}
 	}
 
 	for i := range m.Users {
-		for _, attachedPolicy := range m.Users[i].AttachedPolicies {
-			m.getPermissionsFromAttachedPolicy(m.Users[i].Arn, attachedPolicy, "User", m.Users[i].Name)
-		}
+		if principal == "" {
+			for _, attachedPolicy := range m.Users[i].AttachedPolicies {
+				m.getPermissionsFromAttachedPolicy(m.Users[i].Arn, attachedPolicy, "User", m.Users[i].Name)
+			}
 
-		for _, inlinePolicy := range m.Users[i].InlinePolicies {
-			m.getPermissionsFromInlinePolicy(m.Users[i].Arn, inlinePolicy, "User", m.Users[i].Name)
+			for _, inlinePolicy := range m.Users[i].InlinePolicies {
+				m.getPermissionsFromInlinePolicy(m.Users[i].Arn, inlinePolicy, "User", m.Users[i].Name)
+			}
+		} else {
+			// if user supplied a principal name without the arn, try to create the arn
+			if !strings.Contains(principal, "arn:") {
+				inputArn = fmt.Sprintf("arn:aws:iam::%s:user/%s", aws.ToString(m.Caller.Account), principal)
+			} else {
+				inputArn = principal
+			}
+			if strings.ToLower(m.Users[i].Arn) == strings.ToLower(inputArn) {
+				for _, attachedPolicy := range m.Users[i].AttachedPolicies {
+					m.getPermissionsFromAttachedPolicy(m.Users[i].Arn, attachedPolicy, "User", m.Users[i].Name)
+				}
+
+				for _, inlinePolicy := range m.Users[i].InlinePolicies {
+					m.getPermissionsFromInlinePolicy(m.Users[i].Arn, inlinePolicy, "User", m.Users[i].Name)
+				}
+			}
 		}
 
 		// for each group in the user's group list, get the attached and inline policy names, and then get the permissions from those policies
 		for g := range m.Users[i].GroupList {
-			for _, group := range m.Groups {
-				if group.Name == m.Users[i].GroupList[g] {
-					for _, attachedPolicy := range group.AttachedPolicies {
-						m.getPermissionsFromAttachedPolicy(m.Users[i].Arn, attachedPolicy, "User", m.Users[i].Name)
+			if principal == "" {
+				for _, group := range m.Groups {
+					if group.Name == m.Users[i].GroupList[g] {
+						for _, attachedPolicy := range group.AttachedPolicies {
+							m.getPermissionsFromAttachedPolicy(m.Users[i].Arn, attachedPolicy, "User", m.Users[i].Name)
+						}
+						for _, inlinePolicy := range group.InlinePolicies {
+							m.getPermissionsFromInlinePolicy(m.Users[i].Arn, inlinePolicy, "User", m.Users[i].Name)
+						}
 					}
-					for _, inlinePolicy := range group.InlinePolicies {
-						m.getPermissionsFromInlinePolicy(m.Users[i].Arn, inlinePolicy, "User", m.Users[i].Name)
+				}
+			} else {
+				// if user supplied a principal name without the arn, try to create the arn
+				if !strings.Contains(principal, "arn:") {
+					inputArn = fmt.Sprintf("arn:aws:iam::%s:user/%s", aws.ToString(m.Caller.Account), principal)
+				} else {
+					inputArn = principal
+				}
+				if strings.ToLower(m.Users[i].Arn) == strings.ToLower(inputArn) {
+					for _, group := range m.Groups {
+						if group.Name == m.Users[i].GroupList[g] {
+							for _, attachedPolicy := range group.AttachedPolicies {
+								m.getPermissionsFromAttachedPolicy(m.Users[i].Arn, attachedPolicy, "User", m.Users[i].Name)
+							}
+							for _, inlinePolicy := range group.InlinePolicies {
+								m.getPermissionsFromInlinePolicy(m.Users[i].Arn, inlinePolicy, "User", m.Users[i].Name)
+							}
+						}
 					}
 				}
 			}
+
 		}
+
+		// for group := range m.Users[i].GroupList {
+		// 	for _, gaadGroup := range m.Groups {
+		// 		if gaadGroup.Name == group {
+		// 			for _, attachedPolicy := range m.Groups[j].AttachedPolicies {
+		// 				m.getPermissionsFromAttachedPolicy(m.Users[i].Arn, attachedPolicy, "User", m.Users[i].Name)
+		// 			}
+		// 			for _, inlinePolicy := range m.Groups[j].InlinePolicies {
+		// 				m.getPermissionsFromInlinePolicy(m.Users[i].Arn, inlinePolicy, "User", m.Users[i].Name)
+		// 			}
+		// 		}
+		// 	}
+
+		// }
 	}
 
 }
 
 func (m *IamPermissionsModule) getPermissionsFromAttachedPolicy(arn string, attachedPolicy types.AttachedPolicy, IAMtype string, name string) {
 	//var policies []types.ManagedPolicyDetail
-	var s StatementEntry
+	var s policy.PolicyStatement
 	var AWSService = "IAM"
+	var hasConditions string
 
 	for _, p := range m.Policies {
 		if p.Name == aws.ToString(attachedPolicy.PolicyName) {
 			for _, d := range p.PolicyVersionList {
 				if d.IsDefaultVersion {
-					parsedPolicyDocument, _ := parsePolicyDocument(d.Document)
+					//parsedPolicyDocument, _ := parsePolicyDocument(d.Document)
+					document, _ := url.QueryUnescape(aws.ToString(d.Document))
+					parsedPolicyDocument, _ := policy.ParseJSONPolicy([]byte(document))
 					for _, s = range parsedPolicyDocument.Statement {
 						//version := parsedPolicyDocument.Version
 						effect := s.Effect
 						if s.Action != nil {
 							for _, action := range s.Action {
 								for _, resource := range s.Resource {
+									if s.Condition != nil {
+										hasConditions = "Yes"
+									} else {
+										hasConditions = "No"
+									}
 									m.Rows = append(
 										m.Rows,
 										PermissionsRow{
@@ -332,6 +405,7 @@ func (m *IamPermissionsModule) getPermissionsFromAttachedPolicy(arn string, atta
 											Effect:     effect,
 											Action:     action,
 											Resource:   resource,
+											Condition:  hasConditions,
 										})
 								}
 							}
@@ -340,6 +414,11 @@ func (m *IamPermissionsModule) getPermissionsFromAttachedPolicy(arn string, atta
 						if s.NotAction != nil {
 							for _, action := range s.NotAction {
 								for _, resource := range s.Resource {
+									if s.Condition != nil {
+										hasConditions = "Yes"
+									} else {
+										hasConditions = "No"
+									}
 									m.Rows = append(
 										m.Rows,
 										PermissionsRow{
@@ -352,6 +431,7 @@ func (m *IamPermissionsModule) getPermissionsFromAttachedPolicy(arn string, atta
 											Effect:     effect,
 											Action:     "[NotAction] " + action,
 											Resource:   resource,
+											Condition:  hasConditions,
 										})
 								}
 							}
@@ -366,16 +446,24 @@ func (m *IamPermissionsModule) getPermissionsFromAttachedPolicy(arn string, atta
 
 func (m *IamPermissionsModule) getPermissionsFromInlinePolicy(arn string, inlinePolicy types.PolicyDetail, IAMtype string, name string) {
 	//var policies []types.ManagedPolicyDetail
-	var s StatementEntry
+	var s policy.PolicyStatement
 	var AWSService = "IAM"
+	var hasConditions string
 
-	parsedPolicyDocument, _ := parsePolicyDocument(inlinePolicy.PolicyDocument)
+	//parsedPolicyDocument, _ := parsePolicyDocument(inlinePolicy.PolicyDocument)
+	document, _ := url.QueryUnescape(aws.ToString(inlinePolicy.PolicyDocument))
+	parsedPolicyDocument, _ := policy.ParseJSONPolicy([]byte(document))
+
 	for _, s = range parsedPolicyDocument.Statement {
-		//version := parsedPolicyDocument.Version
 		effect := s.Effect
 		if s.Action != nil {
 			for _, action := range s.Action {
 				for _, resource := range s.Resource {
+					if s.Condition != nil {
+						hasConditions = "Yes"
+					} else {
+						hasConditions = "No"
+					}
 					m.Rows = append(
 						m.Rows,
 						PermissionsRow{
@@ -388,6 +476,7 @@ func (m *IamPermissionsModule) getPermissionsFromInlinePolicy(arn string, inline
 							Effect:     effect,
 							Action:     action,
 							Resource:   resource,
+							Condition:  hasConditions,
 						})
 				}
 			}
@@ -395,6 +484,11 @@ func (m *IamPermissionsModule) getPermissionsFromInlinePolicy(arn string, inline
 		if s.NotAction != nil {
 			for _, action := range s.NotAction {
 				for _, resource := range s.Resource {
+					if s.Condition != nil {
+						hasConditions = "Yes"
+					} else {
+						hasConditions = "No"
+					}
 					m.Rows = append(
 						m.Rows,
 						PermissionsRow{
@@ -405,50 +499,13 @@ func (m *IamPermissionsModule) getPermissionsFromInlinePolicy(arn string, inline
 							PolicyType: "Inline",
 							PolicyName: aws.ToString(inlinePolicy.PolicyName),
 							Effect:     effect,
-							Action:     "notaction" + action,
+							Action:     "[NotAction] " + action,
 							Resource:   resource,
+							Condition:  hasConditions,
 						})
 				}
 			}
 		}
 
 	}
-}
-
-type policyDocument struct {
-	Version   string           `json:"Version"`
-	Statement []StatementEntry `json:"Statement"`
-}
-
-type StatementEntry struct {
-	Effect    string      `json:"Effect"`
-	Action    ListOfItems `json:"Action,omitempty"`
-	NotAction ListOfItems `json:"NotAction,omitempty"`
-	Resource  ListOfItems `json:"Resource"`
-	Condition ListOfItems `json:"Condition"`
-}
-
-func parsePolicyDocument(doc *string) (policyDocument, error) {
-	document, _ := url.QueryUnescape(aws.ToString(doc))
-	var parsedDocumentToJSON policyDocument
-	_ = json.Unmarshal([]byte(document), &parsedDocumentToJSON)
-	return parsedDocumentToJSON, nil
-}
-
-// A custom unmarshaller is necessary because the list of principals can be an array of strings or a string.
-// https://stackoverflow.com/questions/65854778/parsing-arn-from-iam-policy-using-regex
-type ListOfItems []string
-
-func (r *ListOfItems) UnmarshalJSON(b []byte) error {
-	var s string
-	if err := json.Unmarshal(b, &s); err == nil {
-		*r = append(*r, s)
-		return nil
-	}
-	var ss []string
-	if err := json.Unmarshal(b, &ss); err == nil {
-		*r = ss
-		return nil
-	}
-	return errors.New("cannot unmarshal neither to a string nor a slice of strings")
 }

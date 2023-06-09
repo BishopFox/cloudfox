@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
@@ -19,10 +20,7 @@ import (
 
 type IamSimulatorModule struct {
 	// General configuration data
-	IAMSimulatePrincipalPolicyClient iam.SimulatePrincipalPolicyAPIClient
-	IAMListUsersClient               iam.ListUsersAPIClient
-	IAMListRolesClient               iam.ListRolesAPIClient
-
+	IAMClient    sdk.AWSIAMClientInterface
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
 	OutputFormat string
@@ -75,7 +73,7 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
-	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
+	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
 	var actionList []string
 	var pmapperCommands []string
 	var pmapperOutFileName string
@@ -173,15 +171,30 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 
 	}
 	if len(m.output.Body) > 0 {
-		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
+		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+		o := internal.OutputClient{
+			Verbosity:     verbosity,
+			CallingModule: m.output.CallingModule,
+			Table: internal.TableClient{
+				Wrap: m.WrapTable,
+			},
+		}
+		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
+			Header: m.output.Headers,
+			Body:   m.output.Body,
+			Name:   m.output.CallingModule,
+		})
+		o.PrefixIdentifier = m.AWSProfile
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		o.WriteFullOutput(o.Table.TableFiles, nil)
 		fmt.Printf("[%s][%s] We suggest running the pmapper commands in the loot file to get the same information but taking privesc paths into account.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 		// fmt.Printf("[%s]\t\tpmapper --profile %s graph create\n", cyan(m.output.CallingModule),  cyan(m.AWSProfile), m.AWSProfile)
 		// for _, line := range pmapperCommands {
 		// 	fmt.Printf("[%s]\t\t%s", cyan(m.output.CallingModule),  cyan(m.AWSProfile), line)
 		// }
-		m.writeLoot(m.output.FilePath, verbosity, pmapperCommands)
+		m.writeLoot(o.Table.DirectoryName, verbosity, pmapperCommands)
 
 	} else if principal != "" || action != "" {
 		fmt.Printf("[%s][%s] No allowed permissions identified, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
@@ -249,47 +262,31 @@ func (m *IamSimulatorModule) getIAMUsers(wg *sync.WaitGroup, actions []string, r
 	m.CommandCounter.Total++
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
-	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
 
-	for {
-		ListUsers, err := m.IAMListUsersClient.ListUsers(
-			context.TODO(),
-			&iam.ListUsersInput{
-				Marker: PaginationControl,
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
+	ListUsers, err := sdk.CachedIamListUsers(m.IAMClient, aws.ToString(m.Caller.Account))
 
-		for _, user := range ListUsers.Users {
-			//name := user.UserName
-			principal := user.Arn
-			adminCheckResult := m.isPrincipalAnAdmin(principal)
-			if adminCheckResult {
-				query := "Appears to be an administrator"
-				dataReceiver <- SimulatorResult{
-					AWSService: "IAM",
-					Principal:  aws.ToString(principal),
-					Query:      query,
-					Decision:   "",
-				}
-			} else {
-				m.getPolicySimulatorResult(principal, actions, resource, dataReceiver)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	for _, user := range ListUsers {
+		//name := user.UserName
+		principal := user.Arn
+		adminCheckResult := m.isPrincipalAnAdmin(principal)
+		if adminCheckResult {
+			query := "Appears to be an administrator"
+			dataReceiver <- SimulatorResult{
+				AWSService: "IAM",
+				Principal:  aws.ToString(principal),
+				Query:      query,
+				Decision:   "",
 			}
-
-		}
-
-		// Pagination control. After the last page of output, the for loop exits.
-		if ListUsers.Marker != nil {
-			PaginationControl = ListUsers.Marker
 		} else {
-			PaginationControl = nil
-			break
+			m.getPolicySimulatorResult(principal, actions, resource, dataReceiver)
 		}
+
 	}
 
 }
@@ -304,99 +301,66 @@ func (m *IamSimulatorModule) getIAMRoles(wg *sync.WaitGroup, actions []string, r
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
 
-	for {
-		ListRoles, err := m.IAMListRolesClient.ListRoles(
-			context.TODO(),
-			&iam.ListRolesInput{
-				Marker: PaginationControl,
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
+	ListRoles, err := sdk.CachedIamListRoles(m.IAMClient, aws.ToString(m.Caller.Account))
 
-		for _, role := range ListRoles.Roles {
-			//name := user.UserName
-			principal := role.Arn
-			adminCheckResult := m.isPrincipalAnAdmin(principal)
-			if adminCheckResult {
-				query := "Appears to be an administrator"
-				dataReceiver <- SimulatorResult{
-					AWSService: "IAM",
-					Principal:  aws.ToString(principal),
-					Query:      query,
-					Decision:   "",
-				}
-			} else {
-				m.getPolicySimulatorResult(principal, actions, resource, dataReceiver)
-			}
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
 
-		}
-
-		// Pagination control. After the last page of output, the for loop exits.
-		if ListRoles.Marker != nil {
-			PaginationControl = ListRoles.Marker
-		} else {
-			PaginationControl = nil
-			break
-		}
 	}
+
+	for _, role := range ListRoles {
+		//name := user.UserName
+		principal := role.Arn
+		adminCheckResult := m.isPrincipalAnAdmin(principal)
+		if adminCheckResult {
+			query := "Appears to be an administrator"
+			dataReceiver <- SimulatorResult{
+				AWSService: "IAM",
+				Principal:  aws.ToString(principal),
+				Query:      query,
+				Decision:   "",
+			}
+		} else {
+			m.getPolicySimulatorResult(principal, actions, resource, dataReceiver)
+		}
+
+	}
+
 }
 
 func (m *IamSimulatorModule) getPolicySimulatorResult(principal *string, actionNames []string, resource string, dataReceiver chan SimulatorResult) {
-	var PaginationControl2 *string
-
 	//var policySourceArn = "*"
 	//var arn *string
 	var resourceArns []string
 	resourceArns = append(resourceArns, resource)
 	//var resourceArns = []string{"*"}
 
-	for {
-		SimulatePrincipalPolicy, err := m.IAMSimulatePrincipalPolicyClient.SimulatePrincipalPolicy(
-			context.TODO(),
-			&iam.SimulatePrincipalPolicyInput{
-				Marker:          PaginationControl2,
-				ActionNames:     actionNames,
-				PolicySourceArn: principal,
-				ResourceArns:    resourceArns,
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			m.modLog.Error(fmt.Sprintf("Failed to query actions for %s\n\n", aws.ToString(principal)))
+	EvaluationResults, err := sdk.CachedIamSimulatePrincipalPolicy(m.IAMClient, aws.ToString(m.Caller.Account), principal, actionNames, resourceArns)
 
-			break
-		}
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		m.modLog.Error(fmt.Sprintf("Failed to query actions for %s\n\n", aws.ToString(principal)))
+		return
+	}
 
-		for _, result := range SimulatePrincipalPolicy.EvaluationResults {
-			evalName := result.EvalActionName
-			query := fmt.Sprintf("can %s on %s", *evalName, resource)
-			decision := result.EvalDecision
-			if decision == "allowed" {
-				dataReceiver <- SimulatorResult{
-					AWSService: "IAM",
-					Principal:  aws.ToString(principal),
-					Query:      query,
-					Decision:   string(decision),
-				}
+	for _, result := range EvaluationResults {
+		evalName := result.EvalActionName
+		query := fmt.Sprintf("can %s on %s", *evalName, resource)
+		decision := result.EvalDecision
+		if decision == "allowed" {
+			dataReceiver <- SimulatorResult{
+				AWSService: "IAM",
+				Principal:  aws.ToString(principal),
+				Query:      query,
+				Decision:   string(decision),
 			}
 		}
-
-		// Pagination control. After the last page of output, the for loop exits.
-		if SimulatePrincipalPolicy.Marker != nil {
-			PaginationControl2 = SimulatePrincipalPolicy.Marker
-		} else {
-			PaginationControl2 = nil
-			break
-		}
-
 	}
+
 }
 
 func (m *IamSimulatorModule) isPrincipalAnAdmin(principal *string) bool {
@@ -412,7 +376,7 @@ func (m *IamSimulatorModule) isPrincipalAnAdmin(principal *string) bool {
 		"ssm:GetDocument",
 	}
 	for {
-		SimulatePrincipalPolicy, err := m.IAMSimulatePrincipalPolicyClient.SimulatePrincipalPolicy(
+		SimulatePrincipalPolicy, err := m.IAMClient.SimulatePrincipalPolicy(
 			context.TODO(),
 			&iam.SimulatePrincipalPolicyInput{
 				Marker:          PaginationControl2,

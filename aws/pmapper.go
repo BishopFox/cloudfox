@@ -71,16 +71,7 @@ func (m *PmapperModule) initPmapperGraph() error {
 		return err
 	}
 
-	m.pmapperGraph = graph.New(graph.StringHash, graph.Directed())
-
-	for _, node := range m.Nodes {
-		_ = m.pmapperGraph.AddVertex(node.Arn)
-
-	}
-
-	for _, edge := range m.Edges {
-		_ = m.pmapperGraph.AddEdge(edge.Source, edge.Destination)
-	}
+	m.pmapperGraph = m.createAndPopulateGraph()
 
 	for i := range m.Nodes {
 		if m.doesNodeHavePathToAdmin(m.Nodes[i]) {
@@ -89,10 +80,36 @@ func (m *PmapperModule) initPmapperGraph() error {
 		} else {
 			m.Nodes[i].PathToAdmin = false
 		}
-
 	}
 
 	return nil
+}
+
+func (m *PmapperModule) createAndPopulateGraph() graph.Graph[string, string] {
+
+	pmapperGraph := graph.New(graph.StringHash, graph.Directed())
+
+	// having issues with caching the graph. will have to swing back and try again later
+
+	// gob.Register(pmapperGraph)
+	// cacheKey := fmt.Sprintf("%s-pmapperGraph", aws.ToString(m.Caller.Account))
+	// cached, found := internal.Cache.Get(cacheKey)
+	// if found {
+	// 	return cached.(graph.Graph[string, string])
+	// }
+
+	for _, node := range m.Nodes {
+		_ = pmapperGraph.AddVertex(node.Arn)
+
+	}
+
+	for _, edge := range m.Edges {
+		_ = pmapperGraph.AddEdge(edge.Source, edge.Destination)
+	}
+
+	//internal.Cache.Set(cacheKey, pmapperGraph, cache.DefaultExpiration)
+	return pmapperGraph
+
 }
 
 func (m *PmapperModule) DoesPrincipalHavePathToAdmin(principal string) bool {
@@ -131,7 +148,7 @@ func (m *PmapperModule) PrintPmapperData(outputFormat string, outputDirectory st
 	if m.AWSProfile == "" {
 		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
-	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
+	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
 	fmt.Printf("[%s][%s] Looking for pmapper data for this account and building a PrivEsc graph in golang if it exists.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	pmapperError := m.initPmapperGraph()
 	if pmapperError != nil {
@@ -178,9 +195,25 @@ func (m *PmapperModule) PrintPmapperData(outputFormat string, outputDirectory st
 	}
 
 	if len(m.output.Body) > 0 {
-		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
+		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+		o := internal.OutputClient{
+			Verbosity:     verbosity,
+			CallingModule: m.output.CallingModule,
+			Table: internal.TableClient{
+				Wrap: m.WrapTable,
+			},
+		}
+		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
+			Header: m.output.Headers,
+			Body:   m.output.Body,
+			Name:   m.output.CallingModule,
+		})
+		o.PrefixIdentifier = m.AWSProfile
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		o.WriteFullOutput(o.Table.TableFiles, nil)
+		//m.writeLoot(o.Table.DirectoryName, verbosity)
 
 		fmt.Printf("[%s][%s] %s principals who are admin or have a path to admin identified.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 

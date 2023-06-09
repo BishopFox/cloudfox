@@ -72,10 +72,10 @@ func (m *SQSModule) PrintSQS(outputFormat string, outputDirectory string, verbos
 	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
-	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
 	if m.AWSProfile == "" {
 		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
+	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
 
 	fmt.Printf("[%s][%s] Enumerating SQS queues for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 
@@ -134,8 +134,24 @@ func (m *SQSModule) PrintSQS(outputFormat string, outputDirectory string, verbos
 	}
 	if len(m.output.Body) > 0 {
 		//m.output.OutputSelector(outputFormat)
-		internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		m.writeLoot(m.output.FilePath, verbosity, m.AWSProfile)
+		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+		//m.writeLoot(m.output.FilePath, verbosity, m.AWSProfile)
+		o := internal.OutputClient{
+			Verbosity:     verbosity,
+			CallingModule: m.output.CallingModule,
+			Table: internal.TableClient{
+				Wrap: m.WrapTable,
+			},
+		}
+		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
+			Header: m.output.Headers,
+			Body:   m.output.Body,
+			Name:   m.output.CallingModule,
+		})
+		o.PrefixIdentifier = m.AWSProfile
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		o.WriteFullOutput(o.Table.TableFiles, nil)
+		m.writeLoot(o.Table.DirectoryName, verbosity, m.AWSProfile)
 		fmt.Printf("[%s][%s] %s queues found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 		fmt.Printf("[%s][%s] Access policies stored to: %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.getLootDir())
 	} else {
@@ -148,7 +164,7 @@ func (m *SQSModule) PrintSQS(outputFormat string, outputDirectory string, verbos
 func (m *SQSModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Queue) {
 	defer wg.Done()
 	servicemap := &awsservicemap.AwsServiceMap{
-		JsonFileSource: "EMBEDDED_IN_PACKAGE",
+		JsonFileSource: "DOWNLOAD_FROM_AWS",
 	}
 	res, err := servicemap.IsServiceInRegion("sqs", r)
 	if err != nil {
@@ -244,8 +260,44 @@ func (m *SQSModule) getSQSRecordsPerRegion(r string, wg *sync.WaitGroup, semapho
 	defer func() {
 		<-semaphore
 	}()
-	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
+
+	ListQueues, err := m.listQueues(r)
+
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	for _, url := range ListQueues {
+		queue, err := m.getQueueWithAttributes(url, r)
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			break
+		}
+
+		// easier to just set the default state to be no and only flip it to yes if we have a case that matches
+		queue.IsPublic = "No"
+
+		if !queue.Policy.IsEmpty() {
+			m.analyseQueuePolicy(queue, dataReceiver)
+		} else {
+			// If the queue policy "resource policy" is empty, the only principals that have permisisons
+			// are those that are granted access by IAM policies
+			//queue.Access = "Private. Access allowed by IAM policies"
+			queue.Access = "Only intra-account access (via IAM) allowed"
+			dataReceiver <- *queue
+
+		}
+
+	}
+
+}
+
+func (m *SQSModule) listQueues(region string) ([]string, error) {
 	var PaginationControl *string
+	var queues []string
 
 	for {
 		ListQueues, err := m.SQSClient.ListQueues(
@@ -255,37 +307,15 @@ func (m *SQSModule) getSQSRecordsPerRegion(r string, wg *sync.WaitGroup, semapho
 				NextToken:  PaginationControl,
 			},
 			func(o *sqs.Options) {
-				o.Region = r
+				o.Region = region
 			},
 		)
 		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
+			return nil, fmt.Errorf("ListQueues() failed: %s", err)
 		}
 
 		for _, url := range ListQueues.QueueUrls {
-			queue, err := m.getQueueWithAttributes(url, r)
-			if err != nil {
-				m.modLog.Error(err.Error())
-				m.CommandCounter.Error++
-				break
-			}
-
-			// easier to just set the default state to be no and only flip it to yes if we have a case that matches
-			queue.IsPublic = "No"
-
-			if !queue.Policy.IsEmpty() {
-				m.analyseQueuePolicy(queue, dataReceiver)
-			} else {
-				// If the queue policy "resource policy" is empty, the only principals that have permisisons
-				// are those that are granted access by IAM policies
-				//queue.Access = "Private. Access allowed by IAM policies"
-				queue.Access = "Only intra-account access (via IAM) allowed"
-				dataReceiver <- *queue
-
-			}
-
+			queues = append(queues, url)
 		}
 
 		// The "NextToken" value is nil when there's no more data to return.
@@ -296,6 +326,8 @@ func (m *SQSModule) getSQSRecordsPerRegion(r string, wg *sync.WaitGroup, semapho
 			break
 		}
 	}
+
+	return queues, nil
 }
 
 func (m *SQSModule) getQueueWithAttributes(queueURL string, region string) (*Queue, error) {
@@ -358,6 +390,7 @@ func (m *SQSModule) analyseQueuePolicy(queue *Queue, dataReceiver chan Queue) {
 		} else {
 			queue.ResourcePolicySummary = statement.GetStatementSummaryInEnglish(*m.Caller.Account)
 		}
+		queue.ResourcePolicySummary = strings.TrimSuffix(queue.ResourcePolicySummary, "\n")
 
 	}
 	dataReceiver <- *queue

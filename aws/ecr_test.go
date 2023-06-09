@@ -15,15 +15,10 @@ import (
 
 var AWSRegions = []string{"us-east-1", "us-east-2", "us-west-1", "us-west-2", "af-south-1", "ap-east-1", "ap-south-1", "ap-northeast-3", "ap-northeast-2", "ap-southeast-1", "ap-southeast-2", "ap-northeast-1", "ca-central-1", "eu-central-1", "eu-west-1", "eu-west-2", "eu-south-1", "eu-west-3", "eu-north-1", "me-south-1", "sa-east-1"}
 
-type MockedECRClientDescribeRepos struct {
-	AWSRegions []string
+type MockedECRClient struct {
 }
 
-type MockedECRClientDescribeImages struct {
-	AWSRegions []string
-}
-
-func (m *MockedECRClientDescribeRepos) DescribeRepositories(ctx context.Context, params *ecr.DescribeRepositoriesInput, optFns ...func(*ecr.Options)) (*ecr.DescribeRepositoriesOutput, error) {
+func (m *MockedECRClient) DescribeRepositories(ctx context.Context, params *ecr.DescribeRepositoriesInput, optFns ...func(*ecr.Options)) (*ecr.DescribeRepositoriesOutput, error) {
 	return &ecr.DescribeRepositoriesOutput{
 		Repositories: []types.Repository{
 			{
@@ -34,7 +29,7 @@ func (m *MockedECRClientDescribeRepos) DescribeRepositories(ctx context.Context,
 	}, nil
 }
 
-func (m *MockedECRClientDescribeImages) DescribeImages(context.Context, *ecr.DescribeImagesInput, ...func(*ecr.Options)) (*ecr.DescribeImagesOutput, error) {
+func (m *MockedECRClient) DescribeImages(context.Context, *ecr.DescribeImagesInput, ...func(*ecr.Options)) (*ecr.DescribeImagesOutput, error) {
 	return &ecr.DescribeImagesOutput{
 		ImageDetails: []types.ImageDetail{
 			{
@@ -46,7 +41,14 @@ func (m *MockedECRClientDescribeImages) DescribeImages(context.Context, *ecr.Des
 	}, nil
 }
 
+func (m *MockedECRClient) GetRepositoryPolicy(context.Context, *ecr.GetRepositoryPolicyInput, ...func(*ecr.Options)) (*ecr.GetRepositoryPolicyOutput, error) {
+	return &ecr.GetRepositoryPolicyOutput{
+		PolicyText: aws.String("policyText"),
+	}, nil
+}
+
 func TestDescribeRepos(t *testing.T) {
+
 	subtests := []struct {
 		name            string
 		outputDirectory string
@@ -59,13 +61,15 @@ func TestDescribeRepos(t *testing.T) {
 			outputDirectory: ".",
 			verbosity:       2,
 			testModule: ECRModule{
-				ECRClientDescribeReposInterface:  &MockedECRClientDescribeRepos{},
-				ECRClientDescribeImagesInterface: &MockedECRClientDescribeImages{},
-				Caller:                           sts.GetCallerIdentityOutput{Arn: aws.String("test")},
-				OutputFormat:                     "table",
-				AWSProfile:                       "test",
-				Goroutines:                       30,
-				AWSRegions:                       AWSRegions,
+				ECRClient: &MockedECRClient{},
+				Caller: sts.GetCallerIdentityOutput{
+					Arn:     aws.String("arn:aws:iam::123456789012:user/cloudfox_unit_tests"),
+					Account: aws.String("123456789012"),
+				},
+				OutputFormat: "table",
+				AWSProfile:   "test",
+				Goroutines:   30,
+				AWSRegions:   AWSRegions,
 			},
 			expectedResult: []Repository{{
 				Name:      "test1",

@@ -50,25 +50,21 @@ func TestSQSQueues(t *testing.T) {
 	// execute the module with verbosity set to 2
 	m.PrintSQS("table", tmpDir, 2)
 
-	resultsFilePath := filepath.Join(tmpDir, "cloudfox-output/aws/unittesting/table/sqs.txt")
+	resultsFilePath := filepath.Join(tmpDir, "cloudfox-output/aws/123456789012-unittesting/table/sqs.txt")
 	resultsFile, err := afero.ReadFile(fs, resultsFilePath)
 	if err != nil {
 		t.Fatalf("Cannot read output file at %s: %s", resultsFilePath, err)
 	}
 	expectedResults := strings.TrimLeft(`
-╭────────────────────────────────────────────────────┬─────────┬────────────────────────────────────────────────────────────╮
-│                        Arn                         │ Public? │                  Resource Policy Summary                   │
-├────────────────────────────────────────────────────┼─────────┼────────────────────────────────────────────────────────────┤
-│ arn:aws:sqs:us-east-1:123456789012:condition-queue │ YES     │ Statement 0 says: s3.amazonaws.com can SQS:SendMessage     │
-│                                                    │         │                                                            │
-│                                                    │         │ Statement 1 says: arn:aws:iam::123456789012:root can SQS:* │
-│                                                    │         │                                                            │
-│                                                    │         │ Statement 2 says: Everyone can perform 2 actions           │
-│                                                    │         │                                                            │
-│ arn:aws:sqs:us-east-1:123456789012:policy-queue    │ YES     │ * can sqs:*                                                │
-│                                                    │         │                                                            │
-│ arn:aws:sqs:us-east-1:123456789012:no-policy-queue │ No      │                                                            │
-╰────────────────────────────────────────────────────┴─────────┴────────────────────────────────────────────────────────────╯
+╭────────────────────────────────────────────────────┬─────────┬─────────────────────────────────────────────────────────────────────────╮
+│                        Arn                         │ Public? │                         Resource Policy Summary                         │
+├────────────────────────────────────────────────────┼─────────┼─────────────────────────────────────────────────────────────────────────┤
+│ arn:aws:sqs:us-east-1:123456789012:condition-queue │ YES     │ Statement 0 says: s3.amazonaws.com can SQS:SendMessage                  │
+│                                                    │         │ Statement 1 says: arn:aws:iam::123456789012:root can SQS:*              │
+│                                                    │         │ Statement 2 says: Everyone can SQS:SendMessage & can SQS:ReceiveMessage │
+│ arn:aws:sqs:us-east-1:123456789012:policy-queue    │ YES     │ * can sqs:*                                                             │
+│ arn:aws:sqs:us-east-1:123456789012:no-policy-queue │ No      │                                                                         │
+╰────────────────────────────────────────────────────┴─────────┴─────────────────────────────────────────────────────────────────────────╯
 `, "\n")
 	if string(resultsFile) != expectedResults {
 		t.Fatalf("Unexpected results:\n%s\n", resultsFile)
