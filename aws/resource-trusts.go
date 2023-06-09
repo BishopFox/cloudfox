@@ -253,7 +253,7 @@ func (m *ResourceTrustsModule) getSNSTopicsPerRegion(r string, wg *sync.WaitGrou
 		if err != nil {
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
-			break
+			continue
 		}
 		parsedArn, err := arn.Parse(aws.ToString(t.TopicArn))
 		if err != nil {
@@ -332,11 +332,13 @@ func (m *ResourceTrustsModule) getS3Buckets(wg *sync.WaitGroup, semaphore chan s
 		region, err := sdk.CachedGetBucketLocation(cloudFoxS3Client.S3Client, aws.ToString(m.Caller.Account), name)
 		if err != nil {
 			m.modLog.Error(err.Error())
+			continue
 		}
 
 		policyJSON, err := sdk.CachedGetBucketPolicy(cloudFoxS3Client.S3Client, aws.ToString(m.Caller.Account), region, aws.ToString(b.Name))
 		if err != nil {
 			m.modLog.Error(err.Error())
+			continue
 		} else {
 			bucket.PolicyJSON = policyJSON
 		}
@@ -411,14 +413,14 @@ func (m *ResourceTrustsModule) getSQSQueuesPerRegion(r string, wg *sync.WaitGrou
 		if err != nil {
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
-			break
-		}
-		if queue.Policy.IsPublic() {
-			isPublic = magenta("Yes")
-			isInteresting = magenta("Yes")
+			continue
 		}
 
 		if !queue.Policy.IsEmpty() {
+			if queue.Policy.IsPublic() {
+				isPublic = magenta("Yes")
+				isInteresting = magenta("Yes")
+			}
 			for i, statement := range queue.Policy.Statement {
 				prefix := ""
 				if len(queue.Policy.Statement) > 1 {
@@ -473,16 +475,16 @@ func (m *ResourceTrustsModule) getECRRecordsPerRegion(r string, wg *sync.WaitGro
 		if err != nil {
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
-			break
-		}
-		if repoPolicy.IsPublic() {
-			isPublic = magenta("Yes")
-			isInteresting = magenta("Yes")
-		} else {
-			isPublic = "No"
+			continue
 		}
 
 		if !repoPolicy.IsEmpty() {
+			if repoPolicy.IsPublic() {
+				isPublic = magenta("Yes")
+				isInteresting = magenta("Yes")
+			} else {
+				isPublic = "No"
+			}
 			for i, statement := range repoPolicy.Statement {
 				prefix := ""
 				if len(repoPolicy.Statement) > 1 {
@@ -538,26 +540,25 @@ func (m *ResourceTrustsModule) getCodeBuildResourcePoliciesPerRegion(r string, w
 		if err != nil {
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
-			break
+			continue
 		}
 
 		policyJSON, err := sdk.CachedCodeBuildGetResourcePolicy(cloudFoxCodeBuildClient.CodeBuildClient, aws.ToString(cloudFoxCodeBuildClient.Caller.Account), r, p)
 		if err != nil {
-			m.modLog.Error(err.Error())
-			return
+			sharedLogger.Error(err.Error())
+			continue
 		}
 
 		projectPolicy, err = policy.ParseJSONPolicy([]byte(policyJSON))
 
-		if projectPolicy.IsPublic() {
-			isPublic = magenta("Yes")
-			isInteresting = magenta("Yes")
-
-		} else {
-			isPublic = "No"
-		}
-
 		if !projectPolicy.IsEmpty() {
+			if projectPolicy.IsPublic() {
+				isPublic = magenta("Yes")
+				isInteresting = magenta("Yes")
+
+			} else {
+				isPublic = "No"
+			}
 			for i, statement := range projectPolicy.Statement {
 				prefix := ""
 				if len(projectPolicy.Statement) > 1 {
@@ -612,18 +613,17 @@ func (m *ResourceTrustsModule) getLambdaPolicyPerRegion(r string, wg *sync.WaitG
 		if err != nil {
 			sharedLogger.Error(err.Error())
 			m.CommandCounter.Error++
-			break
-		}
-
-		if functionPolicy.IsPublic() {
-			isPublic = magenta("Yes")
-			isInteresting = magenta("Yes")
-
-		} else {
-			isPublic = "No"
+			continue
 		}
 
 		if !functionPolicy.IsEmpty() {
+			if functionPolicy.IsPublic() {
+				isPublic = magenta("Yes")
+				isInteresting = magenta("Yes")
+
+			} else {
+				isPublic = "No"
+			}
 			for i, statement := range functionPolicy.Statement {
 				prefix := ""
 				if len(functionPolicy.Statement) > 1 {
@@ -678,7 +678,7 @@ func (m *ResourceTrustsModule) getEFSfilesystemPoliciesPerRegion(r string, wg *s
 		if err != nil {
 			sharedLogger.Error(err.Error())
 			m.CommandCounter.Error++
-			break
+			continue
 		}
 
 		if fsPolicy.IsPublic() {
