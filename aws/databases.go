@@ -41,6 +41,7 @@ type DatabasesModule struct {
 type Database struct {
 	AWSService string
 	Region     string
+	Engine     string
 	Name       string
 	Arn        string
 	UserName   string
@@ -101,6 +102,7 @@ func (m *DatabasesModule) PrintDatabases(outputFormat string, outputDirectory st
 
 	m.output.Headers = []string{
 		"Service",
+		"Engine",
 		"Region",
 		"Name",
 		"Size",
@@ -118,6 +120,7 @@ func (m *DatabasesModule) PrintDatabases(outputFormat string, outputDirectory st
 			m.output.Body,
 			[]string{
 				m.Databases[i].AWSService,
+				m.Databases[i].Engine,
 				m.Databases[i].Region,
 				m.Databases[i].Name,
 				m.Databases[i].Size,
@@ -283,7 +286,6 @@ func (m *DatabasesModule) getRdsClustersPerRegion(r string, wg *sync.WaitGroup, 
 			port := instance.Endpoint.Port
 			endpoint := aws.ToString(instance.Endpoint.Address)
 			engine := aws.ToString(instance.Engine)
-			awsService := engine
 
 			if instance.PubliclyAccessible {
 				public = "True"
@@ -292,9 +294,10 @@ func (m *DatabasesModule) getRdsClustersPerRegion(r string, wg *sync.WaitGroup, 
 			}
 
 			dataReceiver <- Database{
-				AWSService: awsService,
+				AWSService: "RDS",
 				Region:     r,
 				Name:       name,
+				Engine:     engine,
 				Endpoint:   endpoint,
 				UserName:   aws.ToString(instance.MasterUsername),
 				Port:       port,
