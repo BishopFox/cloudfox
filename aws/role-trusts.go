@@ -279,7 +279,12 @@ func (m *RoleTrustsModule) printServiceTrusts(outputFormat string, outputDirecto
 		}
 	}
 
-	m.sortTrustsTablePerTrustedPrincipal()
+	// sort the rows based on column 2 (service)
+	sort.SliceStable(body, func(i, j int) bool {
+		return body[i][1] < body[j][1]
+	})
+
+	//m.sortTrustsTablePerTrustedPrincipal()
 	return header, body
 
 	// if len(m.output.Body) > 0 {
