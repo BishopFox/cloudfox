@@ -1193,14 +1193,21 @@ func (m *EndpointsModule) getAPIGatewayv2VIPsPerRegion(r string, wg *sync.WaitGr
 
 				for _, mapping := range GetApiMappings.Items {
 					stage := aws.ToString(mapping.Stage)
+					if stage == "$default" {
+						stage = ""
+					}
 					path := aws.ToString(mapping.ApiMappingKey)
 
 					for _, api := range Items {
 						if api.ApiId != nil && aws.ToString(api.ApiId) == aws.ToString(mapping.ApiId) {
 							endpoints := m.getEndpointsPerAPIGatewayv2(r, api)
 							for _, endpoint := range endpoints {
-								old := fmt.Sprintf("https://%s.execute-api.%s.amazonaws.com/%s/", aws.ToString(mapping.ApiId), r, stage)
-
+								var old string
+								if stage == "" {
+									old = fmt.Sprintf("https://%s.execute-api.%s.amazonaws.com/", aws.ToString(mapping.ApiId), r)
+								} else {
+									old = fmt.Sprintf("https://%s.execute-api.%s.amazonaws.com/%s/", aws.ToString(mapping.ApiId), r, stage)
+								}
 								if strings.HasPrefix(endpoint.Endpoint, old) {
 									var new string
 									if path == "" {
@@ -1273,7 +1280,11 @@ func (m *EndpointsModule) getEndpointsPerAPIGatewayv2(r string, api apigatewayV2
 		}
 
 		for _, stage := range GetStages.Items {
-			stages = append(stages, aws.ToString(stage.StageName))
+			s := aws.ToString(stage.StageName)
+			if s == "$default" {
+				s = ""
+			}
+			stages = append(stages, s)
 		}
 
 		if GetStages.NextToken != nil {
@@ -1312,7 +1323,12 @@ func (m *EndpointsModule) getEndpointsPerAPIGatewayv2(r string, api apigatewayV2
 				if len(strings.Fields(*routeKey)) == 2 {
 					path = strings.Fields(*routeKey)[1]
 				}
-				endpoint := fmt.Sprintf("%s/%s%s", raw_endpoint, stage, path)
+				var endpoint string
+				if stage == "" {
+					endpoint = fmt.Sprintf("%s%s", raw_endpoint, path)
+				} else {
+					endpoint = fmt.Sprintf("%s/%s%s", raw_endpoint, stage, path)
+				}
 				public = "True"
 
 				endpoints = append(endpoints, Endpoint{
