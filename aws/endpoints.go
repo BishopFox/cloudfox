@@ -15,7 +15,10 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/apigateway"
+	apigatewayTypes "github.com/aws/aws-sdk-go-v2/service/apigateway/types"
 	"github.com/aws/aws-sdk-go-v2/service/apigatewayv2"
+
+	apigatewayV2Types "github.com/aws/aws-sdk-go-v2/service/apigatewayv2/types"
 	"github.com/aws/aws-sdk-go-v2/service/apprunner"
 	apprunnerTypes "github.com/aws/aws-sdk-go-v2/service/apprunner/types"
 	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
@@ -299,7 +302,15 @@ func (m *EndpointsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore 
 
 		m.CommandCounter.Total++
 		wg.Add(1)
+		go m.getAPIGatewayVIPsPerRegion(r, wg, semaphore, dataReceiver)
+
+		m.CommandCounter.Total++
+		wg.Add(1)
 		go m.getAPIGatewayv2APIsPerRegion(r, wg, semaphore, dataReceiver)
+
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getAPIGatewayv2VIPsPerRegion(r, wg, semaphore, dataReceiver)
 	}
 	res, err = servicemap.IsServiceInRegion("rds", r)
 	if err != nil {
@@ -853,8 +864,39 @@ func (m *EndpointsModule) getAPIGatewayAPIsPerRegion(r string, wg *sync.WaitGrou
 	m.CommandCounter.Executing++
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
 
+	Items, err := sdk.CachedApiGatewayGetRestAPIs(m.APIGatewayClient, aws.ToString(m.Caller.Account), r)
+
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	for _, api := range Items {
+		for _, endpoint := range m.getEndpointsPerAPIGateway(r, api) {
+			dataReceiver <- endpoint
+		}
+	}
+}
+
+func (m *EndpointsModule) getAPIGatewayVIPsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Endpoint) {
+	defer func() {
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+		wg.Done()
+
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
+
 	var PaginationControl2 *string
-	awsService := "APIGateway"
+	var PaginationControl3 *string
 
 	Items, err := sdk.CachedApiGatewayGetRestAPIs(m.APIGatewayClient, aws.ToString(m.Caller.Account), r)
 
@@ -864,77 +906,186 @@ func (m *EndpointsModule) getAPIGatewayAPIsPerRegion(r string, wg *sync.WaitGrou
 		return
 	}
 
-	var public string
-	for _, api := range Items {
+	for {
+		GetDomainNames, err := m.APIGatewayClient.GetDomainNames(
+			context.TODO(),
+			&apigateway.GetDomainNamesInput{
+				Position: PaginationControl2,
+			},
+			func(o *apigateway.Options) {
+				o.Region = r
+			},
+		)
 
-		name := aws.ToString(api.Name)
-		id := aws.ToString(api.Id)
-		raw_endpoint := fmt.Sprintf("https://%s.execute-api.%s.amazonaws.com", id, r)
-		var port int32 = 443
-		protocol := "https"
-
-		endpointType := *api.EndpointConfiguration
-		//fmt.Println(endpointType)
-		if endpointType.Types[0] == "PRIVATE" {
-			public = "False"
-		} else {
-			public = "True"
+		if err != nil {
+			if errors.As(err, &oe) {
+				m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
+			}
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			break
 		}
 
-		for {
-			GetResources, err := m.APIGatewayClient.GetResources(
-				context.TODO(),
-				&apigateway.GetResourcesInput{
-					RestApiId: &id,
-					Position:  PaginationControl2,
-				},
-				func(o *apigateway.Options) {
-					o.Region = r
-				},
-			)
+		for _, item := range GetDomainNames.Items {
 
-			if err != nil {
-				if errors.As(err, &oe) {
-					m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
-				}
-				m.modLog.Error(err.Error())
-				m.CommandCounter.Error++
-				break
-			}
+			domain := aws.ToString(item.DomainName)
 
-			for _, resource := range GetResources.Items {
+			for {
+				GetBasePathMappings, err := m.APIGatewayClient.GetBasePathMappings(
+					context.TODO(),
+					&apigateway.GetBasePathMappingsInput{
+						DomainName: item.DomainName,
+						Position:   PaginationControl3,
+					},
+					func(o *apigateway.Options) {
+						o.Region = r
+					},
+				)
 
-				path := resource.Path
-				//pathPart := resource.PathPart
-				//fmt.Printf(*path, *pathPart)
-				//var path string
-
-				// if len(strings.Fields(*routeKey)) == 2 {
-				// 	path = strings.Fields(*routeKey)[1]
-				// }
-				endpoint := fmt.Sprintf("%s%s", raw_endpoint, aws.ToString(path))
-
-				dataReceiver <- Endpoint{
-					AWSService: awsService,
-					Region:     r,
-					Name:       name,
-					Endpoint:   endpoint,
-					Port:       port,
-					Protocol:   protocol,
-					Public:     public,
+				if err != nil {
+					if errors.As(err, &oe) {
+						m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
+					}
+					m.modLog.Error(err.Error())
+					m.CommandCounter.Error++
+					break
 				}
 
-			}
-			if GetResources.Position != nil {
-				PaginationControl2 = GetResources.Position
-			} else {
-				PaginationControl2 = nil
-				break
-			}
+				for _, mapping := range GetBasePathMappings.Items {
+					stage := aws.ToString(mapping.Stage)
+					basePath := aws.ToString(mapping.BasePath)
+					if basePath == "(none)" {
+						basePath = "" // Empty string since '/' is already prepended
+					}
 
+					for _, api := range Items {
+						if api.Id != nil && aws.ToString(api.Id) == aws.ToString(mapping.RestApiId) {
+							endpoints := m.getEndpointsPerAPIGateway(r, api)
+							for _, endpoint := range endpoints {
+								old := fmt.Sprintf("https://%s.execute-api.%s.amazonaws.com/%s/", aws.ToString(mapping.RestApiId), r, stage)
+
+								if strings.HasPrefix(endpoint.Endpoint, old) {
+									var new string
+									if basePath == "" {
+										new = fmt.Sprintf("https://%s/", domain)
+									} else {
+										new = fmt.Sprintf("https://%s/%s/", domain, basePath)
+									}
+									endpoint.Endpoint = strings.Replace(endpoint.Endpoint, old, new, 1)
+									endpoint.Name = domain
+									dataReceiver <- endpoint
+								}
+							}
+							break
+						}
+					}
+				}
+
+				if GetBasePathMappings.Position != nil {
+					PaginationControl3 = GetBasePathMappings.Position
+				} else {
+					PaginationControl3 = nil
+					break
+				}
+			}
+		}
+		if GetDomainNames.Position != nil {
+			PaginationControl2 = GetDomainNames.Position
+		} else {
+			PaginationControl2 = nil
+			break
 		}
 	}
+}
 
+func (m *EndpointsModule) getEndpointsPerAPIGateway(r string, api apigatewayTypes.RestApi) []Endpoint {
+	var endpoints []Endpoint
+
+	var PaginationControl2 *string
+	awsService := "APIGateway"
+	var public string
+
+	name := aws.ToString(api.Name)
+	id := aws.ToString(api.Id)
+	raw_endpoint := fmt.Sprintf("https://%s.execute-api.%s.amazonaws.com", id, r)
+	var port int32 = 443
+	protocol := "https"
+
+	endpointType := *api.EndpointConfiguration
+	//fmt.Println(endpointType)
+	if endpointType.Types[0] == "PRIVATE" {
+		public = "False"
+	} else {
+		public = "True"
+	}
+
+	GetStages, err := m.APIGatewayClient.GetStages(
+		context.TODO(),
+		&apigateway.GetStagesInput{
+			RestApiId: &id,
+		},
+		func(o *apigateway.Options) {
+			o.Region = r
+		},
+	)
+
+	if err != nil {
+		if errors.As(err, &oe) {
+			m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
+		}
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+	}
+
+	for {
+		GetResources, err := m.APIGatewayClient.GetResources(
+			context.TODO(),
+			&apigateway.GetResourcesInput{
+				RestApiId: &id,
+				Position:  PaginationControl2,
+			},
+			func(o *apigateway.Options) {
+				o.Region = r
+			},
+		)
+
+		if err != nil {
+			if errors.As(err, &oe) {
+				m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
+			}
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			break
+		}
+
+		for _, stage := range GetStages.Item {
+			stageName := aws.ToString(stage.StageName)
+			for _, resource := range GetResources.Items {
+				if len(resource.ResourceMethods) != 0 {
+					path := aws.ToString(resource.Path)
+
+					endpoint := fmt.Sprintf("%s/%s%s", raw_endpoint, stageName, path)
+
+					endpoints = append(endpoints, Endpoint{
+						AWSService: awsService,
+						Region:     r,
+						Name:       name,
+						Endpoint:   endpoint,
+						Port:       port,
+						Protocol:   protocol,
+						Public:     public,
+					})
+				}
+			}
+		}
+		if GetResources.Position != nil {
+			PaginationControl2 = GetResources.Position
+		} else {
+			PaginationControl2 = nil
+			break
+		}
+	}
+	return endpoints
 }
 
 func (m *EndpointsModule) getAPIGatewayv2APIsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Endpoint) {
@@ -952,8 +1103,6 @@ func (m *EndpointsModule) getAPIGatewayv2APIsPerRegion(r string, wg *sync.WaitGr
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl2 *string
-	awsService := "APIGatewayv2"
 
 	Items, err := sdk.CachedAPIGatewayv2GetAPIs(m.APIGatewayv2Client, aws.ToString(m.Caller.Account), r)
 
@@ -962,46 +1111,211 @@ func (m *EndpointsModule) getAPIGatewayv2APIsPerRegion(r string, wg *sync.WaitGr
 		m.CommandCounter.Error++
 		return
 	}
-	var public string
 	for _, api := range Items {
+		for _, endpoint := range m.getEndpointsPerAPIGatewayv2(r, api) {
+			dataReceiver <- endpoint
+		}
+	}
 
-		name := aws.ToString(api.Name)
-		raw_endpoint := aws.ToString(api.ApiEndpoint)
-		id := aws.ToString(api.ApiId)
-		var port int32 = 443
-		protocol := "https"
+}
 
-		for {
-			GetRoutes, err := m.APIGatewayv2Client.GetRoutes(
-				context.TODO(),
-				&apigatewayv2.GetRoutesInput{
-					ApiId:     &id,
-					NextToken: PaginationControl2,
-				},
-				func(o *apigatewayv2.Options) {
-					o.Region = r
-				},
-			)
+func (m *EndpointsModule) getAPIGatewayv2VIPsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Endpoint) {
+	defer func() {
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+		wg.Done()
 
-			if err != nil {
-				if errors.As(err, &oe) {
-					m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
-				}
-				m.modLog.Error(err.Error())
-				m.CommandCounter.Error++
-				continue
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
+
+	var PaginationControl2 *string
+	var PaginationControl3 *string
+
+	Items, err := sdk.CachedAPIGatewayv2GetAPIs(m.APIGatewayv2Client, aws.ToString(m.Caller.Account), r)
+
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	for {
+		GetDomainNames, err := m.APIGatewayv2Client.GetDomainNames(
+			context.TODO(),
+			&apigatewayv2.GetDomainNamesInput{
+				NextToken: PaginationControl2,
+			},
+			func(o *apigatewayv2.Options) {
+				o.Region = r
+			},
+		)
+
+		if err != nil {
+			if errors.As(err, &oe) {
+				m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
 			}
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			break
+		}
 
+		for _, item := range GetDomainNames.Items {
+
+			domain := aws.ToString(item.DomainName)
+
+			for {
+				GetApiMappings, err := m.APIGatewayv2Client.GetApiMappings(
+					context.TODO(),
+					&apigatewayv2.GetApiMappingsInput{
+						DomainName: item.DomainName,
+						NextToken:  PaginationControl3,
+					},
+					func(o *apigatewayv2.Options) {
+						o.Region = r
+					},
+				)
+
+				if err != nil {
+					if errors.As(err, &oe) {
+						m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
+					}
+					m.modLog.Error(err.Error())
+					m.CommandCounter.Error++
+					break
+				}
+
+				for _, mapping := range GetApiMappings.Items {
+					stage := aws.ToString(mapping.Stage)
+					path := aws.ToString(mapping.ApiMappingKey)
+
+					for _, api := range Items {
+						if api.ApiId != nil && aws.ToString(api.ApiId) == aws.ToString(mapping.ApiId) {
+							endpoints := m.getEndpointsPerAPIGatewayv2(r, api)
+							for _, endpoint := range endpoints {
+								old := fmt.Sprintf("https://%s.execute-api.%s.amazonaws.com/%s/", aws.ToString(mapping.ApiId), r, stage)
+
+								if strings.HasPrefix(endpoint.Endpoint, old) {
+									var new string
+									if path == "" {
+										new = fmt.Sprintf("https://%s/", domain)
+									} else {
+										new = fmt.Sprintf("https://%s/%s/", domain, path)
+									}
+									endpoint.Endpoint = strings.Replace(endpoint.Endpoint, old, new, 1)
+									endpoint.Name = domain
+									dataReceiver <- endpoint
+								}
+							}
+							break
+						}
+					}
+				}
+
+				if GetApiMappings.NextToken != nil {
+					PaginationControl3 = GetApiMappings.NextToken
+				} else {
+					PaginationControl3 = nil
+					break
+				}
+			}
+		}
+		if GetDomainNames.NextToken != nil {
+			PaginationControl2 = GetDomainNames.NextToken
+		} else {
+			PaginationControl2 = nil
+			break
+		}
+	}
+}
+
+func (m *EndpointsModule) getEndpointsPerAPIGatewayv2(r string, api apigatewayV2Types.Api) []Endpoint {
+	var endpoints []Endpoint
+
+	var PaginationControl2 *string
+	var PaginationControl3 *string
+	awsService := "APIGatewayv2"
+
+	var public string
+
+	name := aws.ToString(api.Name)
+	raw_endpoint := aws.ToString(api.ApiEndpoint)
+	id := aws.ToString(api.ApiId)
+	var port int32 = 443
+	protocol := "https"
+
+	var stages []string
+	for {
+		GetStages, err := m.APIGatewayv2Client.GetStages(
+			context.TODO(),
+			&apigatewayv2.GetStagesInput{
+				ApiId:     &id,
+				NextToken: PaginationControl2,
+			},
+			func(o *apigatewayv2.Options) {
+				o.Region = r
+			},
+		)
+
+		if err != nil {
+			if errors.As(err, &oe) {
+				m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
+			}
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			break
+		}
+
+		for _, stage := range GetStages.Items {
+			stages = append(stages, aws.ToString(stage.StageName))
+		}
+
+		if GetStages.NextToken != nil {
+			PaginationControl2 = GetStages.NextToken
+		} else {
+			PaginationControl2 = nil
+			break
+		}
+	}
+
+	for {
+		GetRoutes, err := m.APIGatewayv2Client.GetRoutes(
+			context.TODO(),
+			&apigatewayv2.GetRoutesInput{
+				ApiId:     &id,
+				NextToken: PaginationControl3,
+			},
+			func(o *apigatewayv2.Options) {
+				o.Region = r
+			},
+		)
+
+		if err != nil {
+			if errors.As(err, &oe) {
+				m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
+			}
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			continue
+		}
+
+		for _, stage := range stages {
 			for _, route := range GetRoutes.Items {
 				routeKey := route.RouteKey
 				var path string
 				if len(strings.Fields(*routeKey)) == 2 {
 					path = strings.Fields(*routeKey)[1]
 				}
-				endpoint := fmt.Sprintf("%s%s", raw_endpoint, path)
+				endpoint := fmt.Sprintf("%s/%s%s", raw_endpoint, stage, path)
 				public = "True"
 
-				dataReceiver <- Endpoint{
+				endpoints = append(endpoints, Endpoint{
 					AWSService: awsService,
 					Region:     r,
 					Name:       name,
@@ -1009,19 +1323,18 @@ func (m *EndpointsModule) getAPIGatewayv2APIsPerRegion(r string, wg *sync.WaitGr
 					Port:       port,
 					Protocol:   protocol,
 					Public:     public,
-				}
-
+				})
 			}
-			if GetRoutes.NextToken != nil {
-				PaginationControl2 = GetRoutes.NextToken
-			} else {
-				PaginationControl2 = nil
-				break
-			}
-
 		}
-	}
+		if GetRoutes.NextToken != nil {
+			PaginationControl3 = GetRoutes.NextToken
+		} else {
+			PaginationControl3 = nil
+			break
+		}
 
+	}
+	return endpoints
 }
 
 func (m *EndpointsModule) getRdsClustersPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Endpoint) {
@@ -1293,7 +1606,11 @@ func (m *EndpointsModule) getCloudfrontEndpoints(wg *sync.WaitGroup, semaphore c
 				//fmt.Println(origin.DomainName)
 				public = "Unknown"
 				var port int32 = 443
-				endpoint := fmt.Sprintf("https://%s/%s", aws.ToString(origin.DomainName), aws.ToString(origin.OriginPath))
+				path := aws.ToString(origin.OriginPath)
+				if !strings.HasPrefix(path, "/") {
+					path = "/" + path
+				}
+				endpoint := fmt.Sprintf("https://%s%s", aws.ToString(origin.DomainName), path)
 				awsServiceOrigin := fmt.Sprintf("%s [origin]", awsService)
 				dataReceiver <- Endpoint{
 					AWSService: awsServiceOrigin,
