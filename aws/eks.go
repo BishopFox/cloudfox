@@ -315,6 +315,7 @@ func (m *EKSModule) getEKSRecordsPerRegion(r string, wg *sync.WaitGroup, semapho
 	}()
 	var clusters []string
 	var role string
+	var oidc string = ""
 
 	clusters, err := sdk.CachedEKSListClusters(m.EKSClient, aws.ToString(m.Caller.Account), r)
 	if err != nil {
@@ -332,7 +333,8 @@ func (m *EKSModule) getEKSRecordsPerRegion(r string, wg *sync.WaitGroup, semapho
 
 		//nodeGroups = append(nodeGroups, DescribeCluster.Cluster.)
 		endpoint := aws.ToString(clusterDetails.Endpoint)
-		oidc := aws.ToString(clusterDetails.Identity.Oidc.Issuer)
+		if clusterDetails.Identity != nil && clusterDetails.Identity.Oidc != nil {
+			oidc = aws.ToString(clusterDetails.Identity.Oidc.Issuer)
 		publicEndpoint := strconv.FormatBool(clusterDetails.ResourcesVpcConfig.EndpointPublicAccess)
 		// if DescribeCluster.Cluster.ResourcesVpcConfig.PublicAccessCidrs[0] == "0.0.0.0/0" {
 		// 	publicCIDRs := "0.0.0.0/0"

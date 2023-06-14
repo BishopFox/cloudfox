@@ -287,12 +287,13 @@ func (m *FilesystemsModule) getEFSSharesPerRegion(r string, wg *sync.WaitGroup, 
 		)
 		if err != nil {
 			policy = "Default (No IAM auth)"
+		} else {
+			policy = "IAM Authenticated"
 		}
 
 		DescribeMountTargets, err := sdk.CachedDescribeMountTargets(m.EFSClient, aws.ToString(m.Caller.Account), r, id)
 		if err != nil {
 			sharedLogger.Error(err.Error())
-
 			m.CommandCounter.Error++
 			break
 		}
@@ -486,10 +487,11 @@ func (m *FilesystemsModule) getEFSfilesystemPermissions(accessPoint types.Access
 	var path string
 	var permissions string
 
-	if accessPoint.AccessPointId != nil {
+	if accessPoint.AccessPointId != nil && accessPoint.RootDirectory != nil && accessPoint.RootDirectory.CreationInfo != nil {
 		path = aws.ToString(accessPoint.RootDirectory.Path)
 		permissions = aws.ToString(accessPoint.RootDirectory.CreationInfo.Permissions)
+		return path, permissions
 	}
-	return path, permissions
+	return "", ""
 
 }
