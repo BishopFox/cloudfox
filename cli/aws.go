@@ -70,7 +70,7 @@ var (
 	AWSOutputDirectory string
 	AWSSkipAdminCheck  bool
 	AWSWrapTable       bool
-	AWSIgnoreCache     bool
+	AWSUseCache        bool
 	Goroutines         int
 	Verbosity          int
 	AWSCommands        = &cobra.Command{
@@ -479,7 +479,7 @@ func awsPreRun(cmd *cobra.Command, args []string) {
 			}
 			fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
 
-			if !AWSIgnoreCache {
+			if AWSUseCache {
 				cacheDirectory := filepath.Join(AWSOutputDirectory, "cached-data", "aws", ptr.ToString(caller.Account))
 				err = internal.LoadCacheFromGobFiles(cacheDirectory)
 				if err != nil {
@@ -535,7 +535,7 @@ func FindOrgMgmtAccountAndReorderAccounts(AWSProfiles []string, version string) 
 			continue
 		}
 		fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), *caller.Arn)
-		if !AWSIgnoreCache {
+		if AWSUseCache {
 			cacheDirectory := filepath.Join(AWSOutputDirectory, "cached-data", "aws", ptr.ToString(caller.Account))
 			err = internal.LoadCacheFromGobFiles(cacheDirectory)
 			if err != nil {
@@ -1719,7 +1719,7 @@ func init() {
 	AWSCommands.PersistentFlags().IntVarP(&Goroutines, "max-goroutines", "g", 30, "Maximum number of concurrent goroutines")
 	AWSCommands.PersistentFlags().BoolVar(&AWSSkipAdminCheck, "skip-admin-check", false, "Skip check to determine if role is an Admin")
 	AWSCommands.PersistentFlags().BoolVarP(&AWSWrapTable, "wrap", "w", false, "Wrap table to fit in terminal (complicates grepping)")
-	AWSCommands.PersistentFlags().BoolVar(&AWSIgnoreCache, "ignore-cache", false, "Disable loading of cached data. Slower, but important if changes have been recently made")
+	AWSCommands.PersistentFlags().BoolVarP(&AWSUseCache, "cached", "c", false, "Load cached data from disk. Faster, but if changes have been recently made you'll miss them")
 
 	AWSCommands.AddCommand(
 		AllChecksCommand,
