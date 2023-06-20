@@ -41,7 +41,7 @@ For the full documentation please refer to our [wiki](https://github.com/BishopF
 | - | - |
 | AWS | 30 | 
 | Azure | 4 | 
-| GCP | Support Planned |
+| GCP | 1 |
 | Kubernetes | Support Planned | 
 
 
@@ -79,7 +79,12 @@ Additional policy notes (as of 09/2022):
 |  `arn:aws:iam::aws:policy/AdministratorAccess` | This will work just fine with CloudFox, but if you were handed this level of access as a penetration tester, that should probably be a finding in itself :) |
 
 ### Azure
-* Viewer or similar permissions applied. 
+* Viewer or similar permissions applied.
+
+### GCP
+* `gcloud` CLI installed
+ * Proper SDK credentials available (`gcloud auth application-default login`)
+* Viewer or similar permissions applied.
 
 # AWS Commands
 | Provider | Command Name | Description 
@@ -121,6 +126,11 @@ Additional policy notes (as of 09/2022):
 | Azure | [instances](https://github.com/BishopFox/cloudfox/wiki/Azure-Commands#instances) | Enumerates useful information for Compute instances in all available resource groups and subscriptions | 
 | Azure | [rbac](https://github.com/BishopFox/cloudfox/wiki/Azure-Commands#rbac) | Lists Azure RBAC role assignments at subscription or tenant level |
 | Azure | [storage](https://github.com/BishopFox/cloudfox/wiki/Azure-Commands#storage) | The storage command is still under development. Currently it only displays limited data about the storage accounts | 
+
+# GCP Commands
+| Provider | Command Name | Description 
+| - | - | - | 
+| GCP | [whoami](https://github.com/BishopFox/cloudfox/wiki/GCP-Commands#whoami) | Displays information on the projects available to your current Gcloud SDK credentials. This is useful to provide situation awareness on what organizations, folders and projects to use with the other sub commands. |
 
 # Authors
 * [Carlos Vendramini](https://github.com/carlosvendramini-bf)
