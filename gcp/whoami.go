@@ -11,11 +11,10 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 )
 
-//func GCPPermissionsCommand(
 
 func GCPWhoamiCommand(version string, GCPWrapTable bool) error {
 	fmt.Printf("[%s][%s] Enumerating GCP projects through SDK application credentials...\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", version)), color.CyanString(globals.GCP_WHOAMI_MODULE_NAME))
-	var client gcpp.GCPClient = *gcpp.NewGCPClient()
+	var client gcp.GCPClient = *gcp.NewGCPClient()
 	/*
 	orgInfo, err := cloudresourcemanagerService.Organizations.Search(&cloudresourcemanager.SearchOrganizationsRequest{}).Do()
 	if err != nil {

@@ -1,4 +1,4 @@
-package gcpp
+package gcp
 
 import (
 	"context"
@@ -9,12 +9,14 @@ import (
 	"google.golang.org/api/option"
 	goauth2 "google.golang.org/api/oauth2/v2"
 	"google.golang.org/api/cloudresourcemanager/v1"
+	"google.golang.org/api/cloudasset/v1p1beta1"
 )
 
 type GCPClient struct {
 	TokenSource *oauth2.TokenSource
 	TokenInfo *goauth2.Tokeninfo
 	CloudresourcemanagerService *cloudresourcemanager.Service
+	CloudAssetService *cloudasset.Service
 }
 
 func (g *GCPClient) init() {
@@ -35,6 +37,11 @@ func (g *GCPClient) init() {
 		log.Fatal(err)
 	}
 	g.CloudresourcemanagerService = cloudresourcemanagerService
+	cloudassetService, err := cloudasset.NewService(ctx, option.WithTokenSource(ts))
+	if err != nil {
+		log.Fatal(err)
+	}
+	g.CloudAssetService = cloudassetService
 }
 
 func NewGCPClient() *GCPClient {
