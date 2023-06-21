@@ -3,7 +3,6 @@ package gcpp
 import (
 	"context"
 	"log"
-	"fmt"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -41,6 +40,5 @@ func (g *GCPClient) init() {
 func NewGCPClient() *GCPClient {
 	client := new(GCPClient)
 	client.init()
-	fmt.Println(client.TokenInfo)
 	return client
 }
