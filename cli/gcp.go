@@ -49,24 +49,24 @@ Display available GCP resources:
 		Run: runGCPInventoryCommand,
 	}
 
-	GCPProfilesCommand = &cobra.Command{
-		Use:     "profiles",
+	GCPAccessTokensCommand = &cobra.Command{
+		Use:     "access-tokens",
 		Aliases: []string{},
-		Short:   "Display all available local gcloud profiles",
+		Short:   "Display all available local gcloud access tokens",
 		Long: `
-Display available gcloud profiles:
-./cloudfox gcp profiles`,
-		Run: runGCPProfilesCommand,
+Display available gcloud access tokens:
+./cloudfox gcp access-tokens`,
+		Run: runGCPAccessTokensCommand,
 	}
 )
 
-func runGCPProfilesCommand(cmd *cobra.Command, args []string) {
-	m := gcp.ProfilesModule{
+func runGCPAccessTokensCommand(cmd *cobra.Command, args []string) {
+	m := gcp.AccessTokensModule{
 		Organizations:	GCPOrganizations,
 		Projects:		GCPProjectIDs,
 		Folders:		GCPFolderIDs,
 	}
-	err := m.PrintProfiles(cmd.Root().Version, GCPOutputFormat, GCPOutputDirectory, Verbosity)
+	err := m.PrintAccessTokens(cmd.Root().Version, GCPOutputFormat, GCPOutputDirectory, Verbosity)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -110,6 +110,6 @@ func init() {
 	GCPCommands.AddCommand(
 		GCPWhoamiCommand,
 		GCPInventoryCommand,
-		GCPProfilesCommand,
+		GCPAccessTokensCommand,
 	)
 }
