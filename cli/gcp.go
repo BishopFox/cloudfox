@@ -36,7 +36,7 @@ var (
 		Long: `
 Display Available GCP projects:
 ./cloudfox gcp whoami`,
-		Run: runWhoamiCommand,
+		Run: runGCPWhoamiCommand,
 	}
 
 	GCPInventoryCommand = &cobra.Command{
@@ -48,9 +48,31 @@ Display available GCP resources:
 ./cloudfox gcp inventory`,
 		Run: runGCPInventoryCommand,
 	}
+
+	GCPProfilesCommand = &cobra.Command{
+		Use:     "profiles",
+		Aliases: []string{},
+		Short:   "Display all available local gcloud profiles",
+		Long: `
+Display available gcloud profiles:
+./cloudfox gcp profiles`,
+		Run: runGCPProfilesCommand,
+	}
 )
 
-func runWhoamiCommand(cmd *cobra.Command, args []string) {
+func runGCPProfilesCommand(cmd *cobra.Command, args []string) {
+	m := gcp.ProfilesModule{
+		Organizations:	GCPOrganizations,
+		Projects:		GCPProjectIDs,
+		Folders:		GCPFolderIDs,
+	}
+	err := m.PrintProfiles(cmd.Root().Version, GCPOutputFormat, GCPOutputDirectory, Verbosity)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func runGCPWhoamiCommand(cmd *cobra.Command, args []string) {
 	err := gcp.GCPWhoamiCommand(cmd.Root().Version, GCPWrapTable)
 	if err != nil {
 		log.Fatal(err)
@@ -88,5 +110,6 @@ func init() {
 	GCPCommands.AddCommand(
 		GCPWhoamiCommand,
 		GCPInventoryCommand,
+		GCPProfilesCommand,
 	)
 }

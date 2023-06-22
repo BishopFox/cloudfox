@@ -17,31 +17,44 @@ type GCPClient struct {
 	TokenInfo *goauth2.Tokeninfo
 	CloudresourcemanagerService *cloudresourcemanager.Service
 	CloudAssetService *cloudasset.Service
+	ResourcesService *cloudasset.ResourcesService
+	IamPoliciesService *cloudasset.IamPoliciesService
 }
 
 func (g *GCPClient) init() {
 	ctx := context.Background()
+	conf, err := google.NewSDKConfig("")
+	if err != nil {
+		log.Fatal(err)
+	}
+	// Initiate an http.Client. The following GET request will be
+	// authorized and authenticated on the behalf of the SDK user.
+	client := conf.Client(oauth2.NoContext)
 	ts, err := google.DefaultTokenSource(ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
 	g.TokenSource = &ts
-	oauth2Service, err := goauth2.NewService(ctx, option.WithTokenSource(ts))
+	//oauth2Service, err := goauth2.NewService(ctx, option.WithTokenSource(ts))
+	oauth2Service, err := goauth2.NewService(ctx, option.WithHTTPClient(client))
 	tokenInfo, err := oauth2Service.Tokeninfo().Do()
 	if err != nil {
 		log.Fatal(err)
 	}
 	g.TokenInfo = tokenInfo
-	cloudresourcemanagerService, err := cloudresourcemanager.NewService(ctx, option.WithTokenSource(ts))
+	cloudresourcemanagerService, err := cloudresourcemanager.NewService(ctx, option.WithHTTPClient(client))
 	if err != nil {
 		log.Fatal(err)
 	}
 	g.CloudresourcemanagerService = cloudresourcemanagerService
-	cloudassetService, err := cloudasset.NewService(ctx, option.WithTokenSource(ts))
+	cloudassetService, err := cloudasset.NewService(ctx, option.WithHTTPClient(client))
 	if err != nil {
 		log.Fatal(err)
 	}
 	g.CloudAssetService = cloudassetService
+	g.ResourcesService = cloudasset.NewResourcesService(cloudassetService)
+	g.IamPoliciesService = cloudasset.NewIamPoliciesService(cloudassetService)
+	
 }
 
 func NewGCPClient() *GCPClient {
