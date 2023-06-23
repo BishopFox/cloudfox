@@ -58,7 +58,51 @@ Display available gcloud access tokens:
 ./cloudfox gcp access-tokens`,
 		Run: runGCPAccessTokensCommand,
 	}
+
+	GCPBucketsCommand = &cobra.Command{
+		Use:     "buckets",
+		Aliases: []string{},
+		Short:   "Display GCP bucket information",
+		Long: `
+Display available bucket information:
+./cloudfox gcp buckets`,
+		Run: runGCPBucketsCommand,
+	}
+
+	GCPHierarchyCommand = &cobra.Command{
+		Use:     "hierarchy",
+		Aliases: []string{},
+		Short:   "Display GCP resources hierarchy",
+		Long: `
+Display available resources' hierarchy:
+./cloudfox gcp hierarchy`,
+		Run: runGCPHierarchyCommand,
+	}
 )
+
+func runGCPHierarchyCommand(cmd *cobra.Command, args []string) {
+	m := gcp.HierarchyModule{
+		Organizations:	GCPOrganizations,
+		Projects:		GCPProjectIDs,
+		Folders:		GCPFolderIDs,
+	}
+	err := m.DisplayHierarchy(cmd.Root().Version)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func runGCPBucketsCommand(cmd *cobra.Command, args []string) {
+	m := gcp.BucketsModule{
+		Organizations:	GCPOrganizations,
+		Projects:		GCPProjectIDs,
+		Folders:		GCPFolderIDs,
+	}
+	err := m.GetData(cmd.Root().Version, []string{})
+	if err != nil {
+		log.Fatal(err)
+	}
+}
 
 func runGCPAccessTokensCommand(cmd *cobra.Command, args []string) {
 	m := gcp.AccessTokensModule{
@@ -111,5 +155,7 @@ func init() {
 		GCPWhoamiCommand,
 		GCPInventoryCommand,
 		GCPAccessTokensCommand,
+		GCPBucketsCommand,
+		GCPHierarchyCommand,
 	)
 }

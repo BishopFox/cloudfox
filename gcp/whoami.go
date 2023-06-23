@@ -2,11 +2,11 @@ package gcp
 
 import (
 	"fmt"
-	"log"
-	"strconv"
+	//"log"
+	//"strconv"
 	"github.com/fatih/color"
 	"github.com/BishopFox/cloudfox/internal/gcp"
-	"github.com/BishopFox/cloudfox/internal"
+	//"github.com/BishopFox/cloudfox/internal"
 	"github.com/kyokomi/emoji"
 	"github.com/BishopFox/cloudfox/globals"
 )
@@ -15,6 +15,7 @@ import (
 func GCPWhoamiCommand(version string, GCPWrapTable bool) error {
 	fmt.Printf("[%s][%s] Enumerating GCP projects through SDK application credentials...\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", version)), color.CyanString(globals.GCP_WHOAMI_MODULE_NAME))
 	var client gcp.GCPClient = *gcp.NewGCPClient()
+	fmt.Println(client)
 	/*
 	orgInfo, err := cloudresourcemanagerService.Organizations.Search(&cloudresourcemanager.SearchOrganizationsRequest{}).Do()
 	if err != nil {
@@ -22,6 +23,7 @@ func GCPWhoamiCommand(version string, GCPWrapTable bool) error {
 	}
 	fmt.Printf("%+v\n", orgInfo)*/
 	//projectListResponse, err := client.cloudresourcemanagerService.Projects.List().Fields("nextPageToken", "projects/projectId", "projects/projectNumber", "projects/name", "projects/parent.id", "projects/parent.type").Do()
+	/*
 	projectListResponse, err := client.CloudresourcemanagerService.Projects.List().Fields("nextPageToken", "projects/projectId", "projects/projectNumber", "projects/name", "projects/parent.id", "projects/parent.type").Do()
 	if err != nil {
 		log.Fatal(err)
@@ -54,6 +56,6 @@ func GCPWhoamiCommand(version string, GCPWrapTable bool) error {
 		}
 	}
 	internal.PrintTableToScreen(tableHead, tableBody, GCPWrapTable)
-	
+	*/
 	return nil
 }

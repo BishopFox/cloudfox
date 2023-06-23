@@ -3,11 +3,23 @@ package gcp
 import (
 	"context"
 	"log"
+	"fmt"
 	"sort"
+	"github.com/kyokomi/emoji"
+	"github.com/fatih/color"
+	"github.com/BishopFox/cloudfox/globals"
+	"github.com/BishopFox/cloudfox/internal/gcp"
 
 	"cloud.google.com/go/storage"
 	"google.golang.org/api/iterator"
 )
+
+type BucketsModule struct {
+	// Filtering data
+	Organizations []string
+	Folders []string
+	Projects []string
+}
 
 type ObjectInfo struct {
 	ObjectName      string  `json:"objecttName"`
@@ -21,9 +33,13 @@ type BucketInfo struct {
 	Objects      []ObjectInfo `json:"objectInfo"`
 }
 
-func getData(projectIDs []string) error {
+func (m *BucketsModule) GetData(version string, projectIDs []string) error {
 	// 	Use:   "getBucketData",
 	// Short: "Retrieves storage bucket names and sizes given project id(s).
+	fmt.Printf("[%s][%s] Enumerating GCP buckets...\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", version)), color.CyanString(globals.GCP_WHOAMI_MODULE_NAME))
+	var clientt gcp.GCPClient = *gcp.NewGCPClient()
+	blah, _ := clientt.ResourcesService.SearchAll("projects/gcp-goat-d1456434c69b3e84").Do()
+	fmt.Print(blah)
 	ctx := context.Background()
 	client, err := storage.NewClient(ctx)
 	if err != nil {

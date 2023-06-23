@@ -8,7 +8,7 @@ import (
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/option"
 	goauth2 "google.golang.org/api/oauth2/v2"
-	"google.golang.org/api/cloudresourcemanager/v1"
+	"google.golang.org/api/cloudresourcemanager/v3"
 	"google.golang.org/api/cloudasset/v1p1beta1"
 )
 
@@ -16,6 +16,9 @@ type GCPClient struct {
 	TokenSource *oauth2.TokenSource
 	TokenInfo *goauth2.Tokeninfo
 	CloudresourcemanagerService *cloudresourcemanager.Service
+	OrganizationsService *cloudresourcemanager.OrganizationsService
+	FoldersService *cloudresourcemanager.FoldersService
+	ProjectsService *cloudresourcemanager.ProjectsService
 	CloudAssetService *cloudasset.Service
 	ResourcesService *cloudasset.ResourcesService
 	IamPoliciesService *cloudasset.IamPoliciesService
@@ -56,6 +59,9 @@ func (g *GCPClient) init() {
 	g.CloudAssetService = cloudassetService
 	g.ResourcesService = cloudasset.NewResourcesService(cloudassetService)
 	g.IamPoliciesService = cloudasset.NewIamPoliciesService(cloudassetService)
+	g.OrganizationsService = cloudresourcemanager.NewOrganizationsService(cloudresourcemanagerService)
+	g.FoldersService = cloudresourcemanager.NewFoldersService(cloudresourcemanagerService)
+	g.ProjectsService = cloudresourcemanager.NewProjectsService(cloudresourcemanagerService)
 	
 }
 
