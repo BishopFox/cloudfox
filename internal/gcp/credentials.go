@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"crypto/sha256"
 	"fmt"
+	"strings"
+	"time"
 	"encoding/json"
 	_ "modernc.org/sqlite"
 
-	//"golang.org/x/oauth2"
-	//"golang.org/x/oauth2/google"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 	//"google.golang.org/api/option"
 	//goauth2 "google.golang.org/api/oauth2/v2"
 	//"google.golang.org/api/cloudresourcemanager/v1"
@@ -29,6 +31,7 @@ type ApplicationCredential struct {
 	ClientSecret string `json:"client_secret"`
 	RefreshToken string `json:"refresh_token"`
 	Type string `json:"authorized_user"`
+	Scopes []string `json:"scopes"`
 }
 
 type RefreshToken struct {
@@ -45,6 +48,48 @@ type Token struct {
 	IdentityToken string
 }
 
+type GCloudProfile struct {
+	oauth_conf oauth2.Config
+	initial_token oauth2.Token
+}
+func listAllProfiles() []GCloudProfile {
+	var (
+		profiles []GCloudProfile
+		access_tokens []Token
+		refresh_tokens []RefreshToken
+		exp time.Time
+		data ApplicationCredential
+	)
+	access_tokens = ReadAccessTokens()
+	refresh_tokens = ReadRefreshTokens()
+	for _, access_token := range access_tokens {
+		if (strings.Contains(access_token.AccountID, "@")) {
+			exp, _ = time.Parse(time.RFC3339, access_token.TokenExpiry)
+			for _, refresh_token := range refresh_tokens {
+				if (refresh_token.Email == access_token.AccountID) {
+					json.Unmarshal([]byte(refresh_token.JSON), &data)
+					profiles = append(
+						profiles,
+						GCloudProfile{
+							oauth_conf: oauth2.Config{
+								ClientID: data.ClientID,
+								ClientSecret: data.ClientSecret,
+								Scopes: data.Scopes,
+								Endpoint: google.Endpoint,
+							},
+							initial_token: oauth2.Token{
+								AccessToken: access_token.AccessToken,
+								Expiry: exp,
+							},
+						},
+					)
+				}
+			}
+		}
+	}
+	return profiles
+
+}
 /* The active gcloud CLI profile is stored in INI configuration file */
 func GetActiveAccount() string {
 	configPath := GetDefaultConfigPath()

@@ -23,19 +23,21 @@ type GCPClient struct {
 
 func (g *GCPClient) init() {
 	ctx := context.Background()
-	conf, err := google.NewSDKConfig("")
-	if err != nil {
-		log.Fatal(err)
-	}
+	var (
+		profiles []GCloudProfile
+		profile GCloudProfile
+	)
+	profiles = listAllProfiles()
+	profile = profiles[len(profiles)-1]
+
 	// Initiate an http.Client. The following GET request will be
 	// authorized and authenticated on the behalf of the SDK user.
-	client := conf.Client(oauth2.NoContext)
+	client := profile.oauth_conf.Client(ctx, &(profile.initial_token))
 	ts, err := google.DefaultTokenSource(ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
 	g.TokenSource = &ts
-	//oauth2Service, err := goauth2.NewService(ctx, option.WithTokenSource(ts))
 	oauth2Service, err := goauth2.NewService(ctx, option.WithHTTPClient(client))
 	tokenInfo, err := oauth2Service.Tokeninfo().Do()
 	if err != nil {
