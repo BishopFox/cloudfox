@@ -102,18 +102,29 @@ func initGCPProfiles() {
 		GCPLogger.Fatal("Error specifying GCP profiles. Choose only one of -p/--profile, -a/--all-profiles, -l/--profiles-list")
 	
 	}
+	// at this point, GCPProfiles only contains the profiles submitted over the CLI
+
+	// if the --all-profiles option is submitted, replacing the profiles with all existing ones
 	if GCPAllProfiles {
 		GCPProfiles = internal_gcp.GetAllGCPProfiles()
 	}
 
+	// if --profiles-list option is submitted, adding the profiles from the list to the existing ones
 	if GCPProfilesList != "" {
-		// Written like so to enable testing while still being readable
 		GCPProfiles = append(GCPProfiles, internal_gcp.GetSelectedGCPProfiles(GCPProfilesList)...)
 	}
+
+	// remove duplicate
 	GCPProfiles = internal.RemoveDuplicateStr(GCPProfiles)
+
 	if (len(GCPProfiles) == 0) {
-		GCPLogger.Error("Could not find any usable GCP profile")
-		os.Exit(1)
+		GCPLogger.Info("No GCP profile selection submitted, trying to find the default profile...")
+		var allProfiles = internal_gcp.GetAllGCPProfiles()
+		if len(allProfiles) > 0 {
+			GCPProfiles = append(GCPProfiles, allProfiles[len(allProfiles) - 1])
+		} else {
+			GCPLogger.Fatal("Could not find any usable GCP profile")
+		}
 	}
 
 	if !GCPConfirm {
