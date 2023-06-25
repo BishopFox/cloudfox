@@ -44,16 +44,6 @@ var (
 		},
 	}
 
-	GCPWhoamiCommand = &cobra.Command{
-		Use:     "whoami",
-		Aliases: []string{},
-		Short:   "Display available GCP CLI sessions",
-		Long: `
-Display Available GCP projects:
-./cloudfox gcp whoami`,
-		Run: runGCPWhoamiCommand,
-	}
-
 	GCPInventoryCommand = &cobra.Command{
 		Use:     "inventory",
 		Aliases: []string{},
@@ -172,13 +162,6 @@ func runGCPAccessTokensCommand(cmd *cobra.Command, args []string) {
 		Folders:		GCPFolderIDs,
 	}
 	err := m.PrintAccessTokens(cmd.Root().Version, GCPOutputFormat, GCPOutputDirectory, Verbosity)
-	if err != nil {
-		log.Fatal(err)
-	}
-}
-
-func runGCPWhoamiCommand(cmd *cobra.Command, args []string) {
-	err := gcp.GCPWhoamiCommand(cmd.Root().Version, GCPWrapTable)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -130,7 +130,10 @@ Additional policy notes (as of 09/2022):
 # GCP Commands
 | Provider | Command Name | Description 
 | - | - | - | 
-| GCP | [whoami](https://github.com/BishopFox/cloudfox/wiki/GCP-Commands#whoami) | Displays information on the projects available to your current Gcloud SDK credentials. This is useful to provide situation awareness on what organizations, folders and projects to use with the other sub commands. |
+| GCP | [access-tokens](https://github.com/BishopFox/cloudfox/wiki/GCP-Commands#access-tokens) | Displays handy information about existing GCP credentials on your local machine |
+| GCP | [hierarchy](https://github.com/BishopFox/cloudfox/wiki/GCP-Commands#hierarchy) Displays information on the projects available to your current Gcloud SDK credentials. This is useful to provide situation awareness on what organizations, folders and projects to use with the other sub commands.|
+| GCP | [inventory](https://github.com/BishopFox/cloudfox/wiki/GCP-Commands#inventory) Gain a rough understanding of size of the available organizations |
+| GCP | [buckets](https://github.com/BishopFox/cloudfox/wiki/GCP-Commands#buckets) Lists the buckets in the available organizations and gives you handy commands for inspecting them further. |
 
 # Authors
 * [Carlos Vendramini](https://github.com/carlosvendramini-bf)
