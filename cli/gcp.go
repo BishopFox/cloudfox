@@ -2,19 +2,30 @@ package cli
 
 import (
 	"log"
-
+	"fmt"
 	"github.com/BishopFox/cloudfox/gcp"
+	internal_gcp "github.com/BishopFox/cloudfox/internal/gcp"
 	"github.com/spf13/cobra"
 )
 
 var (
+	// GCP resources filtering options
 	GCPOrganizations	[]string
 	GCPProjectIDs		[]string
 	GCPFolderIDs		[]string
+
+	// Output formatting options
 	GCPOutputFormat		string
 	GCPOutputDirectory	string
 	GCPVerbosity		int
 	GCPWrapTable		bool
+
+	GCPProfilesList		string
+	GCPAllProfiles		bool
+	GCPProfiles			[]string
+
+
+	// misc options
 	GCPConfirm			bool
 	GCPSkipAdminCheck	bool
 	GCPIgnoreCache		bool
@@ -69,6 +80,7 @@ Display available bucket information:
 		Run: runGCPBucketsCommand,
 	}
 
+	HierarchyIncludeIDs bool
 	GCPHierarchyCommand = &cobra.Command{
 		Use:     "hierarchy",
 		Aliases: []string{},
@@ -79,6 +91,23 @@ Display available resources' hierarchy:
 		Run: runGCPHierarchyCommand,
 	}
 )
+
+func initGCPProfiles() {
+	// Ensure that profile selection is consistent
+	if (len(GCPProfiles) != 0 || GCPProfilesList != "") && GCPAllProfiles {
+		log.Fatalf("[-] Error specifying GCP profiles. Choose only one of -p/--profile, -a/--all-profiles, -l/--profiles-list")
+	
+	}
+	if GCPAllProfiles {
+		GCPProfiles = internal_gcp.GetAllGCPProfiles(GCPConfirm)
+		fmt.Println(GCPProfiles)
+	}
+
+	if GCPProfilesList != "" {
+		// Written like so to enable testing while still being readable
+		GCPProfiles = append(GCPProfiles, internal_gcp.GetSelectedGCPProfiles(GCPProfilesList)...)
+	}
+}
 
 func runGCPHierarchyCommand(cmd *cobra.Command, args []string) {
 	m := gcp.HierarchyModule{
@@ -136,8 +165,16 @@ func runGCPInventoryCommand(cmd *cobra.Command, args []string) {
 }
 
 func init() {
+	cobra.OnInitialize(initGCPProfiles)
+	GCPHierarchyCommand.Flags().BoolVarP(&HierarchyIncludeIDs, "ids", "i", false, "Use this flag to display resources IDs in the hierarchy tree")
+	// Globals flags for the GCP modules
+
+	GCPCommands.PersistentFlags().StringArrayVarP(&GCPProfiles, "profile", "",  []string{}, "GCloud CLI Profile Name")
+	GCPCommands.PersistentFlags().StringVarP(&GCPProfilesList, "profiles-list", "l", "", "File containing a list of GCP CLI profile names separated by newlines")
+	GCPCommands.PersistentFlags().BoolVarP(&GCPAllProfiles, "all-profiles", "a", false, "Use all available and valid GCP CLI profiles")
+
 	// Resource filtering options
-	GCPCommands.PersistentFlags().StringArrayVarP(&GCPOrganizations, "organization", "o",[]string{}, "Organization name, repetable")
+	GCPCommands.PersistentFlags().StringArrayVarP(&GCPOrganizations, "organization", "o", []string{}, "Organization name, repetable")
 	GCPCommands.PersistentFlags().StringArrayVarP(&GCPProjectIDs, "projectid", "p", []string{}, "Project ID, repeatable")
 	GCPCommands.PersistentFlags().StringArrayVarP(&GCPFolderIDs, "folderid", "f", []string{}, "Folder ID, repeatable")
 

@@ -57,6 +57,7 @@ require (
 	github.com/jedib0t/go-pretty v4.3.0+incompatible
 	github.com/kyokomi/emoji v2.2.4+incompatible
 	github.com/patrickmn/go-cache v2.1.0+incompatible
+	github.com/shivamMg/ppds v0.0.1
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/afero v1.9.5
 	github.com/spf13/cobra v1.7.0

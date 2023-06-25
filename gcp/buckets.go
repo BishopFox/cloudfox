@@ -36,7 +36,7 @@ type BucketInfo struct {
 func (m *BucketsModule) GetData(version string, projectIDs []string) error {
 	// 	Use:   "getBucketData",
 	// Short: "Retrieves storage bucket names and sizes given project id(s).
-	fmt.Printf("[%s][%s] Enumerating GCP buckets...\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", version)), color.CyanString(globals.GCP_WHOAMI_MODULE_NAME))
+	fmt.Printf("[%s][%s] Enumerating GCP buckets...\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", version)), color.CyanString(globals.GCP_BUCKETS_MODULE_NAME))
 	var clientt gcp.GCPClient = *gcp.NewGCPClient()
 	blah, _ := clientt.ResourcesService.SearchAll("projects/gcp-goat-d1456434c69b3e84").Do()
 	fmt.Print(blah)

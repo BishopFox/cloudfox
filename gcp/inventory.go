@@ -16,7 +16,7 @@ type InventoryModule struct {
 }
 
 func (m *InventoryModule) PrintInventory(version string, outputFormat string, outputDirectory string, verbosity int) error {
-	fmt.Printf("[%s][%s] Enumerating GCP resources...\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", version)), color.CyanString(globals.GCP_WHOAMI_MODULE_NAME))
+	fmt.Printf("[%s][%s] Enumerating GCP resources...\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", version)), color.CyanString(globals.GCP_INVENTORY_MODULE_NAME))
 	var client gcp.GCPClient = *gcp.NewGCPClient()
 	blah, _ := client.ResourcesService.SearchAll("projects/gcp-goat-d1456434c69b3e84").Do()
 	fmt.Print(blah)

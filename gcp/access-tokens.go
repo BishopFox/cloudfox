@@ -19,7 +19,7 @@ type AccessTokensModule struct {
 }
 
 func (m *AccessTokensModule) PrintAccessTokens(version string, outputFormat string, outputDirectory string, verbosity int) error {
-	fmt.Printf("[%s][%s] Enumerating gcloud access tokens (%s, %s)...\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", version)), color.CyanString(globals.GCP_WHOAMI_MODULE_NAME), color.CyanString("default user token"), color.RedString("application-default token"))
+	fmt.Printf("[%s][%s] Enumerating gcloud access tokens (%s, %s)...\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", version)), color.CyanString(globals.GCP_ACCESSTOKENS_MODULE_NAME), color.CyanString("default user token"), color.RedString("application-default token"))
 	tokens := gcp.ReadRefreshTokens()
 	accessTokens := gcp.ReadAccessTokens()
 	applicationdefaulthash := gcp.GetDefaultApplicationHash()
