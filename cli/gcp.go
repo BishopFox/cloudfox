@@ -204,10 +204,9 @@ func init() {
 	GCPCommands.PersistentFlags().BoolVar(&GCPIgnoreCache, "ignore-cache", false, "Disable loading of cached data. Slower, but important if changes have been recently made")
 
 	GCPCommands.AddCommand(
-		GCPWhoamiCommand,
-		GCPInventoryCommand,
 		GCPAccessTokensCommand,
-		GCPBucketsCommand,
 		GCPHierarchyCommand,
+		GCPInventoryCommand,
+		GCPBucketsCommand,
 	)
 }
