@@ -2,9 +2,10 @@ package cli
 
 import (
 	"log"
-	"fmt"
+	"os"
 	"github.com/BishopFox/cloudfox/gcp"
 	internal_gcp "github.com/BishopFox/cloudfox/internal/gcp"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/spf13/cobra"
 )
 
@@ -99,13 +100,24 @@ func initGCPProfiles() {
 	
 	}
 	if GCPAllProfiles {
-		GCPProfiles = internal_gcp.GetAllGCPProfiles(GCPConfirm)
-		fmt.Println(GCPProfiles)
+		GCPProfiles = internal_gcp.GetAllGCPProfiles()
 	}
 
 	if GCPProfilesList != "" {
 		// Written like so to enable testing while still being readable
 		GCPProfiles = append(GCPProfiles, internal_gcp.GetSelectedGCPProfiles(GCPProfilesList)...)
+	}
+	GCPProfiles = internal.RemoveDuplicateStr(GCPProfiles)
+	if (len(GCPProfiles) == 0) {
+		internal.TxtLog.Println("Could not find any usable GCP profile")
+		os.Exit(1)
+	}
+
+	if !GCPConfirm {
+		result := internal_gcp.ConfirmSelectedProfiles(GCPProfiles)
+		if !result {
+			os.Exit(1)
+		}
 	}
 }
 

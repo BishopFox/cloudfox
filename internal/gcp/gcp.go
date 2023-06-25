@@ -82,7 +82,7 @@ func NewGCPClient() *GCPClient {
 	Get all usable GCP Profiles
 	We are using only non expired user-tokens
 */
-func GetAllGCPProfiles(GCPConfirm bool) []string {
+func GetAllGCPProfiles() []string {
 	var (
 		GCPProfiles []string
 		accessTokens []Token
@@ -96,17 +96,6 @@ func GetAllGCPProfiles(GCPConfirm bool) []string {
 		exp, _ := time.Parse(time.RFC3339, accessToken.TokenExpiry)
 		if exp.After(time.Now()) {
 			GCPProfiles = append(GCPProfiles, accessToken.AccountID)
-		}
-	}
-
-	if (len(GCPProfiles) == 0) {
-		internal.TxtLog.Println("Could not find any usable GCP profile")
-	}
-
-	if !GCPConfirm {
-		result := ConfirmSelectedProfiles(GCPProfiles)
-		if !result {
-			os.Exit(1)
 		}
 	}
 	return GCPProfiles
