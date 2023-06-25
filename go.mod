@@ -3,6 +3,7 @@ module github.com/BishopFox/cloudfox
 go 1.20
 
 require (
+	cloud.google.com/go/resourcemanager v1.7.0
 	cloud.google.com/go/storage v1.28.1
 	github.com/Azure/azure-sdk-for-go v68.0.0+incompatible
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.3.0
@@ -73,6 +74,7 @@ require (
 	cloud.google.com/go/compute v1.19.3 // indirect
 	cloud.google.com/go/compute/metadata v0.2.3 // indirect
 	cloud.google.com/go/iam v0.13.0 // indirect
+	cloud.google.com/go/longrunning v0.4.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.3 // indirect

@@ -15,6 +15,6 @@ type InventoryModule struct {
 }
 
 func (m *InventoryModule) PrintInventory(outputFormat string, outputDirectory string, verbosity int) error {
-	GCPLogger.InfoM(fmt.Sprintf("Enumerating GCP resources with account %s...\n", m.Client.Name), globals.GCP_INVENTORY_MODULE_NAME)
+	GCPLogger.InfoM(fmt.Sprintf("Enumerating GCP resources with account %s...", m.Client.Name), globals.GCP_INVENTORY_MODULE_NAME)
 	return nil
 }

@@ -42,7 +42,7 @@ type BucketInfo struct {
 func (m *BucketsModule) GetData(projectIDs []string) error {
 	// 	Use:   "getBucketData",
 	// Short: "Retrieves storage bucket names and sizes given project id(s).
-	GCPLogger.InfoM(fmt.Sprintf("Enumerating GCP buckets with account %s...\n", m.Client.Name), globals.GCP_BUCKETS_MODULE_NAME)
+	GCPLogger.InfoM(fmt.Sprintf("Enumerating GCP buckets with account %s...", m.Client.Name), globals.GCP_BUCKETS_MODULE_NAME)
 
 	ctx := context.Background()
 	storageclient, err := storage.NewClient(ctx, option.WithHTTPClient(m.Client.HTTPClient))

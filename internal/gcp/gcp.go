@@ -14,10 +14,11 @@ import (
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/option"
 	goauth2 "google.golang.org/api/oauth2/v2"
-	"google.golang.org/api/cloudresourcemanager/v3"
+	"google.golang.org/api/cloudresourcemanager/v1"
 	"google.golang.org/api/storage/v1"
 	"google.golang.org/api/cloudasset/v1p1beta1"
 	"github.com/BishopFox/cloudfox/internal"
+	resourcemanager "cloud.google.com/go/resourcemanager/apiv3"
 )
 
 var (
@@ -32,6 +33,9 @@ type GCPClient struct {
 	TokenInfo *goauth2.Tokeninfo
 	CloudresourcemanagerService *cloudresourcemanager.Service
 	OrganizationsService *cloudresourcemanager.OrganizationsService
+	OrganizationsClient *resourcemanager.OrganizationsClient
+	FoldersClient *resourcemanager.FoldersClient
+	ProjectsClient *resourcemanager.ProjectsClient
 	StorageService *storage.Service
 	FoldersService *cloudresourcemanager.FoldersService
 	ProjectsService *cloudresourcemanager.ProjectsService
@@ -46,6 +50,7 @@ func (g *GCPClient) init(profile string) {
 	var (
 		profiles []GCloudProfile
 		client_profile *GCloudProfile
+		err error
 	)
 	profiles = listAllProfiles()
 	for _, p := range profiles {
@@ -59,6 +64,21 @@ func (g *GCPClient) init(profile string) {
 	// Initiate an http.Client. The following GET request will be
 	// authorized and authenticated on the behalf of the SDK user.
 	g.HTTPClient = client_profile.oauth_conf.Client(ctx, &(client_profile.initial_token))
+
+	// Create all the clients
+	g.OrganizationsClient, err = resourcemanager.NewOrganizationsRESTClient(ctx, option.WithHTTPClient(g.HTTPClient))
+	if (err != nil){
+		g.Logger.Fatal(fmt.Sprintf("Could not initiate GCP Organization Client: %v", err))
+	}
+	g.FoldersClient, err = resourcemanager.NewFoldersRESTClient(ctx, option.WithHTTPClient(g.HTTPClient))
+	if (err != nil){
+		g.Logger.Fatal(fmt.Sprintf("Could not initiate GCP Folders Client: %v", err))
+	}
+	g.ProjectsClient, err = resourcemanager.NewProjectsRESTClient(ctx, option.WithHTTPClient(g.HTTPClient))
+	if (err != nil){
+		g.Logger.Fatal(fmt.Sprintf("Could not initiate GCP Projects Client: %v", err))
+	}
+
 	ts, err := google.DefaultTokenSource(ctx)
 	if err != nil {
 		log.Fatal(err)

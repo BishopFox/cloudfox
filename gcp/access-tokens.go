@@ -18,7 +18,7 @@ type AccessTokensModule struct {
 }
 
 func (m *AccessTokensModule) PrintAccessTokens(outputFormat string, outputDirectory string, verbosity int) error {
-	GCPLogger.InfoM(fmt.Sprintf("Enumerating GCP local access tokens (%s, %s)...\n", color.CyanString("default user token"), color.RedString("application-default token")), globals.GCP_ACCESSTOKENS_MODULE_NAME)
+	GCPLogger.InfoM(fmt.Sprintf("Enumerating GCP local access tokens (%s, %s)...", color.CyanString("default user token"), color.RedString("application-default token")), globals.GCP_ACCESSTOKENS_MODULE_NAME)
 	tokens := gcp.ReadRefreshTokens()
 	accessTokens := gcp.ReadAccessTokens()
 	applicationdefaulthash := gcp.GetDefaultApplicationHash()
