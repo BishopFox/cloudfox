@@ -31,6 +31,9 @@ var (
 	GCPSkipAdminCheck	bool
 	GCPIgnoreCache		bool
 
+	// logger
+	GCPLogger = internal.NewLogger()
+
 	GCPCommands = &cobra.Command{
 		Use:     "gcp",
 		Aliases: []string{"gcloud"},
@@ -96,7 +99,7 @@ Display available resources' hierarchy:
 func initGCPProfiles() {
 	// Ensure that profile selection is consistent
 	if (len(GCPProfiles) != 0 || GCPProfilesList != "") && GCPAllProfiles {
-		log.Fatalf("[-] Error specifying GCP profiles. Choose only one of -p/--profile, -a/--all-profiles, -l/--profiles-list")
+		GCPLogger.Fatal("Error specifying GCP profiles. Choose only one of -p/--profile, -a/--all-profiles, -l/--profiles-list")
 	
 	}
 	if GCPAllProfiles {
@@ -109,7 +112,7 @@ func initGCPProfiles() {
 	}
 	GCPProfiles = internal.RemoveDuplicateStr(GCPProfiles)
 	if (len(GCPProfiles) == 0) {
-		internal.TxtLog.Println("Could not find any usable GCP profile")
+		GCPLogger.Error("Could not find any usable GCP profile")
 		os.Exit(1)
 	}
 

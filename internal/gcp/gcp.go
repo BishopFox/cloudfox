@@ -16,11 +16,14 @@ import (
 	"google.golang.org/api/cloudresourcemanager/v3"
 	"google.golang.org/api/cloudasset/v1p1beta1"
 	"github.com/BishopFox/cloudfox/internal"
-	"github.com/kyokomi/emoji"
-	"github.com/fatih/color"
+)
+
+var (
+	logger = internal.NewLogger()
 )
 
 type GCPClient struct {
+	Logger internal.Logger
 	TokenSource *oauth2.TokenSource
 	TokenInfo *goauth2.Tokeninfo
 	CloudresourcemanagerService *cloudresourcemanager.Service
@@ -33,6 +36,7 @@ type GCPClient struct {
 }
 
 func (g *GCPClient) init() {
+	g.Logger = internal.NewLogger()
 	ctx := context.Background()
 	var (
 		profiles []GCloudProfile
@@ -103,11 +107,12 @@ func GetAllGCPProfiles() []string {
 
 func ConfirmSelectedProfiles(GCPProfiles []string) bool {
 	reader := bufio.NewReader(os.Stdin)
-	fmt.Printf("[ %s] Identified profiles:\n\n", color.CyanString(emoji.Sprintf(":fox:cloudfox :fox:")))
+	logger.Info("Identified profiles:\n")
 	for _, profile := range GCPProfiles {
 		fmt.Printf("\t* %s\n", profile)
 	}
-	fmt.Printf("\n[ %s] Are you sure you'd like to run this command against the [%d] listed profile(s)? (Y\\n): ", color.CyanString(emoji.Sprintf(":fox:cloudfox :fox:")), len(GCPProfiles))
+	fmt.Printf("\n")
+	logger.Info(fmt.Sprintf("Are you sure you'd like to run this command against the [%d] listed profile(s)? (Y\\n): ", len(GCPProfiles)))
 	text, _ := reader.ReadString('\n')
 	switch text {
 	case "\n", "Y\n", "y\n":
