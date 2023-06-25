@@ -49,6 +49,7 @@ type Token struct {
 }
 
 type GCloudProfile struct {
+	Name string
 	oauth_conf oauth2.Config
 	initial_token oauth2.Token
 }
@@ -71,6 +72,7 @@ func listAllProfiles() []GCloudProfile {
 					profiles = append(
 						profiles,
 						GCloudProfile{
+							Name: access_token.AccountID,
 							oauth_conf: oauth2.Config{
 								ClientID: data.ClientID,
 								ClientSecret: data.ClientSecret,

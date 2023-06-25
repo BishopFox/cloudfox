@@ -7,7 +7,6 @@ import (
 	"github.com/fatih/color"
 	"github.com/BishopFox/cloudfox/internal/gcp"
 	"github.com/BishopFox/cloudfox/internal"
-	"github.com/kyokomi/emoji"
 	"github.com/BishopFox/cloudfox/globals"
 )
 
@@ -18,8 +17,8 @@ type AccessTokensModule struct {
 	Projects []string
 }
 
-func (m *AccessTokensModule) PrintAccessTokens(version string, outputFormat string, outputDirectory string, verbosity int) error {
-	fmt.Printf("[%s][%s] Enumerating GCP local access tokens (%s, %s)...\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", version)), color.CyanString(globals.GCP_ACCESSTOKENS_MODULE_NAME), color.CyanString("default user token"), color.RedString("application-default token"))
+func (m *AccessTokensModule) PrintAccessTokens(outputFormat string, outputDirectory string, verbosity int) error {
+	GCPLogger.InfoM(fmt.Sprintf("Enumerating GCP local access tokens (%s, %s)...\n", color.CyanString("default user token"), color.RedString("application-default token")), globals.GCP_ACCESSTOKENS_MODULE_NAME)
 	tokens := gcp.ReadRefreshTokens()
 	accessTokens := gcp.ReadAccessTokens()
 	applicationdefaulthash := gcp.GetDefaultApplicationHash()

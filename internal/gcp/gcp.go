@@ -3,6 +3,7 @@ package gcp
 import (
 	"context"
 	"log"
+	"net/http"
 	"os"
 	"fmt"
 	"bufio"
@@ -14,6 +15,7 @@ import (
 	"google.golang.org/api/option"
 	goauth2 "google.golang.org/api/oauth2/v2"
 	"google.golang.org/api/cloudresourcemanager/v3"
+	"google.golang.org/api/storage/v1"
 	"google.golang.org/api/cloudasset/v1p1beta1"
 	"github.com/BishopFox/cloudfox/internal"
 )
@@ -23,11 +25,14 @@ var (
 )
 
 type GCPClient struct {
+	Name string
+	HTTPClient *http.Client
 	Logger internal.Logger
 	TokenSource *oauth2.TokenSource
 	TokenInfo *goauth2.Tokeninfo
 	CloudresourcemanagerService *cloudresourcemanager.Service
 	OrganizationsService *cloudresourcemanager.OrganizationsService
+	StorageService *storage.Service
 	FoldersService *cloudresourcemanager.FoldersService
 	ProjectsService *cloudresourcemanager.ProjectsService
 	CloudAssetService *cloudasset.Service
@@ -35,40 +40,50 @@ type GCPClient struct {
 	IamPoliciesService *cloudasset.IamPoliciesService
 }
 
-func (g *GCPClient) init() {
+func (g *GCPClient) init(profile string) {
 	g.Logger = internal.NewLogger()
 	ctx := context.Background()
 	var (
 		profiles []GCloudProfile
-		profile GCloudProfile
+		client_profile *GCloudProfile
 	)
 	profiles = listAllProfiles()
-	profile = profiles[len(profiles)-1]
+	for _, p := range profiles {
+		if (p.Name == profile) {
+			client_profile = &p
+			g.Name = profile
+		}
+	}
 
 	// Initiate an http.Client. The following GET request will be
 	// authorized and authenticated on the behalf of the SDK user.
-	client := profile.oauth_conf.Client(ctx, &(profile.initial_token))
+	g.HTTPClient = client_profile.oauth_conf.Client(ctx, &(client_profile.initial_token))
 	ts, err := google.DefaultTokenSource(ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
 	g.TokenSource = &ts
-	oauth2Service, err := goauth2.NewService(ctx, option.WithHTTPClient(client))
+	oauth2Service, err := goauth2.NewService(ctx, option.WithHTTPClient(g.HTTPClient))
 	tokenInfo, err := oauth2Service.Tokeninfo().Do()
 	if err != nil {
 		log.Fatal(err)
 	}
 	g.TokenInfo = tokenInfo
-	cloudresourcemanagerService, err := cloudresourcemanager.NewService(ctx, option.WithHTTPClient(client))
+	cloudresourcemanagerService, err := cloudresourcemanager.NewService(ctx, option.WithHTTPClient(g.HTTPClient))
 	if err != nil {
 		log.Fatal(err)
 	}
 	g.CloudresourcemanagerService = cloudresourcemanagerService
-	cloudassetService, err := cloudasset.NewService(ctx, option.WithHTTPClient(client))
+
+	cloudassetService, err := cloudasset.NewService(ctx, option.WithHTTPClient(g.HTTPClient))
 	if err != nil {
 		log.Fatal(err)
 	}
 	g.CloudAssetService = cloudassetService
+
+	storageService, err := storage.NewService(ctx, option.WithHTTPClient(g.HTTPClient))
+	g.StorageService = storageService
+
 	g.ResourcesService = cloudasset.NewResourcesService(cloudassetService)
 	g.IamPoliciesService = cloudasset.NewIamPoliciesService(cloudassetService)
 	g.OrganizationsService = cloudresourcemanager.NewOrganizationsService(cloudresourcemanagerService)
@@ -77,9 +92,9 @@ func (g *GCPClient) init() {
 	
 }
 
-func NewGCPClient() *GCPClient {
+func NewGCPClient(profileName string) *GCPClient {
 	client := new(GCPClient)
-	client.init()
+	client.init(profileName)
 	return client
 }
 /*

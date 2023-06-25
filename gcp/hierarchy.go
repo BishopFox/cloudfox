@@ -3,9 +3,7 @@ package gcp
 import (
 	"fmt"
 	"log"
-	"github.com/fatih/color"
 	"github.com/BishopFox/cloudfox/internal/gcp"
-	"github.com/kyokomi/emoji"
 	"github.com/BishopFox/cloudfox/globals"
 
 	// tree stuff
@@ -13,6 +11,8 @@ import (
 )
 
 type HierarchyModule struct {
+	Client gcp.GCPClient
+	
 	// Filtering data
 	Organizations []string
 	Folders []string
@@ -40,20 +40,19 @@ func (n *Node) Add(child Node) {
 	return
 }
 
-func (m *HierarchyModule) DisplayHierarchy(version string) error {
-	fmt.Printf("[%s][%s] Fetching GCP resources and hierarchy...\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", version)), color.CyanString(globals.GCP_HIERARCHY_MODULE_NAME))
-	var client gcp.GCPClient = *gcp.NewGCPClient()
+func (m *HierarchyModule) DisplayHierarchy() error {
+	GCPLogger.InfoM(fmt.Sprintf("Fetching GCP resources and hierarchy with account %s...\n", m.Client.Name), globals.GCP_HIERARCHY_MODULE_NAME)
 	//client.CloudresourcemanagerService.Organizations.List().Fields("nextPageToken", "projects/projectId", "projects/projectNumber", "projects/name", "projects/parent.id", "projects/parent.type").Do()
 	var (
 		root Node
 		current *Node
 	)
 
-	root = Node{data: "root"}
-	organizationListResponse, _ := client.CloudresourcemanagerService.Organizations.Search().Do()
+	root = Node{data: m.Client.Name}
+	organizationListResponse, _ := m.Client.CloudresourcemanagerService.Organizations.Search().Do()
 	for _, organization := range organizationListResponse.Organizations {
 		current = &Node{data: fmt.Sprintf("%s (%s)", organization.DisplayName, organization.Name)}
-		getChilds(current, organization.Name, client)
+		m.getChilds(current, organization.Name)
 		root.Add(*current)
 	}
 	// To Print vertically: tree.Print(&root)
@@ -61,18 +60,18 @@ func (m *HierarchyModule) DisplayHierarchy(version string) error {
 	return nil
 }
 
-func getChilds(current *Node, parentName string, client gcp.GCPClient){
+func (m *HierarchyModule) getChilds(current *Node, parentName string){
 	var child Node
-	foldersListResponse, err := client.CloudresourcemanagerService.Folders.List().Parent(parentName).Do()
+	foldersListResponse, err := m.Client.CloudresourcemanagerService.Folders.List().Parent(parentName).Do()
 	if err != nil{
 		log.Fatalf("%v\n", err)
 	}
 	for _, folder := range foldersListResponse.Folders {
 		child = Node{data: fmt.Sprintf("%s (%s)", folder.DisplayName, folder.Name)}
-		getChilds(&child, folder.Name, client)
+		m.getChilds(&child, folder.Name)
 		(*current).Add(child)
 	}
-	projectsListResponse, err := client.CloudresourcemanagerService.Projects.List().Parent(parentName).Do()
+	projectsListResponse, err := m.Client.CloudresourcemanagerService.Projects.List().Parent(parentName).Do()
 	if err != nil{
 		log.Fatalf("%v\n", err)
 	}

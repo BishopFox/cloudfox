@@ -132,26 +132,34 @@ func initGCPProfiles() {
 }
 
 func runGCPHierarchyCommand(cmd *cobra.Command, args []string) {
-	m := gcp.HierarchyModule{
-		Organizations:	GCPOrganizations,
-		Projects:		GCPProjectIDs,
-		Folders:		GCPFolderIDs,
-	}
-	err := m.DisplayHierarchy(cmd.Root().Version)
-	if err != nil {
-		log.Fatal(err)
+	for _, profile := range GCPProfiles {
+		var client = internal_gcp.NewGCPClient(profile)
+		m := gcp.HierarchyModule{
+			Organizations:	GCPOrganizations,
+			Projects:		GCPProjectIDs,
+			Folders:		GCPFolderIDs,
+			Client:			*client,
+		}
+		err := m.DisplayHierarchy()
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 }
 
 func runGCPBucketsCommand(cmd *cobra.Command, args []string) {
-	m := gcp.BucketsModule{
-		Organizations:	GCPOrganizations,
-		Projects:		GCPProjectIDs,
-		Folders:		GCPFolderIDs,
-	}
-	err := m.GetData(cmd.Root().Version, []string{})
-	if err != nil {
-		log.Fatal(err)
+	for _, profile := range GCPProfiles {
+		var client = internal_gcp.NewGCPClient(profile)
+		m := gcp.BucketsModule{
+			Organizations:	GCPOrganizations,
+			Projects:		GCPProjectIDs,
+			Folders:		GCPFolderIDs,
+			Client:			*client,
+		}
+		err := m.GetData(GCPProjectIDs)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 }
 
@@ -161,21 +169,25 @@ func runGCPAccessTokensCommand(cmd *cobra.Command, args []string) {
 		Projects:		GCPProjectIDs,
 		Folders:		GCPFolderIDs,
 	}
-	err := m.PrintAccessTokens(cmd.Root().Version, GCPOutputFormat, GCPOutputDirectory, Verbosity)
+	err := m.PrintAccessTokens(GCPOutputFormat, GCPOutputDirectory, Verbosity)
 	if err != nil {
 		log.Fatal(err)
 	}
 }
 
 func runGCPInventoryCommand(cmd *cobra.Command, args []string) {
-	m := gcp.InventoryModule{
-		Organizations:	GCPOrganizations,
-		Projects:		GCPProjectIDs,
-		Folders:		GCPFolderIDs,
-	}
-	err := m.PrintInventory(cmd.Root().Version, GCPOutputFormat, GCPOutputDirectory, Verbosity)
-	if err != nil {
-		log.Fatal(err)
+	for _, profile := range GCPProfiles {
+		var client = internal_gcp.NewGCPClient(profile)
+		m := gcp.InventoryModule{
+			Organizations:	GCPOrganizations,
+			Projects:		GCPProjectIDs,
+			Folders:		GCPFolderIDs,
+			Client:			*client,
+		}
+		err := m.PrintInventory(GCPOutputFormat, GCPOutputDirectory, Verbosity)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 }
 

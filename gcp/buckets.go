@@ -5,16 +5,22 @@ import (
 	"log"
 	"fmt"
 	"sort"
-	"github.com/kyokomi/emoji"
-	"github.com/fatih/color"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal/gcp"
+	"github.com/BishopFox/cloudfox/internal"
+	"google.golang.org/api/option"
 
 	"cloud.google.com/go/storage"
 	"google.golang.org/api/iterator"
 )
 
+var (
+	GCPLogger = internal.NewLogger()
+)
+
 type BucketsModule struct {
+	Client gcp.GCPClient
+
 	// Filtering data
 	Organizations []string
 	Folders []string
@@ -33,15 +39,14 @@ type BucketInfo struct {
 	Objects      []ObjectInfo `json:"objectInfo"`
 }
 
-func (m *BucketsModule) GetData(version string, projectIDs []string) error {
+func (m *BucketsModule) GetData(projectIDs []string) error {
 	// 	Use:   "getBucketData",
 	// Short: "Retrieves storage bucket names and sizes given project id(s).
-	fmt.Printf("[%s][%s] Enumerating GCP buckets...\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", version)), color.CyanString(globals.GCP_BUCKETS_MODULE_NAME))
-	var clientt gcp.GCPClient = *gcp.NewGCPClient()
-	blah, _ := clientt.ResourcesService.SearchAll("projects/gcp-goat-d1456434c69b3e84").Do()
-	fmt.Print(blah)
+	GCPLogger.InfoM(fmt.Sprintf("Enumerating GCP buckets with account %s...\n", m.Client.Name), globals.GCP_BUCKETS_MODULE_NAME)
+
 	ctx := context.Background()
-	client, err := storage.NewClient(ctx)
+	storageclient, err := storage.NewClient(ctx, option.WithHTTPClient(m.Client.HTTPClient))
+
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
 	}
@@ -50,7 +55,7 @@ func (m *BucketsModule) GetData(version string, projectIDs []string) error {
 
 	for _, projectID := range projectIDs {
 		log.Printf("Iterating through project %s", projectID)
-		buckets := client.Buckets(ctx, projectID)
+		buckets := storageclient.Buckets(ctx, projectID)
 		for {
 			bucketAttrs, err := buckets.Next()
 			if err == iterator.Done {
@@ -66,7 +71,7 @@ func (m *BucketsModule) GetData(version string, projectIDs []string) error {
 			// List all objects in the bucket and calculate total size
 			totalSize := int64(0)
 			var objects []ObjectInfo
-			it := client.Bucket(bucketName).Objects(ctx, nil)
+			it := storageclient.Bucket(bucketName).Objects(ctx, nil)
 			for {
 				objectAttrs, err := it.Next()
 				if err == iterator.Done {

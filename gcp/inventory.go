@@ -2,23 +2,19 @@ package gcp
 
 import (
 	"fmt"
-	"github.com/fatih/color"
 	"github.com/BishopFox/cloudfox/internal/gcp"
-	"github.com/kyokomi/emoji"
 	"github.com/BishopFox/cloudfox/globals"
 )
 
 type InventoryModule struct {
+	Client gcp.GCPClient
 	// Filtering data
 	Organizations []string
 	Folders []string
 	Projects []string
 }
 
-func (m *InventoryModule) PrintInventory(version string, outputFormat string, outputDirectory string, verbosity int) error {
-	fmt.Printf("[%s][%s] Enumerating GCP resources...\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", version)), color.CyanString(globals.GCP_INVENTORY_MODULE_NAME))
-	var client gcp.GCPClient = *gcp.NewGCPClient()
-	blah, _ := client.ResourcesService.SearchAll("projects/gcp-goat-d1456434c69b3e84").Do()
-	fmt.Print(blah)
+func (m *InventoryModule) PrintInventory(outputFormat string, outputDirectory string, verbosity int) error {
+	GCPLogger.InfoM(fmt.Sprintf("Enumerating GCP resources with account %s...\n", m.Client.Name), globals.GCP_INVENTORY_MODULE_NAME)
 	return nil
 }
