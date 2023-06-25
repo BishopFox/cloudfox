@@ -52,6 +52,7 @@ func (g *GCPClient) init(profile string) {
 		if (p.Name == profile) {
 			client_profile = &p
 			g.Name = profile
+			break
 		}
 	}
 
