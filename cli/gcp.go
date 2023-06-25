@@ -97,6 +97,12 @@ Display available resources' hierarchy:
 )
 
 func initGCPProfiles() {
+	// bypass profile selection logic for commands that don't require authentication
+	if GCPAccessTokensCommand.CalledAs() != "" {
+		return
+	} else if GCPAccessTokensCommand.CalledAs() != "" {
+		return
+	}
 	// Ensure that profile selection is consistent
 	if (len(GCPProfiles) != 0 || GCPProfilesList != "") && GCPAllProfiles {
 		GCPLogger.Fatal("Error specifying GCP profiles. Choose only one of -p/--profile, -a/--all-profiles, -l/--profiles-list")
