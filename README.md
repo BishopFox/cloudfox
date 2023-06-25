@@ -41,7 +41,7 @@ For the full documentation please refer to our [wiki](https://github.com/BishopF
 | - | - |
 | AWS | 30 | 
 | Azure | 4 | 
-| GCP | 1 |
+| GCP | 4 |
 | Kubernetes | Support Planned | 
 
 
