@@ -18,7 +18,10 @@ import (
 	"google.golang.org/api/storage/v1"
 	"google.golang.org/api/cloudasset/v1p1beta1"
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/BishopFox/cloudfox/globals"
 	resourcemanager "cloud.google.com/go/resourcemanager/apiv3"
+	resourcemanagerpb "cloud.google.com/go/resourcemanager/apiv3/resourcemanagerpb"
+	"google.golang.org/api/iterator"
 )
 
 var (
@@ -113,11 +116,80 @@ func (g *GCPClient) init(profile string) {
 	
 }
 
+func (g *GCPClient) GetResourcesRoots(organizations []string, folders []string, projects []string) []*internal.Node {
+	var (
+		roots []*internal.Node
+		root internal.Node
+		current *internal.Node
+	)
+	ctx := context.Background()
+	root = internal.Node{ID: g.Name}
+	organizationIterator := g.OrganizationsClient.SearchOrganizations(ctx, &resourcemanagerpb.SearchOrganizationsRequest{})
+	for {
+		organization, err := organizationIterator.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			g.Logger.FatalM(fmt.Sprintf("An error occurred when listing organizations: %v", err), globals.GCP_HIERARCHY_MODULE_NAME)
+		}
+		current = &internal.Node{ID: fmt.Sprintf("%s (%s)", organization.DisplayName, organization.Name)}
+		//GCPLogger.Success(fmt.Sprintf("Listing stuff in organization %s", organization.DisplayName))
+		// get childs (projects & folders) within current orgnization
+		g.getChilds(current, organization.Name)
+		root.Add(*current)
+	}
+
+	// now look for resources (projects) that do not have a parent and that live in the user' account directly
+	// might need to investigate later but it looks like we can't have folders under a user account
+	projectsListResponse, _ := g.CloudresourcemanagerService.Projects.List().Do()
+	for _, project := range projectsListResponse.Projects {
+		if project.Parent == nil {
+			current = &internal.Node{ID: fmt.Sprintf("%s (%s)", project.Name, project.ProjectId)}
+			root.Add(*current)
+		}
+	}
+	roots = append(roots, &root)
+	return roots
+}
+
+func (g *GCPClient) getChilds(current *internal.Node, parentName string){
+	//GCPLogger.Success(fmt.Sprintf("Listing stuff in parent %s", parentName))
+	var child internal.Node
+	ctx := context.Background()
+	folderIterator := g.FoldersClient.SearchFolders(ctx, &resourcemanagerpb.SearchFoldersRequest{Query: fmt.Sprintf("parent=%s", parentName)})
+	for {
+		folder, err := folderIterator.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			g.Logger.FatalM(fmt.Sprintf("An error occurred when listing folders in parent %s: %v", parentName, err), globals.GCP_HIERARCHY_MODULE_NAME)
+		}
+		child = internal.Node{ID: fmt.Sprintf("%s (%s)", folder.DisplayName, folder.Name)}
+		g.getChilds(&child, folder.Name)
+		(*current).Add(child)
+	}
+	projectIterator := g.ProjectsClient.SearchProjects(ctx, &resourcemanagerpb.SearchProjectsRequest{Query: fmt.Sprintf("parent=%s", parentName)})
+	for {
+		project, err := projectIterator.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			g.Logger.FatalM(fmt.Sprintf("An error occurred when listing projects in parent %s: %v", parentName, err), globals.GCP_HIERARCHY_MODULE_NAME)
+		}
+		child = internal.Node{ID: fmt.Sprintf("%s (%s)", project.DisplayName, project.ProjectId)}
+		(*current).Add(child)
+	}
+}
+
 func NewGCPClient(profileName string) *GCPClient {
 	client := new(GCPClient)
 	client.init(profileName)
 	return client
 }
+
 /*
 	Get all usable GCP Profiles
 	We are using only non expired user-tokens

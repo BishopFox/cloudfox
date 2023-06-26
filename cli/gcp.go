@@ -31,6 +31,9 @@ var (
 	GCPSkipAdminCheck	bool
 	GCPIgnoreCache		bool
 
+	// command specific options
+	GCPTreeFormat		string
+
 	// logger
 	GCPLogger = internal.NewLogger()
 
@@ -140,7 +143,7 @@ func runGCPHierarchyCommand(cmd *cobra.Command, args []string) {
 			Folders:		GCPFolderIDs,
 			Client:			*client,
 		}
-		err := m.DisplayHierarchy()
+		err := m.DisplayHierarchy(GCPTreeFormat)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -193,10 +196,9 @@ func runGCPInventoryCommand(cmd *cobra.Command, args []string) {
 
 func init() {
 	cobra.OnInitialize(initGCPProfiles)
-	GCPHierarchyCommand.Flags().BoolVarP(&HierarchyIncludeIDs, "ids", "i", false, "Use this flag to display resources IDs in the hierarchy tree")
 	// Globals flags for the GCP modules
 
-	GCPCommands.PersistentFlags().StringArrayVarP(&GCPProfiles, "profile", "",  []string{}, "GCloud CLI Profile Name")
+	GCPCommands.PersistentFlags().StringArrayVar(&GCPProfiles, "profile", []string{}, "GCloud CLI Profile Name")
 	GCPCommands.PersistentFlags().StringVarP(&GCPProfilesList, "profiles-list", "l", "", "File containing a list of GCP CLI profile names separated by newlines")
 	GCPCommands.PersistentFlags().BoolVarP(&GCPAllProfiles, "all-profiles", "a", false, "Use all available and valid GCP CLI profiles")
 
@@ -214,6 +216,9 @@ func init() {
 	GCPCommands.PersistentFlags().BoolVar(&GCPSkipAdminCheck, "skip-admin-check", false, "Skip check to determine if role is an Admin")
 	GCPCommands.PersistentFlags().BoolVarP(&GCPWrapTable, "wrap", "w", false, "Wrap table to fit in terminal (complicates grepping)")
 	GCPCommands.PersistentFlags().BoolVar(&GCPIgnoreCache, "ignore-cache", false, "Disable loading of cached data. Slower, but important if changes have been recently made")
+	
+	GCPHierarchyCommand.Flags().BoolVarP(&HierarchyIncludeIDs, "ids", "i", false, "Use this flag to display resources IDs in the hierarchy tree")
+	GCPHierarchyCommand.Flags().StringVar(&GCPTreeFormat, "tree", "horizontal", "[\"horizontal\" | \"vertical\" ]")
 
 	GCPCommands.AddCommand(
 		GCPAccessTokensCommand,
