@@ -2,10 +2,12 @@ package cli
 
 import (
 	"log"
+	"fmt"
 	"os"
 	"github.com/BishopFox/cloudfox/gcp"
 	internal_gcp "github.com/BishopFox/cloudfox/internal/gcp"
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/BishopFox/cloudfox/globals"
 	"github.com/spf13/cobra"
 )
 
@@ -145,7 +147,7 @@ func runGCPHierarchyCommand(cmd *cobra.Command, args []string) {
 		}
 		err := m.DisplayHierarchy(GCPTreeFormat)
 		if err != nil {
-			log.Fatal(err)
+			GCPLogger.ErrorM(fmt.Sprintf("Error running %s module on profile %s", globals.GCP_HIERARCHY_MODULE_NAME, profile), globals.GCP_HIERARCHY_MODULE_NAME)
 		}
 	}
 }
@@ -161,7 +163,7 @@ func runGCPBucketsCommand(cmd *cobra.Command, args []string) {
 		}
 		err := m.GetData(GCPProjectIDs)
 		if err != nil {
-			log.Fatal(err)
+			GCPLogger.ErrorM(fmt.Sprintf("Error running %s module on profile %s", globals.GCP_BUCKETS_MODULE_NAME, profile), globals.GCP_BUCKETS_MODULE_NAME)
 		}
 	}
 }
@@ -189,7 +191,7 @@ func runGCPInventoryCommand(cmd *cobra.Command, args []string) {
 		}
 		err := m.PrintInventory(GCPOutputFormat, GCPOutputDirectory, Verbosity)
 		if err != nil {
-			log.Fatal(err)
+			GCPLogger.ErrorM(fmt.Sprintf("Error running %s module on profile %s: %v", globals.GCP_INVENTORY_MODULE_NAME, profile, err), globals.GCP_INVENTORY_MODULE_NAME)
 		}
 	}
 }
