@@ -48,13 +48,14 @@ func (m *BucketsModule) GetData(projectIDs []string) error {
 	storageclient, err := storage.NewClient(ctx, option.WithHTTPClient(m.Client.HTTPClient))
 
 	if err != nil {
-		log.Fatalf("Failed to create client: %v", err)
+		GCPLogger.ErrorM("Could not create GCP storage client...", globals.GCP_BUCKETS_MODULE_NAME)
+		return err
 	}
 
 	bucketInfos := make(map[string][]BucketInfo)
 
 	for _, projectID := range projectIDs {
-		log.Printf("Iterating through project %s", projectID)
+		GCPLogger.InfoM(fmt.Sprintf("Iterating through project %s...", projectID), globals.GCP_BUCKETS_MODULE_NAME)
 		buckets := storageclient.Buckets(ctx, projectID)
 		for {
 			bucketAttrs, err := buckets.Next()
@@ -62,11 +63,12 @@ func (m *BucketsModule) GetData(projectIDs []string) error {
 				break
 			}
 			if err != nil {
-				log.Fatalf("Failed to list buckets: %v", err)
+				GCPLogger.ErrorM(fmt.Sprintf("Failed to list buckets : %v", err), globals.GCP_BUCKETS_MODULE_NAME)
+				return err
 			}
 
 			bucketName := bucketAttrs.Name
-			log.Printf("Working on bucket %s", bucketName)
+			GCPLogger.InfoM(fmt.Sprintf("Enumerating bucket %s...", bucketName), globals.GCP_BUCKETS_MODULE_NAME)
 
 			// List all objects in the bucket and calculate total size
 			totalSize := int64(0)
@@ -79,6 +81,8 @@ func (m *BucketsModule) GetData(projectIDs []string) error {
 				}
 				if err != nil {
 					log.Fatalf("Failed to list objects: %v", err)
+					GCPLogger.ErrorM(fmt.Sprintf("Failed to list objects : %v", err), globals.GCP_BUCKETS_MODULE_NAME)
+					break
 				}
 
 				// Get size
@@ -97,7 +101,7 @@ func (m *BucketsModule) GetData(projectIDs []string) error {
 				objects = append(objects, ObjectInfo{ObjectName: objectAttrs.Name, ObjectSizeBytes: float64(objectSize), IsPublic: isPublic})
 
 				if totalSize > 3221225472 { // 3 GiB in bytes
-					log.Printf("%s bucket is over 3 GiB. Skipping remaining objects in this bucket...", bucketName)
+					GCPLogger.InfoM(fmt.Sprintf("%s bucket is over 3 GiB. Skipping remaining objects in this bucket...", bucketName), globals.GCP_BUCKETS_MODULE_NAME)
 					break
 				}
 			}
