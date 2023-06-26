@@ -133,7 +133,7 @@ func (g *GCPClient) GetResourcesRoots(organizations []string, folders []string, 
 		if err != nil {
 			g.Logger.FatalM(fmt.Sprintf("An error occurred when listing organizations: %v", err), globals.GCP_HIERARCHY_MODULE_NAME)
 		}
-		current = &internal.Node{ID: fmt.Sprintf("%s (%s)", organization.DisplayName, organization.Name)}
+		current = &internal.Node{ID: fmt.Sprintf("%s (%s)", organization.DisplayName, organization.Name[14:])}
 		//GCPLogger.Success(fmt.Sprintf("Listing stuff in organization %s", organization.DisplayName))
 		// get childs (projects & folders) within current orgnization
 		g.getChilds(current, organization.Name)
@@ -145,7 +145,7 @@ func (g *GCPClient) GetResourcesRoots(organizations []string, folders []string, 
 	projectsListResponse, _ := g.CloudresourcemanagerService.Projects.List().Do()
 	for _, project := range projectsListResponse.Projects {
 		if project.Parent == nil {
-			current = &internal.Node{ID: fmt.Sprintf("%s (%s)", project.Name, project.ProjectId)}
+			current = &internal.Node{ID: fmt.Sprintf("p:%s (%s - %d)", project.Name, project.ProjectId, project.ProjectNumber)}
 			root.Add(*current)
 		}
 	}
@@ -166,7 +166,7 @@ func (g *GCPClient) getChilds(current *internal.Node, parentName string){
 		if err != nil {
 			g.Logger.FatalM(fmt.Sprintf("An error occurred when listing folders in parent %s: %v", parentName, err), globals.GCP_HIERARCHY_MODULE_NAME)
 		}
-		child = internal.Node{ID: fmt.Sprintf("%s (%s)", folder.DisplayName, folder.Name)}
+		child = internal.Node{ID: fmt.Sprintf("f:%s (%s)", folder.DisplayName, folder.Name[8:])}
 		g.getChilds(&child, folder.Name)
 		(*current).Add(child)
 	}
@@ -179,7 +179,7 @@ func (g *GCPClient) getChilds(current *internal.Node, parentName string){
 		if err != nil {
 			g.Logger.FatalM(fmt.Sprintf("An error occurred when listing projects in parent %s: %v", parentName, err), globals.GCP_HIERARCHY_MODULE_NAME)
 		}
-		child = internal.Node{ID: fmt.Sprintf("%s (%s)", project.DisplayName, project.ProjectId)}
+		child = internal.Node{ID: fmt.Sprintf("p:%s (%s - %s)", project.DisplayName, project.ProjectId, project.Name[9:])}
 		(*current).Add(child)
 	}
 }
