@@ -45,6 +45,12 @@ type GCPClient struct {
 	CloudAssetService *cloudasset.Service
 	ResourcesService *cloudasset.ResourcesService
 	IamPoliciesService *cloudasset.IamPoliciesService
+
+	// user resource selectors
+	selectedOrganizations []string
+	selectedFolders []string
+	selectedProjects []string
+	ResourceRoots	[]*internal.Node
 }
 
 func (g *GCPClient) init(profile string) {
@@ -118,12 +124,20 @@ func (g *GCPClient) init(profile string) {
 
 func (g *GCPClient) GetResourcesRoots(organizations []string, folders []string, projects []string) []*internal.Node {
 	var (
-		roots []*internal.Node
 		root internal.Node
 		current *internal.Node
+		selected bool
 	)
+	// make user selectors available to whole client
+	g.selectedOrganizations = organizations
+	g.selectedFolders = folders
+	g.selectedProjects = projects
 	ctx := context.Background()
+
+	// define root node, labelled with current profile name
 	root = internal.Node{ID: g.Name}
+
+	// iterate over available organizations
 	organizationIterator := g.OrganizationsClient.SearchOrganizations(ctx, &resourcemanagerpb.SearchOrganizationsRequest{})
 	for {
 		organization, err := organizationIterator.Next()
@@ -133,10 +147,19 @@ func (g *GCPClient) GetResourcesRoots(organizations []string, folders []string, 
 		if err != nil {
 			g.Logger.FatalM(fmt.Sprintf("An error occurred when listing organizations: %v", err), globals.GCP_HIERARCHY_MODULE_NAME)
 		}
+		selected = false
 		current = &internal.Node{ID: fmt.Sprintf("%s (%s)", organization.DisplayName, organization.Name[14:])}
-		//GCPLogger.Success(fmt.Sprintf("Listing stuff in organization %s", organization.DisplayName))
+		// if organization is selected, add a new root node
+		for _, filterOrg := range organizations {
+			if (organization.DisplayName == filterOrg) {
+				g.ResourceRoots = append(g.ResourceRoots, current)
+				selected = true
+				break
+			}
+		}
 		// get childs (projects & folders) within current orgnization
-		g.getChilds(current, organization.Name)
+		g.getChilds(current, organization.Name, selected)
+		// add the folder as a child to the root node
 		root.Add(*current)
 	}
 
@@ -149,13 +172,19 @@ func (g *GCPClient) GetResourcesRoots(organizations []string, folders []string, 
 			root.Add(*current)
 		}
 	}
-	roots = append(roots, &root)
-	return roots
+	// if no resource root has been found through filtering, add the default root, which is the current user account
+	if len(g.ResourceRoots) == 0 {
+		g.Logger.InfoM("Could not find resources with resources selectors, default root resource", globals.GCP_HIERARCHY_MODULE_NAME)
+		g.ResourceRoots = append(g.ResourceRoots, &root)
+	}
+	return g.ResourceRoots
 }
 
-func (g *GCPClient) getChilds(current *internal.Node, parentName string){
+func (g *GCPClient) getChilds(parent *internal.Node, parentName string, selected bool){
 	//GCPLogger.Success(fmt.Sprintf("Listing stuff in parent %s", parentName))
-	var child internal.Node
+	var (
+		current *internal.Node
+	)
 	ctx := context.Background()
 	folderIterator := g.FoldersClient.SearchFolders(ctx, &resourcemanagerpb.SearchFoldersRequest{Query: fmt.Sprintf("parent=%s", parentName)})
 	for {
@@ -166,9 +195,20 @@ func (g *GCPClient) getChilds(current *internal.Node, parentName string){
 		if err != nil {
 			g.Logger.FatalM(fmt.Sprintf("An error occurred when listing folders in parent %s: %v", parentName, err), globals.GCP_HIERARCHY_MODULE_NAME)
 		}
-		child = internal.Node{ID: fmt.Sprintf("f:%s (%s)", folder.DisplayName, folder.Name[8:])}
-		g.getChilds(&child, folder.Name)
-		(*current).Add(child)
+		current = &internal.Node{ID: fmt.Sprintf("f:%s (%s)", folder.DisplayName, folder.Name[8:])}
+		if !selected {
+			for _, filterFolder := range g.selectedFolders {
+				if (folder.DisplayName == filterFolder) {
+					g.ResourceRoots = append(g.ResourceRoots, current)
+					break
+				} else if (folder.Name[8:] == filterFolder) {
+					g.ResourceRoots = append(g.ResourceRoots, current)
+					break
+				}
+			}
+		}
+		g.getChilds(current, folder.Name, selected)
+		(*parent).Add(*current)
 	}
 	projectIterator := g.ProjectsClient.SearchProjects(ctx, &resourcemanagerpb.SearchProjectsRequest{Query: fmt.Sprintf("parent=%s", parentName)})
 	for {
@@ -179,8 +219,19 @@ func (g *GCPClient) getChilds(current *internal.Node, parentName string){
 		if err != nil {
 			g.Logger.FatalM(fmt.Sprintf("An error occurred when listing projects in parent %s: %v", parentName, err), globals.GCP_HIERARCHY_MODULE_NAME)
 		}
-		child = internal.Node{ID: fmt.Sprintf("p:%s (%s - %s)", project.DisplayName, project.ProjectId, project.Name[9:])}
-		(*current).Add(child)
+		current = &internal.Node{ID: fmt.Sprintf("p:%s (%s - %s)", project.DisplayName, project.ProjectId, project.Name[9:])}
+		if !selected {
+			for _, filterProject := range g.selectedProjects {
+				if (project.ProjectId == filterProject) {
+					g.ResourceRoots = append(g.ResourceRoots, current)
+					break
+				} else if (project.Name[9:] == filterProject) {
+					g.ResourceRoots = append(g.ResourceRoots, current)
+					break
+				}
+			}
+		}
+		(*parent).Add(*current)
 	}
 }
 
