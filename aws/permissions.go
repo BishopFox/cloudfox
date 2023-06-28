@@ -94,7 +94,7 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputFormat string, outputDi
 	if m.AWSProfile == "" {
 		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
-	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
 	fmt.Printf("[%s][%s] Enumerating IAM permissions for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 
 	if principal != "" {
@@ -138,7 +138,7 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputFormat string, outputDi
 	}
 
 	if len(m.output.Body) > 0 {
-		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
 		//m.output.OutputSelector3(outputFormat)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
 		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable, m.AWSProfile)
@@ -155,7 +155,7 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputFormat string, outputDi
 			Name:   m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
-		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
 		o.WriteFullOutput(o.Table.TableFiles, nil)
 		//m.writeLoot(o.Table.DirectoryName, verbosity)
 		fmt.Printf("[%s][%s] %s unique permissions identified.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))

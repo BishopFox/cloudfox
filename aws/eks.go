@@ -198,7 +198,7 @@ func (m *EKSModule) EKS(outputFormat string, outputDirectory string, verbosity i
 	}
 
 	if len(m.output.Body) > 0 {
-		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
 		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
@@ -216,7 +216,7 @@ func (m *EKSModule) EKS(outputFormat string, outputDirectory string, verbosity i
 			Name:   m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
-		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
 		o.WriteFullOutput(o.Table.TableFiles, nil)
 		m.writeLoot(o.Table.DirectoryName, verbosity)
 		fmt.Printf("[%s][%s] %d clusters with a total of %d node groups found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), len(seen), len(m.output.Body))

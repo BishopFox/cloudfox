@@ -78,7 +78,7 @@ func (m *AccessKeysModule) PrintAccessKeys(filter string, outputFormat string, o
 		fmt.Printf("[%s][%s] Only active access keys are shown.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 		//fmt.Printf("[%s][%s] Preparing output.\n\n")
 
-		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
 		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
@@ -95,7 +95,7 @@ func (m *AccessKeysModule) PrintAccessKeys(filter string, outputFormat string, o
 			Name:   m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
-		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
 		o.WriteFullOutput(o.Table.TableFiles, nil)
 		m.writeLoot(o.Table.DirectoryName, verbosity)
 		//m.writeLoot(m.output.FilePath, verbosity)

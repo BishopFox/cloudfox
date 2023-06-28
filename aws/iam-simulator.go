@@ -73,7 +73,7 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
-	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
 	var actionList []string
 	var pmapperCommands []string
 	var pmapperOutFileName string
@@ -171,7 +171,7 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 
 	}
 	if len(m.output.Body) > 0 {
-		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
 		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		o := internal.OutputClient{
@@ -187,7 +187,7 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 			Name:   m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
-		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
 		o.WriteFullOutput(o.Table.TableFiles, nil)
 		fmt.Printf("[%s][%s] We suggest running the pmapper commands in the loot file to get the same information but taking privesc paths into account.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 		// fmt.Printf("[%s]\t\tpmapper --profile %s graph create\n", cyan(m.output.CallingModule),  cyan(m.AWSProfile), m.AWSProfile)

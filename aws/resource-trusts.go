@@ -54,7 +54,7 @@ func (m *ResourceTrustsModule) PrintResources(outputFormat string, outputDirecto
 	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
-	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
 	if m.AWSProfile == "" {
 		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
@@ -137,7 +137,7 @@ func (m *ResourceTrustsModule) PrintResources(outputFormat string, outputDirecto
 			Name:   m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
-		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
 		o.WriteFullOutput(o.Table.TableFiles, nil)
 		//m.writeLoot(o.Table.DirectoryName, verbosity)
 		fmt.Printf("[%s][%s] %s resource policies found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
