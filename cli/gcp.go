@@ -73,9 +73,10 @@ Display available gcloud access tokens:
 		Use:     "buckets",
 		Aliases: []string{},
 		Short:   "Display GCP bucket information",
+		Args:    cobra.MinimumNArgs(0),
 		Long: `
 Display available bucket information:
-./cloudfox gcp buckets`,
+./cloudfox gcp buckets [project [project...]]`,
 		Run: runGCPBucketsCommand,
 	}
 
@@ -161,7 +162,7 @@ func runGCPBucketsCommand(cmd *cobra.Command, args []string) {
 			Folders:		GCPFolderIDs,
 			Client:			*client,
 		}
-		err := m.GetData(GCPProjectIDs)
+		err := m.ListBuckets(args)
 		if err != nil {
 			GCPLogger.ErrorM(fmt.Sprintf("Error running %s module on profile %s", globals.GCP_BUCKETS_MODULE_NAME, profile), globals.GCP_BUCKETS_MODULE_NAME)
 		}

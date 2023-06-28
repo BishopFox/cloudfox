@@ -50,7 +50,12 @@ type GCPClient struct {
 	selectedOrganizations []string
 	selectedFolders []string
 	selectedProjects []string
+
+	// final resources for module usage
 	ResourceRoots	[]*internal.Node
+	Organizations []string
+	Folders []string
+	Projects []string
 }
 
 func (g *GCPClient) init(profile string) {
@@ -137,6 +142,36 @@ func (g *GCPClient) GetResourcesRoots(organizations []string, folders []string, 
 	// define root node, labelled with current profile name
 	root = internal.Node{ID: g.Name}
 
+	// by default, don't select organization
+	selected = false
+	// if a no selector is submitted, all the resources will have to be included
+	if len(organizations) == 0 && len(folders) == 0 && len(projects) == 0 {
+		selected = true
+	}
+
+	// now look for resources (projects) that do not have a parent and that live in the user' account directly
+	// might need to investigate later but it looks like we can't have folders under a user account
+	projectsListResponse, _ := g.CloudresourcemanagerService.Projects.List().Do()
+	for _, project := range projectsListResponse.Projects {
+		if project.Parent == nil {
+			if selected {
+				g.Projects = append(g.Projects, project.ProjectId)
+			}
+			// if project is selected, add a new root node
+			for _, filterProject := range g.selectedProjects {
+				if (project.ProjectId == filterProject) {
+					g.ResourceRoots = append(g.ResourceRoots, current)
+					break
+				} else if (fmt.Sprint(project.ProjectNumber) == filterProject) {
+					g.ResourceRoots = append(g.ResourceRoots, current)
+					break
+				}
+			}
+			current = &internal.Node{ID: fmt.Sprintf("p:%s (%s - %d)", project.Name, project.ProjectId, project.ProjectNumber)}
+			root.Add(*current)
+		}
+	}
+
 	// iterate over available organizations
 	organizationIterator := g.OrganizationsClient.SearchOrganizations(ctx, &resourcemanagerpb.SearchOrganizationsRequest{})
 	for {
@@ -147,11 +182,11 @@ func (g *GCPClient) GetResourcesRoots(organizations []string, folders []string, 
 		if err != nil {
 			g.Logger.FatalM(fmt.Sprintf("An error occurred when listing organizations: %v", err), globals.GCP_HIERARCHY_MODULE_NAME)
 		}
-		selected = false
 		current = &internal.Node{ID: fmt.Sprintf("%s (%s)", organization.DisplayName, organization.Name[14:])}
 		// if organization is selected, add a new root node
 		for _, filterOrg := range organizations {
 			if (organization.DisplayName == filterOrg) {
+				g.Organizations = append(g.Organizations, organization.DisplayName)
 				g.ResourceRoots = append(g.ResourceRoots, current)
 				selected = true
 				break
@@ -163,15 +198,6 @@ func (g *GCPClient) GetResourcesRoots(organizations []string, folders []string, 
 		root.Add(*current)
 	}
 
-	// now look for resources (projects) that do not have a parent and that live in the user' account directly
-	// might need to investigate later but it looks like we can't have folders under a user account
-	projectsListResponse, _ := g.CloudresourcemanagerService.Projects.List().Do()
-	for _, project := range projectsListResponse.Projects {
-		if project.Parent == nil {
-			current = &internal.Node{ID: fmt.Sprintf("p:%s (%s - %d)", project.Name, project.ProjectId, project.ProjectNumber)}
-			root.Add(*current)
-		}
-	}
 	// if no resource root has been found through filtering, add the default root, which is the current user account
 	if len(g.ResourceRoots) == 0 {
 		g.Logger.InfoM("Could not find resources with resources selectors, default root resource", globals.GCP_HIERARCHY_MODULE_NAME)
@@ -199,9 +225,11 @@ func (g *GCPClient) getChilds(parent *internal.Node, parentName string, selected
 		if !selected {
 			for _, filterFolder := range g.selectedFolders {
 				if (folder.DisplayName == filterFolder) {
+					g.Folders = append(g.Folders, folder.DisplayName)
 					g.ResourceRoots = append(g.ResourceRoots, current)
 					break
 				} else if (folder.Name[8:] == filterFolder) {
+					g.Folders = append(g.Folders, folder.Name[8:])
 					g.ResourceRoots = append(g.ResourceRoots, current)
 					break
 				}
@@ -223,9 +251,11 @@ func (g *GCPClient) getChilds(parent *internal.Node, parentName string, selected
 		if !selected {
 			for _, filterProject := range g.selectedProjects {
 				if (project.ProjectId == filterProject) {
+					g.Projects = append(g.Projects, project.ProjectId)
 					g.ResourceRoots = append(g.ResourceRoots, current)
 					break
 				} else if (project.Name[9:] == filterProject) {
+					g.Projects = append(g.Projects, project.Name[9:])
 					g.ResourceRoots = append(g.ResourceRoots, current)
 					break
 				}
