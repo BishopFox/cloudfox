@@ -521,6 +521,11 @@ func awsPostRun(cmd *cobra.Command, args []string) {
 		if err != nil {
 			log.Fatalf("failed to save cache: %v", err)
 		}
+		err = internal.SaveCacheToFiles(outputDirectory, *caller.Account)
+		if err != nil {
+			log.Fatalf("failed to save cache: %v", err)
+		}
+
 		fmt.Printf("[%s] Cached AWS data written to %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), outputDirectory)
 
 	}

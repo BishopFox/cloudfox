@@ -127,7 +127,7 @@ func (m *RoleTrustsModule) PrintRoleTrusts(outputFormat string, outputDirectory 
 	}
 
 	o.PrefixIdentifier = m.AWSProfile
-	o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+	o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
 
 	principalsHeader, principalsBody := m.printPrincipalTrusts(outputFormat, outputDirectory)
 	o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
