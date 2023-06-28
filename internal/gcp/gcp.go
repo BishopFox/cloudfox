@@ -159,10 +159,7 @@ func (g *GCPClient) GetResourcesRoots(organizations []string, folders []string, 
 			}
 			// if project is selected, add a new root node
 			for _, filterProject := range g.selectedProjects {
-				if (project.ProjectId == filterProject) {
-					g.ResourceRoots = append(g.ResourceRoots, current)
-					break
-				} else if (fmt.Sprint(project.ProjectNumber) == filterProject) {
+				if (project.ProjectId == filterProject || fmt.Sprint(project.ProjectNumber) == filterProject) {
 					g.ResourceRoots = append(g.ResourceRoots, current)
 					break
 				}
@@ -185,7 +182,7 @@ func (g *GCPClient) GetResourcesRoots(organizations []string, folders []string, 
 		current = &internal.Node{ID: fmt.Sprintf("%s (%s)", organization.DisplayName, organization.Name[14:])}
 		// if organization is selected, add a new root node
 		for _, filterOrg := range organizations {
-			if (organization.DisplayName == filterOrg) {
+			if (organization.DisplayName == filterOrg || organization.Name[14:] == filterOrg) {
 				g.Organizations = append(g.Organizations, organization.DisplayName)
 				g.ResourceRoots = append(g.ResourceRoots, current)
 				selected = true
@@ -224,12 +221,8 @@ func (g *GCPClient) getChilds(parent *internal.Node, parentName string, selected
 		current = &internal.Node{ID: fmt.Sprintf("f:%s (%s)", folder.DisplayName, folder.Name[8:])}
 		if !selected {
 			for _, filterFolder := range g.selectedFolders {
-				if (folder.DisplayName == filterFolder) {
+				if (folder.DisplayName == filterFolder || folder.Name[8:] == filterFolder) {
 					g.Folders = append(g.Folders, folder.DisplayName)
-					g.ResourceRoots = append(g.ResourceRoots, current)
-					break
-				} else if (folder.Name[8:] == filterFolder) {
-					g.Folders = append(g.Folders, folder.Name[8:])
 					g.ResourceRoots = append(g.ResourceRoots, current)
 					break
 				}
@@ -250,12 +243,8 @@ func (g *GCPClient) getChilds(parent *internal.Node, parentName string, selected
 		current = &internal.Node{ID: fmt.Sprintf("p:%s (%s - %s)", project.DisplayName, project.ProjectId, project.Name[9:])}
 		if !selected {
 			for _, filterProject := range g.selectedProjects {
-				if (project.ProjectId == filterProject) {
+				if (project.ProjectId == filterProject || project.Name[9:] == filterProject) {
 					g.Projects = append(g.Projects, project.ProjectId)
-					g.ResourceRoots = append(g.ResourceRoots, current)
-					break
-				} else if (project.Name[9:] == filterProject) {
-					g.Projects = append(g.Projects, project.Name[9:])
 					g.ResourceRoots = append(g.ResourceRoots, current)
 					break
 				}
