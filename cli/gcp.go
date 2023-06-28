@@ -206,9 +206,9 @@ func init() {
 	GCPCommands.PersistentFlags().BoolVarP(&GCPAllProfiles, "all-profiles", "a", false, "Use all available and valid GCP CLI profiles")
 
 	// Resource filtering options
-	GCPCommands.PersistentFlags().StringArrayVarP(&GCPOrganizations, "organization", "o", []string{}, "Organization name, repetable")
-	GCPCommands.PersistentFlags().StringArrayVarP(&GCPProjectIDs, "projectid", "p", []string{}, "Project ID, repeatable")
-	GCPCommands.PersistentFlags().StringArrayVarP(&GCPFolderIDs, "folderid", "f", []string{}, "Folder ID, repeatable")
+	GCPCommands.PersistentFlags().StringArrayVarP(&GCPOrganizations, "organization", "o", []string{}, "Organization name or number, repetable")
+	GCPCommands.PersistentFlags().StringArrayVarP(&GCPProjectIDs, "projectid", "p", []string{}, "Project slug or number, repeatable")
+	GCPCommands.PersistentFlags().StringArrayVarP(&GCPFolderIDs, "folderid", "f", []string{}, "Folder name or number, repeatable")
 
 	// Global flags for the GCP modules
 	GCPCommands.PersistentFlags().BoolVarP(&GCPConfirm, "yes", "y", false, "Non-interactive mode (like apt/yum)")
