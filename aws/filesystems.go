@@ -136,7 +136,7 @@ func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirector
 	}
 	if len(m.output.Body) > 0 {
 
-		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
 		//m.output.OutputSelector(outputFormat)
 		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
 		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
@@ -154,7 +154,7 @@ func (m *FilesystemsModule) PrintFilesystems(outputFormat string, outputDirector
 			Name:   m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
-		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
 		o.WriteFullOutput(o.Table.TableFiles, nil)
 		m.writeLoot(o.Table.DirectoryName, verbosity)
 		fmt.Printf("[%s][%s] %s filesystems found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
@@ -287,12 +287,13 @@ func (m *FilesystemsModule) getEFSSharesPerRegion(r string, wg *sync.WaitGroup, 
 		)
 		if err != nil {
 			policy = "Default (No IAM auth)"
+		} else {
+			policy = "IAM Authenticated"
 		}
 
 		DescribeMountTargets, err := sdk.CachedDescribeMountTargets(m.EFSClient, aws.ToString(m.Caller.Account), r, id)
 		if err != nil {
 			sharedLogger.Error(err.Error())
-
 			m.CommandCounter.Error++
 			break
 		}
@@ -486,10 +487,11 @@ func (m *FilesystemsModule) getEFSfilesystemPermissions(accessPoint types.Access
 	var path string
 	var permissions string
 
-	if accessPoint.AccessPointId != nil {
+	if accessPoint.AccessPointId != nil && accessPoint.RootDirectory != nil && accessPoint.RootDirectory.CreationInfo != nil {
 		path = aws.ToString(accessPoint.RootDirectory.Path)
 		permissions = aws.ToString(accessPoint.RootDirectory.CreationInfo.Permissions)
+		return path, permissions
 	}
-	return path, permissions
+	return "", ""
 
 }

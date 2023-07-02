@@ -25,7 +25,7 @@ func RegisterEKSTypes() {
 
 }
 
-func CachedEKSDescribeCluster(client EKSClientInterface, accountID string, region string, clusterName string) (eksTypes.Cluster, error) {
+func CachedEKSDescribeCluster(client EKSClientInterface, accountID string, clusterName string, region string) (eksTypes.Cluster, error) {
 	var cluster eksTypes.Cluster
 	cacheKey := fmt.Sprintf("%s-eks-DescribeCluster-%s-%s", accountID, region, clusterName)
 	cached, found := internal.Cache.Get(cacheKey)

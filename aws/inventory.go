@@ -256,7 +256,7 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 		}
 	}
 
-	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
 
 	// if verbosity > 1 {
 	// 	fmt.Printf("\nAnalyzed Global Resources\n\n")
@@ -280,7 +280,7 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 		})
 
 		o.PrefixIdentifier = m.AWSProfile
-		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
 		var header []string
 		var body [][]string
 		header, body = m.PrintGlobalResources(outputFormat, outputDirectory, verbosity, dataReceiver)

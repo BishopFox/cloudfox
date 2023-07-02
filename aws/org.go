@@ -108,7 +108,7 @@ func (m *OrgModule) PrintOrgAccounts(outputFormat string, outputDirectory string
 		}
 
 		if len(m.output.Body) > 0 {
-			m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+			m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
 			//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 			//m.writeLoot(m.output.FilePath, verbosity)
 			o := internal.OutputClient{
@@ -124,7 +124,7 @@ func (m *OrgModule) PrintOrgAccounts(outputFormat string, outputDirectory string
 				Name:   m.output.CallingModule,
 			})
 			o.PrefixIdentifier = m.AWSProfile
-			o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+			o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
 			o.WriteFullOutput(o.Table.TableFiles, nil)
 			//m.writeLoot(o.Table.DirectoryName, verbosity)
 			fmt.Printf("[%s][%s] %d accounts found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), len(m.output.Body))

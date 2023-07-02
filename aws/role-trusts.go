@@ -127,7 +127,7 @@ func (m *RoleTrustsModule) PrintRoleTrusts(outputFormat string, outputDirectory 
 	}
 
 	o.PrefixIdentifier = m.AWSProfile
-	o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account), m.AWSProfile))
+	o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
 
 	principalsHeader, principalsBody := m.printPrincipalTrusts(outputFormat, outputDirectory)
 	o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
@@ -279,7 +279,12 @@ func (m *RoleTrustsModule) printServiceTrusts(outputFormat string, outputDirecto
 		}
 	}
 
-	m.sortTrustsTablePerTrustedPrincipal()
+	// sort the rows based on column 2 (service)
+	sort.SliceStable(body, func(i, j int) bool {
+		return body[i][1] < body[j][1]
+	})
+
+	//m.sortTrustsTablePerTrustedPrincipal()
 	return header, body
 
 	// if len(m.output.Body) > 0 {
