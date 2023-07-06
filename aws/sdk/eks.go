@@ -18,7 +18,7 @@ type EKSClientInterface interface {
 	ListNodegroups(context.Context, *eks.ListNodegroupsInput, ...func(*eks.Options)) (*eks.ListNodegroupsOutput, error)
 }
 
-func RegisterEKSTypes() {
+func init() {
 	gob.Register([]string{})
 	gob.Register(eksTypes.Cluster{})
 	gob.Register(eksTypes.Nodegroup{})

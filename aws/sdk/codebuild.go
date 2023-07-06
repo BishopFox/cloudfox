@@ -18,7 +18,7 @@ type CodeBuildClientInterface interface {
 	GetResourcePolicy(ctx context.Context, params *codebuild.GetResourcePolicyInput, optFns ...func(*codebuild.Options)) (*codebuild.GetResourcePolicyOutput, error)
 }
 
-func RegisterCodeBuildTypes() {
+func init() {
 	gob.Register(codeBuildTypes.Project{})
 
 }

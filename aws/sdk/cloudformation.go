@@ -18,7 +18,7 @@ type CloudFormationClientInterface interface {
 	ListStacks(context.Context, *cloudformation.ListStacksInput, ...func(*cloudformation.Options)) (*cloudformation.ListStacksOutput, error)
 }
 
-func RegisterCloudFormationTypes() {
+func init() {
 	gob.Register([]cloudFormationTypes.Stack{})
 	gob.Register([]cloudFormationTypes.StackSummary{})
 }

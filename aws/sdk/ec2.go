@@ -16,7 +16,7 @@ type AWSEC2ClientInterface interface {
 	DescribeNetworkInterfaces(context.Context, *ec2.DescribeNetworkInterfacesInput, ...func(*ec2.Options)) (*ec2.DescribeNetworkInterfacesOutput, error)
 }
 
-func RegisterEC2Types() {
+func init() {
 	gob.Register([]ec2Types.Instance{})
 	gob.Register([]ec2Types.NetworkInterface{})
 }

@@ -16,7 +16,7 @@ type lightsailClientInterface interface {
 	GetContainerServices(context.Context, *lightsail.GetContainerServicesInput, ...func(*lightsail.Options)) (*lightsail.GetContainerServicesOutput, error)
 }
 
-func RegisterLightsailTypes() {
+func init() {
 	//gob.Register([]lightsailTypes.Instance{})
 	gob.Register([]lightsailTypes.ContainerService{})
 

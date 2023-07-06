@@ -15,7 +15,7 @@ type RedShiftClientInterface interface {
 	DescribeClusters(context.Context, *redshift.DescribeClustersInput, ...func(*redshift.Options)) (*redshift.DescribeClustersOutput, error)
 }
 
-func RegisterRedShiftTypes() {
+func init() {
 	gob.Register([]redshiftTypes.Cluster{})
 }
 

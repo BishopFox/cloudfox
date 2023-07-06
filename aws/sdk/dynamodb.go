@@ -16,7 +16,7 @@ type DynamoDBClientInterface interface {
 	DescribeTable(context.Context, *dynamodb.DescribeTableInput, ...func(*dynamodb.Options)) (*dynamodb.DescribeTableOutput, error)
 }
 
-func RegisterDynamoDBTypes() {
+func init() {
 	gob.Register([]string{})
 	gob.Register(dynamoDBTypes.TableDescription{})
 }

@@ -15,7 +15,7 @@ type SecretsManagerClientInterface interface {
 	ListSecrets(context.Context, *secretsmanager.ListSecretsInput, ...func(*secretsmanager.Options)) (*secretsmanager.ListSecretsOutput, error)
 }
 
-func RegisterSecretsManagerTypes() {
+func init() {
 	gob.Register([]secretsmanagerTypes.SecretListEntry{})
 }
 

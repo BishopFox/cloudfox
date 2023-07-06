@@ -24,7 +24,7 @@ type AWSIAMClientInterface interface {
 	ListInstanceProfiles(ctx context.Context, params *iam.ListInstanceProfilesInput, optFns ...func(*iam.Options)) (*iam.ListInstanceProfilesOutput, error)
 }
 
-func RegisterIamTypes() {
+func init() {
 	gob.Register([]iamTypes.User{})
 	gob.Register([]iamTypes.AccessKeyMetadata{})
 	gob.Register([]iamTypes.Role{})

@@ -15,7 +15,7 @@ type ELBv2ClientInterface interface {
 	DescribeLoadBalancers(context.Context, *elasticloadbalancingv2.DescribeLoadBalancersInput, ...func(*elasticloadbalancingv2.Options)) (*elasticloadbalancingv2.DescribeLoadBalancersOutput, error)
 }
 
-func RegisterELBv2Types() {
+func init() {
 	gob.Register([]elbV2Types.LoadBalancer{})
 }
 

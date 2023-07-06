@@ -16,7 +16,7 @@ type OpenSearchClientInterface interface {
 	DescribeDomainConfig(context.Context, *opensearch.DescribeDomainConfigInput, ...func(*opensearch.Options)) (*opensearch.DescribeDomainConfigOutput, error)
 }
 
-func RegisterOpenSearchTypes() {
+func init() {
 	gob.Register([]openSearchTypes.DomainInfo{})
 	gob.Register(openSearchTypes.DomainConfig{})
 }

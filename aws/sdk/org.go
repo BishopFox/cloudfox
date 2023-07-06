@@ -16,7 +16,7 @@ type OrganizationsClientInterface interface {
 	DescribeOrganization(ctx context.Context, params *organizations.DescribeOrganizationInput, optFns ...func(*organizations.Options)) (*organizations.DescribeOrganizationOutput, error)
 }
 
-func RegisterOrganizationsTypes() {
+func init() {
 	gob.Register([]orgTypes.Account{})
 	//gob.Register(orgTypes.Organization{})
 }

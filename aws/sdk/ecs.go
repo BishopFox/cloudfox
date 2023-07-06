@@ -19,7 +19,7 @@ type AWSECSClientInterface interface {
 	DescribeTaskDefinition(ctx context.Context, params *ecs.DescribeTaskDefinitionInput, optFns ...func(*ecs.Options)) (*ecs.DescribeTaskDefinitionOutput, error)
 }
 
-func RegisterECSTypes() {
+func init() {
 	gob.Register([]string{})
 	gob.Register(ecsTypes.Task{})
 	gob.Register(ecsTypes.TaskDefinition{})

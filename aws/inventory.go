@@ -1280,52 +1280,34 @@ func (m *Inventory2Module) getSSMParametersPerRegion(r string, wg *sync.WaitGrou
 	// m.CommandCounter.Total++
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
-	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
 	var totalCountThisServiceThisRegion = 0
 	var service = "SSM Parameters"
 	var resourceNames []string
 
-	for {
-		DescribeParameters, err := m.SSMClient.DescribeParameters(
-			context.TODO(),
-			&(ssm.DescribeParametersInput{
-				NextToken: PaginationControl,
-			}),
-			func(o *ssm.Options) {
-				o.Region = r
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
+	Parameters, err := sdk.CachedSSMDescribeParameters(m.SSMClient, aws.ToString(m.Caller.Account), r)
 
-		// Add this page of resources to the total count
-		totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(DescribeParameters.Parameters)
-
-		// Add this page of resources to the module's resource list
-		for _, parameter := range DescribeParameters.Parameters {
-			arn := "arn:aws:ssm:" + r + ":" + aws.ToString(m.Caller.Account) + ":parameter/" + aws.ToString(parameter.Name)
-			resourceNames = append(resourceNames, arn)
-		}
-
-		// Pagination control. After the last page of output, the for loop exits.
-		if DescribeParameters.NextToken != nil {
-			PaginationControl = DescribeParameters.NextToken
-		} else {
-			PaginationControl = nil
-			m.mu.Lock()
-			m.resources = append(m.resources, resourceNames...)
-			m.serviceMap[service][r] = totalCountThisServiceThisRegion
-			m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
-			m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
-			m.mu.Unlock()
-			break
-		}
-
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
 	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(Parameters)
+
+	// Add this page of resources to the module's resource list
+	for _, parameter := range Parameters {
+		arn := "arn:aws:ssm:" + r + ":" + aws.ToString(m.Caller.Account) + ":parameter/" + aws.ToString(parameter.Name)
+		resourceNames = append(resourceNames, arn)
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
+
 }
 
 func (m *Inventory2Module) getEcsTasksPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {

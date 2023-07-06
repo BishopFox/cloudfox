@@ -17,7 +17,7 @@ type LambdaClientInterface interface {
 	GetFunctionUrlConfig(context.Context, *lambda.GetFunctionUrlConfigInput, ...func(*lambda.Options)) (*lambda.GetFunctionUrlConfigOutput, error)
 }
 
-func RegisterLambdaTypes() {
+func init() {
 	gob.Register([]lambdaTypes.FunctionConfiguration{})
 	gob.Register(customGetFuntionURLOutput{})
 }
