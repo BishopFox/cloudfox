@@ -1,16 +1,15 @@
 package aws
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
 
+	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/bishopfox/awsservicemap"
@@ -18,8 +17,7 @@ import (
 )
 
 type ElasticNetworkInterfacesModule struct {
-	//EC2Client                       *ec2.Client
-	DescribeNetworkInterfacesClient ec2.DescribeNetworkInterfacesAPIClient
+	EC2Client sdk.AWSEC2ClientInterface
 
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
@@ -213,50 +211,45 @@ func (m *ElasticNetworkInterfacesModule) executeChecks(r string, wg *sync.WaitGr
 }
 
 func (m *ElasticNetworkInterfacesModule) getDescribeNetworkInterfaces(region string, dataReceiver chan MappedENI) {
-	var PaginationControl *string
-	for {
-		DescribeNetworkInterfaces, err := m.DescribeNetworkInterfacesClient.DescribeNetworkInterfaces(
-			context.TODO(),
-			&(ec2.DescribeNetworkInterfacesInput{
-				NextToken: PaginationControl,
-			}),
-			func(o *ec2.Options) {
-				o.Region = region
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
 
-		for _, eni := range DescribeNetworkInterfaces.NetworkInterfaces {
-			status := string(eni.Status)
-			if status == "available" {
-				continue // unused ENI
-			}
+	NetworkInterfaces, err := sdk.CachedEC2DescribeNetworkInterfaces(m.EC2Client, aws.ToString(m.Caller.Account), region)
 
-			mappedENI := MappedENI{
-				ID:               aws.ToString(eni.NetworkInterfaceId),
-				Type:             string(eni.InterfaceType),
-				ExternalIP:       getPublicIPOfElasticNetworkInterface(eni),
-				PrivateIP:        aws.ToString(eni.PrivateIpAddress),
-				VPCID:            aws.ToString(eni.VpcId),
-				AttachedInstance: getAttachmentInstanceOfElasticNetworkInterface(eni),
-				Description:      aws.ToString(eni.Description),
-			}
-
-			dataReceiver <- mappedENI
-		}
-
-		if DescribeNetworkInterfaces.NextToken != nil {
-			PaginationControl = DescribeNetworkInterfaces.NextToken
-		} else {
-			PaginationControl = nil
-			break
-		}
-
+	// var PaginationControl *string
+	// for {
+	// 	DescribeNetworkInterfaces, err := m.DescribeNetworkInterfacesClient.DescribeNetworkInterfaces(
+	// 		context.TODO(),
+	// 		&(ec2.DescribeNetworkInterfacesInput{
+	// 			NextToken: PaginationControl,
+	// 		}),
+	// 		func(o *ec2.Options) {
+	// 			o.Region = region
+	// 		},
+	// 	)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
 	}
+
+	for _, eni := range NetworkInterfaces {
+		status := string(eni.Status)
+		if status == "available" {
+			continue // unused ENI
+		}
+
+		mappedENI := MappedENI{
+			ID:               aws.ToString(eni.NetworkInterfaceId),
+			Type:             string(eni.InterfaceType),
+			ExternalIP:       getPublicIPOfElasticNetworkInterface(eni),
+			PrivateIP:        aws.ToString(eni.PrivateIpAddress),
+			VPCID:            aws.ToString(eni.VpcId),
+			AttachedInstance: getAttachmentInstanceOfElasticNetworkInterface(eni),
+			Description:      aws.ToString(eni.Description),
+		}
+
+		dataReceiver <- mappedENI
+	}
+
 }
 
 func getPublicIPOfElasticNetworkInterface(elasticNetworkInterface types.NetworkInterface) string {

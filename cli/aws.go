@@ -1155,12 +1155,9 @@ func runECSTasksCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.ECSTasksModule{
-			DescribeTasksClient:             ecs.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			DescribeTaskDefinitionClient:    ecs.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			ListTasksClient:                 ecs.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			ListClustersClient:              ecs.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			DescribeNetworkInterfacesClient: ec2.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			IAMClient:                       iam.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			EC2Client: ec2.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			ECSClient: ecs.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			IAMClient: iam.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
 
 			Caller:         *caller,
 			AWSRegions:     internal.GetEnabledRegions(profile, cmd.Root().Version),
@@ -1181,7 +1178,7 @@ func runENICommand(cmd *cobra.Command, args []string) {
 		}
 		m := aws.ElasticNetworkInterfacesModule{
 			//EC2Client:                       ec2.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			DescribeNetworkInterfacesClient: ec2.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			EC2Client: ec2.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
 
 			Caller:     *caller,
 			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
@@ -1411,12 +1408,9 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		databases.PrintDatabases(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
 		ecstasks := aws.ECSTasksModule{
-			DescribeTaskDefinitionClient:    ecsClient,
-			DescribeTasksClient:             ecsClient,
-			ListTasksClient:                 ecsClient,
-			ListClustersClient:              ecsClient,
-			DescribeNetworkInterfacesClient: ec2Client,
-			IAMClient:                       iamClient,
+			EC2Client: ec2Client,
+			ECSClient: ecsClient,
+			IAMClient: iamClient,
 
 			Caller:         *caller,
 			AWSRegions:     internal.GetEnabledRegions(profile, cmd.Root().Version),
@@ -1441,11 +1435,11 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		eksCommand.EKS(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
 		elasticnetworkinterfaces := aws.ElasticNetworkInterfacesModule{
-			DescribeNetworkInterfacesClient: ec2Client,
-			Caller:                          *caller,
-			AWSRegions:                      internal.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile:                      profile,
-			WrapTable:                       AWSWrapTable,
+			EC2Client:  ec2Client,
+			Caller:     *caller,
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile: profile,
+			WrapTable:  AWSWrapTable,
 		}
 		elasticnetworkinterfaces.ElasticNetworkInterfaces(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
@@ -1663,6 +1657,7 @@ func init() {
 	sdk.RegisterDynamoDBTypes()
 	sdk.RegisterEC2Types()
 	sdk.RegisterECRTypes()
+	sdk.RegisterECSTypes()
 	sdk.RegisterEFSTypes()
 	sdk.RegisterEKSTypes()
 	sdk.RegisterELBTypes()

@@ -19,6 +19,15 @@ import (
 
 const DESCRIBE_TASKS_TEST_FILE = "./test-data/describe-tasks.json"
 const DESCRIBE_NETWORK_INTEFACES_TEST_FILE = "./test-data/describe-network-interfaces.json"
+const DESCRIBE_INSTANCES_TEST_FILE = "./test-data/ec2-describeInstances.json"
+
+type mockedECSClient struct {
+	describeTasks DescribeTasks
+}
+type mockedEC2Client struct {
+	describeNetworkInterfaces DescribeNetworkInterfaces
+	describeInstances         DescribeInstances
+}
 
 type ListTasks struct {
 	TaskArns []string `json:"taskArns"`
@@ -140,6 +149,105 @@ type DescribeNetworkInterfaces struct {
 	} `json:"NetworkInterfaces"`
 }
 
+type DescribeInstances struct {
+	Reservations []struct {
+		Instances []struct {
+			AmiLaunchIndex int    `json:"AmiLaunchIndex"`
+			ImageID        string `json:"ImageId"`
+			InstanceID     string `json:"InstanceId"`
+			InstanceType   string `json:"InstanceType"`
+			KernelID       string `json:"KernelId"`
+			KeyName        string `json:"KeyName"`
+			LaunchTime     string `json:"LaunchTime"`
+			Monitoring     struct {
+				State string `json:"State"`
+			} `json:"Monitoring"`
+			Placement struct {
+				AvailabilityZone string `json:"AvailabilityZone"`
+				GroupName        string `json:"GroupName"`
+				Tenancy          string `json:"Tenancy"`
+			} `json:"Placement"`
+			Platform            string `json:"Platform"`
+			PrivateDNS          string `json:"PrivateDnsName"`
+			PrivateIP           string `json:"PrivateIpAddress"`
+			PublicDNS           string `json:"PublicDnsName"`
+			PublicIP            string `json:"PublicIpAddress"`
+			State               string `json:"State"`
+			SubnetID            string `json:"SubnetId"`
+			VpcID               string `json:"VpcId"`
+			Architecture        string `json:"Architecture"`
+			BlockDeviceMappings []struct {
+				DeviceName string `json:"DeviceName"`
+				Ebs        struct {
+					AttachTime          time.Time `json:"AttachTime"`
+					DeleteOnTermination bool      `json:"DeleteOnTermination"`
+					Status              string    `json:"Status"`
+					VolumeID            string    `json:"VolumeId"`
+				} `json:"Ebs"`
+			} `json:"BlockDeviceMappings"`
+			ClientToken        string `json:"ClientToken"`
+			EbsOptimized       bool   `json:"EbsOptimized"`
+			Hypervisor         string `json:"Hypervisor"`
+			IamInstanceProfile struct {
+				Arn string `json:"Arn"`
+				ID  string `json:"Id"`
+			} `json:"IamInstanceProfile"`
+			NetworkInterfaces []struct {
+				Attachment struct {
+					AttachTime          time.Time `json:"AttachTime"`
+					AttachmentID        string    `json:"AttachmentId"`
+					DeleteOnTermination bool      `json:"DeleteOnTermination"`
+					DeviceIndex         int       `json:"DeviceIndex"`
+					Status              string    `json:"Status"`
+				} `json:"Attachment"`
+				Description string `json:"Description"`
+				Groups      []struct {
+					GroupName string `json:"GroupName"`
+					GroupID   string `json:"GroupId"`
+				} `json:"Groups"`
+				MacAddress         string `json:"MacAddress"`
+				NetworkInterfaceID string `json:"NetworkInterfaceId"`
+				OwnerID            string `json:"OwnerId"`
+				PrivateDNSName     string `json:"PrivateDnsName"`
+				PrivateIPAddress   string `json:"PrivateIpAddress"`
+				PrivateIPAddresses []struct {
+					Association struct {
+						IPOwnerID     string `json:"IpOwnerId"`
+						PublicDNSName string `json:"PublicDnsName"`
+						PublicIP      string `json:"PublicIp"`
+					} `json:"Association"`
+					Primary          bool   `json:"Primary"`
+					PrivateDNSName   string `json:"PrivateDnsName"`
+					PrivateIPAddress string `json:"PrivateIpAddress"`
+				} `json:"PrivateIpAddresses"`
+				SourceDestCheck bool   `json:"SourceDestCheck"`
+				Status          string `json:"Status"`
+				SubnetID        string `json:"SubnetId"`
+				VpcID           string `json:"VpcId"`
+			} `json:"NetworkInterfaces"`
+			RootDeviceName string `json:"RootDeviceName"`
+			RootDeviceType string `json:"RootDeviceType"`
+			SecurityGroups []struct {
+				GroupName string `json:"GroupName"`
+				GroupID   string `json:"GroupId"`
+			} `json:"SecurityGroups"`
+			SourceDestCheck bool `json:"SourceDestCheck"`
+			StateReason     struct {
+				Code    string `json:"Code"`
+				Message string `json:"Message"`
+			} `json:"StateReason"`
+			Tags []struct {
+				Key   string `json:"Key"`
+				Value string `json:"Value"`
+			} `json:"Tags"`
+			VirtualizationType string `json:"VirtualizationType"`
+		} `json:"Instances"`
+		OwnerID       string `json:"OwnerId"`
+		RequesterID   string `json:"RequesterId"`
+		ReservationID string `json:"ReservationId"`
+	} `json:"Reservations"`
+}
+
 func readTestFile(testFile string) []byte {
 	file, err := os.ReadFile(testFile)
 	if err != nil {
@@ -148,10 +256,7 @@ func readTestFile(testFile string) []byte {
 	return file
 }
 
-type mockedListclustersClient struct {
-}
-
-func (c *mockedListclustersClient) ListClusters(context.Context, *ecs.ListClustersInput, ...func(*ecs.Options)) (*ecs.ListClustersOutput, error) {
+func (c *mockedECSClient) ListClusters(context.Context, *ecs.ListClustersInput, ...func(*ecs.Options)) (*ecs.ListClustersOutput, error) {
 	return &ecs.ListClustersOutput{ClusterArns: []string{
 		"arn:aws:ecs:us-east-1:123456789012:cluster/MyCluster",
 		"arn:aws:ecs:us-east-1:123456789012:cluster/MyCluster2",
@@ -159,20 +264,14 @@ func (c *mockedListclustersClient) ListClusters(context.Context, *ecs.ListCluste
 	}}, nil
 }
 
-type mockedListTasksClient struct{}
-
-func (c *mockedListTasksClient) ListTasks(ctx context.Context, input *ecs.ListTasksInput, f ...func(*ecs.Options)) (*ecs.ListTasksOutput, error) {
+func (c *mockedECSClient) ListTasks(ctx context.Context, input *ecs.ListTasksInput, f ...func(*ecs.Options)) (*ecs.ListTasksOutput, error) {
 	return &ecs.ListTasksOutput{TaskArns: []string{
 		"arn:aws:ecs:us-east-1:123456789012:task/MyCluster/74de0355a10a4f979ac495c14EXAMPLE",
 		"arn:aws:ecs:us-east-1:123456789012:task/MyCluster/d789e94343414c25b9f6bd59eEXAMPLE",
 	}}, nil
 }
 
-type mockedDescribeTasksClient struct {
-	describeTasks DescribeTasks
-}
-
-func (c *mockedDescribeTasksClient) DescribeTasks(ctx context.Context, input *ecs.DescribeTasksInput, f ...func(*ecs.Options)) (*ecs.DescribeTasksOutput, error) {
+func (c *mockedECSClient) DescribeTasks(ctx context.Context, input *ecs.DescribeTasksInput, f ...func(*ecs.Options)) (*ecs.DescribeTasksOutput, error) {
 	err := json.Unmarshal(readTestFile(DESCRIBE_TASKS_TEST_FILE), &c.describeTasks)
 	if err != nil {
 		log.Fatalf("can't unmarshall file %s", DESCRIBE_TASKS_TEST_FILE)
@@ -211,11 +310,7 @@ func (c *mockedDescribeTasksClient) DescribeTasks(ctx context.Context, input *ec
 	return &ecs.DescribeTasksOutput{Tasks: tasks}, nil
 }
 
-type mockedDescribeNetworkInterfacesClient struct {
-	describeNetworkInterfaces DescribeNetworkInterfaces
-}
-
-func (c *mockedDescribeNetworkInterfacesClient) DescribeNetworkInterfaces(ctx context.Context, input *ec2.DescribeNetworkInterfacesInput, f ...func(o *ec2.Options)) (*ec2.DescribeNetworkInterfacesOutput, error) {
+func (c *mockedEC2Client) DescribeNetworkInterfaces(ctx context.Context, input *ec2.DescribeNetworkInterfacesInput, f ...func(o *ec2.Options)) (*ec2.DescribeNetworkInterfacesOutput, error) {
 	var nics []ec2types.NetworkInterface
 	err := json.Unmarshal(readTestFile(DESCRIBE_NETWORK_INTEFACES_TEST_FILE), &c.describeNetworkInterfaces)
 	if err != nil {
@@ -235,10 +330,31 @@ func (c *mockedDescribeNetworkInterfacesClient) DescribeNetworkInterfaces(ctx co
 	return &ec2.DescribeNetworkInterfacesOutput{NetworkInterfaces: nics}, nil
 }
 
-type mockedDescribeTaskDefinitionInterface struct {
+func (c *mockedEC2Client) DescribeInstances(ctx context.Context, input *ec2.DescribeInstancesInput, f ...func(o *ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
+	var instances []ec2types.Instance
+	err := json.Unmarshal(readTestFile(DESCRIBE_INSTANCES_TEST_FILE), &c.describeInstances)
+	if err != nil {
+		log.Fatalf("can't unmarshall file %s", DESCRIBE_INSTANCES_TEST_FILE)
+	}
+	for _, mockedReservation := range c.describeInstances.Reservations {
+		for _, mockedInstance := range mockedReservation.Instances {
+			for _, inputInstanceID := range input.InstanceIds {
+				if mockedInstance.InstanceID == inputInstanceID {
+					instances = append(instances, ec2types.Instance{
+						InstanceId:   aws.String(mockedInstance.InstanceID),
+						InstanceType: ec2types.InstanceType(mockedInstance.InstanceType),
+						ImageId:      aws.String(mockedInstance.ImageID),
+					})
+				}
+			}
+		}
+	}
+	return &ec2.DescribeInstancesOutput{Reservations: []ec2types.Reservation{
+		{Instances: instances},
+	}}, nil
 }
 
-func (c *mockedDescribeTaskDefinitionInterface) DescribeTaskDefinition(ctx context.Context, input *ecs.DescribeTaskDefinitionInput, f ...func(o *ecs.Options)) (*ecs.DescribeTaskDefinitionOutput, error) {
+func (c *mockedECSClient) DescribeTaskDefinition(ctx context.Context, input *ecs.DescribeTaskDefinitionInput, f ...func(o *ecs.Options)) (*ecs.DescribeTaskDefinitionOutput, error) {
 	testTaskDefinition := ecsTypes.TaskDefinition{}
 	testTaskDefinition.TaskRoleArn = aws.String("test123")
 	return &ecs.DescribeTaskDefinitionOutput{TaskDefinition: &testTaskDefinition}, nil
@@ -258,17 +374,13 @@ func TestECSTasks(t *testing.T) {
 			verbosity:       2,
 			testModule: ECSTasksModule{
 
-				AWSProfile:                      "default",
-				AWSRegions:                      []string{"us-east-1", "us-west-1"},
-				Caller:                          sts.GetCallerIdentityOutput{Arn: aws.String("arn:aws:iam::123456789012:user/cloudfox_unit_tests")},
-				SkipAdminCheck:                  true,
-				Goroutines:                      30,
-				DescribeNetworkInterfacesClient: &mockedDescribeNetworkInterfacesClient{},
-				DescribeTasksClient:             &mockedDescribeTasksClient{},
-				ListTasksClient:                 &mockedListTasksClient{},
-				ListClustersClient:              &mockedListclustersClient{},
-				DescribeTaskDefinitionClient:    &mockedDescribeTaskDefinitionInterface{},
-				//IAMSimulatePrincipalPolicyClient: &mockedDescribeTaskDefinitionsClient{},
+				AWSProfile:     "default",
+				AWSRegions:     []string{"us-east-1", "us-west-1"},
+				Caller:         sts.GetCallerIdentityOutput{Arn: aws.String("arn:aws:iam::123456789012:user/cloudfox_unit_tests")},
+				SkipAdminCheck: true,
+				Goroutines:     30,
+				EC2Client:      &mockedEC2Client{},
+				ECSClient:      &mockedECSClient{},
 			},
 			expectedResult: []MappedECSTask{{
 				Cluster:    "MyCluster",

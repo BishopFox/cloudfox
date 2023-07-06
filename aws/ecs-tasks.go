@@ -13,7 +13,6 @@ import (
 	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -21,16 +20,10 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type DescribeTasksDefinitionAPIClient interface {
-	DescribeTaskDefinition(context.Context, *ecs.DescribeTaskDefinitionInput, ...func(*ecs.Options)) (*ecs.DescribeTaskDefinitionOutput, error)
-}
 type ECSTasksModule struct {
-	DescribeTaskDefinitionClient    DescribeTasksDefinitionAPIClient
-	DescribeTasksClient             ecs.DescribeTasksAPIClient
-	ListTasksClient                 ecs.ListTasksAPIClient
-	ListClustersClient              ecs.ListClustersAPIClient
-	DescribeNetworkInterfacesClient ec2.DescribeNetworkInterfacesAPIClient
-	IAMClient                       sdk.AWSIAMClientInterface
+	ECSClient sdk.AWSECSClientInterface
+	EC2Client sdk.AWSEC2ClientInterface
+	IAMClient sdk.AWSIAMClientInterface
 
 	Caller         sts.GetCallerIdentityOutput
 	AWSRegions     []string
@@ -313,75 +306,37 @@ func (m *ECSTasksModule) executeChecks(r string, wg *sync.WaitGroup, dataReceive
 
 func (m *ECSTasksModule) getListClusters(region string, dataReceiver chan MappedECSTask) {
 
-	var PaginationControl *string
-	for {
-		ListClusters, err := m.ListClustersClient.ListClusters(
-			context.TODO(),
-			&(ecs.ListClustersInput{
-				NextToken: PaginationControl,
-			}),
-			func(o *ecs.Options) {
-				o.Region = region
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
-
-		for _, clusterARN := range ListClusters.ClusterArns {
-			m.getListTasks(clusterARN, region, dataReceiver)
-		}
-
-		if ListClusters.NextToken != nil {
-			PaginationControl = ListClusters.NextToken
-		} else {
-			PaginationControl = nil
-			break
-		}
-
+	ClusterArns, err := sdk.CachedECSListClusters(m.ECSClient, aws.ToString(m.Caller.Account), region)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
 	}
+
+	for _, clusterARN := range ClusterArns {
+		m.getListTasks(clusterARN, region, dataReceiver)
+	}
+
 }
 
 func (m *ECSTasksModule) getListTasks(clusterARN string, region string, dataReceiver chan MappedECSTask) {
-	var PaginationControl *string
-	for {
-
-		ListTasks, err := m.ListTasksClient.ListTasks(
-			context.TODO(),
-			&(ecs.ListTasksInput{
-				Cluster:   aws.String(clusterARN),
-				NextToken: PaginationControl,
-			}),
-			func(o *ecs.Options) {
-				o.Region = region
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
-
-		batchSize := 100 // maximum value: https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_DescribeTasks.html#API_DescribeTasks_RequestSyntax
-		for i := 0; i < len(ListTasks.TaskArns); i += batchSize {
-			j := i + batchSize
-			if j > len(ListTasks.TaskArns) {
-				j = len(ListTasks.TaskArns)
-			}
-
-			m.loadTasksData(clusterARN, ListTasks.TaskArns[i:j], region, dataReceiver)
-		}
-
-		if ListTasks.NextToken != nil {
-			PaginationControl = ListTasks.NextToken
-		} else {
-			PaginationControl = nil
-			break
-		}
-
+	TaskArns, err := sdk.CachedECSListTasks(m.ECSClient, aws.ToString(m.Caller.Account), region, clusterARN)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
 	}
+
+	batchSize := 100 // maximum value: https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_DescribeTasks.html#API_DescribeTasks_RequestSyntax
+	for i := 0; i < len(TaskArns); i += batchSize {
+		j := i + batchSize
+		if j > len(TaskArns) {
+			j = len(TaskArns)
+		}
+
+		m.loadTasksData(clusterARN, TaskArns[i:j], region, dataReceiver)
+	}
+
 }
 
 func (m *ECSTasksModule) loadTasksData(clusterARN string, taskARNs []string, region string, dataReceiver chan MappedECSTask) {
@@ -390,16 +345,7 @@ func (m *ECSTasksModule) loadTasksData(clusterARN string, taskARNs []string, reg
 		return
 	}
 
-	DescribeTasks, err := m.DescribeTasksClient.DescribeTasks(
-		context.TODO(),
-		&(ecs.DescribeTasksInput{
-			Cluster: aws.String(clusterARN),
-			Tasks:   taskARNs,
-		}),
-		func(o *ecs.Options) {
-			o.Region = region
-		},
-	)
+	Tasks, err := sdk.CachedECSDescribeTasks(m.ECSClient, aws.ToString(m.Caller.Account), region, clusterARN, taskARNs)
 	if err != nil {
 		m.modLog.Error(err.Error())
 		m.CommandCounter.Error++
@@ -407,7 +353,7 @@ func (m *ECSTasksModule) loadTasksData(clusterARN string, taskARNs []string, reg
 	}
 
 	eniIDs := []string{}
-	for _, task := range DescribeTasks.Tasks {
+	for _, task := range Tasks {
 		eniID := getElasticNetworkInterfaceIDOfECSTask(task)
 		if eniID != "" {
 			eniIDs = append(eniIDs, eniID)
@@ -420,8 +366,9 @@ func (m *ECSTasksModule) loadTasksData(clusterARN string, taskARNs []string, reg
 		return
 	}
 
-	for _, task := range DescribeTasks.Tasks {
-		taskDefinition, err := m.describeTaskDefinition(aws.ToString(task.TaskDefinitionArn), region)
+	for _, task := range Tasks {
+		//taskDefinition, err := m.describeTaskDefinition(aws.ToString(task.TaskDefinitionArn), region)
+		taskDefinition, err := sdk.CachedECSDescribeTaskDefinition(m.ECSClient, aws.ToString(m.Caller.Account), region, aws.ToString(task.TaskDefinitionArn))
 		if err != nil {
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
@@ -461,7 +408,7 @@ func getTaskDefinitionContent(taskDefinition types.TaskDefinition) string {
 }
 
 func (m *ECSTasksModule) describeTaskDefinition(taskDefinitionArn string, region string) (types.TaskDefinition, error) {
-	DescribeTaskDefinition, err := m.DescribeTaskDefinitionClient.DescribeTaskDefinition(
+	DescribeTaskDefinition, err := m.ECSClient.DescribeTaskDefinition(
 		context.TODO(),
 		&ecs.DescribeTaskDefinitionInput{
 			TaskDefinition: &taskDefinitionArn,
@@ -511,20 +458,13 @@ func (m *ECSTasksModule) loadPublicIPs(eniIDs []string, region string) (map[stri
 	if len(eniIDs) == 0 {
 		return eniPublicIPs, nil
 	}
-	DescribeNetworkInterfaces, err := m.DescribeNetworkInterfacesClient.DescribeNetworkInterfaces(
-		context.TODO(),
-		&(ec2.DescribeNetworkInterfacesInput{
-			NetworkInterfaceIds: eniIDs,
-		}),
-		func(o *ec2.Options) {
-			o.Region = region
-		},
-	)
+
+	NetworkInterfaces, err := sdk.CachedEC2DescribeNetworkInterfaces(m.EC2Client, aws.ToString(m.Caller.Account), region)
 	if err != nil {
 		return nil, fmt.Errorf("getting elastic network interfaces: %s", err)
 	}
 
-	for _, eni := range DescribeNetworkInterfaces.NetworkInterfaces {
+	for _, eni := range NetworkInterfaces {
 		eniPublicIPs[aws.ToString(eni.NetworkInterfaceId)] = getPublicIPOfElasticNetworkInterface(eni)
 	}
 
