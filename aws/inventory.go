@@ -598,6 +598,20 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 
 }
 
+func (m *Inventory2Module) PrintTotalResources(outputFormat string) {
+	var totalResources int
+	for _, r := range m.AWSRegions {
+		if m.totalRegionCounts[r] != 0 {
+			totalResources = totalResources + m.totalRegionCounts[r]
+		}
+	}
+
+	for i := range m.GlobalResourceCounts {
+		totalResources = totalResources + m.GlobalResourceCounts[i].count
+	}
+	fmt.Printf("[%s][%s] %d resources found in the services we looked at. This is NOT the total number of resources in the account.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), totalResources)
+}
+
 func (m *Inventory2Module) getLambdaFunctionsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
 	defer func() {
 		wg.Done()
@@ -1811,18 +1825,4 @@ func (m *Inventory2Module) getIAMRoles(verbosity int, dataReceiver chan GlobalRe
 	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
 	m.mu.Unlock()
 
-}
-
-func (m *Inventory2Module) PrintTotalResources(outputFormat string) {
-	var totalResources int
-	for _, r := range m.AWSRegions {
-		if m.totalRegionCounts[r] != 0 {
-			totalResources = totalResources + m.totalRegionCounts[r]
-		}
-	}
-
-	for i := range m.GlobalResourceCounts {
-		totalResources = totalResources + m.GlobalResourceCounts[i].count
-	}
-	fmt.Printf("[%s][%s] %d resources found in the services we looked at. This is NOT the total number of resources in the account.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), totalResources)
 }
