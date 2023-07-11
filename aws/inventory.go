@@ -45,6 +45,7 @@ type Inventory2Module struct {
 	LambdaClient         *lambda.Client
 	EC2Client            *ec2.Client
 	ECSClient            *ecs.Client
+	ECRClient            sdk.AWSECRClientInterface
 	EKSClient            sdk.EKSClientInterface
 	S3Client             *s3.Client
 	CloudFormationClient *cloudformation.Client
@@ -109,8 +110,46 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 		"module": "inventory",
 	},
 	)
-	// def change this to build dynamically in the future.
-	m.services = []string{"total", "APIGateway RestAPIs", "APIGatewayv2 APIs", "AppRunner Services", "CloudFormation Stacks", "Cloudfront Distributions", "CodeBuild Projects", "DynamoDB Tables", "EC2 Instances", "ECS Tasks", "EKS Clusters", "ELB Load Balancers", "ELBv2 Load Balancers", "Glue Dev Endpoints", "Glue Jobs", "Grafana Workspaces", "IAM Roles", "IAM Users", "Lambda Functions", "Lightsail Instances/Containers", "MQ Brokers", "OpenSearch DomainNames", "RDS DB Instances", "S3 Buckets", "SecretsManager Secrets", "SNS Topics", "SQS Queues", "SSM Parameters", "StepFunctions State Machines"}
+
+	m.services = []string{
+		"total",
+		"APIGateway RestAPIs",
+		"APIGatewayv2 APIs",
+		"AppRunner Services",
+		"CloudFormation Stacks",
+		"Cloudfront Distributions",
+		"CodeBuild Projects",
+		"DynamoDB Tables",
+		"EC2 Instances",
+		"EC2 AMIs",
+		"EC2 Volumes",
+		"EC2 Snapshots",
+		"ECS Clusters",
+		"ECS Tasks",
+		"ECS Services",
+		"ECR Repositories",
+		"EKS Clusters",
+		"ELB Load Balancers",
+		"ELBv2 Load Balancers",
+		"Glue Dev Endpoints",
+		"Glue Jobs",
+		"Grafana Workspaces",
+		"IAM Roles",
+		"IAM Users",
+		"IAM Groups",
+		"Lambda Functions",
+		"Lightsail Instances/Containers",
+		"MQ Brokers",
+		"OpenSearch DomainNames",
+		"RDS DB Instances",
+		"S3 Buckets",
+		"SecretsManager Secrets",
+		"SNS Topics",
+		"SQS Queues",
+		"SSM Parameters",
+		"StepFunctions State Machines",
+	}
+
 	m.serviceMap = map[string]map[string]int{}
 	m.totalRegionCounts = map[string]int{}
 
@@ -131,7 +170,7 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 
 	fmt.Printf("[%s][%s] Enumerating selected services in all regions for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 	fmt.Printf("[%s][%s] Supported Services: ApiGateway, ApiGatewayv2, AppRunner, CloudFormation, Cloudfront, CodeBuild, DynamoDB,  \n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
-	fmt.Printf("[%s][%s] \t\t\tEC2, ECS, EKS, ELB, ELBv2, Glue, Grafana, IAM, Lambda, Lightsail, MQ, \n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	fmt.Printf("[%s][%s] \t\t\tEC2, ECS, ECR, EKS, ELB, ELBv2, Glue, Grafana, IAM, Lambda, Lightsail, MQ, \n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	fmt.Printf("[%s][%s] \t\t\tOpenSearch, RDS, S3, SecretsManager, SNS, SQS, SSM, Step Functions\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 
 	wg := new(sync.WaitGroup)
@@ -158,9 +197,12 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 		go m.executeChecks(region, wg, semaphore, dataReceiver)
 
 	}
+
+	// Time for the non-concurrent global checks
 	m.getBuckets(verbosity, dataReceiver)
 	m.getIAMUsers(verbosity, dataReceiver)
 	m.getIAMRoles(verbosity, dataReceiver)
+	m.getIAMGroups(verbosity, dataReceiver)
 	m.getCloudfrontDistros(verbosity, dataReceiver)
 
 	wg.Wait()
@@ -290,42 +332,6 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 	<-receiverDone
 }
 
-func (m *Inventory2Module) PrintGlobalResources(outputFormat string, outputDirectory string, verbosity int, dataReceiver chan GlobalResourceCount2) ([]string, [][]string) {
-	m.globalOutput.Verbosity = verbosity
-	m.globalOutput.CallingModule = "inventory"
-	m.globalOutput.FullFilename = "inventory-global"
-
-	m.getBuckets(verbosity, dataReceiver)
-	//m.getIAMUsers(verbosity, dataReceiver)
-	m.getIAMRoles(verbosity, dataReceiver)
-	m.getCloudfrontDistros(verbosity, dataReceiver)
-
-	//m.globalOutput.CallingModule = fmt.Sprintf("%s-global", m.globalOutput.CallingModule)
-	m.globalOutput.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", m.AWSProfile)
-
-	m.globalOutput.Headers = []string{
-		"Resource Type",
-		"Total",
-	}
-
-	for i, GlobalResourceCount := range m.GlobalResourceCounts {
-		if m.GlobalResourceCounts[i].count != 0 {
-			m.globalOutput.Body = append(
-				m.globalOutput.Body,
-				[]string{
-					GlobalResourceCount.resourceType,
-					strconv.Itoa(GlobalResourceCount.count),
-				},
-			)
-		}
-	}
-	//m.globalOutput.FilePath = filepath.Join(path, m.globalOutput.CallingModule)
-	//m.globalOutput.OutputSelector(outputFormat)
-	//internal.OutputSelector(verbosity, outputFormat, m.globalOutput.Headers, m.globalOutput.Body, m.globalOutput.FilePath, m.globalOutput.FullFilename, m.globalOutput.CallingModule, false, m.AWSProfile)
-	return m.globalOutput.Headers, m.globalOutput.Body
-
-}
-
 func (m *Inventory2Module) writeLoot(outputDirectory string, verbosity int) {
 	path := filepath.Join(outputDirectory, "loot")
 	err := os.MkdirAll(path, os.ModePerm)
@@ -384,6 +390,7 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 	}
 	if res {
 		m.CommandCounter.Total++
+
 		wg.Add(1)
 		go m.getLambdaFunctionsPerRegion(r, wg, semaphore)
 	}
@@ -396,6 +403,12 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getEc2InstancesPerRegion(r, wg, semaphore)
+		wg.Add(1)
+		go m.getEc2ImagesPerRegion(r, wg, semaphore)
+		wg.Add(1)
+		go m.getEc2SnapshotsPerRegion(r, wg, semaphore)
+		wg.Add(1)
+		go m.getEc2VolumesPerRegion(r, wg, semaphore)
 	}
 
 	res, err = servicemap.IsServiceInRegion("cloudformation", r)
@@ -436,6 +449,21 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getEcsTasksPerRegion(r, wg, semaphore)
+		wg.Add(1)
+		go m.getEcsClustersPerRegion(r, wg, semaphore)
+		wg.Add(1)
+		go m.getEcsServicesPerRegion(r, wg, semaphore)
+
+	}
+
+	res, err = servicemap.IsServiceInRegion("ecr", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getEcrRepositoriesPerRegion(r, wg, semaphore)
 	}
 
 	res, err = servicemap.IsServiceInRegion("rds", r)
@@ -687,6 +715,138 @@ func (m *Inventory2Module) getEc2InstancesPerRegion(r string, wg *sync.WaitGroup
 
 	for _, instance := range DescribeInstances {
 		arn := "arn:aws:ec2:" + r + ":" + aws.ToString(m.Caller.Account) + ":instance/" + aws.ToString(instance.InstanceId)
+		resourceNames = append(resourceNames, arn)
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
+}
+
+func (m *Inventory2Module) getEc2ImagesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
+	var totalCountThisServiceThisRegion = 0
+	var service = "EC2 AMIs"
+	var resourceNames []string
+
+	// used CachedDescribeImagesInput to avoid the need to call DescribeImagesInput
+	DescribeImages, err := sdk.CachedEC2DescribeImages(m.EC2Client, aws.ToString(m.Caller.Account), r)
+
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(DescribeImages)
+
+	// Add this page of resources to the module's resource list
+	for _, image := range DescribeImages {
+		arn := "arn:aws:ec2:" + r + ":" + aws.ToString(m.Caller.Account) + ":image/" + aws.ToString(image.ImageId)
+		resourceNames = append(resourceNames, arn)
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
+}
+
+func (m *Inventory2Module) getEc2SnapshotsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
+	var totalCountThisServiceThisRegion = 0
+	var service = "EC2 Snapshots"
+	var resourceNames []string
+
+	// used CachedDescribeSnapshotsInput to avoid the need to call DescribeSnapshotsInput
+	DescribeSnapshots, err := sdk.CachedEC2DescribeSnapshots(m.EC2Client, aws.ToString(m.Caller.Account), r)
+
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(DescribeSnapshots)
+
+	// Add this page of resources to the module's resource list
+	for _, snapshot := range DescribeSnapshots {
+		arn := "arn:aws:ec2:" + r + ":" + aws.ToString(m.Caller.Account) + ":snapshot/" + aws.ToString(snapshot.SnapshotId)
+		resourceNames = append(resourceNames, arn)
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
+}
+
+func (m *Inventory2Module) getEc2VolumesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
+	var totalCountThisServiceThisRegion = 0
+	var service = "EC2 Volumes"
+	var resourceNames []string
+
+	// used CachedDescribeVolumesInput to avoid the need to call DescribeVolumesInput
+	DescribeVolumes, err := sdk.CachedEC2DescribeVolumes(m.EC2Client, aws.ToString(m.Caller.Account), r)
+
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(DescribeVolumes)
+
+	// Add this page of resources to the module's resource list
+	for _, volume := range DescribeVolumes {
+		arn := "arn:aws:ec2:" + r + ":" + aws.ToString(m.Caller.Account) + ":volume/" + aws.ToString(volume.VolumeId)
 		resourceNames = append(resourceNames, arn)
 	}
 
@@ -1365,6 +1525,147 @@ func (m *Inventory2Module) getEcsTasksPerRegion(r string, wg *sync.WaitGroup, se
 
 }
 
+func (m *Inventory2Module) getEcsServicesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+
+	var totalCountThisServiceThisRegion = 0
+	var service = "ECS Services"
+	var resourceNames []string
+
+	Clusters, err := sdk.CachedECSListClusters(m.ECSClient, aws.ToString(m.Caller.Account), r)
+
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+	for _, cluster := range Clusters {
+
+		Services, err := sdk.CachedECSListServices(m.ECSClient, aws.ToString(m.Caller.Account), r, cluster)
+
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			return
+		}
+		// Add this page of resources to the total count
+		totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(Services)
+
+		// Add this page of resources to the module's resource list
+		for _, service := range Services {
+			arn := "arn:aws:ecs:" + r + ":" + aws.ToString(m.Caller.Account) + ":service/" + service
+			resourceNames = append(resourceNames, arn)
+		}
+
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
+
+}
+
+func (m *Inventory2Module) getEcsClustersPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+
+	var totalCountThisServiceThisRegion = 0
+	var service = "ECS Clusters"
+	var resourceNames []string
+
+	Clusters, err := sdk.CachedECSListClusters(m.ECSClient, aws.ToString(m.Caller.Account), r)
+
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(Clusters)
+
+	// Add this page of resources to the module's resource list
+	for _, cluster := range Clusters {
+		resourceNames = append(resourceNames, cluster)
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
+
+}
+
+func (m *Inventory2Module) getEcrRepositoriesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	// Don't use this method as a template for future ones. There is a one off in the way the NextToken is handled.
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+
+	var totalCountThisServiceThisRegion = 0
+	var service = "ECR Repositories"
+	var resourceNames []string
+
+	Repositories, err := sdk.CachedECRDescribeRepositories(m.ECRClient, aws.ToString(m.Caller.Account), r)
+
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(Repositories)
+
+	// Add this page of resources to the module's resource list
+	for _, repo := range Repositories {
+		resourceNames = append(resourceNames, aws.ToString(repo.RepositoryArn))
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
+
+}
+
 func (m *Inventory2Module) getGlueDevEndpointsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
 	// Don't use this method as a template for future ones. There is a one off in the way the NextToken is handled.
 	defer func() {
@@ -1825,4 +2126,43 @@ func (m *Inventory2Module) getIAMRoles(verbosity int, dataReceiver chan GlobalRe
 	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
 	m.mu.Unlock()
 
+}
+
+func (m *Inventory2Module) getIAMGroups(verbosity int, dataReceiver chan GlobalResourceCount2) {
+	var total int
+	var r string = "Global"
+	service := "IAM Groups"
+	var totalCountThisServiceThisRegion = 0
+	resourceType := "IAM Groups"
+	var resourceNames []string
+
+	Groups, err := sdk.CachedIamListGroups(m.IAMClient, aws.ToString(m.Caller.Account))
+
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+	total = total + len(Groups)
+
+	// Add this page of resources to the module's resource list
+	for _, group := range Groups {
+		resourceNames = append(resourceNames, aws.ToString(group.Arn))
+	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(Groups)
+
+	dataReceiver <- GlobalResourceCount2{
+		resourceType: resourceType,
+		count:        total,
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+
+	m.mu.Unlock()
 }
