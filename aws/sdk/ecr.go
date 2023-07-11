@@ -22,6 +22,7 @@ type AWSECRClientInterface interface {
 func init() {
 	gob.Register([]ecrTypes.Repository{})
 	gob.Register([]ecrTypes.ImageDetail{})
+	gob.Register(ecrTypes.Repository{})
 
 }
 

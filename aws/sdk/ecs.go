@@ -15,6 +15,7 @@ import (
 type AWSECSClientInterface interface {
 	ListClusters(ctx context.Context, params *ecs.ListClustersInput, optFns ...func(*ecs.Options)) (*ecs.ListClustersOutput, error)
 	ListTasks(ctx context.Context, params *ecs.ListTasksInput, optFns ...func(*ecs.Options)) (*ecs.ListTasksOutput, error)
+	ListServices(ctx context.Context, params *ecs.ListServicesInput, optFns ...func(*ecs.Options)) (*ecs.ListServicesOutput, error)
 	DescribeTasks(ctx context.Context, params *ecs.DescribeTasksInput, optFns ...func(*ecs.Options)) (*ecs.DescribeTasksOutput, error)
 	DescribeTaskDefinition(ctx context.Context, params *ecs.DescribeTaskDefinitionInput, optFns ...func(*ecs.Options)) (*ecs.DescribeTaskDefinitionOutput, error)
 }
@@ -167,4 +168,48 @@ func CachedECSDescribeTaskDefinition(ECSClient AWSECSClientInterface, accountID 
 
 	internal.Cache.Set(cacheKey, taskDefinitionDetails, cache.DefaultExpiration)
 	return taskDefinitionDetails, nil
+}
+
+func CachedECSListServices(ECSClient AWSECSClientInterface, accountID string, region string, cluster string) ([]string, error) {
+	var PaginationControl *string
+	var services []string
+	//grab cluster name from AWS ARN
+	clusterName := cluster[strings.LastIndex(cluster, "/")+1:]
+
+	cacheKey := fmt.Sprintf("%s-ecs-ListServices-%s-%s", accountID, region, clusterName)
+	cached, found := internal.Cache.Get(cacheKey)
+	if found {
+		sharedLogger.Debug("Using cached ECS services data")
+		return cached.([]string), nil
+	}
+
+	for {
+		ListServices, err := ECSClient.ListServices(
+			context.TODO(),
+			&ecs.ListServicesInput{
+				Cluster:   &cluster,
+				NextToken: PaginationControl,
+			},
+			func(o *ecs.Options) {
+				o.Region = region
+			},
+		)
+		if err != nil {
+			sharedLogger.Error(err.Error())
+			break
+		}
+
+		services = append(services, ListServices.ServiceArns...)
+
+		// Pagination control.
+		if ListServices.NextToken != nil {
+			PaginationControl = ListServices.NextToken
+		} else {
+			PaginationControl = nil
+			break
+		}
+	}
+
+	internal.Cache.Set(cacheKey, services, cache.DefaultExpiration)
+	return services, nil
 }

@@ -102,6 +102,14 @@ func (c *MockedECSClient) ListTasks(ctx context.Context, input *ecs.ListTasksInp
 	}}, nil
 }
 
+func (c *MockedECSClient) ListServices(ctx context.Context, input *ecs.ListServicesInput, f ...func(*ecs.Options)) (*ecs.ListServicesOutput, error) {
+	return &ecs.ListServicesOutput{ServiceArns: []string{
+		"arn:aws:ecs:us-east-1:123456789012:service/MyService",
+		"arn:aws:ecs:us-east-1:123456789012:service/MyService2",
+		"arn:aws:ecs:us-east-1:123456789012:service/MyService3",
+	}}, nil
+}
+
 func (c *MockedECSClient) DescribeTasks(ctx context.Context, input *ecs.DescribeTasksInput, f ...func(*ecs.Options)) (*ecs.DescribeTasksOutput, error) {
 	err := json.Unmarshal(readTestFile(DESCRIBE_TASKS_TEST_FILE), &c.describeTasks)
 	if err != nil {

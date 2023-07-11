@@ -22,6 +22,10 @@ type AWSEC2ClientInterface interface {
 func init() {
 	gob.Register([]ec2Types.Instance{})
 	gob.Register([]ec2Types.NetworkInterface{})
+	gob.Register([]ec2Types.Snapshot{})
+	gob.Register([]ec2Types.Volume{})
+	gob.Register([]ec2Types.Image{})
+
 }
 
 func CachedEC2DescribeInstances(client AWSEC2ClientInterface, accountID string, region string) ([]ec2Types.Instance, error) {
@@ -109,6 +113,7 @@ func CachedEC2DescribeSnapshots(client AWSEC2ClientInterface, accountID string, 
 			context.TODO(),
 			&(ec2.DescribeSnapshotsInput{
 				NextToken: PaginationControl,
+				OwnerIds:  []string{accountID},
 			}),
 			func(o *ec2.Options) {
 				o.Region = region
