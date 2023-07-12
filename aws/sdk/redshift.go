@@ -11,15 +11,16 @@ import (
 	"github.com/patrickmn/go-cache"
 )
 
-type RedShiftClientInterface interface {
+type AWSRedShiftClientInterface interface {
 	DescribeClusters(context.Context, *redshift.DescribeClustersInput, ...func(*redshift.Options)) (*redshift.DescribeClustersOutput, error)
 }
 
 func init() {
 	gob.Register([]redshiftTypes.Cluster{})
+
 }
 
-func CachedRedShiftDescribeClusters(client RedShiftClientInterface, accountID string, region string) ([]redshiftTypes.Cluster, error) {
+func CachedRedShiftDescribeClusters(client AWSRedShiftClientInterface, accountID string, region string) ([]redshiftTypes.Cluster, error) {
 	var PaginationControl *string
 	var clusters []redshiftTypes.Cluster
 	cacheKey := fmt.Sprintf("%s-redshift-DescribeClusters-%s", accountID, region)

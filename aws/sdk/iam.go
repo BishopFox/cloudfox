@@ -29,6 +29,7 @@ func init() {
 	gob.Register([]iamTypes.User{})
 	gob.Register([]iamTypes.AccessKeyMetadata{})
 	gob.Register([]iamTypes.Role{})
+	gob.Register([]iamTypes.Group{})
 	gob.Register([]iamTypes.PolicyDetail{})
 	gob.Register([]iamTypes.InstanceProfile{})
 	gob.Register([]iamTypes.EvaluationResult{})

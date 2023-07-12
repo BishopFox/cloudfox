@@ -19,7 +19,7 @@ import (
 
 type DatabasesModule struct {
 	RDSClient      sdk.RDSClientInterface
-	RedshiftClient sdk.RedShiftClientInterface
+	RedshiftClient sdk.AWSRedShiftClientInterface
 	DynamoDBClient sdk.DynamoDBClientInterface
 	DocDBClient    sdk.DocDBClientInterface
 

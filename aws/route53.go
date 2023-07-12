@@ -1,22 +1,21 @@
 package aws
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 
+	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/route53"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/sirupsen/logrus"
 )
 
 type Route53Module struct {
 	// General configuration data
-	Route53Client *route53.Client
+	Route53Client sdk.AWSRoute53ClientInterface
 
 	Caller         sts.GetCallerIdentityOutput
 	AWSRegions     []string
@@ -127,7 +126,7 @@ func (m *Route53Module) writeLoot(outputDirectory string, verbosity int) {
 	var route53APublicRecords string
 
 	for _, record := range m.Records {
-		if record.Type == "A" || record.Type == "AAAA" {
+		if record.Type == "A" || record.Type == "AAAA" || record.Type == "CNAME" {
 			if record.PrivateZone == "True" {
 				route53APrivateRecords = route53APrivateRecords + fmt.Sprintln(record.Name)
 			} else {
@@ -176,71 +175,51 @@ func (m *Route53Module) writeLoot(outputDirectory string, verbosity int) {
 
 func (m *Route53Module) getRoute53Records() {
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
 	var recordName string
 	var recordType string
 
-	for {
-		ListHostedZones, err := m.Route53Client.ListHostedZones(
-			context.TODO(),
-			&route53.ListHostedZonesInput{
-				Marker: PaginationControl,
-			},
-		)
+	HostedZones, err := sdk.CachedRoute53ListHostedZones(m.Route53Client, aws.ToString(m.Caller.Account))
+
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	var privateZone string
+	for _, zone := range HostedZones {
+		if zone.Config.PrivateZone {
+			privateZone = "True"
+		} else {
+			privateZone = "False"
+		}
+
+		Records, err := sdk.CachedRoute53ListResourceRecordSets(m.Route53Client, aws.ToString(m.Caller.Account), aws.ToString(zone.Id))
 
 		if err != nil {
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
 			break
 		}
+		for _, record := range Records {
+			recordName = aws.ToString(record.Name)
+			recordType = string(record.Type)
 
-		var privateZone string
-		for _, zone := range ListHostedZones.HostedZones {
-			id := aws.ToString(zone.Id)
-			if zone.Config.PrivateZone {
-				privateZone = "True"
-			} else {
-				privateZone = "False"
+			for _, resourceRecord := range record.ResourceRecords {
+				recordValue := resourceRecord.Value
+				m.Records = append(
+					m.Records,
+					Record{
+						AWSService:  "Route53",
+						Name:        recordName,
+						Type:        recordType,
+						Value:       aws.ToString(recordValue),
+						PrivateZone: privateZone,
+					})
+
 			}
-
-			ListResourceRecordSets, err := m.Route53Client.ListResourceRecordSets(
-				context.TODO(),
-				&route53.ListResourceRecordSetsInput{
-					HostedZoneId: &id,
-				},
-			)
-			if err != nil {
-				m.modLog.Error(err.Error())
-				m.CommandCounter.Error++
-				break
-			}
-			for _, record := range ListResourceRecordSets.ResourceRecordSets {
-				recordName = aws.ToString(record.Name)
-				recordType = string(record.Type)
-
-				for _, resourceRecord := range record.ResourceRecords {
-					recordValue := resourceRecord.Value
-					m.Records = append(
-						m.Records,
-						Record{
-							AWSService:  "Route53",
-							Name:        recordName,
-							Type:        recordType,
-							Value:       aws.ToString(recordValue),
-							PrivateZone: privateZone,
-						})
-
-				}
-			}
-
 		}
 
-		// The "NextToken" value is nil when there's no more data to return.
-		if ListHostedZones.NextMarker != nil {
-			PaginationControl = ListHostedZones.NextMarker
-		} else {
-			PaginationControl = nil
-			break
-		}
 	}
+
 }

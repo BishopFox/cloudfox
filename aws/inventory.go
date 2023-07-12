@@ -29,7 +29,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/mq"
 	"github.com/aws/aws-sdk-go-v2/service/opensearch"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
-	"github.com/aws/aws-sdk-go-v2/service/redshift"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
@@ -52,6 +51,8 @@ type Inventory2Module struct {
 	SecretsManagerClient *secretsmanager.Client
 	SSMClient            *ssm.Client
 	RDSClient            *rds.Client
+	RedshiftClient       sdk.AWSRedShiftClientInterface
+	Route53Client        sdk.AWSRoute53ClientInterface
 	APIGatewayv2Client   *apigatewayv2.Client
 	ELBv2Client          *elasticloadbalancingv2.Client
 	ELBClient            *elasticloadbalancing.Client
@@ -60,7 +61,6 @@ type Inventory2Module struct {
 	OpenSearchClient     *opensearch.Client
 	GrafanaClient        *grafana.Client
 	APIGatewayClient     *apigateway.Client
-	RedshiftClient       *redshift.Client
 	CloudfrontClient     *cloudfront.Client
 	AppRunnerClient      *apprunner.Client
 	LightsailClient      *lightsail.Client
@@ -141,7 +141,10 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 		"Lightsail Instances/Containers",
 		"MQ Brokers",
 		"OpenSearch DomainNames",
+		"Redshift Clusters",
 		"RDS DB Instances",
+		"Route53 Zones",
+		"Route53 Records",
 		"S3 Buckets",
 		"SecretsManager Secrets",
 		"SNS Topics",
@@ -171,7 +174,7 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 	fmt.Printf("[%s][%s] Enumerating selected services in all regions for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 	fmt.Printf("[%s][%s] Supported Services: ApiGateway, ApiGatewayv2, AppRunner, CloudFormation, Cloudfront, CodeBuild, DynamoDB,  \n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	fmt.Printf("[%s][%s] \t\t\tEC2, ECS, ECR, EKS, ELB, ELBv2, Glue, Grafana, IAM, Lambda, Lightsail, MQ, \n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
-	fmt.Printf("[%s][%s] \t\t\tOpenSearch, RDS, S3, SecretsManager, SNS, SQS, SSM, Step Functions\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	fmt.Printf("[%s][%s] \t\t\tOpenSearch, RedShift, RDS, Route53, S3, SecretsManager, SNS, SQS, SSM, Step Functions\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 
 	wg := new(sync.WaitGroup)
 	semaphore := make(chan struct{}, m.Goroutines)
@@ -204,6 +207,8 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 	m.getIAMRoles(verbosity, dataReceiver)
 	m.getIAMGroups(verbosity, dataReceiver)
 	m.getCloudfrontDistros(verbosity, dataReceiver)
+	m.getRoute53Zones(verbosity, dataReceiver)
+	m.getRoute53Records(verbosity, dataReceiver)
 
 	wg.Wait()
 
@@ -384,15 +389,53 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 		JsonFileSource: "DOWNLOAD_FROM_AWS",
 	}
 
-	res, err := servicemap.IsServiceInRegion("lambda", r)
+	// AppRunner is not supported in the aws service region catalog so we have to run it in all regions
+	m.CommandCounter.Total++
+	wg.Add(1)
+	go m.getAppRunnerServicesPerRegion(r, wg, semaphore)
+
+	res, err := servicemap.IsServiceInRegion("apigateway", r)
 	if err != nil {
 		m.modLog.Error(err)
 	}
 	if res {
 		m.CommandCounter.Total++
-
 		wg.Add(1)
-		go m.getLambdaFunctionsPerRegion(r, wg, semaphore)
+		go m.getAPIGatewayvAPIsPerRegion(r, wg, semaphore)
+
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getAPIGatewayv2APIsPerRegion(r, wg, semaphore)
+	}
+
+	res, err = servicemap.IsServiceInRegion("cloudformation", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getCloudFormationStacksPerRegion(r, wg, semaphore)
+	}
+
+	res, err = servicemap.IsServiceInRegion("codebuild", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getCodeBuildProjectsPerRegion(r, wg, semaphore)
+	}
+
+	res, err = servicemap.IsServiceInRegion("dynamodb", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getDynamoDBTablesPerRegion(r, wg, semaphore)
 	}
 
 	res, err = servicemap.IsServiceInRegion("ec2", r)
@@ -409,36 +452,6 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 		go m.getEc2SnapshotsPerRegion(r, wg, semaphore)
 		wg.Add(1)
 		go m.getEc2VolumesPerRegion(r, wg, semaphore)
-	}
-
-	res, err = servicemap.IsServiceInRegion("cloudformation", r)
-	if err != nil {
-		m.modLog.Error(err)
-	}
-	if res {
-		m.CommandCounter.Total++
-		wg.Add(1)
-		go m.getCloudFormationStacksPerRegion(r, wg, semaphore)
-	}
-
-	res, err = servicemap.IsServiceInRegion("secretsmanager", r)
-	if err != nil {
-		m.modLog.Error(err)
-	}
-	if res {
-		m.CommandCounter.Total++
-		wg.Add(1)
-		go m.getSecretsManagerSecretsPerRegion(r, wg, semaphore)
-	}
-
-	res, err = servicemap.IsServiceInRegion("eks", r)
-	if err != nil {
-		m.modLog.Error(err)
-	}
-	if res {
-		m.CommandCounter.Total++
-		wg.Add(1)
-		go m.getEksClustersPerRegion(r, wg, semaphore)
 	}
 
 	res, err = servicemap.IsServiceInRegion("ecs", r)
@@ -466,28 +479,14 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 		go m.getEcrRepositoriesPerRegion(r, wg, semaphore)
 	}
 
-	res, err = servicemap.IsServiceInRegion("rds", r)
+	res, err = servicemap.IsServiceInRegion("eks", r)
 	if err != nil {
 		m.modLog.Error(err)
 	}
 	if res {
 		m.CommandCounter.Total++
 		wg.Add(1)
-		go m.getRdsClustersPerRegion(r, wg, semaphore)
-	}
-
-	res, err = servicemap.IsServiceInRegion("apigateway", r)
-	if err != nil {
-		m.modLog.Error(err)
-	}
-	if res {
-		m.CommandCounter.Total++
-		wg.Add(1)
-		go m.getAPIGatewayvAPIsPerRegion(r, wg, semaphore)
-
-		m.CommandCounter.Total++
-		wg.Add(1)
-		go m.getAPIGatewayv2APIsPerRegion(r, wg, semaphore)
+		go m.getEksClustersPerRegion(r, wg, semaphore)
 	}
 
 	res, err = servicemap.IsServiceInRegion("elb", r)
@@ -502,16 +501,6 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getELBListenersPerRegion(r, wg, semaphore)
-	}
-
-	res, err = servicemap.IsServiceInRegion("mq", r)
-	if err != nil {
-		m.modLog.Error(err)
-	}
-	if res {
-		m.CommandCounter.Total++
-		wg.Add(1)
-		m.getMqBrokersPerRegion(r, wg, semaphore)
 	}
 
 	res, err = servicemap.IsServiceInRegion("es", r)
@@ -534,10 +523,29 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 		go m.getGrafanaWorkspacesPerRegion(r, wg, semaphore)
 	}
 
-	// AppRunner is not supported in the aws service region catalog so we have to run it in all regions
-	m.CommandCounter.Total++
-	wg.Add(1)
-	go m.getAppRunnerServicesPerRegion(r, wg, semaphore)
+	res, err = servicemap.IsServiceInRegion("glue", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getGlueDevEndpointsPerRegion(r, wg, semaphore)
+		wg.Add(1)
+		go m.getGlueJobsPerRegion(r, wg, semaphore)
+
+	}
+
+	res, err = servicemap.IsServiceInRegion("lambda", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+
+		wg.Add(1)
+		go m.getLambdaFunctionsPerRegion(r, wg, semaphore)
+	}
 
 	res, err = servicemap.IsServiceInRegion("lightsail", r)
 	if err != nil {
@@ -547,6 +555,66 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getLightsailInstancesAndContainersPerRegion(r, wg, semaphore)
+	}
+
+	res, err = servicemap.IsServiceInRegion("mq", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		m.getMqBrokersPerRegion(r, wg, semaphore)
+	}
+
+	res, err = servicemap.IsServiceInRegion("rds", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getRdsClustersPerRegion(r, wg, semaphore)
+	}
+
+	res, err = servicemap.IsServiceInRegion("redshift", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getRedshiftClustersPerRegion(r, wg, semaphore)
+	}
+
+	res, err = servicemap.IsServiceInRegion("secretsmanager", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getSecretsManagerSecretsPerRegion(r, wg, semaphore)
+	}
+
+	res, err = servicemap.IsServiceInRegion("sns", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getSNSTopicsPerRegion(r, wg, semaphore)
+	}
+
+	res, err = servicemap.IsServiceInRegion("sqs", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getSQSQueuesPerRegion(r, wg, semaphore)
 	}
 
 	res, err = servicemap.IsServiceInRegion("ssm", r)
@@ -559,61 +627,6 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 		go m.getSSMParametersPerRegion(r, wg, semaphore)
 	}
 
-	res, err = servicemap.IsServiceInRegion("glue", r)
-	if err != nil {
-		m.modLog.Error(err)
-	}
-	if res {
-		m.CommandCounter.Total++
-		wg.Add(1)
-		go m.getGlueDevEndpointsPerRegion(r, wg, semaphore)
-	}
-
-	res, err = servicemap.IsServiceInRegion("glue", r)
-	if err != nil {
-		m.modLog.Error(err)
-	}
-	if res {
-		m.CommandCounter.Total++
-		wg.Add(1)
-		go m.getGlueJobsPerRegion(r, wg, semaphore)
-	}
-	res, err = servicemap.IsServiceInRegion("sns", r)
-	if err != nil {
-		m.modLog.Error(err)
-	}
-	if res {
-		m.CommandCounter.Total++
-		wg.Add(1)
-		go m.getSNSTopicsPerRegion(r, wg, semaphore)
-	}
-	res, err = servicemap.IsServiceInRegion("sqs", r)
-	if err != nil {
-		m.modLog.Error(err)
-	}
-	if res {
-		m.CommandCounter.Total++
-		wg.Add(1)
-		go m.getSQSQueuesPerRegion(r, wg, semaphore)
-	}
-	res, err = servicemap.IsServiceInRegion("dynamodb", r)
-	if err != nil {
-		m.modLog.Error(err)
-	}
-	if res {
-		m.CommandCounter.Total++
-		wg.Add(1)
-		go m.getDynamoDBTablesPerRegion(r, wg, semaphore)
-	}
-	res, err = servicemap.IsServiceInRegion("codebuild", r)
-	if err != nil {
-		m.modLog.Error(err)
-	}
-	if res {
-		m.CommandCounter.Total++
-		wg.Add(1)
-		go m.getCodeBuildProjectsPerRegion(r, wg, semaphore)
-	}
 	res, err = servicemap.IsServiceInRegion("stepfunctions", r)
 	if err != nil {
 		m.modLog.Error(err)
@@ -1880,6 +1893,49 @@ func (m *Inventory2Module) getDynamoDBTablesPerRegion(r string, wg *sync.WaitGro
 	m.mu.Unlock()
 }
 
+func (m *Inventory2Module) getRedshiftClustersPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+	var totalCountThisServiceThisRegion = 0
+	var service = "Redshift Clusters"
+	var resourceNames []string
+
+	Clusters, err := sdk.CachedRedShiftDescribeClusters(m.RedshiftClient, aws.ToString(m.Caller.Account), r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(Clusters)
+
+	// Add this page of resources to the module's resource list
+	for _, cluster := range Clusters {
+		//arn := "arn:aws:redshift:" + r + ":" + aws.ToString(m.Caller.Account) + ":cluster:" + cluster
+
+		resourceNames = append(resourceNames, aws.ToString(cluster.ClusterNamespaceArn))
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+
+	m.mu.Unlock()
+}
+
 func (m *Inventory2Module) getCodeBuildProjectsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
 	defer func() {
 		wg.Done()
@@ -2152,6 +2208,93 @@ func (m *Inventory2Module) getIAMGroups(verbosity int, dataReceiver chan GlobalR
 
 	// Add this page of resources to the total count
 	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(Groups)
+
+	dataReceiver <- GlobalResourceCount2{
+		resourceType: resourceType,
+		count:        total,
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+
+	m.mu.Unlock()
+}
+
+func (m *Inventory2Module) getRoute53Zones(verbosity int, dataReceiver chan GlobalResourceCount2) {
+	var total int
+	var r string = "Global"
+	service := "Route53 Zones"
+	var totalCountThisServiceThisRegion = 0
+	resourceType := "Route53 Zones"
+	var resourceNames []string
+
+	Zones, err := sdk.CachedRoute53ListHostedZones(m.Route53Client, aws.ToString(m.Caller.Account))
+
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+	total = total + len(Zones)
+
+	// Add this page of resources to the module's resource list
+	for _, zone := range Zones {
+		resourceNames = append(resourceNames, aws.ToString(zone.Id))
+	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(Zones)
+
+	dataReceiver <- GlobalResourceCount2{
+		resourceType: resourceType,
+		count:        total,
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
+}
+
+func (m *Inventory2Module) getRoute53Records(verbosity int, dataReceiver chan GlobalResourceCount2) {
+	var total int
+	var r string = "Global"
+	service := "Route53 Records"
+	var totalCountThisServiceThisRegion = 0
+	resourceType := "Route53 Records"
+	var resourceNames []string
+
+	Zones, err := sdk.CachedRoute53ListHostedZones(m.Route53Client, aws.ToString(m.Caller.Account))
+
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	for _, zone := range Zones {
+		Records, err := sdk.CachedRoute53ListResourceRecordSets(m.Route53Client, aws.ToString(m.Caller.Account), aws.ToString(zone.Id))
+
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			return
+		}
+		total = total + len(Records)
+
+		// Add this page of resources to the module's resource list
+		for _, record := range Records {
+			resourceNames = append(resourceNames, aws.ToString(record.Name))
+		}
+
+		// Add this page of resources to the total count
+		totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(Records)
+	}
 
 	dataReceiver <- GlobalResourceCount2{
 		resourceType: resourceType,
