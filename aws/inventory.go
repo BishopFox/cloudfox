@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/apigateway"
 	"github.com/aws/aws-sdk-go-v2/service/apigatewayv2"
 	"github.com/aws/aws-sdk-go-v2/service/apprunner"
+	"github.com/aws/aws-sdk-go-v2/service/athena"
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -21,7 +22,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancing"
 	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
-	"github.com/aws/aws-sdk-go-v2/service/glue"
 	"github.com/aws/aws-sdk-go-v2/service/grafana"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
@@ -41,35 +41,44 @@ import (
 
 type Inventory2Module struct {
 	// General configuration data
-	LambdaClient         *lambda.Client
-	EC2Client            *ec2.Client
-	ECSClient            *ecs.Client
-	ECRClient            sdk.AWSECRClientInterface
-	EKSClient            sdk.EKSClientInterface
-	S3Client             *s3.Client
-	CloudFormationClient *cloudformation.Client
-	SecretsManagerClient *secretsmanager.Client
-	SSMClient            *ssm.Client
-	RDSClient            *rds.Client
-	RedshiftClient       sdk.AWSRedShiftClientInterface
-	Route53Client        sdk.AWSRoute53ClientInterface
-	APIGatewayv2Client   *apigatewayv2.Client
-	ELBv2Client          *elasticloadbalancingv2.Client
-	ELBClient            *elasticloadbalancing.Client
-	IAMClient            *iam.Client
-	MQClient             *mq.Client
-	OpenSearchClient     *opensearch.Client
-	GrafanaClient        *grafana.Client
-	APIGatewayClient     *apigateway.Client
-	CloudfrontClient     *cloudfront.Client
-	AppRunnerClient      *apprunner.Client
-	LightsailClient      *lightsail.Client
-	GlueClient           *glue.Client
-	SNSClient            *sns.Client
-	SQSClient            *sqs.Client
-	DynamoDBClient       *dynamodb.Client
-	CodeBuildClient      sdk.CodeBuildClientInterface
-	StepFunctionClient   sdk.StepFunctionsClientInterface
+	APIGatewayClient       *apigateway.Client
+	APIGatewayv2Client     *apigatewayv2.Client
+	AppRunnerClient        *apprunner.Client
+	AthenaClient           *athena.Client
+	CloudFormationClient   *cloudformation.Client
+	CloudfrontClient       *cloudfront.Client
+	CodeArtifactClient     sdk.AWSCodeArtifactClientInterface
+	CodeBuildClient        sdk.CodeBuildClientInterface
+	CodeCommitClient       sdk.AWSCodeCommitClientInterface
+	CodeDeployClient       sdk.AWSCodeDeployClientInterface
+	DataPipelineClient     sdk.AWSDataPipelineClientInterface
+	DynamoDBClient         *dynamodb.Client
+	EC2Client              *ec2.Client
+	ECRClient              sdk.AWSECRClientInterface
+	ECSClient              *ecs.Client
+	EKSClient              sdk.EKSClientInterface
+	ELBClient              *elasticloadbalancing.Client
+	ELBv2Client            *elasticloadbalancingv2.Client
+	ElasticacheClient      sdk.AWSElastiCacheClientInterface
+	ElasticBeanstalkClient sdk.AWSElasticBeanstalkClientInterface
+	EMRClient              sdk.AWSEMRClientInterface
+	GrafanaClient          *grafana.Client
+	GlueClient             sdk.AWSGlueClientInterface
+	KinesisClient          sdk.AWSKinesisClientInterface
+	IAMClient              *iam.Client
+	LambdaClient           *lambda.Client
+	LightsailClient        *lightsail.Client
+	MQClient               *mq.Client
+	OpenSearchClient       *opensearch.Client
+	RDSClient              *rds.Client
+	RedshiftClient         sdk.AWSRedShiftClientInterface
+	Route53Client          sdk.AWSRoute53ClientInterface
+	S3Client               *s3.Client
+	SQSClient              *sqs.Client
+	SSMClient              *ssm.Client
+	SNSClient              *sns.Client
+	SecretsManagerClient   *secretsmanager.Client
+	StepFunctionClient     sdk.StepFunctionsClientInterface
 
 	Caller       sts.GetCallerIdentityOutput
 	AWSRegions   []string
@@ -115,10 +124,18 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 		"total",
 		"APIGateway RestAPIs",
 		"APIGatewayv2 APIs",
+		"Athena Databases",
+		//"Athena Data Catalogs",
 		"AppRunner Services",
 		"CloudFormation Stacks",
 		"Cloudfront Distributions",
+		"CodeArtifact Repositories",
+		"CodeArtifact Domains",
 		"CodeBuild Projects",
+		"CodeCommit Repositories",
+		"CodeDeploy Applications",
+		"CodeDeploy Deployments",
+		"DataPipeline Pipelines",
 		"DynamoDB Tables",
 		"EC2 Instances",
 		"EC2 AMIs",
@@ -129,14 +146,23 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 		"ECS Services",
 		"ECR Repositories",
 		"EKS Clusters",
+		"EKS Cluster NodeGroups",
+		"Elasticache Clusters",
+		"ElasticBeanstalk Applications",
 		"ELB Load Balancers",
 		"ELBv2 Load Balancers",
+		"EMR Clusters",
+		"EMR Instances",
+		"Glue Databases",
 		"Glue Dev Endpoints",
 		"Glue Jobs",
+		"Glue Tables",
 		"Grafana Workspaces",
+		"IAM Access Keys",
 		"IAM Roles",
 		"IAM Users",
 		"IAM Groups",
+		"Kinesis Data Streams",
 		"Lambda Functions",
 		"Lightsail Instances/Containers",
 		"MQ Brokers",
@@ -206,6 +232,7 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 	m.getIAMUsers(verbosity, dataReceiver)
 	m.getIAMRoles(verbosity, dataReceiver)
 	m.getIAMGroups(verbosity, dataReceiver)
+	m.getIAMAccessKeys(verbosity, dataReceiver)
 	m.getCloudfrontDistros(verbosity, dataReceiver)
 	m.getRoute53Zones(verbosity, dataReceiver)
 	m.getRoute53Records(verbosity, dataReceiver)
@@ -215,9 +242,6 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-
-	//duration := time.Since(start)
-	//fmt.Printf("\n\n[*] Total execution time %s\n", duration)
 
 	// This creates the header row (columns) dynamically - a region oly gets printed if it has at least one resource.
 	m.output.Headers = append(m.output.Headers, "Resource Type")
@@ -236,6 +260,14 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 		return ss[i].Value > ss[j].Value
 	})
 
+	// move the Global column to the front
+	for i, v := range ss {
+		if v.Key == "Global" {
+			ss[0], ss[i] = ss[i], ss[0]
+		}
+	}
+
+	//add the regions to the header row
 	for _, region := range ss {
 
 		if region.Value != 0 {
@@ -278,14 +310,26 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 				}
 
 			}
-			// Convert the slice of strings to a slice of interfaces???  not sure, but this was needed. I couldnt just pass temp row to the output.Body
-			for _, val := range temprow {
-				outputRow = append(outputRow, val)
 
+			// check to see if all regions have no resources for the service. Skip the first column, which is hte resource type.
+			// If any value is other than "-" set rowEmpty to false.
+			var rowEmtpy bool = true
+			for _, val := range temprow[1:] {
+
+				if val != "-" {
+					rowEmtpy = false
+				}
 			}
+			// If rowEmpty is still true at the end of the row, we dont add the row to the output, otherwise we do.
+			if !rowEmtpy {
+				// Convert the slice of strings to a slice of interfaces???  not sure, but this was needed. I couldnt just pass temp row to the output.Body
+				for _, val := range temprow {
+					outputRow = append(outputRow, val)
 
-			// Finally write the row to the table
-			m.output.Body = append(m.output.Body, outputRow)
+				}
+				// Finally write the row to the table if the service has at least one resource
+				m.output.Body = append(m.output.Body, outputRow)
+			}
 
 		}
 	}
@@ -408,6 +452,18 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 		go m.getAPIGatewayv2APIsPerRegion(r, wg, semaphore)
 	}
 
+	res, err = servicemap.IsServiceInRegion("athena", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getAthenaDatabasesPerRegion(r, wg, semaphore)
+		// wg.Add(1)
+		// go m.getAthenaDataCatalogsPerRegion(r, wg, semaphore)
+	}
+
 	res, err = servicemap.IsServiceInRegion("cloudformation", r)
 	if err != nil {
 		m.modLog.Error(err)
@@ -418,6 +474,16 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 		go m.getCloudFormationStacksPerRegion(r, wg, semaphore)
 	}
 
+	res, err = servicemap.IsServiceInRegion("codeartifact", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getCodeArtifactDomainsPerRegion(r, wg, semaphore)
+	}
+
 	res, err = servicemap.IsServiceInRegion("codebuild", r)
 	if err != nil {
 		m.modLog.Error(err)
@@ -426,6 +492,39 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getCodeBuildProjectsPerRegion(r, wg, semaphore)
+	}
+
+	res, err = servicemap.IsServiceInRegion("codecommit", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getCodeCommitRepositoriesPerRegion(r, wg, semaphore)
+	}
+
+	res, err = servicemap.IsServiceInRegion("codedeploy", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getCodeDeployApplicationsPerRegion(r, wg, semaphore)
+		wg.Add(1)
+		go m.getCodeDeployDeploymentsPerRegion(r, wg, semaphore)
+
+	}
+
+	res, err = servicemap.IsServiceInRegion("datapipeline", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getDataPipelinePipelinesPerRegion(r, wg, semaphore)
 	}
 
 	res, err = servicemap.IsServiceInRegion("dynamodb", r)
@@ -487,6 +586,8 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getEksClustersPerRegion(r, wg, semaphore)
+		wg.Add(1)
+		go m.getEKSNodeGroupsPerRegion(r, wg, semaphore)
 	}
 
 	res, err = servicemap.IsServiceInRegion("elb", r)
@@ -501,6 +602,38 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 		m.CommandCounter.Total++
 		wg.Add(1)
 		go m.getELBListenersPerRegion(r, wg, semaphore)
+	}
+
+	res, err = servicemap.IsServiceInRegion("elasticache", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getElasticacheClustersPerRegion(r, wg, semaphore)
+	}
+
+	res, err = servicemap.IsServiceInRegion("elasticbeanstalk", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getElasticBeanstalkApplicationsPerRegion(r, wg, semaphore)
+	}
+
+	res, err = servicemap.IsServiceInRegion("elasticbeanstalk", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getEMRClustersPerRegion(r, wg, semaphore)
+		wg.Add(1)
+		go m.GetEMRInstancesPerRegion(r, wg, semaphore)
 	}
 
 	res, err = servicemap.IsServiceInRegion("es", r)
@@ -533,7 +666,21 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 		go m.getGlueDevEndpointsPerRegion(r, wg, semaphore)
 		wg.Add(1)
 		go m.getGlueJobsPerRegion(r, wg, semaphore)
+		wg.Add(1)
+		go m.getGlueTablesPerRegion(r, wg, semaphore)
+		wg.Add(1)
+		go m.getGlueDatabasesPerRegion(r, wg, semaphore)
 
+	}
+
+	res, err = servicemap.IsServiceInRegion("kinesis", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getKinesisDatastreamsPerRegion(r, wg, semaphore)
 	}
 
 	res, err = servicemap.IsServiceInRegion("lambda", r)
@@ -693,6 +840,105 @@ func (m *Inventory2Module) getLambdaFunctionsPerRegion(r string, wg *sync.WaitGr
 	m.mu.Unlock()
 
 }
+
+func (m *Inventory2Module) getAthenaDatabasesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+
+	var totalCountThisServiceThisRegion = 0
+	var service = "Athena Databases"
+	var resourceNames []string
+
+	ListDataCatalogs, err := sdk.CachedAthenaListDataCatalogs(m.AthenaClient, aws.ToString(m.Caller.Account), r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	for _, dc := range ListDataCatalogs {
+
+		ListDatabases, err := sdk.CachedAthenaListDatabases(m.AthenaClient, aws.ToString(m.Caller.Account), r, aws.ToString(dc.CatalogName))
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			return
+		}
+
+		// Add this page of resources to the total count
+		totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListDatabases)
+
+		for _, d := range ListDatabases {
+			arn := "arn:aws:athena:" + r + ":" + aws.ToString(m.Caller.Account) + ":database/" + d
+			resourceNames = append(resourceNames, arn)
+		}
+	}
+
+	m.mu.Lock()
+
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
+
+}
+
+// func (m *Inventory2Module) getAthenaDataCatalogsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+// 	defer func() {
+// 		wg.Done()
+// 		m.CommandCounter.Executing--
+// 		m.CommandCounter.Complete++
+// 	}()
+// 	semaphore <- struct{}{}
+// 	defer func() {
+// 		<-semaphore
+// 	}()
+
+// 	// m.CommandCounter.Total++
+// 	m.CommandCounter.Pending--
+// 	m.CommandCounter.Executing++
+
+// 	var totalCountThisServiceThisRegion = 0
+// 	var service = "Athena Data Catalogs"
+// 	var resourceNames []string
+
+// 	ListDataCatalogs, err := sdk.CachedAthenaListDataCatalogs(m.AthenaClient, aws.ToString(m.Caller.Account), r)
+// 	if err != nil {
+// 		m.modLog.Error(err.Error())
+// 		m.CommandCounter.Error++
+// 		return
+// 	}
+
+// 	// Add this page of resources to the total count
+// 	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListDataCatalogs)
+
+// 	// Add this page of resources to the module's resource list
+// 	for _, d := range ListDataCatalogs {
+// 		arn := "arn:aws:athena:" + r + ":" + aws.ToString(m.Caller.Account) + ":datacatalog/" + aws.ToString(d.CatalogName)
+// 		resourceNames = append(resourceNames, arn)
+
+// 	}
+
+// 	m.mu.Lock()
+
+// 	m.resources = append(m.resources, resourceNames...)
+// 	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+// 	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+// 	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+// 	m.mu.Unlock()
+// }
 
 func (m *Inventory2Module) getEc2InstancesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
 	defer func() {
@@ -914,6 +1160,57 @@ func (m *Inventory2Module) getEksClustersPerRegion(r string, wg *sync.WaitGroup,
 
 }
 
+func (m *Inventory2Module) getEKSNodeGroupsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
+	var totalCountThisServiceThisRegion = 0
+	var service = "EKS Cluster NodeGroups"
+	var resourceNames []string
+
+	ListClusters, err := sdk.CachedEKSListClusters(m.EKSClient, aws.ToString(m.Caller.Account), r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	for _, cluster := range ListClusters {
+		NodeGroups, err := sdk.CachedEKSListNodeGroups(m.EKSClient, aws.ToString(m.Caller.Account), r, cluster)
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			return
+		}
+		// Add this page of resources to the total count
+		totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(NodeGroups)
+
+		// Add this page of resources to the module's resource list
+		for _, nodegroup := range NodeGroups {
+			arn := "arn:aws:eks:" + r + ":" + aws.ToString(m.Caller.Account) + ":nodegroup/" + cluster + "/" + nodegroup
+			resourceNames = append(resourceNames, arn)
+		}
+
+		m.mu.Lock()
+		m.resources = append(m.resources, resourceNames...)
+		m.serviceMap[service][r] = totalCountThisServiceThisRegion
+		m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+		m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+		m.mu.Unlock()
+	}
+
+}
+
 func (m *Inventory2Module) getCloudFormationStacksPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
 	defer func() {
 		wg.Done()
@@ -957,6 +1254,190 @@ func (m *Inventory2Module) getCloudFormationStacksPerRegion(r string, wg *sync.W
 	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
 	m.mu.Unlock()
 
+}
+
+func (m *Inventory2Module) getElasticacheClustersPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
+	var totalCountThisServiceThisRegion = 0
+	var service = "Elasticache Clusters"
+	var resourceNames []string
+
+	ListClusters, err := sdk.CachedElastiCacheDescribeCacheClusters(m.ElasticacheClient, aws.ToString(m.Caller.Account), r)
+
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListClusters)
+
+	// Add this page of resources to the module's resource list
+	for _, cluster := range ListClusters {
+		resourceNames = append(resourceNames, aws.ToString(cluster.ARN))
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
+
+}
+
+func (m *Inventory2Module) getElasticBeanstalkApplicationsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
+	var totalCountThisServiceThisRegion = 0
+	var service = "ElasticBeanstalk Applications"
+	var resourceNames []string
+
+	ListApplications, err := sdk.CachedElasticBeanstalkDescribeApplications(m.ElasticBeanstalkClient, aws.ToString(m.Caller.Account), r)
+
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListApplications)
+
+	// Add this page of resources to the module's resource list
+	for _, application := range ListApplications {
+		arn := aws.ToString(application.ApplicationArn)
+		resourceNames = append(resourceNames, arn)
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
+
+}
+
+func (m *Inventory2Module) getEMRClustersPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
+	var totalCountThisServiceThisRegion = 0
+	var service = "EMR Clusters"
+	var resourceNames []string
+
+	ListClusters, err := sdk.CachedEMRListClusters(m.EMRClient, aws.ToString(m.Caller.Account), r)
+
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListClusters)
+
+	// Add this page of resources to the module's resource list
+	for _, cluster := range ListClusters {
+		resourceNames = append(resourceNames, aws.ToString(cluster.ClusterArn))
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
+
+}
+
+func (m *Inventory2Module) GetEMRInstancesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+
+	var totalCountThisServiceThisRegion = 0
+	var service = "EMR Instances"
+	var resourceNames []string
+
+	ListClusters, err := sdk.CachedEMRListClusters(m.EMRClient, aws.ToString(m.Caller.Account), r)
+
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	for _, cluster := range ListClusters {
+
+		ListInstances, err := sdk.CachedEMRListInstances(m.EMRClient, aws.ToString(m.Caller.Account), r, aws.ToString(cluster.Id))
+
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			return
+		}
+
+		// Add this page of resources to the total count
+		totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(ListInstances)
+
+		// Add this page of resources to the module's resource list
+		for _, instance := range ListInstances {
+			arn := "arn:aws:elasticmapreduce:" + r + ":" + aws.ToString(m.Caller.Account) + ":instance/" + aws.ToString(instance.Id)
+			resourceNames = append(resourceNames, arn)
+		}
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
 }
 
 func (m *Inventory2Module) getSecretsManagerSecretsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
@@ -1767,6 +2248,149 @@ func (m *Inventory2Module) getGlueJobsPerRegion(r string, wg *sync.WaitGroup, se
 
 }
 
+func (m *Inventory2Module) getGlueDatabasesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+
+	var totalCountThisServiceThisRegion = 0
+	var service = "Glue Databases"
+	var resourceNames []string
+
+	Databases, err := sdk.CachedGlueGetDatabases(m.GlueClient, aws.ToString(m.Caller.Account), r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	for _, database := range Databases {
+		arn := "arn:aws:glue:" + r + ":" + aws.ToString(m.Caller.Account) + ":database/" + aws.ToString(database.Name)
+		resourceNames = append(resourceNames, arn)
+	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(Databases)
+
+	// Add this page of resources to the module's resource list
+	for _, database := range Databases {
+		resourceNames = append(resourceNames, aws.ToString(database.Name))
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
+
+}
+
+func (m *Inventory2Module) getGlueTablesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+
+	var totalCountThisServiceThisRegion = 0
+	var service = "Glue Jobs"
+	var resourceNames []string
+
+	Databases, err := sdk.CachedGlueGetDatabases(m.GlueClient, aws.ToString(m.Caller.Account), r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	for _, database := range Databases {
+		TableNames, err := sdk.CachedGlueGetTables(m.GlueClient, aws.ToString(m.Caller.Account), r, aws.ToString(database.Name))
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			return
+
+		}
+
+		// Add this page of resources to the total count
+
+		totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(TableNames)
+
+		// Add this page of resources to the module's resource list
+		for _, table := range TableNames {
+			arn := "arn:aws:glue:" + r + ":" + aws.ToString(m.Caller.Account) + ":table/" + aws.ToString(database.Name) + "/" + aws.ToString(table.Name)
+			resourceNames = append(resourceNames, arn)
+		}
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
+}
+
+func (m *Inventory2Module) getKinesisDatastreamsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+
+	var totalCountThisServiceThisRegion = 0
+	var service = "Kinesis Data Streams"
+	var resourceNames []string
+
+	Datastreams, err := sdk.CachedKinesisListStreams(m.KinesisClient, aws.ToString(m.Caller.Account), r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(Datastreams)
+
+	// Add this page of resources to the module's resource list
+	for _, stream := range Datastreams {
+		arn := "arn:aws:kinesis:" + r + ":" + aws.ToString(m.Caller.Account) + ":stream/" + stream
+		resourceNames = append(resourceNames, arn)
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
+
+}
+
 func (m *Inventory2Module) getSNSTopicsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
 	defer func() {
 		wg.Done()
@@ -1936,6 +2560,49 @@ func (m *Inventory2Module) getRedshiftClustersPerRegion(r string, wg *sync.WaitG
 	m.mu.Unlock()
 }
 
+func (m *Inventory2Module) getCodeArtifactDomainsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+	var totalCountThisServiceThisRegion = 0
+	var service = "CodeArtifact Domains"
+	var resourceNames []string
+
+	Domains, err := sdk.CachedCodeArtifactListDomains(m.CodeArtifactClient, aws.ToString(m.Caller.Account), r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(Domains)
+
+	// Add this page of resources to the module's resource list
+	for _, domain := range Domains {
+		arn := aws.ToString(domain.Arn)
+		resourceNames = append(resourceNames, arn)
+	}
+
+	// No more pages, update the module's service map
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+
+	m.mu.Unlock()
+}
+
 func (m *Inventory2Module) getCodeBuildProjectsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
 	defer func() {
 		wg.Done()
@@ -1976,6 +2643,174 @@ func (m *Inventory2Module) getCodeBuildProjectsPerRegion(r string, wg *sync.Wait
 	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
 	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
 
+	m.mu.Unlock()
+}
+
+func (m *Inventory2Module) getCodeCommitRepositoriesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+	var totalCountThisServiceThisRegion = 0
+	var service = "CodeCommit Repositories"
+	var resourceNames []string
+
+	repos, err := sdk.CachedCodeCommitListRepositories(m.CodeCommitClient, aws.ToString(m.Caller.Account), r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(repos)
+
+	// Add this page of resources to the module's resource list
+	for _, repo := range repos {
+		arn := "arn:aws:codecommit:" + r + ":" + aws.ToString(m.Caller.Account) + ":" + aws.ToString(repo.RepositoryName)
+		resourceNames = append(resourceNames, arn)
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
+}
+
+func (m *Inventory2Module) getCodeDeployApplicationsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+	var totalCountThisServiceThisRegion = 0
+	var service = "CodeDeploy Applications"
+	var resourceNames []string
+
+	apps, err := sdk.CachedCodeDeployListApplications(m.CodeDeployClient, aws.ToString(m.Caller.Account), r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+
+	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(apps)
+
+	// Add this page of resources to the module's resource list
+	for _, app := range apps {
+		arn := "arn:aws:codedeploy:" + r + ":" + aws.ToString(m.Caller.Account) + ":application:" + app
+		resourceNames = append(resourceNames, arn)
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
+}
+
+func (m *Inventory2Module) getCodeDeployDeploymentsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+	var totalCountThisServiceThisRegion = 0
+	var service = "CodeDeploy Deployments"
+	var resourceNames []string
+
+	deployments, err := sdk.CachedCodeDeployListDeployments(m.CodeDeployClient, aws.ToString(m.Caller.Account), r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+
+	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(deployments)
+
+	// Add this page of resources to the module's resource list
+	for _, d := range deployments {
+		arn := "arn:aws:codedeploy:" + r + ":" + aws.ToString(m.Caller.Account) + ":application:" + d
+		resourceNames = append(resourceNames, arn)
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
+}
+
+func (m *Inventory2Module) getDataPipelinePipelinesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+	var totalCountThisServiceThisRegion = 0
+	var service = "DataPipeline Pipelines"
+	var resourceNames []string
+
+	pipelines, err := sdk.CachedDataPipelineListPipelines(m.DataPipelineClient, aws.ToString(m.Caller.Account), r)
+
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+
+	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(pipelines)
+
+	// Add this page of resources to the module's resource list
+	for _, p := range pipelines {
+		arn := "arn:aws:datapipeline:" + r + ":" + aws.ToString(m.Caller.Account) + ":pipeline:" + aws.ToString(p.Id)
+		resourceNames = append(resourceNames, arn)
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
 	m.mu.Unlock()
 }
 
@@ -2212,6 +3047,56 @@ func (m *Inventory2Module) getIAMGroups(verbosity int, dataReceiver chan GlobalR
 	dataReceiver <- GlobalResourceCount2{
 		resourceType: resourceType,
 		count:        total,
+	}
+
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
+	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+
+	m.mu.Unlock()
+}
+
+func (m *Inventory2Module) getIAMAccessKeys(verbosity int, dataReceiver chan GlobalResourceCount2) {
+	var total int
+	var r string = "Global"
+	service := "IAM Access Keys"
+	var totalCountThisServiceThisRegion = 0
+	resourceType := "IAM Access Keys"
+	var resourceNames []string
+
+	Users, err := sdk.CachedIamListUsers(m.IAMClient, aws.ToString(m.Caller.Account))
+
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	for _, user := range Users {
+
+		AccessKeys, err := sdk.CachedIamListAccessKeys(m.IAMClient, aws.ToString(m.Caller.Account), aws.ToString(user.UserName))
+
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			return
+		}
+		total = total + len(AccessKeys)
+
+		// Add this page of resources to the module's resource list
+		for _, key := range AccessKeys {
+			resourceNames = append(resourceNames, aws.ToString(key.UserName))
+		}
+
+		// Add this page of resources to the total count
+		totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(AccessKeys)
+
+		dataReceiver <- GlobalResourceCount2{
+			resourceType: resourceType,
+			count:        total,
+		}
 	}
 
 	m.mu.Lock()

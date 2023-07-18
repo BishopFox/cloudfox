@@ -14,6 +14,7 @@ type AWSSNSClientInterface interface {
 	ListTopics(ctx context.Context, params *sns.ListTopicsInput, optFns ...func(*sns.Options)) (*sns.ListTopicsOutput, error)
 	ListSubscriptions(ctx context.Context, params *sns.ListSubscriptionsInput, optFns ...func(*sns.Options)) (*sns.ListSubscriptionsOutput, error)
 	ListSubscriptionsByTopic(ctx context.Context, params *sns.ListSubscriptionsByTopicInput, optFns ...func(*sns.Options)) (*sns.ListSubscriptionsByTopicOutput, error)
+	GetTopicAttributes(ctx context.Context, params *sns.GetTopicAttributesInput, optFns ...func(*sns.Options)) (*sns.GetTopicAttributesOutput, error)
 }
 
 func init() {
@@ -150,4 +151,31 @@ func CachedSNSListSubscriptionsByTopic(SNSClient AWSSNSClientInterface, accountI
 	internal.Cache.Set(cacheKey, subscriptions, cache.DefaultExpiration)
 
 	return subscriptions, nil
+}
+
+func CachedSNSGetTopicAttributes(SNSClient AWSSNSClientInterface, accountID string, region string, topicArn string) (map[string]string, error) {
+	cacheKey := "sns-GetTopicAttributes-" + accountID + "-" + region + "-" + topicArn
+	cached, found := internal.Cache.Get(cacheKey)
+	if found {
+		sharedLogger.Debug("Using cached SNS topic attributes data")
+		return cached.(map[string]string), nil
+	}
+
+	GetTopicAttributes, err := SNSClient.GetTopicAttributes(
+		context.TODO(),
+		&sns.GetTopicAttributesInput{
+			TopicArn: &topicArn,
+		},
+		func(o *sns.Options) {
+			o.Region = region
+		},
+	)
+	if err != nil {
+		sharedLogger.Error(err.Error())
+		return nil, err
+	}
+
+	internal.Cache.Set(cacheKey, GetTopicAttributes.Attributes, cache.DefaultExpiration)
+
+	return GetTopicAttributes.Attributes, nil
 }

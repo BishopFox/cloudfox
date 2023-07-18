@@ -14,11 +14,13 @@ import (
 type OpenSearchClientInterface interface {
 	ListDomainNames(context.Context, *opensearch.ListDomainNamesInput, ...func(*opensearch.Options)) (*opensearch.ListDomainNamesOutput, error)
 	DescribeDomainConfig(context.Context, *opensearch.DescribeDomainConfigInput, ...func(*opensearch.Options)) (*opensearch.DescribeDomainConfigOutput, error)
+	DescribeDomain(context.Context, *opensearch.DescribeDomainInput, ...func(*opensearch.Options)) (*opensearch.DescribeDomainOutput, error)
 }
 
 func init() {
 	gob.Register([]openSearchTypes.DomainInfo{})
 	gob.Register(openSearchTypes.DomainConfig{})
+	gob.Register(openSearchTypes.DomainStatus{})
 }
 
 // create CachedOpenSearchListDomainNames function that uses go-cache and pagination
@@ -74,4 +76,32 @@ func CachedOpenSearchDescribeDomainConfig(client OpenSearchClientInterface, acco
 
 	internal.Cache.Set(cacheKey, DomainConfig, cache.DefaultExpiration)
 	return DomainConfig, nil
+}
+
+// create CachedOpenSearchDescribeDomain function that uses go-cache and pagination and supports region option
+func CachedOpenSearchDescribeDomain(client OpenSearchClientInterface, accountID string, region string, domainName string) (openSearchTypes.DomainStatus, error) {
+	var DomainStatus openSearchTypes.DomainStatus
+	cacheKey := fmt.Sprintf("%s-opensearch-DescribeDomain-%s-%s", accountID, region, domainName)
+	cached, found := internal.Cache.Get(cacheKey)
+	if found {
+		return cached.(openSearchTypes.DomainStatus), nil
+	}
+	DescribeDomain, err := client.DescribeDomain(
+		context.TODO(),
+		&opensearch.DescribeDomainInput{
+			DomainName: &domainName,
+		},
+		func(o *opensearch.Options) {
+			o.Region = region
+		},
+	)
+
+	if err != nil {
+		return DomainStatus, err
+	}
+
+	DomainStatus = *DescribeDomain.DomainStatus
+
+	internal.Cache.Set(cacheKey, DomainStatus, cache.DefaultExpiration)
+	return DomainStatus, nil
 }
