@@ -68,7 +68,7 @@ func TestAzInstancesCommand(t *testing.T) {
 	}
 
 	// Mocked functions to simulate Azure calls and responses
-	getSubscriptions = mockedGetSubscriptions
+	GetSubscriptions = mockedGetSubscriptions
 	getResourceGroups = mockedGetResourceGroups
 	getComputeVMsPerResourceGroup = mockedGetComputeVMsPerResourceGroup
 	getNICdetails = mockedGetNICdetails

@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/authorization/mgmt/authorization"
@@ -18,28 +19,39 @@ import (
 	"github.com/kyokomi/emoji"
 )
 
-func AzRBACCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, Version string, AzVerbosity int, AzWrapTable bool) error {
+func AzRBACCommand(AzTenantID, AzSubscription, AzOutputFormat, Version string, AzVerbosity int, AzWrapTable bool) error {
 	var c CloudFoxRBACclient
 	var header []string
 	var body [][]string
 	var outputDirectory, controlMessagePrefix string
 
-	if AzTenantID != "" && AzSubscriptionID == "" {
+	var AzSubscriptionID string
+	var AzSubccriptionName string
+	var AzSubscriptionType AzSubsriptionType
+
+	if AzTenantID != "" && AzSubscription == "" {
 		// ./cloudfox azure rbac --tenant TENANT_ID
 		fmt.Printf("[%s][%s] Enumerating RBAC permissions for tenant %s\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_RBAC_MODULE_NAME), AzTenantID)
-		controlMessagePrefix = fmt.Sprintf("tenant-%s", AzTenantID)
-		outputDirectory = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, "tenants", AzTenantID)
+		controlMessagePrefix = fmt.Sprintf("%s", AzTenantID)
+		outputDirectory = filepath.Join(ptr.ToString(internal.GetLogDirPath()), globals.AZ_DIR_BASE, fmt.Sprintf("tenant-%s", AzTenantID))
 		var err error
 		header, body, err = getRBACperTenant(AzTenantID, c)
 		if err != nil {
 			return err
 		}
-	} else if AzTenantID == "" && AzSubscriptionID != "" {
+	} else if AzTenantID == "" && AzSubscription != "" {
+
+		if AzSubscription != "" {
+			AzSubscriptionType = PopulateSubsriptionType(AzSubscription)
+			AzSubscriptionID = AzSubscriptionType.SubscriptionID
+			AzSubccriptionName = AzSubscriptionType.DisplayName
+		}
+
 		// ./cloudfox azure rbac --subscription SUBSCRIPTION_ID
 		fmt.Printf("[%s][%s] Enumerating RBAC permissions for subscription %s\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_RBAC_MODULE_NAME), AzSubscriptionID)
-		controlMessagePrefix = fmt.Sprintf("subscription-%s", AzSubscriptionID)
-		outputDirectory = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, "subscriptions", AzSubscriptionID)
 		header, body = getRBACperSubscription(AzTenantID, AzSubscriptionID, c)
+		outputDirectory = filepath.Join(ptr.ToString(internal.GetLogDirPath()), globals.AZ_DIR_BASE, fmt.Sprintf("tenant-%s", ptr.ToString(GetTenantIDPerSubscription(AzSubscriptionID))), AzSubccriptionName)
+		controlMessagePrefix = ptr.ToString(GetSubscriptionName(AzSubccriptionName))
 
 	} else {
 		// Error: please make a valid flag selection
@@ -57,7 +69,7 @@ func AzRBACCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, Version string,
 func getRBACperTenant(AzTenantID string, c CloudFoxRBACclient) ([]string, [][]string, error) {
 	var selectedSubs, resultsHeader []string
 	var resultsBody, b [][]string
-	for _, s := range getSubscriptions() {
+	for _, s := range GetSubscriptions() {
 		if ptr.ToString(s.TenantID) == AzTenantID {
 			selectedSubs = append(selectedSubs, ptr.ToString(s.SubscriptionID))
 		}
@@ -76,7 +88,7 @@ func getRBACperTenant(AzTenantID string, c CloudFoxRBACclient) ([]string, [][]st
 func getRBACperSubscription(AzTenantID, AzSubscriptionID string, c CloudFoxRBACclient) ([]string, [][]string) {
 	var resultsHeader []string
 	var resultsBody [][]string
-	for _, s := range getSubscriptions() {
+	for _, s := range GetSubscriptions() {
 		if ptr.ToString(s.SubscriptionID) == AzSubscriptionID {
 			c.initialize(AzTenantID, []string{ptr.ToString(s.SubscriptionID)})
 			resultsHeader, resultsBody = c.GetRelevantRBACData(AzTenantID, ptr.ToString(s.SubscriptionID))
@@ -132,8 +144,13 @@ func (c *CloudFoxRBACclient) GetRelevantRBACData(tenantID, subscriptionID string
 		findRole(c.roleDefinitions, rb, &roleAssignmentRelevantData)
 		results = append(results, roleAssignmentRelevantData)
 	}
+	// Sort the results by userDisplayName using slice.Sort
+	sortedResults := results
+	sort.Slice(sortedResults, func(i, j int) bool {
+		return sortedResults[i].userDisplayName < sortedResults[j].userDisplayName
+	})
 
-	for _, r := range results {
+	for _, r := range sortedResults {
 		body = append(body,
 			[]string{
 				r.userDisplayName,

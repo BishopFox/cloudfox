@@ -50,7 +50,7 @@ func AzInventoryCommand(AzTenantID, AzSubscriptionID, Version string, AzVerbosit
 				Name:   globals.AZ_INVENTORY_MODULE_NAME})
 		o.PrefixIdentifier = fmt.Sprintf("subscription-%s", AzSubscriptionID)
 		o.Table.DirectoryName = filepath.Join(
-			globals.CLOUDFOX_BASE_DIRECTORY,
+			ptr.ToString(internal.GetLogDirPath()),
 			globals.AZ_DIR_BASE,
 			"subscriptions",
 			AzSubscriptionID)

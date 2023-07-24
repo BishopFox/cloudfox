@@ -9,7 +9,7 @@ import (
 
 var (
 	AzTenantID        string
-	AzSubscriptionID  string
+	AzSubscription    string
 	AzRGName          string
 	AzOutputFormat    string
 	AzOutputDirectory string
@@ -25,7 +25,8 @@ var (
 			cmd.Help()
 		},
 	}
-	AzWhoamiCommand = &cobra.Command{
+	AzWhoamiListSubsOnly bool
+	AzWhoamiCommand      = &cobra.Command{
 		Use:     "whoami",
 		Aliases: []string{},
 		Short:   "Display available Azure CLI sessions",
@@ -33,7 +34,7 @@ var (
 Display Available Azure CLI Sessions:
 ./cloudfox az whoami`,
 		Run: func(cmd *cobra.Command, args []string) {
-			err := azure.AzWhoamiCommand(cmd.Root().Version, AzWrapTable)
+			err := azure.AzWhoamiCommand(cmd.Root().Version, AzWrapTable, AzVerbosity, AzWhoamiListSubsOnly)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -51,7 +52,7 @@ Enumerate inventory for a specific subscription:
 ./cloudfox az inventory --subscription SUBSCRIPTION_ID
 `,
 		Run: func(cmd *cobra.Command, args []string) {
-			err := azure.AzInventoryCommand(AzTenantID, AzSubscriptionID, cmd.Root().Version, AzVerbosity, AzWrapTable)
+			err := azure.AzInventoryCommand(AzTenantID, AzSubscription, cmd.Root().Version, AzVerbosity, AzWrapTable)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -69,7 +70,8 @@ Enumerate role assignments for a specific subscription:
 ./cloudfox az rbac --subscription SUBSCRIPTION_ID
 `,
 		Run: func(cmd *cobra.Command, args []string) {
-			err := azure.AzRBACCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, cmd.Root().Version, AzVerbosity, AzWrapTable)
+
+			err := azure.AzRBACCommand(AzTenantID, AzSubscription, AzOutputFormat, cmd.Root().Version, AzVerbosity, AzWrapTable)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -86,7 +88,7 @@ Enumerate VMs for a specific tenant:
 Enumerate VMs for a specific subscription:
 ./cloudfox az instances --subscription SUBSCRIPTION_ID`,
 		Run: func(cmd *cobra.Command, args []string) {
-			err := azure.AzInstancesCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, cmd.Root().Version, AzVerbosity, AzWrapTable)
+			err := azure.AzInstancesCommand(AzTenantID, AzSubscription, AzOutputFormat, cmd.Root().Version, AzVerbosity, AzWrapTable)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -104,7 +106,7 @@ Enumerate storage accounts for a specific subscription:
 ./cloudfox az storage --subscription SUBSCRIPTION_ID
 `,
 		Run: func(cmd *cobra.Command, args []string) {
-			err := azure.AzStorageCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, cmd.Root().Version, AzVerbosity, AzWrapTable)
+			err := azure.AzStorageCommand(AzTenantID, AzSubscription, AzOutputFormat, cmd.Root().Version, AzVerbosity, AzWrapTable)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -113,6 +115,9 @@ Enumerate storage accounts for a specific subscription:
 )
 
 func init() {
+
+	AzWhoamiCommand.Flags().BoolVarP(&AzWhoamiListSubsOnly, "list-subs-only", "l", false, "Only list subscriptions (not resource groups)")
+
 	// Global flags
 	AzCommands.PersistentFlags().StringVarP(
 		&AzOutputFormat,
@@ -133,11 +138,11 @@ func init() {
 		"",
 		"Tenant name")
 	AzCommands.PersistentFlags().StringVarP(
-		&AzSubscriptionID,
+		&AzSubscription,
 		"subscription",
 		"s",
 		"",
-		"Subscription name")
+		"Subscription ID or Name")
 	AzCommands.PersistentFlags().StringVarP(
 		&AzRGName,
 		"resource-group",
@@ -157,4 +162,5 @@ func init() {
 		AzInstancesCommand,
 		AzStorageCommand,
 		AzInventoryCommand)
+
 }

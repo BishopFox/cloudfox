@@ -67,7 +67,7 @@ func TestAzRBACCommand(t *testing.T) {
 	}
 	internal.MockFileSystem(true)
 	// Mocked functions to simulate Azure calls and responses
-	getSubscriptions = mockedGetSubscriptions
+	GetSubscriptions = mockedGetSubscriptions
 	getAzureADUsers = mockedGetAzureADUsers
 	getRoleDefinitions = mockedGetRoleDefinitions
 	getRoleAssignments = mockedGetRoleAssignments

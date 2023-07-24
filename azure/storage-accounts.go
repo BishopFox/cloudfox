@@ -39,7 +39,7 @@ func AzStorageCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, Version stri
 		header, body, publicBlobURLs, err = getStorageInfoPerTenant(AzTenantID)
 		controlMessagePrefix = fmt.Sprintf("tenant-%s", AzTenantID)
 		outputDirectory = filepath.Join(
-			globals.CLOUDFOX_BASE_DIRECTORY,
+			ptr.ToString(internal.GetLogDirPath()),
 			globals.AZ_DIR_BASE,
 			"tenants",
 			AzTenantID)
@@ -55,7 +55,7 @@ func AzStorageCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, Version stri
 		header, body, publicBlobURLs, err = getStorageInfoPerSubscription(AzTenantID, AzSubscriptionID)
 		controlMessagePrefix = fmt.Sprintf("subscription-%s", AzSubscriptionID)
 		outputDirectory = filepath.Join(
-			globals.CLOUDFOX_BASE_DIRECTORY,
+			ptr.ToString(internal.GetLogDirPath()),
 			globals.AZ_DIR_BASE,
 			"subscriptions",
 			AzSubscriptionID)
@@ -128,7 +128,7 @@ func getStorageInfoPerSubscription(AzTenantID, AzSubscriptionID string) ([]strin
 	var body [][]string
 	var publicBlobURLs []string
 
-	for _, s := range getSubscriptions() {
+	for _, s := range GetSubscriptions() {
 		if ptr.ToString(s.SubscriptionID) == AzSubscriptionID {
 			header, body, publicBlobURLs, err = getRelevantStorageAccountData(AzTenantID, ptr.ToString(s.SubscriptionID))
 			if err != nil {
@@ -154,8 +154,18 @@ func getRelevantStorageAccountData(tenantID, subscriptionID string) ([]string, [
 		}
 		containers, err := getStorageAccountContainers(blobClient)
 		if err != nil {
-			return nil, nil, nil, err
+			// rather than return an error, we'll just add a row to the table highlighting the storage account name and that we couldn't get the containers
+
+			tableBody = append(tableBody,
+				[]string{
+					subscriptionID,
+					ptr.ToString(sa.Name),
+					"Unknown",
+					"Authorization Failure"})
+
+			//return nil, nil, nil, nil
 		}
+
 		for containerName, accessType := range containers {
 			tableBody = append(tableBody,
 				[]string{
@@ -165,10 +175,12 @@ func getRelevantStorageAccountData(tenantID, subscriptionID string) ([]string, [
 					accessType})
 		}
 		urls, err := getPublicBlobURLs(blobClient, ptr.ToString(sa.Name), containers)
-		if err != nil {
-			return nil, nil, nil, err
+		if err == nil {
+			continue
+			//return nil, nil, nil, err
 		}
 		publicBlobURLs = append(publicBlobURLs, urls...)
+
 	}
 	return tableHeader, tableBody, publicBlobURLs, nil
 }
@@ -233,7 +245,8 @@ func getPublicBlobURLs(client *azblob.Client, storageAccountName string, contain
 		if accessType == "public" {
 			url, err := getPublicBlobURLsForContainer(client, storageAccountName, containerName)
 			if err != nil {
-				return nil, err
+				//return nil, err
+				continue
 			}
 			publicBlobURLs = append(publicBlobURLs, url...)
 		}

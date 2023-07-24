@@ -15,7 +15,7 @@ func TestAzWhoamiCommand(t *testing.T) {
 
 	// Mocked functions to simulate Azure calls and responses
 	getTenants = mockedGetTenants
-	getSubscriptions = mockedGetSubscriptions
+	GetSubscriptions = mockedGetSubscriptions
 	getResourceGroups = mockedGetResourceGroups
 
 	// Test case parameters
@@ -46,7 +46,7 @@ func TestAzWhoamiCommand(t *testing.T) {
 		globals.RESOURCES_TEST_FILE = s.resourcesTestFile
 		fmt.Println()
 		fmt.Printf("[subtest] %s\n", s.name)
-		AzWhoamiCommand(s.version, s.wrapTableOutput)
+		AzWhoamiCommand(s.version, s.wrapTableOutput, 1, false)
 	}
 }
 

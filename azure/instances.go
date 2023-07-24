@@ -24,19 +24,23 @@ func AzInstancesCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, Version st
 	var body [][]string
 	var outputDirectory, controlMessagePrefix string
 
+	// if AzSubscriptionID != "" {
+	// 	AzSubScriptionName := GetSubscriptionName(AzSubscriptionID)
+	// }
+
 	if AzTenantID != "" && AzSubscriptionID == "" {
 		// ./cloudfox azure instances --tenant TENANT_ID
 		fmt.Printf("[%s][%s] Enumerating VMs for tenant %s\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_INSTANCES_MODULE_NAME), AzTenantID)
-		controlMessagePrefix = fmt.Sprintf("tenant-%s", AzTenantID)
-		outputDirectory = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, globals.AZ_DIR_TEN, AzTenantID)
+		controlMessagePrefix = fmt.Sprintf("%s", AzTenantID)
+		outputDirectory = filepath.Join(ptr.ToString(internal.GetLogDirPath()), globals.AZ_DIR_BASE, fmt.Sprintf("tenant-%s", AzTenantID))
 		header, body = getVMsPerTenantID(AzTenantID)
 
 	} else if AzTenantID == "" && AzSubscriptionID != "" {
 		// ./cloudfox azure instances --subscription SUBSCRIPTION_ID
 		fmt.Printf("[%s][%s] Enumerating VMs for subscription %s\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_INSTANCES_MODULE_NAME), AzSubscriptionID)
-		controlMessagePrefix = fmt.Sprintf("subscription-%s", AzSubscriptionID)
-		outputDirectory = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, globals.AZ_DIR_SUB, AzSubscriptionID)
 		header, body = getVMsPerSubscriptionID(AzSubscriptionID)
+		outputDirectory = filepath.Join(ptr.ToString(internal.GetLogDirPath()), globals.AZ_DIR_BASE, fmt.Sprintf("tenant-%s", ptr.ToString(GetTenantIDPerSubscription(AzSubscriptionID))), ptr.ToString(GetSubscriptionName(AzSubscriptionID)))
+		controlMessagePrefix = ptr.ToString(GetSubscriptionName(AzSubscriptionID))
 
 	} else {
 		// Error: please make a valid flag selection
@@ -74,7 +78,7 @@ func getVMsPerSubscriptionID(AzSubscriptionID string) ([]string, [][]string) {
 	var resultsBody, b [][]string
 	var err error
 
-	for _, s := range getSubscriptions() {
+	for _, s := range GetSubscriptions() {
 		if ptr.ToString(s.SubscriptionID) == AzSubscriptionID {
 			for _, rg := range getResourceGroups(ptr.ToString(s.SubscriptionID)) {
 				resultsHeader, b, err = getComputeRelevantData(s, rg)

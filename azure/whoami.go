@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/resources"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/subscriptions"
@@ -16,12 +17,47 @@ import (
 	"github.com/kyokomi/emoji"
 )
 
-func AzWhoamiCommand(version string, AzWrapTable bool) error {
+func AzWhoamiCommand(version string, AzWrapTable bool, AzVerbosity int, AzWhoamiListSubsOnly bool) error {
+	o := internal.OutputClient{
+		Verbosity:     AzVerbosity,
+		CallingModule: globals.AZ_WHOAMI_MODULE_NAME,
+		Table: internal.TableClient{
+			Wrap: AzWrapTable,
+		},
+	}
+
 	fmt.Printf("[%s][%s] Enumerating Azure CLI sessions...\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", version)), color.CyanString(globals.AZ_WHOAMI_MODULE_NAME))
 	var header []string
 	var body [][]string
-	header, body = getWhoamiRelevantDataPerRG()
-	internal.PrintTableToScreen(header, body, AzWrapTable)
+	o.PrefixIdentifier = "N/A"
+	if AzWhoamiListSubsOnly {
+		header, body = getWhoamiRelevantDataSubsOnly()
+		o.Table.DirectoryName = filepath.Join(
+			globals.CLOUDFOX_BASE_DIRECTORY,
+			globals.AZ_DIR_BASE,
+			"global")
+		o.Table.TableFiles = append(o.Table.TableFiles,
+			internal.TableFile{
+				Header: header,
+				Body:   body,
+				Name:   fmt.Sprintf(globals.AZ_WHOAMI_MODULE_NAME + "-subs-only")})
+
+	} else {
+		header, body = getWhoamiRelevantDataPerRG()
+		o.Table.DirectoryName = filepath.Join(
+			ptr.ToString(internal.GetLogDirPath()),
+			globals.AZ_DIR_BASE,
+			"global")
+		o.Table.TableFiles = append(o.Table.TableFiles,
+			internal.TableFile{
+				Header: header,
+				Body:   body,
+				Name:   globals.AZ_WHOAMI_MODULE_NAME})
+	}
+	//internal.PrintTableToScreen(header, body, AzWrapTable)
+
+	o.WriteFullOutput(o.Table.TableFiles, nil)
+
 	return nil
 }
 
@@ -30,7 +66,7 @@ func getWhoamiRelevantDataPerRG() ([]string, [][]string) {
 	var tableBody [][]string
 
 	for _, t := range getTenants() {
-		for _, s := range getSubscriptions() {
+		for _, s := range GetSubscriptions() {
 			if ptr.ToString(t.TenantID) == ptr.ToString(s.TenantID) {
 				for _, rg := range getResourceGroups(ptr.ToString(s.SubscriptionID)) {
 					tableBody = append(
@@ -50,8 +86,29 @@ func getWhoamiRelevantDataPerRG() ([]string, [][]string) {
 	return tableHead, tableBody
 }
 
+func getWhoamiRelevantDataSubsOnly() ([]string, [][]string) {
+	tableHead := []string{"Tenant ID", "Subscription ID", "Subscription Name", "Domain"}
+	var tableBody [][]string
+
+	for _, t := range getTenants() {
+		for _, s := range GetSubscriptions() {
+			if ptr.ToString(t.TenantID) == ptr.ToString(s.TenantID) {
+				tableBody = append(
+					tableBody,
+					[]string{
+						ptr.ToString(s.TenantID),
+						ptr.ToString(s.SubscriptionID),
+						ptr.ToString(s.DisplayName),
+						ptr.ToString(t.DefaultDomain)})
+			}
+		}
+	}
+
+	return tableHead, tableBody
+}
+
 func GetTenantIDPerSubscription(subscriptionID string) *string {
-	subs := getSubscriptions()
+	subs := GetSubscriptions()
 	for _, s := range subs {
 		if ptr.ToString(s.SubscriptionID) == subscriptionID {
 			return s.TenantID
@@ -61,7 +118,7 @@ func GetTenantIDPerSubscription(subscriptionID string) *string {
 }
 
 func GetSubscriptionsPerTenantID(tenantID string) []subscriptions.Subscription {
-	subs := getSubscriptions()
+	subs := GetSubscriptions()
 	var results []subscriptions.Subscription
 	for _, s := range subs {
 		if ptr.ToString(s.TenantID) == tenantID {
@@ -97,7 +154,7 @@ func mockedGetTenants() []subscriptions.TenantIDDescription {
 	return results
 }
 
-var getSubscriptions = getSubscriptionsOriginal
+var GetSubscriptions = getSubscriptionsOriginal
 
 func getSubscriptionsOriginal() []subscriptions.Subscription {
 	var results []subscriptions.Subscription
