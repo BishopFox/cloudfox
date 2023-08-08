@@ -49,6 +49,17 @@ func GetSubscriptionsClient() subscriptions.Client {
 	return client
 }
 
+func GetgraphRbacClient(tenantID string) graphrbac.DomainsClient {
+	client := graphrbac.NewDomainsClient(tenantID)
+	a, err := getAuthorizer(globals.AZ_GRAPH_ENDPOINT)
+	if err != nil {
+		log.Fatalf("failed to get azure active directory client: %s", err)
+	}
+	client.Authorizer = a
+	client.AddToUserAgent(globals.CLOUDFOX_USER_AGENT)
+	return client
+}
+
 func GetResourceGroupsClient(subscriptionID string) resources.GroupsClient {
 	client := resources.NewGroupsClient(subscriptionID)
 	a, err := getAuthorizer(globals.AZ_RESOURCE_MANAGER_ENDPOINT)

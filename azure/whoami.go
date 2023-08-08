@@ -7,6 +7,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/resources"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/subscriptions"
@@ -17,7 +19,7 @@ import (
 	"github.com/kyokomi/emoji"
 )
 
-func AzWhoamiCommand(version string, AzWrapTable bool, AzVerbosity int, AzWhoamiListSubsOnly bool) error {
+func AzWhoamiCommand(version string, AzWrapTable bool, AzVerbosity int, AzWhoamiListRGsAlso bool) error {
 	o := internal.OutputClient{
 		Verbosity:     AzVerbosity,
 		CallingModule: globals.AZ_WHOAMI_MODULE_NAME,
@@ -30,29 +32,24 @@ func AzWhoamiCommand(version string, AzWrapTable bool, AzVerbosity int, AzWhoami
 	var header []string
 	var body [][]string
 	o.PrefixIdentifier = "N/A"
-	if AzWhoamiListSubsOnly {
+	if !AzWhoamiListRGsAlso {
 		header, body = getWhoamiRelevantDataSubsOnly()
-		o.Table.DirectoryName = filepath.Join(
-			globals.CLOUDFOX_BASE_DIRECTORY,
-			globals.AZ_DIR_BASE,
-			"global")
+		o.Table.DirectoryName = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, "whoami-data")
+		// append timetamp to filename (time from epoch)
 		o.Table.TableFiles = append(o.Table.TableFiles,
 			internal.TableFile{
 				Header: header,
 				Body:   body,
-				Name:   fmt.Sprintf(globals.AZ_WHOAMI_MODULE_NAME + "-subs-only")})
+				Name:   fmt.Sprintf(globals.AZ_WHOAMI_MODULE_NAME+"-subs-only") + "-" + strconv.FormatInt((time.Now().Unix()), 10)})
 
 	} else {
 		header, body = getWhoamiRelevantDataPerRG()
-		o.Table.DirectoryName = filepath.Join(
-			ptr.ToString(internal.GetLogDirPath()),
-			globals.AZ_DIR_BASE,
-			"global")
+		o.Table.DirectoryName = filepath.Join(ptr.ToString(internal.GetLogDirPath()), globals.AZ_DIR_BASE, "whoami-data")
 		o.Table.TableFiles = append(o.Table.TableFiles,
 			internal.TableFile{
 				Header: header,
 				Body:   body,
-				Name:   globals.AZ_WHOAMI_MODULE_NAME})
+				Name:   globals.AZ_WHOAMI_MODULE_NAME + "-" + strconv.FormatInt((time.Now().Unix()), 10)})
 	}
 	//internal.PrintTableToScreen(header, body, AzWrapTable)
 
@@ -62,7 +59,7 @@ func AzWhoamiCommand(version string, AzWrapTable bool, AzVerbosity int, AzWhoami
 }
 
 func getWhoamiRelevantDataPerRG() ([]string, [][]string) {
-	tableHead := []string{"Tenant ID", "Subscription ID", "Subscription Name", "RG Name", "Region", "Domain"}
+	tableHead := []string{"Tenant ID", "Tentant Primary Domain", "Subscription ID", "Subscription Name", "RG Name", "Region"}
 	var tableBody [][]string
 
 	for _, t := range getTenants() {
@@ -73,11 +70,12 @@ func getWhoamiRelevantDataPerRG() ([]string, [][]string) {
 						tableBody,
 						[]string{
 							ptr.ToString(s.TenantID),
+							ptr.ToString(t.DefaultDomain),
 							ptr.ToString(s.SubscriptionID),
 							ptr.ToString(s.DisplayName),
 							ptr.ToString(rg.Name),
 							ptr.ToString(rg.Location),
-							ptr.ToString(t.DefaultDomain)})
+						})
 				}
 			}
 		}
@@ -87,7 +85,7 @@ func getWhoamiRelevantDataPerRG() ([]string, [][]string) {
 }
 
 func getWhoamiRelevantDataSubsOnly() ([]string, [][]string) {
-	tableHead := []string{"Tenant ID", "Subscription ID", "Subscription Name", "Domain"}
+	tableHead := []string{"Tenant ID", "Tenant Primary Domain", "Subscription ID", "Subscription Name"}
 	var tableBody [][]string
 
 	for _, t := range getTenants() {
@@ -97,35 +95,15 @@ func getWhoamiRelevantDataSubsOnly() ([]string, [][]string) {
 					tableBody,
 					[]string{
 						ptr.ToString(s.TenantID),
+						ptr.ToString(t.DefaultDomain),
 						ptr.ToString(s.SubscriptionID),
 						ptr.ToString(s.DisplayName),
-						ptr.ToString(t.DefaultDomain)})
+					})
 			}
 		}
 	}
 
 	return tableHead, tableBody
-}
-
-func GetTenantIDPerSubscription(subscriptionID string) *string {
-	subs := GetSubscriptions()
-	for _, s := range subs {
-		if ptr.ToString(s.SubscriptionID) == subscriptionID {
-			return s.TenantID
-		}
-	}
-	return nil
-}
-
-func GetSubscriptionsPerTenantID(tenantID string) []subscriptions.Subscription {
-	subs := GetSubscriptions()
-	var results []subscriptions.Subscription
-	for _, s := range subs {
-		if ptr.ToString(s.TenantID) == tenantID {
-			results = append(results, s)
-		}
-	}
-	return results
 }
 
 var getTenants = getTenantsOriginal

@@ -25,8 +25,8 @@ var (
 			cmd.Help()
 		},
 	}
-	AzWhoamiListSubsOnly bool
-	AzWhoamiCommand      = &cobra.Command{
+	AzWhoamiListRGsAlso bool
+	AzWhoamiCommand     = &cobra.Command{
 		Use:     "whoami",
 		Aliases: []string{},
 		Short:   "Display available Azure CLI sessions",
@@ -34,7 +34,7 @@ var (
 Display Available Azure CLI Sessions:
 ./cloudfox az whoami`,
 		Run: func(cmd *cobra.Command, args []string) {
-			err := azure.AzWhoamiCommand(cmd.Root().Version, AzWrapTable, AzVerbosity, AzWhoamiListSubsOnly)
+			err := azure.AzWhoamiCommand(cmd.Root().Version, AzWrapTable, AzVerbosity, AzWhoamiListRGsAlso)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -116,7 +116,7 @@ Enumerate storage accounts for a specific subscription:
 
 func init() {
 
-	AzWhoamiCommand.Flags().BoolVarP(&AzWhoamiListSubsOnly, "list-subs-only", "l", false, "Only list subscriptions (not resource groups)")
+	AzWhoamiCommand.Flags().BoolVarP(&AzWhoamiListRGsAlso, "list-rgs", "l", false, "Drill down to the resource group level")
 
 	// Global flags
 	AzCommands.PersistentFlags().StringVarP(

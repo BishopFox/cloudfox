@@ -39,8 +39,8 @@ func AzInstancesCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, Version st
 		// ./cloudfox azure instances --subscription SUBSCRIPTION_ID
 		fmt.Printf("[%s][%s] Enumerating VMs for subscription %s\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_INSTANCES_MODULE_NAME), AzSubscriptionID)
 		header, body = getVMsPerSubscriptionID(AzSubscriptionID)
-		outputDirectory = filepath.Join(ptr.ToString(internal.GetLogDirPath()), globals.AZ_DIR_BASE, fmt.Sprintf("tenant-%s", ptr.ToString(GetTenantIDPerSubscription(AzSubscriptionID))), ptr.ToString(GetSubscriptionName(AzSubscriptionID)))
-		controlMessagePrefix = ptr.ToString(GetSubscriptionName(AzSubscriptionID))
+		outputDirectory = filepath.Join(ptr.ToString(internal.GetLogDirPath()), globals.AZ_DIR_BASE, fmt.Sprintf("tenant-%s", ptr.ToString(GetTenantIDPerSubscription(AzSubscriptionID))), ptr.ToString(GetSubscriptionNameFromID(AzSubscriptionID)))
+		controlMessagePrefix = ptr.ToString(GetSubscriptionNameFromID(AzSubscriptionID))
 
 	} else {
 		// Error: please make a valid flag selection
