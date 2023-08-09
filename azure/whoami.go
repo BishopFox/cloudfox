@@ -33,6 +33,7 @@ func AzWhoamiCommand(version string, AzWrapTable bool, AzVerbosity int, AzWhoami
 	var body [][]string
 	o.PrefixIdentifier = "N/A"
 	if !AzWhoamiListRGsAlso {
+		// cloudfox azure whoami
 		header, body = getWhoamiRelevantDataSubsOnly()
 		o.Table.DirectoryName = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, "whoami-data")
 		// append timetamp to filename (time from epoch)
@@ -43,6 +44,7 @@ func AzWhoamiCommand(version string, AzWrapTable bool, AzVerbosity int, AzWhoami
 				Name:   fmt.Sprintf(globals.AZ_WHOAMI_MODULE_NAME+"-subs-only") + "-" + strconv.FormatInt((time.Now().Unix()), 10)})
 
 	} else {
+		// cloudfox azure whoami --list-rgs
 		header, body = getWhoamiRelevantDataPerRG()
 		o.Table.DirectoryName = filepath.Join(ptr.ToString(internal.GetLogDirPath()), globals.AZ_DIR_BASE, "whoami-data")
 		o.Table.TableFiles = append(o.Table.TableFiles,

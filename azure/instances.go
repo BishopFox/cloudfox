@@ -19,37 +19,72 @@ import (
 	"github.com/kyokomi/emoji"
 )
 
-func AzInstancesCommand(AzTenantID, AzSubscriptionID, AzOutputFormat, Version string, AzVerbosity int, AzWrapTable bool) error {
+func AzInstancesCommand(AzTenantID, AzSubscription, AzOutputFormat, Version string, AzVerbosity int, AzWrapTable bool) error {
+	// setup logging client
+	o := internal.OutputClient{
+		Verbosity:     AzVerbosity,
+		CallingModule: globals.AZ_INSTANCES_MODULE_NAME,
+		Table: internal.TableClient{
+			Wrap: AzWrapTable,
+		},
+	}
+
+	// set up table vars
 	var header []string
 	var body [][]string
-	var outputDirectory, controlMessagePrefix string
 
-	// if AzSubscriptionID != "" {
-	// 	AzSubScriptionName := GetSubscriptionName(AzSubscriptionID)
-	// }
+	if AzTenantID != "" && AzSubscription == "" {
+		// cloudfox azure instances --tenant [TENANT_ID | PRIMARY_DOMAIN]
 
-	if AzTenantID != "" && AzSubscriptionID == "" {
-		// ./cloudfox azure instances --tenant TENANT_ID
-		fmt.Printf("[%s][%s] Enumerating VMs for tenant %s\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_INSTANCES_MODULE_NAME), AzTenantID)
-		controlMessagePrefix = fmt.Sprintf("%s", AzTenantID)
-		outputDirectory = filepath.Join(ptr.ToString(internal.GetLogDirPath()), globals.AZ_DIR_BASE, fmt.Sprintf("tenant-%s", AzTenantID))
-		header, body = getVMsPerTenantID(AzTenantID)
+		tenantInfo := populateTenant(AzTenantID)
 
-	} else if AzTenantID == "" && AzSubscriptionID != "" {
-		// ./cloudfox azure instances --subscription SUBSCRIPTION_ID
-		fmt.Printf("[%s][%s] Enumerating VMs for subscription %s\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_INSTANCES_MODULE_NAME), AzSubscriptionID)
-		header, body = getVMsPerSubscriptionID(AzSubscriptionID)
-		outputDirectory = filepath.Join(ptr.ToString(internal.GetLogDirPath()), globals.AZ_DIR_BASE, fmt.Sprintf("tenant-%s", ptr.ToString(GetTenantIDPerSubscription(AzSubscriptionID))), ptr.ToString(GetSubscriptionNameFromID(AzSubscriptionID)))
-		controlMessagePrefix = ptr.ToString(GetSubscriptionNameFromID(AzSubscriptionID))
+		fmt.Printf("[%s][%s] Enumerating VMs for tenant %s\n",
+			color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_INSTANCES_MODULE_NAME),
+			fmt.Sprintf("%s (%s)", ptr.ToString(tenantInfo.DefaultDomain), ptr.ToString(tenantInfo.ID)))
+
+		o.PrefixIdentifier = ptr.ToString(tenantInfo.DefaultDomain)
+		o.Table.DirectoryName = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain))
+
+		// populate the table data
+		header, body = getVMsPerTenantID(ptr.ToString(tenantInfo.ID))
+
+		o.Table.TableFiles = append(o.Table.TableFiles,
+			internal.TableFile{
+				Header: header,
+				Body:   body,
+				Name:   fmt.Sprintf(globals.AZ_INSTANCES_MODULE_NAME)})
+
+	} else if AzTenantID == "" && AzSubscription != "" {
+		// cloudfox azure instances --subscription [SUBSCRIPTION_ID | SUBSCRIPTION_NAME]
+		var AzSubscriptionInfo SubsriptionInfo
+		tenantID := ptr.ToString(GetTenantIDPerSubscription(AzSubscription))
+		tenantInfo := populateTenant(tenantID)
+		AzSubscriptionInfo = PopulateSubsriptionType(AzSubscription)
+		o.PrefixIdentifier = ptr.ToString(GetSubscriptionNameFromID(AzSubscriptionInfo.Name))
+		o.Table.DirectoryName = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), AzSubscriptionInfo.Name)
+
+		fmt.Printf("[%s][%s] Enumerating VMs for subscription %s\n",
+			color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_INSTANCES_MODULE_NAME),
+			fmt.Sprintf("%s (%s)", AzSubscriptionInfo.Name, AzSubscriptionInfo.ID))
+
+		// populate the table data
+		header, body = getVMsPerSubscriptionID(AzSubscriptionInfo.ID)
+
+		o.Table.TableFiles = append(o.Table.TableFiles,
+			internal.TableFile{
+				Header: header,
+				Body:   body,
+				Name:   fmt.Sprintf(globals.AZ_INSTANCES_MODULE_NAME)})
 
 	} else {
 		// Error: please make a valid flag selection
 		fmt.Println("Please enter a valid input with a valid flag. Use --help for info.")
 	}
 
-	fileNameWithoutExtension := globals.AZ_INSTANCES_MODULE_NAME
 	if body != nil {
-		internal.OutputSelector(AzVerbosity, AzOutputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_INSTANCES_MODULE_NAME, AzWrapTable, controlMessagePrefix)
+		//internal.OutputSelector(AzVerbosity, AzOutputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_INSTANCES_MODULE_NAME, AzWrapTable, controlMessagePrefix)
+		o.WriteFullOutput(o.Table.TableFiles, nil)
+
 	}
 
 	return nil
@@ -94,10 +129,11 @@ func getVMsPerSubscriptionID(AzSubscriptionID string) ([]string, [][]string) {
 }
 
 func getComputeRelevantData(sub subscriptions.Subscription, rg resources.Group) ([]string, [][]string, error) {
-	header := []string{"Subscription ID", "VM Name", "VM Location", "Private IPs", "Public IPs", "Admin Username", "Resource Group Name"}
+	header := []string{"Subscription Name", "VM Name", "VM Location", "Private IPs", "Public IPs", "Admin Username", "Resource Group Name"}
 	var body [][]string
 
 	subscriptionID := ptr.ToString(sub.SubscriptionID)
+	subscriptionName := ptr.ToString(sub.DisplayName)
 	resourceGroupName := ptr.ToString(rg.Name)
 
 	vms, err := getComputeVMsPerResourceGroup(subscriptionID, resourceGroupName)
@@ -115,7 +151,7 @@ func getComputeRelevantData(sub subscriptions.Subscription, rg resources.Group) 
 		body = append(
 			body,
 			[]string{
-				subscriptionID,
+				subscriptionName,
 				ptr.ToString(vm.Name),
 				ptr.ToString(vm.Location),
 				strings.Join(privateIPs, "\n"),

@@ -12,7 +12,6 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/authorization/mgmt/authorization"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/graphrbac/graphrbac"
-	"github.com/Azure/go-autorest/autorest/azure/auth"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/smithy-go/ptr"
@@ -21,74 +20,76 @@ import (
 )
 
 func AzRBACCommand(AzTenantID, AzSubscription, AzOutputFormat, Version string, AzVerbosity int, AzWrapTable bool) error {
+	// setup logging client
+	o := internal.OutputClient{
+		Verbosity:     AzVerbosity,
+		CallingModule: globals.AZ_RBAC_MODULE_NAME,
+		Table: internal.TableClient{
+			Wrap: AzWrapTable,
+		},
+	}
+	// initiate command specific client
 	var c CloudFoxRBACclient
+	// set up table vars
 	var header []string
 	var body [][]string
-	var outputDirectory, controlMessagePrefix string
 
-	var AzSubscriptionID string
-	var AzSubccriptionName string
 	var AzSubscriptionInfo SubsriptionInfo
 
 	if AzTenantID != "" && AzSubscription == "" {
-
-		tenantInfo := populateTenant(AzTenantID)
+		// cloudfox azure rbac --tenant [TENANT_ID | PRIMARY_DOMAIN]
 
 		var err error
+		tenantInfo := populateTenant(AzTenantID)
 		defaultDomain, err := GetDefaultDomainFromTenantID(ptr.ToString(tenantInfo.ID))
-		// ./cloudfox azure rbac --tenant TENANT_ID
-		fmt.Printf("[%s][%s] Enumerating RBAC permissions for tenant %s\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_RBAC_MODULE_NAME), fmt.Sprintf("%s (%s)", ptr.ToString(tenantInfo.DefaultDomain), ptr.ToString(tenantInfo.ID)))
-		controlMessagePrefix = fmt.Sprintf("%s", ptr.ToString(tenantInfo.ID))
-		outputDirectory = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, defaultDomain)
+		if err != nil {
+			return err
+		}
+		o.PrefixIdentifier = ptr.ToString(tenantInfo.DefaultDomain)
+		o.Table.DirectoryName = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, defaultDomain)
+
+		fmt.Printf("[%s][%s] Enumerating RBAC permissions for tenant %s\n",
+			color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_RBAC_MODULE_NAME),
+			fmt.Sprintf("%s (%s)", ptr.ToString(tenantInfo.DefaultDomain), ptr.ToString(tenantInfo.ID)))
 
 		header, body, err = getRBACperTenant(ptr.ToString(tenantInfo.ID), c)
 		if err != nil {
 			return err
 		}
-	} else if AzTenantID == "" && AzSubscription != "" {
+		o.Table.TableFiles = append(o.Table.TableFiles,
+			internal.TableFile{
+				Header: header,
+				Body:   body,
+				Name:   fmt.Sprintf(globals.AZ_RBAC_MODULE_NAME)})
 
+	} else if AzTenantID == "" && AzSubscription != "" {
+		// cloudfox azure rbac --subscription [SUBSCRIPTION_ID | SUBSCRIPTION_NAME]
 		tenantID := ptr.ToString(GetTenantIDPerSubscription(AzSubscription))
 		tenantInfo := populateTenant(tenantID)
-		defaultDomain := ptr.ToString(tenantInfo.DefaultDomain)
-
 		AzSubscriptionInfo = PopulateSubsriptionType(AzSubscription)
-		AzSubscriptionID = AzSubscriptionInfo.ID
-		AzSubccriptionName = AzSubscriptionInfo.Name
+		o.PrefixIdentifier = ptr.ToString(GetSubscriptionNameFromID(AzSubscriptionInfo.Name))
+		o.Table.DirectoryName = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), AzSubscriptionInfo.Name)
 
-		// ./cloudfox azure rbac --subscription SUBSCRIPTION_ID
-		fmt.Printf("[%s][%s] Enumerating RBAC permissions for subscription %s\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_RBAC_MODULE_NAME), fmt.Sprintf("%s (%s)", AzSubccriptionName, AzSubscriptionID))
-		header, body = getRBACperSubscription(ptr.ToString(tenantInfo.ID), AzSubscriptionID, c)
-		outputDirectory = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, defaultDomain, AzSubccriptionName)
-		controlMessagePrefix = ptr.ToString(GetSubscriptionNameFromID(AzSubccriptionName))
+		fmt.Printf("[%s][%s] Enumerating RBAC permissions for subscription %s\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_RBAC_MODULE_NAME),
+			fmt.Sprintf("%s (%s)", AzSubscriptionInfo.Name, AzSubscriptionInfo.ID))
+		header, body = getRBACperSubscription(ptr.ToString(tenantInfo.ID), AzSubscriptionInfo.ID, c)
+		o.Table.TableFiles = append(o.Table.TableFiles,
+			internal.TableFile{
+				Header: header,
+				Body:   body,
+				Name:   fmt.Sprintf(globals.AZ_RBAC_MODULE_NAME)})
 
 	} else {
 		// Error: please make a valid flag selection
 		fmt.Println("Please enter a valid input with a valid flag. Use --help for info.")
 	}
 
-	fileNameWithoutExtension := globals.AZ_RBAC_MODULE_NAME
-
 	if body != nil {
-		internal.OutputSelector(AzVerbosity, AzOutputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_RBAC_MODULE_NAME, AzWrapTable, controlMessagePrefix)
+		//internal.OutputSelector(AzVerbosity, AzOutputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_RBAC_MODULE_NAME, AzWrapTable, controlMessagePrefix)
+		o.WriteFullOutput(o.Table.TableFiles, nil)
+
 	}
 	return nil
-}
-
-func getTenantDisplayName(AzTenantID string) (string, error) {
-	var tenantDisplayName string
-	authorizer, err := auth.NewAuthorizerFromEnvironment()
-	if err != nil {
-		return "", err
-	}
-	graphClient := graphrbac.NewUsersClient(AzTenantID)
-	graphClient.Authorizer = authorizer
-	ctx := context.Background()
-	tenant, err := graphClient.Get(ctx, AzTenantID)
-	if err != nil {
-		return "", err
-	}
-	tenantDisplayName = ptr.ToString(tenant.DisplayName)
-	return tenantDisplayName, nil
 }
 
 func getRBACperTenant(AzTenantID string, c CloudFoxRBACclient) ([]string, [][]string, error) {
