@@ -19,7 +19,7 @@ import (
 	"github.com/kyokomi/emoji"
 )
 
-func AzWhoamiCommand(version string, AzWrapTable bool, AzVerbosity int, AzWhoamiListRGsAlso bool) error {
+func AzWhoamiCommand(AzOutputDirectory, version string, AzWrapTable bool, AzVerbosity int, AzWhoamiListRGsAlso bool) error {
 	o := internal.OutputClient{
 		Verbosity:     AzVerbosity,
 		CallingModule: globals.AZ_WHOAMI_MODULE_NAME,
@@ -35,7 +35,7 @@ func AzWhoamiCommand(version string, AzWrapTable bool, AzVerbosity int, AzWhoami
 	if !AzWhoamiListRGsAlso {
 		// cloudfox azure whoami
 		header, body = getWhoamiRelevantDataSubsOnly()
-		o.Table.DirectoryName = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, "whoami-data")
+		o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, "whoami-data")
 		// append timetamp to filename (time from epoch)
 		o.Table.TableFiles = append(o.Table.TableFiles,
 			internal.TableFile{

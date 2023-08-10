@@ -21,18 +21,21 @@ func TestAzInstancesCommand(t *testing.T) {
 		azSubscriptionID  string
 		azVerbosity       int
 		azOutputFormat    string
+		azOutputDirectory string
 		version           string
 		resourcesTestFile string
 		vmsTestFile       string
 		nicsTestFile      string
 		publicIPsTestFile string
 		wrapTableOutput   bool
+		azMergedTable     bool
 	}{
 		{
 			name:              "./cloudfox azure instances --tenant 11111111-1111-1111-1111-11111111",
 			azTenantID:        "11111111-1111-1111-1111-11111111",
 			azSubscriptionID:  "",
 			azVerbosity:       2,
+			azOutputDirectory: "~/.cloudfox",
 			azOutputFormat:    "all",
 			version:           "DEV",
 			resourcesTestFile: "./test-data/resources.json",
@@ -40,12 +43,14 @@ func TestAzInstancesCommand(t *testing.T) {
 			nicsTestFile:      "./test-data/nics.json",
 			publicIPsTestFile: "./test-data/public-ips.json",
 			wrapTableOutput:   false,
+			azMergedTable:     false,
 		},
 		{
 			name:              "./cloudfox azure instances --subscription AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
 			azTenantID:        "",
 			azSubscriptionID:  "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
 			azVerbosity:       2,
+			azOutputDirectory: "~/.cloudfox",
 			azOutputFormat:    "all",
 			version:           "DEV",
 			resourcesTestFile: "./test-data/resources.json",
@@ -53,17 +58,20 @@ func TestAzInstancesCommand(t *testing.T) {
 			nicsTestFile:      "./test-data/nics.json",
 			publicIPsTestFile: "./test-data/public-ips.json",
 			wrapTableOutput:   false,
+			azMergedTable:     false,
 		},
 		{
 			name:              "./cloudfox azure instances",
 			azVerbosity:       2,
 			azOutputFormat:    "all",
+			azOutputDirectory: "~/.cloudfox",
 			version:           "DEV",
 			resourcesTestFile: "./test-data/resources.json",
 			vmsTestFile:       "./test-data/vms.json",
 			nicsTestFile:      "./test-data/nics.json",
 			publicIPsTestFile: "./test-data/public-ips.json",
 			wrapTableOutput:   false,
+			azMergedTable:     false,
 		},
 	}
 
@@ -82,7 +90,7 @@ func TestAzInstancesCommand(t *testing.T) {
 		globals.NICS_TEST_FILE = s.nicsTestFile
 		globals.PUBLIC_IPS_TEST_FILE = s.publicIPsTestFile
 
-		err := AzInstancesCommand(s.azTenantID, s.azSubscriptionID, s.azOutputFormat, s.version, 2, s.wrapTableOutput)
+		err := AzInstancesCommand(s.azTenantID, s.azSubscriptionID, s.azOutputFormat, s.azOutputDirectory, s.version, 2, s.wrapTableOutput, s.azMergedTable)
 		if err != nil {
 			log.Fatalf(err.Error())
 		}

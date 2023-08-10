@@ -19,7 +19,7 @@ import (
 	"github.com/kyokomi/emoji"
 )
 
-func AzRBACCommand(AzTenantID, AzSubscription, AzOutputFormat, Version string, AzVerbosity int, AzWrapTable bool) error {
+func AzRBACCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, Version string, AzVerbosity int, AzWrapTable bool, AzMergedTable bool) error {
 	// setup logging client
 	o := internal.OutputClient{
 		Verbosity:     AzVerbosity,
@@ -46,7 +46,7 @@ func AzRBACCommand(AzTenantID, AzSubscription, AzOutputFormat, Version string, A
 			return err
 		}
 		o.PrefixIdentifier = ptr.ToString(tenantInfo.DefaultDomain)
-		o.Table.DirectoryName = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, defaultDomain)
+		o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, defaultDomain)
 
 		fmt.Printf("[%s][%s] Enumerating RBAC permissions for tenant %s\n",
 			color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_RBAC_MODULE_NAME),
@@ -67,8 +67,8 @@ func AzRBACCommand(AzTenantID, AzSubscription, AzOutputFormat, Version string, A
 		tenantID := ptr.ToString(GetTenantIDPerSubscription(AzSubscription))
 		tenantInfo := populateTenant(tenantID)
 		AzSubscriptionInfo = PopulateSubsriptionType(AzSubscription)
-		o.PrefixIdentifier = ptr.ToString(GetSubscriptionNameFromID(AzSubscriptionInfo.Name))
-		o.Table.DirectoryName = filepath.Join(globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), AzSubscriptionInfo.Name)
+		o.PrefixIdentifier = AzSubscriptionInfo.Name
+		o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), AzSubscriptionInfo.Name)
 
 		fmt.Printf("[%s][%s] Enumerating RBAC permissions for subscription %s\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_RBAC_MODULE_NAME),
 			fmt.Sprintf("%s (%s)", AzSubscriptionInfo.Name, AzSubscriptionInfo.ID))

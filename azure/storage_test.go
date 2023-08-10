@@ -21,42 +21,50 @@ func TestAzStorageCommand(t *testing.T) {
 		AzTenantID              string
 		AzSubscriptionID        string
 		AzOutputFormat          string
+		azOutputDirectory       string
 		AzVerbosity             int
 		resourcesTestFile       string
 		storageAccountsTestFile string
 		version                 string
 		wrapTableOutput         bool
+		azMergedTable           bool
 	}{
 		{
 			name:                    "./cloudfox az storage --tenant 11111111-1111-1111-1111-11111111",
 			AzTenantID:              "11111111-1111-1111-1111-11111111",
 			AzSubscriptionID:        "",
 			AzOutputFormat:          "all",
+			azOutputDirectory:       "~/.cloudfox",
 			AzVerbosity:             2,
 			resourcesTestFile:       "./test-data/resources.json",
 			storageAccountsTestFile: "./test-data/storage-accounts.json",
 			version:                 "DEV",
 			wrapTableOutput:         false,
+			azMergedTable:           false,
 		},
 		{
 			name:                    "./cloudfox az storage --subscription BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB",
 			AzTenantID:              "",
 			AzSubscriptionID:        "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBB",
 			AzOutputFormat:          "all",
+			azOutputDirectory:       "~/.cloudfox",
 			AzVerbosity:             2,
 			resourcesTestFile:       "./test-data/resources.json",
 			storageAccountsTestFile: "./test-data/storage-accounts.json",
 			version:                 "DEV",
 			wrapTableOutput:         false,
+			azMergedTable:           false,
 		},
 		{
 			name:                    "./cloudfox az storage",
 			AzOutputFormat:          "all",
+			azOutputDirectory:       "~/.cloudfox",
 			AzVerbosity:             2,
 			resourcesTestFile:       "./test-data/resources.json",
 			storageAccountsTestFile: "./test-data/storage-accounts.json",
 			version:                 "DEV",
 			wrapTableOutput:         false,
+			azMergedTable:           false,
 		},
 	}
 	internal.MockFileSystem(true)
@@ -72,7 +80,7 @@ func TestAzStorageCommand(t *testing.T) {
 		globals.RESOURCES_TEST_FILE = s.resourcesTestFile
 		globals.STORAGE_ACCOUNTS_TEST_FILE = s.storageAccountsTestFile
 
-		err := AzStorageCommand(s.AzTenantID, s.AzSubscriptionID, s.AzOutputFormat, s.version, s.AzVerbosity, s.wrapTableOutput)
+		err := AzStorageCommand(s.AzTenantID, s.AzSubscriptionID, s.AzOutputFormat, s.azOutputDirectory, s.version, s.AzVerbosity, s.wrapTableOutput, s.azMergedTable)
 		if err != nil {
 			log.Fatal(err)
 		}

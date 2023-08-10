@@ -26,6 +26,7 @@ func TestAzWhoamiCommand(t *testing.T) {
 		azExtendedFilter  bool
 		version           string
 		wrapTableOutput   bool
+		azOutputDirectory string
 	}{
 		{
 			name:              "./cloudfox azure whoami",
@@ -33,6 +34,7 @@ func TestAzWhoamiCommand(t *testing.T) {
 			azExtendedFilter:  false,
 			version:           "DEV",
 			wrapTableOutput:   false,
+			azOutputDirectory: "~/.cloudfox",
 		},
 		{
 			name:              "./cloudfox azure whoami --extended",
@@ -40,13 +42,14 @@ func TestAzWhoamiCommand(t *testing.T) {
 			azExtendedFilter:  true,
 			version:           "DEV",
 			wrapTableOutput:   true,
+			azOutputDirectory: "~/.cloudfox",
 		},
 	}
 	for _, s := range subtests {
 		globals.RESOURCES_TEST_FILE = s.resourcesTestFile
 		fmt.Println()
 		fmt.Printf("[subtest] %s\n", s.name)
-		AzWhoamiCommand(s.version, s.wrapTableOutput, 1, false)
+		AzWhoamiCommand(s.azOutputDirectory, s.version, s.wrapTableOutput, 1, false)
 	}
 }
 
