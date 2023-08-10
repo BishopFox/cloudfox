@@ -46,7 +46,7 @@ func AzInventoryCommand(AzTenantID, AzSubscriptionID, AzOutputDirectory, Version
 				fmt.Sprintf("%s (%s)", ptr.ToString(tenantInfo.DefaultDomain), ptr.ToString(tenantInfo.ID)))
 
 			o.PrefixIdentifier = ptr.ToString(tenantInfo.DefaultDomain)
-			o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain))
+			o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), "1-tenant-level")
 
 			//populate the table data
 			header, body, err := getInventoryInfoPerTenant(ptr.ToString(tenantInfo.ID))
@@ -72,30 +72,7 @@ func AzInventoryCommand(AzTenantID, AzSubscriptionID, AzOutputDirectory, Version
 	} else if AzTenantID == "" && AzSubscriptionID != "" {
 
 		// ./cloudfox azure inventory --subscription [SUBSCRIPTION_ID | SUBSCRIPTION_NAME]
-		fmt.Printf(
-			"[%s][%s] Gathering inventory for subscription %s\n",
-			color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)),
-			color.CyanString(o.CallingModule),
-			AzSubscriptionID)
-
-		AzTenantID := ptr.ToString(GetTenantIDPerSubscription(AzSubscriptionID))
-
-		header, body, err := getInventoryInfoPerSubscription(AzTenantID, AzSubscriptionID)
-		if err != nil {
-			return err
-		}
-
-		o.Table.TableFiles = append(o.Table.TableFiles,
-			internal.TableFile{
-				Header: header,
-				Body:   body,
-				Name:   globals.AZ_INVENTORY_MODULE_NAME})
-		o.PrefixIdentifier = fmt.Sprintf("subscription-%s", AzSubscriptionID)
-		o.Table.DirectoryName = filepath.Join(
-			ptr.ToString(internal.GetLogDirPath()),
-			globals.AZ_DIR_BASE,
-			"subscriptions",
-			AzSubscriptionID)
+		runInventoryCommandForSingleSubscription(AzSubscriptionID, AzOutputDirectory, AzVerbosity, AzWrapTable, Version)
 
 	} else {
 		// Error: please make a valid flag selection

@@ -42,7 +42,7 @@ func AzInstancesCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDire
 				fmt.Sprintf("%s (%s)", ptr.ToString(tenantInfo.DefaultDomain), ptr.ToString(tenantInfo.ID)))
 
 			o.PrefixIdentifier = ptr.ToString(tenantInfo.DefaultDomain)
-			o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain))
+			o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), "1-tenant-level")
 
 			// populate the table data
 			header, body = getVMsPerTenantID(ptr.ToString(tenantInfo.ID))

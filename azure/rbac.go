@@ -41,12 +41,11 @@ func AzRBACCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory
 
 		var err error
 		tenantInfo := populateTenant(AzTenantID)
-		defaultDomain, err := GetDefaultDomainFromTenantID(ptr.ToString(tenantInfo.ID))
 		if err != nil {
 			return err
 		}
 		o.PrefixIdentifier = ptr.ToString(tenantInfo.DefaultDomain)
-		o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, defaultDomain)
+		o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), "1-tenant-level")
 
 		fmt.Printf("[%s][%s] Enumerating RBAC permissions for tenant %s\n",
 			color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_RBAC_MODULE_NAME),
