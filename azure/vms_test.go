@@ -9,9 +9,9 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 )
 
-func TestAzInstancesCommand(t *testing.T) {
+func TestAzVMsCommand(t *testing.T) {
 	fmt.Println()
-	fmt.Println("[test case] Azure Instances Command")
+	fmt.Println("[test case] Azure vms Command")
 
 	// Test case parameters
 	internal.MockFileSystem(true)
@@ -31,7 +31,7 @@ func TestAzInstancesCommand(t *testing.T) {
 		azMergedTable     bool
 	}{
 		{
-			name:              "./cloudfox azure instances --tenant 11111111-1111-1111-1111-11111111",
+			name:              "./cloudfox azure vms --tenant 11111111-1111-1111-1111-11111111",
 			azTenantID:        "11111111-1111-1111-1111-11111111",
 			azSubscriptionID:  "",
 			azVerbosity:       2,
@@ -46,7 +46,7 @@ func TestAzInstancesCommand(t *testing.T) {
 			azMergedTable:     false,
 		},
 		{
-			name:              "./cloudfox azure instances --subscription AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
+			name:              "./cloudfox azure vms --subscription AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
 			azTenantID:        "",
 			azSubscriptionID:  "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
 			azVerbosity:       2,
@@ -61,7 +61,7 @@ func TestAzInstancesCommand(t *testing.T) {
 			azMergedTable:     false,
 		},
 		{
-			name:              "./cloudfox azure instances",
+			name:              "./cloudfox azure vms",
 			azVerbosity:       2,
 			azOutputFormat:    "all",
 			azOutputDirectory: "~/.cloudfox",
@@ -90,7 +90,7 @@ func TestAzInstancesCommand(t *testing.T) {
 		globals.NICS_TEST_FILE = s.nicsTestFile
 		globals.PUBLIC_IPS_TEST_FILE = s.publicIPsTestFile
 
-		err := AzInstancesCommand(s.azTenantID, s.azSubscriptionID, s.azOutputFormat, s.azOutputDirectory, s.version, 2, s.wrapTableOutput, s.azMergedTable)
+		err := AzVMsCommand(s.azTenantID, s.azSubscriptionID, s.azOutputFormat, s.azOutputDirectory, s.version, 2, s.wrapTableOutput, s.azMergedTable)
 		if err != nil {
 			log.Fatalf(err.Error())
 		}

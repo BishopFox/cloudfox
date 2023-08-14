@@ -78,18 +78,18 @@ Enumerate role assignments for a specific subscription:
 			}
 		},
 	}
-	AzInstancesCommand = &cobra.Command{
-		Use:     "instances",
-		Aliases: []string{},
-		Short:   "Enumerates Azure Compute instances",
+	AzVMsCommand = &cobra.Command{
+		Use:     "vms",
+		Aliases: []string{"vms", "virtualmachines"},
+		Short:   "Enumerates Azure Compute virtual machines",
 		Long: `
 Enumerate VMs for a specific tenant:
-./cloudfox az instances --tenant TENANT_ID
+./cloudfox az vms --tenant TENANT_ID
 
 Enumerate VMs for a specific subscription:
-./cloudfox az instances --subscription SUBSCRIPTION_ID`,
+./cloudfox az vms --subscription SUBSCRIPTION_ID`,
 		Run: func(cmd *cobra.Command, args []string) {
-			err := azure.AzInstancesCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
+			err := azure.AzVMsCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -132,7 +132,7 @@ func init() {
 	AzCommands.AddCommand(
 		AzWhoamiCommand,
 		AzRBACCommand,
-		AzInstancesCommand,
+		AzVMsCommand,
 		AzStorageCommand,
 		AzInventoryCommand)
 
