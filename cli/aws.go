@@ -95,6 +95,17 @@ var (
 		PostRun: awsPostRun,
 	}
 
+	ApiGwCommand = &cobra.Command{
+		Use:     "api-gw",
+		Aliases: []string{"gw", "gateways"},
+		Short:   "Enumerate API gateways. Get a loot file with formatted cURL requests.",
+		Long: "\nUse case examples:\n" +
+			os.Args[0] + " aws api-gw --profile readonly_profile",
+		PreRun:  awsPreRun,
+		Run:     runApiGwCommand,
+		PostRun: awsPostRun,
+	}
+
 	BucketsCommand = &cobra.Command{
 		Use:     "buckets",
 		Aliases: []string{"bucket"},
@@ -588,6 +599,26 @@ func runAccessKeysCommand(cmd *cobra.Command, args []string) {
 			WrapTable:  AWSWrapTable,
 		}
 		m.PrintAccessKeys(AccessKeysFilter, AWSOutputFormat, AWSOutputDirectory, Verbosity)
+	}
+}
+
+func runApiGwCommand(cmd *cobra.Command, args []string) {
+	for _, profile := range AWSProfiles {
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
+		if err != nil {
+			continue
+		}
+		m := aws.ApiGwModule{
+			APIGatewayClient:   apigateway.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			APIGatewayv2Client: apigatewayv2.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+
+			Caller:     *caller,
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile: profile,
+			Goroutines: Goroutines,
+			WrapTable:  AWSWrapTable,
+		}
+		m.PrintApiGws(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -1396,6 +1427,19 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 
 		endpoints.PrintEndpoints(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
+		gateways := aws.ApiGwModule{
+			APIGatewayv2Client: apiGatewayv2Client,
+			APIGatewayClient:   apiGatewayClient,
+
+			Caller:     *caller,
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile: profile,
+			Goroutines: Goroutines,
+			WrapTable:  AWSWrapTable,
+		}
+
+		gateways.PrintApiGws(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+
 		databases := aws.DatabasesModule{
 			RDSClient:      rdsClient,
 			RedshiftClient: redshiftClient,
@@ -1728,6 +1772,7 @@ func init() {
 
 	AWSCommands.AddCommand(
 		AllChecksCommand,
+		ApiGwCommand,
 		RoleTrustCommand,
 		AccessKeysCommand,
 		InstancesCommand,
