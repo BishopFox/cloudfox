@@ -13,10 +13,15 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/apigateway"
 	"github.com/aws/aws-sdk-go-v2/service/apigatewayv2"
 	"github.com/aws/aws-sdk-go-v2/service/apprunner"
+	"github.com/aws/aws-sdk-go-v2/service/athena"
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
 	"github.com/aws/aws-sdk-go-v2/service/cloudtrail"
+	"github.com/aws/aws-sdk-go-v2/service/codeartifact"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
+	"github.com/aws/aws-sdk-go-v2/service/codecommit"
+	"github.com/aws/aws-sdk-go-v2/service/codedeploy"
+	"github.com/aws/aws-sdk-go-v2/service/datapipeline"
 	"github.com/aws/aws-sdk-go-v2/service/docdb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -25,12 +30,15 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/efs"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/elasticache"
+	"github.com/aws/aws-sdk-go-v2/service/elasticbeanstalk"
 	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancing"
 	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
+	"github.com/aws/aws-sdk-go-v2/service/emr"
 	"github.com/aws/aws-sdk-go-v2/service/fsx"
 	"github.com/aws/aws-sdk-go-v2/service/glue"
 	"github.com/aws/aws-sdk-go-v2/service/grafana"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
+	"github.com/aws/aws-sdk-go-v2/service/kinesis"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/lightsail"
 	"github.com/aws/aws-sdk-go-v2/service/mq"
@@ -882,33 +890,44 @@ func runInventoryCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.Inventory2Module{
-			APIGatewayClient:     apigateway.NewFromConfig(AWSConfig),
-			APIGatewayv2Client:   apigatewayv2.NewFromConfig(AWSConfig),
-			AppRunnerClient:      apprunner.NewFromConfig(AWSConfig),
-			CloudFormationClient: cloudformation.NewFromConfig(AWSConfig),
-			CloudfrontClient:     cloudfront.NewFromConfig(AWSConfig),
-			CodeBuildClient:      codebuild.NewFromConfig(AWSConfig),
-			DynamoDBClient:       dynamodb.NewFromConfig(AWSConfig),
-			EC2Client:            ec2.NewFromConfig(AWSConfig),
-			ECSClient:            ecs.NewFromConfig(AWSConfig),
-			EKSClient:            eks.NewFromConfig(AWSConfig),
-			ELBClient:            elasticloadbalancing.NewFromConfig(AWSConfig),
-			ELBv2Client:          elasticloadbalancingv2.NewFromConfig(AWSConfig),
-			GlueClient:           glue.NewFromConfig(AWSConfig),
-			GrafanaClient:        grafana.NewFromConfig(AWSConfig),
-			IAMClient:            iam.NewFromConfig(AWSConfig),
-			LambdaClient:         lambda.NewFromConfig(AWSConfig),
-			LightsailClient:      lightsail.NewFromConfig(AWSConfig),
-			MQClient:             mq.NewFromConfig(AWSConfig),
-			OpenSearchClient:     opensearch.NewFromConfig(AWSConfig),
-			RDSClient:            rds.NewFromConfig(AWSConfig),
-			RedshiftClient:       redshift.NewFromConfig(AWSConfig),
-			S3Client:             s3.NewFromConfig(AWSConfig),
-			SecretsManagerClient: secretsmanager.NewFromConfig(AWSConfig),
-			SNSClient:            sns.NewFromConfig(AWSConfig),
-			SQSClient:            sqs.NewFromConfig(AWSConfig),
-			SSMClient:            ssm.NewFromConfig(AWSConfig),
-			StepFunctionClient:   sfn.NewFromConfig(AWSConfig),
+			APIGatewayClient:       apigateway.NewFromConfig(AWSConfig),
+			APIGatewayv2Client:     apigatewayv2.NewFromConfig(AWSConfig),
+			AppRunnerClient:        apprunner.NewFromConfig(AWSConfig),
+			AthenaClient:           athena.NewFromConfig(AWSConfig),
+			CloudFormationClient:   cloudformation.NewFromConfig(AWSConfig),
+			CloudfrontClient:       cloudfront.NewFromConfig(AWSConfig),
+			CodeArtifactClient:     codeartifact.NewFromConfig(AWSConfig),
+			CodeBuildClient:        codebuild.NewFromConfig(AWSConfig),
+			CodeCommitClient:       codecommit.NewFromConfig(AWSConfig),
+			CodeDeployClient:       codedeploy.NewFromConfig(AWSConfig),
+			DataPipelineClient:     datapipeline.NewFromConfig(AWSConfig),
+			DynamoDBClient:         dynamodb.NewFromConfig(AWSConfig),
+			EC2Client:              ec2.NewFromConfig(AWSConfig),
+			ECSClient:              ecs.NewFromConfig(AWSConfig),
+			ECRClient:              ecr.NewFromConfig(AWSConfig),
+			EKSClient:              eks.NewFromConfig(AWSConfig),
+			ELBClient:              elasticloadbalancing.NewFromConfig(AWSConfig),
+			ELBv2Client:            elasticloadbalancingv2.NewFromConfig(AWSConfig),
+			ElasticacheClient:      elasticache.NewFromConfig(AWSConfig),
+			ElasticBeanstalkClient: elasticbeanstalk.NewFromConfig(AWSConfig),
+			EMRClient:              emr.NewFromConfig(AWSConfig),
+			GlueClient:             glue.NewFromConfig(AWSConfig),
+			GrafanaClient:          grafana.NewFromConfig(AWSConfig),
+			IAMClient:              iam.NewFromConfig(AWSConfig),
+			KinesisClient:          kinesis.NewFromConfig(AWSConfig),
+			LambdaClient:           lambda.NewFromConfig(AWSConfig),
+			LightsailClient:        lightsail.NewFromConfig(AWSConfig),
+			MQClient:               mq.NewFromConfig(AWSConfig),
+			OpenSearchClient:       opensearch.NewFromConfig(AWSConfig),
+			RDSClient:              rds.NewFromConfig(AWSConfig),
+			RedshiftClient:         redshift.NewFromConfig(AWSConfig),
+			Route53Client:          route53.NewFromConfig(AWSConfig),
+			S3Client:               s3.NewFromConfig(AWSConfig),
+			SecretsManagerClient:   secretsmanager.NewFromConfig(AWSConfig),
+			SNSClient:              sns.NewFromConfig(AWSConfig),
+			SQSClient:              sqs.NewFromConfig(AWSConfig),
+			SSMClient:              ssm.NewFromConfig(AWSConfig),
+			StepFunctionClient:     sfn.NewFromConfig(AWSConfig),
 
 			Caller:     *caller,
 			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
@@ -1155,12 +1174,9 @@ func runECSTasksCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.ECSTasksModule{
-			DescribeTasksClient:             ecs.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			DescribeTaskDefinitionClient:    ecs.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			ListTasksClient:                 ecs.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			ListClustersClient:              ecs.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			DescribeNetworkInterfacesClient: ec2.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			IAMClient:                       iam.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			EC2Client: ec2.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			ECSClient: ecs.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			IAMClient: iam.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
 
 			Caller:         *caller,
 			AWSRegions:     internal.GetEnabledRegions(profile, cmd.Root().Version),
@@ -1181,7 +1197,7 @@ func runENICommand(cmd *cobra.Command, args []string) {
 		}
 		m := aws.ElasticNetworkInterfacesModule{
 			//EC2Client:                       ec2.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			DescribeNetworkInterfacesClient: ec2.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			EC2Client: ec2.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
 
 			Caller:     *caller,
 			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
@@ -1228,9 +1244,14 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		apiGatewayClient := apigateway.NewFromConfig(AWSConfig)
 		apiGatewayv2Client := apigatewayv2.NewFromConfig(AWSConfig)
 		appRunnerClient := apprunner.NewFromConfig(AWSConfig)
+		athenaClient := athena.NewFromConfig(AWSConfig)
 		cloudFormationClient := cloudformation.NewFromConfig(AWSConfig)
 		cloudfrontClient := cloudfront.NewFromConfig(AWSConfig)
+		codeArtifactClient := codeartifact.NewFromConfig(AWSConfig)
 		codeBuildClient := codebuild.NewFromConfig(AWSConfig)
+		codeCommitClient := codecommit.NewFromConfig(AWSConfig)
+		codeDeployClient := codedeploy.NewFromConfig(AWSConfig)
+		dataPipelineClient := datapipeline.NewFromConfig(AWSConfig)
 		docdbClient := docdb.NewFromConfig(AWSConfig)
 		dynamodbClient := dynamodb.NewFromConfig(AWSConfig)
 		ec2Client := ec2.NewFromConfig(AWSConfig)
@@ -1239,12 +1260,15 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		efsClient := efs.NewFromConfig(AWSConfig)
 		eksClient := eks.NewFromConfig(AWSConfig)
 		elasticacheClient := elasticache.NewFromConfig(AWSConfig)
+		elasticBeanstalkClient := elasticbeanstalk.NewFromConfig(AWSConfig)
 		elbClient := elasticloadbalancing.NewFromConfig(AWSConfig)
 		elbv2Client := elasticloadbalancingv2.NewFromConfig(AWSConfig)
+		emrClient := emr.NewFromConfig(AWSConfig)
 		fsxClient := fsx.NewFromConfig(AWSConfig)
 		glueClient := glue.NewFromConfig(AWSConfig)
 		grafanaClient := grafana.NewFromConfig(AWSConfig)
 		iamClient := iam.NewFromConfig(AWSConfig)
+		kinesisClient := kinesis.NewFromConfig(AWSConfig)
 		lambdaClient := lambda.NewFromConfig(AWSConfig)
 		lightsailClient := lightsail.NewFromConfig(AWSConfig)
 		mqClient := mq.NewFromConfig(AWSConfig)
@@ -1265,33 +1289,44 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 
 		fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Getting a lay of the land, aka \"What regions is this account using?\""))
 		inventory2 := aws.Inventory2Module{
-			APIGatewayClient:     apiGatewayClient,
-			APIGatewayv2Client:   apiGatewayv2Client,
-			AppRunnerClient:      appRunnerClient,
-			CloudFormationClient: cloudFormationClient,
-			CloudfrontClient:     cloudfrontClient,
-			CodeBuildClient:      codeBuildClient,
-			DynamoDBClient:       dynamodbClient,
-			EC2Client:            ec2Client,
-			ECSClient:            ecsClient,
-			EKSClient:            eksClient,
-			ELBClient:            elbClient,
-			ELBv2Client:          elbv2Client,
-			GlueClient:           glueClient,
-			GrafanaClient:        grafanaClient,
-			IAMClient:            iamClient,
-			LambdaClient:         lambdaClient,
-			LightsailClient:      lightsailClient,
-			MQClient:             mqClient,
-			OpenSearchClient:     openSearchClient,
-			RDSClient:            rdsClient,
-			RedshiftClient:       redshiftClient,
-			S3Client:             s3Client,
-			SecretsManagerClient: secretsManagerClient,
-			SNSClient:            snsClient,
-			SQSClient:            sqsClient,
-			SSMClient:            ssmClient,
-			StepFunctionClient:   stepFunctionClient,
+			APIGatewayClient:       apiGatewayClient,
+			APIGatewayv2Client:     apiGatewayv2Client,
+			AppRunnerClient:        appRunnerClient,
+			AthenaClient:           athenaClient,
+			CloudFormationClient:   cloudFormationClient,
+			CloudfrontClient:       cloudfrontClient,
+			CodeArtifactClient:     codeArtifactClient,
+			CodeBuildClient:        codeBuildClient,
+			CodeCommitClient:       codeCommitClient,
+			CodeDeployClient:       codeDeployClient,
+			DataPipelineClient:     dataPipelineClient,
+			DynamoDBClient:         dynamodbClient,
+			EC2Client:              ec2Client,
+			ECSClient:              ecsClient,
+			ECRClient:              ecrClient,
+			EKSClient:              eksClient,
+			ELBClient:              elbClient,
+			ELBv2Client:            elbv2Client,
+			ElasticacheClient:      elasticacheClient,
+			ElasticBeanstalkClient: elasticBeanstalkClient,
+			EMRClient:              emrClient,
+			GlueClient:             glueClient,
+			GrafanaClient:          grafanaClient,
+			IAMClient:              iamClient,
+			KinesisClient:          kinesisClient,
+			LambdaClient:           lambdaClient,
+			LightsailClient:        lightsailClient,
+			MQClient:               mqClient,
+			OpenSearchClient:       openSearchClient,
+			RDSClient:              rdsClient,
+			RedshiftClient:         redshiftClient,
+			Route53Client:          route53Client,
+			S3Client:               s3Client,
+			SecretsManagerClient:   secretsManagerClient,
+			SNSClient:              snsClient,
+			SQSClient:              sqsClient,
+			SSMClient:              ssmClient,
+			StepFunctionClient:     stepFunctionClient,
 
 			Caller:     *caller,
 			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
@@ -1411,12 +1446,9 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		databases.PrintDatabases(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
 		ecstasks := aws.ECSTasksModule{
-			DescribeTaskDefinitionClient:    ecsClient,
-			DescribeTasksClient:             ecsClient,
-			ListTasksClient:                 ecsClient,
-			ListClustersClient:              ecsClient,
-			DescribeNetworkInterfacesClient: ec2Client,
-			IAMClient:                       iamClient,
+			EC2Client: ec2Client,
+			ECSClient: ecsClient,
+			IAMClient: iamClient,
 
 			Caller:         *caller,
 			AWSRegions:     internal.GetEnabledRegions(profile, cmd.Root().Version),
@@ -1441,11 +1473,11 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		eksCommand.EKS(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
 		elasticnetworkinterfaces := aws.ElasticNetworkInterfacesModule{
-			DescribeNetworkInterfacesClient: ec2Client,
-			Caller:                          *caller,
-			AWSRegions:                      internal.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile:                      profile,
-			WrapTable:                       AWSWrapTable,
+			EC2Client:  ec2Client,
+			Caller:     *caller,
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile: profile,
+			WrapTable:  AWSWrapTable,
 		}
 		elasticnetworkinterfaces.ElasticNetworkInterfaces(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 
@@ -1654,31 +1686,6 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 
 func init() {
 	cobra.OnInitialize(initAWSProfiles)
-	sdk.RegisterApiGatewayTypes()
-	sdk.RegisterApiGatewayV2Types()
-	sdk.RegisterApprunnerTypes()
-	sdk.RegisterCloudFormationTypes()
-	sdk.RegisterCodeBuildTypes()
-	sdk.RegisterDocDBTypes()
-	sdk.RegisterDynamoDBTypes()
-	sdk.RegisterEC2Types()
-	sdk.RegisterECRTypes()
-	sdk.RegisterEFSTypes()
-	sdk.RegisterEKSTypes()
-	sdk.RegisterELBTypes()
-	sdk.RegisterELBv2Types()
-	sdk.RegisterGrafanaTypes()
-	sdk.RegisterIamTypes()
-	sdk.RegisterLambdaTypes()
-	sdk.RegisterLightsailTypes()
-	sdk.RegisterMQTypes()
-	sdk.RegisterOpenSearchTypes()
-	sdk.RegisterOrganizationsTypes()
-	sdk.RegisterRDSTypes()
-	sdk.RegisterRedShiftTypes()
-	sdk.RegisterS3Types()
-	sdk.RegisterSecretsManagerTypes()
-	sdk.RegisterStepFunctionsTypes()
 
 	// Role Trusts Module Flags
 	RoleTrustCommand.Flags().StringVarP(&RoleTrustFilter, "filter", "t", "all", "[AccountNumber | PrincipalARN | PrincipalName | ServiceName]")

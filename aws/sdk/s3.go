@@ -19,7 +19,7 @@ type AWSS3ClientInterface interface {
 	GetPublicAccessBlock(ctx context.Context, params *s3.GetPublicAccessBlockInput, optFns ...func(*s3.Options)) (*s3.GetPublicAccessBlockOutput, error)
 }
 
-func RegisterS3Types() {
+func init() {
 	gob.Register([]s3Types.Bucket{})
 	gob.Register(s3Types.Bucket{})
 	gob.Register(&s3Types.PublicAccessBlockConfiguration{})

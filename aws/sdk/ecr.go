@@ -19,9 +19,10 @@ type AWSECRClientInterface interface {
 	GetRepositoryPolicy(ctx context.Context, params *ecr.GetRepositoryPolicyInput, optFns ...func(*ecr.Options)) (*ecr.GetRepositoryPolicyOutput, error)
 }
 
-func RegisterECRTypes() {
+func init() {
 	gob.Register([]ecrTypes.Repository{})
 	gob.Register([]ecrTypes.ImageDetail{})
+	gob.Register(ecrTypes.Repository{})
 
 }
 

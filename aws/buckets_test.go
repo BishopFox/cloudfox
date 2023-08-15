@@ -112,7 +112,7 @@ func TestListBuckets(t *testing.T) {
 		t.Run(subtest.name, func(t *testing.T) {
 			subtest.testModule.PrintBuckets(subtest.testModule.OutputFormat, subtest.outputDirectory, subtest.verbosity)
 			for index, expectedBucket := range subtest.expectedResult {
-				resultsFilePath := filepath.Join(tmpDir, "cloudfox-output/aws/123456789012-unittesting/table/buckets.txt")
+				resultsFilePath := filepath.Join(tmpDir, "cloudfox-output/aws/unittesting-123456789012/table/buckets.txt")
 				resultsFile, err := afero.ReadFile(fs, resultsFilePath)
 				if err != nil {
 					t.Fatalf("Cannot read output file at %s: %s", resultsFilePath, err)

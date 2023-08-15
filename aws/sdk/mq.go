@@ -15,7 +15,7 @@ type MQClientInterface interface {
 	ListBrokers(context.Context, *mq.ListBrokersInput, ...func(*mq.Options)) (*mq.ListBrokersOutput, error)
 }
 
-func RegisterMQTypes() {
+func init() {
 	gob.Register([]mqTypes.BrokerSummary{})
 }
 

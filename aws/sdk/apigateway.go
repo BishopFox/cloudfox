@@ -14,7 +14,7 @@ type APIGatewayClientInterface interface {
 	GetRestApis(context.Context, *apigateway.GetRestApisInput, ...func(*apigateway.Options)) (*apigateway.GetRestApisOutput, error)
 }
 
-func RegisterApiGatewayTypes() {
+func init() {
 	gob.Register([]apiGatewayTypes.RestApi{})
 }
 

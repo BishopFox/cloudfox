@@ -15,7 +15,7 @@ type AppRunnerClientInterface interface {
 	ListServices(context.Context, *apprunner.ListServicesInput, ...func(*apprunner.Options)) (*apprunner.ListServicesOutput, error)
 }
 
-func RegisterApprunnerTypes() {
+func init() {
 	gob.Register([]apprunnerTypes.Service{})
 	gob.Register([]apprunnerTypes.ServiceSummary{})
 }

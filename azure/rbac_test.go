@@ -20,18 +20,21 @@ func TestAzRBACCommand(t *testing.T) {
 		azRGName                string
 		azVerbosity             int
 		azOutputFormat          string
+		azOutputDirectory       string
 		version                 string
 		resourcesTestFile       string
 		usersTestFile           string
 		roleDefinitionsTestFile string
 		roleAssignmentsTestFile string
 		wrapTableOutput         bool
+		azMergedTable           bool
 	}{
 		{
 			name:                    "./cloudfox azure rbac --tenant 11111111-1111-1111-1111-11111111",
 			azTenantID:              "11111111-1111-1111-1111-11111111",
 			azSubscriptionID:        "",
 			azOutputFormat:          "all",
+			azOutputDirectory:       "~/.cloudfox",
 			azVerbosity:             2,
 			resourcesTestFile:       "./test-data/resources.json",
 			usersTestFile:           "./test-data/users.json",
@@ -39,12 +42,14 @@ func TestAzRBACCommand(t *testing.T) {
 			roleAssignmentsTestFile: "./test-data/role-assignments.json",
 			version:                 "DEV",
 			wrapTableOutput:         false,
+			azMergedTable:           false,
 		},
 		{
 			name:                    "./cloudfox azure rbac --subscription AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
 			azTenantID:              "",
 			azSubscriptionID:        "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAA",
 			azOutputFormat:          "all",
+			azOutputDirectory:       "~/.cloudfox",
 			azVerbosity:             2,
 			version:                 "DEV",
 			resourcesTestFile:       "./test-data/resources.json",
@@ -52,22 +57,25 @@ func TestAzRBACCommand(t *testing.T) {
 			roleDefinitionsTestFile: "./test-data/role-definitions.json",
 			roleAssignmentsTestFile: "./test-data/role-assignments.json",
 			wrapTableOutput:         false,
+			azMergedTable:           false,
 		},
 		{
 			name:                    "./cloudfox azure rbac",
 			azOutputFormat:          "all",
 			azVerbosity:             2,
+			azOutputDirectory:       "~/.cloudfox",
 			version:                 "DEV",
 			resourcesTestFile:       "./test-data/resources.json",
 			usersTestFile:           "./test-data/users.json",
 			roleDefinitionsTestFile: "./test-data/role-definitions.json",
 			roleAssignmentsTestFile: "./test-data/role-assignments.json",
 			wrapTableOutput:         false,
+			azMergedTable:           false,
 		},
 	}
 	internal.MockFileSystem(true)
 	// Mocked functions to simulate Azure calls and responses
-	getSubscriptions = mockedGetSubscriptions
+	GetSubscriptions = mockedGetSubscriptions
 	getAzureADUsers = mockedGetAzureADUsers
 	getRoleDefinitions = mockedGetRoleDefinitions
 	getRoleAssignments = mockedGetRoleAssignments
@@ -82,7 +90,7 @@ func TestAzRBACCommand(t *testing.T) {
 		globals.ROLE_DEFINITIONS_TEST_FILE = s.roleDefinitionsTestFile
 		globals.ROLE_ASSIGNMENTS_TEST_FILE = s.roleAssignmentsTestFile
 
-		if err := AzRBACCommand(s.azTenantID, s.azSubscriptionID, s.azOutputFormat, s.version, s.azVerbosity, s.wrapTableOutput); err != nil {
+		if err := AzRBACCommand(s.azTenantID, s.azSubscriptionID, s.azOutputFormat, s.azOutputDirectory, s.version, 2, s.wrapTableOutput, s.azMergedTable); err != nil {
 			fmt.Println(err)
 		}
 	}

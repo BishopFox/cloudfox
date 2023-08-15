@@ -126,7 +126,7 @@ func TestCodeBuildProjects(t *testing.T) {
 	// execute the module with verbosity set to 2
 	m.PrintCodeBuildProjects("table", tmpDir, 2)
 
-	resultsFilePath := filepath.Join(tmpDir, "cloudfox-output/aws/123456789012-unittesting/table/codebuild.txt")
+	resultsFilePath := filepath.Join(tmpDir, "cloudfox-output/aws/unittesting-123456789012/table/codebuild.txt")
 	resultsFile, err := afero.ReadFile(fs, resultsFilePath)
 	if err != nil {
 		t.Fatalf("Cannot read output file at %s: %s", resultsFilePath, err)
