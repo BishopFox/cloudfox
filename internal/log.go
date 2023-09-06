@@ -23,7 +23,9 @@ func GetLogDirPath() *string {
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		err = os.MkdirAll(dir, 0700)
 		if err != nil {
-			log.Fatalf("[-] Failed to read or create cloudfox directory")
+			log.Printf("[-] Failed to read or create cloudfox directory")
+			dir, err = os.Getwd()
+			return ptr.String(dir)
 		}
 	}
 	return ptr.String(dir)
