@@ -126,8 +126,13 @@ func GetEnabledRegions(awsProfile string, version string) []string {
 
 // txtLogger - Returns the txt logger
 func TxtLogger() *logrus.Logger {
+	var txtFile *os.File
+	var err error
 	txtLogger := logrus.New()
-	txtFile, err := os.OpenFile(fmt.Sprintf("%s/cloudfox-error.log", ptr.ToString(GetLogDirPath())), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	txtFile, err = os.OpenFile(fmt.Sprintf("%s/cloudfox-error.log", ptr.ToString(GetLogDirPath())), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		txtFile, err = os.OpenFile(fmt.Sprintf("./cloudfox-error.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	}
 	if err != nil {
 		panic(fmt.Sprintf("Failed to open log file %v", err))
 	}

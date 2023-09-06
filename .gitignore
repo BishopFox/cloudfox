@@ -70,3 +70,4 @@ cloudfox
 *.json
 *.csv
 *.log
+dist/
