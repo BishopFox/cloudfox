@@ -55,7 +55,7 @@ type Tag struct {
 }
 
 func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verbosity int) {
-	// These stuct values are used by the output module
+	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "tags"
@@ -284,7 +284,7 @@ func (m *TagsModule) getResources(r string) ([]types.ResourceTagMapping, error) 
 	var PaginationControl *string
 	var resources []types.ResourceTagMapping
 
-	// a for loop that accepts user input. If no user input, it will continue to paginate until there are no mor pages. If there is user input, it will paginate until the user input is reached.
+	// a for loop that accepts user input. If no user input, it will continue to paginate until there are no more pages. If there is user input, it will paginate until the user input is reached.
 
 	for {
 		if len(resources) < m.MaxResourcesPerRegion || m.MaxResourcesPerRegion == 0 {

@@ -84,7 +84,7 @@ type Endpoint struct {
 var oe *smithy.OperationError
 
 func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory string, verbosity int) {
-	// These stuct values are used by the output module
+	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "endpoints"
@@ -615,7 +615,7 @@ func (m *EndpointsModule) getOpenSearchPerRegion(r string, wg *sync.WaitGroup, s
 		var endpoint string
 		var kibana_endpoint string
 
-		// This exits thie function if an opensearch domain exists but there is no endpoint
+		// This exits the function if an opensearch domain exists but there is no endpoint
 		if raw_endpoint == nil {
 			return
 		} else {

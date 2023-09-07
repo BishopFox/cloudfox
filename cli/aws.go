@@ -207,7 +207,7 @@ var (
 	EnvsCommand = &cobra.Command{
 		Use:     "env-vars",
 		Aliases: []string{"envs", "envvars", "env"},
-		Short:   "Enumerate the environment variables from mutliple services that have them",
+		Short:   "Enumerate the environment variables from multiple services that have them",
 		Long: "\nUse case examples:\n" +
 			os.Args[0] + " aws env-vars --profile readonly_profile",
 		PreRun:  awsPreRun,

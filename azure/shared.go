@@ -80,7 +80,7 @@ func GetTenantIDPerSubscription(subscriptionID string) *string {
 	return nil
 }
 
-// function that determins if AzSubsriptionType is a subscritpion ID or a subscription display name and returns the AzSubsriptionType struct with both populated
+// function that determines if AzSubsriptionType is a subscription ID or a subscription display name and returns the AzSubsriptionType struct with both populated
 func PopulateSubsriptionType(subscription string) SubsriptionInfo {
 	subs := GetSubscriptions()
 	for _, s := range subs {

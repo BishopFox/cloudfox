@@ -111,7 +111,7 @@ type GlobalResourceCount2 struct {
 
 func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDirectory string, verbosity int) {
 
-	// These stuct values are used by the output module
+	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "inventory"
@@ -243,7 +243,7 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 	spinnerDone <- true
 	<-spinnerDone
 
-	// This creates the header row (columns) dynamically - a region oly gets printed if it has at least one resource.
+	// This creates the header row (columns) dynamically - a region only gets printed if it has at least one resource.
 	m.output.Headers = append(m.output.Headers, "Resource Type")
 
 	type kv struct {
@@ -311,7 +311,7 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 
 			}
 
-			// check to see if all regions have no resources for the service. Skip the first column, which is hte resource type.
+			// check to see if all regions have no resources for the service. Skip the first column, which is the resource type.
 			// If any value is other than "-" set rowEmpty to false.
 			var rowEmtpy bool = true
 			for _, val := range temprow[1:] {
@@ -322,7 +322,7 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 			}
 			// If rowEmpty is still true at the end of the row, we dont add the row to the output, otherwise we do.
 			if !rowEmtpy {
-				// Convert the slice of strings to a slice of interfaces???  not sure, but this was needed. I couldnt just pass temp row to the output.Body
+				// Convert the slice of strings to a slice of interfaces???  not sure, but this was needed. I couldn't just pass temp row to the output.Body
 				for _, val := range temprow {
 					outputRow = append(outputRow, val)
 
