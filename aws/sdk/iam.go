@@ -207,7 +207,7 @@ func CachedIamSimulatePrincipalPolicy(IAMClient AWSIAMClientInterface, accountID
 	var EvaluationResults []iamTypes.EvaluationResult
 	md5hashedActionNames := md5.Sum([]byte(strings.Join(actionNames, "")))
 	md5hashedResourceArns := md5.Sum([]byte(strings.Join(resourceArns, "")))
-	// proccess arn and get the name of the resource
+	// process arn and get the name of the resource
 	arn, err := arn.Parse(*principal)
 	if err != nil {
 		return EvaluationResults, err

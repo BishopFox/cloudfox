@@ -64,7 +64,7 @@ type MappedInstance struct {
 }
 
 func (m *InstancesModule) Instances(filter string, outputFormat string, outputDirectory string, verbosity int) {
-	// These stuct values are used by the output module
+	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "instances"

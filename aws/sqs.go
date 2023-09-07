@@ -65,7 +65,7 @@ type Queue struct {
 }
 
 func (m *SQSModule) PrintSQS(outputFormat string, outputDirectory string, verbosity int) {
-	// These stuct values are used by the output module
+	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "sqs"
@@ -283,7 +283,7 @@ func (m *SQSModule) getSQSRecordsPerRegion(r string, wg *sync.WaitGroup, semapho
 		if !queue.Policy.IsEmpty() {
 			m.analyseQueuePolicy(queue, dataReceiver)
 		} else {
-			// If the queue policy "resource policy" is empty, the only principals that have permisisons
+			// If the queue policy "resource policy" is empty, the only principals that have permissions
 			// are those that are granted access by IAM policies
 			//queue.Access = "Private. Access allowed by IAM policies"
 			queue.Access = "Only intra-account access (via IAM) allowed"

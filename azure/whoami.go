@@ -36,7 +36,7 @@ func AzWhoamiCommand(AzOutputDirectory, version string, AzWrapTable bool, AzVerb
 		// cloudfox azure whoami
 		header, body = getWhoamiRelevantDataSubsOnly()
 		o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, "whoami-data")
-		// append timetamp to filename (time from epoch)
+		// append timestamp to filename (time from epoch)
 		o.Table.TableFiles = append(o.Table.TableFiles,
 			internal.TableFile{
 				Header: header,

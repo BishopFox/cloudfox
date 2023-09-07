@@ -15,7 +15,7 @@ import (
 	"golang.org/x/crypto/ssh/terminal"
 )
 
-// This struct is here to mantain compatibility with legacy cloudfox code
+// This struct is here to maintain compatibility with legacy cloudfox code
 type OutputData2 struct {
 	Headers       []string
 	Body          [][]string

@@ -62,7 +62,7 @@ type SNSTopic struct {
 }
 
 func (m *SNSModule) PrintSNS(outputFormat string, outputDirectory string, verbosity int) {
-	// These stuct values are used by the output module
+	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "sns"
@@ -288,7 +288,7 @@ func (m *SNSModule) getSNSTopicsPerRegion(r string, wg *sync.WaitGroup, semaphor
 		if !topic.Policy.IsEmpty() {
 			m.analyseTopicPolicy(topic, dataReceiver)
 		} else {
-			// If the topic policy "resource policy" is empty, the only principals that have permisisons
+			// If the topic policy "resource policy" is empty, the only principals that have permissions
 			// are those that are granted access by IAM policies
 			//topic.Access = "Private. Access allowed by IAM policies"
 			topic.Access = "Only intra-account access (via IAM) allowed"

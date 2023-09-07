@@ -64,7 +64,7 @@ For the full documentation please refer to our [wiki](https://github.com/BishopF
 ### AWS
 * AWS CLI installed
 * Supports AWS profiles, AWS environment variables, or metadata retrieval (on an ec2 instance)
-   * To run commands on multiple profiles at once, you can specify the path to a file with a list of profile names seperated by a new line using the `-l` flag or pass all stored profiles with the `-a` flag.
+   * To run commands on multiple profiles at once, you can specify the path to a file with a list of profile names separated by a new line using the `-l` flag or pass all stored profiles with the `-a` flag.
 * A principal with one recommended policies attached (described below)
 * Recommended attached policies: **`SecurityAudit` + [CloudFox custom policy](./misc/aws/cloudfox-policy.json)** 
 
@@ -138,7 +138,7 @@ CloudFox doesn't create any alerts or findings, and doesn't check your environme
 
 **Why do I see errors in some CloudFox commands?**
 
-* Services that don't exist in all regions - CloudFox tries a few ways to figure out what services are supported in each region. However some services don't support the methods CloudFox uses, so CloudFox defaults to just asking every region about the service. Regions that don't suppor the service will return errors. 
+* Services that don't exist in all regions - CloudFox tries a few ways to figure out what services are supported in each region. However some services don't support the methods CloudFox uses, so CloudFox defaults to just asking every region about the service. Regions that don't support the service will return errors. 
 * You don't have permission - Another reason you might see errors if you don't have permissions to make calls that CloudFox is making. Either because the policy doesn't allow it (e.g., SecurityAudit doesn't allow all of the permissions CloudFox needs. Or, it might be an SCP that is blocking you.  
 
 You can always look in the ~/.cloudfox/cloudfox-error.log file to get more information on errors. 

@@ -6,7 +6,7 @@ import (
 )
 
 // https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements_condition.html
-// Conditions have the folling general structure:
+// Conditions have the following general structure:
 //   "Condition" : { "{condition-operator}" : { "{condition-key}" : "{condition-value}" }}
 type PolicyStatementCondition map[string]map[string]ListOrString
 
@@ -20,7 +20,7 @@ func (psc *PolicyStatementCondition) IsEmpty() bool {
 
 // IsScopedOnAccountOrOrganization returns true if the policy condition ensures access only for specific
 // AWS accounts or organizations. If may return false even if access is restricted in such a way.
-// Such policies should be reported to the user and analyzed case by case to judge if conditions are sufficently restrictive.
+// Such policies should be reported to the user and analyzed case by case to judge if conditions are sufficiently restrictive.
 func (psc *PolicyStatementCondition) IsScopedOnAccountOrOrganization() bool {
 	for condition, kv := range *psc {
 		for k, v := range kv {

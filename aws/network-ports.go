@@ -137,7 +137,7 @@ var naclToSG = map[string]string{
 var validSecurityGroupProtocols = []string{"-1", "tcp", "udp"}
 
 func (m *NetworkPortsModule) PrintNetworkPorts(outputFormat string, outputDirectory string) {
-	// These stuct values are used by the output module
+	// These struct values are used by the output module
 	m.output.Verbosity = m.Verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "network-ports"

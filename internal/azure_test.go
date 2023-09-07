@@ -8,7 +8,7 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 )
 
-// Requires Az CLI Authentication to passs
+// Requires Az CLI Authentication to pass
 func TestGetAuthorizer(t *testing.T) {
 	t.Skip()
 	subtests := []struct {

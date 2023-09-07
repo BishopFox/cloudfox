@@ -53,7 +53,7 @@ type Account struct {
 }
 
 func (m *OrgModule) PrintOrgAccounts(outputFormat string, outputDirectory string, verbosity int) {
-	// These stuct values are used by the output module
+	// These struct values are used by the output module
 	var err error
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
@@ -272,7 +272,7 @@ func (m *OrgModule) addOrgAccount() {
 		isManagementAccount: false,
 		Name:                "This account",
 		Id:                  aws.ToString(m.Caller.Account),
-		Email:               "Unkonwn",
+		Email:               "Unknown",
 		Arn:                 aws.ToString(m.Caller.Arn),
 		Status:              "ACTIVE",
 	})

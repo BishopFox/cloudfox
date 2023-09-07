@@ -47,7 +47,7 @@ type Resource2 struct {
 }
 
 func (m *ResourceTrustsModule) PrintResources(outputFormat string, outputDirectory string, verbosity int) {
-	// These stuct values are used by the output module
+	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "resource-trusts"
@@ -270,7 +270,7 @@ func (m *ResourceTrustsModule) getSNSTopicsPerRegion(r string, wg *sync.WaitGrou
 			topic.IsPublic = "No"
 		}
 
-		// If there is a resouce policy, convert the resource policy into plain english
+		// If there is a resource policy, convert the resource policy into plain english
 		if !topic.Policy.IsEmpty() {
 
 			for i, statement := range topic.Policy.Statement {
@@ -357,7 +357,7 @@ func (m *ResourceTrustsModule) getS3Buckets(wg *sync.WaitGroup, semaphore chan s
 			bucket.IsPublic = "No"
 		}
 
-		// If there is a resouce policy, convert the resource policy into plain english
+		// If there is a resource policy, convert the resource policy into plain english
 		if !bucket.Policy.IsEmpty() {
 			for i, statement := range bucket.Policy.Statement {
 				var prefix string = ""
