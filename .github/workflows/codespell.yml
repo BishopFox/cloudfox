@@ -1,0 +1,16 @@
+# This Action uses minimal steps to run in ~5 seconds to rapidly:
+# Looks for typos in the codebase using codespell
+# https://github.com/codespell-project/codespell#readme
+name: codespell
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+jobs:
+  codespell:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - run: pip install --user codespell
+    - run: codespell --ignore-words-list="aks"  # --skip="*.css,*.js,*.lock,*.po"
