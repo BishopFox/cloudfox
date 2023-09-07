@@ -1,5 +1,5 @@
 # This Action uses minimal steps to run in ~5 seconds to rapidly:
-# look for typos in the codebase using codespell
+# Looks for typos in the codebase using codespell
 # https://github.com/codespell-project/codespell#readme
 name: codespell
 on:
@@ -8,7 +8,7 @@ on:
   pull_request:
     branches: [main]
 jobs:
-  ruff:
+  codespell:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
