@@ -49,11 +49,18 @@ For the full documentation please refer to our [wiki](https://github.com/BishopF
 
 **Option 1:** Download the [latest binary release](https://github.com/BishopFox/cloudfox/releases) for your platform.
 
-**Option 2:** [Install Go](https://golang.org/doc/install), clone the CloudFox repository and compile from source
+**Option 2:** If you use homebrew: `brew install cloudfox`
+
+**Option 3:** [Install Go](https://golang.org/doc/install), use `go install github.com/BishopFox@latest` to install from the remote source
+ 
+**Option 4:** Developer mode:
+
+   [Install Go](https://golang.org/doc/install), clone the CloudFox repository and compile from source
    ```
    # git clone https://github.com/BishopFox/cloudfox.git
    ...omitted for brevity...
    # cd ./cloudfox
+   # Make any changes necessary
    # go build .
    # ./cloudfox
    ```
