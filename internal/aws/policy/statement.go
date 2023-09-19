@@ -120,13 +120,11 @@ func (ps *PolicyStatement) GetStatementSummaryInEnglish(caller string) string {
 	conditions := ps.GetConditionsInEnglish(caller)
 
 	if conditions == "Default resource policy: Not exploitable" {
-		statementSummary = "Default resource policy: Not exploitable\n" + "\n"
-	} else if conditions != "\n" {
-		statementSummary = fmt.Sprintf("%s %s %s", strings.TrimSuffix(principals, "\n"), actions, conditions)
-
+		statementSummary = "Default resource policy: Not exploitable\n"
+	} else if conditions != "\n" && conditions != "" {
+		statementSummary = fmt.Sprintf("%s %s %s", strings.TrimSuffix(principals, "\n"), strings.TrimSuffix(actions, "\n"), conditions)
 	} else {
-		statementSummary = fmt.Sprintf("%s %s\n", strings.TrimSuffix(principals, "\n"), actions)
-
+		statementSummary = fmt.Sprintf("%s %s", strings.TrimSuffix(principals, "\n"), actions)
 	}
 	// trim the last newline character
 	//statementSummary = strings.TrimSuffix(statementSummary, "\n")
