@@ -51,7 +51,7 @@ For the full documentation please refer to our [wiki](https://github.com/BishopF
 
 **Option 2:** If you use homebrew: `brew install cloudfox`
 
-**Option 3:** [Install Go](https://golang.org/doc/install), use `go install github.com/BishopFox@latest` to install from the remote source
+**Option 3:** [Install Go](https://golang.org/doc/install), use `go install github.com/BishopFox/cloudfox@latest` to install from the remote source
  
 **Option 4:** Developer mode:
 
