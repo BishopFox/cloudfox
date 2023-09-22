@@ -13,7 +13,6 @@ import (
 	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iamTypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
@@ -24,7 +23,7 @@ import (
 
 type InstancesModule struct {
 	// General configuration data
-	EC2Client                 *ec2.Client
+	EC2Client                 sdk.AWSEC2ClientInterface
 	IAMClient                 sdk.AWSIAMClientInterface
 	Caller                    sts.GetCallerIdentityOutput
 	AWSRegions                []string
@@ -440,27 +439,17 @@ func (m *InstancesModule) executeChecks(instancesToSearch []string, r string, wg
 }
 
 func (m *InstancesModule) getInstanceUserDataAttribute(instanceID *string, region string) (userData *string, err error) {
-
-	Attributes, err := m.EC2Client.DescribeInstanceAttribute(
-		context.TODO(),
-		&ec2.DescribeInstanceAttributeInput{
-			InstanceId: instanceID,
-			Attribute:  types.InstanceAttributeName("userData"),
-		},
-		func(o *ec2.Options) {
-			o.Region = region
-		},
-	)
+	UserData, err := sdk.CachedEC2DescribeInstanceAttributeUserData(m.EC2Client, aws.ToString(m.Caller.Account), region, aws.ToString(instanceID))
 
 	if err != nil {
 		m.modLog.Error(err.Error())
 		m.CommandCounter.Error++
 		return nil, err
 	} else {
-		if Attributes.UserData.Value == nil {
+		if UserData == "" {
 			return aws.String("NoUserData"), nil
 		} else {
-			data, _ := base64.StdEncoding.DecodeString(*Attributes.UserData.Value)
+			data, _ := base64.StdEncoding.DecodeString(UserData)
 			return aws.String(string(data)), nil
 		}
 	}
@@ -470,47 +459,22 @@ func (m *InstancesModule) getInstanceUserDataAttribute(instanceID *string, regio
 func (m *InstancesModule) getDescribeInstances(instancesToSearch []string, region string, dataReceiver chan MappedInstance) {
 
 	// The "PaginationControl" value is nil when there's no more data to return.
-	var PaginationControl *string
-	for {
 
-		DescribeInstances, err := m.EC2Client.DescribeInstances(
-			context.TODO(),
-			&(ec2.DescribeInstancesInput{
-				NextToken: PaginationControl,
-			}),
-			func(o *ec2.Options) {
-				o.Region = region
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
+	Instances, err := sdk.CachedEC2DescribeInstances(m.EC2Client, aws.ToString(m.Caller.Account), region)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	for _, instance := range Instances {
+		if instancesToSearch[0] == "all" || internal.Contains(aws.ToString(instance.InstanceId), instancesToSearch) {
+			m.loadInstanceData(instance, region, dataReceiver)
 		}
-
-		for _, reservation := range DescribeInstances.Reservations {
-			accountId := reservation.OwnerId
-
-			for _, instance := range reservation.Instances {
-
-				if instancesToSearch[0] == "all" || internal.Contains(aws.ToString(instance.InstanceId), instancesToSearch) {
-					m.loadInstanceData(instance, region, accountId, dataReceiver)
-				}
-			}
-		}
-
-		// The "NextToken" value is nil when there's no more data to return.
-		if DescribeInstances.NextToken != nil {
-			PaginationControl = DescribeInstances.NextToken
-		} else {
-			PaginationControl = nil
-			break
-		}
-
 	}
 }
 
-func (m *InstancesModule) loadInstanceData(instance types.Instance, region string, accountId *string, dataReceiver chan MappedInstance) {
+func (m *InstancesModule) loadInstanceData(instance types.Instance, region string, dataReceiver chan MappedInstance) {
 
 	var profile string
 	var externalIP string
@@ -552,7 +516,7 @@ func (m *InstancesModule) loadInstanceData(instance types.Instance, region strin
 	dataReceiver <- MappedInstance{
 		ID:               aws.ToString(instance.InstanceId),
 		Name:             aws.ToString(&name),
-		Arn:              fmt.Sprintf("arn:aws:ec2:%s:%s:instance/%s", region, aws.ToString(accountId), aws.ToString(instance.InstanceId)),
+		Arn:              fmt.Sprintf("arn:aws:ec2:%s:%s:instance/%s", region, aws.ToString(m.Caller.Account), aws.ToString(instance.InstanceId)),
 		AvailabilityZone: aws.ToString(instance.Placement.AvailabilityZone),
 		State:            string(instance.State.Name),
 		ExternalIP:       externalIP,

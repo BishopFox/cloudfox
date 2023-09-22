@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2Types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/patrickmn/go-cache"
@@ -17,6 +18,7 @@ type AWSEC2ClientInterface interface {
 	DescribeSnapshots(context.Context, *ec2.DescribeSnapshotsInput, ...func(*ec2.Options)) (*ec2.DescribeSnapshotsOutput, error)
 	DescribeVolumes(context.Context, *ec2.DescribeVolumesInput, ...func(*ec2.Options)) (*ec2.DescribeVolumesOutput, error)
 	DescribeImages(context.Context, *ec2.DescribeImagesInput, ...func(*ec2.Options)) (*ec2.DescribeImagesOutput, error)
+	DescribeInstanceAttribute(context.Context, *ec2.DescribeInstanceAttributeInput, ...func(*ec2.Options)) (*ec2.DescribeInstanceAttributeOutput, error)
 }
 
 func init() {
@@ -64,6 +66,30 @@ func CachedEC2DescribeInstances(client AWSEC2ClientInterface, accountID string, 
 
 	internal.Cache.Set(cacheKey, instances, cache.DefaultExpiration)
 	return instances, nil
+}
+
+func CachedEC2DescribeInstanceAttributeUserData(client AWSEC2ClientInterface, accountID string, region string, instanceID string) (string, error) {
+	cacheKey := fmt.Sprintf("%s-ec2-DescribeInstanceAttributeUserData-%s-%s", accountID, region, instanceID)
+	cached, found := internal.Cache.Get(cacheKey)
+	if found {
+		return cached.(string), nil
+	}
+	DescribeInstanceAttribute, err := client.DescribeInstanceAttribute(
+		context.TODO(),
+		&ec2.DescribeInstanceAttributeInput{
+			Attribute:  ec2Types.InstanceAttributeNameUserData,
+			InstanceId: &instanceID,
+		},
+		func(o *ec2.Options) {
+			o.Region = region
+		},
+	)
+	if err != nil {
+		return "", err
+	}
+	internal.Cache.Set(cacheKey, aws.ToString(DescribeInstanceAttribute.UserData.Value), cache.DefaultExpiration)
+
+	return aws.ToString(DescribeInstanceAttribute.UserData.Value), nil
 }
 
 func CachedEC2DescribeNetworkInterfaces(client AWSEC2ClientInterface, accountID string, region string) ([]ec2Types.NetworkInterface, error) {
