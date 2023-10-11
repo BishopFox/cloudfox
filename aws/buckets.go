@@ -244,6 +244,7 @@ func (m *BucketsModule) createBucketsRows(verbosity int, wg *sync.WaitGroup, sem
 		region, err = sdk.CachedGetBucketLocation(m.S3Client, aws.ToString(m.Caller.Account), aws.ToString(b.Name))
 		if err != nil {
 			m.modLog.Error(err.Error())
+			break
 		}
 		bucket.Region = region
 
@@ -254,21 +255,22 @@ func (m *BucketsModule) createBucketsRows(verbosity int, wg *sync.WaitGroup, sem
 			bucket.PolicyJSON = policyJSON
 		}
 
-		policy, err := policy.ParseJSONPolicy([]byte(policyJSON))
-		if err != nil {
-			m.modLog.Error(fmt.Sprintf("parsing bucket access policy (%s) as JSON: %s", name, err))
-		} else {
-			bucket.Policy = policy
-		}
+		if policyJSON != "" {
+			policy, err := policy.ParseJSONPolicy([]byte(policyJSON))
+			if err != nil {
+				m.modLog.Error(fmt.Sprintf("Bucket (%s)parsing bucket access policy (%s) as JSON: %s", name, err))
+			} else {
+				bucket.Policy = policy
+			}
 
-		bucket.IsPublic = "No"
-		if !bucket.Policy.IsEmpty() {
-			m.analyseBucketPolicy(bucket, dataReceiver)
-		} else {
-			bucket.Access = "No resource policy"
-			dataReceiver <- *bucket
+			bucket.IsPublic = "No"
+			if !bucket.Policy.IsEmpty() {
+				m.analyseBucketPolicy(bucket, dataReceiver)
+			} else {
+				bucket.Access = "No resource policy"
+				dataReceiver <- *bucket
+			}
 		}
-
 		// Send Bucket object through the channel to the receiver
 
 	}

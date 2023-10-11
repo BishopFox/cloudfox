@@ -25,6 +25,7 @@ type MockedEC2Client2 struct {
 	describeSnapshots         DescribeSnapshots
 	describeVolumes           DescribeVolumes
 	describeImages            DescribeImages
+	describeInstanceAttribute DescribeInstanceAttribute
 }
 
 type DescribeNetworkInterfaces struct {
@@ -265,6 +266,12 @@ type DescribeVolumes struct {
 	} `json:"Volumes"`
 }
 
+// DescribeInstanceAttribute is a struct for the DescribeInstanceAttribute function - include userdata
+type DescribeInstanceAttribute struct {
+	UserData   string `json:"UserData"`
+	InstanceID string `json:"InstanceId"`
+}
+
 func (c *MockedEC2Client2) DescribeNetworkInterfaces(ctx context.Context, input *ec2.DescribeNetworkInterfacesInput, f ...func(o *ec2.Options)) (*ec2.DescribeNetworkInterfacesOutput, error) {
 	var nics []ec2types.NetworkInterface
 	err := json.Unmarshal(readTestFile(DESCRIBE_NETWORK_INTEFACES_TEST_FILE), &c.describeNetworkInterfaces)
@@ -371,4 +378,12 @@ func (c *MockedEC2Client2) DescribeImages(ctx context.Context, input *ec2.Descri
 		}
 	}
 	return &ec2.DescribeImagesOutput{Images: images}, nil
+}
+
+func (c *MockedEC2Client2) DescribeInstanceAttribute(ctx context.Context, input *ec2.DescribeInstanceAttributeInput, f ...func(o *ec2.Options)) (*ec2.DescribeInstanceAttributeOutput, error) {
+	return &ec2.DescribeInstanceAttributeOutput{
+		UserData: &ec2types.AttributeValue{
+			Value: aws.String("userdata"),
+		},
+	}, nil
 }
