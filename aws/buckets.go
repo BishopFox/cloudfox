@@ -20,10 +20,11 @@ import (
 type BucketsModule struct {
 	// General configuration data
 	//BucketsS3Client CloudFoxS3Client
-	S3Client   sdk.AWSS3ClientInterface
-	AWSRegions []string
-	AWSProfile string
-	Caller     sts.GetCallerIdentityOutput
+	CheckBucketPolicies bool
+	S3Client            sdk.AWSS3ClientInterface
+	AWSRegions          []string
+	AWSProfile          string
+	Caller              sts.GetCallerIdentityOutput
 
 	OutputFormat string
 	Goroutines   int
@@ -99,26 +100,45 @@ func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string
 	<-receiverDone
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
-	m.output.Headers = []string{
-		"Name",
-		"Region",
-		"Public?",
-		"Resource Policy Summary",
+	if m.CheckBucketPolicies {
+		m.output.Headers = []string{
+			"Name",
+			"Region",
+			"Public?",
+			"Resource Policy Summary",
+		}
+	} else {
+		m.output.Headers = []string{
+			"Name",
+			"Region",
+		}
 	}
 
 	// Table rows
-	for i := range m.Buckets {
-		m.output.Body = append(
-			m.output.Body,
-			[]string{
-				m.Buckets[i].Name,
-				m.Buckets[i].Region,
-				m.Buckets[i].IsPublic,
-				m.Buckets[i].ResourcePolicySummary,
-			},
-		)
-
+	if m.CheckBucketPolicies {
+		for i := range m.Buckets {
+			m.output.Body = append(
+				m.output.Body,
+				[]string{
+					m.Buckets[i].Name,
+					m.Buckets[i].Region,
+					m.Buckets[i].IsPublic,
+					m.Buckets[i].ResourcePolicySummary,
+				},
+			)
+		}
+	} else {
+		for i := range m.Buckets {
+			m.output.Body = append(
+				m.output.Body,
+				[]string{
+					m.Buckets[i].Name,
+					m.Buckets[i].Region,
+				},
+			)
+		}
 	}
+
 	if len(m.output.Body) > 0 {
 		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		//m.writeLoot(m.output.FilePath, verbosity, m.AWSProfile)
@@ -244,21 +264,23 @@ func (m *BucketsModule) createBucketsRows(verbosity int, wg *sync.WaitGroup, sem
 		region, err = sdk.CachedGetBucketLocation(m.S3Client, aws.ToString(m.Caller.Account), aws.ToString(b.Name))
 		if err != nil {
 			m.modLog.Error(err.Error())
-			break
+			region = "Unknown"
+
 		}
 		bucket.Region = region
 
-		policyJSON, err := sdk.CachedGetBucketPolicy(m.S3Client, aws.ToString(m.Caller.Account), region, aws.ToString(b.Name))
-		if err != nil {
-			m.modLog.Error(err.Error())
-		} else {
-			bucket.PolicyJSON = policyJSON
-		}
+		if m.CheckBucketPolicies {
 
-		if policyJSON != "" {
+			policyJSON, err := sdk.CachedGetBucketPolicy(m.S3Client, aws.ToString(m.Caller.Account), region, aws.ToString(b.Name))
+			if err != nil {
+				m.modLog.Error(err.Error())
+			} else {
+				bucket.PolicyJSON = policyJSON
+			}
+
 			policy, err := policy.ParseJSONPolicy([]byte(policyJSON))
 			if err != nil {
-				m.modLog.Error(fmt.Sprintf("Bucket (%s)parsing bucket access policy (%s) as JSON: %s", name, err))
+				m.modLog.Error(fmt.Sprintf("parsing bucket access policy (%s) as JSON: %s", name, err))
 			} else {
 				bucket.Policy = policy
 			}
@@ -270,11 +292,12 @@ func (m *BucketsModule) createBucketsRows(verbosity int, wg *sync.WaitGroup, sem
 				bucket.Access = "No resource policy"
 				dataReceiver <- *bucket
 			}
+		} else {
+
+			// Send Bucket object through the channel to the receiver
+			dataReceiver <- *bucket
 		}
-		// Send Bucket object through the channel to the receiver
-
 	}
-
 }
 
 func (m *BucketsModule) isPublicAccessBlocked(bucketName string, r string) bool {

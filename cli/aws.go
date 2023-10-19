@@ -103,7 +103,8 @@ var (
 		PostRun: awsPostRun,
 	}
 
-	BucketsCommand = &cobra.Command{
+	CheckBucketPolicies bool
+	BucketsCommand      = &cobra.Command{
 		Use:     "buckets",
 		Aliases: []string{"bucket"},
 		Short:   "Enumerate all of the buckets. Get loot file with s3 commands to list/download bucket contents",
@@ -614,12 +615,13 @@ func runBucketsCommand(cmd *cobra.Command, args []string) {
 		// }
 
 		m := aws.BucketsModule{
-			S3Client:   s3.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			Caller:     *caller,
-			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
+			S3Client:            s3.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			Caller:              *caller,
+			AWSRegions:          internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile:          profile,
+			Goroutines:          Goroutines,
+			WrapTable:           AWSWrapTable,
+			CheckBucketPolicies: CheckBucketPolicies,
 		}
 		m.PrintBuckets(AWSOutputFormat, AWSOutputDirectory, Verbosity)
 	}
@@ -1719,6 +1721,9 @@ func init() {
 
 	// tags module flags
 	TagsCommand.Flags().IntVarP(&MaxResourcesPerRegion, "max-resources-per-region", "m", 0, "Maximum number of resources to enumerate per region. Set to 0 to enumerate all resources.")
+
+	// buckets command flags (for bucket policies)
+	BucketsCommand.Flags().BoolVarP(&CheckBucketPolicies, "with-policies", "", false, "Analyze bucket policies (this is already done in the resource-trusts command)")
 
 	// Global flags for the AWS modules
 	AWSCommands.PersistentFlags().StringVarP(&AWSProfile, "profile", "p", "", "AWS CLI Profile Name")
