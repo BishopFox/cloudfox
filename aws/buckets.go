@@ -324,7 +324,7 @@ func (m *BucketsModule) analyseBucketPolicy(bucket *Bucket, dataReceiver chan Bu
 		} else {
 			bucket.ResourcePolicySummary = statement.GetStatementSummaryInEnglish(*m.Caller.Account)
 		}
-		bucket.ResourcePolicySummary = strings.TrimSuffix(bucket.ResourcePolicySummary, "\n")
+		//bucket.ResourcePolicySummary = strings.TrimSuffix(bucket.ResourcePolicySummary, "\n")
 
 	}
 	dataReceiver <- *bucket
