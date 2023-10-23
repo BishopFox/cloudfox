@@ -69,20 +69,22 @@ var (
 	red              = color.New(color.FgRed).SprintFunc()
 	defaultOutputDir = ptr.ToString(internal.GetLogDirPath())
 
-	AWSProfile         string
-	AWSProfilesList    string
-	AWSAllProfiles     bool
-	AWSProfiles        []string
-	AWSConfirm         bool
-	AWSOutputType      string
+	AWSProfile      string
+	AWSProfilesList string
+	AWSAllProfiles  bool
+	AWSProfiles     []string
+	AWSConfirm      bool
+	AWSOutputType   string
+	AWSTableCols    string
+
 	AWSOutputDirectory string
 	AWSSkipAdminCheck  bool
 	AWSWrapTable       bool
 	AWSUseCache        bool
-	AWSTableCols       string
-	Goroutines         int
-	Verbosity          int
-	AWSCommands        = &cobra.Command{
+
+	Goroutines  int
+	Verbosity   int
+	AWSCommands = &cobra.Command{
 		Use:   "aws",
 		Short: "See \"Available Commands\" for AWS Modules",
 		Run: func(cmd *cobra.Command, args []string) {
@@ -600,6 +602,7 @@ func runAccessKeysCommand(cmd *cobra.Command, args []string) {
 			Goroutines:    Goroutines,
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 		m.PrintAccessKeys(AccessKeysFilter, AWSOutputDirectory, Verbosity)
 	}
@@ -620,8 +623,8 @@ func runBucketsCommand(cmd *cobra.Command, args []string) {
 			Goroutines:          Goroutines,
 			WrapTable:           AWSWrapTable,
 			CheckBucketPolicies: CheckBucketPolicies,
-			AWSTableCols:        AWSTableCols,
 			AWSOutputType:       AWSOutputType,
+			AWSTableCols:        AWSTableCols,
 		}
 		m.PrintBuckets(AWSOutputDirectory, Verbosity)
 	}
@@ -643,6 +646,7 @@ func runCloudformationCommand(cmd *cobra.Command, args []string) {
 			Goroutines:           Goroutines,
 			WrapTable:            AWSWrapTable,
 			AWSOutputType:        AWSOutputType,
+			AWSTableCols:         AWSTableCols,
 		}
 		m.PrintCloudformationStacks(AWSOutputDirectory, Verbosity)
 	}
@@ -664,6 +668,7 @@ func runCodeBuildCommand(cmd *cobra.Command, args []string) {
 			SkipAdminCheck:  AWSSkipAdminCheck,
 			WrapTable:       AWSWrapTable,
 			AWSOutputType:   AWSOutputType,
+			AWSTableCols:    AWSTableCols,
 		}
 		m.PrintCodeBuildProjects(AWSOutputDirectory, Verbosity)
 	}
@@ -688,6 +693,7 @@ func runDatabasesCommand(cmd *cobra.Command, args []string) {
 			Goroutines:     Goroutines,
 			WrapTable:      AWSWrapTable,
 			AWSOutputType:  AWSOutputType,
+			AWSTableCols:   AWSTableCols,
 		}
 		m.PrintDatabases(AWSOutputDirectory, Verbosity)
 	}
@@ -708,6 +714,7 @@ func runECRCommand(cmd *cobra.Command, args []string) {
 			Goroutines:    Goroutines,
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 		m.PrintECR(AWSOutputDirectory, Verbosity)
 	}
@@ -731,6 +738,7 @@ func runSQSCommand(cmd *cobra.Command, args []string) {
 			Goroutines:    Goroutines,
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 		m.PrintSQS(AWSOutputDirectory, Verbosity)
 	}
@@ -765,6 +773,7 @@ func runEKSCommand(cmd *cobra.Command, args []string) {
 			SkipAdminCheck: AWSSkipAdminCheck,
 			WrapTable:      AWSWrapTable,
 			AWSOutputType:  AWSOutputType,
+			AWSTableCols:   AWSTableCols,
 		}
 		m.EKS(AWSOutputDirectory, Verbosity)
 	}
@@ -800,6 +809,7 @@ func runEndpointsCommand(cmd *cobra.Command, args []string) {
 			Goroutines:    Goroutines,
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 		m.PrintEndpoints(AWSOutputDirectory, Verbosity)
 	}
@@ -820,6 +830,7 @@ func runEnvsCommand(cmd *cobra.Command, args []string) {
 			Goroutines:    Goroutines,
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 
 			ECSClient:       ecs.NewFromConfig(AWSConfig),
 			AppRunnerClient: apprunner.NewFromConfig(AWSConfig),
@@ -848,6 +859,7 @@ func runFilesystemsCommand(cmd *cobra.Command, args []string) {
 			AWSRegions:    internal.GetEnabledRegions(profile, cmd.Root().Version),
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 		filesystems.PrintFilesystems(AWSOutputDirectory, Verbosity)
 	}
@@ -867,6 +879,7 @@ func runIamSimulatorCommand(cmd *cobra.Command, args []string) {
 			Goroutines:    Goroutines,
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 		m.PrintIamSimulator(SimulatorPrincipal, SimulatorAction, SimulatorResource, AWSOutputDirectory, Verbosity)
 	}
@@ -890,6 +903,7 @@ func runInstancesCommand(cmd *cobra.Command, args []string) {
 			SkipAdminCheck:         AWSSkipAdminCheck,
 			WrapTable:              AWSWrapTable,
 			AWSOutputType:          AWSOutputType,
+			AWSTableCols:           AWSTableCols,
 		}
 		m.Instances(InstancesFilter, AWSOutputDirectory, Verbosity)
 	}
@@ -948,6 +962,7 @@ func runInventoryCommand(cmd *cobra.Command, args []string) {
 			Goroutines:    Goroutines,
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 		m.PrintInventoryPerRegion(AWSOutputDirectory, Verbosity)
 	}
@@ -970,6 +985,7 @@ func runLambdasCommand(cmd *cobra.Command, args []string) {
 			SkipAdminCheck: AWSSkipAdminCheck,
 			WrapTable:      AWSWrapTable,
 			AWSOutputType:  AWSOutputType,
+			AWSTableCols:   AWSTableCols,
 		}
 		m.PrintLambdas(AWSOutputDirectory, Verbosity)
 	}
@@ -991,6 +1007,7 @@ func runOutboundAssumedRolesCommand(cmd *cobra.Command, args []string) {
 			Goroutines:    Goroutines,
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 		m.PrintOutboundRoleTrusts(OutboundAssumedRolesDays, AWSOutputDirectory, Verbosity)
 	}
@@ -1009,6 +1026,7 @@ func runOrgsCommand(cmd *cobra.Command, args []string) {
 			AWSProfile:          profile,
 			WrapTable:           AWSWrapTable,
 			AWSOutputType:       AWSOutputType,
+			AWSTableCols:        AWSTableCols,
 		}
 		m.PrintOrgAccounts(AWSOutputDirectory, Verbosity)
 	}
@@ -1046,6 +1064,7 @@ func runPmapperCommand(cmd *cobra.Command, args []string) {
 			Goroutines:    Goroutines,
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 		m.PrintPmapperData(AWSOutputDirectory, Verbosity)
 	}
@@ -1065,6 +1084,7 @@ func runPrincipalsCommand(cmd *cobra.Command, args []string) {
 			Goroutines:    Goroutines,
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 		m.PrintIamPrincipals(AWSOutputDirectory, Verbosity)
 	}
@@ -1085,6 +1105,7 @@ func runRAMCommand(cmd *cobra.Command, args []string) {
 			AWSRegions:    internal.GetEnabledRegions(profile, cmd.Root().Version),
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 		ram.PrintRAM(AWSOutputDirectory, Verbosity)
 
@@ -1105,6 +1126,7 @@ func runResourceTrustsCommand(cmd *cobra.Command, args []string) {
 			WrapTable:       AWSWrapTable,
 			CloudFoxVersion: cmd.Root().Version,
 			AWSOutputType:   AWSOutputType,
+			AWSTableCols:    AWSTableCols,
 		}
 		m.PrintResources(AWSOutputDirectory, Verbosity)
 	}
@@ -1147,6 +1169,7 @@ func runRoute53Command(cmd *cobra.Command, args []string) {
 			Goroutines:    Goroutines,
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 		m.PrintRoute53(AWSOutputDirectory, Verbosity)
 	}
@@ -1169,6 +1192,7 @@ func runSecretsCommand(cmd *cobra.Command, args []string) {
 			Goroutines:    Goroutines,
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 		m.PrintSecrets(AWSOutputDirectory, Verbosity)
 	}
@@ -1190,6 +1214,7 @@ func runTagsCommand(cmd *cobra.Command, args []string) {
 			WrapTable:                         AWSWrapTable,
 			MaxResourcesPerRegion:             MaxResourcesPerRegion,
 			AWSOutputType:                     AWSOutputType,
+			AWSTableCols:                      AWSTableCols,
 		}
 		m.PrintTags(AWSOutputDirectory, Verbosity)
 	}
@@ -1213,6 +1238,7 @@ func runECSTasksCommand(cmd *cobra.Command, args []string) {
 			SkipAdminCheck: AWSSkipAdminCheck,
 			WrapTable:      AWSWrapTable,
 			AWSOutputType:  AWSOutputType,
+			AWSTableCols:   AWSTableCols,
 		}
 		m.ECSTasks(AWSOutputDirectory, Verbosity)
 	}
@@ -1233,6 +1259,7 @@ func runENICommand(cmd *cobra.Command, args []string) {
 			AWSProfile:    profile,
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 		m.ElasticNetworkInterfaces(AWSOutputDirectory, Verbosity)
 	}
@@ -1259,6 +1286,7 @@ func runNetworkPortsCommand(cmd *cobra.Command, args []string) {
 			WrapTable:         AWSWrapTable,
 			Verbosity:         Verbosity,
 			AWSOutputType:     AWSOutputType,
+			AWSTableCols:      AWSTableCols,
 		}
 		m.PrintNetworkPorts(AWSOutputDirectory)
 	}
@@ -1365,6 +1393,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			Goroutines:    Goroutines,
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 		inventory2.PrintInventoryPerRegion(AWSOutputDirectory, Verbosity)
 
@@ -1387,6 +1416,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			Goroutines:          Goroutines,
 			WrapTable:           AWSWrapTable,
 			AWSOutputType:       AWSOutputType,
+			AWSTableCols:        AWSTableCols,
 		}
 		orgMod.PrintOrgAccounts(AWSOutputDirectory, Verbosity)
 
@@ -1402,6 +1432,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			AWSProfile:             profile,
 			WrapTable:              AWSWrapTable,
 			AWSOutputType:          AWSOutputType,
+			AWSTableCols:           AWSTableCols,
 		}
 		instances.Instances(InstancesFilter, AWSOutputDirectory, Verbosity)
 		route53 := aws.Route53Module{
@@ -1423,6 +1454,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			SkipAdminCheck: AWSSkipAdminCheck,
 			WrapTable:      AWSWrapTable,
 			AWSOutputType:  AWSOutputType,
+			AWSTableCols:   AWSTableCols,
 		}
 		lambdasMod.PrintLambdas(AWSOutputDirectory, Verbosity)
 
@@ -1437,6 +1469,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			Goroutines:    Goroutines,
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 		filesystems.PrintFilesystems(AWSOutputDirectory, Verbosity)
 
@@ -1464,6 +1497,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			Goroutines:    Goroutines,
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 
 		endpoints.PrintEndpoints(AWSOutputDirectory, Verbosity)
@@ -1479,6 +1513,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			Goroutines:     Goroutines,
 			WrapTable:      AWSWrapTable,
 			AWSOutputType:  AWSOutputType,
+			AWSTableCols:   AWSTableCols,
 		}
 
 		databases.PrintDatabases(AWSOutputDirectory, Verbosity)
@@ -1495,6 +1530,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			SkipAdminCheck: AWSSkipAdminCheck,
 			WrapTable:      AWSWrapTable,
 			AWSOutputType:  AWSOutputType,
+			AWSTableCols:   AWSTableCols,
 		}
 		ecstasks.ECSTasks(AWSOutputDirectory, Verbosity)
 
@@ -1509,6 +1545,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			SkipAdminCheck: AWSSkipAdminCheck,
 			WrapTable:      AWSWrapTable,
 			AWSOutputType:  AWSOutputType,
+			AWSTableCols:   AWSTableCols,
 		}
 		eksCommand.EKS(AWSOutputDirectory, Verbosity)
 
@@ -1519,6 +1556,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			AWSProfile:    profile,
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 		elasticnetworkinterfaces.ElasticNetworkInterfaces(AWSOutputDirectory, Verbosity)
 
@@ -1536,6 +1574,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			Goroutines:             Goroutines,
 			WrapTable:              AWSWrapTable,
 			AWSOutputType:          AWSOutputType,
+			AWSTableCols:           AWSTableCols,
 		}
 		ec2UserData.Instances(InstancesFilter, AWSOutputDirectory, Verbosity)
 		envsMod := aws.EnvsModule{
@@ -1551,6 +1590,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			Goroutines:      Goroutines,
 			WrapTable:       AWSWrapTable,
 			AWSOutputType:   AWSOutputType,
+			AWSTableCols:    AWSTableCols,
 		}
 		envsMod.PrintEnvs(AWSOutputDirectory, Verbosity)
 
@@ -1562,6 +1602,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			Goroutines:           Goroutines,
 			WrapTable:            AWSWrapTable,
 			AWSOutputType:        AWSOutputType,
+			AWSTableCols:         AWSTableCols,
 		}
 		cfMod.PrintCloudformationStacks(AWSOutputDirectory, Verbosity)
 
@@ -1584,6 +1625,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			Goroutines:    Goroutines,
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 		buckets.PrintBuckets(AWSOutputDirectory, Verbosity)
 
@@ -1595,6 +1637,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			Goroutines:    Goroutines,
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 		ecr.PrintECR(AWSOutputDirectory, Verbosity)
 
@@ -1608,6 +1651,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			Goroutines:    Goroutines,
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 		secrets.PrintSecrets(AWSOutputDirectory, Verbosity)
 
@@ -1619,6 +1663,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			AWSRegions:    internal.GetEnabledRegions(profile, cmd.Root().Version),
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 		ram.PrintRAM(AWSOutputDirectory, Verbosity)
 
@@ -1635,6 +1680,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			Goroutines:        Goroutines,
 			AWSRegions:        internal.GetEnabledRegions(profile, cmd.Root().Version),
 			AWSOutputType:     AWSOutputType,
+			AWSTableCols:      AWSTableCols,
 		}
 		networkPorts.PrintNetworkPorts(AWSOutputDirectory)
 
@@ -1649,6 +1695,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			Goroutines:    Goroutines,
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 		sqsMod.PrintSQS(AWSOutputDirectory, Verbosity)
 
@@ -1663,6 +1710,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			WrapTable:       AWSWrapTable,
 			CloudFoxVersion: cmd.Root().Version,
 			AWSOutputType:   AWSOutputType,
+			AWSTableCols:    AWSTableCols,
 		}
 		resourceTrustsCommand.PrintResources(AWSOutputDirectory, Verbosity)
 
@@ -1674,6 +1722,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			AWSRegions:      internal.GetEnabledRegions(profile, cmd.Root().Version),
 			WrapTable:       AWSWrapTable,
 			AWSOutputType:   AWSOutputType,
+			AWSTableCols:    AWSTableCols,
 		}
 		codeBuildCommand.PrintCodeBuildProjects(AWSOutputDirectory, Verbosity)
 
@@ -1686,6 +1735,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			Goroutines:    Goroutines,
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 
 		principals.PrintIamPrincipals(AWSOutputDirectory, Verbosity)
@@ -1704,6 +1754,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			Goroutines:    Goroutines,
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 		accessKeys.PrintAccessKeys(AccessKeysFilter, AWSOutputDirectory, Verbosity)
 		roleTrusts := aws.RoleTrustsModule{
@@ -1714,6 +1765,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			SkipAdminCheck: AWSSkipAdminCheck,
 			WrapTable:      AWSWrapTable,
 			AWSOutputType:  AWSOutputType,
+			AWSTableCols:   AWSTableCols,
 		}
 		roleTrusts.PrintRoleTrusts(AWSOutputDirectory, Verbosity)
 
@@ -1723,6 +1775,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			Goroutines:    Goroutines,
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 		pmapperCommand.PrintPmapperData(AWSOutputDirectory, Verbosity)
 
@@ -1733,6 +1786,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			Goroutines:    Goroutines,
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 		iamSimulator.PrintIamSimulator(SimulatorPrincipal, SimulatorAction, SimulatorResource, AWSOutputDirectory, Verbosity)
 

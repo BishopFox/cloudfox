@@ -20,11 +20,13 @@ type OrgModule struct {
 	Caller              sts.GetCallerIdentityOutput
 	AWSRegions          []string
 	AWSOutputType       string
-	Goroutines          int
-	AWSProfile          string
-	SkipAdminCheck      bool
-	WrapTable           bool
-	DescribeOrgOutput   *types.Organization
+	AWSTableCols        string
+
+	Goroutines        int
+	AWSProfile        string
+	SkipAdminCheck    bool
+	WrapTable         bool
+	DescribeOrgOutput *types.Organization
 
 	// Main module data
 	Accounts       []Account

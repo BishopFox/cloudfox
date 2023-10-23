@@ -20,11 +20,13 @@ import (
 
 type ResourceTrustsModule struct {
 	// General configuration data
-	Caller          sts.GetCallerIdentityOutput
-	AWSRegions      []string
-	Goroutines      int
-	WrapTable       bool
-	AWSOutputType   string
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	Goroutines    int
+	WrapTable     bool
+	AWSOutputType string
+	AWSTableCols  string
+
 	AWSProfile      string
 	CloudFoxVersion string
 

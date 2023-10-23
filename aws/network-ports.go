@@ -68,10 +68,12 @@ type NetworkPortsModule struct {
 	Caller        sts.GetCallerIdentityOutput
 	AWSRegions    []string
 	AWSOutputType string
-	Goroutines    int
-	AWSProfile    string
-	WrapTable     bool
-	Verbosity     int
+	AWSTableCols  string
+
+	Goroutines int
+	AWSProfile string
+	WrapTable  bool
+	Verbosity  int
 
 	// Main module data
 	IPv4_Private   []NetworkService

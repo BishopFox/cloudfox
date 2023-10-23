@@ -31,9 +31,11 @@ type SQSModule struct {
 	Caller        sts.GetCallerIdentityOutput
 	AWSRegions    []string
 	AWSOutputType string
-	Goroutines    int
-	AWSProfile    string
-	WrapTable     bool
+	AWSTableCols  string
+
+	Goroutines int
+	AWSProfile string
+	WrapTable  bool
 
 	// Main module data
 	Queues         []Queue

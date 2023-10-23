@@ -28,6 +28,7 @@ type SecretsModule struct {
 	Goroutines    int
 	WrapTable     bool
 	AWSOutputType string
+	AWSTableCols  string
 
 	// Main module data
 	Secrets []Secret

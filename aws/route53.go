@@ -17,9 +17,11 @@ type Route53Module struct {
 	// General configuration data
 	Route53Client sdk.AWSRoute53ClientInterface
 
-	Caller         sts.GetCallerIdentityOutput
-	AWSRegions     []string
-	AWSOutputType  string
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	AWSOutputType string
+	AWSTableCols  string
+
 	Goroutines     int
 	AWSProfile     string
 	WrapTable      bool

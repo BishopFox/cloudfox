@@ -23,11 +23,13 @@ import (
 
 type InstancesModule struct {
 	// General configuration data
-	EC2Client                 sdk.AWSEC2ClientInterface
-	IAMClient                 sdk.AWSIAMClientInterface
-	Caller                    sts.GetCallerIdentityOutput
-	AWSRegions                []string
-	AWSOutputType             string
+	EC2Client     sdk.AWSEC2ClientInterface
+	IAMClient     sdk.AWSIAMClientInterface
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	AWSOutputType string
+	AWSTableCols  string
+
 	Goroutines                int
 	UserDataAttributesOnly    bool
 	AWSProfile                string

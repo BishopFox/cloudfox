@@ -21,9 +21,11 @@ type EKSModule struct {
 	EKSClient sdk.EKSClientInterface
 	IAMClient sdk.AWSIAMClientInterface
 
-	Caller         sts.GetCallerIdentityOutput
-	AWSRegions     []string
-	AWSOutputType  string
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	AWSOutputType string
+	AWSTableCols  string
+
 	Goroutines     int
 	AWSProfile     string
 	SkipAdminCheck bool

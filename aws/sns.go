@@ -30,8 +30,10 @@ type SNSModule struct {
 	Caller        sts.GetCallerIdentityOutput
 	StorePolicies bool
 	AWSOutputType string
-	Goroutines    int
-	WrapTable     bool
+	AWSTableCols  string
+
+	Goroutines int
+	WrapTable  bool
 
 	// Main module data
 	Topics         []SNSTopic

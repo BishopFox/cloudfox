@@ -32,10 +32,11 @@ type RoleTrustsModule struct {
 	SkipAdminCheck bool
 	WrapTable      bool
 	AWSOutputType  string
-	pmapperMod     PmapperModule
-	pmapperError   error
-	iamSimClient   IamSimulatorModule
 	AWSTableCols   string
+
+	pmapperMod   PmapperModule
+	pmapperError error
+	iamSimClient IamSimulatorModule
 
 	// Main module data
 	AnalyzedRoles  []AnalyzedRole

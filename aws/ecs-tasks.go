@@ -25,9 +25,11 @@ type ECSTasksModule struct {
 	EC2Client sdk.AWSEC2ClientInterface
 	IAMClient sdk.AWSIAMClientInterface
 
-	Caller         sts.GetCallerIdentityOutput
-	AWSRegions     []string
-	AWSOutputType  string
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	AWSOutputType string
+	AWSTableCols  string
+
 	AWSProfile     string
 	Goroutines     int
 	SkipAdminCheck bool

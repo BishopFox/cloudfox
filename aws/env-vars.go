@@ -38,8 +38,10 @@ type EnvsModule struct {
 	AWSRegions    []string
 	AWSProfile    string
 	AWSOutputType string
-	Goroutines    int
-	WrapTable     bool
+	AWSTableCols  string
+
+	Goroutines int
+	WrapTable  bool
 
 	// Service Clients
 	ECSClient       *ecs.Client

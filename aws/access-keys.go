@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
@@ -21,6 +22,7 @@ type AccessKeysModule struct {
 	Goroutines     int
 	WrapTable      bool
 	AWSOutputType  string
+	AWSTableCols   string
 	CommandCounter internal.CommandCounter
 
 	// Main module data
@@ -86,10 +88,33 @@ func (m *AccessKeysModule) PrintAccessKeys(filter string, outputDirectory string
 				Wrap: m.WrapTable,
 			},
 		}
+
+		// If the user specified table columns, use those.
+		// If the user specified -o wide, use the wide default cols for this module.
+		// Otherwise, use the hardcoded default cols for this module.
+		var tableCols []string
+		// If the user specified table columns, use those.
+		if m.AWSTableCols != "" {
+			tableCols = strings.Split(m.AWSTableCols, ",")
+			// If the user specified wide as the output format, use these columns.
+		} else if m.AWSOutputType == "wide" {
+			tableCols = []string{
+				"User Name",
+				"Access Key ID",
+			}
+			// Otherwise, use the default columns.
+		} else {
+			tableCols = []string{
+				"User Name",
+				"Access Key ID",
+			}
+		}
+
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			Body:      m.output.Body,
+			TableCols: tableCols,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))

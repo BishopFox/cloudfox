@@ -22,8 +22,10 @@ type ElasticNetworkInterfacesModule struct {
 	Caller        sts.GetCallerIdentityOutput
 	AWSRegions    []string
 	AWSOutputType string
-	AWSProfile    string
-	WrapTable     bool
+	AWSTableCols  string
+
+	AWSProfile string
+	WrapTable  bool
 
 	MappedENIs     []MappedENI
 	CommandCounter internal.CommandCounter

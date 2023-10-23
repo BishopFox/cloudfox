@@ -26,9 +26,11 @@ type TagsModule struct {
 	// General configuration data
 	ResourceGroupsTaggingApiInterface TagsGetResourcesAPI
 
-	Caller                sts.GetCallerIdentityOutput
-	AWSRegions            []string
-	AWSOutputType         string
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	AWSOutputType string
+	AWSTableCols  string
+
 	Goroutines            int
 	AWSProfile            string
 	WrapTable             bool
