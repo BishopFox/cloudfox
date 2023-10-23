@@ -20,12 +20,12 @@ type CloudformationModule struct {
 	// General configuration data
 	CloudFormationClient sdk.CloudFormationClientInterface
 
-	Caller       sts.GetCallerIdentityOutput
-	AWSRegions   []string
-	OutputFormat string
-	Goroutines   int
-	AWSProfile   string
-	WrapTable    bool
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	Goroutines    int
+	AWSProfile    string
+	WrapTable     bool
+	AWSOutputType string
 
 	// Main module data
 	CFStacks       []CFStack
@@ -45,7 +45,7 @@ type CFStack struct {
 	Template   string
 }
 
-func (m *CloudformationModule) PrintCloudformationStacks(outputFormat string, outputDirectory string, verbosity int) {
+func (m *CloudformationModule) PrintCloudformationStacks(outputDirectory string, verbosity int) {
 	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
@@ -130,11 +130,6 @@ func (m *CloudformationModule) PrintCloudformationStacks(outputFormat string, ou
 
 	}
 	if len(m.output.Body) > 0 {
-		//	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account),m.AWSProfile))
-		//m.output.OutputSelector(outputFormat)
-		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,

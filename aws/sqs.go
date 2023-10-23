@@ -28,12 +28,12 @@ type SQSModule struct {
 
 	StorePolicies bool
 
-	Caller       sts.GetCallerIdentityOutput
-	AWSRegions   []string
-	OutputFormat string
-	Goroutines   int
-	AWSProfile   string
-	WrapTable    bool
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	AWSOutputType string
+	Goroutines    int
+	AWSProfile    string
+	WrapTable     bool
 
 	// Main module data
 	Queues         []Queue
@@ -64,7 +64,7 @@ type Queue struct {
 	ResourcePolicySummary string
 }
 
-func (m *SQSModule) PrintSQS(outputFormat string, outputDirectory string, verbosity int) {
+func (m *SQSModule) PrintSQS(outputDirectory string, verbosity int) {
 	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
@@ -133,9 +133,7 @@ func (m *SQSModule) PrintSQS(outputFormat string, outputDirectory string, verbos
 
 	}
 	if len(m.output.Body) > 0 {
-		//m.output.OutputSelector(outputFormat)
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		//m.writeLoot(m.output.FilePath, verbosity, m.AWSProfile)
+
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,

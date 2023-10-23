@@ -27,7 +27,7 @@ type ECSTasksModule struct {
 
 	Caller         sts.GetCallerIdentityOutput
 	AWSRegions     []string
-	OutputFormat   string
+	AWSOutputType  string
 	AWSProfile     string
 	Goroutines     int
 	SkipAdminCheck bool
@@ -56,7 +56,7 @@ type MappedECSTask struct {
 	CanPrivEsc            string
 }
 
-func (m *ECSTasksModule) ECSTasks(outputFormat string, outputDirectory string, verbosity int) {
+func (m *ECSTasksModule) ECSTasks(outputDirectory string, verbosity int) {
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "ecs-tasks"
@@ -119,7 +119,7 @@ func (m *ECSTasksModule) ECSTasks(outputFormat string, outputDirectory string, v
 	receiverDone <- true
 	<-receiverDone
 
-	m.printECSTaskData(outputFormat, outputDirectory, dataReceiver, verbosity)
+	m.printECSTaskData(outputDirectory, dataReceiver, verbosity)
 
 }
 
@@ -136,7 +136,7 @@ func (m *ECSTasksModule) Receiver(receiver chan MappedECSTask, receiverDone chan
 	}
 }
 
-func (m *ECSTasksModule) printECSTaskData(outputFormat string, outputDirectory string, dataReceiver chan MappedECSTask, verbosity int) {
+func (m *ECSTasksModule) printECSTaskData(outputDirectory string, dataReceiver chan MappedECSTask, verbosity int) {
 	if m.pmapperError == nil {
 		m.output.Headers = []string{
 			"Cluster",
@@ -201,9 +201,6 @@ func (m *ECSTasksModule) printECSTaskData(outputFormat string, outputDirectory s
 
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		//m.writeLoot(m.output.FilePath)
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,

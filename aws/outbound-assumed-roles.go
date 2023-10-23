@@ -22,12 +22,12 @@ type OutboundAssumedRolesModule struct {
 	// General configuration data
 	CloudTrailClient *cloudtrail.Client
 
-	Caller       sts.GetCallerIdentityOutput
-	AWSRegions   []string
-	OutputFormat string
-	Goroutines   int
-	AWSProfile   string
-	WrapTable    bool
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	AWSOutputType string
+	Goroutines    int
+	AWSProfile    string
+	WrapTable     bool
 
 	// Main module data
 	OutboundAssumeRoleEntries []OutboundAssumeRoleEntry
@@ -114,7 +114,7 @@ type CloudTrailEvent struct {
 	} `json:"tlsDetails"`
 }
 
-func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputFormat string, outputDirectory string, verbosity int) {
+func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputDirectory string, verbosity int) {
 	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
@@ -191,9 +191,6 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputFor
 	if len(m.output.Body) > 0 {
 
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		//m.output.OutputSelector(outputFormat)
-		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,

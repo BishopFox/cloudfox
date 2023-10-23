@@ -19,7 +19,7 @@ type OrgModule struct {
 	OrganizationsClient sdk.OrganizationsClientInterface
 	Caller              sts.GetCallerIdentityOutput
 	AWSRegions          []string
-	OutputFormat        string
+	AWSOutputType       string
 	Goroutines          int
 	AWSProfile          string
 	SkipAdminCheck      bool
@@ -52,7 +52,7 @@ type Account struct {
 	OrgId               string
 }
 
-func (m *OrgModule) PrintOrgAccounts(outputFormat string, outputDirectory string, verbosity int) {
+func (m *OrgModule) PrintOrgAccounts(outputDirectory string, verbosity int) {
 	// These struct values are used by the output module
 	var err error
 	m.output.Verbosity = verbosity
@@ -109,8 +109,6 @@ func (m *OrgModule) PrintOrgAccounts(outputFormat string, outputDirectory string
 
 		if len(m.output.Body) > 0 {
 			m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-			//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-			//m.writeLoot(m.output.FilePath, verbosity)
 			o := internal.OutputClient{
 				Verbosity:     verbosity,
 				CallingModule: m.output.CallingModule,

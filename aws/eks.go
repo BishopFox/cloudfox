@@ -23,7 +23,7 @@ type EKSModule struct {
 
 	Caller         sts.GetCallerIdentityOutput
 	AWSRegions     []string
-	OutputFormat   string
+	AWSOutputType  string
 	Goroutines     int
 	AWSProfile     string
 	SkipAdminCheck bool
@@ -52,7 +52,7 @@ type Cluster struct {
 	CanPrivEsc string
 }
 
-func (m *EKSModule) EKS(outputFormat string, outputDirectory string, verbosity int) {
+func (m *EKSModule) EKS(outputDirectory string, verbosity int) {
 	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
@@ -199,10 +199,6 @@ func (m *EKSModule) EKS(outputFormat string, outputDirectory string, verbosity i
 
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		//m.output.OutputSelector(outputFormat)
-		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		//m.writeLoot(m.output.FilePath, verbosity)
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,

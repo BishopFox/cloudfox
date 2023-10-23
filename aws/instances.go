@@ -27,7 +27,7 @@ type InstancesModule struct {
 	IAMClient                 sdk.AWSIAMClientInterface
 	Caller                    sts.GetCallerIdentityOutput
 	AWSRegions                []string
-	OutputFormat              string
+	AWSOutputType             string
 	Goroutines                int
 	UserDataAttributesOnly    bool
 	AWSProfile                string
@@ -62,7 +62,7 @@ type MappedInstance struct {
 	CanPrivEsc       string
 }
 
-func (m *InstancesModule) Instances(filter string, outputFormat string, outputDirectory string, verbosity int) {
+func (m *InstancesModule) Instances(filter string, outputDirectory string, verbosity int) {
 	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
@@ -146,9 +146,9 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 	// This conditional block will either dump the userData attribute content or the general instances data, depending on what you select via command line.
 	//fmt.Printf("\n[*] Preparing output...\n\n")
 	if m.UserDataAttributesOnly {
-		m.printInstancesUserDataAttributesOnly(outputFormat, outputDirectory, dataReceiver)
+		m.printInstancesUserDataAttributesOnly(outputDirectory, dataReceiver)
 	} else {
-		m.printGeneralInstanceData(outputFormat, outputDirectory, dataReceiver, verbosity)
+		m.printGeneralInstanceData(outputDirectory, dataReceiver, verbosity)
 	}
 
 }
@@ -166,7 +166,7 @@ func (m *InstancesModule) Receiver(receiver chan MappedInstance, receiverDone ch
 	}
 }
 
-func (m *InstancesModule) printInstancesUserDataAttributesOnly(outputFormat string, outputDirectory string, dataReceiver chan MappedInstance) {
+func (m *InstancesModule) printInstancesUserDataAttributesOnly(outputDirectory string, dataReceiver chan MappedInstance) {
 	defer func() {
 		m.output.CallingModule = "instances"
 	}()
@@ -216,7 +216,7 @@ func (m *InstancesModule) printInstancesUserDataAttributesOnly(outputFormat stri
 	}
 }
 
-func (m *InstancesModule) printGeneralInstanceData(outputFormat string, outputDirectory string, dataReceiver chan MappedInstance, verbosity int) {
+func (m *InstancesModule) printGeneralInstanceData(outputDirectory string, dataReceiver chan MappedInstance, verbosity int) {
 	// Prepare Table headers
 	//m.output.Headers = table.Row{
 	if m.pmapperError == nil {
@@ -296,9 +296,6 @@ func (m *InstancesModule) printGeneralInstanceData(outputFormat string, outputDi
 
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		////m.output.OutputSelector(outputFormat)
-		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 
 		//m.writeLoot(m.output.FilePath)
 		o := internal.OutputClient{

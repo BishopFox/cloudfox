@@ -25,7 +25,6 @@ func TestCloudFormation(t *testing.T) {
 			testModule: CloudformationModule{
 				CloudFormationClient: &sdk.MockedCloudformationClient{},
 				Caller:               sts.GetCallerIdentityOutput{Arn: aws.String("test")},
-				OutputFormat:         "table",
 				AWSProfile:           "test",
 				Goroutines:           30,
 				AWSRegions:           AWSRegions,
@@ -39,7 +38,7 @@ func TestCloudFormation(t *testing.T) {
 	internal.MockFileSystem(true)
 	for _, subtest := range subtests {
 		t.Run(subtest.name, func(t *testing.T) {
-			subtest.testModule.PrintCloudformationStacks(subtest.testModule.OutputFormat, subtest.outputDirectory, subtest.verbosity)
+			subtest.testModule.PrintCloudformationStacks(subtest.outputDirectory, subtest.verbosity)
 			for index, expectedStack := range subtest.expectedResult {
 				if expectedStack.Name != subtest.testModule.CFStacks[index].Name {
 					log.Fatal("Stack name does not match expected name")

@@ -86,7 +86,6 @@ func TestEks(t *testing.T) {
 				EKSClient: &MockedEKSClientInterface{},
 				//IAMSimulatePrincipalPolicyClient:    iam.SimulatePrincipalPolicyAPIClient,
 				Caller:         sts.GetCallerIdentityOutput{Arn: aws.String("test")},
-				OutputFormat:   "table",
 				AWSProfile:     "test",
 				Goroutines:     30,
 				AWSRegions:     AWSRegions,
@@ -104,7 +103,7 @@ func TestEks(t *testing.T) {
 	internal.MockFileSystem(true)
 	for _, subtest := range subtests {
 		t.Run(subtest.name, func(t *testing.T) {
-			subtest.testModule.EKS(subtest.testModule.OutputFormat, subtest.outputDirectory, subtest.verbosity)
+			subtest.testModule.EKS(subtest.outputDirectory, subtest.verbosity)
 			for index, expectedCluster := range subtest.expectedResult {
 				if expectedCluster.Name != subtest.testModule.Clusters[index].Name {
 					log.Fatal("Cluster name does not match expected value")

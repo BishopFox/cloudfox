@@ -65,13 +65,13 @@ type NetworkPortsModule struct {
 	LightsailClient   *lightsail.Client
 	RDSClient         *rds.Client
 
-	Caller       sts.GetCallerIdentityOutput
-	AWSRegions   []string
-	OutputFormat string
-	Goroutines   int
-	AWSProfile   string
-	WrapTable    bool
-	Verbosity    int
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	AWSOutputType string
+	Goroutines    int
+	AWSProfile    string
+	WrapTable     bool
+	Verbosity     int
 
 	// Main module data
 	IPv4_Private   []NetworkService
@@ -136,7 +136,7 @@ var naclToSG = map[string]string{
 
 var validSecurityGroupProtocols = []string{"-1", "tcp", "udp"}
 
-func (m *NetworkPortsModule) PrintNetworkPorts(outputFormat string, outputDirectory string) {
+func (m *NetworkPortsModule) PrintNetworkPorts(outputDirectory string) {
 	// These struct values are used by the output module
 	m.output.Verbosity = m.Verbosity
 	m.output.Directory = outputDirectory
@@ -211,9 +211,6 @@ func (m *NetworkPortsModule) PrintNetworkPorts(outputFormat string, outputDirect
 
 	if len(m.IPv4_Private) > 0 || len(m.IPv4_Public) > 0 || len(m.IPv6) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		//m.output.OutputSelector(outputFormat)
-		//internal.OutputSelector(m.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		//m.writeLoot(m.output.FilePath)
 		o := internal.OutputClient{
 			Verbosity:     m.Verbosity,
 			CallingModule: m.output.CallingModule,

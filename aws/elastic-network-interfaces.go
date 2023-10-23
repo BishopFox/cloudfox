@@ -19,11 +19,11 @@ import (
 type ElasticNetworkInterfacesModule struct {
 	EC2Client sdk.AWSEC2ClientInterface
 
-	Caller       sts.GetCallerIdentityOutput
-	AWSRegions   []string
-	OutputFormat string
-	AWSProfile   string
-	WrapTable    bool
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	AWSOutputType string
+	AWSProfile    string
+	WrapTable     bool
 
 	MappedENIs     []MappedENI
 	CommandCounter internal.CommandCounter
@@ -42,7 +42,7 @@ type MappedENI struct {
 	Description      string
 }
 
-func (m *ElasticNetworkInterfacesModule) ElasticNetworkInterfaces(outputFormat string, outputDirectory string, verbosity int) {
+func (m *ElasticNetworkInterfacesModule) ElasticNetworkInterfaces(outputDirectory string, verbosity int) {
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "elastic-network-interfaces"
@@ -82,7 +82,7 @@ func (m *ElasticNetworkInterfacesModule) ElasticNetworkInterfaces(outputFormat s
 	receiverDone <- true
 	<-receiverDone
 
-	m.printENIsData(outputFormat, outputDirectory, dataReceiver, verbosity)
+	m.printENIsData(outputDirectory, dataReceiver, verbosity)
 
 }
 
@@ -99,7 +99,7 @@ func (m *ElasticNetworkInterfacesModule) Receiver(receiver chan MappedENI, recei
 	}
 }
 
-func (m *ElasticNetworkInterfacesModule) printENIsData(outputFormat string, outputDirectory string, dataReceiver chan MappedENI, verbosity int) {
+func (m *ElasticNetworkInterfacesModule) printENIsData(outputDirectory string, dataReceiver chan MappedENI, verbosity int) {
 	m.output.Headers = []string{
 		"ID",
 		"Type",
@@ -125,10 +125,7 @@ func (m *ElasticNetworkInterfacesModule) printENIsData(outputFormat string, outp
 	}
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 
-		//m.writeLoot(m.output.FilePath)
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,

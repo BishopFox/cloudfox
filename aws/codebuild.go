@@ -20,7 +20,7 @@ type CodeBuildModule struct {
 
 	Caller         sts.GetCallerIdentityOutput
 	AWSRegions     []string
-	OutputFormat   string
+	AWSOutputType  string
 	Goroutines     int
 	AWSProfile     string
 	SkipAdminCheck bool
@@ -46,7 +46,7 @@ type Project struct {
 	CanPrivEsc string
 }
 
-func (m *CodeBuildModule) PrintCodeBuildProjects(outputFormat string, outputDirectory string, verbosity int) {
+func (m *CodeBuildModule) PrintCodeBuildProjects(outputDirectory string, verbosity int) {
 	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
@@ -162,11 +162,6 @@ func (m *CodeBuildModule) PrintCodeBuildProjects(outputFormat string, outputDire
 
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		//m.output.OutputSelector(outputFormat)
-		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		//m.writeLoot(m.output.FilePath, verbosity)
-		//fmt.Printf("[%s][%s] %d projects with a total of %d node groups found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), len(seen), len(m.output.Body))
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,

@@ -19,7 +19,7 @@ type Route53Module struct {
 
 	Caller         sts.GetCallerIdentityOutput
 	AWSRegions     []string
-	OutputFormat   string
+	AWSOutputType  string
 	Goroutines     int
 	AWSProfile     string
 	WrapTable      bool
@@ -41,7 +41,7 @@ type Record struct {
 	PrivateZone string
 }
 
-func (m *Route53Module) PrintRoute53(outputFormat string, outputDirectory string, verbosity int) {
+func (m *Route53Module) PrintRoute53(outputDirectory string, verbosity int) {
 
 	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
@@ -83,10 +83,7 @@ func (m *Route53Module) PrintRoute53(outputFormat string, outputDirectory string
 	if len(m.output.Body) > 0 {
 
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		//m.output.OutputSelector(outputFormat)
-		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		//m.writeLoot(m.output.FilePath, verbosity)
+
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,

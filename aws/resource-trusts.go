@@ -24,6 +24,7 @@ type ResourceTrustsModule struct {
 	AWSRegions      []string
 	Goroutines      int
 	WrapTable       bool
+	AWSOutputType   string
 	AWSProfile      string
 	CloudFoxVersion string
 
@@ -46,7 +47,7 @@ type Resource2 struct {
 	Interesting           string
 }
 
-func (m *ResourceTrustsModule) PrintResources(outputFormat string, outputDirectory string, verbosity int) {
+func (m *ResourceTrustsModule) PrintResources(outputDirectory string, verbosity int) {
 	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
@@ -122,8 +123,6 @@ func (m *ResourceTrustsModule) PrintResources(outputFormat string, outputDirecto
 
 	}
 	if len(m.output.Body) > 0 {
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		//m.writeLoot(m.output.FilePath, verbosity, m.AWSProfile)
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,
@@ -325,7 +324,7 @@ func (m *ResourceTrustsModule) getS3Buckets(wg *sync.WaitGroup, semaphore chan s
 	for _, b := range ListBuckets {
 		var statementSummaryInEnglish string
 		var isInteresting string = "No"
-		bucket := &Bucket{
+		bucket := &BucketRow{
 			Arn: fmt.Sprintf("arn:aws:s3:::%s", aws.ToString(b.Name)),
 		}
 		name := aws.ToString(b.Name)

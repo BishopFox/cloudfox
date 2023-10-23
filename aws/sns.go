@@ -29,7 +29,7 @@ type SNSModule struct {
 	AWSProfile    string
 	Caller        sts.GetCallerIdentityOutput
 	StorePolicies bool
-	OutputFormat  string
+	AWSOutputType string
 	Goroutines    int
 	WrapTable     bool
 
@@ -61,7 +61,7 @@ type SNSTopic struct {
 	ResourcePolicySummary string
 }
 
-func (m *SNSModule) PrintSNS(outputFormat string, outputDirectory string, verbosity int) {
+func (m *SNSModule) PrintSNS(outputDirectory string, verbosity int) {
 	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
@@ -131,9 +131,7 @@ func (m *SNSModule) PrintSNS(outputFormat string, outputDirectory string, verbos
 
 	}
 	if len(m.output.Body) > 0 {
-		//m.output.OutputSelector(outputFormat)
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		//m.writeLoot(m.output.FilePath, verbosity, m.AWSProfile)
+
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,

@@ -25,20 +25,21 @@ type BucketsModule struct {
 	AWSRegions          []string
 	AWSProfile          string
 	Caller              sts.GetCallerIdentityOutput
+	AWSTableCols        string
+	AWSOutputType       string
 
-	OutputFormat string
-	Goroutines   int
-	WrapTable    bool
+	Goroutines int
+	WrapTable  bool
 
 	// Main module data
-	Buckets        []Bucket
+	Buckets        []BucketRow
 	CommandCounter internal.CommandCounter
 	// Used to store output data for pretty printing
 	output internal.OutputData2
 	modLog *logrus.Entry
 }
 
-type Bucket struct {
+type BucketRow struct {
 	Arn                   string
 	AWSService            string
 	Region                string
@@ -54,7 +55,7 @@ type Bucket struct {
 	ResourcePolicySummary string
 }
 
-func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string, verbosity int) {
+func (m *BucketsModule) PrintBuckets(outputDirectory string, verbosity int) {
 	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
@@ -79,7 +80,7 @@ func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string
 	go internal.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
 
 	//create a channel to receive the objects
-	dataReceiver := make(chan Bucket)
+	dataReceiver := make(chan BucketRow)
 
 	// Create a channel to signal to stop
 	receiverDone := make(chan bool)
@@ -100,48 +101,27 @@ func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string
 	<-receiverDone
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
-	if m.CheckBucketPolicies {
-		m.output.Headers = []string{
-			"Name",
-			"Region",
-			"Public?",
-			"Resource Policy Summary",
-		}
-	} else {
-		m.output.Headers = []string{
-			"Name",
-			"Region",
-		}
+	m.output.Headers = []string{
+		"Name",
+		"Region",
+		"Public?",
+		"Resource Policy Summary",
 	}
 
 	// Table rows
-	if m.CheckBucketPolicies {
-		for i := range m.Buckets {
-			m.output.Body = append(
-				m.output.Body,
-				[]string{
-					m.Buckets[i].Name,
-					m.Buckets[i].Region,
-					m.Buckets[i].IsPublic,
-					m.Buckets[i].ResourcePolicySummary,
-				},
-			)
-		}
-	} else {
-		for i := range m.Buckets {
-			m.output.Body = append(
-				m.output.Body,
-				[]string{
-					m.Buckets[i].Name,
-					m.Buckets[i].Region,
-				},
-			)
-		}
+	for i := range m.Buckets {
+		m.output.Body = append(
+			m.output.Body,
+			[]string{
+				m.Buckets[i].Name,
+				m.Buckets[i].Region,
+				m.Buckets[i].IsPublic,
+				m.Buckets[i].ResourcePolicySummary,
+			},
+		)
 	}
 
 	if len(m.output.Body) > 0 {
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		//m.writeLoot(m.output.FilePath, verbosity, m.AWSProfile)
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,
@@ -149,10 +129,27 @@ func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string
 				Wrap: m.WrapTable,
 			},
 		}
+
+		// If the user specified table columns, use those.
+		// If the user specified -o wide, use the wide default cols for this module.
+		// Otherwise, use the hardcoded default cols for this module.
+		var tableCols []string
+		// If the user specified table columns, use those.
+		if m.AWSTableCols != "" {
+			tableCols = strings.Split(m.AWSTableCols, ",")
+			// If the user specified wide as the output format, use these columns.
+		} else if m.AWSOutputType == "wide" {
+			tableCols = []string{"Name", "Region", "Public?", "Resource Policy Summary"}
+			// Otherwise, use the default columns for this module (brief)
+		} else {
+			tableCols = []string{"Name", "Region", "Public?", "Resource Policy Summary"}
+		}
+
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			TableCols: tableCols,
+			Body:      m.output.Body,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
@@ -168,7 +165,7 @@ func (m *BucketsModule) PrintBuckets(outputFormat string, outputDirectory string
 	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 }
 
-func (m *BucketsModule) Receiver(receiver chan Bucket, receiverDone chan bool) {
+func (m *BucketsModule) Receiver(receiver chan BucketRow, receiverDone chan bool) {
 	defer close(receiverDone)
 	for {
 		select {
@@ -181,7 +178,7 @@ func (m *BucketsModule) Receiver(receiver chan Bucket, receiverDone chan bool) {
 	}
 }
 
-func (m *BucketsModule) executeChecks(wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Bucket) {
+func (m *BucketsModule) executeChecks(wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan BucketRow) {
 	defer wg.Done()
 
 	m.CommandCounter.Total++
@@ -235,7 +232,7 @@ func (m *BucketsModule) writeLoot(outputDirectory string, verbosity int, profile
 
 }
 
-func (m *BucketsModule) createBucketsRows(verbosity int, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Bucket) {
+func (m *BucketsModule) createBucketsRows(verbosity int, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan BucketRow) {
 	defer func() {
 		m.CommandCounter.Executing--
 		m.CommandCounter.Complete++
@@ -257,7 +254,7 @@ func (m *BucketsModule) createBucketsRows(verbosity int, wg *sync.WaitGroup, sem
 	}
 
 	for _, b := range ListBuckets {
-		bucket := &Bucket{
+		bucket := &BucketRow{
 			Name:       aws.ToString(b.Name),
 			AWSService: "S3",
 		}
@@ -295,6 +292,8 @@ func (m *BucketsModule) createBucketsRows(verbosity int, wg *sync.WaitGroup, sem
 		} else {
 
 			// Send Bucket object through the channel to the receiver
+			bucket.Access = "Skipped"
+			bucket.IsPublic = "Skipped"
 			dataReceiver <- *bucket
 		}
 	}
@@ -309,7 +308,7 @@ func (m *BucketsModule) isPublicAccessBlocked(bucketName string, r string) bool 
 
 }
 
-func (m *BucketsModule) analyseBucketPolicy(bucket *Bucket, dataReceiver chan Bucket) {
+func (m *BucketsModule) analyseBucketPolicy(bucket *BucketRow, dataReceiver chan BucketRow) {
 	m.storeAccessPolicy(bucket)
 
 	if bucket.Policy.IsPublic() && !bucket.Policy.IsConditionallyPublic() && !m.isPublicAccessBlocked(bucket.Name, bucket.Region) {
@@ -331,7 +330,7 @@ func (m *BucketsModule) analyseBucketPolicy(bucket *Bucket, dataReceiver chan Bu
 
 }
 
-func (m *BucketsModule) storeAccessPolicy(bucket *Bucket) {
+func (m *BucketsModule) storeAccessPolicy(bucket *BucketRow) {
 	f := filepath.Join(m.getLootDir(), fmt.Sprintf("%s.json", bucket.Name))
 
 	if err := m.storeFile(f, bucket.PolicyJSON); err != nil {

@@ -27,7 +27,7 @@ type LambdasModule struct {
 
 	Caller         sts.GetCallerIdentityOutput
 	AWSRegions     []string
-	OutputFormat   string
+	AWSOutputType  string
 	Goroutines     int
 	AWSProfile     string
 	SkipAdminCheck bool
@@ -55,7 +55,7 @@ type Lambda struct {
 	Public     string
 }
 
-func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string, verbosity int) {
+func (m *LambdasModule) PrintLambdas(outputDirectory string, verbosity int) {
 
 	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
@@ -182,8 +182,6 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 	}
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,

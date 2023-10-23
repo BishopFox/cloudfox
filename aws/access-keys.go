@@ -18,9 +18,9 @@ type AccessKeysModule struct {
 	IAMClient      sdk.AWSIAMClientInterface
 	Caller         sts.GetCallerIdentityOutput
 	AWSProfile     string
-	OutputFormat   string
 	Goroutines     int
 	WrapTable      bool
+	AWSOutputType  string
 	CommandCounter internal.CommandCounter
 
 	// Main module data
@@ -36,7 +36,7 @@ type UserKeys struct {
 	Key      string
 }
 
-func (m *AccessKeysModule) PrintAccessKeys(filter string, outputFormat string, outputDirectory string, verbosity int) {
+func (m *AccessKeysModule) PrintAccessKeys(filter string, outputDirectory string, verbosity int) {
 	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
@@ -79,9 +79,6 @@ func (m *AccessKeysModule) PrintAccessKeys(filter string, outputFormat string, o
 		//fmt.Printf("[%s][%s] Preparing output.\n\n")
 
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		//m.output.OutputSelector(outputFormat)
-		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,
