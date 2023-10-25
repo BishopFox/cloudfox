@@ -771,7 +771,7 @@ func (m *NetworkPortsModule) getElastiCacheNetworkPortsPerRegion(r string, dataR
 		// Memcached
 		if cluster.ConfigurationEndpoint != nil {
 			ipv4_private = addHost(ipv4_private, aws.ToString(cluster.ConfigurationEndpoint.Address))
-			tcpPortsInts = addPort(tcpPortsInts, cluster.ConfigurationEndpoint.Port)
+			tcpPortsInts = addPort(tcpPortsInts, aws.ToInt32(cluster.ConfigurationEndpoint.Port))
 		} else {
 			replicationGroupId := aws.ToString(cluster.ReplicationGroupId)
 			for _, group := range nodes {
@@ -780,7 +780,7 @@ func (m *NetworkPortsModule) getElastiCacheNetworkPortsPerRegion(r string, dataR
 						// Primary
 						if g.PrimaryEndpoint != nil && !strContains(reportedClusters, aws.ToString(g.PrimaryEndpoint.Address)) {
 							ipv4_private = addHost(ipv4_private, aws.ToString(g.PrimaryEndpoint.Address))
-							tcpPortsInts = addPort(tcpPortsInts, g.PrimaryEndpoint.Port)
+							tcpPortsInts = addPort(tcpPortsInts, aws.ToInt32(g.PrimaryEndpoint.Port))
 
 							reportedClusters = addHost(reportedClusters, aws.ToString(g.PrimaryEndpoint.Address))
 						}
@@ -788,7 +788,7 @@ func (m *NetworkPortsModule) getElastiCacheNetworkPortsPerRegion(r string, dataR
 						// Reader
 						if g.ReaderEndpoint != nil && !strContains(reportedClusters, aws.ToString(g.ReaderEndpoint.Address)) {
 							ipv4_private = addHost(ipv4_private, aws.ToString(g.ReaderEndpoint.Address))
-							tcpPortsInts = addPort(tcpPortsInts, g.ReaderEndpoint.Port)
+							tcpPortsInts = addPort(tcpPortsInts, aws.ToInt32(g.ReaderEndpoint.Port))
 
 							reportedClusters = addHost(reportedClusters, aws.ToString(g.ReaderEndpoint.Address))
 						}
@@ -798,7 +798,7 @@ func (m *NetworkPortsModule) getElastiCacheNetworkPortsPerRegion(r string, dataR
 							if aws.ToString(m.CacheClusterId) == aws.ToString(cluster.CacheClusterId) {
 								if m.ReadEndpoint != nil {
 									ipv4_private = addHost(ipv4_private, aws.ToString(m.ReadEndpoint.Address))
-									tcpPortsInts = addPort(tcpPortsInts, m.ReadEndpoint.Port)
+									tcpPortsInts = addPort(tcpPortsInts, aws.ToInt32(m.ReadEndpoint.Port))
 								}
 							}
 						}
@@ -1076,7 +1076,7 @@ func (m *NetworkPortsModule) getRdsNetworkPortsPerRegion(r string, dataReceiver 
 	for _, instance := range DBInstances {
 		if aws.ToString(instance.DBInstanceStatus) == "available" {
 			host := []string{aws.ToString(instance.Endpoint.Address)}
-			var port int32 = instance.Endpoint.Port
+			var port int32 = aws.ToInt32(instance.Endpoint.Port)
 
 			var groups []SecurityGroup
 			for _, group := range instance.VpcSecurityGroups {

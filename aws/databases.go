@@ -322,7 +322,7 @@ func (m *DatabasesModule) getRdsClustersPerRegion(r string, wg *sync.WaitGroup, 
 			endpoint := aws.ToString(instance.Endpoint.Address)
 			engine := aws.ToString(instance.Engine)
 
-			if instance.PubliclyAccessible {
+			if aws.ToBool(instance.PubliclyAccessible) {
 				public = "True"
 			} else {
 				public = "False"
@@ -335,7 +335,7 @@ func (m *DatabasesModule) getRdsClustersPerRegion(r string, wg *sync.WaitGroup, 
 				Engine:     engine,
 				Endpoint:   endpoint,
 				UserName:   aws.ToString(instance.MasterUsername),
-				Port:       port,
+				Port:       aws.ToInt32(port),
 				Protocol:   aws.ToString(instance.Engine),
 				Public:     public,
 			}
@@ -379,7 +379,7 @@ func (m *DatabasesModule) getRedshiftDatabasesPerRegion(r string, wg *sync.WaitG
 		//id := workspace.Id
 		endpoint := aws.ToString(cluster.Endpoint.Address)
 
-		if cluster.PubliclyAccessible {
+		if aws.ToBool(cluster.PubliclyAccessible) {
 			public = "True"
 		} else {
 			public = "False"
@@ -390,7 +390,7 @@ func (m *DatabasesModule) getRedshiftDatabasesPerRegion(r string, wg *sync.WaitG
 			Region:     r,
 			Name:       name,
 			Endpoint:   endpoint,
-			Port:       port,
+			Port:       aws.ToInt32(port),
 			Protocol:   protocol,
 			Public:     public,
 		}

@@ -579,7 +579,7 @@ func (m *EndpointsModule) getMqBrokersPerRegion(r string, wg *sync.WaitGroup, se
 			m.CommandCounter.Error++
 			continue
 		}
-		if BrokerDetails.PubliclyAccessible {
+		if aws.ToBool(BrokerDetails.PubliclyAccessible) {
 			public = "True"
 		} else {
 			public = "False"
@@ -1420,7 +1420,7 @@ func (m *EndpointsModule) getRdsClustersPerRegion(r string, wg *sync.WaitGroup, 
 			endpoint := aws.ToString(instance.Endpoint.Address)
 			awsService := "RDS"
 
-			if instance.PubliclyAccessible {
+			if aws.ToBool(instance.PubliclyAccessible) {
 				public = "True"
 			} else {
 				public = "False"
@@ -1431,7 +1431,7 @@ func (m *EndpointsModule) getRdsClustersPerRegion(r string, wg *sync.WaitGroup, 
 				Region:     r,
 				Name:       name,
 				Endpoint:   endpoint,
-				Port:       port,
+				Port:       aws.ToInt32(port),
 				Protocol:   aws.ToString(instance.Engine),
 				Public:     public,
 			}
@@ -1476,7 +1476,7 @@ func (m *EndpointsModule) getRedshiftEndPointsPerRegion(r string, wg *sync.WaitG
 		//id := workspace.Id
 		endpoint := aws.ToString(cluster.Endpoint.Address)
 
-		if cluster.PubliclyAccessible {
+		if aws.ToBool(cluster.PubliclyAccessible) {
 			public = "True"
 		} else {
 			public = "False"
@@ -1489,7 +1489,7 @@ func (m *EndpointsModule) getRedshiftEndPointsPerRegion(r string, wg *sync.WaitG
 			Region:     r,
 			Name:       name,
 			Endpoint:   endpoint,
-			Port:       port,
+			Port:       aws.ToInt32(port),
 			Protocol:   protocol,
 			Public:     public,
 		}

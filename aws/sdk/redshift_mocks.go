@@ -20,7 +20,7 @@ func (m *MockedRedshiftClient) DescribeClusters(ctx context.Context, input *reds
 				DBName:              aws.String("db1"),
 				Endpoint: &redshiftTypes.Endpoint{
 					Address: aws.String("cluster1.us-east-1.redshift.amazonaws.com"),
-					Port:    5439,
+					Port:    aws.Int32(5439),
 				},
 			},
 			{
@@ -29,7 +29,7 @@ func (m *MockedRedshiftClient) DescribeClusters(ctx context.Context, input *reds
 				DBName:              aws.String("db2"),
 				Endpoint: &redshiftTypes.Endpoint{
 					Address: aws.String("cluster2.us-east-1.redshift.amazonaws.com"),
-					Port:    5439,
+					Port:    aws.Int32(5439),
 				},
 			},
 		},
