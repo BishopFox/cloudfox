@@ -32,7 +32,7 @@ func (m *MockedElasticacheClient) DescribeCacheClusters(ctx context.Context, inp
 					},
 				},
 
-				AutoMinorVersionUpgrade:    true,
+				AutoMinorVersionUpgrade:    aws.Bool(true),
 				PreferredMaintenanceWindow: aws.String("sun:05:00-sun:06:00"),
 			},
 		},

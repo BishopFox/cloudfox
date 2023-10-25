@@ -21,12 +21,14 @@ type IamPermissionsModule struct {
 	// General configuration data
 	IAMClient sdk.AWSIAMClientInterface
 
-	Caller       sts.GetCallerIdentityOutput
-	AWSRegions   []string
-	OutputFormat string
-	Goroutines   int
-	AWSProfile   string
-	WrapTable    bool
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	AWSOutputType string
+	AWSTableCols  string
+
+	Goroutines int
+	AWSProfile string
+	WrapTable  bool
 
 	// Main module data
 
@@ -76,13 +78,14 @@ type PermissionsRow struct {
 	Arn        string
 	PolicyType string
 	PolicyName string
+	PolicyArn  string
 	Effect     string
 	Action     string
 	Resource   string
 	Condition  string
 }
 
-func (m *IamPermissionsModule) PrintIamPermissions(outputFormat string, outputDirectory string, verbosity int, principal string) {
+func (m *IamPermissionsModule) PrintIamPermissions(outputDirectory string, verbosity int, principal string) {
 	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
@@ -108,9 +111,10 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputFormat string, outputDi
 		//"Service",
 		"Type",
 		"Name",
-		//"Arn",
+		"Arn",
 		"Policy",
 		"Policy Name",
+		"Policy Arn",
 		"Effect",
 		"Action",
 		"Resource",
@@ -125,9 +129,10 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputFormat string, outputDi
 				//m.Rows[i].AWSService,
 				m.Rows[i].Type,
 				m.Rows[i].Name,
-				//m.Rows[i].Arn,
+				m.Rows[i].Arn,
 				m.Rows[i].PolicyType,
 				m.Rows[i].PolicyName,
+				m.Rows[i].PolicyArn,
 				m.Rows[i].Effect,
 				m.Rows[i].Action,
 				m.Rows[i].Resource,
@@ -139,9 +144,6 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputFormat string, outputDi
 
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		//m.output.OutputSelector3(outputFormat)
-		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,
@@ -149,10 +151,45 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputFormat string, outputDi
 				Wrap: m.WrapTable,
 			},
 		}
+
+		// If the user specified table columns, use those.
+		// If the user specified -o wide, use the wide default cols for this module.
+		// Otherwise, use the hardcoded default cols for this module.
+		var tableCols []string
+		// If the user specified table columns, use those.
+		if m.AWSTableCols != "" {
+			tableCols = strings.Split(m.AWSTableCols, ",")
+			// If the user specified wide as the output format, use these columns.
+		} else if m.AWSOutputType == "wide" {
+			tableCols = []string{"Type",
+				//"Name",
+				"Arn",
+				"Policy",
+				"Policy Name",
+				"Policy Arn",
+				"Effect",
+				"Action",
+				"Resource",
+				"Condition"}
+			// Otherwise, use the default columns for this module (brief)
+		} else {
+			tableCols = []string{"Type",
+				"Name",
+				//"Arn",
+				"Policy",
+				"Policy Name",
+				"Effect",
+				"Action",
+				"Resource",
+				"Condition",
+			}
+		}
+
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			TableCols: tableCols,
+			Body:      m.output.Body,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
@@ -402,6 +439,7 @@ func (m *IamPermissionsModule) getPermissionsFromAttachedPolicy(arn string, atta
 											Type:       IAMtype,
 											PolicyType: "Managed",
 											PolicyName: p.Name,
+											PolicyArn:  p.Arn,
 											Effect:     effect,
 											Action:     action,
 											Resource:   resource,
@@ -428,6 +466,7 @@ func (m *IamPermissionsModule) getPermissionsFromAttachedPolicy(arn string, atta
 											Type:       IAMtype,
 											PolicyType: "Managed",
 											PolicyName: p.Name,
+											PolicyArn:  p.Arn,
 											Effect:     effect,
 											Action:     "[NotAction] " + action,
 											Resource:   resource,
@@ -473,6 +512,7 @@ func (m *IamPermissionsModule) getPermissionsFromInlinePolicy(arn string, inline
 							Type:       IAMtype,
 							PolicyType: "Inline",
 							PolicyName: aws.ToString(inlinePolicy.PolicyName),
+							PolicyArn:  aws.ToString(inlinePolicy.PolicyName),
 							Effect:     effect,
 							Action:     action,
 							Resource:   resource,
@@ -498,6 +538,7 @@ func (m *IamPermissionsModule) getPermissionsFromInlinePolicy(arn string, inline
 							Type:       IAMtype,
 							PolicyType: "Inline",
 							PolicyName: aws.ToString(inlinePolicy.PolicyName),
+							PolicyArn:  aws.ToString(inlinePolicy.PolicyName),
 							Effect:     effect,
 							Action:     "[NotAction] " + action,
 							Resource:   resource,

@@ -31,17 +31,33 @@ type RoleTrustsModule struct {
 	CommandCounter internal.CommandCounter
 	SkipAdminCheck bool
 	WrapTable      bool
-	pmapperMod     PmapperModule
-	pmapperError   error
-	iamSimClient   IamSimulatorModule
+	AWSOutputType  string
+	AWSTableCols   string
+
+	pmapperMod   PmapperModule
+	pmapperError error
+	iamSimClient IamSimulatorModule
 
 	// Main module data
-	AnalyzedRoles []AnalyzedRole
+	AnalyzedRoles  []AnalyzedRole
+	RoleTrustTable []RoleTrustRow
 
 	// Used to store output data for pretty printing
 	output internal.OutputData2
 
 	modLog *logrus.Entry
+}
+
+type RoleTrustRow struct {
+	RoleARN                  string
+	RoleName                 string
+	TrustedPrincipal         string
+	TrustedService           string
+	TrustedFederatedProvider string
+	TrustedFederatedSubject  string
+	ExternalID               string
+	IsAdmin                  string
+	CanPrivEsc               string
 }
 
 type AnalyzedRole struct {
@@ -86,7 +102,7 @@ type RoleTrustStatementEntry struct {
 	} `json:"Condition"`
 }
 
-func (m *RoleTrustsModule) PrintRoleTrusts(outputFormat string, outputDirectory string, verbosity int) {
+func (m *RoleTrustsModule) PrintRoleTrusts(outputDirectory string, verbosity int) {
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "role-trusts"
@@ -129,25 +145,28 @@ func (m *RoleTrustsModule) PrintRoleTrusts(outputFormat string, outputDirectory 
 	o.PrefixIdentifier = m.AWSProfile
 	o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
 
-	principalsHeader, principalsBody := m.printPrincipalTrusts(outputFormat, outputDirectory)
+	principalsHeader, principalsBody, principalTableCols := m.printPrincipalTrusts(outputDirectory)
 	o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-		Header: principalsHeader,
-		Body:   principalsBody,
-		Name:   "role-trusts-principals",
+		Header:    principalsHeader,
+		Body:      principalsBody,
+		TableCols: principalTableCols,
+		Name:      "role-trusts-principals",
 	})
 
-	servicesHeader, servicesBody := m.printServiceTrusts(outputFormat, outputDirectory)
+	servicesHeader, servicesBody, serviceTableCols := m.printServiceTrusts(outputDirectory)
 	o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-		Header: servicesHeader,
-		Body:   servicesBody,
-		Name:   "role-trusts-services",
+		Header:    servicesHeader,
+		Body:      servicesBody,
+		TableCols: serviceTableCols,
+		Name:      "role-trusts-services",
 	})
 
-	federatedHeader, federatedBody := m.printFederatedTrusts(outputFormat, outputDirectory)
+	federatedHeader, federatedBody, federatedTableCols := m.printFederatedTrusts(outputDirectory)
 	o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-		Header: federatedHeader,
-		Body:   federatedBody,
-		Name:   "role-trusts-federated",
+		Header:    federatedHeader,
+		Body:      federatedBody,
+		TableCols: federatedTableCols,
+		Name:      "role-trusts-federated",
 	})
 
 	o.WriteFullOutput(o.Table.TableFiles, nil)
@@ -169,112 +188,120 @@ func (m *RoleTrustsModule) PrintRoleTrusts(outputFormat string, outputDirectory 
 
 }
 
-func (m *RoleTrustsModule) printPrincipalTrusts(outputFormat string, outputDirectory string) ([]string, [][]string) {
+func (m *RoleTrustsModule) printPrincipalTrusts(outputDirectory string) ([]string, [][]string, []string) {
 	var header []string
 	var body [][]string
 	m.output.FullFilename = ""
 	m.output.Body = nil
 	m.output.CallingModule = "role-trusts"
 	m.output.FullFilename = "role-trusts-principals"
-	var column1 string
-	if m.pmapperError == nil {
-		header = []string{
-			"Role",
-			"Trusted Principal",
-			"ExternalID",
-			"IsAdmin?",
-			"CanPrivEscToAdmin?",
-		}
-	} else {
-		header = []string{
-			"Role",
-			"Trusted Principal",
-			"ExternalID",
-			"IsAdmin?",
-			//"CanPrivEscToAdmin?",
-		}
+	header = []string{
+		"Role Arn",
+		"Role Name",
+		"Trusted Principal",
+		"ExternalID",
+		"IsAdmin?",
+		"CanPrivEscToAdmin?",
+	}
 
+	// If the user specified table columns, use those.
+	// If the user specified -o wide, use the wide default cols for this module.
+	// Otherwise, use the hardcoded default cols for this module.
+	var tableCols []string
+	// If the user specified table columns, use those.
+	if m.AWSTableCols != "" {
+		tableCols = strings.Split(m.AWSTableCols, ",")
+		// If the user specified wide as the output format, use these columns.
+	} else if m.AWSOutputType == "wide" {
+		tableCols = []string{"Role Arn", "Trusted Principal", "ExternalID", "IsAdmin?", "CanPrivEscToAdmin?"}
+		// Otherwise, use the default columns for this module (brief)
+	} else {
+		tableCols = []string{"Role Name", "Trusted Principal", "ExternalID", "IsAdmin?", "CanPrivEscToAdmin?"}
+	}
+	// Remove the pmapper row if there is no pmapper data
+	if m.pmapperError != nil {
+		sharedLogger.Errorf("%s - %s - No pmapper data found for this account. Skipping the pmapper column in the output table.", m.output.CallingModule, m.AWSProfile)
+		tableCols = removeStringFromSlice(tableCols, "CanPrivEscToAdmin?")
 	}
 
 	for _, role := range m.AnalyzedRoles {
 		for _, statement := range role.trustsDoc.Statement {
 			for _, principal := range statement.Principal.AWS {
-				if outputFormat == "wide" {
-					column1 = aws.ToString(role.roleARN)
-				} else {
-					column1 = GetResourceNameFromArn(aws.ToString(role.roleARN))
-				}
-				column2 := principal
-				column3 := statement.Condition.StringEquals.StsExternalID
-				column4 := role.Admin
-				column5 := role.CanPrivEsc
-				if m.pmapperError == nil {
-					body = append(body, []string{column1, column2, column3, column4, column5})
-				} else {
-					body = append(body, []string{column1, column2, column3, column4})
-				}
 
+				RoleTrustRow := RoleTrustRow{
+					RoleARN:          aws.ToString(role.roleARN),
+					RoleName:         GetResourceNameFromArn(aws.ToString(role.roleARN)),
+					TrustedPrincipal: principal,
+					ExternalID:       statement.Condition.StringEquals.StsExternalID,
+					IsAdmin:          role.Admin,
+					CanPrivEsc:       role.CanPrivEsc,
+				}
+				body = append(body, []string{RoleTrustRow.RoleARN,
+					RoleTrustRow.RoleName,
+					RoleTrustRow.TrustedPrincipal,
+					RoleTrustRow.ExternalID,
+					RoleTrustRow.IsAdmin,
+					RoleTrustRow.CanPrivEsc})
 			}
 		}
 	}
-	m.sortTrustsTablePerTrustedPrincipal()
-	return header, body
-	// if len(m.output.Body) > 0 {
-	// 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account),m.AWSProfile))
-	// 	////m.output.OutputSelector(outputFormat)
-	// 	//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
-	// 	//internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-	// 	fmt.Printf("[%s][%s] %s role trusts found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
-	// } else {
-	// 	fmt.Printf("[%s][%s] No role trusts found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
-	// }
-	// fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
+	m.sortTrustsTablePerTrustedPrincipal()
+	return header, body, tableCols
+
 }
 
-func (m *RoleTrustsModule) printServiceTrusts(outputFormat string, outputDirectory string) ([]string, [][]string) {
+func (m *RoleTrustsModule) printServiceTrusts(outputDirectory string) ([]string, [][]string, []string) {
 	var header []string
 	var body [][]string
 	m.output.FullFilename = ""
 	m.output.Body = nil
 	m.output.CallingModule = "role-trusts"
 	m.output.FullFilename = "role-trusts-services"
-	var column1 string
-	if m.pmapperError == nil {
-		header = []string{
-			"Role",
-			"Trusted Service",
-			"ExternalID",
-			"IsAdmin?",
-			"CanPrivEscToAdmin?",
-		}
+	header = []string{
+		"Role Arn",
+		"Role Name",
+		"Trusted Service",
+		"IsAdmin?",
+		"CanPrivEscToAdmin?",
+	}
+
+	// If the user specified table columns, use those.
+	// If the user specified -o wide, use the wide default cols for this module.
+	// Otherwise, use the hardcoded default cols for this module.
+	var tableCols []string
+	// If the user specified table columns, use those.
+	if m.AWSTableCols != "" {
+		tableCols = strings.Split(m.AWSTableCols, ",")
+		// If the user specified wide as the output format, use these columns.
+	} else if m.AWSOutputType == "wide" {
+		tableCols = []string{"Role Arn", "Trusted Service", "IsAdmin?", "CanPrivEscToAdmin?"}
+		// Otherwise, use the default columns for this module (brief)
 	} else {
-		header = []string{
-			"Role",
-			"Trusted Service",
-			"ExternalID",
-			"IsAdmin?",
-			//"CanPrivEscToAdmin?",
-		}
+		tableCols = []string{"Role Name", "Trusted Service", "IsAdmin?", "CanPrivEscToAdmin?"}
+	}
+	// Remove the pmapper row if there is no pmapper data
+	if m.pmapperError != nil {
+		sharedLogger.Errorf("%s - %s - No pmapper data found for this account. Skipping the pmapper column in the output table.", m.output.CallingModule, m.AWSProfile)
+		tableCols = removeStringFromSlice(tableCols, "CanPrivEscToAdmin?")
 	}
 
 	for _, role := range m.AnalyzedRoles {
 		for _, statement := range role.trustsDoc.Statement {
 			for _, service := range statement.Principal.Service {
-				if outputFormat == "wide" {
-					column1 = aws.ToString(role.roleARN)
-				} else {
-					column1 = GetResourceNameFromArn(aws.ToString(role.roleARN))
+				RoleTrustRow := RoleTrustRow{
+					RoleARN:        aws.ToString(role.roleARN),
+					RoleName:       GetResourceNameFromArn(aws.ToString(role.roleARN)),
+					TrustedService: service,
+					IsAdmin:        role.Admin,
+					CanPrivEsc:     role.CanPrivEsc,
 				}
-				column2 := service
-				column3 := statement.Condition.StringEquals.StsExternalID
-				column4 := role.Admin
-				column5 := role.CanPrivEsc
-				if m.pmapperError == nil {
-					body = append(body, []string{column1, column2, column3, column4, column5})
-				} else {
-					body = append(body, []string{column1, column2, column3, column4})
-				}
+				body = append(body, []string{RoleTrustRow.RoleARN,
+					RoleTrustRow.RoleName,
+					RoleTrustRow.TrustedService,
+					RoleTrustRow.IsAdmin,
+					RoleTrustRow.CanPrivEsc})
+
 			}
 		}
 	}
@@ -284,81 +311,71 @@ func (m *RoleTrustsModule) printServiceTrusts(outputFormat string, outputDirecto
 		return body[i][1] < body[j][1]
 	})
 
-	//m.sortTrustsTablePerTrustedPrincipal()
-	return header, body
+	return header, body, tableCols
 
-	// if len(m.output.Body) > 0 {
-	// 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account),m.AWSProfile))
-	// 	//m.output.OutputSelector(outputFormat)
-	// 	//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
-	// 	internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-	// 	fmt.Printf("[%s][%s] %s role trusts found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
-
-	// } else {
-	// 	fmt.Printf("[%s][%s] No role trusts found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
-	// }
 }
 
-func (m *RoleTrustsModule) printFederatedTrusts(outputFormat string, outputDirectory string) ([]string, [][]string) {
+func (m *RoleTrustsModule) printFederatedTrusts(outputDirectory string) ([]string, [][]string, []string) {
 	var header []string
 	var body [][]string
 	m.output.FullFilename = ""
 	m.output.Body = nil
 	m.output.CallingModule = "role-trusts"
 	m.output.FullFilename = "role-trusts-federated"
-	var column1, column3, column2 string
-	if m.pmapperError == nil {
-
-		header = []string{
-			"Role",
-			"Trusted Provider",
-			"Trusted Subject",
-			"IsAdmin?",
-			"CanPrivEscToAdmin?",
-		}
-	} else {
-		header = []string{
-			"Role",
-			"Trusted Provider",
-			"Trusted Subject",
-			"IsAdmin?",
-			//"CanPrivEscToAdmin?",
-		}
+	header = []string{
+		"Role Arn",
+		"Role Name",
+		"Trusted Provider",
+		"Trusted Subject",
+		"IsAdmin?",
+		"CanPrivEscToAdmin?",
 	}
 
+	// If the user specified table columns, use those.
+	// If the user specified -o wide, use the wide default cols for this module.
+	// Otherwise, use the hardcoded default cols for this module.
+	var tableCols []string
+	// If the user specified table columns, use those.
+	if m.AWSTableCols != "" {
+		tableCols = strings.Split(m.AWSTableCols, ",")
+		// If the user specified wide as the output format, use these columns.
+	} else if m.AWSOutputType == "wide" {
+		tableCols = []string{"Role Arn", "Trusted Provider", "Trusted Subject", "IsAdmin?", "CanPrivEscToAdmin?"}
+		// Otherwise, use the default columns for this module (brief)
+	} else {
+		tableCols = []string{"Role Name", "Trusted Provider", "Trusted Subject", "IsAdmin?", "CanPrivEscToAdmin?"}
+	}
+	// Remove the pmapper row if there is no pmapper data
+	if m.pmapperError != nil {
+		sharedLogger.Errorf("%s - %s - No pmapper data found for this account. Skipping the pmapper column in the output table.", m.output.CallingModule, m.AWSProfile)
+		tableCols = removeStringFromSlice(tableCols, "CanPrivEscToAdmin?")
+	}
 	for _, role := range m.AnalyzedRoles {
-		if outputFormat == "wide" {
-			column1 = aws.ToString(role.roleARN)
-		} else {
-			column1 = GetResourceNameFromArn(aws.ToString(role.roleARN))
-		}
 		for _, statement := range role.trustsDoc.Statement {
 			if len(statement.Principal.Federated) > 0 {
-				column2, column3 = parseFederatedTrustPolicy(statement)
-				column4 := role.Admin
-				column5 := role.CanPrivEsc
-				if m.pmapperError == nil {
-					body = append(body, []string{column1, column2, column3, column4, column5})
-				} else {
-					body = append(body, []string{column1, column2, column3, column4})
+				provider, subject := parseFederatedTrustPolicy(statement)
+				RoleTrustRow := RoleTrustRow{
+					RoleARN:                  aws.ToString(role.roleARN),
+					RoleName:                 GetResourceNameFromArn(aws.ToString(role.roleARN)),
+					TrustedFederatedProvider: provider,
+					TrustedFederatedSubject:  subject,
+					IsAdmin:                  role.Admin,
+					CanPrivEsc:               role.CanPrivEsc,
 				}
+				body = append(body, []string{RoleTrustRow.RoleARN,
+					RoleTrustRow.RoleName,
+					RoleTrustRow.TrustedFederatedProvider,
+					RoleTrustRow.TrustedFederatedSubject,
+					RoleTrustRow.IsAdmin,
+					RoleTrustRow.CanPrivEsc})
 			}
+
 		}
 	}
 
 	m.sortTrustsTablePerTrustedPrincipal()
-	return header, body
+	return header, body, tableCols
 
-	// if len(m.output.Body) > 0 {
-	// 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", aws.ToString(m.Caller.Account),m.AWSProfile))
-	// 	//m.output.OutputSelector(outputFormat)
-	// 	//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule)
-	// 	internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.FullFilename, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-	// 	fmt.Printf("[%s][%s] %s role trusts found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
-
-	// } else {
-	// 	fmt.Printf("[%s][%s] No role trusts found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
-	// }
 }
 
 func parseFederatedTrustPolicy(statement RoleTrustStatementEntry) (string, string) {
@@ -435,6 +452,7 @@ func (m *RoleTrustsModule) getAllRoleTrusts() {
 				Admin:      "",
 				CanPrivEsc: "",
 			})
+
 		}
 
 	}

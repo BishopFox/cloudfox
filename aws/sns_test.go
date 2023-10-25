@@ -42,7 +42,7 @@ func TestSNSQueues(t *testing.T) {
 	tmpDir := "."
 
 	// execute the module with verbosity = 2
-	m.PrintSNS("table", tmpDir, 2)
+	m.PrintSNS(tmpDir, 2)
 
 	resultsFilePath := filepath.Join(tmpDir, "cloudfox-output/aws/unittesting-123456789012/table/sns.txt")
 	resultsFile, err := afero.ReadFile(fs, resultsFilePath)

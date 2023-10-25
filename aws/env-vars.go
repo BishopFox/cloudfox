@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/BishopFox/cloudfox/aws/sdk"
@@ -34,12 +35,14 @@ import (
 
 type EnvsModule struct {
 	// General configuration data
-	Caller       sts.GetCallerIdentityOutput
-	AWSRegions   []string
-	AWSProfile   string
-	OutputFormat string
-	Goroutines   int
-	WrapTable    bool
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	AWSProfile    string
+	AWSOutputType string
+	AWSTableCols  string
+
+	Goroutines int
+	WrapTable  bool
 
 	// Service Clients
 	ECSClient       *ecs.Client
@@ -65,7 +68,7 @@ type EnvironmentVariable struct {
 	environmentVarValue string
 }
 
-func (m *EnvsModule) PrintEnvs(outputFormat string, outputDirectory string, verbosity int) {
+func (m *EnvsModule) PrintEnvs(outputDirectory string, verbosity int) {
 	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
@@ -126,6 +129,36 @@ func (m *EnvsModule) PrintEnvs(outputFormat string, outputDirectory string, verb
 		"Value",
 	}
 
+	// If the user specified table columns, use those.
+	// If the user specified -o wide, use the wide default cols for this module.
+	// Otherwise, use the hardcoded default cols for this module.
+	var tableCols []string
+	// If the user specified table columns, use those.
+	if m.AWSTableCols != "" {
+		// If the user specified wide as the output format, use these columns.
+		// remove any spaces between any commas and the first letter after the commas
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
+		tableCols = strings.Split(m.AWSTableCols, ",")
+		// If the user specified wide as the output format, use these columns.
+	} else if m.AWSOutputType == "wide" {
+		tableCols = []string{
+			"Service",
+			"Region",
+			"Name",
+			"Key",
+			"Value",
+		}
+	} else {
+		tableCols = []string{
+			"Service",
+			"Region",
+			"Name",
+			"Key",
+			"Value",
+		}
+	}
+
 	//Table rows
 	for _, envVar := range m.EnvironmentVariables {
 		m.output.Body = append(
@@ -141,9 +174,7 @@ func (m *EnvsModule) PrintEnvs(outputFormat string, outputDirectory string, verb
 	if len(m.output.Body) > 0 {
 
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		//m.output.OutputSelector(outputFormat)
-		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,
@@ -152,9 +183,10 @@ func (m *EnvsModule) PrintEnvs(outputFormat string, outputDirectory string, verb
 			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			Body:      m.output.Body,
+			TableCols: tableCols,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))

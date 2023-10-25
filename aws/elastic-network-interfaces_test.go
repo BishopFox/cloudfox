@@ -44,7 +44,7 @@ func TestElasticNetworkInterfaces(t *testing.T) {
 	internal.MockFileSystem(true)
 	for _, subtest := range subtests {
 		t.Run(subtest.name, func(t *testing.T) {
-			subtest.testModule.ElasticNetworkInterfaces("table", ".", 3)
+			subtest.testModule.ElasticNetworkInterfaces(".", 3)
 			for index, expectedTask := range subtest.expectedResult {
 				if expectedTask.ExternalIP != subtest.testModule.MappedENIs[index].ExternalIP {
 					t.Errorf("expected %s, got %s", expectedTask.ExternalIP, subtest.testModule.MappedENIs[index].ExternalIP)

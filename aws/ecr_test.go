@@ -66,10 +66,9 @@ func TestDescribeRepos(t *testing.T) {
 					Arn:     aws.String("arn:aws:iam::123456789012:user/cloudfox_unit_tests"),
 					Account: aws.String("123456789012"),
 				},
-				OutputFormat: "table",
-				AWSProfile:   "test",
-				Goroutines:   30,
-				AWSRegions:   AWSRegions,
+				AWSProfile: "test",
+				Goroutines: 30,
+				AWSRegions: AWSRegions,
 			},
 			expectedResult: []Repository{{
 				Name:      "test1",
@@ -83,7 +82,7 @@ func TestDescribeRepos(t *testing.T) {
 	internal.MockFileSystem(true)
 	for _, subtest := range subtests {
 		t.Run(subtest.name, func(t *testing.T) {
-			subtest.testModule.PrintECR(subtest.testModule.OutputFormat, subtest.outputDirectory, subtest.verbosity)
+			subtest.testModule.PrintECR(subtest.outputDirectory, subtest.verbosity)
 			for index, expectedRepo := range subtest.expectedResult {
 				if expectedRepo.Name != subtest.testModule.Repositories[index].Name {
 					log.Fatal("Repo name does not match expected name")

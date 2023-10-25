@@ -80,12 +80,14 @@ type Inventory2Module struct {
 	SecretsManagerClient   *secretsmanager.Client
 	StepFunctionClient     sdk.StepFunctionsClientInterface
 
-	Caller       sts.GetCallerIdentityOutput
-	AWSRegions   []string
-	OutputFormat string
-	Goroutines   int
-	AWSProfile   string
-	WrapTable    bool
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	AWSOutputType string
+	AWSTableCols  string
+
+	Goroutines int
+	AWSProfile string
+	WrapTable  bool
 
 	// Main module data
 	RegionResourceCount  int
@@ -109,7 +111,7 @@ type GlobalResourceCount2 struct {
 	count        int
 }
 
-func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDirectory string, verbosity int) {
+func (m *Inventory2Module) PrintInventoryPerRegion(outputDirectory string, verbosity int) {
 
 	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
@@ -341,10 +343,6 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 	// }
 	if len(m.output.Body) > 0 {
 
-		//m.output.OutputSelector(outputFormat)
-		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,
@@ -360,18 +358,11 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputFormat string, outputDi
 
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		// var header []string
-		// var body [][]string
-		// header, body = m.PrintGlobalResources(outputFormat, outputDirectory, verbosity, dataReceiver)
-		// o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-		// 	Header: header,
-		// 	Body:   body,
-		// 	Name:   "inventory-global",
-		// })
+
 		o.WriteFullOutput(o.Table.TableFiles, nil)
 		m.writeLoot(o.Table.DirectoryName, verbosity)
 
-		m.PrintTotalResources(outputFormat)
+		m.PrintTotalResources(m.AWSOutputType)
 		//m.writeLoot(m.output.FilePath, verbosity)
 	} else {
 		fmt.Printf("[%s][%s] No resources identified, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
@@ -786,7 +777,7 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 
 }
 
-func (m *Inventory2Module) PrintTotalResources(outputFormat string) {
+func (m *Inventory2Module) PrintTotalResources(AWSOutputType string) {
 	var totalResources int
 	for _, r := range m.AWSRegions {
 		if m.totalRegionCounts[r] != 0 {

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
@@ -17,9 +18,11 @@ type Route53Module struct {
 	// General configuration data
 	Route53Client sdk.AWSRoute53ClientInterface
 
-	Caller         sts.GetCallerIdentityOutput
-	AWSRegions     []string
-	OutputFormat   string
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	AWSOutputType string
+	AWSTableCols  string
+
 	Goroutines     int
 	AWSProfile     string
 	WrapTable      bool
@@ -41,7 +44,7 @@ type Record struct {
 	PrivateZone string
 }
 
-func (m *Route53Module) PrintRoute53(outputFormat string, outputDirectory string, verbosity int) {
+func (m *Route53Module) PrintRoute53(outputDirectory string, verbosity int) {
 
 	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
@@ -66,6 +69,36 @@ func (m *Route53Module) PrintRoute53(outputFormat string, outputDirectory string
 		"PrivateZone",
 	}
 
+	// If the user specified table columns, use those.
+	// If the user specified -o wide, use the wide default cols for this module.
+	// Otherwise, use the hardcoded default cols for this module.
+	var tableCols []string
+	// If the user specified table columns, use those.
+	if m.AWSTableCols != "" {
+		// If the user specified wide as the output format, use these columns.
+		// remove any spaces between any commas and the first letter after the commas
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
+		tableCols = strings.Split(m.AWSTableCols, ",")
+	} else if m.AWSOutputType == "wide" {
+		tableCols = []string{
+			"Service",
+			"Name",
+			"Type",
+			"Value",
+			"PrivateZone",
+		}
+
+	} else {
+		tableCols = []string{
+			"Service",
+			"Name",
+			"Type",
+			"Value",
+			"PrivateZone",
+		}
+	}
+
 	// Table rows
 	for i := range m.Records {
 		m.output.Body = append(
@@ -83,10 +116,7 @@ func (m *Route53Module) PrintRoute53(outputFormat string, outputDirectory string
 	if len(m.output.Body) > 0 {
 
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		//m.output.OutputSelector(outputFormat)
-		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		//m.writeLoot(m.output.FilePath, verbosity)
+
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,
@@ -95,9 +125,10 @@ func (m *Route53Module) PrintRoute53(outputFormat string, outputDirectory string
 			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			Body:      m.output.Body,
+			TableCols: tableCols,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))

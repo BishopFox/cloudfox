@@ -90,6 +90,7 @@ func CachedGetBucketPolicy(S3Client AWSS3ClientInterface, accountID string, r st
 		},
 	)
 	if err != nil {
+		internal.Cache.Set(cacheKey, "", cache.DefaultExpiration)
 		return "", err
 	}
 
