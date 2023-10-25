@@ -97,7 +97,7 @@ func (m *ECRModule) PrintECR(outputDirectory string, verbosity int) {
 	receiverDone <- true
 	<-receiverDone
 
-	// add - if struct is not empty do this. otherwise, dont write anything.
+	// This is the complete list of potential table columns
 	m.output.Headers = []string{
 		"Service",
 		"Region",
@@ -106,6 +106,41 @@ func (m *ECRModule) PrintECR(outputDirectory string, verbosity int) {
 		"PushedAt",
 		"ImageTags",
 		"ImageSize",
+	}
+
+	// If the user specified table columns, use those.
+	// If the user specified -o wide, use the wide default cols for this module.
+	// Otherwise, use the hardcoded default cols for this module.
+	var tableCols []string
+	// If the user specified table columns, use those.
+	if m.AWSTableCols != "" {
+		// If the user specified wide as the output format, use these columns.
+		// remove any spaces between any commans and the first letter after the commas
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
+		tableCols = strings.Split(m.AWSTableCols, ",")
+		// If the user specified wide as the output format, use these columns.
+	} else if m.AWSOutputType == "wide" {
+		tableCols = []string{
+			"Service",
+			"Region",
+			"Name",
+			"URI",
+			"PushedAt",
+			"ImageTags",
+			"ImageSize",
+		}
+		// Otherwise, use the default columns.
+	} else {
+		tableCols = []string{
+			"Service",
+			"Region",
+			"Name",
+			"URI",
+			"PushedAt",
+			"ImageTags",
+			"ImageSize",
+		}
 	}
 
 	// Table rows
@@ -135,9 +170,10 @@ func (m *ECRModule) PrintECR(outputDirectory string, verbosity int) {
 			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			Body:      m.output.Body,
+			TableCols: tableCols,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))

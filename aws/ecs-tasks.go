@@ -139,8 +139,33 @@ func (m *ECSTasksModule) Receiver(receiver chan MappedECSTask, receiverDone chan
 }
 
 func (m *ECSTasksModule) printECSTaskData(outputDirectory string, dataReceiver chan MappedECSTask, verbosity int) {
-	if m.pmapperError == nil {
-		m.output.Headers = []string{
+	// This is the complete list of potential table columns
+	m.output.Headers = []string{
+		"Cluster",
+		"TaskDefinition",
+		"LaunchType",
+		"ID",
+		"External IP",
+		"Internal IP",
+		"RoleArn",
+		"IsAdminRole?",
+		"CanPrivEscToAdmin?",
+	}
+
+	// If the user specified table columns, use those.
+	// If the user specified -o wide, use the wide default cols for this module.
+	// Otherwise, use the hardcoded default cols for this module.
+	var tableCols []string
+	// If the user specified table columns, use those.
+	if m.AWSTableCols != "" {
+		// If the user specified wide as the output format, use these columns.
+		// remove any spaces between any commans and the first letter after the commas
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
+		tableCols = strings.Split(m.AWSTableCols, ",")
+		// If the user specified wide as the output format, use these columns.
+	} else if m.AWSOutputType == "wide" {
+		tableCols = []string{
 			"Cluster",
 			"TaskDefinition",
 			"LaunchType",
@@ -151,54 +176,41 @@ func (m *ECSTasksModule) printECSTaskData(outputDirectory string, dataReceiver c
 			"IsAdminRole?",
 			"CanPrivEscToAdmin?",
 		}
+		// Otherwise, use the default columns.
 	} else {
-		m.output.Headers = []string{
+		tableCols = []string{
 			"Cluster",
 			"TaskDefinition",
 			"LaunchType",
-			"ID",
 			"External IP",
 			"Internal IP",
 			"RoleArn",
 			"IsAdminRole?",
-			//"CanPrivEscToAdmin?",
+			"CanPrivEscToAdmin?",
 		}
 	}
 
-	if m.pmapperError == nil {
-		for _, ecsTask := range m.MappedECSTasks {
-			m.output.Body = append(
-				m.output.Body,
-				[]string{
-					ecsTask.Cluster,
-					ecsTask.TaskDefinitionName,
-					ecsTask.LaunchType,
-					ecsTask.ID,
-					ecsTask.ExternalIP,
-					ecsTask.PrivateIP,
-					ecsTask.Role,
-					ecsTask.Admin,
-					ecsTask.CanPrivEsc,
-				},
-			)
-		}
-	} else {
-		for _, ecsTask := range m.MappedECSTasks {
-			m.output.Body = append(
-				m.output.Body,
-				[]string{
-					ecsTask.Cluster,
-					ecsTask.TaskDefinitionName,
-					ecsTask.LaunchType,
-					ecsTask.ID,
-					ecsTask.ExternalIP,
-					ecsTask.PrivateIP,
-					ecsTask.Role,
-					ecsTask.Admin,
-					//ecsTask.CanPrivEsc,
-				},
-			)
-		}
+	// Remove the pmapper row if there is no pmapper data
+	if m.pmapperError != nil {
+		sharedLogger.Errorf("%s - %s - No pmapper data found for this account. Skipping the pmapper column in the output table.", m.output.CallingModule, m.AWSProfile)
+		tableCols = removeStringFromSlice(tableCols, "CanPrivEscToAdmin?")
+	}
+
+	for _, ecsTask := range m.MappedECSTasks {
+		m.output.Body = append(
+			m.output.Body,
+			[]string{
+				ecsTask.Cluster,
+				ecsTask.TaskDefinitionName,
+				ecsTask.LaunchType,
+				ecsTask.ID,
+				ecsTask.ExternalIP,
+				ecsTask.PrivateIP,
+				ecsTask.Role,
+				ecsTask.Admin,
+				ecsTask.CanPrivEsc,
+			},
+		)
 	}
 
 	if len(m.output.Body) > 0 {
@@ -211,9 +223,10 @@ func (m *ECSTasksModule) printECSTaskData(outputDirectory string, dataReceiver c
 			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			Body:      m.output.Body,
+			TableCols: tableCols,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))

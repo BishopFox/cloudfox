@@ -136,6 +136,9 @@ func (m *BucketsModule) PrintBuckets(outputDirectory string, verbosity int) {
 		var tableCols []string
 		// If the user specified table columns, use those.
 		if m.AWSTableCols != "" {
+			// remove any spaces between any commans and the first letter after the commas
+			m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
+			m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
 			tableCols = strings.Split(m.AWSTableCols, ",")
 			// If the user specified wide as the output format, use these columns.
 		} else if m.AWSOutputType == "wide" {
@@ -143,6 +146,12 @@ func (m *BucketsModule) PrintBuckets(outputDirectory string, verbosity int) {
 			// Otherwise, use the default columns for this module (brief)
 		} else {
 			tableCols = []string{"Name", "Region", "Public?", "Resource Policy Summary"}
+		}
+
+		// Remove the Public? and Resource Policy Summary columns if the user did not specify CheckBucketPolicies
+		if !m.CheckBucketPolicies {
+			tableCols = removeStringFromSlice(tableCols, "Public?")
+			tableCols = removeStringFromSlice(tableCols, "Resource Policy Summary")
 		}
 
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{

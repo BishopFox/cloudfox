@@ -105,6 +105,35 @@ func (m *ResourceTrustsModule) PrintResources(outputDirectory string, verbosity 
 		"Resource Policy Summary",
 	}
 
+	// If the user specified table columns, use those.
+	// If the user specified -o wide, use the wide default cols for this module.
+	// Otherwise, use the hardcoded default cols for this module.
+	var tableCols []string
+	// If the user specified table columns, use those.
+	if m.AWSTableCols != "" {
+		// If the user specified wide as the output format, use these columns.
+		// remove any spaces between any commans and the first letter after the commas
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
+		tableCols = strings.Split(m.AWSTableCols, ",")
+	} else if m.AWSOutputType == "wide" {
+		tableCols = []string{
+			//"Account ID",
+			"ARN",
+			"Public",
+			"Interesting",
+			"Resource Policy Summary",
+		}
+	} else {
+		tableCols = []string{
+			//"Account ID",
+			"ARN",
+			"Public",
+			"Interesting",
+			"Resource Policy Summary",
+		}
+	}
+
 	// sort the table roles by Interesting
 	sort.Slice(m.Resources2, func(i, j int) bool {
 		return m.Resources2[j].Interesting > m.Resources2[i].Interesting
@@ -133,9 +162,10 @@ func (m *ResourceTrustsModule) PrintResources(outputDirectory string, verbosity 
 			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			Body:      m.output.Body,
+			TableCols: tableCols,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))

@@ -3,6 +3,7 @@ package aws
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/BishopFox/cloudfox/aws/sdk"
@@ -109,22 +110,48 @@ func (m *CodeBuildModule) PrintCodeBuildProjects(outputDirectory string, verbosi
 	}
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
-	if m.pmapperError == nil {
-		m.output.Headers = []string{
+	m.output.Headers = []string{
+		"Region",
+		"Name",
+		"Role",
+		"IsAdminRole?",
+		"CanPrivEscToAdmin?",
+	}
+
+	// If the user specified table columns, use those.
+	// If the user specified -o wide, use the wide default cols for this module.
+	// Otherwise, use the hardcoded default cols for this module.
+	var tableCols []string
+	// If the user specified table columns, use those.
+	if m.AWSTableCols != "" {
+		// If the user specified wide as the output format, use these columns.
+		// remove any spaces between any commans and the first letter after the commas
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
+		tableCols = strings.Split(m.AWSTableCols, ",")
+	} else if m.AWSOutputType == "wide" {
+		tableCols = []string{
 			"Region",
 			"Name",
 			"Role",
 			"IsAdminRole?",
 			"CanPrivEscToAdmin?",
 		}
+		// Otherwise, use the default columns.
 	} else {
-		m.output.Headers = []string{
+		tableCols = []string{
 			"Region",
 			"Name",
 			"Role",
 			"IsAdminRole?",
-			//"CanPrivEscToAdmin?",
+			"CanPrivEscToAdmin?",
 		}
+	}
+
+	// Remove the pmapper row if there is no pmapper data
+	if m.pmapperError != nil {
+		sharedLogger.Errorf("%s - %s - No pmapper data found for this account. Skipping the pmapper column in the output table.", m.output.CallingModule, m.AWSProfile)
+		tableCols = removeStringFromSlice(tableCols, "CanPrivEscToAdmin?")
 	}
 
 	// Table rows
@@ -172,9 +199,10 @@ func (m *CodeBuildModule) PrintCodeBuildProjects(outputDirectory string, verbosi
 			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			Body:      m.output.Body,
+			TableCols: tableCols,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))

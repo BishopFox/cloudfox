@@ -221,9 +221,34 @@ func (m *InstancesModule) printInstancesUserDataAttributesOnly(outputDirectory s
 func (m *InstancesModule) printGeneralInstanceData(outputDirectory string, dataReceiver chan MappedInstance, verbosity int) {
 	// Prepare Table headers
 	//m.output.Headers = table.Row{
-	if m.pmapperError == nil {
+	m.output.Headers = []string{
+		//"ID",
+		"Name",
+		//"Arn",
+		"ID",
+		"Zone",
+		"State",
+		"External IP",
+		"Internal IP",
+		"Role",
+		"IsAdminRole?",
+		"CanPrivEscToAdmin?",
+	}
 
-		m.output.Headers = []string{
+	// If the user specified table columns, use those.
+	// If the user specified -o wide, use the wide default cols for this module.
+	// Otherwise, use the hardcoded default cols for this module.
+	var tableCols []string
+	// If the user specified table columns, use those.
+	if m.AWSTableCols != "" {
+		// If the user specified wide as the output format, use these columns.
+		// remove any spaces between any commans and the first letter after the commas
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
+		tableCols = strings.Split(m.AWSTableCols, ",")
+		// If the user specified wide as the output format, use these columns.
+	} else if m.AWSOutputType == "wide" {
+		tableCols = []string{
 			//"ID",
 			"Name",
 			//"Arn",
@@ -236,8 +261,9 @@ func (m *InstancesModule) printGeneralInstanceData(outputDirectory string, dataR
 			"IsAdminRole?",
 			"CanPrivEscToAdmin?",
 		}
+		// Otherwise, use the default columns.
 	} else {
-		m.output.Headers = []string{
+		tableCols = []string{
 			//"ID",
 			"Name",
 			//"Arn",
@@ -248,52 +274,35 @@ func (m *InstancesModule) printGeneralInstanceData(outputDirectory string, dataR
 			"Internal IP",
 			"Role",
 			"IsAdminRole?",
-			//"CanPrivEscToAdmin?",
+			"CanPrivEscToAdmin?",
 		}
 	}
 
-	//Table rows
-	if m.pmapperError == nil {
+	// Remove the pmapper row if there is no pmapper data
+	if m.pmapperError != nil {
+		sharedLogger.Errorf("%s - %s - No pmapper data found for this account. Skipping the pmapper column in the output table.", m.output.CallingModule, m.AWSProfile)
+		tableCols = removeStringFromSlice(tableCols, "CanPrivEscToAdmin?")
+	}
 
-		for _, instance := range m.MappedInstances {
-			m.output.Body = append(
-				m.output.Body,
-				//table.Row{
-				[]string{
-					//instance.ID,
-					instance.Name,
-					//instance.Arn,
-					instance.ID,
-					instance.AvailabilityZone,
-					instance.State,
-					instance.ExternalIP,
-					instance.PrivateIP,
-					instance.Role,
-					instance.Admin,
-					instance.CanPrivEsc,
-				},
-			)
-		}
-	} else {
-		for _, instance := range m.MappedInstances {
-			m.output.Body = append(
-				m.output.Body,
-				//table.Row{
-				[]string{
-					//instance.ID,
-					instance.Name,
-					//instance.Arn,
-					instance.ID,
-					instance.AvailabilityZone,
-					instance.State,
-					instance.ExternalIP,
-					instance.PrivateIP,
-					instance.Role,
-					instance.Admin,
-					//instance.CanPrivEsc,
-				},
-			)
-		}
+	//Table rows
+	for _, instance := range m.MappedInstances {
+		m.output.Body = append(
+			m.output.Body,
+			//table.Row{
+			[]string{
+				//instance.ID,
+				instance.Name,
+				//instance.Arn,
+				instance.ID,
+				instance.AvailabilityZone,
+				instance.State,
+				instance.ExternalIP,
+				instance.PrivateIP,
+				instance.Role,
+				instance.Admin,
+				instance.CanPrivEsc,
+			},
+		)
 	}
 
 	if len(m.output.Body) > 0 {
@@ -308,9 +317,10 @@ func (m *InstancesModule) printGeneralInstanceData(outputDirectory string, dataR
 			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			Body:      m.output.Body,
+			TableCols: tableCols,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))

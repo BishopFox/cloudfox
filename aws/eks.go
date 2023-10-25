@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/BishopFox/cloudfox/aws/sdk"
@@ -124,9 +125,48 @@ func (m *EKSModule) EKS(outputDirectory string, verbosity int) {
 		}
 	}
 
-	// add - if struct is not empty do this. otherwise, dont write anything.
-	if m.pmapperError == nil {
-		m.output.Headers = []string{
+	// This is the complete list of potential table columns
+	m.output.Headers = []string{
+		"Service",
+		"Region",
+		"Name",
+		//"Endpoint",
+		"Public",
+		//"OIDC",
+		"NodeGroup",
+		"Role",
+		"IsAdminRole?",
+		"CanPrivEscToAdmin?",
+	}
+
+	// If the user specified table columns, use those.
+	// If the user specified -o wide, use the wide default cols for this module.
+	// Otherwise, use the hardcoded default cols for this module.
+	var tableCols []string
+	// If the user specified table columns, use those.
+	if m.AWSTableCols != "" {
+		// If the user specified wide as the output format, use these columns.
+		// remove any spaces between any commans and the first letter after the commas
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
+		tableCols = strings.Split(m.AWSTableCols, ",")
+		// If the user specified wide as the output format, use these columns.
+	} else if m.AWSOutputType == "wide" {
+		tableCols = []string{
+			"Service",
+			"Region",
+			"Name",
+			"Endpoint",
+			"Public",
+			"OIDC",
+			"NodeGroup",
+			"Role",
+			"IsAdminRole?",
+			"CanPrivEscToAdmin?",
+		}
+		// Otherwise, use the default columns.
+	} else {
+		tableCols = []string{
 			"Service",
 			"Region",
 			"Name",
@@ -138,58 +178,32 @@ func (m *EKSModule) EKS(outputDirectory string, verbosity int) {
 			"IsAdminRole?",
 			"CanPrivEscToAdmin?",
 		}
-	} else {
-		m.output.Headers = []string{
-			"Service",
-			"Region",
-			"Name",
-			//"Endpoint",
-			"Public",
-			//"OIDC",
-			"NodeGroup",
-			"Role",
-			"IsAdminRole?",
-			//"CanPrivEscToAdmin?",
-		}
+	}
+
+	// Remove the pmapper row if there is no pmapper data
+	if m.pmapperError != nil {
+		sharedLogger.Errorf("%s - %s - No pmapper data found for this account. Skipping the pmapper column in the output table.", m.output.CallingModule, m.AWSProfile)
+		tableCols = removeStringFromSlice(tableCols, "CanPrivEscToAdmin?")
 	}
 
 	// Table rows
 
 	for i := range m.Clusters {
-		if m.pmapperError == nil {
-			m.output.Body = append(
-				m.output.Body,
-				[]string{
-					m.Clusters[i].AWSService,
-					m.Clusters[i].Region,
-					m.Clusters[i].Name,
-					//m.Clusters[i].Endpoint,
-					m.Clusters[i].Public,
-					//m.Clusters[i].OIDC,
-					m.Clusters[i].NodeGroup,
-					m.Clusters[i].Role,
-					m.Clusters[i].Admin,
-					m.Clusters[i].CanPrivEsc,
-				},
-			)
-		} else {
-			m.output.Body = append(
-				m.output.Body,
-				[]string{
-					m.Clusters[i].AWSService,
-					m.Clusters[i].Region,
-					m.Clusters[i].Name,
-					//m.Clusters[i].Endpoint,
-					m.Clusters[i].Public,
-					//m.Clusters[i].OIDC,
-					m.Clusters[i].NodeGroup,
-					m.Clusters[i].Role,
-					m.Clusters[i].Admin,
-					//m.Clusters[i].CanPrivEsc,
-				},
-			)
-
-		}
+		m.output.Body = append(
+			m.output.Body,
+			[]string{
+				m.Clusters[i].AWSService,
+				m.Clusters[i].Region,
+				m.Clusters[i].Name,
+				//m.Clusters[i].Endpoint,
+				m.Clusters[i].Public,
+				//m.Clusters[i].OIDC,
+				m.Clusters[i].NodeGroup,
+				m.Clusters[i].Role,
+				m.Clusters[i].Admin,
+				m.Clusters[i].CanPrivEsc,
+			},
+		)
 	}
 
 	var seen []string
@@ -209,9 +223,10 @@ func (m *EKSModule) EKS(outputDirectory string, verbosity int) {
 			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			Body:      m.output.Body,
+			TableCols: tableCols,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))

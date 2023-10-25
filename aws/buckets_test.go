@@ -81,10 +81,11 @@ func TestListBuckets(t *testing.T) {
 			Arn:     aws.String("arn:aws:iam::123456789012:user/cloudfox_unit_tests"),
 			Account: aws.String("123456789012"),
 		},
-		AWSRegions:    []string{"us-east-1", "us-west-1", "us-west-2"},
-		AWSProfile:    "unittesting",
-		AWSOutputType: "",
-		Goroutines:    3,
+		AWSRegions:          []string{"us-east-1", "us-west-1", "us-west-2"},
+		AWSProfile:          "unittesting",
+		AWSOutputType:       "",
+		CheckBucketPolicies: true,
+		Goroutines:          3,
 	}
 
 	subtests := []struct {

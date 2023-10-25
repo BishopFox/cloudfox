@@ -95,6 +95,9 @@ func (m *AccessKeysModule) PrintAccessKeys(filter string, outputDirectory string
 		var tableCols []string
 		// If the user specified table columns, use those.
 		if m.AWSTableCols != "" {
+			// remove any spaces between any commans and the first letter after the commas
+			m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
+			m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
 			tableCols = strings.Split(m.AWSTableCols, ",")
 			// If the user specified wide as the output format, use these columns.
 		} else if m.AWSOutputType == "wide" {
