@@ -242,7 +242,7 @@ func (m *InstancesModule) printGeneralInstanceData(outputDirectory string, dataR
 	// If the user specified table columns, use those.
 	if m.AWSTableCols != "" {
 		// If the user specified wide as the output format, use these columns.
-		// remove any spaces between any commans and the first letter after the commas
+		// remove any spaces between any commas and the first letter after the commas
 		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
 		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
 		tableCols = strings.Split(m.AWSTableCols, ",")
