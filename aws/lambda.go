@@ -52,6 +52,7 @@ type Lambda struct {
 	Region     string
 	Type       string
 	Name       string
+	Arn        string
 	Role       string
 	Admin      string
 	CanPrivEsc string
@@ -129,7 +130,8 @@ func (m *LambdasModule) PrintLambdas(outputDirectory string, verbosity int) {
 	m.output.Headers = []string{
 		"Service",
 		"Region",
-		"Resource",
+		"Name",
+		"Arn",
 		"Role",
 		"IsAdminRole?",
 		"CanPrivEscToAdmin?",
@@ -150,7 +152,7 @@ func (m *LambdasModule) PrintLambdas(outputDirectory string, verbosity int) {
 		tableCols = []string{
 			"Service",
 			"Region",
-			"Resource",
+			"Arn",
 			"Role",
 			"IsAdminRole?",
 			"CanPrivEscToAdmin?",
@@ -160,7 +162,7 @@ func (m *LambdasModule) PrintLambdas(outputDirectory string, verbosity int) {
 		tableCols = []string{
 			"Service",
 			"Region",
-			"Resource",
+			"Name",
 			"Role",
 			"IsAdminRole?",
 			"CanPrivEscToAdmin?",
@@ -186,6 +188,7 @@ func (m *LambdasModule) PrintLambdas(outputDirectory string, verbosity int) {
 				m.Lambdas[i].Region,
 				//m.Lambdas[i].Type,
 				m.Lambdas[i].Name,
+				m.Lambdas[i].Arn,
 				m.Lambdas[i].Role,
 				m.Lambdas[i].Admin,
 				m.Lambdas[i].CanPrivEsc,
@@ -313,13 +316,14 @@ func (m *LambdasModule) getLambdasPerRegion(r string, wg *sync.WaitGroup, semaph
 	}
 
 	for _, function := range functions {
-		//arn := aws.ToString(function.FunctionArn)
+		arn := aws.ToString(function.FunctionArn)
 		name := aws.ToString(function.FunctionName)
 		role := aws.ToString(function.Role)
 
 		dataReceiver <- Lambda{
 			AWSService: "Lambda",
 			Name:       name,
+			Arn:        arn,
 			Region:     r,
 			Type:       "",
 			Role:       role,
