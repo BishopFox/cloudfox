@@ -95,6 +95,7 @@ func (m *CloudformationModule) PrintCloudformationStacks(outputDirectory string,
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
+		"Account",
 		"Service",
 		"Region",
 		"Name",
@@ -121,6 +122,7 @@ func (m *CloudformationModule) PrintCloudformationStacks(outputDirectory string,
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
+				aws.ToString(m.Caller.Account),
 				m.CFStacks[i].AWSService,
 				m.CFStacks[i].Region,
 				m.CFStacks[i].Name,
@@ -153,6 +155,7 @@ func (m *CloudformationModule) PrintCloudformationStacks(outputDirectory string,
 			// If the user specified wide as the output format, use these columns.
 		} else if m.AWSOutputType == "wide" {
 			tableCols = []string{
+				"Account",
 				"Service",
 				"Region",
 				"Name",

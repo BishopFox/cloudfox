@@ -108,7 +108,7 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputDirectory string, verbo
 	m.parsePermissions(principal)
 
 	m.output.Headers = []string{
-		//"Service",
+		"Account",
 		"Type",
 		"Name",
 		"Arn",
@@ -126,7 +126,7 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputDirectory string, verbo
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
-				//m.Rows[i].AWSService,
+				aws.ToString(m.Caller.Account),
 				m.Rows[i].Type,
 				m.Rows[i].Name,
 				m.Rows[i].Arn,
@@ -161,7 +161,9 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputDirectory string, verbo
 			tableCols = strings.Split(m.AWSTableCols, ",")
 			// If the user specified wide as the output format, use these columns.
 		} else if m.AWSOutputType == "wide" {
-			tableCols = []string{"Type",
+			tableCols = []string{
+				"Account",
+				"Type",
 				//"Name",
 				"Arn",
 				"Policy",
@@ -173,7 +175,8 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputDirectory string, verbo
 				"Condition"}
 			// Otherwise, use the default columns for this module (brief)
 		} else {
-			tableCols = []string{"Type",
+			tableCols = []string{
+				"Type",
 				"Name",
 				//"Arn",
 				"Policy",

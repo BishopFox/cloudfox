@@ -149,6 +149,7 @@ func (m *EndpointsModule) PrintEndpoints(outputDirectory string, verbosity int) 
 	})
 
 	m.output.Headers = []string{
+		"Account",
 		"Service",
 		"Region",
 		"Name",
@@ -172,6 +173,7 @@ func (m *EndpointsModule) PrintEndpoints(outputDirectory string, verbosity int) 
 		// If the user specified wide as the output format, use these columns.
 	} else if m.AWSOutputType == "wide" {
 		tableCols = []string{
+			"Account",
 			"Service",
 			"Region",
 			"Name",
@@ -198,6 +200,7 @@ func (m *EndpointsModule) PrintEndpoints(outputDirectory string, verbosity int) 
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
+				aws.ToString(m.Caller.Account),
 				m.Endpoints[i].AWSService,
 				m.Endpoints[i].Region,
 				m.Endpoints[i].Name,

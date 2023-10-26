@@ -98,7 +98,7 @@ func (m *ResourceTrustsModule) PrintResources(outputDirectory string, verbosity 
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
-		//"Account ID",
+		"Account",
 		"ARN",
 		"Public",
 		"Interesting",
@@ -118,7 +118,7 @@ func (m *ResourceTrustsModule) PrintResources(outputDirectory string, verbosity 
 		tableCols = strings.Split(m.AWSTableCols, ",")
 	} else if m.AWSOutputType == "wide" {
 		tableCols = []string{
-			//"Account ID",
+			"Account",
 			"ARN",
 			"Public",
 			"Interesting",
@@ -144,7 +144,7 @@ func (m *ResourceTrustsModule) PrintResources(outputDirectory string, verbosity 
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
-				//m.Resources2[i].AccountID,
+				aws.ToString(m.Caller.Account),
 				m.Resources2[i].ARN,
 				m.Resources2[i].Public,
 				m.Resources2[i].Interesting,

@@ -222,6 +222,7 @@ func (m *InstancesModule) printGeneralInstanceData(outputDirectory string, dataR
 	// Prepare Table headers
 	//m.output.Headers = table.Row{
 	m.output.Headers = []string{
+		"Account",
 		//"ID",
 		"Name",
 		//"Arn",
@@ -249,6 +250,7 @@ func (m *InstancesModule) printGeneralInstanceData(outputDirectory string, dataR
 		// If the user specified wide as the output format, use these columns.
 	} else if m.AWSOutputType == "wide" {
 		tableCols = []string{
+			"Account",
 			//"ID",
 			"Name",
 			//"Arn",
@@ -290,6 +292,7 @@ func (m *InstancesModule) printGeneralInstanceData(outputDirectory string, dataR
 			m.output.Body,
 			//table.Row{
 			[]string{
+				aws.ToString(m.Caller.Account),
 				//instance.ID,
 				instance.Name,
 				//instance.Arn,

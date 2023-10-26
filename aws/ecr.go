@@ -99,6 +99,7 @@ func (m *ECRModule) PrintECR(outputDirectory string, verbosity int) {
 
 	// This is the complete list of potential table columns
 	m.output.Headers = []string{
+		"Account",
 		"Service",
 		"Region",
 		"Name",
@@ -122,6 +123,7 @@ func (m *ECRModule) PrintECR(outputDirectory string, verbosity int) {
 		// If the user specified wide as the output format, use these columns.
 	} else if m.AWSOutputType == "wide" {
 		tableCols = []string{
+			"Account",
 			"Service",
 			"Region",
 			"Name",
@@ -148,6 +150,7 @@ func (m *ECRModule) PrintECR(outputDirectory string, verbosity int) {
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
+				aws.ToString(m.Caller.Account),
 				m.Repositories[i].AWSService,
 				m.Repositories[i].Region,
 				m.Repositories[i].Name,

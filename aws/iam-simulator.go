@@ -152,7 +152,7 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 
 	// Regardless of what options were selected, for now at least, we will always print the data using the output module (table/csv mode)
 	m.output.Headers = []string{
-		"Service",
+		"Account",
 		"Principal",
 		"Query",
 	}
@@ -171,13 +171,12 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 		// If the user specified wide as the output format, use these columns.
 	} else if m.AWSOutputType == "wide" {
 		tableCols = []string{
-			"Service",
+			"Account",
 			"Principal",
 			"Query",
 		}
 	} else {
 		tableCols = []string{
-			"Service",
 			"Principal",
 			"Query",
 		}
@@ -192,7 +191,7 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
-				m.SimulatorResults[i].AWSService,
+				aws.ToString(m.Caller.Account),
 				m.SimulatorResults[i].Principal,
 				m.SimulatorResults[i].Query,
 			},

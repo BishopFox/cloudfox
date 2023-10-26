@@ -122,6 +122,7 @@ func (m *EnvsModule) PrintEnvs(outputDirectory string, verbosity int) {
 
 	// Table headers
 	m.output.Headers = []string{
+		"Account",
 		"Service",
 		"Region",
 		"Name",
@@ -143,6 +144,7 @@ func (m *EnvsModule) PrintEnvs(outputDirectory string, verbosity int) {
 		// If the user specified wide as the output format, use these columns.
 	} else if m.AWSOutputType == "wide" {
 		tableCols = []string{
+			"Account",
 			"Service",
 			"Region",
 			"Name",
@@ -163,6 +165,7 @@ func (m *EnvsModule) PrintEnvs(outputDirectory string, verbosity int) {
 	for _, envVar := range m.EnvironmentVariables {
 		m.output.Body = append(
 			m.output.Body, []string{
+				aws.ToString(m.Caller.Account),
 				envVar.service,
 				envVar.region,
 				envVar.name,

@@ -110,7 +110,7 @@ func (m *FilesystemsModule) PrintFilesystems(outputDirectory string, verbosity i
 	})
 
 	m.output.Headers = []string{
-		"Service",
+		"Account",
 		"Region",
 		"Name",
 		"DNS Name",
@@ -134,7 +134,7 @@ func (m *FilesystemsModule) PrintFilesystems(outputDirectory string, verbosity i
 		// If the user specified wide as the output format, use these columns.
 	} else if m.AWSOutputType == "wide" {
 		tableCols = []string{
-			"Service",
+			"Account",
 			"Region",
 			"Name",
 			"DNS Name",
@@ -145,7 +145,6 @@ func (m *FilesystemsModule) PrintFilesystems(outputDirectory string, verbosity i
 		}
 	} else {
 		tableCols = []string{
-			"Service",
 			"Region",
 			"Name",
 			"DNS Name",
@@ -162,7 +161,7 @@ func (m *FilesystemsModule) PrintFilesystems(outputDirectory string, verbosity i
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
-				m.Filesystems[i].AWSService,
+				aws.ToString(m.Caller.Account),
 				m.Filesystems[i].Region,
 				m.Filesystems[i].Name,
 				m.Filesystems[i].DnsName,
