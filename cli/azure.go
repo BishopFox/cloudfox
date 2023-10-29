@@ -154,14 +154,14 @@ func runAzInventoryCommand (cmd *cobra.Command, args []string) {
 }
 
 func runAzRBACCommand (cmd *cobra.Command, args []string) {
-	err := azure.AzRBACCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
+	err := azure.AzRBACCommand(AzClient, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
 	if err != nil {
 		log.Fatal(err)
 	}
 }
 
 func runAzVMsCommand (cmd *cobra.Command, args []string) {
-	err := azure.AzVMsCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
+	err := azure.AzVMsCommand(AzClient, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -175,14 +175,14 @@ func runAzStorageCommand (cmd *cobra.Command, args []string) {
 }
 
 func runAzNSGRulesCommand(cmd *cobra.Command, args []string) {
-	err := azure.AzNSGRulesCommand(AzTenantID, AzSubscription, AzResourceRefs, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
+	err := azure.AzNSGRulesCommand(AzClient, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
 	if err != nil {
 		log.Fatal(err)
 	}
 }
 
 func runAzNSGLinksCommand(cmd *cobra.Command, args []string) {
-	err := azure.AzNSGLinksCommand(AzTenantID, AzSubscription, AzResourceRefs, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
+	err := azure.AzNSGLinksCommand(AzClient, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
 	if err != nil {
 		log.Fatal(err)
 	}
