@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
+	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/subscriptions"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/smithy-go/ptr"
@@ -14,7 +15,7 @@ import (
 	"github.com/kyokomi/emoji"
 )
 
-func AzInventoryCommand(AzTenantID, AzSubscriptionID, AzOutputDirectory, Version string, AzVerbosity int, AzWrapTable bool, AzMergedTable bool) error {
+func AzInventoryCommand(AzTenants []*subscriptions.TenantIDDescription, AzSubscriptions []*subscriptions.Subscription, AzOutputDirectory, Version string, AzVerbosity int, AzWrapTable bool, AzMergedTable bool) error {
 	o := internal.OutputClient{
 		Verbosity:     AzVerbosity,
 		CallingModule: globals.AZ_INVENTORY_MODULE_NAME,
@@ -23,60 +24,58 @@ func AzInventoryCommand(AzTenantID, AzSubscriptionID, AzOutputDirectory, Version
 		},
 	}
 
-	if AzTenantID != "" && AzSubscriptionID == "" {
+	if len(AzTenants) > 0 {
 		// cloudfox azure inventory --tenant [TENANT_ID | PRIMARY_DOMAIN]
-		tenantInfo := populateTenant(AzTenantID)
+		for _, AzTenant := range AzTenants {
+			tenantInfo := populateTenant(*AzTenant.ID)
 
-		if AzMergedTable {
-			// set up table vars
-			var header []string
-			var body [][]string
+			if AzMergedTable {
+				// set up table vars
+				var header []string
+				var body [][]string
 
-			o := internal.OutputClient{
-				Verbosity:     AzVerbosity,
-				CallingModule: globals.AZ_INVENTORY_MODULE_NAME,
-				Table: internal.TableClient{
-					Wrap: AzWrapTable,
-				},
+				o := internal.OutputClient{
+					Verbosity:     AzVerbosity,
+					CallingModule: globals.AZ_INVENTORY_MODULE_NAME,
+					Table: internal.TableClient{
+						Wrap: AzWrapTable,
+					},
+				}
+
+				fmt.Printf(
+					"[%s][%s] Gathering inventory for tenant %s\n",
+					color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(o.CallingModule),
+					fmt.Sprintf("%s (%s)", ptr.ToString(tenantInfo.DefaultDomain), ptr.ToString(tenantInfo.ID)))
+
+				o.PrefixIdentifier = ptr.ToString(tenantInfo.DefaultDomain)
+				o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), "1-tenant-level")
+
+				//populate the table data
+				header, body, err := getInventoryInfoPerTenant(ptr.ToString(tenantInfo.ID))
+				if err != nil {
+					return err
+				}
+				o.Table.TableFiles = append(o.Table.TableFiles,
+					internal.TableFile{
+						Header: header,
+						Body:   body,
+						Name:   fmt.Sprintf(o.CallingModule)})
+
+				if body != nil {
+					o.WriteFullOutput(o.Table.TableFiles, nil)
+				}
+			} else {
+				for _, s := range GetSubscriptionsPerTenantID(ptr.ToString(tenantInfo.ID)) {
+					runInventoryCommandForSingleSubscription(ptr.ToString(s.SubscriptionID), AzOutputDirectory, AzVerbosity, AzWrapTable, Version)
+				}
 			}
-
-			fmt.Printf(
-				"[%s][%s] Gathering inventory for subscription %s\n",
-				color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(o.CallingModule),
-				fmt.Sprintf("%s (%s)", ptr.ToString(tenantInfo.DefaultDomain), ptr.ToString(tenantInfo.ID)))
-
-			o.PrefixIdentifier = ptr.ToString(tenantInfo.DefaultDomain)
-			o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), "1-tenant-level")
-
-			//populate the table data
-			header, body, err := getInventoryInfoPerTenant(ptr.ToString(tenantInfo.ID))
-			if err != nil {
-				return err
-			}
-			o.Table.TableFiles = append(o.Table.TableFiles,
-				internal.TableFile{
-					Header: header,
-					Body:   body,
-					Name:   fmt.Sprintf(o.CallingModule)})
-
-			if body != nil {
-				o.WriteFullOutput(o.Table.TableFiles, nil)
-			}
-		} else {
-
-			for _, s := range GetSubscriptionsPerTenantID(ptr.ToString(tenantInfo.ID)) {
-				runInventoryCommandForSingleSubscription(ptr.ToString(s.SubscriptionID), AzOutputDirectory, AzVerbosity, AzWrapTable, Version)
-			}
+		} 
+	} else {
+		// ./cloudfox azure inventory --subscription [SUBSCRIPTION_ID | SUBSCRIPTION_NAME]
+		for _, AzSubscription := range AzSubscriptions {
+			runInventoryCommandForSingleSubscription(*AzSubscription.SubscriptionID, AzOutputDirectory, AzVerbosity, AzWrapTable, Version)
 		}
 
-	} else if AzTenantID == "" && AzSubscriptionID != "" {
-
-		// ./cloudfox azure inventory --subscription [SUBSCRIPTION_ID | SUBSCRIPTION_NAME]
-		runInventoryCommandForSingleSubscription(AzSubscriptionID, AzOutputDirectory, AzVerbosity, AzWrapTable, Version)
-
-	} else {
-		// Error: please make a valid flag selection
-		fmt.Println("Please enter a valid input with a valid flag. Use --help for info.")
 	}
 	o.WriteFullOutput(o.Table.TableFiles, nil)
 	return nil

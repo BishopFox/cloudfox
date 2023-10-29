@@ -15,6 +15,11 @@ import (
 )
 
 
+type NSGLinksModule struct {
+	NSGClient *network.SecurityGroupsClient
+
+}
+
 func AzNSGLinksCommand(AzTenantID string, AzSubscription string, AzResourceIDs []string, AzOutputFormat, AzOutputDirectory, Version string, AzVerbosity int, AzWrapTable bool, AzMergedTable bool) error {
 
 

@@ -2,9 +2,9 @@ package cli
 
 import (
 	"log"
-	"fmt"
 
 	"github.com/BishopFox/cloudfox/azure"
+	"github.com/BishopFox/cloudfox/internal"
 	az "github.com/Azure/go-autorest/autorest/azure"
 	"github.com/spf13/cobra"
 	"github.com/kyokomi/emoji"
@@ -27,6 +27,8 @@ var (
 	AzRGRefs           []string
 	AzResourceRefs     []string
 
+
+	AzClient           *internal.AzureClient
 	AzTenants          []*subscriptions.TenantIDDescription
 	AzSubscriptions    []*subscriptions.Subscription
 	AzRGs              []*resources.Group
@@ -145,7 +147,7 @@ func runAzWhoamiCommand (cmd *cobra.Command, args []string) {
 }
 
 func runAzInventoryCommand (cmd *cobra.Command, args []string) {
-	err := azure.AzInventoryCommand(AzTenantID, AzSubscription, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
+	err := azure.AzInventoryCommand(AzTenants, AzSubscriptions, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -187,97 +189,14 @@ func runAzNSGLinksCommand(cmd *cobra.Command, args []string) {
 }
 
 func azurePreRun(cmd *cobra.Command, args []string) {
-	availableSubscriptions := azure.GetSubscriptions()
-	availableTenants := azure.GetTenants()
-	// resource identifiers were submitted on the CLI, running modules on them only
-	if len(AzResourceRefs) > 0 {
-		fmt.Printf("[%s] Azure resource identifiers submitted, skipping submitted tenants and subscriptions\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)))
-		// remove any other resource scope filter
-		AzTenants = nil
-		AzSubscriptions = nil
-		AzRGs = nil
-
-		var (
-			err            error
-			resource       az.Resource
-		)
-		// check if the submitted resource can be reached with existing credentials
-		// this does not guarantees that the resource will be found since only the prefix of the resource ID
-		// is checked against the available ones
-		for _, azResourceRef := range AzResourceRefs {
-			resource, err = az.ParseResourceID(azResourceRef)
-			if err != nil {
-				fmt.Printf("[%s] Invalid resource identifier : %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), azResourceRef)
-				continue
-			}
-			for _, subscription := range availableSubscriptions {
-				if resource.SubscriptionID == *subscription.SubscriptionID {
-					// add the resource to the final list of targets
-					AzResources = append(AzResources, &resource)
-					// also add the associated subscription since you cannot query a resource alone
-					AzSubscriptions = append(AzSubscriptions, &subscription)
-					goto FOUND_RESOURCE
-				}
-			}
-			fmt.Printf("[%s] No active credentials valid for resource %s, removing from target list\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), azResourceRef)
-			FOUND_RESOURCE:
-		}
-		return
-	}
-	// resource groups were submitted on the CLI, running modules on them only
-	if len(AzRGRefs) > 0 {
-		fmt.Printf("[%s] Azure subscriptions submitted, skipping submitted tenants\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)))
-		for _, AzRGRef := range AzRGRefs {
-			for _, subscription := range availableSubscriptions {
-				for _, rg := range azure.GetResourceGroups(*subscription.SubscriptionID) {
-					if *rg.ID == AzRGRef {
-						AzRGs = append(AzRGs, &rg)
-						goto FOUND_RG
-					} else if *rg.Name == AzRGRef {
-						AzRGs = append(AzRGs, &rg)
-						goto FOUND_RG
-					}
-				}
-			}
-			fmt.Printf("[%s] Resource Group %s not accessible with active CLI credentials, removing from targetst\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), AzRGRef)
-			FOUND_RG:
-		}
-	}
-	// subscriptions were submitted on the CLI, running modules on them only
-	if len(AzSubscriptionRefs) > 0 {
-		fmt.Printf("[%s] Azure subscriptions submitted, skipping submitted tenants\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)))
-		// remove any other resource scope filter
-		AzTenants = nil
-		for _, AzSubscriptionRef := range AzSubscriptionRefs {
-			for _, subscription := range availableSubscriptions {
-				if *subscription.ID == AzSubscriptionRef {
-					AzSubscriptions = append(AzSubscriptions, &subscription)
-					goto FOUND_SUB
-				} else if *subscription.DisplayName == AzSubscriptionRef {
-					AzSubscriptions = append(AzSubscriptions, &subscription)
-					goto FOUND_SUB
-				}
-			}
-			fmt.Printf("[%s] Subscription %s not accessible with active CLI credentials, removing from targetst\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), AzSubscriptionRef)
-			FOUND_SUB:
-		}
-		return
-	}
-	// tenants were submitted on the CLI, running modules on them only
-	if len(AzTenantRefs) > 0 {
-		for _, AzTenantRef := range AzTenantRefs {
-			for _, tenant := range availableTenants {
-				if *tenant.ID == AzTenantRef {
-					AzTenants = append(AzTenants, &tenant)
-					goto FOUND_TENANT
-				} else if *tenant.DefaultDomain == AzTenantRef {
-					AzTenants = append(AzTenants, &tenant)
-					goto FOUND_TENANT
-				}
-			}
-			fmt.Printf("[%s] Tenant %s not accessible with active CLI credentials, removing from targetst\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), AzTenantRef)
-			FOUND_TENANT:
-		}
+	AzClient = internal.NewAzureClient(AzTenantRefs, AzSubscriptionRefs, AzRGRefs, AzResourceRefs, cmd)
+	nTenants := len(AzClient.AzTenants)
+	nSubscriptions := len(AzClient.AzSubscriptions)
+	nRGs := len(AzClient.AzRGs)
+	nResources := len(AzClient.AzResources)
+	nTotal := nTenants + nSubscriptions + nRGs + nResources
+	if nTotal == 0 {
+		log.Fatalf("[%s] No valid target supplied, stopping\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)))
 	}
 }
 
