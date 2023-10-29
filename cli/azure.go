@@ -17,6 +17,8 @@ var (
 	AzWrapTable       bool
 	AzMergedTable     bool
 
+	AzResourceIDs      []string
+
 	AzCommands = &cobra.Command{
 		Use:     "azure",
 		Aliases: []string{"az"},
@@ -113,6 +115,50 @@ Enumerate storage accounts for a specific subscription:
 			}
 		},
 	}
+/*
+	AzNSGCommand = &cobra.Command{
+		Use:     "nsg",
+		Aliases: []string{},
+		Short:   "Enumerates azure Network Securiy Groups (NSG)",
+		Long: `
+Enumerate Network Security Groups rules for a specific tenant:
+./cloudfox az nsg --tenant TENANT_ID
+
+Enumerate Network Security Groups rules for a specific subscription:
+./cloudfox az nsg --subscription SUBSCRIPTION_ID
+
+Enumerate rules for a specific Network Security Group:
+./cloudfox az nsg --nsg NSG_ID
+`,
+		Run: func(cmd *cobra.Command, args []string) {
+			err := azure.AzNSGCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
+			if err != nil {
+				log.Fatal(err)
+			}
+		},
+	}
+*/
+	AzNSGLinksCommand = &cobra.Command{
+		Use:     "nsg-links",
+		Aliases: []string{},
+		Short:   "Enumerates azure Network Securiy Groups links",
+		Long: `
+Enumerate Network Security Groups links for a specific tenant:
+./cloudfox az nsg-links --tenant TENANT_ID
+
+Enumerate Network Security Groups links for a specific subscription:
+./cloudfox az nsg-links --subscription SUBSCRIPTION_ID
+
+Enumerate links for a specific Network Security Group:
+./cloudfox az nsg-links --nsg NSG_ID
+`,
+		Run: func(cmd *cobra.Command, args []string) {
+			err := azure.AzNSGLinksCommand(AzTenantID, AzSubscription, AzResourceIDs, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
+			if err != nil {
+				log.Fatal(err)
+			}
+		},
+	}
 )
 
 func init() {
@@ -126,6 +172,7 @@ func init() {
 	AzCommands.PersistentFlags().StringVarP(&AzTenantID, "tenant", "t", "", "Tenant name")
 	AzCommands.PersistentFlags().StringVarP(&AzSubscription, "subscription", "s", "", "Subscription ID or Name")
 	AzCommands.PersistentFlags().StringVarP(&AzRGName, "resource-group", "g", "", "Resource Group name")
+	AzCommands.PersistentFlags().StringSliceVarP(&AzResourceIDs, "resource-id", "r", []string{}, "Resource ID (/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName})")
 	AzCommands.PersistentFlags().BoolVarP(&AzWrapTable, "wrap", "w", false, "Wrap table to fit in terminal (complicates grepping)")
 	AzCommands.PersistentFlags().BoolVarP(&AzMergedTable, "merged-table", "m", false, "Writes a single table for all subscriptions in the tenant. Default writes a table per subscription.")
 
@@ -134,6 +181,8 @@ func init() {
 		AzRBACCommand,
 		AzVMsCommand,
 		AzStorageCommand,
+//		AzNSGCommand,
+		AzNSGLinksCommand,
 		AzInventoryCommand)
 
 }

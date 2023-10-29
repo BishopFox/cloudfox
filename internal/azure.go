@@ -126,6 +126,28 @@ func GetNICClient(subscriptionID string) network.InterfacesClient {
 	return client
 }
 
+func GetNSGClient(subscriptionID string) network.SecurityGroupsClient {
+	client := network.NewSecurityGroupsClient(subscriptionID)
+	authorizer, err := getAuthorizer(globals.AZ_RESOURCE_MANAGER_ENDPOINT)
+	if err != nil {
+		log.Fatalf("failed to get nsg client: %s", err)
+	}
+	client.Authorizer = authorizer
+	client.AddToUserAgent(globals.CLOUDFOX_USER_AGENT)
+	return client
+}
+
+func GetSubnetsClient(subscriptionID string) network.SubnetsClient {
+	client := network.NewSubnetsClient(subscriptionID)
+	authorizer, err := getAuthorizer(globals.AZ_RESOURCE_MANAGER_ENDPOINT)
+	if err != nil {
+		log.Fatalf("failed to get subnets client: %s", err)
+	}
+	client.Authorizer = authorizer
+	client.AddToUserAgent(globals.CLOUDFOX_USER_AGENT)
+	return client
+}
+
 func GetPublicIPClient(subscriptionID string) network.PublicIPAddressesClient {
 	client := network.NewPublicIPAddressesClient(subscriptionID)
 	authorizer, err := getAuthorizer(globals.AZ_RESOURCE_MANAGER_ENDPOINT)
@@ -170,4 +192,21 @@ func GetARMresourcesClient(tenantID, subscriptionID string) *armresources.Client
 		log.Fatalf("failed to get ARM resources client: %s", err)
 	}
 	return client
+}
+
+func GetIPAddressesFromInterface(iface *network.Interface) []string{
+	var ipAddresses []string
+	for _, ipConfiguration := range *iface.InterfacePropertiesFormat.IPConfigurations {
+		if ipConfiguration.InterfaceIPConfigurationPropertiesFormat.PrivateIPAddress != nil {
+			ipAddresses = append(ipAddresses, *ipConfiguration.InterfaceIPConfigurationPropertiesFormat.PrivateIPAddress)
+		}
+		if ipConfiguration.InterfaceIPConfigurationPropertiesFormat.PublicIPAddress != nil {
+			if ipConfiguration.InterfaceIPConfigurationPropertiesFormat.PublicIPAddress.PublicIPAddressPropertiesFormat != nil {
+				if ipConfiguration.InterfaceIPConfigurationPropertiesFormat.PublicIPAddress.PublicIPAddressPropertiesFormat.IPAddress != nil {
+					ipAddresses = append(ipAddresses, *ipConfiguration.InterfaceIPConfigurationPropertiesFormat.PublicIPAddress.PublicIPAddressPropertiesFormat.IPAddress)
+				}
+			}
+		}
+	}
+	return ipAddresses
 }
