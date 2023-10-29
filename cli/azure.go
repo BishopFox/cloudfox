@@ -168,7 +168,7 @@ func runAzVMsCommand (cmd *cobra.Command, args []string) {
 }
 
 func runAzStorageCommand (cmd *cobra.Command, args []string) {
-	err := azure.AzStorageCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
+	err := azure.AzStorageCommand(AzClient, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
 	if err != nil {
 		log.Fatal(err)
 	}

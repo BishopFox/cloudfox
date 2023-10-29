@@ -22,74 +22,69 @@ import (
 // Color functions
 var cyan = color.New(color.FgCyan).SprintFunc()
 
-func AzStorageCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, Version string, AzVerbosity int, AzWrapTable bool, AzMergedTable bool) error {
+func AzStorageCommand(AzClient *internal.AzureClient, AzOutputFormat, AzOutputDirectory, Version string, AzVerbosity int, AzWrapTable bool, AzMergedTable bool) error {
 
 	var publicBlobURLs []string
 
-	if AzTenantID != "" && AzSubscription == "" {
+	if len(AzClient.AzTenants) > 0 {
 		// cloudfox azure storage --tenant [TENANT_ID | PRIMARY_DOMAIN]
-		tenantInfo := populateTenant(AzTenantID)
+		for _, AzTenant := range AzClient.AzTenants {
 
-		if AzMergedTable {
+			if AzMergedTable {
 
-			// set up table vars
-			var header []string
-			var body [][]string
-			// setup logging client
-			o := internal.OutputClient{
-				Verbosity:     AzVerbosity,
-				CallingModule: globals.AZ_STORAGE_MODULE_NAME,
-				Table: internal.TableClient{
-					Wrap: AzWrapTable,
-				},
-			}
+				// set up table vars
+				var header []string
+				var body [][]string
+				// setup logging client
+				o := internal.OutputClient{
+					Verbosity:     AzVerbosity,
+					CallingModule: globals.AZ_STORAGE_MODULE_NAME,
+					Table: internal.TableClient{
+						Wrap: AzWrapTable,
+					},
+				}
 
-			var err error
+				var err error
 
-			fmt.Printf("[%s][%s] Enumerating storage accounts for tenant %s\n",
-				color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_RBAC_MODULE_NAME),
-				fmt.Sprintf("%s (%s)", ptr.ToString(tenantInfo.DefaultDomain), ptr.ToString(tenantInfo.ID)))
+				fmt.Printf("[%s][%s] Enumerating storage accounts for tenant %s\n",
+					color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_RBAC_MODULE_NAME),
+					fmt.Sprintf("%s (%s)", ptr.ToString(AzTenant.DefaultDomain), ptr.ToString(AzTenant.TenantID)))
 
-			o.PrefixIdentifier = ptr.ToString(tenantInfo.DefaultDomain)
-			o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), "1-tenant-level")
+				o.PrefixIdentifier = ptr.ToString(AzTenant.DefaultDomain)
+				o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(AzTenant.DefaultDomain), "1-tenant-level")
 
-			header, body, publicBlobURLs, err = getStorageInfoPerTenant(ptr.ToString(tenantInfo.ID))
+				header, body, publicBlobURLs, err = getStorageInfoPerTenant(ptr.ToString(AzTenant.TenantID))
 
-			if err != nil {
-				return err
-			}
-			o.Table.TableFiles = append(o.Table.TableFiles,
-				internal.TableFile{
-					Header: header,
-					Body:   body,
-					Name:   fmt.Sprintf(globals.AZ_STORAGE_MODULE_NAME)})
-
-			if body != nil {
-				o.WriteFullOutput(o.Table.TableFiles, nil)
-			}
-			if publicBlobURLs != nil {
-				err := writeBlobURLslootFile(globals.AZ_STORAGE_MODULE_NAME, o.PrefixIdentifier, o.Table.DirectoryName, publicBlobURLs)
 				if err != nil {
 					return err
 				}
-			}
+				o.Table.TableFiles = append(o.Table.TableFiles,
+					internal.TableFile{
+						Header: header,
+						Body:   body,
+						Name:   fmt.Sprintf(globals.AZ_STORAGE_MODULE_NAME)})
 
-		} else {
+				if body != nil {
+					o.WriteFullOutput(o.Table.TableFiles, nil)
+				}
+				if publicBlobURLs != nil {
+					err := writeBlobURLslootFile(globals.AZ_STORAGE_MODULE_NAME, o.PrefixIdentifier, o.Table.DirectoryName, publicBlobURLs)
+					if err != nil {
+						return err
+					}
+				}
 
-			for _, s := range GetSubscriptionsPerTenantID(ptr.ToString(tenantInfo.ID)) {
-				runStorageCommandForSingleSubcription(ptr.ToString(s.SubscriptionID), AzOutputDirectory, AzVerbosity, AzWrapTable, Version)
+			} else {
+				for _, s := range GetSubscriptionsPerTenantID(ptr.ToString(AzTenant.TenantID)) {
+					runStorageCommandForSingleSubcription(ptr.ToString(s.SubscriptionID), AzOutputDirectory, AzVerbosity, AzWrapTable, Version)
+				}
 			}
 		}
-
-	} else if AzTenantID == "" && AzSubscription != "" {
-		//cloudfox azure storage  --subscription [SUBSCRIPTION_ID | SUBSCRIPTION_NAME]
-		runStorageCommandForSingleSubcription(AzSubscription, AzOutputDirectory, AzVerbosity, AzWrapTable, Version)
-
 	} else {
-		// Error: please make a valid flag selection
-		fmt.Println("Please enter a valid input with a valid flag. Use --help for info.")
+		for _, AzSubscription := range AzClient.AzSubscriptions {
+			runStorageCommandForSingleSubcription(*AzSubscription.SubscriptionID, AzOutputDirectory, AzVerbosity, AzWrapTable, Version)
+		}
 	}
-
 	return nil
 }
 
