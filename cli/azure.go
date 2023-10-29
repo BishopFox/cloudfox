@@ -36,12 +36,7 @@ var (
 		Long: `
 Display Available Azure CLI Sessions:
 ./cloudfox az whoami`,
-		Run: func(cmd *cobra.Command, args []string) {
-			err := azure.AzWhoamiCommand(AzOutputDirectory, cmd.Root().Version, AzWrapTable, AzVerbosity, AzWhoamiListRGsAlso)
-			if err != nil {
-				log.Fatal(err)
-			}
-		},
+		Run: runAzWhoamiCommand,
 	}
 	AzInventoryCommand = &cobra.Command{
 		Use:     "inventory",
@@ -54,12 +49,7 @@ Enumerate inventory for a specific tenant:
 Enumerate inventory for a specific subscription:
 ./cloudfox az inventory --subscription SUBSCRIPTION_ID
 `,
-		Run: func(cmd *cobra.Command, args []string) {
-			err := azure.AzInventoryCommand(AzTenantID, AzSubscription, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
-			if err != nil {
-				log.Fatal(err)
-			}
-		},
+		Run: runAzInventoryCommand,
 	}
 	AzRBACCommand = &cobra.Command{
 		Use:     "rbac",
@@ -72,13 +62,7 @@ Enumerate role assignments for a specific tenant:
 Enumerate role assignments for a specific subscription:
 ./cloudfox az rbac --subscription SUBSCRIPTION_ID
 `,
-		Run: func(cmd *cobra.Command, args []string) {
-
-			err := azure.AzRBACCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
-			if err != nil {
-				log.Fatal(err)
-			}
-		},
+		Run: runAzRBACCommand,
 	}
 	AzVMsCommand = &cobra.Command{
 		Use:     "vms",
@@ -90,12 +74,7 @@ Enumerate VMs for a specific tenant:
 
 Enumerate VMs for a specific subscription:
 ./cloudfox az vms --subscription SUBSCRIPTION_ID`,
-		Run: func(cmd *cobra.Command, args []string) {
-			err := azure.AzVMsCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
-			if err != nil {
-				log.Fatal(err)
-			}
-		},
+		Run: runAzVMsCommand,
 	}
 	AzStorageCommand = &cobra.Command{
 		Use:     "storage",
@@ -108,12 +87,7 @@ Enumerate storage accounts for a specific tenant:
 Enumerate storage accounts for a specific subscription:
 ./cloudfox az storage --subscription SUBSCRIPTION_ID
 `,
-		Run: func(cmd *cobra.Command, args []string) {
-			err := azure.AzStorageCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
-			if err != nil {
-				log.Fatal(err)
-			}
-		},
+		Run: runAzStorageCommand,
 	}
 	AzNSGRulesCommand = &cobra.Command{
 		Use:     "nsg-rules",
@@ -129,12 +103,7 @@ Enumerate Network Security Groups rules for a specific subscription:
 Enumerate rules for a specific Network Security Group:
 ./cloudfox az nsg-rules --nsg NSG_ID
 `,
-		Run: func(cmd *cobra.Command, args []string) {
-			err := azure.AzNSGRulesCommand(AzTenantID, AzSubscription, AzResourceIDs, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
-			if err != nil {
-				log.Fatal(err)
-			}
-		},
+		Run: runAzNSGRulesCommand,
 	}
 	AzNSGLinksCommand = &cobra.Command{
 		Use:     "nsg-links",
@@ -150,14 +119,59 @@ Enumerate Network Security Groups links for a specific subscription:
 Enumerate links for a specific Network Security Group:
 ./cloudfox az nsg-links --nsg NSG_ID
 `,
-		Run: func(cmd *cobra.Command, args []string) {
-			err := azure.AzNSGLinksCommand(AzTenantID, AzSubscription, AzResourceIDs, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
-			if err != nil {
-				log.Fatal(err)
-			}
-		},
+		Run: runAzNSGLinksCommand,
 	}
 )
+
+func runAzWhoamiCommand (cmd *cobra.Command, args []string) {
+	err := azure.AzWhoamiCommand(AzOutputDirectory, cmd.Root().Version, AzWrapTable, AzVerbosity, AzWhoamiListRGsAlso)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func runAzInventoryCommand (cmd *cobra.Command, args []string) {
+	err := azure.AzInventoryCommand(AzTenantID, AzSubscription, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func runAzRBACCommand (cmd *cobra.Command, args []string) {
+	err := azure.AzRBACCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func runAzVMsCommand (cmd *cobra.Command, args []string) {
+	err := azure.AzVMsCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func runAzStorageCommand (cmd *cobra.Command, args []string) {
+	err := azure.AzStorageCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func runAzNSGRulesCommand(cmd *cobra.Command, args []string) {
+	err := azure.AzNSGRulesCommand(AzTenantID, AzSubscription, AzResourceIDs, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func runAzNSGLinksCommand(cmd *cobra.Command, args []string) {
+	err := azure.AzNSGLinksCommand(AzTenantID, AzSubscription, AzResourceIDs, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
 
 func init() {
 
