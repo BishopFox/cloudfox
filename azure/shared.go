@@ -116,7 +116,7 @@ func GetDefaultDomainFromTenantID(tenantID string) (string, error) {
 
 func populateTenant(tenantID string) TenantInfo {
 
-	for _, t := range getTenants() {
+	for _, t := range GetTenants() {
 		if ptr.ToString(t.TenantID) == tenantID || ptr.ToString(t.DefaultDomain) == tenantID {
 			var subscriptions []SubsriptionInfo
 			for _, s := range GetSubscriptionsPerTenantID(ptr.ToString(t.ID)) {

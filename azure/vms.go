@@ -150,7 +150,7 @@ func getVMsPerTenantID(AzTenantID string) ([]string, [][]string, string) {
 	var err error
 
 	for _, s := range GetSubscriptionsPerTenantID(AzTenantID) {
-		for _, rg := range getResourceGroups(ptr.ToString(s.SubscriptionID)) {
+		for _, rg := range GetResourceGroups(ptr.ToString(s.SubscriptionID)) {
 			resultsHeader, b, userData, err = getComputeRelevantData(s, rg)
 			if err != nil {
 				fmt.Printf("[%s] Could not enumerate VMs for resource group %s in subscription %s\n", color.CyanString(globals.AZ_VMS_MODULE_NAME), ptr.ToString(rg.Name), ptr.ToString(s.SubscriptionID))
@@ -172,7 +172,7 @@ func getVMsPerSubscriptionID(AzSubscriptionID string) ([]string, [][]string, str
 
 	for _, s := range GetSubscriptions() {
 		if ptr.ToString(s.SubscriptionID) == AzSubscriptionID {
-			for _, rg := range getResourceGroups(ptr.ToString(s.SubscriptionID)) {
+			for _, rg := range GetResourceGroups(ptr.ToString(s.SubscriptionID)) {
 				resultsHeader, b, userData, err = getComputeRelevantData(s, rg)
 				if err != nil {
 					fmt.Printf("[%s] Could not enumerate VMs for resource group %s in subscription %s\n", color.CyanString(globals.AZ_VMS_MODULE_NAME), ptr.ToString(rg.Name), ptr.ToString(s.SubscriptionID))

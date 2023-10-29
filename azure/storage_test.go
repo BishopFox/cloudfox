@@ -69,9 +69,9 @@ func TestAzStorageCommand(t *testing.T) {
 	}
 	internal.MockFileSystem(true)
 	// Mocked functions to simulate Azure calls and responses
-	getTenants = mockedGetTenants
+	GetTenants = mockedGetTenants
 	GetSubscriptions = mockedGetSubscriptions
-	getResourceGroups = mockedGetResourceGroups
+	GetResourceGroups = mockedGetResourceGroups
 	getStorageAccounts = mockedGetStorageAccounts
 
 	for _, s := range subtests {

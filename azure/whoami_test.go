@@ -14,9 +14,9 @@ func TestAzWhoamiCommand(t *testing.T) {
 	fmt.Println("[test case] Azure Whoami Command")
 
 	// Mocked functions to simulate Azure calls and responses
-	getTenants = mockedGetTenants
+	GetTenants = mockedGetTenants
 	GetSubscriptions = mockedGetSubscriptions
-	getResourceGroups = mockedGetResourceGroups
+	GetResourceGroups = mockedGetResourceGroups
 
 	// Test case parameters
 	internal.MockFileSystem(true)

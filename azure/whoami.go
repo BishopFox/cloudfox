@@ -64,10 +64,10 @@ func getWhoamiRelevantDataPerRG() ([]string, [][]string) {
 	tableHead := []string{"Tenant ID", "Tentant Primary Domain", "Subscription ID", "Subscription Name", "RG Name", "Region"}
 	var tableBody [][]string
 
-	for _, t := range getTenants() {
+	for _, t := range GetTenants() {
 		for _, s := range GetSubscriptions() {
 			if ptr.ToString(t.TenantID) == ptr.ToString(s.TenantID) {
-				for _, rg := range getResourceGroups(ptr.ToString(s.SubscriptionID)) {
+				for _, rg := range GetResourceGroups(ptr.ToString(s.SubscriptionID)) {
 					tableBody = append(
 						tableBody,
 						[]string{
@@ -90,7 +90,7 @@ func getWhoamiRelevantDataSubsOnly() ([]string, [][]string) {
 	tableHead := []string{"Tenant ID", "Tenant Primary Domain", "Subscription ID", "Subscription Name"}
 	var tableBody [][]string
 
-	for _, t := range getTenants() {
+	for _, t := range GetTenants() {
 		for _, s := range GetSubscriptions() {
 			if ptr.ToString(t.TenantID) == ptr.ToString(s.TenantID) {
 				tableBody = append(
@@ -108,9 +108,9 @@ func getWhoamiRelevantDataSubsOnly() ([]string, [][]string) {
 	return tableHead, tableBody
 }
 
-var getTenants = getTenantsOriginal
+var GetTenants = GetTenantsOriginal
 
-func getTenantsOriginal() []subscriptions.TenantIDDescription {
+func GetTenantsOriginal() []subscriptions.TenantIDDescription {
 	tenantsClient := internal.GetTenantsClient()
 	var results []subscriptions.TenantIDDescription
 	for page, err := tenantsClient.List(context.TODO()); page.NotDone(); err = page.Next() {
@@ -163,9 +163,9 @@ func mockedGetSubscriptions() []subscriptions.Subscription {
 	return results
 }
 
-var getResourceGroups = getResourceGroupsOriginal
+var GetResourceGroups = GetResourceGroupsOriginal
 
-func getResourceGroupsOriginal(subscriptionID string) []resources.Group {
+func GetResourceGroupsOriginal(subscriptionID string) []resources.Group {
 	var results []resources.Group
 	rgClient := internal.GetResourceGroupsClient(subscriptionID)
 
