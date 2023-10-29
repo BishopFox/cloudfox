@@ -33,7 +33,6 @@ func AzVMsCommand(AzClient *internal.AzureClient, AzOutputFormat, AzOutputDirect
 	if len(AzClient.AzTenants) > 0 {
 		// cloudfox azure inventory --tenant [TENANT_ID | PRIMARY_DOMAIN]
 		for _, AzTenant := range AzClient.AzTenants {
-			tenantInfo := populateTenant(*AzTenant.TenantID)
 
 			if AzMergedTable {
 				// set up table vars
@@ -52,13 +51,13 @@ func AzVMsCommand(AzClient *internal.AzureClient, AzOutputFormat, AzOutputDirect
 				fmt.Printf(
 					"[%s][%s] Enumerating VMs for tenant %s\n",
 					color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(o.CallingModule),
-					fmt.Sprintf("%s (%s)", ptr.ToString(tenantInfo.DefaultDomain), ptr.ToString(tenantInfo.ID)))
+					fmt.Sprintf("%s (%s)", ptr.ToString(AzTenant.DefaultDomain), ptr.ToString(AzTenant.TenantID)))
 
-				o.PrefixIdentifier = ptr.ToString(tenantInfo.DefaultDomain)
-				o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), "1-tenant-level")
+				o.PrefixIdentifier = ptr.ToString(AzTenant.DefaultDomain)
+				o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(AzTenant.DefaultDomain), "1-tenant-level")
 
 				//populate the table data
-				header, body, userData = getVMsPerTenantID(ptr.ToString(tenantInfo.ID))
+				header, body, userData = getVMsPerTenantID(ptr.ToString(AzTenant.TenantID))
 
 				o.Table.TableFiles = append(o.Table.TableFiles,
 					internal.TableFile{
@@ -68,7 +67,7 @@ func AzVMsCommand(AzClient *internal.AzureClient, AzOutputFormat, AzOutputDirect
 
 				if body != nil {
 					if userData != "" {
-						o.Loot.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), "loot")
+						o.Loot.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(AzTenant.DefaultDomain), "loot")
 						o.Loot.LootFiles = append(o.Loot.LootFiles,
 							internal.LootFile{
 								Contents: userData,
@@ -81,7 +80,7 @@ func AzVMsCommand(AzClient *internal.AzureClient, AzOutputFormat, AzOutputDirect
 					}
 				}
 			} else {
-				for _, s := range GetSubscriptionsPerTenantID(ptr.ToString(tenantInfo.ID)) {
+				for _, s := range GetSubscriptionsPerTenantID(ptr.ToString(AzTenant.ID)) {
 					runVMsCommandForSingleSubscription(ptr.ToString(s.SubscriptionID), AzOutputDirectory, AzVerbosity, AzWrapTable, Version)
 				}
 			}

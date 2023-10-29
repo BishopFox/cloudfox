@@ -26,7 +26,6 @@ func AzInventoryCommand(AzClient *internal.AzureClient, AzOutputDirectory, Versi
 	if len(AzClient.AzTenants) > 0 {
 		// cloudfox azure inventory --tenant [TENANT_ID | PRIMARY_DOMAIN]
 		for _, AzTenant := range AzClient.AzTenants {
-			tenantInfo := populateTenant(*AzTenant.TenantID)
 
 			if AzMergedTable {
 				// set up table vars
@@ -44,13 +43,13 @@ func AzInventoryCommand(AzClient *internal.AzureClient, AzOutputDirectory, Versi
 				fmt.Printf(
 					"[%s][%s] Gathering inventory for tenant %s\n",
 					color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(o.CallingModule),
-					fmt.Sprintf("%s (%s)", ptr.ToString(tenantInfo.DefaultDomain), ptr.ToString(tenantInfo.ID)))
+					fmt.Sprintf("%s (%s)", ptr.ToString(AzTenant.DefaultDomain), ptr.ToString(AzTenant.TenantID)))
 
-				o.PrefixIdentifier = ptr.ToString(tenantInfo.DefaultDomain)
-				o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), "1-tenant-level")
+				o.PrefixIdentifier = ptr.ToString(AzTenant.DefaultDomain)
+				o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(AzTenant.DefaultDomain), "1-tenant-level")
 
 				//populate the table data
-				header, body, err := getInventoryInfoPerTenant(ptr.ToString(tenantInfo.ID))
+				header, body, err := getInventoryInfoPerTenant(ptr.ToString(AzTenant.TenantID))
 				if err != nil {
 					return err
 				}
@@ -64,7 +63,7 @@ func AzInventoryCommand(AzClient *internal.AzureClient, AzOutputDirectory, Versi
 					o.WriteFullOutput(o.Table.TableFiles, nil)
 				}
 			} else {
-				for _, s := range GetSubscriptionsPerTenantID(ptr.ToString(tenantInfo.ID)) {
+				for _, s := range GetSubscriptionsPerTenantID(ptr.ToString(AzTenant.ID)) {
 					runInventoryCommandForSingleSubscription(ptr.ToString(s.SubscriptionID), AzOutputDirectory, AzVerbosity, AzWrapTable, Version)
 				}
 			}
