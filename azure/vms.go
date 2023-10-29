@@ -20,73 +20,80 @@ import (
 	"github.com/kyokomi/emoji"
 )
 
-func AzVMsCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, Version string, AzVerbosity int, AzWrapTable bool, AzMergedTable bool) error {
+func AzVMsCommand(AzClient *internal.AzureClient, AzOutputFormat, AzOutputDirectory, Version string, AzVerbosity int, AzWrapTable bool, AzMergedTable bool) error {
 
-	if AzTenantID != "" && AzSubscription == "" {
-		// cloudfox azure vms --tenant [TENANT_ID | PRIMARY_DOMAIN]
-		tenantInfo := populateTenant(AzTenantID)
-
-		if AzMergedTable {
-			// set up table vars
-			var header []string
-			var body [][]string
-			var userData string
-
-			o := internal.OutputClient{
-				Verbosity:     AzVerbosity,
-				CallingModule: globals.AZ_VMS_MODULE_NAME,
-				Table: internal.TableClient{
-					Wrap: AzWrapTable,
-				},
-			}
-			fmt.Printf("[%s][%s] Enumerating VMs for tenant %s\n",
-				color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_VMS_MODULE_NAME),
-				fmt.Sprintf("%s (%s)", ptr.ToString(tenantInfo.DefaultDomain), ptr.ToString(tenantInfo.ID)))
-
-			o.PrefixIdentifier = ptr.ToString(tenantInfo.DefaultDomain)
-			o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), "1-tenant-level")
-
-			// populate the table data
-			header, body, userData = getVMsPerTenantID(ptr.ToString(tenantInfo.ID))
-
-			o.Table.TableFiles = append(o.Table.TableFiles,
-				internal.TableFile{
-					Header: header,
-					Body:   body,
-					Name:   fmt.Sprintf(globals.AZ_VMS_MODULE_NAME)})
-
-			if body != nil {
-				if userData != "" {
-					o.Loot.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), "loot")
-					o.Loot.LootFiles = append(o.Loot.LootFiles,
-						internal.LootFile{
-							Contents: userData,
-							Name:     "virtualmachines-user-data"})
-					o.WriteFullOutput(o.Table.TableFiles, o.Loot.LootFiles)
-					fmt.Println()
-				} else {
-
-					o.WriteFullOutput(o.Table.TableFiles, nil)
-					fmt.Println()
-				}
-
-			}
-		} else {
-
-			for _, s := range GetSubscriptionsPerTenantID(ptr.ToString(tenantInfo.ID)) {
-				runVMsCommandForSingleSubscription(ptr.ToString(s.SubscriptionID), AzOutputDirectory, AzVerbosity, AzWrapTable, Version)
-			}
-		}
-
-	} else if AzTenantID == "" && AzSubscription != "" {
-		// cloudfox azure vms --subscription [SUBSCRIPTION_ID | SUBSCRIPTION_NAME]
-		runVMsCommandForSingleSubscription(AzSubscription, AzOutputDirectory, AzVerbosity, AzWrapTable, Version)
-
-	} else {
-		// Error: please make a valid flag selection
-		fmt.Println("Please enter a valid input with a valid flag. Use --help for info.")
+	o := internal.OutputClient{
+		Verbosity:     AzVerbosity,
+		CallingModule: globals.AZ_VMS_MODULE_NAME,
+		Table: internal.TableClient{
+			Wrap: AzWrapTable,
+		},
 	}
 
+	if len(AzClient.AzTenants) > 0 {
+		// cloudfox azure inventory --tenant [TENANT_ID | PRIMARY_DOMAIN]
+		for _, AzTenant := range AzClient.AzTenants {
+			tenantInfo := populateTenant(*AzTenant.TenantID)
+
+			if AzMergedTable {
+				// set up table vars
+				var header []string
+				var body [][]string
+				var userData string
+
+				o := internal.OutputClient{
+					Verbosity:     AzVerbosity,
+					CallingModule: globals.AZ_INVENTORY_MODULE_NAME,
+					Table: internal.TableClient{
+						Wrap: AzWrapTable,
+					},
+				}
+
+				fmt.Printf(
+					"[%s][%s] Enumerating VMs for tenant %s\n",
+					color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(o.CallingModule),
+					fmt.Sprintf("%s (%s)", ptr.ToString(tenantInfo.DefaultDomain), ptr.ToString(tenantInfo.ID)))
+
+				o.PrefixIdentifier = ptr.ToString(tenantInfo.DefaultDomain)
+				o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), "1-tenant-level")
+
+				//populate the table data
+				header, body, userData = getVMsPerTenantID(ptr.ToString(tenantInfo.ID))
+
+				o.Table.TableFiles = append(o.Table.TableFiles,
+					internal.TableFile{
+						Header: header,
+						Body:   body,
+						Name:   fmt.Sprintf(globals.AZ_VMS_MODULE_NAME)})
+
+				if body != nil {
+					if userData != "" {
+						o.Loot.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), "loot")
+						o.Loot.LootFiles = append(o.Loot.LootFiles,
+							internal.LootFile{
+								Contents: userData,
+								Name:     "virtualmachines-user-data"})
+						o.WriteFullOutput(o.Table.TableFiles, o.Loot.LootFiles)
+						fmt.Println()
+					} else {
+						o.WriteFullOutput(o.Table.TableFiles, nil)
+						fmt.Println()
+					}
+				}
+			} else {
+				for _, s := range GetSubscriptionsPerTenantID(ptr.ToString(tenantInfo.ID)) {
+					runVMsCommandForSingleSubscription(ptr.ToString(s.SubscriptionID), AzOutputDirectory, AzVerbosity, AzWrapTable, Version)
+				}
+			}
+		} 
+	} else {
+		// ./cloudfox azure inventory --subscription [SUBSCRIPTION_ID | SUBSCRIPTION_NAME]
+		for _, AzSubscription := range AzClient.AzSubscriptions {
+			runVMsCommandForSingleSubscription(*AzSubscription.SubscriptionID, AzOutputDirectory, AzVerbosity, AzWrapTable, Version)
+		}
+
+	}
+	o.WriteFullOutput(o.Table.TableFiles, nil)
 	return nil
 }
 

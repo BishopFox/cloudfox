@@ -26,7 +26,7 @@ func AzInventoryCommand(AzClient *internal.AzureClient, AzOutputDirectory, Versi
 	if len(AzClient.AzTenants) > 0 {
 		// cloudfox azure inventory --tenant [TENANT_ID | PRIMARY_DOMAIN]
 		for _, AzTenant := range AzClient.AzTenants {
-			tenantInfo := populateTenant(*AzTenant.ID)
+			tenantInfo := populateTenant(*AzTenant.TenantID)
 
 			if AzMergedTable {
 				// set up table vars
