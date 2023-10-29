@@ -147,7 +147,7 @@ func runAzWhoamiCommand (cmd *cobra.Command, args []string) {
 }
 
 func runAzInventoryCommand (cmd *cobra.Command, args []string) {
-	err := azure.AzInventoryCommand(AzTenants, AzSubscriptions, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
+	err := azure.AzInventoryCommand(AzClient, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -7,7 +7,6 @@ import (
 	"sort"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
-	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/subscriptions"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/smithy-go/ptr"
@@ -15,7 +14,7 @@ import (
 	"github.com/kyokomi/emoji"
 )
 
-func AzInventoryCommand(AzTenants []*subscriptions.TenantIDDescription, AzSubscriptions []*subscriptions.Subscription, AzOutputDirectory, Version string, AzVerbosity int, AzWrapTable bool, AzMergedTable bool) error {
+func AzInventoryCommand(AzClient *internal.AzureClient, AzOutputDirectory, Version string, AzVerbosity int, AzWrapTable bool, AzMergedTable bool) error {
 	o := internal.OutputClient{
 		Verbosity:     AzVerbosity,
 		CallingModule: globals.AZ_INVENTORY_MODULE_NAME,
@@ -24,9 +23,9 @@ func AzInventoryCommand(AzTenants []*subscriptions.TenantIDDescription, AzSubscr
 		},
 	}
 
-	if len(AzTenants) > 0 {
+	if len(AzClient.AzTenants) > 0 {
 		// cloudfox azure inventory --tenant [TENANT_ID | PRIMARY_DOMAIN]
-		for _, AzTenant := range AzTenants {
+		for _, AzTenant := range AzClient.AzTenants {
 			tenantInfo := populateTenant(*AzTenant.ID)
 
 			if AzMergedTable {
@@ -72,7 +71,7 @@ func AzInventoryCommand(AzTenants []*subscriptions.TenantIDDescription, AzSubscr
 		} 
 	} else {
 		// ./cloudfox azure inventory --subscription [SUBSCRIPTION_ID | SUBSCRIPTION_NAME]
-		for _, AzSubscription := range AzSubscriptions {
+		for _, AzSubscription := range AzClient.AzSubscriptions {
 			runInventoryCommandForSingleSubscription(*AzSubscription.SubscriptionID, AzOutputDirectory, AzVerbosity, AzWrapTable, Version)
 		}
 
