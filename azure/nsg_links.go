@@ -30,7 +30,7 @@ func AzNSGLinksCommand(AzTenantID string, AzSubscription string, AzResourceIDs [
 			// setup logging client
 			o := internal.OutputClient{
 				Verbosity:     AzVerbosity,
-				CallingModule: globals.AZ_NSG_MODULE_NAME,
+				CallingModule: globals.AZ_NSG_LINKS_MODULE_NAME,
 				Table: internal.TableClient{
 					Wrap: AzWrapTable,
 				},
@@ -39,7 +39,7 @@ func AzNSGLinksCommand(AzTenantID string, AzSubscription string, AzResourceIDs [
 			var err error
 
 			fmt.Printf("[%s][%s] Enumerating Network Security Group links for tenant %s\n",
-				color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_NSGLINKS_MODULE_NAME),
+				color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_NSG_LINKS_MODULE_NAME),
 				fmt.Sprintf("%s (%s)", ptr.ToString(tenantInfo.DefaultDomain), ptr.ToString(tenantInfo.ID)))
 
 			o.PrefixIdentifier = ptr.ToString(tenantInfo.DefaultDomain)
@@ -54,7 +54,7 @@ func AzNSGLinksCommand(AzTenantID string, AzSubscription string, AzResourceIDs [
 				internal.TableFile{
 					Header: header,
 					Body:   body,
-					Name:   fmt.Sprintf(globals.AZ_NSG_MODULE_NAME)})
+					Name:   fmt.Sprintf(globals.AZ_NSG_LINKS_MODULE_NAME)})
 
 			if body != nil {
 				o.WriteFullOutput(o.Table.TableFiles, nil)
@@ -83,7 +83,7 @@ func runNSGCommandForSingleSubcription(AzSubscription string, AzOutputDirectory 
 	// setup logging client
 	o := internal.OutputClient{
 		Verbosity:     AzVerbosity,
-		CallingModule: globals.AZ_NSGLINKS_MODULE_NAME,
+		CallingModule: globals.AZ_NSG_LINKS_MODULE_NAME,
 		Table: internal.TableClient{
 			Wrap: AzWrapTable,
 		},
@@ -102,7 +102,7 @@ func runNSGCommandForSingleSubcription(AzSubscription string, AzOutputDirectory 
 	fmt.Printf(
 		"[%s][%s] Enumerating Network Security Groups links for subscription %s\n",
 		color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)),
-		color.CyanString(globals.AZ_NSGLINKS_MODULE_NAME),
+		color.CyanString(globals.AZ_NSG_LINKS_MODULE_NAME),
 		fmt.Sprintf("%s (%s)", AzSubscriptionInfo.Name, AzSubscriptionInfo.ID))
 	//AzTenantID := ptr.ToString(GetTenantIDPerSubscription(AzSubscription))
 	header, body, err = getNSGInfoPerSubscription(ptr.ToString(tenantInfo.ID), AzSubscriptionInfo.ID)
@@ -114,7 +114,7 @@ func runNSGCommandForSingleSubcription(AzSubscription string, AzOutputDirectory 
 		internal.TableFile{
 			Header: header,
 			Body:   body,
-			Name:   fmt.Sprintf(globals.AZ_NSGLINKS_MODULE_NAME)})
+			Name:   fmt.Sprintf(globals.AZ_NSG_LINKS_MODULE_NAME)})
 	if body != nil {
 		o.WriteFullOutput(o.Table.TableFiles, nil)
 

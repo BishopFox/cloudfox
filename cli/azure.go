@@ -115,29 +115,27 @@ Enumerate storage accounts for a specific subscription:
 			}
 		},
 	}
-/*
-	AzNSGCommand = &cobra.Command{
-		Use:     "nsg",
+	AzNSGRulesCommand = &cobra.Command{
+		Use:     "nsg-rules",
 		Aliases: []string{},
-		Short:   "Enumerates azure Network Securiy Groups (NSG)",
+		Short:   "Enumerates azure Network Securiy Group rules",
 		Long: `
 Enumerate Network Security Groups rules for a specific tenant:
-./cloudfox az nsg --tenant TENANT_ID
+./cloudfox az nsg-rukes --tenant TENANT_ID
 
 Enumerate Network Security Groups rules for a specific subscription:
-./cloudfox az nsg --subscription SUBSCRIPTION_ID
+./cloudfox az nsg-rules --subscription SUBSCRIPTION_ID
 
 Enumerate rules for a specific Network Security Group:
-./cloudfox az nsg --nsg NSG_ID
+./cloudfox az nsg-rules --nsg NSG_ID
 `,
 		Run: func(cmd *cobra.Command, args []string) {
-			err := azure.AzNSGCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
+			err := azure.AzNSGRulesCommand(AzTenantID, AzSubscription, AzResourceIDs, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
 			if err != nil {
 				log.Fatal(err)
 			}
 		},
 	}
-*/
 	AzNSGLinksCommand = &cobra.Command{
 		Use:     "nsg-links",
 		Aliases: []string{},
@@ -181,7 +179,7 @@ func init() {
 		AzRBACCommand,
 		AzVMsCommand,
 		AzStorageCommand,
-//		AzNSGCommand,
+		AzNSGRulesCommand,
 		AzNSGLinksCommand,
 		AzInventoryCommand)
 
