@@ -80,7 +80,7 @@ func AzVMsCommand(AzClient *internal.AzureClient, AzOutputFormat, AzOutputDirect
 					}
 				}
 			} else {
-				for _, s := range GetSubscriptionsPerTenantID(ptr.ToString(AzTenant.ID)) {
+				for _, s := range GetSubscriptionsPerTenantID(ptr.ToString(AzTenant.TenantID)) {
 					runVMsCommandForSingleSubscription(ptr.ToString(s.SubscriptionID), AzOutputDirectory, AzVerbosity, AzWrapTable, Version)
 				}
 			}

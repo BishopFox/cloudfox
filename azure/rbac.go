@@ -50,7 +50,7 @@ func AzRBACCommand(AzClient *internal.AzureClient, AzOutputFormat, AzOutputDirec
 				color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_RBAC_MODULE_NAME),
 				fmt.Sprintf("%s (%s)", *AzTenant.DefaultDomain, *AzTenant.TenantID))
 
-			header, body, err = getRBACperTenant(ptr.ToString(AzTenant.ID), c)
+			header, body, err = getRBACperTenant(ptr.ToString(AzTenant.TenantID), c)
 			if err != nil {
 				return err
 			}
