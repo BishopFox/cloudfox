@@ -165,7 +165,10 @@ func runAzRBACCommand (cmd *cobra.Command, args []string) {
 }
 
 func runAzVMsCommand (cmd *cobra.Command, args []string) {
-	err := azure.AzVMsCommand(AzClient, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
+	m := azure.AzVMsModule{
+		AzClient: AzClient,
+	}
+	err := m.AzVMsCommand()
 	if err != nil {
 		log.Fatal(err)
 	}
