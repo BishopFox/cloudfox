@@ -12,6 +12,8 @@ import (
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/resources"
 )
 
+func void(cmd *cobra.Command, args []string) {}
+
 var (
 	AzTenantID         string
 	AzSubscription     string
@@ -53,6 +55,7 @@ var (
 Display Available Azure CLI Sessions:
 ./cloudfox az whoami`,
 		Run: runAzWhoamiCommand,
+		PersistentPreRun: void,
 	}
 	AzInventoryCommand = &cobra.Command{
 		Use:     "inventory",
