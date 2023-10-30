@@ -158,7 +158,10 @@ func runAzInventoryCommand (cmd *cobra.Command, args []string) {
 }
 
 func runAzRBACCommand (cmd *cobra.Command, args []string) {
-	err := azure.AzRBACCommand(AzClient, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
+	m := azure.AzRBACModule{
+		AzClient: AzClient,
+	}
+	err := m.AzRBACCommand()
 	if err != nil {
 		log.Fatal(err)
 	}
