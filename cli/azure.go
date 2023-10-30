@@ -147,7 +147,10 @@ func runAzWhoamiCommand (cmd *cobra.Command, args []string) {
 }
 
 func runAzInventoryCommand (cmd *cobra.Command, args []string) {
-	err := azure.AzInventoryCommand(AzClient, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
+	m := azure.AzInventoryModule{
+		AzClient: AzClient,
+	}
+	err := m.AzInventoryCommand()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -189,7 +192,7 @@ func runAzNSGLinksCommand(cmd *cobra.Command, args []string) {
 }
 
 func azurePreRun(cmd *cobra.Command, args []string) {
-	AzClient = internal.NewAzureClient(AzTenantRefs, AzSubscriptionRefs, AzRGRefs, AzResourceRefs, cmd)
+	AzClient = internal.NewAzureClient(AzVerbosity, AzWrapTable, AzMergedTable, AzTenantRefs, AzSubscriptionRefs, AzRGRefs, AzResourceRefs, cmd, AzOutputFormat, AzOutputDirectory)
 	nTenants := len(AzClient.AzTenants)
 	nSubscriptions := len(AzClient.AzSubscriptions)
 	nRGs := len(AzClient.AzRGs)

@@ -9,47 +9,53 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/aws/smithy-go/ptr"
 	"github.com/fatih/color"
 	"github.com/kyokomi/emoji"
 )
 
-func AzInventoryCommand(AzClient *internal.AzureClient, AzOutputDirectory, Version string, AzVerbosity int, AzWrapTable bool, AzMergedTable bool) error {
+type AzInventoryModule struct {
+	AzClient            *internal.AzureClient
+}
+
+
+func (m *AzInventoryModule) AzInventoryCommand() error {
 	o := internal.OutputClient{
-		Verbosity:     AzVerbosity,
+		Verbosity:     m.AzClient.AzVerbosity,
 		CallingModule: globals.AZ_INVENTORY_MODULE_NAME,
 		Table: internal.TableClient{
-			Wrap: AzWrapTable,
+			Wrap: m.AzClient.AzWrapTable,
 		},
 	}
 
-	if len(AzClient.AzTenants) > 0 {
+	if len(m.AzClient.AzTenants) > 0 {
 		// cloudfox azure inventory --tenant [TENANT_ID | PRIMARY_DOMAIN]
-		for _, AzTenant := range AzClient.AzTenants {
+		for _, AzTenant := range m.AzClient.AzTenants {
 
-			if AzMergedTable {
+			if m.AzClient.AzMergedTable {
 				// set up table vars
 				var header []string
 				var body [][]string
 
 				o := internal.OutputClient{
-					Verbosity:     AzVerbosity,
+					Verbosity:     m.AzClient.AzVerbosity,
 					CallingModule: globals.AZ_INVENTORY_MODULE_NAME,
 					Table: internal.TableClient{
-						Wrap: AzWrapTable,
+						Wrap: m.AzClient.AzWrapTable,
 					},
 				}
 
 				fmt.Printf(
 					"[%s][%s] Gathering inventory for tenant %s\n",
-					color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(o.CallingModule),
+					color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", m.AzClient.Version)), color.CyanString(o.CallingModule),
 					fmt.Sprintf("%s (%s)", ptr.ToString(AzTenant.DefaultDomain), ptr.ToString(AzTenant.TenantID)))
 
 				o.PrefixIdentifier = ptr.ToString(AzTenant.DefaultDomain)
-				o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(AzTenant.DefaultDomain), "1-tenant-level")
+				o.Table.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(AzTenant.DefaultDomain), "1-tenant-level")
 
 				//populate the table data
-				header, body, err := getInventoryInfoPerTenant(ptr.ToString(AzTenant.TenantID))
+				header, body, err := m.getInventoryInfoPerTenant(ptr.ToString(AzTenant.TenantID))
 				if err != nil {
 					return err
 				}
@@ -63,15 +69,15 @@ func AzInventoryCommand(AzClient *internal.AzureClient, AzOutputDirectory, Versi
 					o.WriteFullOutput(o.Table.TableFiles, nil)
 				}
 			} else {
-				for _, s := range GetSubscriptionsPerTenantID(ptr.ToString(AzTenant.ID)) {
-					runInventoryCommandForSingleSubscription(ptr.ToString(s.SubscriptionID), AzOutputDirectory, AzVerbosity, AzWrapTable, Version)
+				for _, s := range GetSubscriptionsPerTenantID(ptr.ToString(AzTenant.TenantID)) {
+					m.runInventoryCommandForSingleSubscription(ptr.ToString(s.SubscriptionID))
 				}
 			}
 		} 
 	} else {
 		// ./cloudfox azure inventory --subscription [SUBSCRIPTION_ID | SUBSCRIPTION_NAME]
-		for _, AzSubscription := range AzClient.AzSubscriptions {
-			runInventoryCommandForSingleSubscription(*AzSubscription.SubscriptionID, AzOutputDirectory, AzVerbosity, AzWrapTable, Version)
+		for _, AzSubscription := range m.AzClient.AzSubscriptions {
+			m.runInventoryCommandForSingleSubscription(*AzSubscription.SubscriptionID)
 		}
 
 	}
@@ -79,16 +85,16 @@ func AzInventoryCommand(AzClient *internal.AzureClient, AzOutputDirectory, Versi
 	return nil
 }
 
-func runInventoryCommandForSingleSubscription(AzSubscription string, AzOutputDirectory string, AzVerbosity int, AzWrapTable bool, Version string) error {
+func (m *AzInventoryModule) runInventoryCommandForSingleSubscription(AzSubscription string) error {
 	// set up table vars
 	var header []string
 	var body [][]string
 	var err error
 	o := internal.OutputClient{
-		Verbosity:     AzVerbosity,
+		Verbosity:     m.AzClient.AzVerbosity,
 		CallingModule: globals.AZ_INVENTORY_MODULE_NAME,
 		Table: internal.TableClient{
-			Wrap: AzWrapTable,
+			Wrap: m.AzClient.AzWrapTable,
 		},
 	}
 	var AzSubscriptionInfo SubsriptionInfo
@@ -96,15 +102,15 @@ func runInventoryCommandForSingleSubscription(AzSubscription string, AzOutputDir
 	tenantInfo := populateTenant(tenantID)
 	AzSubscriptionInfo = PopulateSubsriptionType(AzSubscription)
 	o.PrefixIdentifier = AzSubscriptionInfo.Name
-	o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), AzSubscriptionInfo.Name)
+	o.Table.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), AzSubscriptionInfo.Name)
 
 	fmt.Printf(
 		"[%s][%s] Gathering inventory for subscription %s\n",
-		color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(o.CallingModule),
+		color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", m.AzClient.Version)), color.CyanString(o.CallingModule),
 		fmt.Sprintf("%s (%s)", AzSubscriptionInfo.Name, AzSubscriptionInfo.ID))
 
 	// populate the table data
-	header, body, err = getInventoryInfoPerSubscription(ptr.ToString(tenantInfo.ID), AzSubscriptionInfo.ID)
+	header, body, err = m.getInventoryInfoPerSubscription(ptr.ToString(tenantInfo.ID), AzSubscriptionInfo.ID)
 	if err != nil {
 		return err
 	}
@@ -123,8 +129,8 @@ func runInventoryCommandForSingleSubscription(AzSubscription string, AzOutputDir
 	return nil
 }
 
-func getInventoryInfoPerSubscription(tenantID, subscriptionID string) ([]string, [][]string, error) {
-	resources, err := getResources(tenantID, subscriptionID)
+func (m *AzInventoryModule) getInventoryInfoPerSubscription(tenantID, subscriptionID string) ([]string, [][]string, error) {
+	resources, err := m.getResources(tenantID, subscriptionID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -136,14 +142,24 @@ func getInventoryInfoPerSubscription(tenantID, subscriptionID string) ([]string,
 	for _, resource := range resources {
 		resourceType := ptr.ToString(resource.Type)
 		resourceLocation := ptr.ToString(resource.Location)
-
 		_, ok := inventory[resourceType]
+		if len(m.AzClient.AzRGs) > 0 {
+			for _, AzRG := range m.AzClient.AzRGs {
+				metaResource, _ := azure.ParseResourceID(*resource.ID)
+				if metaResource.ResourceGroup == *AzRG.Name {
+					goto ADD_RESOURCE
+				}
+			}
+			goto SKIP_RESOURCE
+		}
+		ADD_RESOURCE:
 		if !ok {
 			inventory[resourceType] = make(map[string]int)
 		}
 		inventory[resourceType][resourceLocation]++
 		resourceTypes[resourceType] = true
 		resourceLocations[resourceLocation] = true
+		SKIP_RESOURCE:
 	}
 
 	header := []string{"Resource Type"}
@@ -170,14 +186,14 @@ func getInventoryInfoPerSubscription(tenantID, subscriptionID string) ([]string,
 	return header, body, nil
 }
 
-func getInventoryInfoPerTenant(tenantID string) ([]string, [][]string, error) {
+func (m *AzInventoryModule) getInventoryInfoPerTenant(tenantID string) ([]string, [][]string, error) {
 
 	inventory := make(map[string]map[string]int)
 	resourceTypes := make(map[string]bool)
 	resourceLocations := make(map[string]bool)
 
 	for _, s := range GetSubscriptionsPerTenantID(tenantID) {
-		resources, err := getResources(tenantID, ptr.ToString(s.SubscriptionID))
+		resources, err := m.getResources(tenantID, ptr.ToString(s.SubscriptionID))
 		if err != nil {
 			return nil, nil, err
 		}
@@ -220,7 +236,7 @@ func getInventoryInfoPerTenant(tenantID string) ([]string, [][]string, error) {
 	return header, body, nil
 }
 
-func getResources(tenantID, subscriptionID string) ([]*armresources.GenericResourceExpanded, error) {
+func (m *AzInventoryModule) getResources(tenantID, subscriptionID string) ([]*armresources.GenericResourceExpanded, error) {
 	client := internal.GetARMresourcesClient(tenantID, subscriptionID)
 
 	var resources []*armresources.GenericResourceExpanded

@@ -22,8 +22,17 @@ import (
 	"github.com/kyokomi/emoji"
 	"github.com/spf13/cobra"
 )
+// func NewAzureClient(AzVerbosity int, AzWrapTable, AzMergedTable bool, AzTenantRefs, AzSubscriptionRefs, AzRGRefs, AzResourceRefs []string, cmd *cobra.Command) *AzureClient {
 
 type AzureClient struct {
+	AzVerbosity        int
+	AzWrapTable        bool
+	AzMergedTable      bool
+
+	Version            string
+	AzOutputFormat     string
+	AzOutputDirectory  string
+
 	AzTenants          []*subscriptions.TenantIDDescription
 	AzSubscriptions    []*subscriptions.Subscription
 	AzRGs              []*resources.Group
@@ -126,8 +135,14 @@ func (a *AzureClient) init (AzTenantRefs, AzSubscriptionRefs, AzRGRefs, AzResour
 	}
 }
 
-func NewAzureClient(AzTenantRefs, AzSubscriptionRefs, AzRGRefs, AzResourceRefs []string, cmd *cobra.Command) *AzureClient {
+func NewAzureClient(AzVerbosity int, AzWrapTable, AzMergedTable bool, AzTenantRefs, AzSubscriptionRefs, AzRGRefs, AzResourceRefs []string, cmd *cobra.Command, AzOutputFormat, AzOutputDirectory string) *AzureClient {
    client := new(AzureClient)
+   client.Version = cmd.Root().Version
+   client.AzWrapTable = AzWrapTable
+   client.AzMergedTable = AzMergedTable
+   client.AzVerbosity = AzVerbosity
+   client.AzOutputFormat = AzOutputFormat
+   client.AzOutputDirectory = AzOutputDirectory
    client.init(AzTenantRefs, AzSubscriptionRefs, AzRGRefs, AzResourceRefs, cmd)
    return client
 }
