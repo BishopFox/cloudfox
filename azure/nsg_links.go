@@ -11,174 +11,80 @@ import (
 	"github.com/fatih/color"
 	"github.com/kyokomi/emoji"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/network/mgmt/network"
+	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/subscriptions"
 	"github.com/Azure/go-autorest/autorest/azure"
 )
 
+func (m *AzNSGModule) AzNSGLinksCommand() error {
 
-type NSGLinksModule struct {
-	NSGClient *network.SecurityGroupsClient
+	m.getNSGData = m.getNSGLinksData
 
-}
-
-func AzNSGLinksCommand(AzClient *internal.AzureClient, AzOutputFormat, AzOutputDirectory, Version string, AzVerbosity int, AzWrapTable bool, AzMergedTable bool) error {
-
-
-	if len(AzClient.AzTenants) > 0 {
-		for _, AzTenant := range AzClient.AzTenants {
-
-			if AzMergedTable {
-
-				// set up table vars
-				var header []string
-				var body [][]string
-				// setup logging client
-				o := internal.OutputClient{
-					Verbosity:     AzVerbosity,
-					CallingModule: globals.AZ_NSG_LINKS_MODULE_NAME,
-					Table: internal.TableClient{
-						Wrap: AzWrapTable,
-					},
-				}
-
-				var err error
-
-				fmt.Printf("[%s][%s] Enumerating Network Security Group links for tenant %s\n",
-					color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_NSG_LINKS_MODULE_NAME),
-					fmt.Sprintf("%s (%s)", ptr.ToString(AzTenant.DefaultDomain), ptr.ToString(AzTenant.TenantID)))
-
-				o.PrefixIdentifier = ptr.ToString(AzTenant.DefaultDomain)
-				o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(AzTenant.DefaultDomain), "1-tenant-level")
-
-				header, body, err = getNSGInfoPerTenant(ptr.ToString(AzTenant.TenantID))
-
-				if err != nil {
-					return err
-				}
-				o.Table.TableFiles = append(o.Table.TableFiles,
-					internal.TableFile{
-						Header: header,
-						Body:   body,
-						Name:   fmt.Sprintf(globals.AZ_NSG_LINKS_MODULE_NAME)})
-
-				if body != nil {
-					o.WriteFullOutput(o.Table.TableFiles, nil)
-				}
-			} else {
-				for _, s := range GetSubscriptionsPerTenantID(ptr.ToString(AzTenant.TenantID)) {
-					runNSGCommandForSingleSubcription(ptr.ToString(s.SubscriptionID), AzOutputDirectory, AzVerbosity, AzWrapTable, Version)
+	if len(m.AzClient.AzTenants) > 0 {
+		for _, AzTenant := range m.AzClient.AzTenants {
+			fmt.Printf("[%s][%s] Enumerating Network Security Group links for tenant %s\n",
+				color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", m.AzClient.Version)), color.CyanString(globals.AZ_NSG_LINKS_MODULE_NAME),
+				fmt.Sprintf("%s (%s)", ptr.ToString(AzTenant.DefaultDomain), ptr.ToString(AzTenant.TenantID)))
+			for _, AzTenant := range m.AzClient.AzTenants {
+				for _, AzSubscription := range GetSubscriptionsPerTenantID(ptr.ToString(AzTenant.TenantID)) {
+					m.runNSGLinksCommandForSingleSubcription(*AzTenant.DefaultDomain, &AzSubscription)
 				}
 			}
 		}
 	} else {
-		for _, AzSubscription := range AzClient.AzSubscriptions {
-			runNSGCommandForSingleSubcription(*AzSubscription.SubscriptionID, AzOutputDirectory, AzVerbosity, AzWrapTable, Version)
+		for tenantSlug, AzSubscriptions := range m.AzClient.AzSubscriptionsAlt {
+			for _, AzSubscription := range AzSubscriptions {
+				m.runNSGLinksCommandForSingleSubcription(tenantSlug, AzSubscription)
+			}
 		}
 	}
 	return nil
 }
 
-func runNSGCommandForSingleSubcription(AzSubscription string, AzOutputDirectory string, AzVerbosity int, AzWrapTable bool, Version string) error {
+func (m *AzNSGModule) runNSGLinksCommandForSingleSubcription(tenantSlug string, AzSubscription *subscriptions.Subscription) error {
 	var err error
-	// setup logging client
-	o := internal.OutputClient{
-		Verbosity:     AzVerbosity,
-		CallingModule: globals.AZ_NSG_LINKS_MODULE_NAME,
-		Table: internal.TableClient{
-			Wrap: AzWrapTable,
-		},
-	}
-
-	// set up table vars
-	var header []string
-	var body [][]string
-
-	tenantID := ptr.ToString(GetTenantIDPerSubscription(AzSubscription))
-	tenantInfo := populateTenant(tenantID)
-	AzSubscriptionInfo := PopulateSubsriptionType(AzSubscription)
-	o.PrefixIdentifier = AzSubscriptionInfo.Name
-	o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), AzSubscriptionInfo.Name)
 
 	fmt.Printf(
 		"[%s][%s] Enumerating Network Security Groups links for subscription %s\n",
-		color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)),
+		color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", m.AzClient.Version)),
 		color.CyanString(globals.AZ_NSG_LINKS_MODULE_NAME),
-		fmt.Sprintf("%s (%s)", AzSubscriptionInfo.Name, AzSubscriptionInfo.ID))
+		fmt.Sprintf("%s (%s)", *AzSubscription.DisplayName, *AzSubscription.SubscriptionID))
 	//AzTenantID := ptr.ToString(GetTenantIDPerSubscription(AzSubscription))
-	header, body, err = getNSGInfoPerSubscription(ptr.ToString(tenantInfo.ID), AzSubscriptionInfo.ID)
+	err = m.getNSGInfoPerSubscription(tenantSlug, AzSubscription)
 	if err != nil {
 		return err
 	}
 
-	o.Table.TableFiles = append(o.Table.TableFiles,
-		internal.TableFile{
-			Header: header,
-			Body:   body,
-			Name:   fmt.Sprintf(globals.AZ_NSG_LINKS_MODULE_NAME)})
-	if body != nil {
-		o.WriteFullOutput(o.Table.TableFiles, nil)
-
-	}
 	return nil
-
 }
 
 
-func getNSGInfoPerTenant(AzTenantID string) ([]string, [][]string, error) {
-	var err error
-	var header []string
-	var body, b [][]string
 
-	for _, s := range GetSubscriptionsPerTenantID(AzTenantID) {
-		header, b, err = getNSGData(ptr.ToString(s.SubscriptionID))
-		if err != nil {
-			return nil, nil, err
-		} else {
-			body = append(body, b...)
-		}
-	}
-	return header, body, nil
-}
-
-func getNSGInfoPerSubscription(AzTenantID, AzSubscriptionID string) ([]string, [][]string, error) {
-	var err error
-	var header []string
-	var body [][]string
-
-	for _, s := range GetSubscriptions() {
-		if ptr.ToString(s.SubscriptionID) == AzSubscriptionID {
-			header, body, err = getNSGData(ptr.ToString(s.SubscriptionID))
-			if err != nil {
-				return nil, nil, err
-			}
-		}
-	}
-	return header, body, nil
-}
-func value(ptr *string) string {
-	if ptr != nil {
-		return *ptr
-	} else {
-		return "AAAAA"
-	}
-}
-
-func getNSGData(subscriptionID string) ([]string, [][]string, error) {
-	tableHeader := []string{"Subscription Name", "Network Security Group", "Link Type", "Linked Name", "Link Target"}
+func (m *AzNSGModule) getNSGLinksData(tenantSlug string, AzSubscription *subscriptions.Subscription) error {
+	tableHeader := []string{"Network Security Group", "Link Type", "Linked Name", "Link Target"}
 	var tableBody [][]string
-	networkSecurityGroups, err := getNSG(subscriptionID)
-	nsgClient := internal.GetNSGClient(subscriptionID)
+	networkSecurityGroups, err := m.getNSG(*AzSubscription.SubscriptionID)
+	nsgClient := internal.GetNSGClient(*AzSubscription.SubscriptionID)
 	//subnetsClient := internal.GetSubnetsClient(subscriptionID)
 	if err != nil {
-		return tableHeader, tableBody, err
+		return err
 	}
 	for _, networkSecurityGroup := range *networkSecurityGroups {
+		tableBody = nil
+		// setup logging client
+		o := internal.OutputClient{
+			Verbosity:     m.AzClient.AzVerbosity,
+			CallingModule: globals.AZ_NSG_LINKS_MODULE_NAME,
+			Table: internal.TableClient{
+				Wrap: m.AzClient.AzWrapTable,
+			},
+		}
+
 		var resource azure.Resource
 		resource, err = azure.ParseResourceID(*networkSecurityGroup.ID)
 		if err != nil {
 			continue
 		}
 		networkSecurityGroup, _ = nsgClient.Get(context.TODO(), resource.ResourceGroup, resource.ResourceName, "Subnets,NetworkInterfaces")
-		fmt.Println(*networkSecurityGroup.ID)
 		if networkSecurityGroup.Subnets != nil {
 			for _, subnet := range *networkSecurityGroup.Subnets {
 				var addressPrefixes []string
@@ -192,10 +98,9 @@ func getNSGData(subscriptionID string) ([]string, [][]string, error) {
 				}
 				tableBody = append(tableBody,
 					[]string{
-						subscriptionID,
 						*networkSecurityGroup.Name,
 						"Subnet",
-						value(subnet.Name),
+						ptr.ToString(subnet.Name),
 						strings.Join(addressPrefixes[:], "\n"),
 					},
 				)
@@ -205,28 +110,68 @@ func getNSGData(subscriptionID string) ([]string, [][]string, error) {
 			for _, networkInterface := range *networkSecurityGroup.NetworkInterfaces {
 				tableBody = append(tableBody,
 					[]string{
-						subscriptionID,
 						*networkSecurityGroup.Name,
 						"NIC",
-						value(networkInterface.Name),
+						ptr.ToString(networkInterface.Name),
 						strings.Join(internal.GetIPAddressesFromInterface(&networkInterface)[:], "\n"),
 					},
 				)
 			}
 		}
+
+		// set up table vars
+		o.PrefixIdentifier = fmt.Sprintf("%s %s", *AzSubscription.DisplayName, *networkSecurityGroup.Name)
+		o.Table.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, tenantSlug, *AzSubscription.DisplayName, *networkSecurityGroup.Name)
+		o.Table.TableFiles = append(o.Table.TableFiles,
+			internal.TableFile{
+				Header: tableHeader,
+				Body:   tableBody,
+				Name:   fmt.Sprintf(globals.AZ_NSG_LINKS_MODULE_NAME)})
+
+		if tableBody != nil {
+			o.WriteFullOutput(o.Table.TableFiles, nil)
+		}
 	}
-	return tableHeader, tableBody, nil
+	return nil
 }
 
 
-func getNSG(subscriptionID string) (*[]network.SecurityGroup, error) {
-	nsgClient := internal.GetNSGClient(subscriptionID)
-	var networkSecurityGroups []network.SecurityGroup
-	for page, err := nsgClient.ListAll(context.TODO()); page.NotDone(); page.Next() {
-		if err != nil {
-			return nil, fmt.Errorf("could not get network security groups for subscription")
-		}
-		networkSecurityGroups = append(networkSecurityGroups, page.Values()...)
+func stringAndArrayToString(value *string, values *[]string) string {
+	var final string
+	if value != nil {
+		final = *value
+	} else {
+		final = ""
 	}
-	return &networkSecurityGroups, nil
+	if len(*values) > 0 {
+		if len(final) > 0 {
+			final = fmt.Sprintf("%s\n%s", final, strings.Join((*values)[:], "\n"))
+		} else {
+			final = strings.Join((*values)[:], "\n")
+		}
+	}
+	return final
+}
+
+
+func getSourceFromSecurityGroupRule(rule *network.SecurityRule) string {
+	var final string
+	final = stringAndArrayToString(rule.SecurityRulePropertiesFormat.SourceAddressPrefix, rule.SecurityRulePropertiesFormat.SourceAddressPrefixes)
+	if rule.SecurityRulePropertiesFormat.SourceApplicationSecurityGroups != nil {
+		for _, app := range *rule.SecurityRulePropertiesFormat.SourceApplicationSecurityGroups {
+			final = fmt.Sprintf("%s\n%s", final, *app.Name)
+		}
+	}
+	return final
+}
+
+func getDestinationFromSecurityGroupRule(rule *network.SecurityRule) string {
+	var final string
+	final = stringAndArrayToString(rule.SecurityRulePropertiesFormat.DestinationAddressPrefix, rule.SecurityRulePropertiesFormat.DestinationAddressPrefixes)
+	if rule.SecurityRulePropertiesFormat.DestinationApplicationSecurityGroups != nil {
+		for _, app := range *rule.SecurityRulePropertiesFormat.DestinationApplicationSecurityGroups {
+			final = fmt.Sprintf("%s\n%s", final, *app.Name)
+		}
+	}
+	return final
 }

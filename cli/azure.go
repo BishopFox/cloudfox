@@ -188,14 +188,20 @@ func runAzStorageCommand (cmd *cobra.Command, args []string) {
 }
 
 func runAzNSGRulesCommand(cmd *cobra.Command, args []string) {
-	err := azure.AzNSGRulesCommand(AzClient, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
+	m := azure.AzNSGModule{
+		AzClient: AzClient,
+	}
+	err := m.AzNSGCommand("rules")
 	if err != nil {
 		log.Fatal(err)
 	}
 }
 
 func runAzNSGLinksCommand(cmd *cobra.Command, args []string) {
-	err := azure.AzNSGLinksCommand(AzClient, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
+	m := azure.AzNSGModule{
+		AzClient: AzClient,
+	}
+	err := m.AzNSGCommand("links")
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -35,6 +35,7 @@ type AzureClient struct {
 
 	AzTenants          []*subscriptions.TenantIDDescription
 	AzSubscriptions    []*subscriptions.Subscription
+	AzSubscriptionsAlt map[string][]*subscriptions.Subscription
 	AzRGs              []*resources.Group
 	AzResources        []*azure.Resource
 }
@@ -42,6 +43,7 @@ type AzureClient struct {
 func (a *AzureClient) init (AzTenantRefs, AzSubscriptionRefs, AzRGRefs, AzResourceRefs []string, cmd *cobra.Command){
 	availableSubscriptions := GetSubscriptions()
 	availableTenants := GetTenants()
+
 	// resource identifiers were submitted on the CLI, running modules on them only
 	if len(AzResourceRefs) > 0 {
 		fmt.Printf("[%s] Azure resource identifiers submitted, skipping submitted tenants and subscriptions\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)))
@@ -104,13 +106,17 @@ func (a *AzureClient) init (AzTenantRefs, AzSubscriptionRefs, AzRGRefs, AzResour
 		fmt.Printf("[%s] Azure subscriptions submitted, skipping submitted tenants\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)))
 		// remove any other resource scope filter
 		a.AzTenants = nil
+		a.AzSubscriptionsAlt = make(map[string][]*subscriptions.Subscription, 0)
 		for _, AzSubscriptionRef := range AzSubscriptionRefs {
 			for _, subscription := range availableSubscriptions {
-				if *subscription.SubscriptionID == AzSubscriptionRef {
+				if (*subscription.SubscriptionID == AzSubscriptionRef) || (*subscription.DisplayName == AzSubscriptionRef) {
 					a.AzSubscriptions = append(a.AzSubscriptions, &subscription)
-					goto FOUND_SUB
-				} else if *subscription.DisplayName == AzSubscriptionRef {
-					a.AzSubscriptions = append(a.AzSubscriptions, &subscription)
+					for _, AzTenant := range availableTenants {
+						if *subscription.TenantID == *AzTenant.TenantID {
+							a.AzSubscriptionsAlt[*AzTenant.DefaultDomain] = append(a.AzSubscriptionsAlt[*AzTenant.DefaultDomain], &subscription)
+							break
+						}
+					}
 					goto FOUND_SUB
 				}
 			}
