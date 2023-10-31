@@ -17,7 +17,6 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/smithy-go/ptr"
 	"github.com/fatih/color"
-	"github.com/kyokomi/emoji"
 )
 
 // Color functions
@@ -25,9 +24,12 @@ var cyan = color.New(color.FgCyan).SprintFunc()
 
 type AzStorageModule struct {
 	AzClient            *internal.AzureClient
+	log                 *internal.Logger
 }
 
 func (m *AzStorageModule) AzStorageCommand() error {
+
+	m.log = internal.NewLogger("storage")
 
 	var publicBlobURLs []string
 
@@ -51,9 +53,7 @@ func (m *AzStorageModule) AzStorageCommand() error {
 
 				var err error
 
-				fmt.Printf("[%s][%s] Enumerating storage accounts for tenant %s\n",
-					color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", m.AzClient.Version)), color.CyanString(globals.AZ_RBAC_MODULE_NAME),
-					fmt.Sprintf("%s (%s)", ptr.ToString(AzTenant.DefaultDomain), ptr.ToString(AzTenant.TenantID)))
+				m.log.Infof([]string{}, "Enumerating storage accounts for tenant %s (%s)", ptr.ToString(AzTenant.DefaultDomain), ptr.ToString(AzTenant.TenantID))
 
 				o.PrefixIdentifier = ptr.ToString(AzTenant.DefaultDomain)
 				o.Table.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(AzTenant.DefaultDomain), "1-tenant-level")
@@ -115,12 +115,7 @@ func (m *AzStorageModule) runStorageCommandForSingleSubcription(AzSubscription s
 	o.PrefixIdentifier = AzSubscriptionInfo.Name
 	o.Table.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), AzSubscriptionInfo.Name)
 
-	fmt.Printf(
-		"[%s][%s] Enumerating storage accounts for subscription %s\n",
-		color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", m.AzClient.Version)),
-		color.CyanString(globals.AZ_STORAGE_MODULE_NAME),
-		fmt.Sprintf("%s (%s)", AzSubscriptionInfo.Name, AzSubscriptionInfo.ID))
-	//AzTenantID := ptr.ToString(GetTenantIDPerSubscription(AzSubscription))
+	m.log.Infof([]string{}, "Enumerating storage accounts for subscription %s (%s)", AzSubscriptionInfo.Name, AzSubscriptionInfo.ID)
 	header, body, publicBlobURLs, err = m.getStorageInfoPerSubscription(ptr.ToString(tenantInfo.ID), AzSubscriptionInfo.ID)
 	if err != nil {
 		return err

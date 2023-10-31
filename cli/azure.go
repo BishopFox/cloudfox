@@ -7,7 +7,6 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	az "github.com/Azure/go-autorest/autorest/azure"
 	"github.com/spf13/cobra"
-	"github.com/kyokomi/emoji"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/subscriptions"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/resources"
 )
@@ -215,7 +214,7 @@ func azurePreRun(cmd *cobra.Command, args []string) {
 	nResources := len(AzClient.AzResources)
 	nTotal := nTenants + nSubscriptions + nRGs + nResources
 	if nTotal == 0 {
-		log.Fatalf("[%s] No valid target supplied, stopping\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)))
+		AzClient.Log.Fatal(nil, "No valid target supplied, stopping")
 	}
 }
 

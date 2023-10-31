@@ -19,10 +19,8 @@ import (
 	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/Azure/go-autorest/autorest/azure/auth"
 	"github.com/BishopFox/cloudfox/globals"
-	"github.com/kyokomi/emoji"
 	"github.com/spf13/cobra"
 )
-// func NewAzureClient(AzVerbosity int, AzWrapTable, AzMergedTable bool, AzTenantRefs, AzSubscriptionRefs, AzRGRefs, AzResourceRefs []string, cmd *cobra.Command) *AzureClient {
 
 type AzureClient struct {
 	AzVerbosity        int
@@ -38,6 +36,8 @@ type AzureClient struct {
 	AzSubscriptionsAlt map[string][]*subscriptions.Subscription
 	AzRGs              []*resources.Group
 	AzResources        []*azure.Resource
+
+	Log                *Logger
 }
 
 func (a *AzureClient) init (AzTenantRefs, AzSubscriptionRefs, AzRGRefs, AzResourceRefs []string, cmd *cobra.Command){
@@ -46,7 +46,7 @@ func (a *AzureClient) init (AzTenantRefs, AzSubscriptionRefs, AzRGRefs, AzResour
 
 	// resource identifiers were submitted on the CLI, running modules on them only
 	if len(AzResourceRefs) > 0 {
-		fmt.Printf("[%s] Azure resource identifiers submitted, skipping submitted tenants and subscriptions\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)))
+		a.Log.Info(nil, "Azure resource identifiers submitted, skipping submitted tenants and subscriptions")
 		// remove any other resource scope filter
 		a.AzTenants = nil
 		a.AzSubscriptions = nil
@@ -62,7 +62,7 @@ func (a *AzureClient) init (AzTenantRefs, AzSubscriptionRefs, AzRGRefs, AzResour
 		for _, azResourceRef := range AzResourceRefs {
 			resource, err = azure.ParseResourceID(azResourceRef)
 			if err != nil {
-				fmt.Printf("[%s] Invalid resource identifier : %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), azResourceRef)
+				a.Log.Errorf(nil, "Invalid resource identifier : %s", azResourceRef)
 				continue
 			}
 			for _, subscription := range availableSubscriptions {
@@ -74,12 +74,12 @@ func (a *AzureClient) init (AzTenantRefs, AzSubscriptionRefs, AzRGRefs, AzResour
 					goto FOUND_RESOURCE
 				}
 			}
-			fmt.Printf("[%s] No active credentials valid for resource %s, removing from target list\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), azResourceRef)
+			a.Log.Errorf(nil, "No active credentials valid for resource %s, removing from target list", azResourceRef)
 			FOUND_RESOURCE:
 		}
 	} else if len(AzRGRefs) > 0 {
 	// resource groups were submitted on the CLI, running modules on them only
-		fmt.Printf("[%s] Azure subscriptions submitted, skipping submitted tenants\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)))
+		a.Log.Info(nil, "Azure subscriptions submitted, skipping submitted tenants")
 
 		a.AzTenants = nil
 		a.AzSubscriptions = nil
@@ -98,12 +98,12 @@ func (a *AzureClient) init (AzTenantRefs, AzSubscriptionRefs, AzRGRefs, AzResour
 					}
 				}
 			}
-			fmt.Printf("[%s] Resource Group %s not accessible with active CLI credentials, removing from targetst\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), AzRGRef)
+			a.Log.Warnf(nil, "Resource Group %s not accessible with active CLI credentials, removing from targets", AzRGRef)
 			FOUND_RG:
 		}
 	} else if len(AzSubscriptionRefs) > 0 {
 	// subscriptions were submitted on the CLI, running modules on them only
-		fmt.Printf("[%s] Azure subscriptions submitted, skipping submitted tenants\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)))
+		a.Log.Info(nil, "Azure subscriptions submitted, skipping submitted tenants")
 		// remove any other resource scope filter
 		a.AzTenants = nil
 		a.AzSubscriptionsAlt = make(map[string][]*subscriptions.Subscription, 0)
@@ -120,7 +120,7 @@ func (a *AzureClient) init (AzTenantRefs, AzSubscriptionRefs, AzRGRefs, AzResour
 					goto FOUND_SUB
 				}
 			}
-			fmt.Printf("[%s] Subscription %s not accessible with active CLI credentials, removing from targetst\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), AzSubscriptionRef)
+			a.Log.Warnf(nil, "Subscription %s not accessible with active CLI credentials, removing from targets", AzSubscriptionRef)
 			FOUND_SUB:
 		}
 	} else if len(AzTenantRefs) > 0 {
@@ -135,7 +135,7 @@ func (a *AzureClient) init (AzTenantRefs, AzSubscriptionRefs, AzRGRefs, AzResour
 					goto FOUND_TENANT
 				}
 			}
-			fmt.Printf("[%s] Tenant %s not accessible with active CLI credentials, removing from targetst\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), AzTenantRef)
+			a.Log.Warnf(nil, "Tenant %s not accessible with active CLI credentials, removing from targets", AzTenantRef)
 			FOUND_TENANT:
 		}
 	}
@@ -143,6 +143,8 @@ func (a *AzureClient) init (AzTenantRefs, AzSubscriptionRefs, AzRGRefs, AzResour
 
 func NewAzureClient(AzVerbosity int, AzWrapTable, AzMergedTable bool, AzTenantRefs, AzSubscriptionRefs, AzRGRefs, AzResourceRefs []string, cmd *cobra.Command, AzOutputFormat, AzOutputDirectory string) *AzureClient {
    client := new(AzureClient)
+   client.Log = NewLogger("azure")
+   client.Log.Announce(nil, "Searching existing credentials and validating submitted targets...")
    client.Version = cmd.Root().Version
    client.AzWrapTable = AzWrapTable
    client.AzMergedTable = AzMergedTable
