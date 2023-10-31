@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/BishopFox/cloudfox/internal"
@@ -22,11 +23,13 @@ type SecretsModule struct {
 	SecretsManagerClient *secretsmanager.Client
 	SSMClient            *ssm.Client
 
-	Caller     sts.GetCallerIdentityOutput
-	AWSRegions []string
-	AWSProfile string
-	Goroutines int
-	WrapTable  bool
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	AWSProfile    string
+	Goroutines    int
+	WrapTable     bool
+	AWSOutputType string
+	AWSTableCols  string
 
 	// Main module data
 	Secrets []Secret
@@ -45,7 +48,7 @@ type Secret struct {
 	Description string
 }
 
-func (m *SecretsModule) PrintSecrets(outputFormat string, outputDirectory string, verbosity int) {
+func (m *SecretsModule) PrintSecrets(outputDirectory string, verbosity int) {
 	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
@@ -100,6 +103,34 @@ func (m *SecretsModule) PrintSecrets(outputFormat string, outputDirectory string
 		"Description",
 	}
 
+	// If the user specified table columns, use those.
+	// If the user specified -o wide, use the wide default cols for this module.
+	// Otherwise, use the hardcoded default cols for this module.
+	var tableCols []string
+	// If the user specified table columns, use those.
+	if m.AWSTableCols != "" {
+		// If the user specified wide as the output format, use these columns.
+		// remove any spaces between any commas and the first letter after the commas
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
+		tableCols = strings.Split(m.AWSTableCols, ",")
+	} else if m.AWSOutputType == "wide" {
+		tableCols = []string{
+			"Service",
+			"Region",
+			"Name",
+			"Description",
+		}
+		// Otherwise, use the default columns.
+	} else {
+		tableCols = []string{
+			"Service",
+			"Region",
+			"Name",
+			"Description",
+		}
+	}
+
 	// Table rows
 	for i := range m.Secrets {
 		m.output.Body = append(
@@ -116,11 +147,7 @@ func (m *SecretsModule) PrintSecrets(outputFormat string, outputDirectory string
 	if len(m.output.Body) > 0 {
 
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		//m.output.OutputSelector(outputFormat)
-		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 
-		//m.writeLoot(m.output.FilePath, verbosity)
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,
@@ -129,9 +156,10 @@ func (m *SecretsModule) PrintSecrets(outputFormat string, outputDirectory string
 			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			Body:      m.output.Body,
+			TableCols: tableCols,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))

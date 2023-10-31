@@ -13,7 +13,6 @@ import (
 	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iamTypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
@@ -24,11 +23,13 @@ import (
 
 type InstancesModule struct {
 	// General configuration data
-	EC2Client                 *ec2.Client
-	IAMClient                 sdk.AWSIAMClientInterface
-	Caller                    sts.GetCallerIdentityOutput
-	AWSRegions                []string
-	OutputFormat              string
+	EC2Client     sdk.AWSEC2ClientInterface
+	IAMClient     sdk.AWSIAMClientInterface
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	AWSOutputType string
+	AWSTableCols  string
+
 	Goroutines                int
 	UserDataAttributesOnly    bool
 	AWSProfile                string
@@ -63,7 +64,7 @@ type MappedInstance struct {
 	CanPrivEsc       string
 }
 
-func (m *InstancesModule) Instances(filter string, outputFormat string, outputDirectory string, verbosity int) {
+func (m *InstancesModule) Instances(filter string, outputDirectory string, verbosity int) {
 	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
@@ -147,9 +148,9 @@ func (m *InstancesModule) Instances(filter string, outputFormat string, outputDi
 	// This conditional block will either dump the userData attribute content or the general instances data, depending on what you select via command line.
 	//fmt.Printf("\n[*] Preparing output...\n\n")
 	if m.UserDataAttributesOnly {
-		m.printInstancesUserDataAttributesOnly(outputFormat, outputDirectory, dataReceiver)
+		m.printInstancesUserDataAttributesOnly(outputDirectory, dataReceiver)
 	} else {
-		m.printGeneralInstanceData(outputFormat, outputDirectory, dataReceiver, verbosity)
+		m.printGeneralInstanceData(outputDirectory, dataReceiver, verbosity)
 	}
 
 }
@@ -167,7 +168,7 @@ func (m *InstancesModule) Receiver(receiver chan MappedInstance, receiverDone ch
 	}
 }
 
-func (m *InstancesModule) printInstancesUserDataAttributesOnly(outputFormat string, outputDirectory string, dataReceiver chan MappedInstance) {
+func (m *InstancesModule) printInstancesUserDataAttributesOnly(outputDirectory string, dataReceiver chan MappedInstance) {
 	defer func() {
 		m.output.CallingModule = "instances"
 	}()
@@ -217,12 +218,37 @@ func (m *InstancesModule) printInstancesUserDataAttributesOnly(outputFormat stri
 	}
 }
 
-func (m *InstancesModule) printGeneralInstanceData(outputFormat string, outputDirectory string, dataReceiver chan MappedInstance, verbosity int) {
+func (m *InstancesModule) printGeneralInstanceData(outputDirectory string, dataReceiver chan MappedInstance, verbosity int) {
 	// Prepare Table headers
 	//m.output.Headers = table.Row{
-	if m.pmapperError == nil {
+	m.output.Headers = []string{
+		//"ID",
+		"Name",
+		//"Arn",
+		"ID",
+		"Zone",
+		"State",
+		"External IP",
+		"Internal IP",
+		"Role",
+		"IsAdminRole?",
+		"CanPrivEscToAdmin?",
+	}
 
-		m.output.Headers = []string{
+	// If the user specified table columns, use those.
+	// If the user specified -o wide, use the wide default cols for this module.
+	// Otherwise, use the hardcoded default cols for this module.
+	var tableCols []string
+	// If the user specified table columns, use those.
+	if m.AWSTableCols != "" {
+		// If the user specified wide as the output format, use these columns.
+		// remove any spaces between any commas and the first letter after the commas
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
+		tableCols = strings.Split(m.AWSTableCols, ",")
+		// If the user specified wide as the output format, use these columns.
+	} else if m.AWSOutputType == "wide" {
+		tableCols = []string{
 			//"ID",
 			"Name",
 			//"Arn",
@@ -235,8 +261,9 @@ func (m *InstancesModule) printGeneralInstanceData(outputFormat string, outputDi
 			"IsAdminRole?",
 			"CanPrivEscToAdmin?",
 		}
+		// Otherwise, use the default columns.
 	} else {
-		m.output.Headers = []string{
+		tableCols = []string{
 			//"ID",
 			"Name",
 			//"Arn",
@@ -247,59 +274,39 @@ func (m *InstancesModule) printGeneralInstanceData(outputFormat string, outputDi
 			"Internal IP",
 			"Role",
 			"IsAdminRole?",
-			//"CanPrivEscToAdmin?",
+			"CanPrivEscToAdmin?",
 		}
 	}
 
-	//Table rows
-	if m.pmapperError == nil {
+	// Remove the pmapper row if there is no pmapper data
+	if m.pmapperError != nil {
+		sharedLogger.Errorf("%s - %s - No pmapper data found for this account. Skipping the pmapper column in the output table.", m.output.CallingModule, m.AWSProfile)
+		tableCols = removeStringFromSlice(tableCols, "CanPrivEscToAdmin?")
+	}
 
-		for _, instance := range m.MappedInstances {
-			m.output.Body = append(
-				m.output.Body,
-				//table.Row{
-				[]string{
-					//instance.ID,
-					instance.Name,
-					//instance.Arn,
-					instance.ID,
-					instance.AvailabilityZone,
-					instance.State,
-					instance.ExternalIP,
-					instance.PrivateIP,
-					instance.Role,
-					instance.Admin,
-					instance.CanPrivEsc,
-				},
-			)
-		}
-	} else {
-		for _, instance := range m.MappedInstances {
-			m.output.Body = append(
-				m.output.Body,
-				//table.Row{
-				[]string{
-					//instance.ID,
-					instance.Name,
-					//instance.Arn,
-					instance.ID,
-					instance.AvailabilityZone,
-					instance.State,
-					instance.ExternalIP,
-					instance.PrivateIP,
-					instance.Role,
-					instance.Admin,
-					//instance.CanPrivEsc,
-				},
-			)
-		}
+	//Table rows
+	for _, instance := range m.MappedInstances {
+		m.output.Body = append(
+			m.output.Body,
+			//table.Row{
+			[]string{
+				//instance.ID,
+				instance.Name,
+				//instance.Arn,
+				instance.ID,
+				instance.AvailabilityZone,
+				instance.State,
+				instance.ExternalIP,
+				instance.PrivateIP,
+				instance.Role,
+				instance.Admin,
+				instance.CanPrivEsc,
+			},
+		)
 	}
 
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		////m.output.OutputSelector(outputFormat)
-		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 
 		//m.writeLoot(m.output.FilePath)
 		o := internal.OutputClient{
@@ -310,9 +317,10 @@ func (m *InstancesModule) printGeneralInstanceData(outputFormat string, outputDi
 			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			Body:      m.output.Body,
+			TableCols: tableCols,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
@@ -440,27 +448,17 @@ func (m *InstancesModule) executeChecks(instancesToSearch []string, r string, wg
 }
 
 func (m *InstancesModule) getInstanceUserDataAttribute(instanceID *string, region string) (userData *string, err error) {
-
-	Attributes, err := m.EC2Client.DescribeInstanceAttribute(
-		context.TODO(),
-		&ec2.DescribeInstanceAttributeInput{
-			InstanceId: instanceID,
-			Attribute:  types.InstanceAttributeName("userData"),
-		},
-		func(o *ec2.Options) {
-			o.Region = region
-		},
-	)
+	UserData, err := sdk.CachedEC2DescribeInstanceAttributeUserData(m.EC2Client, aws.ToString(m.Caller.Account), region, aws.ToString(instanceID))
 
 	if err != nil {
 		m.modLog.Error(err.Error())
 		m.CommandCounter.Error++
 		return nil, err
 	} else {
-		if Attributes.UserData.Value == nil {
+		if UserData == "" {
 			return aws.String("NoUserData"), nil
 		} else {
-			data, _ := base64.StdEncoding.DecodeString(*Attributes.UserData.Value)
+			data, _ := base64.StdEncoding.DecodeString(UserData)
 			return aws.String(string(data)), nil
 		}
 	}
@@ -470,47 +468,22 @@ func (m *InstancesModule) getInstanceUserDataAttribute(instanceID *string, regio
 func (m *InstancesModule) getDescribeInstances(instancesToSearch []string, region string, dataReceiver chan MappedInstance) {
 
 	// The "PaginationControl" value is nil when there's no more data to return.
-	var PaginationControl *string
-	for {
 
-		DescribeInstances, err := m.EC2Client.DescribeInstances(
-			context.TODO(),
-			&(ec2.DescribeInstancesInput{
-				NextToken: PaginationControl,
-			}),
-			func(o *ec2.Options) {
-				o.Region = region
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
+	Instances, err := sdk.CachedEC2DescribeInstances(m.EC2Client, aws.ToString(m.Caller.Account), region)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	for _, instance := range Instances {
+		if instancesToSearch[0] == "all" || internal.Contains(aws.ToString(instance.InstanceId), instancesToSearch) {
+			m.loadInstanceData(instance, region, dataReceiver)
 		}
-
-		for _, reservation := range DescribeInstances.Reservations {
-			accountId := reservation.OwnerId
-
-			for _, instance := range reservation.Instances {
-
-				if instancesToSearch[0] == "all" || internal.Contains(aws.ToString(instance.InstanceId), instancesToSearch) {
-					m.loadInstanceData(instance, region, accountId, dataReceiver)
-				}
-			}
-		}
-
-		// The "NextToken" value is nil when there's no more data to return.
-		if DescribeInstances.NextToken != nil {
-			PaginationControl = DescribeInstances.NextToken
-		} else {
-			PaginationControl = nil
-			break
-		}
-
 	}
 }
 
-func (m *InstancesModule) loadInstanceData(instance types.Instance, region string, accountId *string, dataReceiver chan MappedInstance) {
+func (m *InstancesModule) loadInstanceData(instance types.Instance, region string, dataReceiver chan MappedInstance) {
 
 	var profile string
 	var externalIP string
@@ -552,7 +525,7 @@ func (m *InstancesModule) loadInstanceData(instance types.Instance, region strin
 	dataReceiver <- MappedInstance{
 		ID:               aws.ToString(instance.InstanceId),
 		Name:             aws.ToString(&name),
-		Arn:              fmt.Sprintf("arn:aws:ec2:%s:%s:instance/%s", region, aws.ToString(accountId), aws.ToString(instance.InstanceId)),
+		Arn:              fmt.Sprintf("arn:aws:ec2:%s:%s:instance/%s", region, aws.ToString(m.Caller.Account), aws.ToString(instance.InstanceId)),
 		AvailabilityZone: aws.ToString(instance.Placement.AvailabilityZone),
 		State:            string(instance.State.Name),
 		ExternalIP:       externalIP,

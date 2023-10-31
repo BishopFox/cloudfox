@@ -81,9 +81,11 @@ func TestListBuckets(t *testing.T) {
 			Arn:     aws.String("arn:aws:iam::123456789012:user/cloudfox_unit_tests"),
 			Account: aws.String("123456789012"),
 		},
-		AWSRegions: []string{"us-east-1", "us-west-1", "us-west-2"},
-		AWSProfile: "unittesting",
-		Goroutines: 3,
+		AWSRegions:          []string{"us-east-1", "us-west-1", "us-west-2"},
+		AWSProfile:          "unittesting",
+		AWSOutputType:       "",
+		CheckBucketPolicies: true,
+		Goroutines:          3,
 	}
 
 	subtests := []struct {
@@ -91,14 +93,14 @@ func TestListBuckets(t *testing.T) {
 		outputDirectory string
 		verbosity       int
 		testModule      BucketsModule
-		expectedResult  []Bucket
+		expectedResult  []BucketRow
 	}{
 		{
 			name:            "test1",
 			outputDirectory: ".",
 			verbosity:       2,
 			testModule:      m,
-			expectedResult: []Bucket{{
+			expectedResult: []BucketRow{{
 				Name: "mockBucket123",
 			}},
 		},
@@ -110,7 +112,7 @@ func TestListBuckets(t *testing.T) {
 
 	for _, subtest := range subtests {
 		t.Run(subtest.name, func(t *testing.T) {
-			subtest.testModule.PrintBuckets(subtest.testModule.OutputFormat, subtest.outputDirectory, subtest.verbosity)
+			subtest.testModule.PrintBuckets(subtest.outputDirectory, subtest.verbosity)
 			for index, expectedBucket := range subtest.expectedResult {
 				resultsFilePath := filepath.Join(tmpDir, "cloudfox-output/aws/unittesting-123456789012/table/buckets.txt")
 				resultsFile, err := afero.ReadFile(fs, resultsFilePath)

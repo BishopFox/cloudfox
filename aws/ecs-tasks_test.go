@@ -43,7 +43,7 @@ func TestECSTasks(t *testing.T) {
 	internal.MockFileSystem(true)
 	for _, subtest := range subtests {
 		t.Run(subtest.name, func(t *testing.T) {
-			subtest.testModule.ECSTasks(subtest.testModule.OutputFormat, subtest.outputDirectory, subtest.verbosity)
+			subtest.testModule.ECSTasks(subtest.outputDirectory, subtest.verbosity)
 			for index, expectedTask := range subtest.expectedResult {
 				if expectedTask.Cluster != subtest.testModule.MappedECSTasks[index].Cluster {
 					log.Fatal("Cluster name does not match expected value")

@@ -65,13 +65,15 @@ type NetworkPortsModule struct {
 	LightsailClient   *lightsail.Client
 	RDSClient         *rds.Client
 
-	Caller       sts.GetCallerIdentityOutput
-	AWSRegions   []string
-	OutputFormat string
-	Goroutines   int
-	AWSProfile   string
-	WrapTable    bool
-	Verbosity    int
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	AWSOutputType string
+	AWSTableCols  string
+
+	Goroutines int
+	AWSProfile string
+	WrapTable  bool
+	Verbosity  int
 
 	// Main module data
 	IPv4_Private   []NetworkService
@@ -136,7 +138,7 @@ var naclToSG = map[string]string{
 
 var validSecurityGroupProtocols = []string{"-1", "tcp", "udp"}
 
-func (m *NetworkPortsModule) PrintNetworkPorts(outputFormat string, outputDirectory string) {
+func (m *NetworkPortsModule) PrintNetworkPorts(outputDirectory string) {
 	// These struct values are used by the output module
 	m.output.Verbosity = m.Verbosity
 	m.output.Directory = outputDirectory
@@ -191,6 +193,35 @@ func (m *NetworkPortsModule) PrintNetworkPorts(outputFormat string, outputDirect
 		"Ports",
 	}
 
+	// If the user specified table columns, use those.
+	// If the user specified -o wide, use the wide default cols for this module.
+	// Otherwise, use the hardcoded default cols for this module.
+	var tableCols []string
+	// If the user specified table columns, use those.
+	if m.AWSTableCols != "" {
+		// If the user specified wide as the output format, use these columns.
+		// remove any spaces between any commas and the first letter after the commas
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
+		tableCols = strings.Split(m.AWSTableCols, ",")
+	} else if m.AWSOutputType == "wide" {
+		tableCols = []string{
+			"Service",
+			"Region",
+			"Protocol",
+			"Host",
+			"Ports",
+		}
+	} else {
+		tableCols = []string{
+			"Service",
+			"Region",
+			"Protocol",
+			"Host",
+			"Ports",
+		}
+	}
+
 	// Table rows
 	for _, arr := range [][]NetworkService{m.IPv4_Private, m.IPv4_Public, m.IPv6} {
 		for _, i := range arr {
@@ -211,9 +242,6 @@ func (m *NetworkPortsModule) PrintNetworkPorts(outputFormat string, outputDirect
 
 	if len(m.IPv4_Private) > 0 || len(m.IPv4_Public) > 0 || len(m.IPv6) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		//m.output.OutputSelector(outputFormat)
-		//internal.OutputSelector(m.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		//m.writeLoot(m.output.FilePath)
 		o := internal.OutputClient{
 			Verbosity:     m.Verbosity,
 			CallingModule: m.output.CallingModule,
@@ -222,9 +250,10 @@ func (m *NetworkPortsModule) PrintNetworkPorts(outputFormat string, outputDirect
 			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			Body:      m.output.Body,
+			TableCols: tableCols,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
@@ -742,7 +771,7 @@ func (m *NetworkPortsModule) getElastiCacheNetworkPortsPerRegion(r string, dataR
 		// Memcached
 		if cluster.ConfigurationEndpoint != nil {
 			ipv4_private = addHost(ipv4_private, aws.ToString(cluster.ConfigurationEndpoint.Address))
-			tcpPortsInts = addPort(tcpPortsInts, cluster.ConfigurationEndpoint.Port)
+			tcpPortsInts = addPort(tcpPortsInts, aws.ToInt32(cluster.ConfigurationEndpoint.Port))
 		} else {
 			replicationGroupId := aws.ToString(cluster.ReplicationGroupId)
 			for _, group := range nodes {
@@ -751,7 +780,7 @@ func (m *NetworkPortsModule) getElastiCacheNetworkPortsPerRegion(r string, dataR
 						// Primary
 						if g.PrimaryEndpoint != nil && !strContains(reportedClusters, aws.ToString(g.PrimaryEndpoint.Address)) {
 							ipv4_private = addHost(ipv4_private, aws.ToString(g.PrimaryEndpoint.Address))
-							tcpPortsInts = addPort(tcpPortsInts, g.PrimaryEndpoint.Port)
+							tcpPortsInts = addPort(tcpPortsInts, aws.ToInt32(g.PrimaryEndpoint.Port))
 
 							reportedClusters = addHost(reportedClusters, aws.ToString(g.PrimaryEndpoint.Address))
 						}
@@ -759,7 +788,7 @@ func (m *NetworkPortsModule) getElastiCacheNetworkPortsPerRegion(r string, dataR
 						// Reader
 						if g.ReaderEndpoint != nil && !strContains(reportedClusters, aws.ToString(g.ReaderEndpoint.Address)) {
 							ipv4_private = addHost(ipv4_private, aws.ToString(g.ReaderEndpoint.Address))
-							tcpPortsInts = addPort(tcpPortsInts, g.ReaderEndpoint.Port)
+							tcpPortsInts = addPort(tcpPortsInts, aws.ToInt32(g.ReaderEndpoint.Port))
 
 							reportedClusters = addHost(reportedClusters, aws.ToString(g.ReaderEndpoint.Address))
 						}
@@ -769,7 +798,7 @@ func (m *NetworkPortsModule) getElastiCacheNetworkPortsPerRegion(r string, dataR
 							if aws.ToString(m.CacheClusterId) == aws.ToString(cluster.CacheClusterId) {
 								if m.ReadEndpoint != nil {
 									ipv4_private = addHost(ipv4_private, aws.ToString(m.ReadEndpoint.Address))
-									tcpPortsInts = addPort(tcpPortsInts, m.ReadEndpoint.Port)
+									tcpPortsInts = addPort(tcpPortsInts, aws.ToInt32(m.ReadEndpoint.Port))
 								}
 							}
 						}
@@ -1047,7 +1076,7 @@ func (m *NetworkPortsModule) getRdsNetworkPortsPerRegion(r string, dataReceiver 
 	for _, instance := range DBInstances {
 		if aws.ToString(instance.DBInstanceStatus) == "available" {
 			host := []string{aws.ToString(instance.Endpoint.Address)}
-			var port int32 = instance.Endpoint.Port
+			var port int32 = aws.ToInt32(instance.Endpoint.Port)
 
 			var groups []SecurityGroup
 			for _, group := range instance.VpcSecurityGroups {

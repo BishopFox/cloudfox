@@ -23,6 +23,7 @@ type AWSECSClientInterface interface {
 func init() {
 	gob.Register([]string{})
 	gob.Register(ecsTypes.Task{})
+	gob.Register([]ecsTypes.Task{})
 	gob.Register(ecsTypes.TaskDefinition{})
 
 }
@@ -113,7 +114,10 @@ func CachedECSListTasks(ECSClient AWSECSClientInterface, accountID string, regio
 
 func CachedECSDescribeTasks(ECSClient AWSECSClientInterface, accountID string, region string, cluster string, tasks []string) ([]ecsTypes.Task, error) {
 	var taskDetails []ecsTypes.Task
-	cacheKey := fmt.Sprintf("%s-ecs-DescribeTasks-%s-%s", accountID, region, cluster)
+	//replace semi-colons with underscores in task definition name
+	clusterFileSystemSafe := strings.ReplaceAll(cluster, ":", "_")
+	clusterFileSystemSafe = strings.ReplaceAll(cluster, "/", "_")
+	cacheKey := fmt.Sprintf("%s-ecs-DescribeTasks-%s-%s", accountID, region, clusterFileSystemSafe)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
 		sharedLogger.Debug("Using cached ECS task details data")
@@ -143,7 +147,10 @@ func CachedECSDescribeTasks(ECSClient AWSECSClientInterface, accountID string, r
 
 func CachedECSDescribeTaskDefinition(ECSClient AWSECSClientInterface, accountID string, region string, taskDefinition string) (ecsTypes.TaskDefinition, error) {
 	var taskDefinitionDetails ecsTypes.TaskDefinition
-	cacheKey := fmt.Sprintf("%s-ecs-DescribeTaskDefinition-%s-%s", accountID, region, taskDefinition)
+	//replace semi-colons with underscores in task definition name
+	taskDefinitionFileSystemSafe := strings.ReplaceAll(taskDefinition, ":", "_")
+	taskDefinitionFileSystemSafe = strings.ReplaceAll(taskDefinition, "/", "_")
+	cacheKey := fmt.Sprintf("%s-ecs-DescribeTaskDefinition-%s-%s", accountID, region, taskDefinitionFileSystemSafe)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
 		sharedLogger.Debug("Using cached ECS task definition details data")

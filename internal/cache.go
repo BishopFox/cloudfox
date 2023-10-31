@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,7 +36,7 @@ func SaveCacheToFiles(directory string, accountID string) error {
 			}
 
 			filename := filepath.Join(directory, key+".json")
-			err = ioutil.WriteFile(filename, jsonData, 0644)
+			err = os.WriteFile(filename, jsonData, 0644)
 			if err != nil {
 				return err
 			}
@@ -55,7 +54,7 @@ func LoadCacheFromFiles(directory string) error {
 		return err
 	}
 
-	files, err := ioutil.ReadDir(directory)
+	files, err := os.ReadDir(directory)
 	if err != nil {
 		return err
 	}
@@ -66,7 +65,7 @@ func LoadCacheFromFiles(directory string) error {
 		}
 
 		filename := filepath.Join(directory, file.Name())
-		jsonData, err := ioutil.ReadFile(filename)
+		jsonData, err := os.ReadFile(filename)
 		if err != nil {
 			return err
 		}
@@ -133,13 +132,18 @@ func LoadCacheFromGobFiles(directory string) error {
 		return err
 	}
 
-	files, err := ioutil.ReadDir(directory)
+	files, err := os.ReadDir(directory)
+
 	if err != nil {
 		return err
 	}
 
 	for _, file := range files {
 		if file.IsDir() {
+			continue
+		}
+		// if the filetype is json, skip it
+		if filepath.Ext(file.Name()) == ".json" {
 			continue
 		}
 

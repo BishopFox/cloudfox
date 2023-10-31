@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
@@ -18,9 +19,10 @@ type AccessKeysModule struct {
 	IAMClient      sdk.AWSIAMClientInterface
 	Caller         sts.GetCallerIdentityOutput
 	AWSProfile     string
-	OutputFormat   string
 	Goroutines     int
 	WrapTable      bool
+	AWSOutputType  string
+	AWSTableCols   string
 	CommandCounter internal.CommandCounter
 
 	// Main module data
@@ -36,7 +38,7 @@ type UserKeys struct {
 	Key      string
 }
 
-func (m *AccessKeysModule) PrintAccessKeys(filter string, outputFormat string, outputDirectory string, verbosity int) {
+func (m *AccessKeysModule) PrintAccessKeys(filter string, outputDirectory string, verbosity int) {
 	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
@@ -79,9 +81,6 @@ func (m *AccessKeysModule) PrintAccessKeys(filter string, outputFormat string, o
 		//fmt.Printf("[%s][%s] Preparing output.\n\n")
 
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		//m.output.OutputSelector(outputFormat)
-		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,
@@ -89,10 +88,36 @@ func (m *AccessKeysModule) PrintAccessKeys(filter string, outputFormat string, o
 				Wrap: m.WrapTable,
 			},
 		}
+
+		// If the user specified table columns, use those.
+		// If the user specified -o wide, use the wide default cols for this module.
+		// Otherwise, use the hardcoded default cols for this module.
+		var tableCols []string
+		// If the user specified table columns, use those.
+		if m.AWSTableCols != "" {
+			// remove any spaces between any commas and the first letter after the commas
+			m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
+			m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
+			tableCols = strings.Split(m.AWSTableCols, ",")
+			// If the user specified wide as the output format, use these columns.
+		} else if m.AWSOutputType == "wide" {
+			tableCols = []string{
+				"User Name",
+				"Access Key ID",
+			}
+			// Otherwise, use the default columns.
+		} else {
+			tableCols = []string{
+				"User Name",
+				"Access Key ID",
+			}
+		}
+
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			Body:      m.output.Body,
+			TableCols: tableCols,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))

@@ -26,9 +26,11 @@ type TagsModule struct {
 	// General configuration data
 	ResourceGroupsTaggingApiInterface TagsGetResourcesAPI
 
-	Caller                sts.GetCallerIdentityOutput
-	AWSRegions            []string
-	OutputFormat          string
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	AWSOutputType string
+	AWSTableCols  string
+
 	Goroutines            int
 	AWSProfile            string
 	WrapTable             bool
@@ -54,7 +56,7 @@ type Tag struct {
 	Value      string
 }
 
-func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verbosity int) {
+func (m *TagsModule) PrintTags(outputDirectory string, verbosity int) {
 	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
@@ -111,6 +113,40 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 		"Value",
 	}
 
+	// If the user specified table columns, use those.
+	// If the user specified -o wide, use the wide default cols for this module.
+	// Otherwise, use the hardcoded default cols for this module.
+	var tableCols []string
+	// If the user specified table columns, use those.
+	if m.AWSTableCols != "" {
+		// If the user specified wide as the output format, use these columns.
+		// remove any spaces between any commas and the first letter after the commas
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
+		tableCols = strings.Split(m.AWSTableCols, ",")
+	} else if m.AWSOutputType == "wide" {
+		tableCols = []string{
+			"Service",
+			"Region",
+			"Type",
+			//"Name",
+			//"Resource Arn",
+			"Key",
+			"Value",
+		}
+		// Otherwise, use the default columns.
+	} else {
+		tableCols = []string{
+			"Service",
+			"Region",
+			"Type",
+			//"Name",
+			//"Resource Arn",
+			"Key",
+			"Value",
+		}
+	}
+
 	sort.Slice(m.Tags, func(i, j int) bool {
 		return m.Tags[i].AWSService < m.Tags[j].AWSService
 	})
@@ -134,9 +170,7 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 	}
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		//m.writeLoot(m.output.FilePath, verbosity)
+
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,
@@ -145,9 +179,10 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			Body:      m.output.Body,
+			TableCols: tableCols,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))

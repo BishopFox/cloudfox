@@ -29,9 +29,11 @@ type SNSModule struct {
 	AWSProfile    string
 	Caller        sts.GetCallerIdentityOutput
 	StorePolicies bool
-	OutputFormat  string
-	Goroutines    int
-	WrapTable     bool
+	AWSOutputType string
+	AWSTableCols  string
+
+	Goroutines int
+	WrapTable  bool
 
 	// Main module data
 	Topics         []SNSTopic
@@ -61,7 +63,7 @@ type SNSTopic struct {
 	ResourcePolicySummary string
 }
 
-func (m *SNSModule) PrintSNS(outputFormat string, outputDirectory string, verbosity int) {
+func (m *SNSModule) PrintSNS(outputDirectory string, verbosity int) {
 	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
@@ -114,6 +116,33 @@ func (m *SNSModule) PrintSNS(outputFormat string, outputDirectory string, verbos
 		"Resource Policy Summary",
 	}
 
+	// If the user specified table columns, use those.
+	// If the user specified -o wide, use the wide default cols for this module.
+	// Otherwise, use the hardcoded default cols for this module.
+	var tableCols []string
+	// If the user specified table columns, use those.
+	if m.AWSTableCols != "" {
+		// If the user specified wide as the output format, use these columns.
+		// remove any spaces between any commas and the first letter after the commas
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
+		tableCols = strings.Split(m.AWSTableCols, ",")
+	} else if m.AWSOutputType == "wide" {
+		tableCols = []string{
+			"ARN",
+			"Public?",
+			"Resource Policy Summary",
+		}
+
+		// Otherwise, use the default columns.
+	} else {
+		tableCols = []string{
+			"ARN",
+			"Public?",
+			"Resource Policy Summary",
+		}
+	}
+
 	sort.SliceStable(m.Topics, func(i, j int) bool {
 		return m.Topics[i].ARN < m.Topics[j].ARN
 	})
@@ -131,9 +160,7 @@ func (m *SNSModule) PrintSNS(outputFormat string, outputDirectory string, verbos
 
 	}
 	if len(m.output.Body) > 0 {
-		//m.output.OutputSelector(outputFormat)
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		//m.writeLoot(m.output.FilePath, verbosity, m.AWSProfile)
+
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,
@@ -142,9 +169,10 @@ func (m *SNSModule) PrintSNS(outputFormat string, outputDirectory string, verbos
 			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			Body:      m.output.Body,
+			TableCols: tableCols,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))

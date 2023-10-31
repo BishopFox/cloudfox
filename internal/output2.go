@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"strings"
 
 	"github.com/aquasecurity/table"
 	"github.com/fatih/color"
@@ -41,6 +42,7 @@ type TableFile struct {
 	TableFilePointer afero.File
 	CSVFilePointer   afero.File
 	JSONFilePointer  afero.File
+	TableCols        []string
 	Header           []string
 	Body             [][]string
 }
@@ -179,20 +181,10 @@ func (l *LootClient) writeLootFiles() []string {
 
 func (b *TableClient) printTablesToScreen(tableFiles []TableFile) {
 	for _, tf := range tableFiles {
+		tf.Body, tf.Header = adjustBodyForTable(tf.TableCols, tf.Header, tf.Body)
 		standardColumnWidth := 1000
 		t := table.New(os.Stdout)
 
-		// if b.Wrap {
-		// 	terminalWidth, _, err := terminal.GetSize(int(os.Stdout.Fd()))
-		// 	if err != nil {
-		// 		fmt.Printf("error getting terminal size: %s, please set the --wrap flag to false\n", err)
-		// 		return
-		// 	}
-		// 	columnCount := len(tf.Header)
-		// 	// The offset value was defined by trial and error to get the best wrapping
-		// 	trialAndErrorOffset := 1
-		// 	standardColumnWidth = terminalWidth / (columnCount + trialAndErrorOffset)
-		// }
 		if !b.Wrap {
 			t.SetColumnMaxWidth(standardColumnWidth)
 		}
@@ -245,6 +237,7 @@ func (b *TableClient) writeTableFiles(files []TableFile) []string {
 	var fullFilePaths []string
 
 	for _, file := range b.TableFiles {
+		file.Body, file.Header = adjustBodyForTable(file.TableCols, file.Header, file.Body)
 		standardColumnWidth := 1000
 		t := table.New(file.TableFilePointer)
 
@@ -305,6 +298,8 @@ func (b *TableClient) writeCSVFiles() []string {
 		csvWriter.Write(file.Header)
 		for _, row := range file.Body {
 			row = removeColorCodesFromSlice(row)
+			//row = removeNewLinesFromSlice(row)
+
 			csvWriter.Write(row)
 		}
 		csvWriter.Flush()
@@ -314,6 +309,39 @@ func (b *TableClient) writeCSVFiles() []string {
 	}
 
 	return fullFilePaths
+}
+
+// replace newlines in row to make them csv and json safe
+func removeNewLinesFromNestedSlice(input [][]string) [][]string {
+	// Regular expression to match new lines
+	newLineRegExp := regexp.MustCompile(`\n`)
+
+	// Create a new slice to store the slices with new lines removed
+	noNewLineNestedSlice := make([][]string, len(input))
+
+	for i, strSlice := range input {
+		noNewLineNestedSlice[i] = make([]string, len(strSlice))
+		for j, str := range strSlice {
+			noNewLineNestedSlice[i][j] = newLineRegExp.ReplaceAllString(str, "")
+		}
+	}
+
+	return noNewLineNestedSlice
+}
+
+// replace newlines in slice of strings to make them render as newlines in csv and json when opened in excel
+func removeNewLinesFromSlice(input []string) []string {
+	// Regular expression to match new lines
+	newLineRegExp := regexp.MustCompile(`\n`)
+
+	// Create a new slice to store the strings with new lines removed
+	noNewLineSlice := make([]string, len(input))
+
+	for i, str := range input {
+		noNewLineSlice[i] = newLineRegExp.ReplaceAllString(str, " \\n")
+	}
+
+	return noNewLineSlice
 }
 
 func (b *TableClient) createJSONFiles() {
@@ -396,4 +424,34 @@ func (b *TableClient) writeJSONFiles() []string {
 	}
 
 	return fullFilePaths
+}
+
+func adjustBodyForTable(tableHeaders []string, fullHeaders []string, fullBody [][]string) ([][]string, []string) {
+	if tableHeaders == nil || len(tableHeaders) == 0 {
+		return fullBody, fullHeaders
+	}
+
+	columnIndices := make([]int, 0)
+	selectedHeaders := make([]string, 0)
+
+	for _, tableHeader := range tableHeaders {
+		for j, fullHeader := range fullHeaders {
+			if strings.ToLower(tableHeader) == strings.ToLower(fullHeader) {
+				columnIndices = append(columnIndices, j)
+				selectedHeaders = append(selectedHeaders, fullHeader)
+				break
+			}
+		}
+	}
+
+	adjustedBody := make([][]string, len(fullBody))
+	for i, row := range fullBody {
+		newRow := make([]string, len(columnIndices))
+		for k, index := range columnIndices {
+			newRow[k] = row[index]
+		}
+		adjustedBody[i] = newRow
+	}
+
+	return adjustedBody, selectedHeaders
 }

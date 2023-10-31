@@ -20,10 +20,13 @@ import (
 
 type ResourceTrustsModule struct {
 	// General configuration data
-	Caller          sts.GetCallerIdentityOutput
-	AWSRegions      []string
-	Goroutines      int
-	WrapTable       bool
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	Goroutines    int
+	WrapTable     bool
+	AWSOutputType string
+	AWSTableCols  string
+
 	AWSProfile      string
 	CloudFoxVersion string
 
@@ -46,7 +49,7 @@ type Resource2 struct {
 	Interesting           string
 }
 
-func (m *ResourceTrustsModule) PrintResources(outputFormat string, outputDirectory string, verbosity int) {
+func (m *ResourceTrustsModule) PrintResources(outputDirectory string, verbosity int) {
 	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
@@ -102,6 +105,35 @@ func (m *ResourceTrustsModule) PrintResources(outputFormat string, outputDirecto
 		"Resource Policy Summary",
 	}
 
+	// If the user specified table columns, use those.
+	// If the user specified -o wide, use the wide default cols for this module.
+	// Otherwise, use the hardcoded default cols for this module.
+	var tableCols []string
+	// If the user specified table columns, use those.
+	if m.AWSTableCols != "" {
+		// If the user specified wide as the output format, use these columns.
+		// remove any spaces between any commas and the first letter after the commas
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
+		tableCols = strings.Split(m.AWSTableCols, ",")
+	} else if m.AWSOutputType == "wide" {
+		tableCols = []string{
+			//"Account ID",
+			"ARN",
+			"Public",
+			"Interesting",
+			"Resource Policy Summary",
+		}
+	} else {
+		tableCols = []string{
+			//"Account ID",
+			"ARN",
+			"Public",
+			"Interesting",
+			"Resource Policy Summary",
+		}
+	}
+
 	// sort the table roles by Interesting
 	sort.Slice(m.Resources2, func(i, j int) bool {
 		return m.Resources2[j].Interesting > m.Resources2[i].Interesting
@@ -122,8 +154,6 @@ func (m *ResourceTrustsModule) PrintResources(outputFormat string, outputDirecto
 
 	}
 	if len(m.output.Body) > 0 {
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		//m.writeLoot(m.output.FilePath, verbosity, m.AWSProfile)
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,
@@ -132,9 +162,10 @@ func (m *ResourceTrustsModule) PrintResources(outputFormat string, outputDirecto
 			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			Body:      m.output.Body,
+			TableCols: tableCols,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
@@ -325,7 +356,7 @@ func (m *ResourceTrustsModule) getS3Buckets(wg *sync.WaitGroup, semaphore chan s
 	for _, b := range ListBuckets {
 		var statementSummaryInEnglish string
 		var isInteresting string = "No"
-		bucket := &Bucket{
+		bucket := &BucketRow{
 			Arn: fmt.Sprintf("arn:aws:s3:::%s", aws.ToString(b.Name)),
 		}
 		name := aws.ToString(b.Name)
