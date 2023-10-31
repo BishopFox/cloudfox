@@ -120,13 +120,13 @@ func (m *AzNSGModule) getNSGLinksData(tenantSlug string, AzSubscription *subscri
 		}
 
 		// set up table vars
-		o.PrefixIdentifier = fmt.Sprintf("%s %s", *AzSubscription.DisplayName, *networkSecurityGroup.Name)
-		o.Table.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, tenantSlug, *AzSubscription.DisplayName, *networkSecurityGroup.Name)
+		o.PrefixIdentifier = fmt.Sprintf("%s", *AzSubscription.DisplayName)
+		o.Table.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, tenantSlug, *AzSubscription.DisplayName)
 		o.Table.TableFiles = append(o.Table.TableFiles,
 			internal.TableFile{
 				Header: tableHeader,
 				Body:   tableBody,
-				Name:   fmt.Sprintf(globals.AZ_NSG_LINKS_MODULE_NAME)})
+				Name:   fmt.Sprintf("%s-%s", globals.AZ_NSG_LINKS_MODULE_NAME, *networkSecurityGroup.Name)})
 
 		if tableBody != nil {
 			o.WriteFullOutput(o.Table.TableFiles, nil)
