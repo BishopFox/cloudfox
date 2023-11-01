@@ -16,11 +16,11 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/smithy-go/ptr"
 	"github.com/fatih/color"
-	"github.com/kyokomi/emoji"
 )
 
 type AzRBACModule struct {
 	AzClient            *internal.AzureClient
+	Log                 *internal.Logger
 }
 
 func (m *AzRBACModule) AzRBACCommand() error {
@@ -51,10 +51,7 @@ func (m *AzRBACModule) AzRBACCommand() error {
 			o.PrefixIdentifier = *AzTenant.DefaultDomain
 			o.Table.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, *AzTenant.DefaultDomain, "1-tenant-level")
 
-			fmt.Printf("[%s][%s] Enumerating RBAC permissions for tenant %s\n",
-				color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", m.AzClient.Version)), color.CyanString(globals.AZ_RBAC_MODULE_NAME),
-				fmt.Sprintf("%s (%s)", *AzTenant.DefaultDomain, *AzTenant.TenantID))
-
+			m.Log.Infof(nil, "Enumerating RBAC permissions for tenant %s (%s)", *AzTenant.DefaultDomain, *AzTenant.TenantID)
 			header, body, err = m.getRBACperTenant(ptr.ToString(AzTenant.TenantID), c)
 			if err != nil {
 				return err
@@ -66,15 +63,14 @@ func (m *AzRBACModule) AzRBACCommand() error {
 					Name:   fmt.Sprintf(globals.AZ_RBAC_MODULE_NAME)})
 
 		}
-	} else{
+	} else {
 		// cloudfox azure rbac --subscription [SUBSCRIPTION_ID | SUBSCRIPTION_NAME]
 		for _, AzSubscription := range m.AzClient.AzSubscriptions {
 			tenantInfo := populateTenant(*AzSubscription.TenantID)
 			o.PrefixIdentifier = ptr.ToString(AzSubscription.DisplayName)
 			o.Table.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), *AzSubscription.DisplayName)
 
-			fmt.Printf("[%s][%s] Enumerating RBAC permissions for subscription %s\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", m.AzClient.Version)), color.CyanString(globals.AZ_RBAC_MODULE_NAME),
-				fmt.Sprintf("%s (%s)", ptr.ToString(AzSubscription.DisplayName), *AzSubscription.SubscriptionID))
+			m.Log.Infof(nil, "Enumerating RBAC permissions for subscription %s (%s)", ptr.ToString(AzSubscription.DisplayName), *AzSubscription.SubscriptionID)
 			header, body = m.getRBACperSubscription(ptr.ToString(tenantInfo.ID), *AzSubscription.SubscriptionID, c)
 			o.Table.TableFiles = append(o.Table.TableFiles,
 				internal.TableFile{

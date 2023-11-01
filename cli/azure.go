@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"log"
-
 	"github.com/BishopFox/cloudfox/azure"
 	"github.com/BishopFox/cloudfox/internal"
 	az "github.com/Azure/go-autorest/autorest/azure"
@@ -140,69 +138,89 @@ Enumerate links for a specific Network Security Group:
 )
 
 func runAzWhoamiCommand (cmd *cobra.Command, args []string) {
-	err := azure.AzWhoamiCommand(AzOutputDirectory, cmd.Root().Version, AzWrapTable, AzVerbosity, AzWhoamiListRGsAlso)
+	AzClient = new(internal.AzureClient)
+	AzClient.Log = internal.NewLogger("azure")
+	AzClient.Log.Announce(nil, "Analyzing local Azure credentials")
+	AzClient.Version = cmd.Root().Version
+	AzClient.AzWrapTable = AzWrapTable
+	AzClient.AzMergedTable = AzMergedTable
+	AzClient.AzVerbosity = AzVerbosity
+	AzClient.AzOutputFormat = AzOutputFormat
+	AzClient.AzOutputDirectory = AzOutputDirectory
+
+	m := azure.AzWhoamiModule{
+		AzClient: AzClient,
+		Log:      internal.NewLogger("whoami"),
+	}
+	err := m.AzWhoamiCommand(AzWhoamiListRGsAlso)
 	if err != nil {
-		log.Fatal(err)
+		m.Log.Fatal(nil, err.Error())
 	}
 }
 
 func runAzInventoryCommand (cmd *cobra.Command, args []string) {
 	m := azure.AzInventoryModule{
 		AzClient: AzClient,
+		Log:      internal.NewLogger("inventory"),
 	}
 	err := m.AzInventoryCommand()
 	if err != nil {
-		log.Fatal(err)
+		m.Log.Fatal(nil, err.Error())
 	}
 }
 
 func runAzRBACCommand (cmd *cobra.Command, args []string) {
 	m := azure.AzRBACModule{
 		AzClient: AzClient,
+		Log:      internal.NewLogger("rbac"),
 	}
 	err := m.AzRBACCommand()
 	if err != nil {
-		log.Fatal(err)
+		m.Log.Fatal(nil, err.Error())
 	}
 }
 
 func runAzVMsCommand (cmd *cobra.Command, args []string) {
 	m := azure.AzVMsModule{
 		AzClient: AzClient,
+		Log:      internal.NewLogger("vms"),
 	}
 	err := m.AzVMsCommand()
 	if err != nil {
-		log.Fatal(err)
+		m.Log.Fatal(nil, err.Error())
 	}
 }
 
 func runAzStorageCommand (cmd *cobra.Command, args []string) {
 	m := azure.AzStorageModule{
 		AzClient: AzClient,
+		Log:      internal.NewLogger("storage"),
 	}
 	err := m.AzStorageCommand()
 	if err != nil {
-		log.Fatal(err)
+		m.Log.Fatal(nil, err.Error())
 	}
 }
 
 func runAzNSGRulesCommand(cmd *cobra.Command, args []string) {
 	m := azure.AzNSGModule{
 		AzClient: AzClient,
+		Log:      internal.NewLogger("nsg"),
 	}
 	err := m.AzNSGCommand("rules")
 	if err != nil {
-		log.Fatal(err)
+		m.Log.Fatal([]string{"rules"}, err.Error())
 	}
 }
 
 func runAzNSGLinksCommand(cmd *cobra.Command, args []string) {
 	m := azure.AzNSGModule{
 		AzClient: AzClient,
+		Log:      internal.NewLogger("nsg"),
 	}
 	err := m.AzNSGCommand("links")
 	if err != nil {
-		log.Fatal(err)
+		m.Log.Fatal([]string{"links"}, err.Error())
 	}
 }
 

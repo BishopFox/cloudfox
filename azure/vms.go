@@ -16,12 +16,11 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/smithy-go/ptr"
-	"github.com/fatih/color"
-	"github.com/kyokomi/emoji"
 )
 
 type AzVMsModule struct {
 	AzClient            *internal.AzureClient
+	Log                 *internal.Logger
 }
 
 
@@ -53,10 +52,7 @@ func (m *AzVMsModule) AzVMsCommand() error {
 					},
 				}
 
-				fmt.Printf(
-					"[%s][%s] Enumerating VMs for tenant %s\n",
-					color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", m.AzClient.Version)), color.CyanString(o.CallingModule),
-					fmt.Sprintf("%s (%s)", ptr.ToString(AzTenant.DefaultDomain), ptr.ToString(AzTenant.TenantID)))
+				m.Log.Infof(nil, "Enumerating VMs for tenant %s (%s)", ptr.ToString(AzTenant.DefaultDomain), ptr.ToString(AzTenant.TenantID))
 
 				o.PrefixIdentifier = ptr.ToString(AzTenant.DefaultDomain)
 				o.Table.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(AzTenant.DefaultDomain), "1-tenant-level")
@@ -85,23 +81,24 @@ func (m *AzVMsModule) AzVMsCommand() error {
 					}
 				}
 			} else {
-				for _, s := range GetSubscriptionsPerTenantID(ptr.ToString(AzTenant.TenantID)) {
-					m.runVMsCommandForSingleSubscription(ptr.ToString(s.SubscriptionID))
+				for _, AzSubscription := range GetSubscriptionsPerTenantID(ptr.ToString(AzTenant.TenantID)) {
+					m.runVMsCommandForSingleSubscription(*AzTenant.DefaultDomain, &AzSubscription)
 				}
 			}
 		} 
 	} else {
 		// ./cloudfox azure inventory --subscription [SUBSCRIPTION_ID | SUBSCRIPTION_NAME]
-		for _, AzSubscription := range m.AzClient.AzSubscriptions {
-			m.runVMsCommandForSingleSubscription(*AzSubscription.SubscriptionID)
+		for tenantSlug, AzSubscriptions := range m.AzClient.AzSubscriptionsAlt {
+			for _, AzSubscription := range AzSubscriptions {
+				m.runVMsCommandForSingleSubscription(tenantSlug, AzSubscription)
+			}
 		}
-
 	}
 	o.WriteFullOutput(o.Table.TableFiles, nil)
 	return nil
 }
 
-func (m *AzVMsModule) runVMsCommandForSingleSubscription(AzSubscription string) error {
+func (m *AzVMsModule) runVMsCommandForSingleSubscription(tenantSlug string, AzSubscription *subscriptions.Subscription) error {
 	// set up table vars
 	var header []string
 	var body [][]string
@@ -114,19 +111,13 @@ func (m *AzVMsModule) runVMsCommandForSingleSubscription(AzSubscription string) 
 			Wrap: m.AzClient.AzWrapTable,
 		},
 	}
-	var AzSubscriptionInfo SubsriptionInfo
-	tenantID := ptr.ToString(GetTenantIDPerSubscription(AzSubscription))
-	tenantInfo := populateTenant(tenantID)
-	AzSubscriptionInfo = PopulateSubsriptionType(AzSubscription)
-	o.PrefixIdentifier = AzSubscriptionInfo.Name
-	o.Table.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), AzSubscriptionInfo.Name)
+	o.PrefixIdentifier = *AzSubscription.DisplayName
+	o.Table.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, tenantSlug, *AzSubscription.DisplayName)
 
-	fmt.Printf("[%s][%s] Enumerating VMs for subscription %s\n",
-		color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", m.AzClient.Version)), color.CyanString(globals.AZ_VMS_MODULE_NAME),
-		fmt.Sprintf("%s (%s)", AzSubscriptionInfo.Name, AzSubscriptionInfo.ID))
+	m.Log.Infof(nil, "Enumerating VMs in subscription %s (%s)", *AzSubscription.DisplayName, *AzSubscription.SubscriptionID)
 
 	// populate the table data
-	header, body, userData = m.getVMsPerSubscriptionID(AzSubscriptionInfo.ID)
+	header, body, userData = m.getVMsPerSubscriptionID(tenantSlug, AzSubscription)
 
 	o.Table.TableFiles = append(o.Table.TableFiles,
 		internal.TableFile{
@@ -136,7 +127,7 @@ func (m *AzVMsModule) runVMsCommandForSingleSubscription(AzSubscription string) 
 
 	if body != nil {
 		if userData != "" {
-			o.Loot.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), AzSubscriptionInfo.Name, "loot")
+			o.Loot.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, tenantSlug, *AzSubscription.DisplayName, "loot")
 			o.Loot.LootFiles = append(o.Loot.LootFiles,
 				internal.LootFile{
 					Contents: userData,
@@ -164,7 +155,7 @@ func (m *AzVMsModule) getVMsPerTenantID(AzTenantID string) ([]string, [][]string
 		for _, rg := range GetResourceGroups(ptr.ToString(s.SubscriptionID)) {
 			resultsHeader, b, userData, err = m.getComputeRelevantData(s, rg)
 			if err != nil {
-				fmt.Printf("[%s] Could not enumerate VMs for resource group %s in subscription %s\n", color.CyanString(globals.AZ_VMS_MODULE_NAME), ptr.ToString(rg.Name), ptr.ToString(s.SubscriptionID))
+				m.Log.Warnf(nil, "Could not enumerate VMs for resource group %s in subscription %s", ptr.ToString(rg.Name), ptr.ToString(s.SubscriptionID))
 			} else {
 				resultsBody = append(resultsBody, b...)
 				userDataCombined += userData
@@ -174,23 +165,19 @@ func (m *AzVMsModule) getVMsPerTenantID(AzTenantID string) ([]string, [][]string
 	return resultsHeader, resultsBody, userDataCombined
 }
 
-func (m *AzVMsModule) getVMsPerSubscriptionID(AzSubscriptionID string) ([]string, [][]string, string) {
+func (m *AzVMsModule) getVMsPerSubscriptionID(tenantSlug string, AzSubscription *subscriptions.Subscription) ([]string, [][]string, string) {
 	var resultsHeader []string
 	var resultsBody, b [][]string
 	var userDataCombined, userData string
 	var err error
 
-	for _, s := range GetSubscriptions() {
-		if ptr.ToString(s.SubscriptionID) == AzSubscriptionID {
-			for _, rg := range GetResourceGroups(ptr.ToString(s.SubscriptionID)) {
-				resultsHeader, b, userData, err = m.getComputeRelevantData(s, rg)
-				if err != nil {
-					fmt.Printf("[%s] Could not enumerate VMs for resource group %s in subscription %s\n", color.CyanString(globals.AZ_VMS_MODULE_NAME), ptr.ToString(rg.Name), ptr.ToString(s.SubscriptionID))
-				} else {
-					resultsBody = append(resultsBody, b...)
-					userDataCombined += userData
-				}
-			}
+	for _, rg := range GetResourceGroups(ptr.ToString(AzSubscription.SubscriptionID)) {
+		resultsHeader, b, userData, err = m.getComputeRelevantData(*AzSubscription, rg)
+		if err != nil {
+			m.Log.Warnf(nil, "Could not enumerate VMs for resource group %s in subscription %s", ptr.ToString(rg.Name), ptr.ToString(AzSubscription.SubscriptionID))
+		} else {
+			resultsBody = append(resultsBody, b...)
+			userDataCombined += userData
 		}
 	}
 	return resultsHeader, resultsBody, userDataCombined

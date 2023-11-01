@@ -24,12 +24,10 @@ var cyan = color.New(color.FgCyan).SprintFunc()
 
 type AzStorageModule struct {
 	AzClient            *internal.AzureClient
-	log                 *internal.Logger
+	Log                 *internal.Logger
 }
 
 func (m *AzStorageModule) AzStorageCommand() error {
-
-	m.log = internal.NewLogger("storage")
 
 	var publicBlobURLs []string
 
@@ -53,7 +51,7 @@ func (m *AzStorageModule) AzStorageCommand() error {
 
 				var err error
 
-				m.log.Infof([]string{}, "Enumerating storage accounts for tenant %s (%s)", ptr.ToString(AzTenant.DefaultDomain), ptr.ToString(AzTenant.TenantID))
+				m.Log.Infof([]string{}, "Enumerating storage accounts for tenant %s (%s)", ptr.ToString(AzTenant.DefaultDomain), ptr.ToString(AzTenant.TenantID))
 
 				o.PrefixIdentifier = ptr.ToString(AzTenant.DefaultDomain)
 				o.Table.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(AzTenant.DefaultDomain), "1-tenant-level")
@@ -115,7 +113,7 @@ func (m *AzStorageModule) runStorageCommandForSingleSubcription(AzSubscription s
 	o.PrefixIdentifier = AzSubscriptionInfo.Name
 	o.Table.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), AzSubscriptionInfo.Name)
 
-	m.log.Infof([]string{}, "Enumerating storage accounts for subscription %s (%s)", AzSubscriptionInfo.Name, AzSubscriptionInfo.ID)
+	m.Log.Infof([]string{}, "Enumerating storage accounts for subscription %s (%s)", AzSubscriptionInfo.Name, AzSubscriptionInfo.ID)
 	header, body, publicBlobURLs, err = m.getStorageInfoPerSubscription(ptr.ToString(tenantInfo.ID), AzSubscriptionInfo.ID)
 	if err != nil {
 		return err

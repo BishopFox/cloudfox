@@ -18,7 +18,7 @@ func (m *AzNSGModule) AzNSGRulesCommand() error {
 
 	if len(m.AzClient.AzTenants) > 0 {
 		for _, AzTenant := range m.AzClient.AzTenants {
-			m.log.Infof([]string{"rules"}, "Enumerating Network Security Group rules for tenant %s (%s)", ptr.ToString(AzTenant.DefaultDomain), ptr.ToString(AzTenant.TenantID))
+			m.Log.Infof([]string{"rules"}, "Enumerating Network Security Group rules for tenant %s (%s)", ptr.ToString(AzTenant.DefaultDomain), ptr.ToString(AzTenant.TenantID))
 			for _, AzTenant := range m.AzClient.AzTenants {
 				// cloudfox azure nsg-rules --tenant [TENANT_ID | PRIMARY_DOMAIN]
 				for _, AzSubscription := range GetSubscriptionsPerTenantID(ptr.ToString(AzTenant.TenantID)) {
@@ -40,7 +40,7 @@ func (m *AzNSGModule) AzNSGRulesCommand() error {
 func (m *AzNSGModule) runNSGRulesCommandForSingleSubcription(tenantSlug string, AzSubscription *subscriptions.Subscription) error {
 	var err error
 
-	m.log.Infof([]string{"rules"}, "Enumerating Network Security Groups rules for subscription %s (%s)", *AzSubscription.DisplayName, *AzSubscription.SubscriptionID)
+	m.Log.Infof([]string{"rules"}, "Enumerating Network Security Groups rules for subscription %s (%s)", *AzSubscription.DisplayName, *AzSubscription.SubscriptionID)
 	err = m.getNSGInfoPerSubscription(tenantSlug, AzSubscription)
 	if err != nil {
 		return err
@@ -77,10 +77,10 @@ func (m *AzNSGModule) getNSGRulesData(tenantSlug string, AzSubscription *subscri
 		}
 		networkSecurityGroup, err = nsgClient.Get(context.TODO(), resource.ResourceGroup, resource.ResourceName, "")
 		if err != nil {
-			m.log.Warnf([]string{"rules"}, "Failed to enumerate rules for NSG %s", *networkSecurityGroup.Name)
+			m.Log.Warnf([]string{"rules"}, "Failed to enumerate rules for NSG %s", *networkSecurityGroup.Name)
 			continue
 		} else {
-			m.log.Infof([]string{"rules"}, "Enumerating rules for NSG %s", *networkSecurityGroup.Name)
+			m.Log.Infof([]string{"rules"}, "Enumerating rules for NSG %s", *networkSecurityGroup.Name)
 		}
 		for _, securityRule := range *networkSecurityGroup.SecurityRules {
 			tableBody = append(tableBody,
@@ -116,9 +116,9 @@ func (m *AzNSGModule) getNSGRulesData(tenantSlug string, AzSubscription *subscri
 
 func (m *AzNSGModule) colorRule(action string) string {
 	if action == "Allow" {
-		return m.log.Green(action)
+		return m.Log.Green(action)
 	} else if action == "Deny" {
-		return m.log.Red(action)
+		return m.Log.Red(action)
 	} else {
 		return action
 	}

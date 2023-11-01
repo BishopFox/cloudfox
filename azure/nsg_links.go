@@ -19,7 +19,7 @@ func (m *AzNSGModule) AzNSGLinksCommand() error {
 
 	if len(m.AzClient.AzTenants) > 0 {
 		for _, AzTenant := range m.AzClient.AzTenants {
-			m.log.Infof([]string{"links"}, "Enumerating Network Security Group links for tenant %s (%s)", ptr.ToString(AzTenant.DefaultDomain), ptr.ToString(AzTenant.TenantID))
+			m.Log.Infof([]string{"links"}, "Enumerating Network Security Group links for tenant %s (%s)", ptr.ToString(AzTenant.DefaultDomain), ptr.ToString(AzTenant.TenantID))
 			for _, AzTenant := range m.AzClient.AzTenants {
 				for _, AzSubscription := range GetSubscriptionsPerTenantID(ptr.ToString(AzTenant.TenantID)) {
 					m.runNSGLinksCommandForSingleSubcription(*AzTenant.DefaultDomain, &AzSubscription)
@@ -39,7 +39,7 @@ func (m *AzNSGModule) AzNSGLinksCommand() error {
 func (m *AzNSGModule) runNSGLinksCommandForSingleSubcription(tenantSlug string, AzSubscription *subscriptions.Subscription) error {
 	var err error
 
-	m.log.Infof([]string{"links"}, "Enumerating Network Security Groups links for subscription %s (%s)", *AzSubscription.DisplayName, *AzSubscription.SubscriptionID)
+	m.Log.Infof([]string{"links"}, "Enumerating Network Security Groups links for subscription %s (%s)", *AzSubscription.DisplayName, *AzSubscription.SubscriptionID)
 	err = m.getNSGInfoPerSubscription(tenantSlug, AzSubscription)
 	if err != nil {
 		return err
@@ -76,10 +76,10 @@ func (m *AzNSGModule) getNSGLinksData(tenantSlug string, AzSubscription *subscri
 		}
 		networkSecurityGroup, err = nsgClient.Get(context.TODO(), resource.ResourceGroup, resource.ResourceName, "Subnets,NetworkInterfaces")
 		if err != nil {
-			m.log.Warnf([]string{"links"}, "Failed to enumerate links for NSG %s", *networkSecurityGroup.Name)
+			m.Log.Warnf([]string{"links"}, "Failed to enumerate links for NSG %s", *networkSecurityGroup.Name)
 			continue
 		} else {
-			m.log.Infof([]string{"links"}, "Enumerating rules for NSG %s", *networkSecurityGroup.Name)
+			m.Log.Infof([]string{"links"}, "Enumerating rules for NSG %s", *networkSecurityGroup.Name)
 		}
 		if networkSecurityGroup.Subnets != nil {
 			for _, subnet := range *networkSecurityGroup.Subnets {

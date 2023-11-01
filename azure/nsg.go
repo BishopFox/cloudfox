@@ -11,12 +11,11 @@ import (
 type AzNSGModule struct {
 	AzClient            *internal.AzureClient
 	getNSGData          func(string, *subscriptions.Subscription) error
-	log                 *internal.Logger
+	Log                 *internal.Logger
 }
 
 
 func (m *AzNSGModule) AzNSGCommand(data string) error {
-	m.log = internal.NewLogger("nsg")
 
 	if data == "links" {
 		m.AzNSGLinksCommand()

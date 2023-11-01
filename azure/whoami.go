@@ -15,27 +15,31 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/smithy-go/ptr"
-	"github.com/fatih/color"
-	"github.com/kyokomi/emoji"
 )
 
-func AzWhoamiCommand(AzOutputDirectory, version string, AzWrapTable bool, AzVerbosity int, AzWhoamiListRGsAlso bool) error {
+type AzWhoamiModule struct {
+	AzClient            *internal.AzureClient
+	Log                 *internal.Logger
+}
+
+func (m *AzWhoamiModule) AzWhoamiCommand(AzWhoamiListRGsAlso bool) error {
 	o := internal.OutputClient{
-		Verbosity:     AzVerbosity,
+		Verbosity:     m.AzClient.AzVerbosity,
 		CallingModule: globals.AZ_WHOAMI_MODULE_NAME,
 		Table: internal.TableClient{
-			Wrap: AzWrapTable,
+			Wrap: m.AzClient.AzWrapTable,
 		},
 	}
 
-	fmt.Printf("[%s][%s] Enumerating Azure CLI sessions...\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", version)), color.CyanString(globals.AZ_WHOAMI_MODULE_NAME))
+
+	m.Log.Info(nil, "Enumerating Azure CLI sessions...")
 	var header []string
 	var body [][]string
 	o.PrefixIdentifier = "N/A"
 	if !AzWhoamiListRGsAlso {
 		// cloudfox azure whoami
 		header, body = getWhoamiRelevantDataSubsOnly()
-		o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, "whoami-data")
+		o.Table.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, "whoami-data")
 		// append timestamp to filename (time from epoch)
 		o.Table.TableFiles = append(o.Table.TableFiles,
 			internal.TableFile{

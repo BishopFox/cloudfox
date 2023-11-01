@@ -16,12 +16,11 @@ import (
 
 type AzInventoryModule struct {
 	AzClient            *internal.AzureClient
-	log                 *internal.Logger
+	Log                 *internal.Logger
 }
 
 
 func (m *AzInventoryModule) AzInventoryCommand() error {
-	m.log = internal.NewLogger("inventory")
 	o := internal.OutputClient{
 		Verbosity:     m.AzClient.AzVerbosity,
 		CallingModule: "inventory",
@@ -47,7 +46,7 @@ func (m *AzInventoryModule) AzInventoryCommand() error {
 					},
 				}
 
-				m.log.Infof(nil, "Gathering inventory for tenant %s (%s)", ptr.ToString(AzTenant.DefaultDomain), ptr.ToString(AzTenant.TenantID))
+				m.Log.Infof(nil, "Gathering inventory for tenant %s (%s)", ptr.ToString(AzTenant.DefaultDomain), ptr.ToString(AzTenant.TenantID))
 
 				o.PrefixIdentifier = ptr.ToString(AzTenant.DefaultDomain)
 				o.Table.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(AzTenant.DefaultDomain), "1-tenant-level")
@@ -99,7 +98,7 @@ func (m *AzInventoryModule) runInventoryCommandForSingleSubscription(tenantSlug 
 	o.PrefixIdentifier = *AzSubscription.DisplayName
 	o.Table.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, tenantSlug, *AzSubscription.DisplayName)
 
-	m.log.Infof(nil, "Gathering inventory for subscription %s (%s)", *AzSubscription.DisplayName, *AzSubscription.SubscriptionID)
+	m.Log.Infof(nil, "Gathering inventory for subscription %s (%s)", *AzSubscription.DisplayName, *AzSubscription.SubscriptionID)
 
 	// populate the table data
 	header, body, err = m.getInventoryInfoPerSubscription(tenantSlug, AzSubscription)
