@@ -132,6 +132,7 @@ func (l *Logger) Errorf(categories []string, format string, params ...any) {
 
 func (l *Logger) Fatal(categories []string, text string) {
 	l.Print(append([]string{emoji.Sprintf(":fox:cloudfox v%s :fox:", l.version), l.module}, categories...), l.Red, text)
+	panic(nil)
 }
 
 func (l *Logger) Fatalf(categories []string, format string, params ...any) {
