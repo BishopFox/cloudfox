@@ -50,7 +50,7 @@ func (m *AzWhoamiModule) AzWhoamiCommand(AzWhoamiListRGsAlso bool) error {
 	} else {
 		// cloudfox azure whoami --list-rgs
 		header, body = getWhoamiRelevantDataPerRG()
-		o.Table.DirectoryName = filepath.Join(ptr.ToString(internal.GetLogDirPath()), globals.AZ_DIR_BASE, "whoami-data")
+		o.Table.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, "whoami-data")
 		o.Table.TableFiles = append(o.Table.TableFiles,
 			internal.TableFile{
 				Header: header,
