@@ -317,7 +317,7 @@ func (m *AzVMsModule) getIPs(subscriptionID string, resourceGroup string, vm com
 
 	if vm.VirtualMachineProperties.NetworkProfile.NetworkInterfaces != nil {
 		for _, nicReference := range *vm.VirtualMachineProperties.NetworkProfile.NetworkInterfaces {
-			nic, err := m.getNICdetails(subscriptionID, resourceGroup, nicReference)
+			nic, err := getNICdetails(subscriptionID, resourceGroup, nicReference, "")
 			if err != nil {
 				return []string{err.Error()}, []string{err.Error()}
 			}
@@ -341,15 +341,15 @@ func (m *AzVMsModule) getIPs(subscriptionID string, resourceGroup string, vm com
 	return privateIPs, publicIPs
 }
 
-func (m *AzVMsModule) getNICdetails(subscriptionID string, resourceGroup string, nicReference compute.NetworkInterfaceReference) (network.Interface, error) {
-	return m.getNICdetailsOriginal(subscriptionID, resourceGroup, nicReference)
+func getNICdetails(subscriptionID string, resourceGroup string, nicReference compute.NetworkInterfaceReference, expand string) (network.Interface, error) {
+	return getNICdetailsOriginal(subscriptionID, resourceGroup, nicReference, expand)
 }
 
-func (m *AzVMsModule) getNICdetailsOriginal(subscriptionID string, resourceGroup string, nicReference compute.NetworkInterfaceReference) (network.Interface, error) {
+func getNICdetailsOriginal(subscriptionID string, resourceGroup string, nicReference compute.NetworkInterfaceReference, expand string) (network.Interface, error) {
 	client := internal.GetNICClient(subscriptionID)
 	NICName := strings.Split(ptr.ToString(nicReference.ID), "/")[len(strings.Split(ptr.ToString(nicReference.ID), "/"))-1]
 
-	nic, err := client.Get(context.TODO(), resourceGroup, NICName, "")
+	nic, err := client.Get(context.TODO(), resourceGroup, NICName, expand)
 	if err != nil {
 		return network.Interface{}, fmt.Errorf("NICnotFound_%s", NICName)
 	}
