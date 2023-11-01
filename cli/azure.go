@@ -105,7 +105,7 @@ Enumerate storage accounts for a specific subscription:
 	AzNSGRulesCommand = &cobra.Command{
 		Use:     "nsg-rules",
 		Aliases: []string{},
-		Short:   "Enumerates azure Network Securiy Group rules",
+		Short:   "Enumerates azure Network Security Group rules",
 		Long: `
 Enumerate Network Security Groups rules for a specific tenant:
 ./cloudfox az nsg-rukes --tenant TENANT_ID
@@ -121,7 +121,7 @@ Enumerate rules for a specific Network Security Group:
 	AzNSGLinksCommand = &cobra.Command{
 		Use:     "nsg-links",
 		Aliases: []string{},
-		Short:   "Enumerates azure Network Securiy Groups links",
+		Short:   "Enumerates azure Network Security Groups links",
 		Long: `
 Enumerate Network Security Groups links for a specific tenant:
 ./cloudfox az nsg-links --tenant TENANT_ID
