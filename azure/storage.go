@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/subscriptions"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/storage/mgmt/storage"
 	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
@@ -78,20 +79,22 @@ func (m *AzStorageModule) AzStorageCommand() error {
 				}
 
 			} else {
-				for _, s := range GetSubscriptionsPerTenantID(ptr.ToString(AzTenant.TenantID)) {
-					m.runStorageCommandForSingleSubcription(ptr.ToString(s.SubscriptionID))
+				for _, AzSubscription := range GetSubscriptionsPerTenantID(ptr.ToString(AzTenant.TenantID)) {
+					m.runStorageCommandForSingleSubscription(*AzTenant.DefaultDomain, &AzSubscription)
 				}
 			}
 		}
 	} else {
-		for _, AzSubscription := range m.AzClient.AzSubscriptions {
-			m.runStorageCommandForSingleSubcription(*AzSubscription.SubscriptionID)
+		for tenantSlug, AzSubscriptions := range m.AzClient.AzSubscriptionsAlt {
+			for _, AzSubscription := range AzSubscriptions {
+				m.runStorageCommandForSingleSubscription(tenantSlug, AzSubscription)
+			}
 		}
 	}
 	return nil
 }
 
-func (m *AzStorageModule) runStorageCommandForSingleSubcription(AzSubscription string) error {
+func (m *AzStorageModule) runStorageCommandForSingleSubscription(tenantSlug string, AzSubscription *subscriptions.Subscription) error {
 	var err error
 	// setup logging client
 	o := internal.OutputClient{
@@ -107,14 +110,11 @@ func (m *AzStorageModule) runStorageCommandForSingleSubcription(AzSubscription s
 	var body [][]string
 	var publicBlobURLs []string
 
-	tenantID := ptr.ToString(GetTenantIDPerSubscription(AzSubscription))
-	tenantInfo := populateTenant(tenantID)
-	AzSubscriptionInfo := PopulateSubsriptionType(AzSubscription)
-	o.PrefixIdentifier = AzSubscriptionInfo.Name
-	o.Table.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), AzSubscriptionInfo.Name)
+	o.PrefixIdentifier = *AzSubscription.DisplayName
+	o.Table.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, tenantSlug, *AzSubscription.DisplayName)
 
-	m.Log.Infof([]string{}, "Enumerating storage accounts for subscription %s (%s)", AzSubscriptionInfo.Name, AzSubscriptionInfo.ID)
-	header, body, publicBlobURLs, err = m.getStorageInfoPerSubscription(ptr.ToString(tenantInfo.ID), AzSubscriptionInfo.ID)
+	m.Log.Infof([]string{}, "Enumerating storage accounts for subscription %s (%s)", *AzSubscription.DisplayName, *AzSubscription.SubscriptionID)
+	header, body, publicBlobURLs, err = m.getStorageInfoPerSubscription(*AzSubscription.TenantID, *AzSubscription.SubscriptionID)
 	if err != nil {
 		return err
 	}
