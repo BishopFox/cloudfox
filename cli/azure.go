@@ -12,7 +12,6 @@ import (
 var (
 	AzTenantID         string
 	AzSubscription     string
-	AzRGName           string
 	AzOutputFormat     string
 	AzOutputDirectory  string
 	AzVerbosity        int
@@ -224,6 +223,17 @@ func runAzNSGLinksCommand(cmd *cobra.Command, args []string) {
 	}
 }
 
+func runAzNetScanCommand(cmd *cobra.Command, args []string) {
+	m := azure.AzNetScanModule{
+		AzClient: AzClient,
+		Log:      internal.NewLogger("netscan"),
+	}
+	err := m.AzNetScanCommand()
+	if err != nil {
+		m.Log.Fatal(nil, err.Error())
+	}
+}
+
 func azurePreRun(cmd *cobra.Command, args []string) {
 	AzClient = internal.NewAzureClient(AzVerbosity, AzWrapTable, AzMergedTable, AzTenantRefs, AzSubscriptionRefs, AzRGRefs, AzResourceRefs, cmd, AzOutputFormat, AzOutputDirectory)
 	nTenants := len(AzClient.AzTenants)
@@ -244,14 +254,11 @@ func init() {
 	AzCommands.PersistentFlags().StringVarP(&AzOutputFormat, "output", "o", "all", "[\"table\" | \"csv\" | \"all\" ]")
 	AzCommands.PersistentFlags().StringVar(&AzOutputDirectory, "outdir", defaultOutputDir, "Output Directory ")
 	AzCommands.PersistentFlags().IntVarP(&AzVerbosity, "verbosity", "v", 2, "1 = Print control messages only\n2 = Print control messages, module output\n3 = Print control messages, module output, and loot file output\n")
-	AzCommands.PersistentFlags().StringVarP(&AzTenantID, "tenant", "t", "", "Tenant name")
-	AzCommands.PersistentFlags().StringVarP(&AzSubscription, "subscription", "s", "", "Subscription ID or Name")
-	AzCommands.PersistentFlags().StringVarP(&AzRGName, "resource-group", "g", "", "Resource Group name")
 
-	AzCommands.PersistentFlags().StringSliceVar(&AzTenantRefs, "tenants", []string{}, "Tenant ID or name, repeatable")
-	AzCommands.PersistentFlags().StringSliceVar(&AzSubscriptionRefs, "subs", []string{}, "Subscription ID or name, repeatable")
-	AzCommands.PersistentFlags().StringSliceVar(&AzRGRefs, "rgs", []string{}, "Resource Group name or ID, repeatable")
-	AzCommands.PersistentFlags().StringSliceVar(&AzResourceRefs, "resource-id", []string{}, "Resource ID (/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}), repeatable")
+	AzCommands.PersistentFlags().StringSliceVarP(&AzTenantRefs, "tenant", "t", []string{}, "Tenant ID or name, repeatable")
+	AzCommands.PersistentFlags().StringSliceVarP(&AzSubscriptionRefs, "subscription", "s", []string{}, "Subscription ID or name, repeatable")
+	AzCommands.PersistentFlags().StringSliceVarP(&AzRGRefs, "resource-group", "r", []string{}, "Resource Group name or ID, repeatable")
+	AzCommands.PersistentFlags().StringSliceVarP(&AzResourceRefs, "resource-id", "i", []string{}, "Resource ID (/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}), repeatable")
 
 	AzCommands.PersistentFlags().BoolVarP(&AzWrapTable, "wrap", "w", false, "Wrap table to fit in terminal (complicates grepping)")
 	AzCommands.PersistentFlags().BoolVarP(&AzMergedTable, "merged-table", "m", false, "Writes a single table for all subscriptions in the tenant. Default writes a table per subscription.")
