@@ -40,7 +40,7 @@ For the full documentation please refer to our [wiki](https://github.com/BishopF
 | Provider| CloudFox Commands |
 | - | - |
 | AWS | 30 | 
-| Azure | 4 | 
+| Azure | 6 | 
 | GCP | Support Planned |
 | Kubernetes | Support Planned | 
 
@@ -128,10 +128,13 @@ Additional policy notes (as of 09/2022):
 | Azure | [instances](https://github.com/BishopFox/cloudfox/wiki/Azure-Commands#instances) | Enumerates useful information for Compute instances in all available resource groups and subscriptions | 
 | Azure | [rbac](https://github.com/BishopFox/cloudfox/wiki/Azure-Commands#rbac) | Lists Azure RBAC role assignments at subscription or tenant level |
 | Azure | [storage](https://github.com/BishopFox/cloudfox/wiki/Azure-Commands#storage) | The storage command is still under development. Currently it only displays limited data about the storage accounts | 
+| Azure | [nsg-links](https://github.com/BishopFox/cloudfox/wiki/Azure-Commands#nsg-links) | Lists subnets and network interfaces attached to Network Security Groups | 
+| Azure | [nsg-rules](https://github.com/BishopFox/cloudfox/wiki/Azure-Commands#nsg-rules) | Lists rules in Network Security Groups | 
 
 # Authors
 * [Carlos Vendramini](https://github.com/carlosvendramini-bf)
 * [Seth Art (@sethsec](https://twitter.com/sethsec))
+* [Bastien Faure](https://github.com/BastienFaure)
 
 # Contributing
 [Wiki - How to Contribute](https://github.com/BishopFox/cloudfox/wiki#how-to-contribute)
