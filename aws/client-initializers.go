@@ -7,9 +7,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/aws/aws-sdk-go-v2/service/efs"
 	"github.com/aws/aws-sdk-go-v2/service/fsx"
+	"github.com/aws/aws-sdk-go-v2/service/glue"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/organizations"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -123,4 +125,14 @@ func InitOrgClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVers
 		AWSRegions:          internal.GetEnabledRegions(AWSProfile, cfVersion),
 	}
 	return orgClient
+}
+
+func InitSecretsManagerClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int) *secretsmanager.Client {
+	var AWSConfig = internal.AWSConfigFileLoader(AWSProfile, cfVersion)
+	return secretsmanager.NewFromConfig(AWSConfig)
+}
+
+func InitGlueClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int) *glue.Client {
+	var AWSConfig = internal.AWSConfigFileLoader(AWSProfile, cfVersion)
+	return glue.NewFromConfig(AWSConfig)
 }

@@ -15,6 +15,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/apigateway v1.18.2
 	github.com/aws/aws-sdk-go-v2/service/apigatewayv2 v1.15.0
 	github.com/aws/aws-sdk-go-v2/service/apprunner v1.21.2
+	github.com/aws/aws-sdk-go-v2/service/cloud9 v1.18.11
 	github.com/aws/aws-sdk-go-v2/service/cloudformation v1.36.0
 	github.com/aws/aws-sdk-go-v2/service/cloudfront v1.28.7
 	github.com/aws/aws-sdk-go-v2/service/cloudtrail v1.29.2
@@ -62,16 +63,7 @@ require (
 	golang.org/x/crypto v0.14.0
 )
 
-require (
-	github.com/alecthomas/template v0.0.0-20160405071501-a0175ee3bccc // indirect
-	github.com/alecthomas/units v0.0.0-20151022065526-2efee857e7cf // indirect
-	github.com/dustin/go-humanize v0.0.0-20180713052910-9f541cc9db5d // indirect
-	github.com/golang-jwt/jwt/v5 v5.0.0 // indirect
-	github.com/jondot/goweight v1.0.5 // indirect
-	github.com/mattn/go-zglob v0.0.0-20180803001819-2ea3427bfa53 // indirect
-	github.com/thoas/go-funk v0.0.0-20180716193722-1060394a7713 // indirect
-	gopkg.in/alecthomas/kingpin.v2 v2.2.6 // indirect
-)
+require github.com/golang-jwt/jwt/v5 v5.0.0 // indirect
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.8.0 // indirect

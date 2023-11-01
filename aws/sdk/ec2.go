@@ -113,9 +113,8 @@ func CachedEC2DescribeNetworkInterfaces(client AWSEC2ClientInterface, accountID 
 		if err != nil {
 			return NetworkInterfaces, err
 		}
-		for _, networkInterface := range DescribeNetworkInterfaces.NetworkInterfaces {
-			NetworkInterfaces = append(NetworkInterfaces, networkInterface)
-		}
+		NetworkInterfaces = append(NetworkInterfaces, DescribeNetworkInterfaces.NetworkInterfaces...)
+
 		if DescribeNetworkInterfaces.NextToken == nil {
 			break
 		}
@@ -148,9 +147,8 @@ func CachedEC2DescribeSnapshots(client AWSEC2ClientInterface, accountID string, 
 		if err != nil {
 			return Snapshots, err
 		}
-		for _, snapshot := range DescribeSnapshots.Snapshots {
-			Snapshots = append(Snapshots, snapshot)
-		}
+		Snapshots = append(Snapshots, DescribeSnapshots.Snapshots...)
+
 		if DescribeSnapshots.NextToken == nil {
 			break
 		}
@@ -182,9 +180,8 @@ func CachedEC2DescribeVolumes(client AWSEC2ClientInterface, accountID string, re
 		if err != nil {
 			return Volumes, err
 		}
-		for _, volume := range DescribeVolumes.Volumes {
-			Volumes = append(Volumes, volume)
-		}
+		Volumes = append(Volumes, DescribeVolumes.Volumes...)
+
 		if DescribeVolumes.NextToken == nil {
 			break
 		}
@@ -217,9 +214,8 @@ func CachedEC2DescribeImages(client AWSEC2ClientInterface, accountID string, reg
 		if err != nil {
 			return Images, err
 		}
-		for _, image := range DescribeImages.Images {
-			Images = append(Images, image)
-		}
+		Images = append(Images, DescribeImages.Images...)
+
 		if DescribeImages.NextToken == nil {
 			break
 		}
