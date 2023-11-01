@@ -39,10 +39,10 @@ type Logger struct {
 	version string
 	module string
 	txtLog *logrus.Logger
-	cyan func(...interface{}) string
-	red func(...interface{}) string
-	green func(...interface{}) string
-	yellow func(...interface{}) string
+	Cyan func(...interface{}) string
+	Red func(...interface{}) string
+	Green func(...interface{}) string
+	Yellow func(...interface{}) string
 }
 
 func NewLogger(module string) *Logger {
@@ -58,10 +58,10 @@ func NewLogger(module string) *Logger {
 		version: globals.CLOUDFOX_VERSION,
 		txtLog: lootLogger,
 		module: module,
-		cyan: color.New(color.FgCyan).SprintFunc(),
-		red: color.New(color.FgRed).SprintFunc(),
-		green:color.New(color.FgGreen).SprintFunc(),
-		yellow: color.New(color.FgYellow).SprintFunc(),
+		Cyan: color.New(color.FgCyan).SprintFunc(),
+		Red: color.New(color.FgRed).SprintFunc(),
+		Green:color.New(color.FgGreen).SprintFunc(),
+		Yellow: color.New(color.FgYellow).SprintFunc(),
 	}
 	return &logger
 }
@@ -91,50 +91,50 @@ func (l *Logger) Printf(categories []string, color func(...interface{}) string, 
 }
 
 func (l *Logger) Announce(categories []string, text string) {
-	l.Print(append([]string{emoji.Sprintf(":fox:cloudfox v%s :fox:", l.version), l.module}, categories...), l.cyan, text)
+	l.Print(append([]string{emoji.Sprintf(":fox:cloudfox v%s :fox:", l.version), l.module}, categories...), l.Cyan, text)
 }
 
 func (l *Logger) Announcef(categories []string, format string, params ...any) {
-	l.Printf(append([]string{emoji.Sprintf(":fox:cloudfox v%s :fox:", l.version), l.module}, categories...), l.cyan, format, params...)
+	l.Printf(append([]string{emoji.Sprintf(":fox:cloudfox v%s :fox:", l.version), l.module}, categories...), l.Cyan, format, params...)
 }
 
 func (l *Logger) Info(categories []string, text string) {
-	l.Print(append([]string{l.module}, categories...), l.cyan, text)
+	l.Print(append([]string{l.module}, categories...), l.Cyan, text)
 }
 
 func (l *Logger) Infof(categories []string, format string, params ...any) {
-	l.Printf(append([]string{l.module}, categories...), l.cyan, format, params...)
+	l.Printf(append([]string{l.module}, categories...), l.Cyan, format, params...)
 }
 
 func (l *Logger) Success(categories []string, text string) {
-	l.Print(append([]string{l.module}, categories...), l.green, text)
+	l.Print(append([]string{l.module}, categories...), l.Green, text)
 }
 
 func (l *Logger) Successf(categories []string, format string, params ...any) {
-	l.Printf(append([]string{l.module}, categories...), l.green, format, params...)
+	l.Printf(append([]string{l.module}, categories...), l.Green, format, params...)
 }
 
 func (l *Logger) Warn(categories []string, text string) {
-	l.Print(append([]string{l.module}, categories...), l.yellow, text)
+	l.Print(append([]string{l.module}, categories...), l.Yellow, text)
 }
 
 func (l *Logger) Warnf(categories []string, format string, params ...any) {
-	l.Printf(append([]string{l.module}, categories...), l.yellow, format, params...)
+	l.Printf(append([]string{l.module}, categories...), l.Yellow, format, params...)
 }
 
 func (l *Logger) Error(categories []string, text string) {
-	l.Print(append([]string{l.module}, categories...), l.red, text)
+	l.Print(append([]string{l.module}, categories...), l.Red, text)
 }
 
 func (l *Logger) Errorf(categories []string, format string, params ...any) {
-	l.Printf(append([]string{l.module}, categories...), l.red, format, params...)
+	l.Printf(append([]string{l.module}, categories...), l.Red, format, params...)
 }
 
 func (l *Logger) Fatal(categories []string, text string) {
-	l.Print(append([]string{emoji.Sprintf(":fox:cloudfox v%s :fox:", l.version), l.module}, categories...), l.red, text)
+	l.Print(append([]string{emoji.Sprintf(":fox:cloudfox v%s :fox:", l.version), l.module}, categories...), l.Red, text)
 }
 
 func (l *Logger) Fatalf(categories []string, format string, params ...any) {
-	l.Printf(append([]string{emoji.Sprintf(":fox:cloudfox v%s :fox:", l.version), l.module}, categories...), l.red, format, params...)
+	l.Printf(append([]string{emoji.Sprintf(":fox:cloudfox v%s :fox:", l.version), l.module}, categories...), l.Red, format, params...)
 	panic(nil)
 }

@@ -7,8 +7,6 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/smithy-go/ptr"
-	"github.com/fatih/color"
-	"github.com/kyokomi/emoji"
 	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/subscriptions"
 )
@@ -20,9 +18,7 @@ func (m *AzNSGModule) AzNSGRulesCommand() error {
 
 	if len(m.AzClient.AzTenants) > 0 {
 		for _, AzTenant := range m.AzClient.AzTenants {
-			fmt.Printf("[%s][%s] Enumerating Network Security Group rules for tenant %s\n",
-				color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", m.AzClient.Version)), color.CyanString(globals.AZ_NSG_RULES_MODULE_NAME),
-				fmt.Sprintf("%s (%s)", ptr.ToString(AzTenant.DefaultDomain), ptr.ToString(AzTenant.TenantID)))
+			m.log.Infof([]string{"rules"}, "Enumerating Network Security Group rules for tenant %s (%s)", ptr.ToString(AzTenant.DefaultDomain), ptr.ToString(AzTenant.TenantID))
 			for _, AzTenant := range m.AzClient.AzTenants {
 				// cloudfox azure nsg-rules --tenant [TENANT_ID | PRIMARY_DOMAIN]
 				for _, AzSubscription := range GetSubscriptionsPerTenantID(ptr.ToString(AzTenant.TenantID)) {
@@ -44,12 +40,7 @@ func (m *AzNSGModule) AzNSGRulesCommand() error {
 func (m *AzNSGModule) runNSGRulesCommandForSingleSubcription(tenantSlug string, AzSubscription *subscriptions.Subscription) error {
 	var err error
 
-	fmt.Printf(
-		"[%s][%s] Enumerating Network Security Groups rules for subscription %s\n",
-		color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", m.AzClient.Version)),
-		color.CyanString(globals.AZ_NSG_LINKS_MODULE_NAME),
-		fmt.Sprintf("%s (%s)", *AzSubscription.DisplayName, *AzSubscription.SubscriptionID))
-	//AzTenantID := ptr.ToString(GetTenantIDPerSubscription(AzSubscription))
+	m.log.Infof([]string{"rules"}, "Enumerating Network Security Groups rules for subscription %s (%s)", *AzSubscription.DisplayName, *AzSubscription.SubscriptionID)
 	err = m.getNSGInfoPerSubscription(tenantSlug, AzSubscription)
 	if err != nil {
 		return err
@@ -84,12 +75,13 @@ func (m *AzNSGModule) getNSGRulesData(tenantSlug string, AzSubscription *subscri
 		if err != nil {
 			continue
 		}
-		fmt.Printf(
-			"[%s][%s] Enumerating rules for NSG %s\n",
-			color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", m.AzClient.Version)),
-			color.CyanString(globals.AZ_NSG_LINKS_MODULE_NAME),
-			fmt.Sprintf(*networkSecurityGroup.Name))
-		networkSecurityGroup, _ = nsgClient.Get(context.TODO(), resource.ResourceGroup, resource.ResourceName, "")
+		networkSecurityGroup, err = nsgClient.Get(context.TODO(), resource.ResourceGroup, resource.ResourceName, "")
+		if err != nil {
+			m.log.Warnf([]string{"rules"}, "Failed to enumerate rules for NSG %s", *networkSecurityGroup.Name)
+			continue
+		} else {
+			m.log.Infof([]string{"rules"}, "Enumerating rules for NSG %s", *networkSecurityGroup.Name)
+		}
 		for _, securityRule := range *networkSecurityGroup.SecurityRules {
 			tableBody = append(tableBody,
 				[]string{
@@ -100,7 +92,7 @@ func (m *AzNSGModule) getNSGRulesData(tenantSlug string, AzSubscription *subscri
 					getDestinationFromSecurityGroupRule(&securityRule),
 					stringAndArrayToString(securityRule.SecurityRulePropertiesFormat.DestinationPortRange,
 						securityRule.SecurityRulePropertiesFormat.DestinationPortRanges),
-					fmt.Sprintf("%v", securityRule.SecurityRulePropertiesFormat.Access),
+					m.colorRule(fmt.Sprintf("%v", securityRule.SecurityRulePropertiesFormat.Access)),
 					ptr.ToString(securityRule.Description),
 				},
 			)
@@ -120,4 +112,14 @@ func (m *AzNSGModule) getNSGRulesData(tenantSlug string, AzSubscription *subscri
 		}
 	}
 	return nil
+}
+
+func (m *AzNSGModule) colorRule(action string) string {
+	if action == "Allow" {
+		return m.log.Green(action)
+	} else if action == "Deny" {
+		return m.log.Red(action)
+	} else {
+		return action
+	}
 }

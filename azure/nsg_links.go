@@ -8,8 +8,6 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/smithy-go/ptr"
-	"github.com/fatih/color"
-	"github.com/kyokomi/emoji"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/network/mgmt/network"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/subscriptions"
 	"github.com/Azure/go-autorest/autorest/azure"
@@ -21,9 +19,7 @@ func (m *AzNSGModule) AzNSGLinksCommand() error {
 
 	if len(m.AzClient.AzTenants) > 0 {
 		for _, AzTenant := range m.AzClient.AzTenants {
-			fmt.Printf("[%s][%s] Enumerating Network Security Group links for tenant %s\n",
-				color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", m.AzClient.Version)), color.CyanString(globals.AZ_NSG_LINKS_MODULE_NAME),
-				fmt.Sprintf("%s (%s)", ptr.ToString(AzTenant.DefaultDomain), ptr.ToString(AzTenant.TenantID)))
+			m.log.Infof([]string{"links"}, "Enumerating Network Security Group links for tenant %s (%s)", ptr.ToString(AzTenant.DefaultDomain), ptr.ToString(AzTenant.TenantID))
 			for _, AzTenant := range m.AzClient.AzTenants {
 				for _, AzSubscription := range GetSubscriptionsPerTenantID(ptr.ToString(AzTenant.TenantID)) {
 					m.runNSGLinksCommandForSingleSubcription(*AzTenant.DefaultDomain, &AzSubscription)
@@ -43,12 +39,7 @@ func (m *AzNSGModule) AzNSGLinksCommand() error {
 func (m *AzNSGModule) runNSGLinksCommandForSingleSubcription(tenantSlug string, AzSubscription *subscriptions.Subscription) error {
 	var err error
 
-	fmt.Printf(
-		"[%s][%s] Enumerating Network Security Groups links for subscription %s\n",
-		color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", m.AzClient.Version)),
-		color.CyanString(globals.AZ_NSG_LINKS_MODULE_NAME),
-		fmt.Sprintf("%s (%s)", *AzSubscription.DisplayName, *AzSubscription.SubscriptionID))
-	//AzTenantID := ptr.ToString(GetTenantIDPerSubscription(AzSubscription))
+	m.log.Infof([]string{"links"}, "Enumerating Network Security Groups links for subscription %s (%s)", *AzSubscription.DisplayName, *AzSubscription.SubscriptionID)
 	err = m.getNSGInfoPerSubscription(tenantSlug, AzSubscription)
 	if err != nil {
 		return err
@@ -56,7 +47,6 @@ func (m *AzNSGModule) runNSGLinksCommandForSingleSubcription(tenantSlug string, 
 
 	return nil
 }
-
 
 
 func (m *AzNSGModule) getNSGLinksData(tenantSlug string, AzSubscription *subscriptions.Subscription) error {
@@ -84,7 +74,13 @@ func (m *AzNSGModule) getNSGLinksData(tenantSlug string, AzSubscription *subscri
 		if err != nil {
 			continue
 		}
-		networkSecurityGroup, _ = nsgClient.Get(context.TODO(), resource.ResourceGroup, resource.ResourceName, "Subnets,NetworkInterfaces")
+		networkSecurityGroup, err = nsgClient.Get(context.TODO(), resource.ResourceGroup, resource.ResourceName, "Subnets,NetworkInterfaces")
+		if err != nil {
+			m.log.Warnf([]string{"links"}, "Failed to enumerate links for NSG %s", *networkSecurityGroup.Name)
+			continue
+		} else {
+			m.log.Infof([]string{"links"}, "Enumerating rules for NSG %s", *networkSecurityGroup.Name)
+		}
 		if networkSecurityGroup.Subnets != nil {
 			for _, subnet := range *networkSecurityGroup.Subnets {
 				var addressPrefixes []string
