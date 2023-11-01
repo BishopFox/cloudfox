@@ -132,7 +132,7 @@ func (m *AzNSGModule) getNSGLinksData(tenantSlug string, AzSubscription *subscri
 }
 
 
-func stringAndArrayToString(value *string, values *[]string) string {
+func stringAndArrayToString(value *string, values *[]string, separator string) string {
 	var final string
 	if value != nil {
 		final = *value
@@ -141,9 +141,9 @@ func stringAndArrayToString(value *string, values *[]string) string {
 	}
 	if len(*values) > 0 {
 		if len(final) > 0 {
-			final = fmt.Sprintf("%s\n%s", final, strings.Join((*values)[:], "\n"))
+			final = fmt.Sprintf("%s%s%s", final, separator, strings.Join((*values)[:], separator))
 		} else {
-			final = strings.Join((*values)[:], "\n")
+			final = strings.Join((*values)[:], separator)
 		}
 	}
 	return final
@@ -152,10 +152,10 @@ func stringAndArrayToString(value *string, values *[]string) string {
 
 func getSourceFromSecurityGroupRule(rule *network.SecurityRule) string {
 	var final string
-	final = stringAndArrayToString(rule.SecurityRulePropertiesFormat.SourceAddressPrefix, rule.SecurityRulePropertiesFormat.SourceAddressPrefixes)
+	final = stringAndArrayToString(rule.SecurityRulePropertiesFormat.SourceAddressPrefix, rule.SecurityRulePropertiesFormat.SourceAddressPrefixes, "\n")
 	if rule.SecurityRulePropertiesFormat.SourceApplicationSecurityGroups != nil {
 		for _, app := range *rule.SecurityRulePropertiesFormat.SourceApplicationSecurityGroups {
-			final = fmt.Sprintf("%s\n%s", final, *app.Name)
+			final = fmt.Sprintf("%s\n%s", final, ptr.ToString(app.Name))
 		}
 	}
 	return final
@@ -163,10 +163,10 @@ func getSourceFromSecurityGroupRule(rule *network.SecurityRule) string {
 
 func getDestinationFromSecurityGroupRule(rule *network.SecurityRule) string {
 	var final string
-	final = stringAndArrayToString(rule.SecurityRulePropertiesFormat.DestinationAddressPrefix, rule.SecurityRulePropertiesFormat.DestinationAddressPrefixes)
+	final = stringAndArrayToString(rule.SecurityRulePropertiesFormat.DestinationAddressPrefix, rule.SecurityRulePropertiesFormat.DestinationAddressPrefixes, "\n")
 	if rule.SecurityRulePropertiesFormat.DestinationApplicationSecurityGroups != nil {
 		for _, app := range *rule.SecurityRulePropertiesFormat.DestinationApplicationSecurityGroups {
-			final = fmt.Sprintf("%s\n%s", final, *app.Name)
+			final = fmt.Sprintf("%s\n%s", final, ptr.ToString(app.Name))
 		}
 	}
 	return final

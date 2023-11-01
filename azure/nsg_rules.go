@@ -64,7 +64,7 @@ func (m *AzNSGModule) getNSGRulesData(tenantSlug string, AzSubscription *subscri
 		// setup logging client
 		o := internal.OutputClient{
 			Verbosity:     m.AzClient.AzVerbosity,
-			CallingModule: globals.AZ_NSG_LINKS_MODULE_NAME,
+			CallingModule: globals.AZ_NSG_RULES_MODULE_NAME,
 			Table: internal.TableClient{
 				Wrap: m.AzClient.AzWrapTable,
 			},
@@ -91,7 +91,7 @@ func (m *AzNSGModule) getNSGRulesData(tenantSlug string, AzSubscription *subscri
 					getSourceFromSecurityGroupRule(&securityRule),
 					getDestinationFromSecurityGroupRule(&securityRule),
 					stringAndArrayToString(securityRule.SecurityRulePropertiesFormat.DestinationPortRange,
-						securityRule.SecurityRulePropertiesFormat.DestinationPortRanges),
+						securityRule.SecurityRulePropertiesFormat.DestinationPortRanges, "\n"),
 					m.colorRule(fmt.Sprintf("%v", securityRule.SecurityRulePropertiesFormat.Access)),
 					ptr.ToString(securityRule.Description),
 				},
