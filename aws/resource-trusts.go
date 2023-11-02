@@ -47,6 +47,10 @@ type Resource2 struct {
 	ResourcePolicySummary string
 	Public                string
 	Interesting           string
+	TrustedPrincipals     string
+	TrustsCrossAccount    string
+	TrustsAllAccounts     string
+	HasConditions         string
 }
 
 func (m *ResourceTrustsModule) PrintResources(outputDirectory string, verbosity int) {
@@ -510,7 +514,7 @@ func (m *ResourceTrustsModule) getECRRecordsPerRegion(r string, wg *sync.WaitGro
 
 	cloudFoxECRClient := InitECRClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines)
 
-	DescribeRepositories, err := cloudFoxECRClient.describeRepositories(r)
+	DescribeRepositories, err := sdk.CachedECRDescribeRepositories(cloudFoxECRClient.ECRClient, aws.ToString(m.Caller.Account), r)
 	if err != nil {
 		m.modLog.Error(err.Error())
 		return
