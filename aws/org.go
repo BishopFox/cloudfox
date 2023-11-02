@@ -88,6 +88,7 @@ func (m *OrgModule) PrintOrgAccounts(outputDirectory string, verbosity int) {
 		}
 
 		m.output.Headers = []string{
+			"Account",
 			"Name",
 			"ID",
 			"isManagementAccount?",
@@ -108,6 +109,7 @@ func (m *OrgModule) PrintOrgAccounts(outputDirectory string, verbosity int) {
 			tableCols = strings.Split(m.AWSTableCols, ",")
 		} else if m.AWSOutputType == "wide" {
 			tableCols = []string{
+				"Account",
 				"Name",
 				"ID",
 				"isManagementAccount?",
@@ -131,6 +133,7 @@ func (m *OrgModule) PrintOrgAccounts(outputDirectory string, verbosity int) {
 			m.output.Body = append(
 				m.output.Body,
 				[]string{
+					aws.ToString(m.Caller.Account),
 					m.Accounts[i].Name,
 					m.Accounts[i].Id,
 					strconv.FormatBool(m.Accounts[i].isManagementAccount),

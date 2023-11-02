@@ -54,18 +54,6 @@ func (ps *PolicyStatement) GetAllActionsAsString() string {
 
 func (ps *PolicyStatement) GetAllPrincipalsAsString() string {
 	principals := ""
-	// if len(ps.Principal.O.GetListOfPrincipals()) < 3 {
-	// 	for _, principal := range ps.Principal.O.GetListOfPrincipals() {
-	// 		principals = fmt.Sprintf("%s%s & ", principals, principal)
-	// 	}
-	// } else {
-	// 	principals = fmt.Sprintf("%s%d principals", principals, len(ps.Principal.O.GetListOfPrincipals()))
-	// }
-	// principals = strings.TrimSuffix(principals, " & ")
-	// principals = principals + "\n"
-
-	// return principals
-
 	for _, principal := range ps.Principal.O.GetListOfPrincipals() {
 		if len(ps.Principal.O.GetListOfPrincipals()) > 1 {
 			principals = fmt.Sprintf("%s%s \n& ", principals, principal)
@@ -132,4 +120,9 @@ func (ps *PolicyStatement) GetStatementSummaryInEnglish(caller string) string {
 	//statementSummary = strings.TrimSuffix(statementSummary, "\n")
 
 	return statementSummary
+}
+
+// GetResources as list of strings
+func (ps *PolicyStatement) GetResources() []string {
+	return ps.Resource
 }

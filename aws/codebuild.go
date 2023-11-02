@@ -111,6 +111,7 @@ func (m *CodeBuildModule) PrintCodeBuildProjects(outputDirectory string, verbosi
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
+		"Account",
 		"Region",
 		"Name",
 		"Role",
@@ -131,6 +132,7 @@ func (m *CodeBuildModule) PrintCodeBuildProjects(outputDirectory string, verbosi
 		tableCols = strings.Split(m.AWSTableCols, ",")
 	} else if m.AWSOutputType == "wide" {
 		tableCols = []string{
+			"Account",
 			"Region",
 			"Name",
 			"Role",
@@ -157,29 +159,17 @@ func (m *CodeBuildModule) PrintCodeBuildProjects(outputDirectory string, verbosi
 	// Table rows
 
 	for i := range m.Projects {
-		if m.pmapperError == nil {
-			m.output.Body = append(
-				m.output.Body,
-				[]string{
-					m.Projects[i].Region,
-					m.Projects[i].Name,
-					m.Projects[i].Role,
-					m.Projects[i].Admin,
-					m.Projects[i].CanPrivEsc,
-				},
-			)
-		} else {
-			m.output.Body = append(
-				m.output.Body,
-				[]string{
-					m.Projects[i].Region,
-					m.Projects[i].Name,
-					m.Projects[i].Role,
-					m.Projects[i].Admin,
-				},
-			)
-
-		}
+		m.output.Body = append(
+			m.output.Body,
+			[]string{
+				aws.ToString(m.Caller.Account),
+				m.Projects[i].Region,
+				m.Projects[i].Name,
+				m.Projects[i].Role,
+				m.Projects[i].Admin,
+				m.Projects[i].CanPrivEsc,
+			},
+		)
 	}
 
 	var seen []string

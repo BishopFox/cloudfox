@@ -25,7 +25,6 @@ type MockedEC2Client2 struct {
 	describeSnapshots         DescribeSnapshots
 	describeVolumes           DescribeVolumes
 	describeImages            DescribeImages
-	describeInstanceAttribute DescribeInstanceAttribute
 }
 
 type DescribeNetworkInterfaces struct {

@@ -186,6 +186,7 @@ func (m *NetworkPortsModule) PrintNetworkPorts(outputDirectory string) {
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
+		"Account",
 		"Service",
 		"Region",
 		"Protocol",
@@ -206,6 +207,7 @@ func (m *NetworkPortsModule) PrintNetworkPorts(outputDirectory string) {
 		tableCols = strings.Split(m.AWSTableCols, ",")
 	} else if m.AWSOutputType == "wide" {
 		tableCols = []string{
+			"Account",
 			"Service",
 			"Region",
 			"Protocol",
@@ -229,6 +231,7 @@ func (m *NetworkPortsModule) PrintNetworkPorts(outputDirectory string) {
 				m.output.Body = append(
 					m.output.Body,
 					[]string{
+						aws.ToString(m.Caller.Account),
 						i.AWSService,
 						i.Region,
 						i.Protocol,

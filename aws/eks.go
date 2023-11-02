@@ -127,7 +127,7 @@ func (m *EKSModule) EKS(outputDirectory string, verbosity int) {
 
 	// This is the complete list of potential table columns
 	m.output.Headers = []string{
-		"Service",
+		"Account",
 		"Region",
 		"Name",
 		//"Endpoint",
@@ -153,7 +153,7 @@ func (m *EKSModule) EKS(outputDirectory string, verbosity int) {
 		// If the user specified wide as the output format, use these columns.
 	} else if m.AWSOutputType == "wide" {
 		tableCols = []string{
-			"Service",
+			"Account",
 			"Region",
 			"Name",
 			"Endpoint",
@@ -167,7 +167,6 @@ func (m *EKSModule) EKS(outputDirectory string, verbosity int) {
 		// Otherwise, use the default columns.
 	} else {
 		tableCols = []string{
-			"Service",
 			"Region",
 			"Name",
 			//"Endpoint",
@@ -192,7 +191,7 @@ func (m *EKSModule) EKS(outputDirectory string, verbosity int) {
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
-				m.Clusters[i].AWSService,
+				aws.ToString(m.Caller.Account),
 				m.Clusters[i].Region,
 				m.Clusters[i].Name,
 				//m.Clusters[i].Endpoint,

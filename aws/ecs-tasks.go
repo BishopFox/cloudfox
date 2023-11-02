@@ -141,6 +141,7 @@ func (m *ECSTasksModule) Receiver(receiver chan MappedECSTask, receiverDone chan
 func (m *ECSTasksModule) printECSTaskData(outputDirectory string, dataReceiver chan MappedECSTask, verbosity int) {
 	// This is the complete list of potential table columns
 	m.output.Headers = []string{
+		"Account",
 		"Cluster",
 		"TaskDefinition",
 		"LaunchType",
@@ -166,6 +167,7 @@ func (m *ECSTasksModule) printECSTaskData(outputDirectory string, dataReceiver c
 		// If the user specified wide as the output format, use these columns.
 	} else if m.AWSOutputType == "wide" {
 		tableCols = []string{
+			"Account",
 			"Cluster",
 			"TaskDefinition",
 			"LaunchType",
@@ -200,6 +202,7 @@ func (m *ECSTasksModule) printECSTaskData(outputDirectory string, dataReceiver c
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
+				aws.ToString(m.Caller.Account),
 				ecsTask.Cluster,
 				ecsTask.TaskDefinitionName,
 				ecsTask.LaunchType,

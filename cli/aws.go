@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/apigatewayv2"
 	"github.com/aws/aws-sdk-go-v2/service/apprunner"
 	"github.com/aws/aws-sdk-go-v2/service/athena"
+	"github.com/aws/aws-sdk-go-v2/service/cloud9"
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
 	"github.com/aws/aws-sdk-go-v2/service/cloudtrail"
@@ -921,6 +922,7 @@ func runInventoryCommand(cmd *cobra.Command, args []string) {
 			APIGatewayv2Client:     apigatewayv2.NewFromConfig(AWSConfig),
 			AppRunnerClient:        apprunner.NewFromConfig(AWSConfig),
 			AthenaClient:           athena.NewFromConfig(AWSConfig),
+			Cloud9Client:           cloud9.NewFromConfig(AWSConfig),
 			CloudFormationClient:   cloudformation.NewFromConfig(AWSConfig),
 			CloudfrontClient:       cloudfront.NewFromConfig(AWSConfig),
 			CodeArtifactClient:     codeartifact.NewFromConfig(AWSConfig),
@@ -1304,6 +1306,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		apiGatewayv2Client := apigatewayv2.NewFromConfig(AWSConfig)
 		appRunnerClient := apprunner.NewFromConfig(AWSConfig)
 		athenaClient := athena.NewFromConfig(AWSConfig)
+		cloud9Client := cloud9.NewFromConfig(AWSConfig)
 		cloudFormationClient := cloudformation.NewFromConfig(AWSConfig)
 		cloudfrontClient := cloudfront.NewFromConfig(AWSConfig)
 		codeArtifactClient := codeartifact.NewFromConfig(AWSConfig)
@@ -1352,6 +1355,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			APIGatewayv2Client:     apiGatewayv2Client,
 			AppRunnerClient:        appRunnerClient,
 			AthenaClient:           athenaClient,
+			Cloud9Client:           cloud9Client,
 			CloudFormationClient:   cloudFormationClient,
 			CloudfrontClient:       cloudfrontClient,
 			CodeArtifactClient:     codeArtifactClient,

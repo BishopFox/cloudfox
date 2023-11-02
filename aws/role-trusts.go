@@ -196,6 +196,7 @@ func (m *RoleTrustsModule) printPrincipalTrusts(outputDirectory string) ([]strin
 	m.output.CallingModule = "role-trusts"
 	m.output.FullFilename = "role-trusts-principals"
 	header = []string{
+		"Account",
 		"Role Arn",
 		"Role Name",
 		"Trusted Principal",
@@ -213,7 +214,7 @@ func (m *RoleTrustsModule) printPrincipalTrusts(outputDirectory string) ([]strin
 		tableCols = strings.Split(m.AWSTableCols, ",")
 		// If the user specified wide as the output format, use these columns.
 	} else if m.AWSOutputType == "wide" {
-		tableCols = []string{"Role Arn", "Trusted Principal", "ExternalID", "IsAdmin?", "CanPrivEscToAdmin?"}
+		tableCols = []string{"Account", "Role Arn", "Trusted Principal", "ExternalID", "IsAdmin?", "CanPrivEscToAdmin?"}
 		// Otherwise, use the default columns for this module (brief)
 	} else {
 		tableCols = []string{"Role Name", "Trusted Principal", "ExternalID", "IsAdmin?", "CanPrivEscToAdmin?"}
@@ -236,7 +237,9 @@ func (m *RoleTrustsModule) printPrincipalTrusts(outputDirectory string) ([]strin
 					IsAdmin:          role.Admin,
 					CanPrivEsc:       role.CanPrivEsc,
 				}
-				body = append(body, []string{RoleTrustRow.RoleARN,
+				body = append(body, []string{
+					aws.ToString(m.Caller.Account),
+					RoleTrustRow.RoleARN,
 					RoleTrustRow.RoleName,
 					RoleTrustRow.TrustedPrincipal,
 					RoleTrustRow.ExternalID,
@@ -259,6 +262,7 @@ func (m *RoleTrustsModule) printServiceTrusts(outputDirectory string) ([]string,
 	m.output.CallingModule = "role-trusts"
 	m.output.FullFilename = "role-trusts-services"
 	header = []string{
+		"Account",
 		"Role Arn",
 		"Role Name",
 		"Trusted Service",
@@ -296,7 +300,9 @@ func (m *RoleTrustsModule) printServiceTrusts(outputDirectory string) ([]string,
 					IsAdmin:        role.Admin,
 					CanPrivEsc:     role.CanPrivEsc,
 				}
-				body = append(body, []string{RoleTrustRow.RoleARN,
+				body = append(body, []string{
+					aws.ToString(m.Caller.Account),
+					RoleTrustRow.RoleARN,
 					RoleTrustRow.RoleName,
 					RoleTrustRow.TrustedService,
 					RoleTrustRow.IsAdmin,
@@ -323,6 +329,7 @@ func (m *RoleTrustsModule) printFederatedTrusts(outputDirectory string) ([]strin
 	m.output.CallingModule = "role-trusts"
 	m.output.FullFilename = "role-trusts-federated"
 	header = []string{
+		"Account",
 		"Role Arn",
 		"Role Name",
 		"Trusted Provider",
@@ -362,7 +369,9 @@ func (m *RoleTrustsModule) printFederatedTrusts(outputDirectory string) ([]strin
 					IsAdmin:                  role.Admin,
 					CanPrivEsc:               role.CanPrivEsc,
 				}
-				body = append(body, []string{RoleTrustRow.RoleARN,
+				body = append(body, []string{
+					aws.ToString(m.Caller.Account),
+					RoleTrustRow.RoleARN,
 					RoleTrustRow.RoleName,
 					RoleTrustRow.TrustedFederatedProvider,
 					RoleTrustRow.TrustedFederatedSubject,

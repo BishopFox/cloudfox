@@ -70,7 +70,7 @@ func CachedECRDescribeRepositories(ECRClient AWSECRClientInterface, accountID st
 func CachedECRDescribeImages(ECRClient AWSECRClientInterface, accountID string, region string, repositoryName string) ([]ecrTypes.ImageDetail, error) {
 	var PaginationControl *string
 	var images []ecrTypes.ImageDetail
-	cacheKey := fmt.Sprintf("%s-efs-DescribImages-%s-%s", accountID, region, strings.ReplaceAll(repositoryName, "/", "-"))
+	cacheKey := fmt.Sprintf("%s-ecr-DescribeImages-%s-%s", accountID, region, strings.ReplaceAll(repositoryName, "/", "-"))
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
 		sharedLogger.Debug("Using cached Images data")

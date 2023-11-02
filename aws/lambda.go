@@ -128,7 +128,7 @@ func (m *LambdasModule) PrintLambdas(outputDirectory string, verbosity int) {
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
-		"Service",
+		"Account",
 		"Region",
 		"Name",
 		"Arn",
@@ -150,7 +150,7 @@ func (m *LambdasModule) PrintLambdas(outputDirectory string, verbosity int) {
 		tableCols = strings.Split(m.AWSTableCols, ",")
 	} else if m.AWSOutputType == "wide" {
 		tableCols = []string{
-			"Service",
+			"Account",
 			"Region",
 			"Arn",
 			"Role",
@@ -184,7 +184,7 @@ func (m *LambdasModule) PrintLambdas(outputDirectory string, verbosity int) {
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
-				m.Lambdas[i].AWSService,
+				aws.ToString(m.Caller.Account),
 				m.Lambdas[i].Region,
 				//m.Lambdas[i].Type,
 				m.Lambdas[i].Name,

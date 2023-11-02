@@ -62,7 +62,7 @@ func (m *Route53Module) PrintRoute53(outputDirectory string, verbosity int) {
 	m.getRoute53Records()
 
 	m.output.Headers = []string{
-		"Service",
+		"Account",
 		"Name",
 		"Type",
 		"Value",
@@ -82,7 +82,7 @@ func (m *Route53Module) PrintRoute53(outputDirectory string, verbosity int) {
 		tableCols = strings.Split(m.AWSTableCols, ",")
 	} else if m.AWSOutputType == "wide" {
 		tableCols = []string{
-			"Service",
+			"Account",
 			"Name",
 			"Type",
 			"Value",
@@ -91,7 +91,6 @@ func (m *Route53Module) PrintRoute53(outputDirectory string, verbosity int) {
 
 	} else {
 		tableCols = []string{
-			"Service",
 			"Name",
 			"Type",
 			"Value",
@@ -104,7 +103,7 @@ func (m *Route53Module) PrintRoute53(outputDirectory string, verbosity int) {
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
-				m.Records[i].AWSService,
+				aws.ToString(m.Caller.Account),
 				m.Records[i].Name,
 				m.Records[i].Type,
 				m.Records[i].Value,

@@ -166,6 +166,7 @@ func (m *PmapperModule) PrintPmapperData(outputDirectory string, verbosity int) 
 	}
 
 	m.output.Headers = []string{
+		"Account",
 		"Principal Arn",
 		"IsAdmin?",
 		"CanPrivEscToAdmin?",
@@ -184,6 +185,7 @@ func (m *PmapperModule) PrintPmapperData(outputDirectory string, verbosity int) 
 		tableCols = strings.Split(m.AWSTableCols, ",")
 	} else if m.AWSOutputType == "wide" {
 		tableCols = []string{
+			"Account",
 			"Principal Arn",
 			"IsAdmin?",
 			"CanPrivEscToAdmin?",
@@ -215,6 +217,7 @@ func (m *PmapperModule) PrintPmapperData(outputDirectory string, verbosity int) 
 			m.output.Body = append(
 				m.output.Body,
 				[]string{
+					aws.ToString(m.Caller.Account),
 					m.Nodes[i].Arn,
 					isAdmin,
 					pathToAdmin,

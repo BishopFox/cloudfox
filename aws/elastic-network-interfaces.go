@@ -104,6 +104,7 @@ func (m *ElasticNetworkInterfacesModule) Receiver(receiver chan MappedENI, recei
 
 func (m *ElasticNetworkInterfacesModule) printENIsData(outputDirectory string, dataReceiver chan MappedENI, verbosity int) {
 	m.output.Headers = []string{
+		"Account",
 		"ID",
 		"Type",
 		"External IP",
@@ -127,6 +128,7 @@ func (m *ElasticNetworkInterfacesModule) printENIsData(outputDirectory string, d
 		// If the user specified wide as the output format, use these columns.
 	} else if m.AWSOutputType == "wide" {
 		tableCols = []string{
+			"Account",
 			"ID",
 			"Type",
 			"External IP",
@@ -152,6 +154,7 @@ func (m *ElasticNetworkInterfacesModule) printENIsData(outputDirectory string, d
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
+				aws.ToString(m.Caller.Account),
 				eni.ID,
 				eni.Type,
 				eni.ExternalIP,

@@ -102,6 +102,7 @@ func (m *BucketsModule) PrintBuckets(outputDirectory string, verbosity int) {
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
+		"Account",
 		"Name",
 		"Region",
 		"Public?",
@@ -113,6 +114,7 @@ func (m *BucketsModule) PrintBuckets(outputDirectory string, verbosity int) {
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
+				aws.ToString(m.Caller.Account),
 				m.Buckets[i].Name,
 				m.Buckets[i].Region,
 				m.Buckets[i].IsPublic,
@@ -142,10 +144,21 @@ func (m *BucketsModule) PrintBuckets(outputDirectory string, verbosity int) {
 			tableCols = strings.Split(m.AWSTableCols, ",")
 			// If the user specified wide as the output format, use these columns.
 		} else if m.AWSOutputType == "wide" {
-			tableCols = []string{"Name", "Region", "Public?", "Resource Policy Summary"}
+			tableCols = []string{
+				"Account",
+				"Name",
+				"Region",
+				"Public?",
+				"Resource Policy Summary",
+			}
 			// Otherwise, use the default columns for this module (brief)
 		} else {
-			tableCols = []string{"Name", "Region", "Public?", "Resource Policy Summary"}
+			tableCols = []string{
+				"Name",
+				"Region",
+				"Public?",
+				"Resource Policy Summary",
+			}
 		}
 
 		// Remove the Public? and Resource Policy Summary columns if the user did not specify CheckBucketPolicies

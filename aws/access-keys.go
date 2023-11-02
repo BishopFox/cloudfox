@@ -57,6 +57,7 @@ func (m *AccessKeysModule) PrintAccessKeys(filter string, outputDirectory string
 
 	// Variables used to draw table output
 	m.output.Headers = []string{
+		"Account",
 		"User Name",
 		"Access Key ID",
 	}
@@ -67,6 +68,7 @@ func (m *AccessKeysModule) PrintAccessKeys(filter string, outputDirectory string
 			m.output.Body = append(
 				m.output.Body,
 				[]string{
+					aws.ToString(m.Caller.Account),
 					key.Username,
 					key.Key,
 				},
@@ -102,6 +104,7 @@ func (m *AccessKeysModule) PrintAccessKeys(filter string, outputDirectory string
 			// If the user specified wide as the output format, use these columns.
 		} else if m.AWSOutputType == "wide" {
 			tableCols = []string{
+				"Account",
 				"User Name",
 				"Access Key ID",
 			}
