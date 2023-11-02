@@ -3,6 +3,7 @@ package policy
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 )
 
 type PolicyStatementPrincipal struct {
@@ -91,4 +92,17 @@ func (ls *ListOrString) UnmarshalJSON(b []byte) error {
 	}
 
 	return errors.New("not a string or list of strings")
+}
+
+// create a method on *PolicyStatementPrincipalObject that will determine if trusted principal is from the same account as the resource or a different account
+func (pspo *PolicyStatementPrincipalObject) IsTrustedPrincipalSameAccount(accountID string) bool {
+	for _, principal := range pspo.CanonicalUser {
+		if strings.Contains(principal, ":") {
+			principalAccount := strings.Split(principal, ":")[4]
+			if principalAccount == accountID {
+				return true
+			}
+		}
+	}
+	return false
 }
