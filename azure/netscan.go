@@ -8,7 +8,9 @@ import (
 	"github.com/Azure/go-autorest/autorest/azure"
 	"strings"
 	"context"
+	"path/filepath"
 	"fmt"
+	"os"
 )
 
 type AzNetScanModule struct {
@@ -52,6 +54,7 @@ func (m *AzNetScanModule) AzNetScanCommand(sourceIP string) error {
 func (m *AzNetScanModule) processVM(subscriptionID string, resourceGroupName string, VMName string) {
 	computeClient := internal.GetVirtualMachinesClient(subscriptionID)
 	vm, err := computeClient.Get(context.TODO(), resourceGroupName, VMName, "")
+	targetSubnets := []string{}
 	if err != nil {
 		m.Log.Errorf([]string{VMName}, "Could not fetch virtual machine details")
 		return
@@ -99,6 +102,7 @@ func (m *AzNetScanModule) processVM(subscriptionID string, resourceGroupName str
 					m.Log.Infof([]string{VMName, *nic.Name, *ipConfig.PrivateIPAddress}, "Virtual Network %s has %s subnets as potential targets", VNETName, len(*vnet.VirtualNetworkPropertiesFormat.Subnets))
 					for _, subnet := range *vnet.VirtualNetworkPropertiesFormat.Subnets {
 						m.Log.Infof([]string{VMName, *nic.Name, *ipConfig.PrivateIPAddress}, "Potential target : %s", *subnet.SubnetPropertiesFormat.AddressPrefix)
+						targetSubnets = append(targetSubnets, *subnet.SubnetPropertiesFormat.AddressPrefix)
 					}
 					for _, peering := range *vnet.VirtualNetworkPropertiesFormat.VirtualNetworkPeerings {
 						remoteVnetID := *peering.VirtualNetworkPeeringPropertiesFormat.RemoteVirtualNetwork.ID
@@ -108,16 +112,44 @@ func (m *AzNetScanModule) processVM(subscriptionID string, resourceGroupName str
 						} else {
 							m.Log.Successf([]string{VMName, *nic.Name, *ipConfig.PrivateIPAddress, *subnet.Name}, "Peering to Virtual Network %s is active : %s",
 								remoteVnetResource.ResourceName, stringAndArrayToString(nil, peering.VirtualNetworkPeeringPropertiesFormat.RemoteAddressSpace.AddressPrefixes, " "))
+							for _, addressPrefix := range *peering.VirtualNetworkPeeringPropertiesFormat.RemoteAddressSpace.AddressPrefixes {
+								targetSubnets = append(targetSubnets, addressPrefix)
+							}
 						}
 					}
 
 				}
 			}
+		m.writeScanFile(VMName, targetSubnets)
 		} else {
 			m.Log.Errorf(nil, "Virtual Machine %s has no network interface", VMName)
 			return
 		}
 	}
+}
+
+func (m *AzNetScanModule) writeScanFile(vm string, subnets []string) error {
+	lootDirectory := filepath.Join(m.AzClient.AzOutputDirectory, "loot")
+	lootFilePath := filepath.Join(lootDirectory, fmt.Sprintf("scan-from-%s.txt", vm))
+	err := os.MkdirAll(lootDirectory, os.ModePerm)
+	if err != nil {
+		return err
+	}
+
+	file, err := os.Create(lootFilePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	for _, subnet := range subnets {
+		_, err := file.WriteString(fmt.Sprintf("nmap -p- --max-retries 1 -T4 -Pn -sV -sC -oA %s %s\n", strings.Replace(subnet, "/", "_", -1), subnet))
+		if err != nil {
+			return err
+		}
+	}
+	m.Log.Successf(nil, "Scan file written to %s", lootFilePath)
+	return nil
 }
 
 func getSubnetDetails(subscriptionID, resourceGroup, VNETName, subnetName, expand string) (network.Subnet, error) {
