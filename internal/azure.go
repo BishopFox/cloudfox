@@ -40,7 +40,7 @@ type AzureClient struct {
 	Log                *Logger
 }
 
-func (a *AzureClient) init (AzTenantRefs, AzSubscriptionRefs, AzRGRefs, AzResourceRefs []string, cmd *cobra.Command){
+func (a *AzureClient) init (AzTenantRefs, AzSubscriptionRefs, AzRGRefs, AzResourceRefs []string){
 	availableSubscriptions := GetSubscriptions()
 	availableTenants := GetTenants()
 
@@ -151,7 +151,7 @@ func NewAzureClient(AzVerbosity int, AzWrapTable, AzMergedTable bool, AzTenantRe
    client.AzVerbosity = AzVerbosity
    client.AzOutputFormat = AzOutputFormat
    client.AzOutputDirectory = AzOutputDirectory
-   client.init(AzTenantRefs, AzSubscriptionRefs, AzRGRefs, AzResourceRefs, cmd)
+   client.init(AzTenantRefs, AzSubscriptionRefs, AzRGRefs, AzResourceRefs)
    return client
 }
 
@@ -276,6 +276,17 @@ func GetNSGClient(subscriptionID string) network.SecurityGroupsClient {
 
 func GetSubnetsClient(subscriptionID string) network.SubnetsClient {
 	client := network.NewSubnetsClient(subscriptionID)
+	authorizer, err := getAuthorizer(globals.AZ_RESOURCE_MANAGER_ENDPOINT)
+	if err != nil {
+		log.Fatalf("failed to get subnets client: %s", err)
+	}
+	client.Authorizer = authorizer
+	client.AddToUserAgent(globals.CLOUDFOX_USER_AGENT)
+	return client
+}
+
+func GetVNETsClient(subscriptionID string) network.VirtualNetworksClient {
+	client := network.NewVirtualNetworksClient(subscriptionID)
 	authorizer, err := getAuthorizer(globals.AZ_RESOURCE_MANAGER_ENDPOINT)
 	if err != nil {
 		log.Fatalf("failed to get subnets client: %s", err)

@@ -10,25 +10,30 @@ import (
 )
 
 var (
-	AzTenantID         string
-	AzSubscription     string
+	// output options
 	AzOutputFormat     string
 	AzOutputDirectory  string
 	AzVerbosity        int
 	AzWrapTable        bool
 	AzMergedTable      bool
 
+	// resource selectors
 	AzTenantRefs       []string
 	AzSubscriptionRefs []string
 	AzRGRefs           []string
 	AzResourceRefs     []string
 
 
+	// Shared resources for all modules
 	AzClient           *internal.AzureClient
 	AzTenants          []*subscriptions.TenantIDDescription
 	AzSubscriptions    []*subscriptions.Subscription
 	AzRGs              []*resources.Group
 	AzResources        []*az.Resource
+
+	// command specific variables
+	// netscan ipv4
+	AzSourceIPv4       string
 
 	AzCommands = &cobra.Command{
 		Use:     "azure",
@@ -134,6 +139,19 @@ Enumerate links for a specific Network Security Group:
 `,
 		Run: runAzNSGLinksCommand,
 	}
+	AzNetScanCommand = &cobra.Command{
+		Use:     "netscan",
+		Aliases: []string{},
+		Short:   "Enumerates internal network targets",
+		Long: `
+Enumerate targets with a specific resource as origin:
+./cloudfox az nsg-links --resource-id /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}
+
+Enumerate targets with a specific IP address as origin
+./cloudfox az nsg-links --ipv4 A.B.C.D
+`,
+		Run: runAzNetScanCommand,
+	}
 )
 
 func runAzWhoamiCommand (cmd *cobra.Command, args []string) {
@@ -228,7 +246,8 @@ func runAzNetScanCommand(cmd *cobra.Command, args []string) {
 		AzClient: AzClient,
 		Log:      internal.NewLogger("netscan"),
 	}
-	err := m.AzNetScanCommand()
+
+	err := m.AzNetScanCommand(AzSourceIPv4)
 	if err != nil {
 		m.Log.Fatal(nil, err.Error())
 	}
@@ -250,6 +269,8 @@ func init() {
 
 	AzWhoamiCommand.Flags().BoolVarP(&AzWhoamiListRGsAlso, "list-rgs", "l", false, "Drill down to the resource group level")
 
+	AzNetScanCommand.Flags().StringVar(&AzSourceIPv4, "ipv4", "", "The Source IP address to run the analysis from")
+
 	// Global flags
 	AzCommands.PersistentFlags().StringVarP(&AzOutputFormat, "output", "o", "all", "[\"table\" | \"csv\" | \"all\" ]")
 	AzCommands.PersistentFlags().StringVar(&AzOutputDirectory, "outdir", defaultOutputDir, "Output Directory ")
@@ -270,6 +291,7 @@ func init() {
 		AzStorageCommand,
 		AzNSGRulesCommand,
 		AzNSGLinksCommand,
-		AzInventoryCommand)
+		AzInventoryCommand,
+		AzNetScanCommand)
 
 }
