@@ -3,6 +3,7 @@ package aws
 import (
 	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/aws/aws-sdk-go-v2/service/efs"
@@ -17,7 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
-func initIAMSimClient(iamSimPPClient sdk.AWSIAMClientInterface, caller sts.GetCallerIdentityOutput, AWSProfile string, Goroutines int) IamSimulatorModule {
+func InitIamCommandClient(iamSimPPClient sdk.AWSIAMClientInterface, caller sts.GetCallerIdentityOutput, AWSProfile string, Goroutines int) IamSimulatorModule {
 
 	iamSimMod := IamSimulatorModule{
 		IAMClient:  iamSimPPClient,
@@ -30,7 +31,7 @@ func initIAMSimClient(iamSimPPClient sdk.AWSIAMClientInterface, caller sts.GetCa
 
 }
 
-func InitCloudFoxSNSClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int, AWSWrapTable bool) SNSModule {
+func InitSNSCommandClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int, AWSWrapTable bool) SNSModule {
 	var AWSConfig = internal.AWSConfigFileLoader(AWSProfile, cfVersion)
 	cloudFoxSNSClient := SNSModule{
 		SNSClient:  sns.NewFromConfig(AWSConfig),
@@ -44,7 +45,7 @@ func InitCloudFoxSNSClient(caller sts.GetCallerIdentityOutput, AWSProfile string
 
 }
 
-func initCloudFoxS3Client(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string) BucketsModule {
+func InitS3CommandClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string) BucketsModule {
 	var AWSConfig = internal.AWSConfigFileLoader(AWSProfile, cfVersion)
 	cloudFoxS3Client := BucketsModule{
 		S3Client:   s3.NewFromConfig(AWSConfig),
@@ -56,7 +57,7 @@ func initCloudFoxS3Client(caller sts.GetCallerIdentityOutput, AWSProfile string,
 
 }
 
-func InitSQSClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int) SQSModule {
+func InitSQSCommandClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int) SQSModule {
 	var AWSConfig = internal.AWSConfigFileLoader(AWSProfile, cfVersion)
 	sqsClient := SQSModule{
 		SQSClient: sqs.NewFromConfig(AWSConfig),
@@ -71,7 +72,7 @@ func InitSQSClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVers
 
 }
 
-func InitLambdaClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int) LambdasModule {
+func InitLambdaCommandClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int) LambdasModule {
 	var AWSConfig = internal.AWSConfigFileLoader(AWSProfile, cfVersion)
 	lambdaClient := LambdasModule{
 		LambdaClient: lambda.NewFromConfig(AWSConfig),
@@ -82,7 +83,7 @@ func InitLambdaClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfV
 	return lambdaClient
 }
 
-func InitCodeBuildClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int) CodeBuildModule {
+func InitCodeBuildCommandClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int) CodeBuildModule {
 	var AWSConfig = internal.AWSConfigFileLoader(AWSProfile, cfVersion)
 	codeBuildClient := CodeBuildModule{
 		CodeBuildClient: codebuild.NewFromConfig(AWSConfig),
@@ -93,7 +94,7 @@ func InitCodeBuildClient(caller sts.GetCallerIdentityOutput, AWSProfile string, 
 	return codeBuildClient
 }
 
-func InitECRClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int) ECRModule {
+func InitECRCommandClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int) ECRModule {
 	var AWSConfig = internal.AWSConfigFileLoader(AWSProfile, cfVersion)
 	ecrClient := ECRModule{
 		ECRClient:  ecr.NewFromConfig(AWSConfig),
@@ -104,7 +105,7 @@ func InitECRClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVers
 	return ecrClient
 }
 
-func InitFileSystemsClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int) FilesystemsModule {
+func InitFileSystemsCommandClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int) FilesystemsModule {
 	var AWSConfig = internal.AWSConfigFileLoader(AWSProfile, cfVersion)
 	fileSystemsClient := FilesystemsModule{
 		EFSClient:  efs.NewFromConfig(AWSConfig),
@@ -116,7 +117,7 @@ func InitFileSystemsClient(caller sts.GetCallerIdentityOutput, AWSProfile string
 	return fileSystemsClient
 }
 
-func InitOrgClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int) OrgModule {
+func InitOrgCommandClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int) OrgModule {
 	var AWSConfig = internal.AWSConfigFileLoader(AWSProfile, cfVersion)
 	orgClient := OrgModule{
 		OrganizationsClient: organizations.NewFromConfig(AWSConfig),
@@ -135,4 +136,8 @@ func InitSecretsManagerClient(caller sts.GetCallerIdentityOutput, AWSProfile str
 func InitGlueClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int) *glue.Client {
 	var AWSConfig = internal.AWSConfigFileLoader(AWSProfile, cfVersion)
 	return glue.NewFromConfig(AWSConfig)
+}
+
+func InitOrgClient(AWSConfig aws.Config) *organizations.Client {
+	return organizations.NewFromConfig(AWSConfig)
 }

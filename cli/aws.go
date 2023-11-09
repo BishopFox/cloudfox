@@ -444,6 +444,16 @@ var (
 		PostRun: awsPostRun,
 	}
 
+	GraphCommand = &cobra.Command{
+		Use:   "graph",
+		Short: "Graph the relationships between resources",
+		Long: "\nUse case examples:\n" +
+			os.Args[0] + " aws graph --profile readonly_profile",
+		PreRun:  awsPreRun,
+		Run:     runGraphCommand,
+		PostRun: awsPostRun,
+	}
+
 	AllChecksCommand = &cobra.Command{
 
 		Use:     "all-checks",
@@ -510,7 +520,7 @@ func awsPreRun(cmd *cobra.Command, args []string) {
 				}
 			}
 
-			orgModuleClient := aws.InitOrgClient(*caller, profile, cmd.Root().Version, Goroutines)
+			orgModuleClient := aws.InitOrgCommandClient(*caller, profile, cmd.Root().Version, Goroutines)
 			isPartOfOrg := orgModuleClient.IsCallerAccountPartOfAnOrg()
 			if isPartOfOrg {
 				isMgmtAccount := orgModuleClient.IsManagementAccount(orgModuleClient.DescribeOrgOutput, ptr.ToString(caller.Account))
@@ -570,7 +580,7 @@ func FindOrgMgmtAccountAndReorderAccounts(AWSProfiles []string, version string) 
 				fmt.Printf("[%s] Loaded cached AWS data for to %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), ptr.ToString(caller.Account))
 			}
 		}
-		orgModuleClient := aws.InitOrgClient(*caller, profile, version, Goroutines)
+		orgModuleClient := aws.InitOrgCommandClient(*caller, profile, version, Goroutines)
 		orgModuleClient.DescribeOrgOutput, err = sdk.CachedOrganizationsDescribeOrganization(orgModuleClient.OrganizationsClient, ptr.ToString(caller.Account))
 		if err != nil {
 			continue
@@ -751,7 +761,7 @@ func runSNSCommand(cmd *cobra.Command, args []string) {
 		if err != nil {
 			continue
 		}
-		cloudFoxSNSClient := aws.InitCloudFoxSNSClient(*caller, profile, cmd.Root().Version, Goroutines, AWSWrapTable)
+		cloudFoxSNSClient := aws.InitSNSCommandClient(*caller, profile, cmd.Root().Version, Goroutines, AWSWrapTable)
 		cloudFoxSNSClient.PrintSNS(AWSOutputDirectory, Verbosity)
 	}
 }
@@ -863,6 +873,29 @@ func runFilesystemsCommand(cmd *cobra.Command, args []string) {
 			AWSTableCols:  AWSTableCols,
 		}
 		filesystems.PrintFilesystems(AWSOutputDirectory, Verbosity)
+	}
+}
+
+func runGraphCommand(cmd *cobra.Command, args []string) {
+	for _, profile := range AWSProfiles {
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
+		if err != nil {
+			continue
+		}
+		graphCommandClient := aws.GraphCommand{
+			Caller:             *caller,
+			AWSProfile:         profile,
+			Goroutines:         Goroutines,
+			AWSRegions:         internal.GetEnabledRegions(profile, cmd.Root().Version),
+			WrapTable:          AWSWrapTable,
+			AWSOutputType:      AWSOutputType,
+			AWSTableCols:       AWSTableCols,
+			AWSOutputDirectory: AWSOutputDirectory,
+			Verbosity:          Verbosity,
+			AWSConfig:          AWSConfig,
+		}
+		graphCommandClient.RunGraphCommand()
 	}
 }
 
@@ -1703,7 +1736,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		}
 		sqsMod.PrintSQS(AWSOutputDirectory, Verbosity)
 
-		cloudFoxSNSClient := aws.InitCloudFoxSNSClient(*caller, profile, cmd.Root().Version, Goroutines, AWSWrapTable)
+		cloudFoxSNSClient := aws.InitSNSCommandClient(*caller, profile, cmd.Root().Version, Goroutines, AWSWrapTable)
 		cloudFoxSNSClient.PrintSNS(AWSOutputDirectory, Verbosity)
 
 		resourceTrustsCommand := aws.ResourceTrustsModule{
@@ -1884,6 +1917,7 @@ func init() {
 		ResourceTrustsCommand,
 		OrgsCommand,
 		DatabasesCommand,
+		GraphCommand,
 	)
 
 }
