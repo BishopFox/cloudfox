@@ -213,9 +213,9 @@ func (m *AzVMsModule) getComputeRelevantData(sub subscriptions.Subscription, rg 
 		if vm.VirtualMachineProperties != nil && vm.OsProfile != nil {
 			adminUsername = ptr.ToString(vm.OsProfile.AdminUsername)
 		}
-		privateIPs, publicIPs := m.getIPs(ptr.ToString(sub.SubscriptionID), ptr.ToString(rg.Name), vm)
+		privateIPs, publicIPs := getIPs(ptr.ToString(sub.SubscriptionID), ptr.ToString(rg.Name), vm)
 		// get userdata
-		vmDetails, err := m.getComputeVmInfo(subscriptionID, resourceGroupName, ptr.ToString(vm.Name))
+		vmDetails, err := getComputeVmInfo(subscriptionID, resourceGroupName, ptr.ToString(vm.Name))
 		if err != nil {
 			fmt.Println("error fetching vm details for vm: ", ptr.ToString(vm.Name))
 		}
@@ -280,9 +280,17 @@ func (m *AzVMsModule) getComputeVMsPerResourceGroupOriginal(subscriptionID strin
 }
 
 // get vms with user-data view
-func (m *AzVMsModule) getComputeVmInfo(subscriptionID string, resourceGroup string, vmName string) (compute.VirtualMachine, error) {
+func getComputeVmInfo(subscriptionID string, resourceGroup string, vmName string) (compute.VirtualMachine, error) {
 	computeClient := internal.GetVirtualMachinesClient(subscriptionID)
 	vm, err := computeClient.Get(context.Background(), resourceGroup, vmName, compute.InstanceViewTypesUserData)
+	if err != nil {
+		return compute.VirtualMachine{}, fmt.Errorf("could not get vm %s. %s", vmName, err)
+	}
+	return vm, nil
+}
+func getComputeVmInstanceView(subscriptionID string, resourceGroup string, vmName string) (compute.VirtualMachine, error) {
+	computeClient := internal.GetVirtualMachinesClient(subscriptionID)
+	vm, err := computeClient.Get(context.Background(), resourceGroup, vmName, compute.InstanceViewTypesInstanceView)
 	if err != nil {
 		return compute.VirtualMachine{}, fmt.Errorf("could not get vm %s. %s", vmName, err)
 	}
@@ -312,7 +320,7 @@ func (m *AzVMsModule) mockedGetComputeVMsPerResourceGroup(subscriptionID, resour
 	return results, nil
 }
 
-func (m *AzVMsModule) getIPs(subscriptionID string, resourceGroup string, vm compute.VirtualMachine) ([]string, []string) {
+func getIPs(subscriptionID string, resourceGroup string, vm compute.VirtualMachine) ([]string, []string) {
 	var privateIPs, publicIPs []string
 
 	if vm.VirtualMachineProperties.NetworkProfile.NetworkInterfaces != nil {
@@ -328,7 +336,7 @@ func (m *AzVMsModule) getIPs(subscriptionID string, resourceGroup string, vm com
 						ptr.ToString(
 							ip.InterfaceIPConfigurationPropertiesFormat.PrivateIPAddress))
 
-					publicIP, err := m.getPublicIP(subscriptionID, resourceGroup, ip)
+					publicIP, err := getPublicIP(subscriptionID, resourceGroup, ip)
 					if err != nil {
 						publicIPs = append(publicIPs, err.Error())
 					} else {
@@ -377,11 +385,11 @@ func (m *AzVMsModule) mockedGetNICdetails(subscriptionID, resourceGroup string, 
 	return network.Interface{}, fmt.Errorf("NICnotFound_%s", ptr.ToString(nicReference.ID))
 }
 
-func (m *AzVMsModule) getPublicIP(subscriptionID string, resourceGroup string, ip network.InterfaceIPConfiguration) (*string, error) {
-	return m.getPublicIPOriginal(subscriptionID, resourceGroup, ip)
+func getPublicIP(subscriptionID string, resourceGroup string, ip network.InterfaceIPConfiguration) (*string, error) {
+	return getPublicIPOriginal(subscriptionID, resourceGroup, ip)
 }
 
-func (m *AzVMsModule) getPublicIPOriginal(subscriptionID string, resourceGroup string, ip network.InterfaceIPConfiguration) (*string, error) {
+func getPublicIPOriginal(subscriptionID string, resourceGroup string, ip network.InterfaceIPConfiguration) (*string, error) {
 	client := internal.GetPublicIPClient(subscriptionID)
 	if ip.InterfaceIPConfigurationPropertiesFormat.PublicIPAddress == nil {
 		return nil, fmt.Errorf("NoPublicIP")
