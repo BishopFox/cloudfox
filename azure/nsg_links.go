@@ -155,7 +155,8 @@ func getSourceFromSecurityGroupRule(rule *network.SecurityRule) string {
 	final = stringAndArrayToString(rule.SecurityRulePropertiesFormat.SourceAddressPrefix, rule.SecurityRulePropertiesFormat.SourceAddressPrefixes, "\n")
 	if rule.SecurityRulePropertiesFormat.SourceApplicationSecurityGroups != nil {
 		for _, app := range *rule.SecurityRulePropertiesFormat.SourceApplicationSecurityGroups {
-			final = fmt.Sprintf("%s\n%s", final, ptr.ToString(app.Name))
+			resource, _ := azure.ParseResourceID(ptr.ToString(app.ID))
+			final = fmt.Sprintf("%s\n%s", final, resource.ResourceName)
 		}
 	}
 	return final
@@ -166,7 +167,8 @@ func getDestinationFromSecurityGroupRule(rule *network.SecurityRule) string {
 	final = stringAndArrayToString(rule.SecurityRulePropertiesFormat.DestinationAddressPrefix, rule.SecurityRulePropertiesFormat.DestinationAddressPrefixes, "\n")
 	if rule.SecurityRulePropertiesFormat.DestinationApplicationSecurityGroups != nil {
 		for _, app := range *rule.SecurityRulePropertiesFormat.DestinationApplicationSecurityGroups {
-			final = fmt.Sprintf("%s\n%s", final, ptr.ToString(app.Name))
+			resource, _ := azure.ParseResourceID(ptr.ToString(app.ID))
+			final = fmt.Sprintf("%s\n%s", final, resource.ResourceName)
 		}
 	}
 	return final
