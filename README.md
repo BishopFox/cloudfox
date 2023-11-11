@@ -14,8 +14,12 @@ CloudFox helps you gain situational awareness in unfamiliar cloud environments. 
 
 ## Demos, Examples, Walkthroughs
 * [Blog - Introducing: CloudFox](https://bishopfox.com/blog/introducing-cloudfox)
+* [Video - Penetration Testing with CloudFox](https://www.youtube.com/watch?v=Ljt_JUp5HbM)
 * [Video - CloudFox Intro Demos](https://www.youtube.com/watch?v=ReWoUgpUuiQ)
-* [Video - Tool Talk: CloudFox AWS sub-command walkthroughs](https://youtu.be/KKsYfL5uVU4?t=360) 
+* [Video - Tool Talk: CloudFox AWS sub-command walkthroughs](https://youtu.be/KKsYfL5uVU4?t=360)
+
+## Intentionally Vulnerable Playground 
+* [CloudFoxable - A Gamified Cloud Hacking Sandbox](https://cloudfoxable.bishopfox.com/)
 
 ## Quick Start
 CloudFox is modular (you can run one command at a time), but there is an `aws all-checks` command that will run the other aws commands for you with sane defaults: 
