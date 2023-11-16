@@ -16,7 +16,7 @@ type RDSClientInterface interface {
 	DescribeDBInstances(context.Context, *rds.DescribeDBInstancesInput, ...func(*rds.Options)) (*rds.DescribeDBInstancesOutput, error)
 }
 
-func RegisterRDSTypes() {
+func init() {
 	gob.Register([]rdsTypes.DBInstance{})
 }
 

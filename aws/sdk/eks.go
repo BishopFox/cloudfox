@@ -18,7 +18,7 @@ type EKSClientInterface interface {
 	ListNodegroups(context.Context, *eks.ListNodegroupsInput, ...func(*eks.Options)) (*eks.ListNodegroupsOutput, error)
 }
 
-func RegisterEKSTypes() {
+func init() {
 	gob.Register([]string{})
 	gob.Register(eksTypes.Cluster{})
 	gob.Register(eksTypes.Nodegroup{})
@@ -126,7 +126,7 @@ func CachedEKSListNodeGroups(client EKSClientInterface, accountID string, region
 
 func CachedEKSDescribeNodeGroup(client EKSClientInterface, accountID string, region string, clusterName string, nodeGroupName string) (eksTypes.Nodegroup, error) {
 	var nodeGroup eksTypes.Nodegroup
-	cacheKey := fmt.Sprintf("%s-eks-DescribeNodeGroup-%s-%s-%s", accountID, region, nodeGroupName)
+	cacheKey := fmt.Sprintf("%s-eks-DescribeNodeGroup-%s-%s-%s", accountID, region, clusterName, nodeGroupName)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
 		return cached.(eksTypes.Nodegroup), nil

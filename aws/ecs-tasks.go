@@ -13,7 +13,6 @@ import (
 	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -21,20 +20,16 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type DescribeTasksDefinitionAPIClient interface {
-	DescribeTaskDefinition(context.Context, *ecs.DescribeTaskDefinitionInput, ...func(*ecs.Options)) (*ecs.DescribeTaskDefinitionOutput, error)
-}
 type ECSTasksModule struct {
-	DescribeTaskDefinitionClient    DescribeTasksDefinitionAPIClient
-	DescribeTasksClient             ecs.DescribeTasksAPIClient
-	ListTasksClient                 ecs.ListTasksAPIClient
-	ListClustersClient              ecs.ListClustersAPIClient
-	DescribeNetworkInterfacesClient ec2.DescribeNetworkInterfacesAPIClient
-	IAMClient                       sdk.AWSIAMClientInterface
+	ECSClient sdk.AWSECSClientInterface
+	EC2Client sdk.AWSEC2ClientInterface
+	IAMClient sdk.AWSIAMClientInterface
 
-	Caller         sts.GetCallerIdentityOutput
-	AWSRegions     []string
-	OutputFormat   string
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	AWSOutputType string
+	AWSTableCols  string
+
 	AWSProfile     string
 	Goroutines     int
 	SkipAdminCheck bool
@@ -63,7 +58,7 @@ type MappedECSTask struct {
 	CanPrivEsc            string
 }
 
-func (m *ECSTasksModule) ECSTasks(outputFormat string, outputDirectory string, verbosity int) {
+func (m *ECSTasksModule) ECSTasks(outputDirectory string, verbosity int) {
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "ecs-tasks"
@@ -126,7 +121,7 @@ func (m *ECSTasksModule) ECSTasks(outputFormat string, outputDirectory string, v
 	receiverDone <- true
 	<-receiverDone
 
-	m.printECSTaskData(outputFormat, outputDirectory, dataReceiver, verbosity)
+	m.printECSTaskData(outputDirectory, dataReceiver, verbosity)
 
 }
 
@@ -143,9 +138,36 @@ func (m *ECSTasksModule) Receiver(receiver chan MappedECSTask, receiverDone chan
 	}
 }
 
-func (m *ECSTasksModule) printECSTaskData(outputFormat string, outputDirectory string, dataReceiver chan MappedECSTask, verbosity int) {
-	if m.pmapperError == nil {
-		m.output.Headers = []string{
+func (m *ECSTasksModule) printECSTaskData(outputDirectory string, dataReceiver chan MappedECSTask, verbosity int) {
+	// This is the complete list of potential table columns
+	m.output.Headers = []string{
+		"Account",
+		"Cluster",
+		"TaskDefinition",
+		"LaunchType",
+		"ID",
+		"External IP",
+		"Internal IP",
+		"RoleArn",
+		"IsAdminRole?",
+		"CanPrivEscToAdmin?",
+	}
+
+	// If the user specified table columns, use those.
+	// If the user specified -o wide, use the wide default cols for this module.
+	// Otherwise, use the hardcoded default cols for this module.
+	var tableCols []string
+	// If the user specified table columns, use those.
+	if m.AWSTableCols != "" {
+		// If the user specified wide as the output format, use these columns.
+		// remove any spaces between any commas and the first letter after the commas
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
+		tableCols = strings.Split(m.AWSTableCols, ",")
+		// If the user specified wide as the output format, use these columns.
+	} else if m.AWSOutputType == "wide" {
+		tableCols = []string{
+			"Account",
 			"Cluster",
 			"TaskDefinition",
 			"LaunchType",
@@ -156,61 +178,46 @@ func (m *ECSTasksModule) printECSTaskData(outputFormat string, outputDirectory s
 			"IsAdminRole?",
 			"CanPrivEscToAdmin?",
 		}
+		// Otherwise, use the default columns.
 	} else {
-		m.output.Headers = []string{
+		tableCols = []string{
 			"Cluster",
 			"TaskDefinition",
 			"LaunchType",
-			"ID",
 			"External IP",
 			"Internal IP",
 			"RoleArn",
 			"IsAdminRole?",
-			//"CanPrivEscToAdmin?",
+			"CanPrivEscToAdmin?",
 		}
 	}
 
-	if m.pmapperError == nil {
-		for _, ecsTask := range m.MappedECSTasks {
-			m.output.Body = append(
-				m.output.Body,
-				[]string{
-					ecsTask.Cluster,
-					ecsTask.TaskDefinitionName,
-					ecsTask.LaunchType,
-					ecsTask.ID,
-					ecsTask.ExternalIP,
-					ecsTask.PrivateIP,
-					ecsTask.Role,
-					ecsTask.Admin,
-					ecsTask.CanPrivEsc,
-				},
-			)
-		}
-	} else {
-		for _, ecsTask := range m.MappedECSTasks {
-			m.output.Body = append(
-				m.output.Body,
-				[]string{
-					ecsTask.Cluster,
-					ecsTask.TaskDefinitionName,
-					ecsTask.LaunchType,
-					ecsTask.ID,
-					ecsTask.ExternalIP,
-					ecsTask.PrivateIP,
-					ecsTask.Role,
-					ecsTask.Admin,
-					//ecsTask.CanPrivEsc,
-				},
-			)
-		}
+	// Remove the pmapper row if there is no pmapper data
+	if m.pmapperError != nil {
+		sharedLogger.Errorf("%s - %s - No pmapper data found for this account. Skipping the pmapper column in the output table.", m.output.CallingModule, m.AWSProfile)
+		tableCols = removeStringFromSlice(tableCols, "CanPrivEscToAdmin?")
+	}
+
+	for _, ecsTask := range m.MappedECSTasks {
+		m.output.Body = append(
+			m.output.Body,
+			[]string{
+				aws.ToString(m.Caller.Account),
+				ecsTask.Cluster,
+				ecsTask.TaskDefinitionName,
+				ecsTask.LaunchType,
+				ecsTask.ID,
+				ecsTask.ExternalIP,
+				ecsTask.PrivateIP,
+				ecsTask.Role,
+				ecsTask.Admin,
+				ecsTask.CanPrivEsc,
+			},
+		)
 	}
 
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		//m.writeLoot(m.output.FilePath)
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,
@@ -219,9 +226,10 @@ func (m *ECSTasksModule) printECSTaskData(outputFormat string, outputDirectory s
 			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			Body:      m.output.Body,
+			TableCols: tableCols,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
@@ -313,75 +321,37 @@ func (m *ECSTasksModule) executeChecks(r string, wg *sync.WaitGroup, dataReceive
 
 func (m *ECSTasksModule) getListClusters(region string, dataReceiver chan MappedECSTask) {
 
-	var PaginationControl *string
-	for {
-		ListClusters, err := m.ListClustersClient.ListClusters(
-			context.TODO(),
-			&(ecs.ListClustersInput{
-				NextToken: PaginationControl,
-			}),
-			func(o *ecs.Options) {
-				o.Region = region
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
-
-		for _, clusterARN := range ListClusters.ClusterArns {
-			m.getListTasks(clusterARN, region, dataReceiver)
-		}
-
-		if ListClusters.NextToken != nil {
-			PaginationControl = ListClusters.NextToken
-		} else {
-			PaginationControl = nil
-			break
-		}
-
+	ClusterArns, err := sdk.CachedECSListClusters(m.ECSClient, aws.ToString(m.Caller.Account), region)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
 	}
+
+	for _, clusterARN := range ClusterArns {
+		m.getListTasks(clusterARN, region, dataReceiver)
+	}
+
 }
 
 func (m *ECSTasksModule) getListTasks(clusterARN string, region string, dataReceiver chan MappedECSTask) {
-	var PaginationControl *string
-	for {
-
-		ListTasks, err := m.ListTasksClient.ListTasks(
-			context.TODO(),
-			&(ecs.ListTasksInput{
-				Cluster:   aws.String(clusterARN),
-				NextToken: PaginationControl,
-			}),
-			func(o *ecs.Options) {
-				o.Region = region
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
-
-		batchSize := 100 // maximum value: https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_DescribeTasks.html#API_DescribeTasks_RequestSyntax
-		for i := 0; i < len(ListTasks.TaskArns); i += batchSize {
-			j := i + batchSize
-			if j > len(ListTasks.TaskArns) {
-				j = len(ListTasks.TaskArns)
-			}
-
-			m.loadTasksData(clusterARN, ListTasks.TaskArns[i:j], region, dataReceiver)
-		}
-
-		if ListTasks.NextToken != nil {
-			PaginationControl = ListTasks.NextToken
-		} else {
-			PaginationControl = nil
-			break
-		}
-
+	TaskArns, err := sdk.CachedECSListTasks(m.ECSClient, aws.ToString(m.Caller.Account), region, clusterARN)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
 	}
+
+	batchSize := 100 // maximum value: https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_DescribeTasks.html#API_DescribeTasks_RequestSyntax
+	for i := 0; i < len(TaskArns); i += batchSize {
+		j := i + batchSize
+		if j > len(TaskArns) {
+			j = len(TaskArns)
+		}
+
+		m.loadTasksData(clusterARN, TaskArns[i:j], region, dataReceiver)
+	}
+
 }
 
 func (m *ECSTasksModule) loadTasksData(clusterARN string, taskARNs []string, region string, dataReceiver chan MappedECSTask) {
@@ -390,16 +360,7 @@ func (m *ECSTasksModule) loadTasksData(clusterARN string, taskARNs []string, reg
 		return
 	}
 
-	DescribeTasks, err := m.DescribeTasksClient.DescribeTasks(
-		context.TODO(),
-		&(ecs.DescribeTasksInput{
-			Cluster: aws.String(clusterARN),
-			Tasks:   taskARNs,
-		}),
-		func(o *ecs.Options) {
-			o.Region = region
-		},
-	)
+	Tasks, err := sdk.CachedECSDescribeTasks(m.ECSClient, aws.ToString(m.Caller.Account), region, clusterARN, taskARNs)
 	if err != nil {
 		m.modLog.Error(err.Error())
 		m.CommandCounter.Error++
@@ -407,7 +368,7 @@ func (m *ECSTasksModule) loadTasksData(clusterARN string, taskARNs []string, reg
 	}
 
 	eniIDs := []string{}
-	for _, task := range DescribeTasks.Tasks {
+	for _, task := range Tasks {
 		eniID := getElasticNetworkInterfaceIDOfECSTask(task)
 		if eniID != "" {
 			eniIDs = append(eniIDs, eniID)
@@ -420,8 +381,9 @@ func (m *ECSTasksModule) loadTasksData(clusterARN string, taskARNs []string, reg
 		return
 	}
 
-	for _, task := range DescribeTasks.Tasks {
-		taskDefinition, err := m.describeTaskDefinition(aws.ToString(task.TaskDefinitionArn), region)
+	for _, task := range Tasks {
+		//taskDefinition, err := m.describeTaskDefinition(aws.ToString(task.TaskDefinitionArn), region)
+		taskDefinition, err := sdk.CachedECSDescribeTaskDefinition(m.ECSClient, aws.ToString(m.Caller.Account), region, aws.ToString(task.TaskDefinitionArn))
 		if err != nil {
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
@@ -461,7 +423,7 @@ func getTaskDefinitionContent(taskDefinition types.TaskDefinition) string {
 }
 
 func (m *ECSTasksModule) describeTaskDefinition(taskDefinitionArn string, region string) (types.TaskDefinition, error) {
-	DescribeTaskDefinition, err := m.DescribeTaskDefinitionClient.DescribeTaskDefinition(
+	DescribeTaskDefinition, err := m.ECSClient.DescribeTaskDefinition(
 		context.TODO(),
 		&ecs.DescribeTaskDefinitionInput{
 			TaskDefinition: &taskDefinitionArn,
@@ -511,20 +473,13 @@ func (m *ECSTasksModule) loadPublicIPs(eniIDs []string, region string) (map[stri
 	if len(eniIDs) == 0 {
 		return eniPublicIPs, nil
 	}
-	DescribeNetworkInterfaces, err := m.DescribeNetworkInterfacesClient.DescribeNetworkInterfaces(
-		context.TODO(),
-		&(ec2.DescribeNetworkInterfacesInput{
-			NetworkInterfaceIds: eniIDs,
-		}),
-		func(o *ec2.Options) {
-			o.Region = region
-		},
-	)
+
+	NetworkInterfaces, err := sdk.CachedEC2DescribeNetworkInterfaces(m.EC2Client, aws.ToString(m.Caller.Account), region)
 	if err != nil {
 		return nil, fmt.Errorf("getting elastic network interfaces: %s", err)
 	}
 
-	for _, eni := range DescribeNetworkInterfaces.NetworkInterfaces {
+	for _, eni := range NetworkInterfaces {
 		eniPublicIPs[aws.ToString(eni.NetworkInterfaceId)] = getPublicIPOfElasticNetworkInterface(eni)
 	}
 

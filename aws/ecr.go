@@ -21,13 +21,15 @@ import (
 
 type ECRModule struct {
 	// General configuration data
-	ECRClient    sdk.AWSECRClientInterface
-	Caller       sts.GetCallerIdentityOutput
-	AWSRegions   []string
-	OutputFormat string
-	Goroutines   int
-	AWSProfile   string
-	WrapTable    bool
+	ECRClient     sdk.AWSECRClientInterface
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	AWSOutputType string
+	AWSTableCols  string
+
+	Goroutines int
+	AWSProfile string
+	WrapTable  bool
 
 	// Main module data
 	Repositories   []Repository
@@ -49,8 +51,8 @@ type Repository struct {
 	PolicyJSON string
 }
 
-func (m *ECRModule) PrintECR(outputFormat string, outputDirectory string, verbosity int) {
-	// These stuct values are used by the output module
+func (m *ECRModule) PrintECR(outputDirectory string, verbosity int) {
+	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "ecr"
@@ -95,8 +97,9 @@ func (m *ECRModule) PrintECR(outputFormat string, outputDirectory string, verbos
 	receiverDone <- true
 	<-receiverDone
 
-	// add - if struct is not empty do this. otherwise, dont write anything.
+	// This is the complete list of potential table columns
 	m.output.Headers = []string{
+		"Account",
 		"Service",
 		"Region",
 		"Name",
@@ -106,11 +109,53 @@ func (m *ECRModule) PrintECR(outputFormat string, outputDirectory string, verbos
 		"ImageSize",
 	}
 
+	// If the user specified table columns, use those.
+	// If the user specified -o wide, use the wide default cols for this module.
+	// Otherwise, use the hardcoded default cols for this module.
+	var tableCols []string
+	// If the user specified table columns, use those.
+	if m.AWSTableCols != "" {
+		// If the user specified wide as the output format, use these columns.
+		// remove any spaces between any commas and the first letter after the commas
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
+		tableCols = strings.Split(m.AWSTableCols, ",")
+		// If the user specified wide as the output format, use these columns.
+	} else if m.AWSOutputType == "wide" {
+		tableCols = []string{
+			"Account",
+			"Service",
+			"Region",
+			"Name",
+			"URI",
+			"PushedAt",
+			"ImageTags",
+			"ImageSize",
+		}
+		// Otherwise, use the default columns.
+	} else {
+		tableCols = []string{
+			"Service",
+			"Region",
+			"Name",
+			"URI",
+			"PushedAt",
+			"ImageTags",
+			"ImageSize",
+		}
+	}
+
+	// sort the table by Name
+	sort.Slice(m.Repositories, func(i, j int) bool {
+		return m.Repositories[i].Name < m.Repositories[j].Name
+	})
+
 	// Table rows
 	for i := range m.Repositories {
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
+				aws.ToString(m.Caller.Account),
 				m.Repositories[i].AWSService,
 				m.Repositories[i].Region,
 				m.Repositories[i].Name,
@@ -124,10 +169,7 @@ func (m *ECRModule) PrintECR(outputFormat string, outputDirectory string, verbos
 	}
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		//m.output.OutputSelector(outputFormat)
-		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		//m.writeLoot(m.output.FilePath, verbosity)
+
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,
@@ -136,9 +178,10 @@ func (m *ECRModule) PrintECR(outputFormat string, outputDirectory string, verbos
 			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			Body:      m.output.Body,
+			TableCols: tableCols,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
@@ -239,92 +282,89 @@ func (m *ECRModule) getECRRecordsPerRegion(r string, wg *sync.WaitGroup, semapho
 		<-semaphore
 	}()
 
-	var allImages []types.ImageDetail
-	var repoURI string
-	var repoName string
-
-	DescribeRepositories, err := m.describeRepositories(r)
+	Repositories, err := sdk.CachedECRDescribeRepositories(m.ECRClient, aws.ToString(m.Caller.Account), r)
 	if err != nil {
 		m.modLog.Error(err.Error())
 		m.CommandCounter.Error++
 		return
 	}
 
-	for _, repo := range DescribeRepositories {
-		repoName = aws.ToString(repo.RepositoryName)
-		repoURI = aws.ToString(repo.RepositoryUri)
+	for _, repo := range Repositories {
+		repoName := aws.ToString(repo.RepositoryName)
+		repoURI := aws.ToString(repo.RepositoryUri)
 		//created := *repo.CreatedAt
 		//fmt.Printf("%s, %s, %s", repoName, repoURI, created)
-
-		images, err := m.describeImages(r, repoName)
+		images, err := sdk.CachedECRDescribeImages(m.ECRClient, aws.ToString(m.Caller.Account), r, repoName)
 		if err != nil {
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
-			return
+			continue
 		}
-		allImages = append(allImages, images...)
-	}
 
-	sort.Slice(allImages, func(i, j int) bool {
-		return allImages[i].ImagePushedAt.Format("2006-01-02 15:04:05") < allImages[j].ImagePushedAt.Format("2006-01-02 15:04:05")
-	})
+		sort.Slice(images, func(i, j int) bool {
+			return images[i].ImagePushedAt.Format("2006-01-02 15:04:05") < images[j].ImagePushedAt.Format("2006-01-02 15:04:05")
+		})
 
-	var image types.ImageDetail
-	var imageTags string
+		var image types.ImageDetail
+		var imageTags string
 
-	if len(allImages) > 1 {
-		image = allImages[len(allImages)-1]
-	} else if len(allImages) == 1 {
-		image = allImages[0]
-	} else {
-		return
-	}
+		if len(images) > 1 {
+			image = images[len(images)-1]
+		} else if len(images) == 1 {
+			image = images[0]
+		} else {
+			continue
+		}
 
-	if len(image.ImageTags) > 0 {
-		imageTags = image.ImageTags[0]
-	}
-	//imageTags := image.ImageTags[0]
-	pushedAt := image.ImagePushedAt.Format("2006-01-02 15:04:05")
-	imageSize := aws.ToInt64(image.ImageSizeInBytes)
-	pullURI := fmt.Sprintf("%s:%s", repoURI, imageTags)
+		if len(image.ImageTags) > 0 {
+			imageTags = image.ImageTags[0]
+		} else {
+			imageTags = "No tags"
+		}
 
-	dataReceiver <- Repository{
-		AWSService: "ECR",
-		Name:       repoName,
-		Region:     r,
-		URI:        pullURI,
-		PushedAt:   pushedAt,
-		ImageTags:  imageTags,
-		ImageSize:  imageSize,
+		//imageTags := image.ImageTags[0]
+		pushedAt := image.ImagePushedAt.Format("2006-01-02 15:04:05")
+		imageSize := aws.ToInt64(image.ImageSizeInBytes)
+		pullURI := fmt.Sprintf("%s:%s", repoURI, imageTags)
+
+		dataReceiver <- Repository{
+			AWSService: "ECR",
+			Name:       repoName,
+			Region:     r,
+			URI:        pullURI,
+			PushedAt:   pushedAt,
+			ImageTags:  imageTags,
+			ImageSize:  imageSize,
+		}
 	}
 
 }
 
-func (m *ECRModule) describeRepositories(r string) ([]types.Repository, error) {
+// func (m *ECRModule) describeRepositories(r string) ([]types.Repository, error) {
 
-	var repositories []types.Repository
-	Repositories, err := sdk.CachedECRDescribeRepositories(m.ECRClient, aws.ToString(m.Caller.Account), r)
-	if err != nil {
-		m.CommandCounter.Error++
-		return nil, err
-	}
+// 	var repositories []types.Repository
+// 	Repositories, err := sdk.CachedECRDescribeRepositories(m.ECRClient, aws.ToString(m.Caller.Account), r)
+// 	if err != nil {
+// 		m.CommandCounter.Error++
+// 		return nil, err
+// 	}
 
-	repositories = append(repositories, Repositories...)
+// 	repositories = append(repositories, Repositories...)
 
-	return repositories, nil
-}
+// 	return repositories, nil
+// }
 
-func (m *ECRModule) describeImages(r string, repoName string) ([]types.ImageDetail, error) {
-	var images []types.ImageDetail
+// func (m *ECRModule) describeImages(r string, repoName string) ([]types.ImageDetail, error) {
+// 	var images []types.ImageDetail
 
-	ImageDetails, err := sdk.CachedECRDescribeImages(m.ECRClient, aws.ToString(m.Caller.Account), r, repoName)
-	if err != nil {
-		m.CommandCounter.Error++
-		return nil, err
-	}
-	images = append(images, ImageDetails...)
-	return images, nil
-}
+// 	ImageDetails, err := sdk.CachedECRDescribeImages(m.ECRClient, aws.ToString(m.Caller.Account), r, repoName)
+// 	if err != nil {
+// 		m.CommandCounter.Error++
+// 		return nil, err
+// 	}
+// 	images = append(images, ImageDetails...)
+// 	return images, nil
+// }
 
 func (m *ECRModule) getECRRepositoryPolicy(r string, repository string) (policy.Policy, error) {
 	var repoPolicy policy.Policy

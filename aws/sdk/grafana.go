@@ -15,7 +15,7 @@ type GrafanaClientInterface interface {
 	ListWorkspaces(context.Context, *grafana.ListWorkspacesInput, ...func(*grafana.Options)) (*grafana.ListWorkspacesOutput, error)
 }
 
-func RegisterGrafanaTypes() {
+func init() {
 	gob.Register([]grafanaTypes.WorkspaceSummary{})
 }
 

@@ -48,9 +48,9 @@ func TestSQSQueues(t *testing.T) {
 	tmpDir := "."
 
 	// execute the module with verbosity set to 2
-	m.PrintSQS("table", tmpDir, 2)
+	m.PrintSQS(tmpDir, 2)
 
-	resultsFilePath := filepath.Join(tmpDir, "cloudfox-output/aws/123456789012-unittesting/table/sqs.txt")
+	resultsFilePath := filepath.Join(tmpDir, "cloudfox-output/aws/unittesting-123456789012/table/sqs.txt")
 	resultsFile, err := afero.ReadFile(fs, resultsFilePath)
 	if err != nil {
 		t.Fatalf("Cannot read output file at %s: %s", resultsFilePath, err)

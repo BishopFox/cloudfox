@@ -19,7 +19,7 @@ type AWSS3ClientInterface interface {
 	GetPublicAccessBlock(ctx context.Context, params *s3.GetPublicAccessBlockInput, optFns ...func(*s3.Options)) (*s3.GetPublicAccessBlockOutput, error)
 }
 
-func RegisterS3Types() {
+func init() {
 	gob.Register([]s3Types.Bucket{})
 	gob.Register(s3Types.Bucket{})
 	gob.Register(&s3Types.PublicAccessBlockConfiguration{})
@@ -90,6 +90,7 @@ func CachedGetBucketPolicy(S3Client AWSS3ClientInterface, accountID string, r st
 		},
 	)
 	if err != nil {
+		internal.Cache.Set(cacheKey, "", cache.DefaultExpiration)
 		return "", err
 	}
 

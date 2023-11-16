@@ -53,7 +53,6 @@ func TestTags(t *testing.T) {
 					UserId:  aws.String("AIDAJDPLRKLG7UEXAMPLE"),
 				},
 				AWSRegions:            []string{"us-east-1"},
-				OutputFormat:          "table",
 				Goroutines:            10,
 				AWSProfile:            "test",
 				WrapTable:             false,
@@ -73,7 +72,7 @@ func TestTags(t *testing.T) {
 	internal.MockFileSystem(true)
 	for _, subtest := range subtests {
 		t.Run(subtest.name, func(t *testing.T) {
-			subtest.testModule.PrintTags(subtest.testModule.OutputFormat, subtest.outputDirectory, subtest.verbosity)
+			subtest.testModule.PrintTags(subtest.outputDirectory, subtest.verbosity)
 			if len(subtest.testModule.Tags) != len(subtest.expectedResult) {
 				t.Errorf("Expected %d results, got %d", len(subtest.expectedResult), len(subtest.testModule.Tags))
 			}

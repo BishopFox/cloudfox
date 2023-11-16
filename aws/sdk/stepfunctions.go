@@ -15,7 +15,7 @@ type StepFunctionsClientInterface interface {
 	ListStateMachines(context.Context, *sfn.ListStateMachinesInput, ...func(*sfn.Options)) (*sfn.ListStateMachinesOutput, error)
 }
 
-func RegisterStepFunctionsTypes() {
+func init() {
 	gob.Register([]sfnTypes.StateMachineListItem{})
 }
 

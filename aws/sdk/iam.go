@@ -22,12 +22,14 @@ type AWSIAMClientInterface interface {
 	GetAccountAuthorizationDetails(ctx context.Context, params *iam.GetAccountAuthorizationDetailsInput, optFns ...func(*iam.Options)) (*iam.GetAccountAuthorizationDetailsOutput, error)
 	SimulatePrincipalPolicy(ctx context.Context, params *iam.SimulatePrincipalPolicyInput, optFns ...func(*iam.Options)) (*iam.SimulatePrincipalPolicyOutput, error)
 	ListInstanceProfiles(ctx context.Context, params *iam.ListInstanceProfilesInput, optFns ...func(*iam.Options)) (*iam.ListInstanceProfilesOutput, error)
+	ListGroups(ctx context.Context, params *iam.ListGroupsInput, optFns ...func(*iam.Options)) (*iam.ListGroupsOutput, error)
 }
 
-func RegisterIamTypes() {
+func init() {
 	gob.Register([]iamTypes.User{})
 	gob.Register([]iamTypes.AccessKeyMetadata{})
 	gob.Register([]iamTypes.Role{})
+	gob.Register([]iamTypes.Group{})
 	gob.Register([]iamTypes.PolicyDetail{})
 	gob.Register([]iamTypes.InstanceProfile{})
 	gob.Register([]iamTypes.EvaluationResult{})
@@ -205,7 +207,7 @@ func CachedIamSimulatePrincipalPolicy(IAMClient AWSIAMClientInterface, accountID
 	var EvaluationResults []iamTypes.EvaluationResult
 	md5hashedActionNames := md5.Sum([]byte(strings.Join(actionNames, "")))
 	md5hashedResourceArns := md5.Sum([]byte(strings.Join(resourceArns, "")))
-	// proccess arn and get the name of the resource
+	// process arn and get the name of the resource
 	arn, err := arn.Parse(*principal)
 	if err != nil {
 		return EvaluationResults, err
@@ -249,4 +251,40 @@ func CachedIamSimulatePrincipalPolicy(IAMClient AWSIAMClientInterface, accountID
 	}
 	internal.Cache.Set(cacheKey, EvaluationResults, cache.DefaultExpiration)
 	return EvaluationResults, nil
+}
+
+func CachedIamListGroups(IAMClient AWSIAMClientInterface, accountID string) ([]iamTypes.Group, error) {
+	var PaginationControl *string
+	var Groups []iamTypes.Group
+	cacheKey := fmt.Sprintf("%s-iam-ListGroups", accountID)
+	cached, found := internal.Cache.Get(cacheKey)
+	if found {
+		return cached.([]iamTypes.Group), nil
+	}
+
+	for {
+		ListGroups, err := IAMClient.ListGroups(
+			context.TODO(),
+			&iam.ListGroupsInput{
+				Marker: PaginationControl,
+			},
+		)
+		if err != nil {
+			return Groups, err
+		}
+
+		Groups = append(Groups, ListGroups.Groups...)
+
+		// Pagination control.
+		if ListGroups.Marker != nil {
+			PaginationControl = ListGroups.Marker
+		} else {
+			PaginationControl = nil
+			break
+		}
+	}
+
+	internal.Cache.Set(cacheKey, Groups, cache.DefaultExpiration)
+	return Groups, nil
+
 }

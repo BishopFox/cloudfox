@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/BishopFox/cloudfox/aws/sdk"
@@ -25,9 +26,11 @@ type LambdasModule struct {
 	LambdaClient *lambda.Client
 	IAMClient    sdk.AWSIAMClientInterface
 
-	Caller         sts.GetCallerIdentityOutput
-	AWSRegions     []string
-	OutputFormat   string
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	AWSOutputType string
+	AWSTableCols  string
+
 	Goroutines     int
 	AWSProfile     string
 	SkipAdminCheck bool
@@ -49,15 +52,16 @@ type Lambda struct {
 	Region     string
 	Type       string
 	Name       string
+	Arn        string
 	Role       string
 	Admin      string
 	CanPrivEsc string
 	Public     string
 }
 
-func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string, verbosity int) {
+func (m *LambdasModule) PrintLambdas(outputDirectory string, verbosity int) {
 
-	// These stuct values are used by the output module
+	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "lambda"
@@ -123,23 +127,51 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 	<-receiverDone
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
-	if m.pmapperError == nil {
-		m.output.Headers = []string{
-			"Service",
+	m.output.Headers = []string{
+		"Account",
+		"Region",
+		"Name",
+		"Arn",
+		"Role",
+		"IsAdminRole?",
+		"CanPrivEscToAdmin?",
+	}
+
+	// If the user specified table columns, use those.
+	// If the user specified -o wide, use the wide default cols for this module.
+	// Otherwise, use the hardcoded default cols for this module.
+	var tableCols []string
+	// If the user specified table columns, use those.
+	if m.AWSTableCols != "" {
+		// If the user specified wide as the output format, use these columns.
+		// remove any spaces between any commas and the first letter after the commas
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
+		tableCols = strings.Split(m.AWSTableCols, ",")
+	} else if m.AWSOutputType == "wide" {
+		tableCols = []string{
+			"Account",
 			"Region",
-			"Resource",
+			"Arn",
 			"Role",
 			"IsAdminRole?",
 			"CanPrivEscToAdmin?",
 		}
+		// Otherwise, use the default columns.
 	} else {
-		m.output.Headers = []string{
+		tableCols = []string{
 			"Service",
 			"Region",
-			"Resource",
+			"Name",
 			"Role",
 			"IsAdminRole?",
+			"CanPrivEscToAdmin?",
 		}
+	}
+	// Remove the pmapper row if there is no pmapper data
+	if m.pmapperError != nil {
+		sharedLogger.Errorf("%s - %s - No pmapper data found for this account. Skipping the pmapper column in the output table.", m.output.CallingModule, m.AWSProfile)
+		tableCols = removeStringFromSlice(tableCols, "CanPrivEscToAdmin?")
 	}
 
 	sort.Slice(m.Lambdas, func(i, j int) bool {
@@ -149,41 +181,24 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 	// Table rows
 	for i := range m.Lambdas {
 
-		if m.pmapperError == nil {
-			m.output.Body = append(
-				m.output.Body,
-				[]string{
-					m.Lambdas[i].AWSService,
-					m.Lambdas[i].Region,
-					//m.Lambdas[i].Type,
-					m.Lambdas[i].Name,
-					m.Lambdas[i].Role,
-					m.Lambdas[i].Admin,
-					m.Lambdas[i].CanPrivEsc,
-					//m.Lambdas[i].Public,
-				},
-			)
-		} else {
-			m.output.Body = append(
-				m.output.Body,
-				[]string{
-					m.Lambdas[i].AWSService,
-					m.Lambdas[i].Region,
-					//m.Lambdas[i].Type,
-					m.Lambdas[i].Name,
-					m.Lambdas[i].Role,
-					m.Lambdas[i].Admin,
-					//m.Lambdas[i].CanPrivEsc,
-					//m.Lambdas[i].Public,
-				},
-			)
-		}
+		m.output.Body = append(
+			m.output.Body,
+			[]string{
+				aws.ToString(m.Caller.Account),
+				m.Lambdas[i].Region,
+				//m.Lambdas[i].Type,
+				m.Lambdas[i].Name,
+				m.Lambdas[i].Arn,
+				m.Lambdas[i].Role,
+				m.Lambdas[i].Admin,
+				m.Lambdas[i].CanPrivEsc,
+				//m.Lambdas[i].Public,
+			},
+		)
 
 	}
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,
@@ -192,9 +207,10 @@ func (m *LambdasModule) PrintLambdas(outputFormat string, outputDirectory string
 			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			Body:      m.output.Body,
+			TableCols: tableCols,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
@@ -300,13 +316,14 @@ func (m *LambdasModule) getLambdasPerRegion(r string, wg *sync.WaitGroup, semaph
 	}
 
 	for _, function := range functions {
-		//arn := aws.ToString(function.FunctionArn)
+		arn := aws.ToString(function.FunctionArn)
 		name := aws.ToString(function.FunctionName)
 		role := aws.ToString(function.Role)
 
 		dataReceiver <- Lambda{
 			AWSService: "Lambda",
 			Name:       name,
+			Arn:        arn,
 			Region:     r,
 			Type:       "",
 			Role:       role,

@@ -71,7 +71,7 @@ func TestGetSelectedAWSProfiles(t *testing.T) {
 		afero.WriteFile(UtilsFs, "/tmp/myfile.txt", test.fileData, 0755)
 		output := GetSelectedAWSProfiles("/tmp/myfile.txt")
 		if !compareSlice(output, test.expectedOutput) {
-			t.Errorf("Test Failed: %v inputted, %v expected, recieved: %v", test.fileData, test.expectedOutput, output)
+			t.Errorf("Test Failed: %v inputted, %v expected, received: %v", test.fileData, test.expectedOutput, output)
 		}
 	}
 }

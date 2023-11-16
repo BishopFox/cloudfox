@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
@@ -16,12 +17,14 @@ type IamPrincipalsModule struct {
 	// General configuration data
 	IAMClient sdk.AWSIAMClientInterface
 
-	Caller       sts.GetCallerIdentityOutput
-	AWSRegions   []string
-	OutputFormat string
-	Goroutines   int
-	AWSProfile   string
-	WrapTable    bool
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	AWSOutputType string
+	AWSTableCols  string
+
+	Goroutines int
+	AWSProfile string
+	WrapTable  bool
 
 	// Main module data
 	Users          []User
@@ -61,8 +64,8 @@ type Role struct {
 	InlinePolicies   []string
 }
 
-func (m *IamPrincipalsModule) PrintIamPrincipals(outputFormat string, outputDirectory string, verbosity int) {
-	// These stuct values are used by the output module
+func (m *IamPrincipalsModule) PrintIamPrincipals(outputDirectory string, verbosity int) {
+	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "principals"
@@ -92,13 +95,44 @@ func (m *IamPrincipalsModule) PrintIamPrincipals(outputFormat string, outputDire
 	//fmt.Printf("\nAnalyzed Resources by Region\n\n")
 
 	m.output.Headers = []string{
-		"Service",
+		"Account",
 		"Type",
 		"Name",
 		"Arn",
+		"AttachedPolicies",
+		"InlinePolicies",
+	}
 
-		// "AttachedPolicies",
-		// "InlinePolicies",
+	// If the user specified table columns, use those.
+	// If the user specified -o wide, use the wide default cols for this module.
+	// Otherwise, use the hardcoded default cols for this module.
+	var tableCols []string
+	// If the user specified table columns, use those.
+	if m.AWSTableCols != "" {
+		// If the user specified wide as the output format, use these columns.
+		// remove any spaces between any commas and the first letter after the commas
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
+		tableCols = strings.Split(m.AWSTableCols, ",")
+	} else if m.AWSOutputType == "wide" {
+		tableCols = []string{
+			"Account",
+			"Type",
+			"Name",
+			"Arn",
+			//"AttachedPolicies",
+			//"InlinePolicies",
+		}
+
+		// Otherwise, use the default columns.
+	} else {
+		tableCols = []string{
+			"Type",
+			"Name",
+			"Arn",
+			// "AttachedPolicies",
+			// "InlinePolicies",
+		}
 	}
 
 	//Table rows
@@ -106,13 +140,12 @@ func (m *IamPrincipalsModule) PrintIamPrincipals(outputFormat string, outputDire
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
-				m.Users[i].AWSService,
+				aws.ToString(m.Caller.Account),
 				m.Users[i].Type,
 				m.Users[i].Name,
 				m.Users[i].Arn,
-
-				// m.Users[i].AttachedPolicies,
-				// m.Users[i].InlinePolicies,
+				strings.Join(m.Users[i].AttachedPolicies, " , "),
+				strings.Join(m.Users[i].InlinePolicies, " , "),
 			},
 		)
 
@@ -122,22 +155,19 @@ func (m *IamPrincipalsModule) PrintIamPrincipals(outputFormat string, outputDire
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
-				m.Roles[i].AWSService,
+				aws.ToString(m.Caller.Account),
 				m.Roles[i].Type,
 				m.Roles[i].Name,
 				m.Roles[i].Arn,
-
-				// m.Roles[i].AttachedPolicies,
-				// m.Roles[i].InlinePolicies,
+				strings.Join(m.Roles[i].AttachedPolicies, " , "),
+				strings.Join(m.Roles[i].InlinePolicies, " , "),
 			},
 		)
 
 	}
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		//m.output.OutputSelector(outputFormat)
-		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,
@@ -146,9 +176,10 @@ func (m *IamPrincipalsModule) PrintIamPrincipals(outputFormat string, outputDire
 			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			Body:      m.output.Body,
+			TableCols: tableCols,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))

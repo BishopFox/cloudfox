@@ -3,6 +3,7 @@ package aws
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/BishopFox/cloudfox/aws/sdk"
@@ -18,9 +19,11 @@ type CodeBuildModule struct {
 	CodeBuildClient sdk.CodeBuildClientInterface
 	IAMClient       sdk.AWSIAMClientInterface
 
-	Caller         sts.GetCallerIdentityOutput
-	AWSRegions     []string
-	OutputFormat   string
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	AWSOutputType string
+	AWSTableCols  string
+
 	Goroutines     int
 	AWSProfile     string
 	SkipAdminCheck bool
@@ -46,8 +49,8 @@ type Project struct {
 	CanPrivEsc string
 }
 
-func (m *CodeBuildModule) PrintCodeBuildProjects(outputFormat string, outputDirectory string, verbosity int) {
-	// These stuct values are used by the output module
+func (m *CodeBuildModule) PrintCodeBuildProjects(outputDirectory string, verbosity int) {
+	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "codebuild"
@@ -107,50 +110,66 @@ func (m *CodeBuildModule) PrintCodeBuildProjects(outputFormat string, outputDire
 	}
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
-	if m.pmapperError == nil {
-		m.output.Headers = []string{
+	m.output.Headers = []string{
+		"Account",
+		"Region",
+		"Name",
+		"Role",
+		"IsAdminRole?",
+		"CanPrivEscToAdmin?",
+	}
+
+	// If the user specified table columns, use those.
+	// If the user specified -o wide, use the wide default cols for this module.
+	// Otherwise, use the hardcoded default cols for this module.
+	var tableCols []string
+	// If the user specified table columns, use those.
+	if m.AWSTableCols != "" {
+		// If the user specified wide as the output format, use these columns.
+		// remove any spaces between any commas and the first letter after the commas
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
+		tableCols = strings.Split(m.AWSTableCols, ",")
+	} else if m.AWSOutputType == "wide" {
+		tableCols = []string{
+			"Account",
 			"Region",
 			"Name",
 			"Role",
 			"IsAdminRole?",
 			"CanPrivEscToAdmin?",
 		}
+		// Otherwise, use the default columns.
 	} else {
-		m.output.Headers = []string{
+		tableCols = []string{
 			"Region",
 			"Name",
 			"Role",
 			"IsAdminRole?",
-			//"CanPrivEscToAdmin?",
+			"CanPrivEscToAdmin?",
 		}
+	}
+
+	// Remove the pmapper row if there is no pmapper data
+	if m.pmapperError != nil {
+		sharedLogger.Errorf("%s - %s - No pmapper data found for this account. Skipping the pmapper column in the output table.", m.output.CallingModule, m.AWSProfile)
+		tableCols = removeStringFromSlice(tableCols, "CanPrivEscToAdmin?")
 	}
 
 	// Table rows
 
 	for i := range m.Projects {
-		if m.pmapperError == nil {
-			m.output.Body = append(
-				m.output.Body,
-				[]string{
-					m.Projects[i].Region,
-					m.Projects[i].Name,
-					m.Projects[i].Role,
-					m.Projects[i].Admin,
-					m.Projects[i].CanPrivEsc,
-				},
-			)
-		} else {
-			m.output.Body = append(
-				m.output.Body,
-				[]string{
-					m.Projects[i].Region,
-					m.Projects[i].Name,
-					m.Projects[i].Role,
-					m.Projects[i].Admin,
-				},
-			)
-
-		}
+		m.output.Body = append(
+			m.output.Body,
+			[]string{
+				aws.ToString(m.Caller.Account),
+				m.Projects[i].Region,
+				m.Projects[i].Name,
+				m.Projects[i].Role,
+				m.Projects[i].Admin,
+				m.Projects[i].CanPrivEsc,
+			},
+		)
 	}
 
 	var seen []string
@@ -162,11 +181,6 @@ func (m *CodeBuildModule) PrintCodeBuildProjects(outputFormat string, outputDire
 
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		//m.output.OutputSelector(outputFormat)
-		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		//m.writeLoot(m.output.FilePath, verbosity)
-		//fmt.Printf("[%s][%s] %d projects with a total of %d node groups found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), len(seen), len(m.output.Body))
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,
@@ -175,9 +189,10 @@ func (m *CodeBuildModule) PrintCodeBuildProjects(outputFormat string, outputDire
 			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			Body:      m.output.Body,
+			TableCols: tableCols,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))

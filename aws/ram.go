@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/BishopFox/cloudfox/internal"
@@ -20,12 +21,14 @@ type RAMModule struct {
 	// General configuration data
 	RAMClient *ram.Client
 
-	Caller       sts.GetCallerIdentityOutput
-	AWSRegions   []string
-	OutputFormat string
-	Goroutines   int
-	AWSProfile   string
-	WrapTable    bool
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	AWSOutputType string
+	AWSTableCols  string
+
+	Goroutines int
+	AWSProfile string
+	WrapTable  bool
 
 	// Main module data
 	Resources      []Resource
@@ -44,8 +47,8 @@ type Resource struct {
 	ShareType  string
 }
 
-func (m *RAMModule) PrintRAM(outputFormat string, outputDirectory string, verbosity int) {
-	// These stuct values are used by the output module
+func (m *RAMModule) PrintRAM(outputDirectory string, verbosity int) {
+	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "ram"
@@ -91,7 +94,7 @@ func (m *RAMModule) PrintRAM(outputFormat string, outputDirectory string, verbos
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
-		"Service",
+		"Account",
 		"Region",
 		"Share Name",
 		"Type",
@@ -99,12 +102,44 @@ func (m *RAMModule) PrintRAM(outputFormat string, outputDirectory string, verbos
 		"Share Type",
 	}
 
+	// If the user specified table columns, use those.
+	// If the user specified -o wide, use the wide default cols for this module.
+	// Otherwise, use the hardcoded default cols for this module.
+	var tableCols []string
+	// If the user specified table columns, use those.
+	if m.AWSTableCols != "" {
+		// If the user specified wide as the output format, use these columns.
+		// remove any spaces between any commas and the first letter after the commas
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
+		tableCols = strings.Split(m.AWSTableCols, ",")
+	} else if m.AWSOutputType == "wide" {
+		tableCols = []string{
+			"Account",
+			"Region",
+			"Share Name",
+			"Type",
+			"Owner",
+			"Share Type",
+		}
+		// Otherwise, use the default columns.
+	} else {
+		tableCols = []string{
+			"Service",
+			"Region",
+			"Share Name",
+			"Type",
+			"Owner",
+			"Share Type",
+		}
+	}
+
 	// Table rows
 	for i := range m.Resources {
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
-				m.Resources[i].AWSService,
+				aws.ToString(m.Caller.Account),
 				m.Resources[i].Region,
 				m.Resources[i].Name,
 				m.Resources[i].Type,
@@ -116,9 +151,7 @@ func (m *RAMModule) PrintRAM(outputFormat string, outputDirectory string, verbos
 	}
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		//m.output.OutputSelector(outputFormat)
-		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
+
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,
@@ -127,9 +160,10 @@ func (m *RAMModule) PrintRAM(outputFormat string, outputDirectory string, verbos
 			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			Body:      m.output.Body,
+			TableCols: tableCols,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))

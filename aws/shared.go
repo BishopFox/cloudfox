@@ -18,9 +18,8 @@ var red = color.New(color.FgRed).SprintFunc()
 var yellow = color.New(color.FgRed).SprintFunc()
 var blue = color.New(color.FgBlue).SprintFunc()
 var magenta = color.New(color.FgMagenta).SprintFunc()
-
 var green = color.New(color.FgGreen).SprintFunc()
-
+var AWSRegions = []string{"us-east-1", "us-east-2", "us-west-1", "us-west-2", "af-south-1", "ap-east-1", "ap-south-1", "ap-northeast-3", "ap-northeast-2", "ap-southeast-1", "ap-southeast-2", "ap-northeast-1", "ca-central-1", "eu-central-1", "eu-west-1", "eu-west-2", "eu-south-1", "eu-west-3", "eu-north-1", "me-south-1", "sa-east-1"}
 var sharedLogger = internal.TxtLogger()
 
 func GetIamSimResult(SkipAdminCheck bool, roleArnPtr *string, iamSimulatorMod IamSimulatorModule, localAdminMap map[string]bool) (string, string) {
@@ -177,4 +176,13 @@ func GetResourceNameFromArn(arn string) string {
 	resourceName := parts[len(parts)-1]
 
 	return resourceName
+}
+
+func removeStringFromSlice(slice []string, element string) []string {
+	for i, v := range slice {
+		if v == element {
+			return append(slice[:i], slice[i+1:]...)
+		}
+	}
+	return slice
 }

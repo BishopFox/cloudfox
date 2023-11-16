@@ -20,7 +20,7 @@ type AWSEFSClientInterface interface {
 	DescribeFileSystemPolicy(ctx context.Context, params *efs.DescribeFileSystemPolicyInput, optFns ...func(*efs.Options)) (*efs.DescribeFileSystemPolicyOutput, error)
 }
 
-func RegisterEFSTypes() {
+func init() {
 	gob.Register([]efsTypes.FileSystemDescription{})
 	gob.Register([]efsTypes.MountTargetDescription{})
 	gob.Register([]efsTypes.AccessPointDescription{})

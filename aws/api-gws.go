@@ -22,19 +22,18 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-var CURL_COMMAND string = "curl -k -X %s %s"
+var CURL_COMMAND string = "curl -X %s %s"
 
 type ApiGwModule struct {
 	// General configuration data
 	APIGatewayClient   *apigateway.Client
 	APIGatewayv2Client *apigatewayv2.Client
 
-	Caller       sts.GetCallerIdentityOutput
-	AWSRegions   []string
-	OutputFormat string
-	Goroutines   int
-	AWSProfile   string
-	WrapTable    bool
+	Caller     sts.GetCallerIdentityOutput
+	AWSRegions []string
+	Goroutines int
+	AWSProfile string
+	WrapTable  bool
 
 	// Main module data
 	Gateways       []ApiGateway
@@ -55,7 +54,7 @@ type ApiGateway struct {
 	Method     string
 }
 
-func (m *ApiGwModule) PrintApiGws(outputFormat string, outputDirectory string, verbosity int) {
+func (m *ApiGwModule) PrintApiGws(outputDirectory string, verbosity int) {
 	// These stuct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
@@ -131,10 +130,7 @@ func (m *ApiGwModule) PrintApiGws(outputFormat string, outputDirectory string, v
 	}
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		//m.output.OutputSelector(outputFormat)
-		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		//m.writeLoot(m.output.FilePath, verbosity)
+
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,
@@ -218,12 +214,25 @@ func (m *ApiGwModule) writeLoot(outputDirectory string, verbosity int) {
 	var out string
 
 	for _, endpoint := range m.Gateways {
-		line := fmt.Sprintf(CURL_COMMAND, endpoint.Method, endpoint.Endpoint)
+		method := endpoint.Method
+		// Write a GET and POST for ANY
+		if endpoint.Method == "ANY" {
+			line := fmt.Sprintf(CURL_COMMAND, "GET", endpoint.Endpoint)
+			if endpoint.ApiKey != "" {
+				line += fmt.Sprintf(" -H 'X-Api-Key: %s'", endpoint.ApiKey)
+			}
+
+			out += line + "\n"
+
+			method = "POST"
+		}
+
+		line := fmt.Sprintf(CURL_COMMAND, method, endpoint.Endpoint)
 		if endpoint.ApiKey != "" {
 			line += fmt.Sprintf(" -H 'X-Api-Key: %s'", endpoint.ApiKey)
 		}
 
-		if endpoint.Method == "DELETE" || endpoint.Method == "PATCH" || endpoint.Method == "POST" || endpoint.Method == "PUT" {
+		if method == "DELETE" || method == "PATCH" || method == "POST" || method == "PUT" {
 			line += " -H 'Content-Type: application/json' -d '{}'"
 		}
 
@@ -239,7 +248,7 @@ func (m *ApiGwModule) writeLoot(outputDirectory string, verbosity int) {
 
 	if verbosity > 2 {
 		fmt.Println()
-		fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("Feed this endpoints into nmap and something like gowitness/aquatone for screenshots."))
+		fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("Send these requests through your favorite interception proxy"))
 		fmt.Print(out)
 		fmt.Printf("[%s][%s] %s \n\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("End of loot file."))
 	}

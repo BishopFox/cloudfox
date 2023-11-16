@@ -13,10 +13,16 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/apigateway"
 	"github.com/aws/aws-sdk-go-v2/service/apigatewayv2"
 	"github.com/aws/aws-sdk-go-v2/service/apprunner"
+	"github.com/aws/aws-sdk-go-v2/service/athena"
+	"github.com/aws/aws-sdk-go-v2/service/cloud9"
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
 	"github.com/aws/aws-sdk-go-v2/service/cloudtrail"
+	"github.com/aws/aws-sdk-go-v2/service/codeartifact"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
+	"github.com/aws/aws-sdk-go-v2/service/codecommit"
+	"github.com/aws/aws-sdk-go-v2/service/codedeploy"
+	"github.com/aws/aws-sdk-go-v2/service/datapipeline"
 	"github.com/aws/aws-sdk-go-v2/service/docdb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -25,12 +31,15 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/efs"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/elasticache"
+	"github.com/aws/aws-sdk-go-v2/service/elasticbeanstalk"
 	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancing"
 	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
+	"github.com/aws/aws-sdk-go-v2/service/emr"
 	"github.com/aws/aws-sdk-go-v2/service/fsx"
 	"github.com/aws/aws-sdk-go-v2/service/glue"
 	"github.com/aws/aws-sdk-go-v2/service/grafana"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
+	"github.com/aws/aws-sdk-go-v2/service/kinesis"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/lightsail"
 	"github.com/aws/aws-sdk-go-v2/service/mq"
@@ -61,19 +70,22 @@ var (
 	red              = color.New(color.FgRed).SprintFunc()
 	defaultOutputDir = ptr.ToString(internal.GetLogDirPath())
 
-	AWSProfile         string
-	AWSProfilesList    string
-	AWSAllProfiles     bool
-	AWSProfiles        []string
-	AWSConfirm         bool
-	AWSOutputFormat    string
+	AWSProfile      string
+	AWSProfilesList string
+	AWSAllProfiles  bool
+	AWSProfiles     []string
+	AWSConfirm      bool
+	AWSOutputType   string
+	AWSTableCols    string
+
 	AWSOutputDirectory string
 	AWSSkipAdminCheck  bool
 	AWSWrapTable       bool
 	AWSUseCache        bool
-	Goroutines         int
-	Verbosity          int
-	AWSCommands        = &cobra.Command{
+
+	Goroutines  int
+	Verbosity   int
+	AWSCommands = &cobra.Command{
 		Use:   "aws",
 		Short: "See \"Available Commands\" for AWS Modules",
 		Run: func(cmd *cobra.Command, args []string) {
@@ -106,7 +118,8 @@ var (
 		PostRun: awsPostRun,
 	}
 
-	BucketsCommand = &cobra.Command{
+	CheckBucketPolicies bool
+	BucketsCommand      = &cobra.Command{
 		Use:     "buckets",
 		Aliases: []string{"bucket"},
 		Short:   "Enumerate all of the buckets. Get loot file with s3 commands to list/download bucket contents",
@@ -210,7 +223,7 @@ var (
 	EnvsCommand = &cobra.Command{
 		Use:     "env-vars",
 		Aliases: []string{"envs", "envvars", "env"},
-		Short:   "Enumerate the environment variables from mutliple services that have them",
+		Short:   "Enumerate the environment variables from multiple services that have them",
 		Long: "\nUse case examples:\n" +
 			os.Args[0] + " aws env-vars --profile readonly_profile",
 		PreRun:  awsPreRun,
@@ -341,7 +354,10 @@ var (
 		Short:   "Enumerate IAM permissions per principal",
 		Long: "\nUse case examples:\n" +
 			os.Args[0] + " aws permissions --profile profile\n" +
-			os.Args[0] + " aws permissions --profile profile --principal arn:aws:iam::111111111111:role/test123",
+			os.Args[0] + " aws permissions --profile profile --principal arn:aws:iam::111111111111:role/test123" +
+			"\n\nAvailable Column Names:\n" +
+			"Type, Name, Arn, Policy, Policy Name, Policy Arn, Effect, Action, Resource, Condition\n",
+
 		PreRun:  awsPreRun,
 		Run:     runPermissionsCommand,
 		PostRun: awsPostRun,
@@ -592,13 +608,15 @@ func runAccessKeysCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.AccessKeysModule{
-			IAMClient:  iam.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			Caller:     *caller,
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
+			IAMClient:     iam.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			Caller:        *caller,
+			AWSProfile:    profile,
+			Goroutines:    Goroutines,
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
-		m.PrintAccessKeys(AccessKeysFilter, AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		m.PrintAccessKeys(AccessKeysFilter, AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -618,7 +636,7 @@ func runApiGwCommand(cmd *cobra.Command, args []string) {
 			Goroutines: Goroutines,
 			WrapTable:  AWSWrapTable,
 		}
-		m.PrintApiGws(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		m.PrintApiGws(AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -629,22 +647,18 @@ func runBucketsCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 
-		// cloudFoxS3Client := aws.CloudFoxS3Client{
-		// 	S3Client:   s3.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
-		// 	Caller:     *caller,
-		// 	AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
-		// 	AWSProfile: profile,
-		// }
-
 		m := aws.BucketsModule{
-			S3Client:   s3.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			Caller:     *caller,
-			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
+			S3Client:            s3.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			Caller:              *caller,
+			AWSRegions:          internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile:          profile,
+			Goroutines:          Goroutines,
+			WrapTable:           AWSWrapTable,
+			CheckBucketPolicies: CheckBucketPolicies,
+			AWSOutputType:       AWSOutputType,
+			AWSTableCols:        AWSTableCols,
 		}
-		m.PrintBuckets(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		m.PrintBuckets(AWSOutputDirectory, Verbosity)
 	}
 
 }
@@ -663,8 +677,10 @@ func runCloudformationCommand(cmd *cobra.Command, args []string) {
 			AWSProfile:           profile,
 			Goroutines:           Goroutines,
 			WrapTable:            AWSWrapTable,
+			AWSOutputType:        AWSOutputType,
+			AWSTableCols:         AWSTableCols,
 		}
-		m.PrintCloudformationStacks(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		m.PrintCloudformationStacks(AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -683,8 +699,10 @@ func runCodeBuildCommand(cmd *cobra.Command, args []string) {
 			Goroutines:      Goroutines,
 			SkipAdminCheck:  AWSSkipAdminCheck,
 			WrapTable:       AWSWrapTable,
+			AWSOutputType:   AWSOutputType,
+			AWSTableCols:    AWSTableCols,
 		}
-		m.PrintCodeBuildProjects(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		m.PrintCodeBuildProjects(AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -706,8 +724,10 @@ func runDatabasesCommand(cmd *cobra.Command, args []string) {
 			AWSProfile:     profile,
 			Goroutines:     Goroutines,
 			WrapTable:      AWSWrapTable,
+			AWSOutputType:  AWSOutputType,
+			AWSTableCols:   AWSTableCols,
 		}
-		m.PrintDatabases(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		m.PrintDatabases(AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -719,14 +739,16 @@ func runECRCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.ECRModule{
-			ECRClient:  ecr.NewFromConfig(AWSConfig),
-			Caller:     *caller,
-			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
+			ECRClient:     ecr.NewFromConfig(AWSConfig),
+			Caller:        *caller,
+			AWSRegions:    internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile:    profile,
+			Goroutines:    Goroutines,
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
-		m.PrintECR(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		m.PrintECR(AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -742,13 +764,15 @@ func runSQSCommand(cmd *cobra.Command, args []string) {
 
 			StorePolicies: StoreSQSAccessPolicies,
 
-			Caller:     *caller,
-			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
+			Caller:        *caller,
+			AWSRegions:    internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile:    profile,
+			Goroutines:    Goroutines,
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
-		m.PrintSQS(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		m.PrintSQS(AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -759,7 +783,7 @@ func runSNSCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		cloudFoxSNSClient := aws.InitCloudFoxSNSClient(*caller, profile, cmd.Root().Version, Goroutines, AWSWrapTable)
-		cloudFoxSNSClient.PrintSNS(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		cloudFoxSNSClient.PrintSNS(AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -780,8 +804,10 @@ func runEKSCommand(cmd *cobra.Command, args []string) {
 			Goroutines:     Goroutines,
 			SkipAdminCheck: AWSSkipAdminCheck,
 			WrapTable:      AWSWrapTable,
+			AWSOutputType:  AWSOutputType,
+			AWSTableCols:   AWSTableCols,
 		}
-		m.EKS(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		m.EKS(AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -809,13 +835,15 @@ func runEndpointsCommand(cmd *cobra.Command, args []string) {
 			RedshiftClient:     redshift.NewFromConfig(AWSConfig),
 			S3Client:           s3.NewFromConfig(AWSConfig),
 
-			Caller:     *caller,
-			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
+			Caller:        *caller,
+			AWSRegions:    internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile:    profile,
+			Goroutines:    Goroutines,
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
-		m.PrintEndpoints(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		m.PrintEndpoints(AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -828,11 +856,13 @@ func runEnvsCommand(cmd *cobra.Command, args []string) {
 		}
 		m := aws.EnvsModule{
 
-			Caller:     *caller,
-			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
+			Caller:        *caller,
+			AWSRegions:    internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile:    profile,
+			Goroutines:    Goroutines,
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 
 			ECSClient:       ecs.NewFromConfig(AWSConfig),
 			AppRunnerClient: apprunner.NewFromConfig(AWSConfig),
@@ -840,7 +870,7 @@ func runEnvsCommand(cmd *cobra.Command, args []string) {
 			LightsailClient: lightsail.NewFromConfig(AWSConfig),
 			SagemakerClient: sagemaker.NewFromConfig(AWSConfig),
 		}
-		m.PrintEnvs(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		m.PrintEnvs(AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -855,13 +885,15 @@ func runFilesystemsCommand(cmd *cobra.Command, args []string) {
 			EFSClient: efs.NewFromConfig(AWSConfig),
 			FSxClient: fsx.NewFromConfig(AWSConfig),
 
-			Caller:     *caller,
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
-			WrapTable:  AWSWrapTable,
+			Caller:        *caller,
+			AWSProfile:    profile,
+			Goroutines:    Goroutines,
+			AWSRegions:    internal.GetEnabledRegions(profile, cmd.Root().Version),
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
-		filesystems.PrintFilesystems(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		filesystems.PrintFilesystems(AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -873,13 +905,15 @@ func runIamSimulatorCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.IamSimulatorModule{
-			IAMClient:  iam.NewFromConfig(AWSConfig),
-			Caller:     *caller,
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
+			IAMClient:     iam.NewFromConfig(AWSConfig),
+			Caller:        *caller,
+			AWSProfile:    profile,
+			Goroutines:    Goroutines,
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
-		m.PrintIamSimulator(SimulatorPrincipal, SimulatorAction, SimulatorResource, AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		m.PrintIamSimulator(SimulatorPrincipal, SimulatorAction, SimulatorResource, AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -900,8 +934,10 @@ func runInstancesCommand(cmd *cobra.Command, args []string) {
 			AWSProfile:             profile,
 			SkipAdminCheck:         AWSSkipAdminCheck,
 			WrapTable:              AWSWrapTable,
+			AWSOutputType:          AWSOutputType,
+			AWSTableCols:           AWSTableCols,
 		}
-		m.Instances(InstancesFilter, AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		m.Instances(InstancesFilter, AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -913,41 +949,55 @@ func runInventoryCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.Inventory2Module{
-			APIGatewayClient:     apigateway.NewFromConfig(AWSConfig),
-			APIGatewayv2Client:   apigatewayv2.NewFromConfig(AWSConfig),
-			AppRunnerClient:      apprunner.NewFromConfig(AWSConfig),
-			CloudFormationClient: cloudformation.NewFromConfig(AWSConfig),
-			CloudfrontClient:     cloudfront.NewFromConfig(AWSConfig),
-			CodeBuildClient:      codebuild.NewFromConfig(AWSConfig),
-			DynamoDBClient:       dynamodb.NewFromConfig(AWSConfig),
-			EC2Client:            ec2.NewFromConfig(AWSConfig),
-			ECSClient:            ecs.NewFromConfig(AWSConfig),
-			EKSClient:            eks.NewFromConfig(AWSConfig),
-			ELBClient:            elasticloadbalancing.NewFromConfig(AWSConfig),
-			ELBv2Client:          elasticloadbalancingv2.NewFromConfig(AWSConfig),
-			GlueClient:           glue.NewFromConfig(AWSConfig),
-			GrafanaClient:        grafana.NewFromConfig(AWSConfig),
-			IAMClient:            iam.NewFromConfig(AWSConfig),
-			LambdaClient:         lambda.NewFromConfig(AWSConfig),
-			LightsailClient:      lightsail.NewFromConfig(AWSConfig),
-			MQClient:             mq.NewFromConfig(AWSConfig),
-			OpenSearchClient:     opensearch.NewFromConfig(AWSConfig),
-			RDSClient:            rds.NewFromConfig(AWSConfig),
-			RedshiftClient:       redshift.NewFromConfig(AWSConfig),
-			S3Client:             s3.NewFromConfig(AWSConfig),
-			SecretsManagerClient: secretsmanager.NewFromConfig(AWSConfig),
-			SNSClient:            sns.NewFromConfig(AWSConfig),
-			SQSClient:            sqs.NewFromConfig(AWSConfig),
-			SSMClient:            ssm.NewFromConfig(AWSConfig),
-			StepFunctionClient:   sfn.NewFromConfig(AWSConfig),
+			APIGatewayClient:       apigateway.NewFromConfig(AWSConfig),
+			APIGatewayv2Client:     apigatewayv2.NewFromConfig(AWSConfig),
+			AppRunnerClient:        apprunner.NewFromConfig(AWSConfig),
+			AthenaClient:           athena.NewFromConfig(AWSConfig),
+			Cloud9Client:           cloud9.NewFromConfig(AWSConfig),
+			CloudFormationClient:   cloudformation.NewFromConfig(AWSConfig),
+			CloudfrontClient:       cloudfront.NewFromConfig(AWSConfig),
+			CodeArtifactClient:     codeartifact.NewFromConfig(AWSConfig),
+			CodeBuildClient:        codebuild.NewFromConfig(AWSConfig),
+			CodeCommitClient:       codecommit.NewFromConfig(AWSConfig),
+			CodeDeployClient:       codedeploy.NewFromConfig(AWSConfig),
+			DataPipelineClient:     datapipeline.NewFromConfig(AWSConfig),
+			DynamoDBClient:         dynamodb.NewFromConfig(AWSConfig),
+			EC2Client:              ec2.NewFromConfig(AWSConfig),
+			ECSClient:              ecs.NewFromConfig(AWSConfig),
+			ECRClient:              ecr.NewFromConfig(AWSConfig),
+			EKSClient:              eks.NewFromConfig(AWSConfig),
+			ELBClient:              elasticloadbalancing.NewFromConfig(AWSConfig),
+			ELBv2Client:            elasticloadbalancingv2.NewFromConfig(AWSConfig),
+			ElasticacheClient:      elasticache.NewFromConfig(AWSConfig),
+			ElasticBeanstalkClient: elasticbeanstalk.NewFromConfig(AWSConfig),
+			EMRClient:              emr.NewFromConfig(AWSConfig),
+			GlueClient:             glue.NewFromConfig(AWSConfig),
+			GrafanaClient:          grafana.NewFromConfig(AWSConfig),
+			IAMClient:              iam.NewFromConfig(AWSConfig),
+			KinesisClient:          kinesis.NewFromConfig(AWSConfig),
+			LambdaClient:           lambda.NewFromConfig(AWSConfig),
+			LightsailClient:        lightsail.NewFromConfig(AWSConfig),
+			MQClient:               mq.NewFromConfig(AWSConfig),
+			OpenSearchClient:       opensearch.NewFromConfig(AWSConfig),
+			RDSClient:              rds.NewFromConfig(AWSConfig),
+			RedshiftClient:         redshift.NewFromConfig(AWSConfig),
+			Route53Client:          route53.NewFromConfig(AWSConfig),
+			S3Client:               s3.NewFromConfig(AWSConfig),
+			SecretsManagerClient:   secretsmanager.NewFromConfig(AWSConfig),
+			SNSClient:              sns.NewFromConfig(AWSConfig),
+			SQSClient:              sqs.NewFromConfig(AWSConfig),
+			SSMClient:              ssm.NewFromConfig(AWSConfig),
+			StepFunctionClient:     sfn.NewFromConfig(AWSConfig),
 
-			Caller:     *caller,
-			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
+			Caller:        *caller,
+			AWSRegions:    internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile:    profile,
+			Goroutines:    Goroutines,
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
-		m.PrintInventoryPerRegion(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		m.PrintInventoryPerRegion(AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -967,8 +1017,10 @@ func runLambdasCommand(cmd *cobra.Command, args []string) {
 			Goroutines:     Goroutines,
 			SkipAdminCheck: AWSSkipAdminCheck,
 			WrapTable:      AWSWrapTable,
+			AWSOutputType:  AWSOutputType,
+			AWSTableCols:   AWSTableCols,
 		}
-		m.PrintLambdas(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		m.PrintLambdas(AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -982,13 +1034,15 @@ func runOutboundAssumedRolesCommand(cmd *cobra.Command, args []string) {
 		m := aws.OutboundAssumedRolesModule{
 			CloudTrailClient: cloudtrail.NewFromConfig(AWSConfig),
 
-			Caller:     *caller,
-			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
+			Caller:        *caller,
+			AWSRegions:    internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile:    profile,
+			Goroutines:    Goroutines,
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
-		m.PrintOutboundRoleTrusts(OutboundAssumedRolesDays, AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		m.PrintOutboundRoleTrusts(OutboundAssumedRolesDays, AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -1004,8 +1058,10 @@ func runOrgsCommand(cmd *cobra.Command, args []string) {
 			Caller:              *caller,
 			AWSProfile:          profile,
 			WrapTable:           AWSWrapTable,
+			AWSOutputType:       AWSOutputType,
+			AWSTableCols:        AWSTableCols,
 		}
-		m.PrintOrgAccounts(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		m.PrintOrgAccounts(AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -1017,13 +1073,15 @@ func runPermissionsCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.IamPermissionsModule{
-			IAMClient:  iam.NewFromConfig(AWSConfig),
-			Caller:     *caller,
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
+			IAMClient:     iam.NewFromConfig(AWSConfig),
+			Caller:        *caller,
+			AWSProfile:    profile,
+			Goroutines:    Goroutines,
+			WrapTable:     AWSWrapTable,
+			AWSTableCols:  AWSTableCols,
+			AWSOutputType: AWSOutputType,
 		}
-		m.PrintIamPermissions(AWSOutputFormat, AWSOutputDirectory, Verbosity, PermissionsPrincipal)
+		m.PrintIamPermissions(AWSOutputDirectory, Verbosity, PermissionsPrincipal)
 	}
 }
 
@@ -1034,12 +1092,14 @@ func runPmapperCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.PmapperModule{
-			Caller:     *caller,
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
+			Caller:        *caller,
+			AWSProfile:    profile,
+			Goroutines:    Goroutines,
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
-		m.PrintPmapperData(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		m.PrintPmapperData(AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -1051,13 +1111,15 @@ func runPrincipalsCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.IamPrincipalsModule{
-			IAMClient:  iam.NewFromConfig(AWSConfig),
-			Caller:     *caller,
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
+			IAMClient:     iam.NewFromConfig(AWSConfig),
+			Caller:        *caller,
+			AWSProfile:    profile,
+			Goroutines:    Goroutines,
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
-		m.PrintIamPrincipals(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		m.PrintIamPrincipals(AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -1069,14 +1131,16 @@ func runRAMCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		ram := aws.RAMModule{
-			RAMClient:  ram.NewFromConfig(AWSConfig),
-			Caller:     *caller,
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
-			WrapTable:  AWSWrapTable,
+			RAMClient:     ram.NewFromConfig(AWSConfig),
+			Caller:        *caller,
+			AWSProfile:    profile,
+			Goroutines:    Goroutines,
+			AWSRegions:    internal.GetEnabledRegions(profile, cmd.Root().Version),
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
-		ram.PrintRAM(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		ram.PrintRAM(AWSOutputDirectory, Verbosity)
 
 	}
 }
@@ -1094,8 +1158,10 @@ func runResourceTrustsCommand(cmd *cobra.Command, args []string) {
 			AWSRegions:      internal.GetEnabledRegions(profile, cmd.Root().Version),
 			WrapTable:       AWSWrapTable,
 			CloudFoxVersion: cmd.Root().Version,
+			AWSOutputType:   AWSOutputType,
+			AWSTableCols:    AWSTableCols,
 		}
-		m.PrintResources(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		m.PrintResources(AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -1113,8 +1179,10 @@ func runRoleTrustCommand(cmd *cobra.Command, args []string) {
 			Goroutines:     Goroutines,
 			SkipAdminCheck: AWSSkipAdminCheck,
 			WrapTable:      AWSWrapTable,
+			AWSOutputType:  AWSOutputType,
+			AWSTableCols:   AWSTableCols,
 		}
-		m.PrintRoleTrusts(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		m.PrintRoleTrusts(AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -1128,13 +1196,15 @@ func runRoute53Command(cmd *cobra.Command, args []string) {
 		m := aws.Route53Module{
 			Route53Client: route53.NewFromConfig(AWSConfig),
 
-			Caller:     *caller,
-			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
+			Caller:        *caller,
+			AWSRegions:    internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile:    profile,
+			Goroutines:    Goroutines,
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
-		m.PrintRoute53(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		m.PrintRoute53(AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -1149,13 +1219,15 @@ func runSecretsCommand(cmd *cobra.Command, args []string) {
 			SecretsManagerClient: secretsmanager.NewFromConfig(AWSConfig),
 			SSMClient:            ssm.NewFromConfig(AWSConfig),
 
-			Caller:     *caller,
-			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
+			Caller:        *caller,
+			AWSRegions:    internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile:    profile,
+			Goroutines:    Goroutines,
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
-		m.PrintSecrets(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		m.PrintSecrets(AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -1174,8 +1246,10 @@ func runTagsCommand(cmd *cobra.Command, args []string) {
 			Goroutines:                        Goroutines,
 			WrapTable:                         AWSWrapTable,
 			MaxResourcesPerRegion:             MaxResourcesPerRegion,
+			AWSOutputType:                     AWSOutputType,
+			AWSTableCols:                      AWSTableCols,
 		}
-		m.PrintTags(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		m.PrintTags(AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -1186,12 +1260,9 @@ func runECSTasksCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.ECSTasksModule{
-			DescribeTasksClient:             ecs.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			DescribeTaskDefinitionClient:    ecs.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			ListTasksClient:                 ecs.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			ListClustersClient:              ecs.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			DescribeNetworkInterfacesClient: ec2.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			IAMClient:                       iam.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			EC2Client: ec2.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			ECSClient: ecs.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			IAMClient: iam.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
 
 			Caller:         *caller,
 			AWSRegions:     internal.GetEnabledRegions(profile, cmd.Root().Version),
@@ -1199,8 +1270,10 @@ func runECSTasksCommand(cmd *cobra.Command, args []string) {
 			Goroutines:     Goroutines,
 			SkipAdminCheck: AWSSkipAdminCheck,
 			WrapTable:      AWSWrapTable,
+			AWSOutputType:  AWSOutputType,
+			AWSTableCols:   AWSTableCols,
 		}
-		m.ECSTasks(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		m.ECSTasks(AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -1212,14 +1285,16 @@ func runENICommand(cmd *cobra.Command, args []string) {
 		}
 		m := aws.ElasticNetworkInterfacesModule{
 			//EC2Client:                       ec2.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			DescribeNetworkInterfacesClient: ec2.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			EC2Client: ec2.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
 
-			Caller:     *caller,
-			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile: profile,
-			WrapTable:  AWSWrapTable,
+			Caller:        *caller,
+			AWSRegions:    internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile:    profile,
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
-		m.ElasticNetworkInterfaces(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		m.ElasticNetworkInterfaces(AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -1243,8 +1318,10 @@ func runNetworkPortsCommand(cmd *cobra.Command, args []string) {
 			Goroutines:        Goroutines,
 			WrapTable:         AWSWrapTable,
 			Verbosity:         Verbosity,
+			AWSOutputType:     AWSOutputType,
+			AWSTableCols:      AWSTableCols,
 		}
-		m.PrintNetworkPorts(AWSOutputFormat, AWSOutputDirectory)
+		m.PrintNetworkPorts(AWSOutputDirectory)
 	}
 }
 
@@ -1259,9 +1336,15 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		apiGatewayClient := apigateway.NewFromConfig(AWSConfig)
 		apiGatewayv2Client := apigatewayv2.NewFromConfig(AWSConfig)
 		appRunnerClient := apprunner.NewFromConfig(AWSConfig)
+		athenaClient := athena.NewFromConfig(AWSConfig)
+		cloud9Client := cloud9.NewFromConfig(AWSConfig)
 		cloudFormationClient := cloudformation.NewFromConfig(AWSConfig)
 		cloudfrontClient := cloudfront.NewFromConfig(AWSConfig)
+		codeArtifactClient := codeartifact.NewFromConfig(AWSConfig)
 		codeBuildClient := codebuild.NewFromConfig(AWSConfig)
+		codeCommitClient := codecommit.NewFromConfig(AWSConfig)
+		codeDeployClient := codedeploy.NewFromConfig(AWSConfig)
+		dataPipelineClient := datapipeline.NewFromConfig(AWSConfig)
 		docdbClient := docdb.NewFromConfig(AWSConfig)
 		dynamodbClient := dynamodb.NewFromConfig(AWSConfig)
 		ec2Client := ec2.NewFromConfig(AWSConfig)
@@ -1270,12 +1353,15 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		efsClient := efs.NewFromConfig(AWSConfig)
 		eksClient := eks.NewFromConfig(AWSConfig)
 		elasticacheClient := elasticache.NewFromConfig(AWSConfig)
+		elasticBeanstalkClient := elasticbeanstalk.NewFromConfig(AWSConfig)
 		elbClient := elasticloadbalancing.NewFromConfig(AWSConfig)
 		elbv2Client := elasticloadbalancingv2.NewFromConfig(AWSConfig)
+		emrClient := emr.NewFromConfig(AWSConfig)
 		fsxClient := fsx.NewFromConfig(AWSConfig)
 		glueClient := glue.NewFromConfig(AWSConfig)
 		grafanaClient := grafana.NewFromConfig(AWSConfig)
 		iamClient := iam.NewFromConfig(AWSConfig)
+		kinesisClient := kinesis.NewFromConfig(AWSConfig)
 		lambdaClient := lambda.NewFromConfig(AWSConfig)
 		lightsailClient := lightsail.NewFromConfig(AWSConfig)
 		mqClient := mq.NewFromConfig(AWSConfig)
@@ -1296,41 +1382,55 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 
 		fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Getting a lay of the land, aka \"What regions is this account using?\""))
 		inventory2 := aws.Inventory2Module{
-			APIGatewayClient:     apiGatewayClient,
-			APIGatewayv2Client:   apiGatewayv2Client,
-			AppRunnerClient:      appRunnerClient,
-			CloudFormationClient: cloudFormationClient,
-			CloudfrontClient:     cloudfrontClient,
-			CodeBuildClient:      codeBuildClient,
-			DynamoDBClient:       dynamodbClient,
-			EC2Client:            ec2Client,
-			ECSClient:            ecsClient,
-			EKSClient:            eksClient,
-			ELBClient:            elbClient,
-			ELBv2Client:          elbv2Client,
-			GlueClient:           glueClient,
-			GrafanaClient:        grafanaClient,
-			IAMClient:            iamClient,
-			LambdaClient:         lambdaClient,
-			LightsailClient:      lightsailClient,
-			MQClient:             mqClient,
-			OpenSearchClient:     openSearchClient,
-			RDSClient:            rdsClient,
-			RedshiftClient:       redshiftClient,
-			S3Client:             s3Client,
-			SecretsManagerClient: secretsManagerClient,
-			SNSClient:            snsClient,
-			SQSClient:            sqsClient,
-			SSMClient:            ssmClient,
-			StepFunctionClient:   stepFunctionClient,
+			APIGatewayClient:       apiGatewayClient,
+			APIGatewayv2Client:     apiGatewayv2Client,
+			AppRunnerClient:        appRunnerClient,
+			AthenaClient:           athenaClient,
+			Cloud9Client:           cloud9Client,
+			CloudFormationClient:   cloudFormationClient,
+			CloudfrontClient:       cloudfrontClient,
+			CodeArtifactClient:     codeArtifactClient,
+			CodeBuildClient:        codeBuildClient,
+			CodeCommitClient:       codeCommitClient,
+			CodeDeployClient:       codeDeployClient,
+			DataPipelineClient:     dataPipelineClient,
+			DynamoDBClient:         dynamodbClient,
+			EC2Client:              ec2Client,
+			ECSClient:              ecsClient,
+			ECRClient:              ecrClient,
+			EKSClient:              eksClient,
+			ELBClient:              elbClient,
+			ELBv2Client:            elbv2Client,
+			ElasticacheClient:      elasticacheClient,
+			ElasticBeanstalkClient: elasticBeanstalkClient,
+			EMRClient:              emrClient,
+			GlueClient:             glueClient,
+			GrafanaClient:          grafanaClient,
+			IAMClient:              iamClient,
+			KinesisClient:          kinesisClient,
+			LambdaClient:           lambdaClient,
+			LightsailClient:        lightsailClient,
+			MQClient:               mqClient,
+			OpenSearchClient:       openSearchClient,
+			RDSClient:              rdsClient,
+			RedshiftClient:         redshiftClient,
+			Route53Client:          route53Client,
+			S3Client:               s3Client,
+			SecretsManagerClient:   secretsManagerClient,
+			SNSClient:              snsClient,
+			SQSClient:              sqsClient,
+			SSMClient:              ssmClient,
+			StepFunctionClient:     stepFunctionClient,
 
-			Caller:     *caller,
-			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
+			Caller:        *caller,
+			AWSRegions:    internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile:    profile,
+			Goroutines:    Goroutines,
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
-		inventory2.PrintInventoryPerRegion(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		inventory2.PrintInventoryPerRegion(AWSOutputDirectory, Verbosity)
 
 		tagsMod := aws.TagsModule{
 			ResourceGroupsTaggingApiInterface: resourceClient,
@@ -1341,7 +1441,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			MaxResourcesPerRegion:             1000,
 		}
 		var verbosityOverride int = 1
-		tagsMod.PrintTags(AWSOutputFormat, AWSOutputDirectory, verbosityOverride)
+		tagsMod.PrintTags(AWSOutputDirectory, verbosityOverride)
 
 		orgMod := aws.OrgModule{
 			OrganizationsClient: orgClient,
@@ -1350,8 +1450,10 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			AWSProfile:          profile,
 			Goroutines:          Goroutines,
 			WrapTable:           AWSWrapTable,
+			AWSOutputType:       AWSOutputType,
+			AWSTableCols:        AWSTableCols,
 		}
-		orgMod.PrintOrgAccounts(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		orgMod.PrintOrgAccounts(AWSOutputDirectory, Verbosity)
 
 		// Service and endpoint enum section
 		fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Gathering the info you'll want for your application & service enumeration needs."))
@@ -1364,8 +1466,10 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			UserDataAttributesOnly: false,
 			AWSProfile:             profile,
 			WrapTable:              AWSWrapTable,
+			AWSOutputType:          AWSOutputType,
+			AWSTableCols:           AWSTableCols,
 		}
-		instances.Instances(InstancesFilter, AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		instances.Instances(InstancesFilter, AWSOutputDirectory, Verbosity)
 		route53 := aws.Route53Module{
 			Route53Client: route53Client,
 
@@ -1384,21 +1488,25 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			Goroutines:     Goroutines,
 			SkipAdminCheck: AWSSkipAdminCheck,
 			WrapTable:      AWSWrapTable,
+			AWSOutputType:  AWSOutputType,
+			AWSTableCols:   AWSTableCols,
 		}
-		lambdasMod.PrintLambdas(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		lambdasMod.PrintLambdas(AWSOutputDirectory, Verbosity)
 
-		route53.PrintRoute53(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		route53.PrintRoute53(AWSOutputDirectory, Verbosity)
 
 		filesystems := aws.FilesystemsModule{
-			EFSClient:  efsClient,
-			FSxClient:  fsxClient,
-			Caller:     *caller,
-			AWSProfile: profile,
-			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
+			EFSClient:     efsClient,
+			FSxClient:     fsxClient,
+			Caller:        *caller,
+			AWSProfile:    profile,
+			AWSRegions:    internal.GetEnabledRegions(profile, cmd.Root().Version),
+			Goroutines:    Goroutines,
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
-		filesystems.PrintFilesystems(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		filesystems.PrintFilesystems(AWSOutputDirectory, Verbosity)
 
 		endpoints := aws.EndpointsModule{
 
@@ -1418,14 +1526,16 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			AppRunnerClient:    appRunnerClient,
 			LightsailClient:    lightsailClient,
 
-			Caller:     *caller,
-			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
+			Caller:        *caller,
+			AWSRegions:    internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile:    profile,
+			Goroutines:    Goroutines,
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 
-		endpoints.PrintEndpoints(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		endpoints.PrintEndpoints(AWSOutputDirectory, Verbosity)
 
 		gateways := aws.ApiGwModule{
 			APIGatewayv2Client: apiGatewayv2Client,
@@ -1438,7 +1548,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			WrapTable:  AWSWrapTable,
 		}
 
-		gateways.PrintApiGws(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		gateways.PrintApiGws(AWSOutputDirectory, Verbosity)
 
 		databases := aws.DatabasesModule{
 			RDSClient:      rdsClient,
@@ -1450,17 +1560,16 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			AWSRegions:     internal.GetEnabledRegions(profile, cmd.Root().Version),
 			Goroutines:     Goroutines,
 			WrapTable:      AWSWrapTable,
+			AWSOutputType:  AWSOutputType,
+			AWSTableCols:   AWSTableCols,
 		}
 
-		databases.PrintDatabases(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		databases.PrintDatabases(AWSOutputDirectory, Verbosity)
 
 		ecstasks := aws.ECSTasksModule{
-			DescribeTaskDefinitionClient:    ecsClient,
-			DescribeTasksClient:             ecsClient,
-			ListTasksClient:                 ecsClient,
-			ListClustersClient:              ecsClient,
-			DescribeNetworkInterfacesClient: ec2Client,
-			IAMClient:                       iamClient,
+			EC2Client: ec2Client,
+			ECSClient: ecsClient,
+			IAMClient: iamClient,
 
 			Caller:         *caller,
 			AWSRegions:     internal.GetEnabledRegions(profile, cmd.Root().Version),
@@ -1468,8 +1577,10 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			Goroutines:     Goroutines,
 			SkipAdminCheck: AWSSkipAdminCheck,
 			WrapTable:      AWSWrapTable,
+			AWSOutputType:  AWSOutputType,
+			AWSTableCols:   AWSTableCols,
 		}
-		ecstasks.ECSTasks(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		ecstasks.ECSTasks(AWSOutputDirectory, Verbosity)
 
 		eksCommand := aws.EKSModule{
 			EKSClient: eksClient,
@@ -1481,17 +1592,21 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			Goroutines:     Goroutines,
 			SkipAdminCheck: AWSSkipAdminCheck,
 			WrapTable:      AWSWrapTable,
+			AWSOutputType:  AWSOutputType,
+			AWSTableCols:   AWSTableCols,
 		}
-		eksCommand.EKS(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		eksCommand.EKS(AWSOutputDirectory, Verbosity)
 
 		elasticnetworkinterfaces := aws.ElasticNetworkInterfacesModule{
-			DescribeNetworkInterfacesClient: ec2Client,
-			Caller:                          *caller,
-			AWSRegions:                      internal.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile:                      profile,
-			WrapTable:                       AWSWrapTable,
+			EC2Client:     ec2Client,
+			Caller:        *caller,
+			AWSRegions:    internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile:    profile,
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
-		elasticnetworkinterfaces.ElasticNetworkInterfaces(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		elasticnetworkinterfaces.ElasticNetworkInterfaces(AWSOutputDirectory, Verbosity)
 
 		// Secrets section
 		fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Looking for secrets hidden between the seat cushions."))
@@ -1506,8 +1621,10 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			AWSProfile:             profile,
 			Goroutines:             Goroutines,
 			WrapTable:              AWSWrapTable,
+			AWSOutputType:          AWSOutputType,
+			AWSTableCols:           AWSTableCols,
 		}
-		ec2UserData.Instances(InstancesFilter, AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		ec2UserData.Instances(InstancesFilter, AWSOutputDirectory, Verbosity)
 		envsMod := aws.EnvsModule{
 
 			Caller:          *caller,
@@ -1520,8 +1637,10 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			SagemakerClient: sagemakerClient,
 			Goroutines:      Goroutines,
 			WrapTable:       AWSWrapTable,
+			AWSOutputType:   AWSOutputType,
+			AWSTableCols:    AWSTableCols,
 		}
-		envsMod.PrintEnvs(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		envsMod.PrintEnvs(AWSOutputDirectory, Verbosity)
 
 		cfMod := aws.CloudformationModule{
 			CloudFormationClient: cloudFormationClient,
@@ -1530,8 +1649,10 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			AWSProfile:           profile,
 			Goroutines:           Goroutines,
 			WrapTable:            AWSWrapTable,
+			AWSOutputType:        AWSOutputType,
+			AWSTableCols:         AWSTableCols,
 		}
-		cfMod.PrintCloudformationStacks(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		cfMod.PrintCloudformationStacks(AWSOutputDirectory, Verbosity)
 
 		// CPT Enum
 		//fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Gathering some other info that is often useful."))
@@ -1545,46 +1666,54 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		// }
 
 		buckets := aws.BucketsModule{
-			S3Client:   s3.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			Caller:     *caller,
-			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
+			S3Client:      s3.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			Caller:        *caller,
+			AWSRegions:    internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile:    profile,
+			Goroutines:    Goroutines,
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
-		buckets.PrintBuckets(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		buckets.PrintBuckets(AWSOutputDirectory, Verbosity)
 
 		ecr := aws.ECRModule{
-			ECRClient:  ecrClient,
-			Caller:     *caller,
-			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
+			ECRClient:     ecrClient,
+			Caller:        *caller,
+			AWSRegions:    internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile:    profile,
+			Goroutines:    Goroutines,
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
-		ecr.PrintECR(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		ecr.PrintECR(AWSOutputDirectory, Verbosity)
 
 		secrets := aws.SecretsModule{
 			SecretsManagerClient: secretsManagerClient,
 			SSMClient:            ssmClient,
 
-			Caller:     *caller,
-			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
+			Caller:        *caller,
+			AWSRegions:    internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile:    profile,
+			Goroutines:    Goroutines,
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
-		secrets.PrintSecrets(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		secrets.PrintSecrets(AWSOutputDirectory, Verbosity)
 
 		ram := aws.RAMModule{
-			RAMClient:  ramClient,
-			Caller:     *caller,
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
-			WrapTable:  AWSWrapTable,
+			RAMClient:     ramClient,
+			Caller:        *caller,
+			AWSProfile:    profile,
+			Goroutines:    Goroutines,
+			AWSRegions:    internal.GetEnabledRegions(profile, cmd.Root().Version),
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
-		ram.PrintRAM(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		ram.PrintRAM(AWSOutputDirectory, Verbosity)
 
 		networkPorts := aws.NetworkPortsModule{
 			EC2Client:         ec2Client,
@@ -1598,24 +1727,28 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			AWSProfile:        profile,
 			Goroutines:        Goroutines,
 			AWSRegions:        internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSOutputType:     AWSOutputType,
+			AWSTableCols:      AWSTableCols,
 		}
-		networkPorts.PrintNetworkPorts(AWSOutputFormat, AWSOutputDirectory)
+		networkPorts.PrintNetworkPorts(AWSOutputDirectory)
 
 		sqsMod := aws.SQSModule{
 			SQSClient: sqsClient,
 
 			StorePolicies: StoreSQSAccessPolicies,
 
-			Caller:     *caller,
-			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
+			Caller:        *caller,
+			AWSRegions:    internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile:    profile,
+			Goroutines:    Goroutines,
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
-		sqsMod.PrintSQS(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		sqsMod.PrintSQS(AWSOutputDirectory, Verbosity)
 
 		cloudFoxSNSClient := aws.InitCloudFoxSNSClient(*caller, profile, cmd.Root().Version, Goroutines, AWSWrapTable)
-		cloudFoxSNSClient.PrintSNS(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		cloudFoxSNSClient.PrintSNS(AWSOutputDirectory, Verbosity)
 
 		resourceTrustsCommand := aws.ResourceTrustsModule{
 			Caller:          *caller,
@@ -1624,8 +1757,10 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			AWSRegions:      internal.GetEnabledRegions(profile, cmd.Root().Version),
 			WrapTable:       AWSWrapTable,
 			CloudFoxVersion: cmd.Root().Version,
+			AWSOutputType:   AWSOutputType,
+			AWSTableCols:    AWSTableCols,
 		}
-		resourceTrustsCommand.PrintResources(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		resourceTrustsCommand.PrintResources(AWSOutputDirectory, Verbosity)
 
 		codeBuildCommand := aws.CodeBuildModule{
 			CodeBuildClient: codeBuildClient,
@@ -1634,20 +1769,24 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			Goroutines:      Goroutines,
 			AWSRegions:      internal.GetEnabledRegions(profile, cmd.Root().Version),
 			WrapTable:       AWSWrapTable,
+			AWSOutputType:   AWSOutputType,
+			AWSTableCols:    AWSTableCols,
 		}
-		codeBuildCommand.PrintCodeBuildProjects(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		codeBuildCommand.PrintCodeBuildProjects(AWSOutputDirectory, Verbosity)
 
 		// IAM privesc section
 		fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("IAM is complicated. Complicated usually means misconfigurations. You'll want to pay attention here."))
 		principals := aws.IamPrincipalsModule{
-			IAMClient:  iamClient,
-			Caller:     *caller,
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
+			IAMClient:     iamClient,
+			Caller:        *caller,
+			AWSProfile:    profile,
+			Goroutines:    Goroutines,
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 
-		principals.PrintIamPrincipals(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		principals.PrintIamPrincipals(AWSOutputDirectory, Verbosity)
 		permissions := aws.IamPermissionsModule{
 			IAMClient:  iamClient,
 			Caller:     *caller,
@@ -1655,15 +1794,17 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			Goroutines: Goroutines,
 			WrapTable:  AWSWrapTable,
 		}
-		permissions.PrintIamPermissions(AWSOutputFormat, AWSOutputDirectory, Verbosity, PermissionsPrincipal)
+		permissions.PrintIamPermissions(AWSOutputDirectory, Verbosity, PermissionsPrincipal)
 		accessKeys := aws.AccessKeysModule{
-			IAMClient:  iam.NewFromConfig(AWSConfig),
-			Caller:     *caller,
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
+			IAMClient:     iam.NewFromConfig(AWSConfig),
+			Caller:        *caller,
+			AWSProfile:    profile,
+			Goroutines:    Goroutines,
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
-		accessKeys.PrintAccessKeys(AccessKeysFilter, AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		accessKeys.PrintAccessKeys(AccessKeysFilter, AWSOutputDirectory, Verbosity)
 		roleTrusts := aws.RoleTrustsModule{
 			IAMClient:      iamClient,
 			Caller:         *caller,
@@ -1671,25 +1812,31 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			Goroutines:     Goroutines,
 			SkipAdminCheck: AWSSkipAdminCheck,
 			WrapTable:      AWSWrapTable,
+			AWSOutputType:  AWSOutputType,
+			AWSTableCols:   AWSTableCols,
 		}
-		roleTrusts.PrintRoleTrusts(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		roleTrusts.PrintRoleTrusts(AWSOutputDirectory, Verbosity)
 
 		pmapperCommand := aws.PmapperModule{
-			Caller:     *caller,
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
+			Caller:        *caller,
+			AWSProfile:    profile,
+			Goroutines:    Goroutines,
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
-		pmapperCommand.PrintPmapperData(AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		pmapperCommand.PrintPmapperData(AWSOutputDirectory, Verbosity)
 
 		iamSimulator := aws.IamSimulatorModule{
-			IAMClient:  iamClient,
-			Caller:     *caller,
-			AWSProfile: profile,
-			Goroutines: Goroutines,
-			WrapTable:  AWSWrapTable,
+			IAMClient:     iamClient,
+			Caller:        *caller,
+			AWSProfile:    profile,
+			Goroutines:    Goroutines,
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
-		iamSimulator.PrintIamSimulator(SimulatorPrincipal, SimulatorAction, SimulatorResource, AWSOutputFormat, AWSOutputDirectory, Verbosity)
+		iamSimulator.PrintIamSimulator(SimulatorPrincipal, SimulatorAction, SimulatorResource, AWSOutputDirectory, Verbosity)
 
 		fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("That's it! Check your output files for situational awareness and check your loot files for next steps."))
 		fmt.Printf("[%s] %s\n\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("FYI, we skipped the outbound-assumed-roles module in all-checks (really long run time). Make sure to try it out manually."))
@@ -1698,43 +1845,18 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 
 func init() {
 	cobra.OnInitialize(initAWSProfiles)
-	sdk.RegisterApiGatewayTypes()
-	sdk.RegisterApiGatewayV2Types()
-	sdk.RegisterApprunnerTypes()
-	sdk.RegisterCloudFormationTypes()
-	sdk.RegisterCodeBuildTypes()
-	sdk.RegisterDocDBTypes()
-	sdk.RegisterDynamoDBTypes()
-	sdk.RegisterEC2Types()
-	sdk.RegisterECRTypes()
-	sdk.RegisterEFSTypes()
-	sdk.RegisterEKSTypes()
-	sdk.RegisterELBTypes()
-	sdk.RegisterELBv2Types()
-	sdk.RegisterGrafanaTypes()
-	sdk.RegisterIamTypes()
-	sdk.RegisterLambdaTypes()
-	sdk.RegisterLightsailTypes()
-	sdk.RegisterMQTypes()
-	sdk.RegisterOpenSearchTypes()
-	sdk.RegisterOrganizationsTypes()
-	sdk.RegisterRDSTypes()
-	sdk.RegisterRedShiftTypes()
-	sdk.RegisterS3Types()
-	sdk.RegisterSecretsManagerTypes()
-	sdk.RegisterStepFunctionsTypes()
 
 	// Role Trusts Module Flags
-	RoleTrustCommand.Flags().StringVarP(&RoleTrustFilter, "filter", "t", "all", "[AccountNumber | PrincipalARN | PrincipalName | ServiceName]")
+	RoleTrustCommand.Flags().StringVarP(&RoleTrustFilter, "filter", "f", "all", "[AccountNumber | PrincipalARN | PrincipalName | ServiceName]")
 
 	// Map Access Keys Module Flags
-	AccessKeysCommand.Flags().StringVarP(&AccessKeysFilter, "filter", "t", "none", "Access key ID to search for")
+	AccessKeysCommand.Flags().StringVarP(&AccessKeysFilter, "filter", "f", "none", "Access key ID to search for")
 
 	// IAM Simulator Module Flags
 	//IamSimulatorCommand.Flags().StringVarP(&IamSimulatorFilter, "filter", "f", "none", "Access key ID to search for")
 
 	// Instances Map Module Flags
-	InstancesCommand.Flags().StringVarP(&InstancesFilter, "filter", "t", "all", "[InstanceID | InstanceIDsFile]")
+	InstancesCommand.Flags().StringVarP(&InstancesFilter, "filter", "f", "all", "[InstanceID | InstanceIDsFile]")
 	InstancesCommand.Flags().BoolVarP(&InstanceMapUserDataAttributesOnly, "userdata", "u", false, "Use this flag to retrieve only the userData attribute from EC2 instances.")
 
 	// SQS module flags
@@ -1757,18 +1879,22 @@ func init() {
 	// tags module flags
 	TagsCommand.Flags().IntVarP(&MaxResourcesPerRegion, "max-resources-per-region", "m", 0, "Maximum number of resources to enumerate per region. Set to 0 to enumerate all resources.")
 
+	// buckets command flags (for bucket policies)
+	BucketsCommand.Flags().BoolVarP(&CheckBucketPolicies, "with-policies", "", false, "Analyze bucket policies (this is already done in the resource-trusts command)")
+
 	// Global flags for the AWS modules
 	AWSCommands.PersistentFlags().StringVarP(&AWSProfile, "profile", "p", "", "AWS CLI Profile Name")
 	AWSCommands.PersistentFlags().StringVarP(&AWSProfilesList, "profiles-list", "l", "", "File containing a AWS CLI profile names separated by newlines")
 	AWSCommands.PersistentFlags().BoolVarP(&AWSAllProfiles, "all-profiles", "a", false, "Use all AWS CLI profiles in AWS credentials file")
 	AWSCommands.PersistentFlags().BoolVarP(&AWSConfirm, "yes", "y", false, "Non-interactive mode (like apt/yum)")
-	AWSCommands.PersistentFlags().StringVarP(&AWSOutputFormat, "output", "o", "brief", "[\"brief\" | \"wide\" ]")
+	AWSCommands.PersistentFlags().StringVarP(&AWSOutputType, "output", "o", "brief", "[\"brief\" | \"wide\" ]")
 	AWSCommands.PersistentFlags().IntVarP(&Verbosity, "verbosity", "v", 1, "1 = Print control messages only\n2 = Print control messages, module output\n3 = Print control messages, module output, and loot file output\n")
 	AWSCommands.PersistentFlags().StringVar(&AWSOutputDirectory, "outdir", defaultOutputDir, "Output Directory ")
 	AWSCommands.PersistentFlags().IntVarP(&Goroutines, "max-goroutines", "g", 30, "Maximum number of concurrent goroutines")
 	AWSCommands.PersistentFlags().BoolVar(&AWSSkipAdminCheck, "skip-admin-check", false, "Skip check to determine if role is an Admin")
 	AWSCommands.PersistentFlags().BoolVarP(&AWSWrapTable, "wrap", "w", false, "Wrap table to fit in terminal (complicates grepping)")
 	AWSCommands.PersistentFlags().BoolVarP(&AWSUseCache, "cached", "c", false, "Load cached data from disk. Faster, but if changes have been recently made you'll miss them")
+	AWSCommands.PersistentFlags().StringVarP(&AWSTableCols, "cols", "t", "", "Comma separated list of columns to display in table output")
 
 	AWSCommands.AddCommand(
 		AllChecksCommand,

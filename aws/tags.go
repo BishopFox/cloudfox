@@ -26,9 +26,11 @@ type TagsModule struct {
 	// General configuration data
 	ResourceGroupsTaggingApiInterface TagsGetResourcesAPI
 
-	Caller                sts.GetCallerIdentityOutput
-	AWSRegions            []string
-	OutputFormat          string
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	AWSOutputType string
+	AWSTableCols  string
+
 	Goroutines            int
 	AWSProfile            string
 	WrapTable             bool
@@ -54,8 +56,8 @@ type Tag struct {
 	Value      string
 }
 
-func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verbosity int) {
-	// These stuct values are used by the output module
+func (m *TagsModule) PrintTags(outputDirectory string, verbosity int) {
+	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "tags"
@@ -102,6 +104,7 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
+		"Account",
 		"Service",
 		"Region",
 		"Type",
@@ -109,6 +112,41 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 		//"Resource Arn",
 		"Key",
 		"Value",
+	}
+
+	// If the user specified table columns, use those.
+	// If the user specified -o wide, use the wide default cols for this module.
+	// Otherwise, use the hardcoded default cols for this module.
+	var tableCols []string
+	// If the user specified table columns, use those.
+	if m.AWSTableCols != "" {
+		// If the user specified wide as the output format, use these columns.
+		// remove any spaces between any commas and the first letter after the commas
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
+		tableCols = strings.Split(m.AWSTableCols, ",")
+	} else if m.AWSOutputType == "wide" {
+		tableCols = []string{
+			"Account",
+			"Service",
+			"Region",
+			"Type",
+			//"Name",
+			//"Resource Arn",
+			"Key",
+			"Value",
+		}
+		// Otherwise, use the default columns.
+	} else {
+		tableCols = []string{
+			"Service",
+			"Region",
+			"Type",
+			//"Name",
+			//"Resource Arn",
+			"Key",
+			"Value",
+		}
 	}
 
 	sort.Slice(m.Tags, func(i, j int) bool {
@@ -121,6 +159,7 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
+				aws.ToString(m.Caller.Account),
 				m.Tags[i].AWSService,
 				m.Tags[i].Region,
 				m.Tags[i].Type,
@@ -134,9 +173,7 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 	}
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		//m.writeLoot(m.output.FilePath, verbosity)
+
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,
@@ -145,9 +182,10 @@ func (m *TagsModule) PrintTags(outputFormat string, outputDirectory string, verb
 			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			Body:      m.output.Body,
+			TableCols: tableCols,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
@@ -284,7 +322,7 @@ func (m *TagsModule) getResources(r string) ([]types.ResourceTagMapping, error) 
 	var PaginationControl *string
 	var resources []types.ResourceTagMapping
 
-	// a for loop that accepts user input. If no user input, it will continue to paginate until there are no mor pages. If there is user input, it will paginate until the user input is reached.
+	// a for loop that accepts user input. If no user input, it will continue to paginate until there are no more pages. If there is user input, it will paginate until the user input is reached.
 
 	for {
 		if len(resources) < m.MaxResourcesPerRegion || m.MaxResourcesPerRegion == 0 {

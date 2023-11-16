@@ -1,26 +1,28 @@
 package aws
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
+	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/route53"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/sirupsen/logrus"
 )
 
 type Route53Module struct {
 	// General configuration data
-	Route53Client *route53.Client
+	Route53Client sdk.AWSRoute53ClientInterface
 
-	Caller         sts.GetCallerIdentityOutput
-	AWSRegions     []string
-	OutputFormat   string
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	AWSOutputType string
+	AWSTableCols  string
+
 	Goroutines     int
 	AWSProfile     string
 	WrapTable      bool
@@ -42,9 +44,9 @@ type Record struct {
 	PrivateZone string
 }
 
-func (m *Route53Module) PrintRoute53(outputFormat string, outputDirectory string, verbosity int) {
+func (m *Route53Module) PrintRoute53(outputDirectory string, verbosity int) {
 
-	// These stuct values are used by the output module
+	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "route53"
@@ -60,11 +62,40 @@ func (m *Route53Module) PrintRoute53(outputFormat string, outputDirectory string
 	m.getRoute53Records()
 
 	m.output.Headers = []string{
-		"Service",
+		"Account",
 		"Name",
 		"Type",
 		"Value",
 		"PrivateZone",
+	}
+
+	// If the user specified table columns, use those.
+	// If the user specified -o wide, use the wide default cols for this module.
+	// Otherwise, use the hardcoded default cols for this module.
+	var tableCols []string
+	// If the user specified table columns, use those.
+	if m.AWSTableCols != "" {
+		// If the user specified wide as the output format, use these columns.
+		// remove any spaces between any commas and the first letter after the commas
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
+		tableCols = strings.Split(m.AWSTableCols, ",")
+	} else if m.AWSOutputType == "wide" {
+		tableCols = []string{
+			"Account",
+			"Name",
+			"Type",
+			"Value",
+			"PrivateZone",
+		}
+
+	} else {
+		tableCols = []string{
+			"Name",
+			"Type",
+			"Value",
+			"PrivateZone",
+		}
 	}
 
 	// Table rows
@@ -72,7 +103,7 @@ func (m *Route53Module) PrintRoute53(outputFormat string, outputDirectory string
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
-				m.Records[i].AWSService,
+				aws.ToString(m.Caller.Account),
 				m.Records[i].Name,
 				m.Records[i].Type,
 				m.Records[i].Value,
@@ -84,10 +115,7 @@ func (m *Route53Module) PrintRoute53(outputFormat string, outputDirectory string
 	if len(m.output.Body) > 0 {
 
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		//m.output.OutputSelector(outputFormat)
-		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		//m.writeLoot(m.output.FilePath, verbosity)
+
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,
@@ -96,9 +124,10 @@ func (m *Route53Module) PrintRoute53(outputFormat string, outputDirectory string
 			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			Body:      m.output.Body,
+			TableCols: tableCols,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
@@ -127,7 +156,7 @@ func (m *Route53Module) writeLoot(outputDirectory string, verbosity int) {
 	var route53APublicRecords string
 
 	for _, record := range m.Records {
-		if record.Type == "A" || record.Type == "AAAA" {
+		if record.Type == "A" || record.Type == "AAAA" || record.Type == "CNAME" {
 			if record.PrivateZone == "True" {
 				route53APrivateRecords = route53APrivateRecords + fmt.Sprintln(record.Name)
 			} else {
@@ -176,71 +205,51 @@ func (m *Route53Module) writeLoot(outputDirectory string, verbosity int) {
 
 func (m *Route53Module) getRoute53Records() {
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
-	var PaginationControl *string
 	var recordName string
 	var recordType string
 
-	for {
-		ListHostedZones, err := m.Route53Client.ListHostedZones(
-			context.TODO(),
-			&route53.ListHostedZonesInput{
-				Marker: PaginationControl,
-			},
-		)
+	HostedZones, err := sdk.CachedRoute53ListHostedZones(m.Route53Client, aws.ToString(m.Caller.Account))
+
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	var privateZone string
+	for _, zone := range HostedZones {
+		if zone.Config.PrivateZone {
+			privateZone = "True"
+		} else {
+			privateZone = "False"
+		}
+
+		Records, err := sdk.CachedRoute53ListResourceRecordSets(m.Route53Client, aws.ToString(m.Caller.Account), aws.ToString(zone.Id))
 
 		if err != nil {
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
 			break
 		}
+		for _, record := range Records {
+			recordName = aws.ToString(record.Name)
+			recordType = string(record.Type)
 
-		var privateZone string
-		for _, zone := range ListHostedZones.HostedZones {
-			id := aws.ToString(zone.Id)
-			if zone.Config.PrivateZone {
-				privateZone = "True"
-			} else {
-				privateZone = "False"
+			for _, resourceRecord := range record.ResourceRecords {
+				recordValue := resourceRecord.Value
+				m.Records = append(
+					m.Records,
+					Record{
+						AWSService:  "Route53",
+						Name:        recordName,
+						Type:        recordType,
+						Value:       aws.ToString(recordValue),
+						PrivateZone: privateZone,
+					})
+
 			}
-
-			ListResourceRecordSets, err := m.Route53Client.ListResourceRecordSets(
-				context.TODO(),
-				&route53.ListResourceRecordSetsInput{
-					HostedZoneId: &id,
-				},
-			)
-			if err != nil {
-				m.modLog.Error(err.Error())
-				m.CommandCounter.Error++
-				break
-			}
-			for _, record := range ListResourceRecordSets.ResourceRecordSets {
-				recordName = aws.ToString(record.Name)
-				recordType = string(record.Type)
-
-				for _, resourceRecord := range record.ResourceRecords {
-					recordValue := resourceRecord.Value
-					m.Records = append(
-						m.Records,
-						Record{
-							AWSService:  "Route53",
-							Name:        recordName,
-							Type:        recordType,
-							Value:       aws.ToString(recordValue),
-							PrivateZone: privateZone,
-						})
-
-				}
-			}
-
 		}
 
-		// The "NextToken" value is nil when there's no more data to return.
-		if ListHostedZones.NextMarker != nil {
-			PaginationControl = ListHostedZones.NextMarker
-		} else {
-			PaginationControl = nil
-			break
-		}
 	}
+
 }

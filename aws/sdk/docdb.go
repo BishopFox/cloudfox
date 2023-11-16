@@ -19,7 +19,7 @@ type DocDBClientInterface interface {
 	DescribeDBInstances(context.Context, *docdb.DescribeDBInstancesInput, ...func(*docdb.Options)) (*docdb.DescribeDBInstancesOutput, error)
 }
 
-func RegisterDocDBTypes() {
+func init() {
 	gob.Register([]docdbTypes.GlobalCluster{})
 	gob.Register([]docdbTypes.DBCluster{})
 	//gob.Register([]docdbTypes.DBInstance{})

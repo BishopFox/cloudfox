@@ -16,7 +16,7 @@ type APIGatewayv2ClientInterface interface {
 	GetApis(context.Context, *apigatewayv2.GetApisInput, ...func(*apigatewayv2.Options)) (*apigatewayv2.GetApisOutput, error)
 }
 
-func RegisterApiGatewayV2Types() {
+func init() {
 	gob.Register([]apiGatwayV2Types.Api{})
 }
 

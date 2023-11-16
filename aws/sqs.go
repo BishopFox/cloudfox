@@ -28,12 +28,14 @@ type SQSModule struct {
 
 	StorePolicies bool
 
-	Caller       sts.GetCallerIdentityOutput
-	AWSRegions   []string
-	OutputFormat string
-	Goroutines   int
-	AWSProfile   string
-	WrapTable    bool
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	AWSOutputType string
+	AWSTableCols  string
+
+	Goroutines int
+	AWSProfile string
+	WrapTable  bool
 
 	// Main module data
 	Queues         []Queue
@@ -64,8 +66,8 @@ type Queue struct {
 	ResourcePolicySummary string
 }
 
-func (m *SQSModule) PrintSQS(outputFormat string, outputDirectory string, verbosity int) {
-	// These stuct values are used by the output module
+func (m *SQSModule) PrintSQS(outputDirectory string, verbosity int) {
+	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "sqs"
@@ -111,9 +113,38 @@ func (m *SQSModule) PrintSQS(outputFormat string, outputDirectory string, verbos
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
+		"Account",
 		"Arn",
 		"Public?",
 		"Resource Policy Summary",
+	}
+
+	// If the user specified table columns, use those.
+	// If the user specified -o wide, use the wide default cols for this module.
+	// Otherwise, use the hardcoded default cols for this module.
+	var tableCols []string
+	// If the user specified table columns, use those.
+	if m.AWSTableCols != "" {
+		// If the user specified wide as the output format, use these columns.
+		// remove any spaces between any commas and the first letter after the commas
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
+		tableCols = strings.Split(m.AWSTableCols, ",")
+	} else if m.AWSOutputType == "wide" {
+		tableCols = []string{
+			"Account",
+			"Arn",
+			"Public?",
+			"Resource Policy Summary",
+		}
+
+		// Otherwise, use the default columns.
+	} else {
+		tableCols = []string{
+			"Arn",
+			"Public?",
+			"Resource Policy Summary",
+		}
 	}
 
 	sort.SliceStable(m.Queues, func(i, j int) bool {
@@ -125,6 +156,7 @@ func (m *SQSModule) PrintSQS(outputFormat string, outputDirectory string, verbos
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
+				aws.ToString(m.Caller.Account),
 				m.Queues[i].Arn,
 				m.Queues[i].IsPublic,
 				m.Queues[i].ResourcePolicySummary,
@@ -133,9 +165,7 @@ func (m *SQSModule) PrintSQS(outputFormat string, outputDirectory string, verbos
 
 	}
 	if len(m.output.Body) > 0 {
-		//m.output.OutputSelector(outputFormat)
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		//m.writeLoot(m.output.FilePath, verbosity, m.AWSProfile)
+
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,
@@ -144,9 +174,10 @@ func (m *SQSModule) PrintSQS(outputFormat string, outputDirectory string, verbos
 			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			Body:      m.output.Body,
+			TableCols: tableCols,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
@@ -283,7 +314,7 @@ func (m *SQSModule) getSQSRecordsPerRegion(r string, wg *sync.WaitGroup, semapho
 		if !queue.Policy.IsEmpty() {
 			m.analyseQueuePolicy(queue, dataReceiver)
 		} else {
-			// If the queue policy "resource policy" is empty, the only principals that have permisisons
+			// If the queue policy "resource policy" is empty, the only principals that have permissions
 			// are those that are granted access by IAM policies
 			//queue.Access = "Private. Access allowed by IAM policies"
 			queue.Access = "Only intra-account access (via IAM) allowed"
@@ -390,7 +421,7 @@ func (m *SQSModule) analyseQueuePolicy(queue *Queue, dataReceiver chan Queue) {
 		} else {
 			queue.ResourcePolicySummary = statement.GetStatementSummaryInEnglish(*m.Caller.Account)
 		}
-		queue.ResourcePolicySummary = strings.TrimSuffix(queue.ResourcePolicySummary, "\n")
+		//queue.ResourcePolicySummary = strings.TrimSuffix(queue.ResourcePolicySummary, "\n")
 
 	}
 	dataReceiver <- *queue

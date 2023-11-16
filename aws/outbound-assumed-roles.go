@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,12 +23,14 @@ type OutboundAssumedRolesModule struct {
 	// General configuration data
 	CloudTrailClient *cloudtrail.Client
 
-	Caller       sts.GetCallerIdentityOutput
-	AWSRegions   []string
-	OutputFormat string
-	Goroutines   int
-	AWSProfile   string
-	WrapTable    bool
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	AWSOutputType string
+	AWSTableCols  string
+
+	Goroutines int
+	AWSProfile string
+	WrapTable  bool
 
 	// Main module data
 	OutboundAssumeRoleEntries []OutboundAssumeRoleEntry
@@ -114,8 +117,8 @@ type CloudTrailEvent struct {
 	} `json:"tlsDetails"`
 }
 
-func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputFormat string, outputDirectory string, verbosity int) {
-	// These stuct values are used by the output module
+func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputDirectory string, verbosity int) {
+	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "outbound-assumed-roles"
@@ -161,7 +164,7 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputFor
 	<-receiverDone
 
 	m.output.Headers = []string{
-		"Service",
+		"Account",
 		"Region",
 		"Type",
 		//"Source Account",
@@ -171,12 +174,48 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputFor
 		"Log Entry Timestamp",
 	}
 
+	// If the user specified table columns, use those.
+	// If the user specified -o wide, use the wide default cols for this module.
+	// Otherwise, use the hardcoded default cols for this module.
+	var tableCols []string
+	// If the user specified table columns, use those.
+	if m.AWSTableCols != "" {
+		// If the user specified wide as the output format, use these columns.
+		// remove any spaces between any commas and the first letter after the commas
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
+		tableCols = strings.Split(m.AWSTableCols, ",")
+	} else if m.AWSOutputType == "wide" {
+		tableCols = []string{
+			"Account",
+			"Region",
+			"Type",
+			//"Source Account",
+			"Source Principal",
+			//"Destination Account",
+			"Destination Principal",
+			"Log Entry Timestamp",
+		}
+		// Otherwise, use the default columns.
+	} else {
+
+		tableCols = []string{
+			"Region",
+			"Type",
+			//"Source Account",
+			"Source Principal",
+			//"Destination Account",
+			"Destination Principal",
+			"Log Entry Timestamp",
+		}
+	}
+
 	// Table rows
 	for i := range m.OutboundAssumeRoleEntries {
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
-				m.OutboundAssumeRoleEntries[i].AWSService,
+				aws.ToString(m.Caller.Account),
 				m.OutboundAssumeRoleEntries[i].Region,
 				m.OutboundAssumeRoleEntries[i].Type,
 				//m.OutboundAssumeRoleEntries[i].SourceAccount,
@@ -191,9 +230,6 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputFor
 	if len(m.output.Body) > 0 {
 
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		//m.output.OutputSelector(outputFormat)
-		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,
@@ -202,9 +238,10 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputFor
 			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			Body:      m.output.Body,
+			TableCols: tableCols,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))

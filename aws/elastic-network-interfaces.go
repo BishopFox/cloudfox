@@ -1,16 +1,16 @@
 package aws
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 
+	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/bishopfox/awsservicemap"
@@ -18,14 +18,15 @@ import (
 )
 
 type ElasticNetworkInterfacesModule struct {
-	//EC2Client                       *ec2.Client
-	DescribeNetworkInterfacesClient ec2.DescribeNetworkInterfacesAPIClient
+	EC2Client sdk.AWSEC2ClientInterface
 
-	Caller       sts.GetCallerIdentityOutput
-	AWSRegions   []string
-	OutputFormat string
-	AWSProfile   string
-	WrapTable    bool
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	AWSOutputType string
+	AWSTableCols  string
+
+	AWSProfile string
+	WrapTable  bool
 
 	MappedENIs     []MappedENI
 	CommandCounter internal.CommandCounter
@@ -44,7 +45,7 @@ type MappedENI struct {
 	Description      string
 }
 
-func (m *ElasticNetworkInterfacesModule) ElasticNetworkInterfaces(outputFormat string, outputDirectory string, verbosity int) {
+func (m *ElasticNetworkInterfacesModule) ElasticNetworkInterfaces(outputDirectory string, verbosity int) {
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "elastic-network-interfaces"
@@ -84,7 +85,7 @@ func (m *ElasticNetworkInterfacesModule) ElasticNetworkInterfaces(outputFormat s
 	receiverDone <- true
 	<-receiverDone
 
-	m.printENIsData(outputFormat, outputDirectory, dataReceiver, verbosity)
+	m.printENIsData(outputDirectory, dataReceiver, verbosity)
 
 }
 
@@ -101,8 +102,9 @@ func (m *ElasticNetworkInterfacesModule) Receiver(receiver chan MappedENI, recei
 	}
 }
 
-func (m *ElasticNetworkInterfacesModule) printENIsData(outputFormat string, outputDirectory string, dataReceiver chan MappedENI, verbosity int) {
+func (m *ElasticNetworkInterfacesModule) printENIsData(outputDirectory string, dataReceiver chan MappedENI, verbosity int) {
 	m.output.Headers = []string{
+		"Account",
 		"ID",
 		"Type",
 		"External IP",
@@ -111,10 +113,48 @@ func (m *ElasticNetworkInterfacesModule) printENIsData(outputFormat string, outp
 		"Attached Instance",
 		"Description",
 	}
+
+	// If the user specified table columns, use those.
+	// If the user specified -o wide, use the wide default cols for this module.
+	// Otherwise, use the hardcoded default cols for this module.
+	var tableCols []string
+	// If the user specified table columns, use those.
+	if m.AWSTableCols != "" {
+		// If the user specified wide as the output format, use these columns.
+		// remove any spaces between any commas and the first letter after the commas
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
+		tableCols = strings.Split(m.AWSTableCols, ",")
+		// If the user specified wide as the output format, use these columns.
+	} else if m.AWSOutputType == "wide" {
+		tableCols = []string{
+			"Account",
+			"ID",
+			"Type",
+			"External IP",
+			"Internal IP",
+			"VPC ID",
+			"Attached Instance",
+			"Description",
+		}
+		// Otherwise, use the default columns.
+	} else {
+		tableCols = []string{
+			"ID",
+			"Type",
+			"External IP",
+			"Internal IP",
+			"VPC ID",
+			"Attached Instance",
+			"Description",
+		}
+	}
+
 	for _, eni := range m.MappedENIs {
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
+				aws.ToString(m.Caller.Account),
 				eni.ID,
 				eni.Type,
 				eni.ExternalIP,
@@ -127,10 +167,7 @@ func (m *ElasticNetworkInterfacesModule) printENIsData(outputFormat string, outp
 	}
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		//utils.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//internal.OutputSelector(m.output.Verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
 
-		//m.writeLoot(m.output.FilePath)
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,
@@ -139,9 +176,10 @@ func (m *ElasticNetworkInterfacesModule) printENIsData(outputFormat string, outp
 			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			Body:      m.output.Body,
+			TableCols: tableCols,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
@@ -213,50 +251,45 @@ func (m *ElasticNetworkInterfacesModule) executeChecks(r string, wg *sync.WaitGr
 }
 
 func (m *ElasticNetworkInterfacesModule) getDescribeNetworkInterfaces(region string, dataReceiver chan MappedENI) {
-	var PaginationControl *string
-	for {
-		DescribeNetworkInterfaces, err := m.DescribeNetworkInterfacesClient.DescribeNetworkInterfaces(
-			context.TODO(),
-			&(ec2.DescribeNetworkInterfacesInput{
-				NextToken: PaginationControl,
-			}),
-			func(o *ec2.Options) {
-				o.Region = region
-			},
-		)
-		if err != nil {
-			m.modLog.Error(err.Error())
-			m.CommandCounter.Error++
-			break
-		}
 
-		for _, eni := range DescribeNetworkInterfaces.NetworkInterfaces {
-			status := string(eni.Status)
-			if status == "available" {
-				continue // unused ENI
-			}
+	NetworkInterfaces, err := sdk.CachedEC2DescribeNetworkInterfaces(m.EC2Client, aws.ToString(m.Caller.Account), region)
 
-			mappedENI := MappedENI{
-				ID:               aws.ToString(eni.NetworkInterfaceId),
-				Type:             string(eni.InterfaceType),
-				ExternalIP:       getPublicIPOfElasticNetworkInterface(eni),
-				PrivateIP:        aws.ToString(eni.PrivateIpAddress),
-				VPCID:            aws.ToString(eni.VpcId),
-				AttachedInstance: getAttachmentInstanceOfElasticNetworkInterface(eni),
-				Description:      aws.ToString(eni.Description),
-			}
-
-			dataReceiver <- mappedENI
-		}
-
-		if DescribeNetworkInterfaces.NextToken != nil {
-			PaginationControl = DescribeNetworkInterfaces.NextToken
-		} else {
-			PaginationControl = nil
-			break
-		}
-
+	// var PaginationControl *string
+	// for {
+	// 	DescribeNetworkInterfaces, err := m.DescribeNetworkInterfacesClient.DescribeNetworkInterfaces(
+	// 		context.TODO(),
+	// 		&(ec2.DescribeNetworkInterfacesInput{
+	// 			NextToken: PaginationControl,
+	// 		}),
+	// 		func(o *ec2.Options) {
+	// 			o.Region = region
+	// 		},
+	// 	)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
 	}
+
+	for _, eni := range NetworkInterfaces {
+		status := string(eni.Status)
+		if status == "available" {
+			continue // unused ENI
+		}
+
+		mappedENI := MappedENI{
+			ID:               aws.ToString(eni.NetworkInterfaceId),
+			Type:             string(eni.InterfaceType),
+			ExternalIP:       getPublicIPOfElasticNetworkInterface(eni),
+			PrivateIP:        aws.ToString(eni.PrivateIpAddress),
+			VPCID:            aws.ToString(eni.VpcId),
+			AttachedInstance: getAttachmentInstanceOfElasticNetworkInterface(eni),
+			Description:      aws.ToString(eni.Description),
+		}
+
+		dataReceiver <- mappedENI
+	}
+
 }
 
 func getPublicIPOfElasticNetworkInterface(elasticNetworkInterface types.NetworkInterface) string {

@@ -55,12 +55,14 @@ type EndpointsModule struct {
 	AppRunnerClient    *apprunner.Client
 	LightsailClient    *lightsail.Client
 
-	Caller       sts.GetCallerIdentityOutput
-	AWSRegions   []string
-	OutputFormat string
-	Goroutines   int
-	AWSProfile   string
-	WrapTable    bool
+	Caller        sts.GetCallerIdentityOutput
+	AWSRegions    []string
+	AWSOutputType string
+	AWSTableCols  string
+
+	Goroutines int
+	AWSProfile string
+	WrapTable  bool
 
 	// Main module data
 	Endpoints      []Endpoint
@@ -83,8 +85,8 @@ type Endpoint struct {
 
 var oe *smithy.OperationError
 
-func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory string, verbosity int) {
-	// These stuct values are used by the output module
+func (m *EndpointsModule) PrintEndpoints(outputDirectory string, verbosity int) {
+	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "endpoints"
@@ -147,6 +149,7 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 	})
 
 	m.output.Headers = []string{
+		"Account",
 		"Service",
 		"Region",
 		"Name",
@@ -156,11 +159,48 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 		"Public",
 	}
 
+	// If the user specified table columns, use those.
+	// If the user specified -o wide, use the wide default cols for this module.
+	// Otherwise, use the hardcoded default cols for this module.
+	var tableCols []string
+	// If the user specified table columns, use those.
+	if m.AWSTableCols != "" {
+		// If the user specified wide as the output format, use these columns.
+		// remove any spaces between any commas and the first letter after the commas
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
+		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
+		tableCols = strings.Split(m.AWSTableCols, ",")
+		// If the user specified wide as the output format, use these columns.
+	} else if m.AWSOutputType == "wide" {
+		tableCols = []string{
+			"Account",
+			"Service",
+			"Region",
+			"Name",
+			"Endpoint",
+			"Port",
+			"Protocol",
+			"Public",
+		}
+		// Otherwise, use the default columns.
+	} else {
+		tableCols = []string{
+			"Service",
+			"Region",
+			"Name",
+			"Endpoint",
+			"Port",
+			"Protocol",
+			"Public",
+		}
+	}
+
 	// Table rows
 	for i := range m.Endpoints {
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
+				aws.ToString(m.Caller.Account),
 				m.Endpoints[i].AWSService,
 				m.Endpoints[i].Region,
 				m.Endpoints[i].Name,
@@ -174,10 +214,6 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 	}
 	if len(m.output.Body) > 0 {
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		//m.output.OutputSelector(outputFormat)
-		//utils.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule)
-		//internal.OutputSelector(verbosity, outputFormat, m.output.Headers, m.output.Body, m.output.FilePath, m.output.CallingModule, m.output.CallingModule, m.WrapTable, m.AWSProfile)
-		//m.writeLoot(m.output.FilePath, verbosity)
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,
@@ -186,9 +222,10 @@ func (m *EndpointsModule) PrintEndpoints(outputFormat string, outputDirectory st
 			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: m.output.Headers,
-			Body:   m.output.Body,
-			Name:   m.output.CallingModule,
+			Header:    m.output.Headers,
+			Body:      m.output.Body,
+			TableCols: tableCols,
+			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
@@ -545,7 +582,7 @@ func (m *EndpointsModule) getMqBrokersPerRegion(r string, wg *sync.WaitGroup, se
 			m.CommandCounter.Error++
 			continue
 		}
-		if BrokerDetails.PubliclyAccessible {
+		if aws.ToBool(BrokerDetails.PubliclyAccessible) {
 			public = "True"
 		} else {
 			public = "False"
@@ -615,7 +652,7 @@ func (m *EndpointsModule) getOpenSearchPerRegion(r string, wg *sync.WaitGroup, s
 		var endpoint string
 		var kibana_endpoint string
 
-		// This exits thie function if an opensearch domain exists but there is no endpoint
+		// This exits the function if an opensearch domain exists but there is no endpoint
 		if raw_endpoint == nil {
 			return
 		} else {
@@ -1386,7 +1423,7 @@ func (m *EndpointsModule) getRdsClustersPerRegion(r string, wg *sync.WaitGroup, 
 			endpoint := aws.ToString(instance.Endpoint.Address)
 			awsService := "RDS"
 
-			if instance.PubliclyAccessible {
+			if aws.ToBool(instance.PubliclyAccessible) {
 				public = "True"
 			} else {
 				public = "False"
@@ -1397,7 +1434,7 @@ func (m *EndpointsModule) getRdsClustersPerRegion(r string, wg *sync.WaitGroup, 
 				Region:     r,
 				Name:       name,
 				Endpoint:   endpoint,
-				Port:       port,
+				Port:       aws.ToInt32(port),
 				Protocol:   aws.ToString(instance.Engine),
 				Public:     public,
 			}
@@ -1442,7 +1479,7 @@ func (m *EndpointsModule) getRedshiftEndPointsPerRegion(r string, wg *sync.WaitG
 		//id := workspace.Id
 		endpoint := aws.ToString(cluster.Endpoint.Address)
 
-		if cluster.PubliclyAccessible {
+		if aws.ToBool(cluster.PubliclyAccessible) {
 			public = "True"
 		} else {
 			public = "False"
@@ -1455,7 +1492,7 @@ func (m *EndpointsModule) getRedshiftEndPointsPerRegion(r string, wg *sync.WaitG
 			Region:     r,
 			Name:       name,
 			Endpoint:   endpoint,
-			Port:       port,
+			Port:       aws.ToInt32(port),
 			Protocol:   protocol,
 			Public:     public,
 		}
