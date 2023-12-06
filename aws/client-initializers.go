@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/efs"
 	"github.com/aws/aws-sdk-go-v2/service/fsx"
 	"github.com/aws/aws-sdk-go-v2/service/glue"
+	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/organizations"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -128,6 +129,17 @@ func InitOrgCommandClient(caller sts.GetCallerIdentityOutput, AWSProfile string,
 	return orgClient
 }
 
+func InitPermissionsClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int) IamPermissionsModule {
+	var AWSConfig = internal.AWSConfigFileLoader(AWSProfile, cfVersion)
+	permissionsClient := IamPermissionsModule{
+		IAMClient:  iam.NewFromConfig(AWSConfig),
+		Caller:     caller,
+		AWSProfile: AWSProfile,
+		AWSRegions: internal.GetEnabledRegions(AWSProfile, cfVersion),
+	}
+	return permissionsClient
+}
+
 func InitSecretsManagerClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int) *secretsmanager.Client {
 	var AWSConfig = internal.AWSConfigFileLoader(AWSProfile, cfVersion)
 	return secretsmanager.NewFromConfig(AWSConfig)
@@ -140,4 +152,8 @@ func InitGlueClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVer
 
 func InitOrgClient(AWSConfig aws.Config) *organizations.Client {
 	return organizations.NewFromConfig(AWSConfig)
+}
+
+func InitIAMClient(AWSConfig aws.Config) *iam.Client {
+	return iam.NewFromConfig(AWSConfig)
 }

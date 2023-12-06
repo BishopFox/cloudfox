@@ -10,6 +10,7 @@ import (
 	"github.com/BishopFox/cloudfox/aws"
 	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/BishopFox/cloudfox/internal/common"
 	"github.com/aws/aws-sdk-go-v2/service/apigateway"
 	"github.com/aws/aws-sdk-go-v2/service/apigatewayv2"
 	"github.com/aws/aws-sdk-go-v2/service/apprunner"
@@ -83,8 +84,9 @@ var (
 	AWSWrapTable       bool
 	AWSUseCache        bool
 
-	Goroutines  int
-	Verbosity   int
+	Goroutines int
+	Verbosity  int
+
 	AWSCommands = &cobra.Command{
 		Use:   "aws",
 		Short: "See \"Available Commands\" for AWS Modules",
@@ -877,12 +879,29 @@ func runFilesystemsCommand(cmd *cobra.Command, args []string) {
 }
 
 func runGraphCommand(cmd *cobra.Command, args []string) {
+	//gaadWg := new(sync.WaitGroup)
+	for _, profile := range AWSProfiles {
+		//var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
+		if err != nil {
+			continue
+		}
+
+		//instantiate a permissions client and populate the permissions data
+		fmt.Println("Getting GAAD for " + profile)
+		PermissionsCommandClient := aws.InitPermissionsClient(*caller, profile, cmd.Root().Version, Goroutines)
+		PermissionsCommandClient.GetGAAD()
+		PermissionsCommandClient.ParsePermissions("")
+		common.PermissionRowsFromAllProfiles = append(common.PermissionRowsFromAllProfiles, PermissionsCommandClient.Rows...)
+	}
+
 	for _, profile := range AWSProfiles {
 		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
 		if err != nil {
 			continue
 		}
+
 		graphCommandClient := aws.GraphCommand{
 			Caller:             *caller,
 			AWSProfile:         profile,
@@ -894,6 +913,8 @@ func runGraphCommand(cmd *cobra.Command, args []string) {
 			AWSOutputDirectory: AWSOutputDirectory,
 			Verbosity:          Verbosity,
 			AWSConfig:          AWSConfig,
+			Version:            cmd.Root().Version,
+			SkipAdminCheck:     AWSSkipAdminCheck,
 		}
 		graphCommandClient.RunGraphCommand()
 	}

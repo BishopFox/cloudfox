@@ -5,6 +5,7 @@ import (
 )
 
 var NodeLabelToNodeMap = map[schema.NodeLabel]schema.Node{
-	//schema.Organization: &Organization{},
-	schema.Account: &Account{},
+	schema.Organization: &Organization{},
+	schema.Account:      &Account{},
+	schema.Role:         &Role{},
 }

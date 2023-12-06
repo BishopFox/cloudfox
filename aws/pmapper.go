@@ -1,6 +1,7 @@
 package aws
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -13,8 +14,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/dominikbraun/graph"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/sirupsen/logrus"
 )
+
+var GlobalPmapperEdges []Edge
 
 type PmapperModule struct {
 	// General configuration data
@@ -301,3 +305,102 @@ func (m *PmapperModule) readPmapperData(accountID *string) error {
 	return nil
 
 }
+
+func (m *PmapperModule) GenerateCypherStatements(goCtx context.Context, driver neo4j.DriverWithContext) error {
+	// Insert nodes
+	for i, node := range m.Nodes {
+		query, params := m.generateNodeCreateStatement(node, i)
+		if err := m.executeCypherQuery(goCtx, driver, query, params); err != nil {
+			return err
+		}
+	}
+
+	// Insert edges
+	for i, edge := range m.Edges {
+		query, params := m.generateEdgeCreateStatement(edge, i)
+		if err := m.executeCypherQuery(goCtx, driver, query, params); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (m *PmapperModule) generateNodeCreateStatement(node Node, i int) (string, map[string]interface{}) {
+	var ptype string
+
+	if strings.Contains(node.Arn, "role") {
+		ptype = "Role"
+	} else if strings.Contains(node.Arn, "user") {
+		ptype = "User"
+		node.TrustPolicy = ""
+	} else if strings.Contains(node.Arn, "group") {
+		ptype = "Group"
+	}
+
+	query := `MERGE (n:%s {arn: $arn, idValue: $idValue, isAdmin: $isAdmin, name: $name, principalType: $principalType})`
+	params := map[string]interface{}{
+		"arn":           node.Arn,
+		"idValue":       node.IDValue,
+		"isAdmin":       node.IsAdmin,
+		"name":          node.Arn,
+		"principalType": ptype,
+	}
+
+	return fmt.Sprintf(query, ptype), params
+}
+
+func (m *PmapperModule) generateEdgeCreateStatement(edge Edge, i int) (string, map[string]interface{}) {
+	// Sanitize ARNs for matching nodes
+	srcArnSanitized := sanitizeArnForNeo4jLabel(edge.Source)
+	destArnSanitized := sanitizeArnForNeo4jLabel(edge.Destination)
+
+	query := `MATCH (a {arn: $srcArn}), (b {arn: $destArn}) CREATE (a)-[:CAN_ACCESS {reason: $reason, shortReason: $shortReason}]->(b)`
+	params := map[string]interface{}{
+		"srcArn":      srcArnSanitized,
+		"destArn":     destArnSanitized,
+		"reason":      edge.Reason,
+		"shortReason": edge.ShortReason,
+	}
+
+	return query, params
+}
+
+func (m *PmapperModule) executeCypherQuery(ctx context.Context, driver neo4j.DriverWithContext, query string, params map[string]interface{}) error {
+	_, err := neo4j.ExecuteQuery(ctx, driver, query, params, neo4j.EagerResultTransformer, neo4j.ExecuteQueryWithDatabase("neo4j"))
+	if err != nil {
+		sharedLogger.Errorf("Error executing query: %s -- %v", err, params)
+		return err
+	}
+	return nil
+}
+
+func sanitizeArnForNeo4jLabel(arn string) string {
+	// Replace non-allowed characters with underscores or other allowed characters
+	sanitized := strings.ReplaceAll(arn, ":", "_")
+	sanitized = strings.ReplaceAll(sanitized, "-", "_")
+	// Add more replacements if needed
+	return sanitized
+}
+
+// func GetRelationshipsForRole(roleArn string) []schema.Relationship {
+// 	var relationships []schema.Relationship
+// 	if strings.Contains(node.Arn, "role") {
+// 		ptype = "Role"
+// 	} else if strings.Contains(node.Arn, "user") {
+// 		ptype = "User"
+// 		node.TrustPolicy = ""
+// 	} else if strings.Contains(node.Arn, "group") {
+// 		ptype = "Group"
+// 	}
+// 	for _, edge := range m.Edges {
+// 		if edge.Source == roleArn {
+// 			relationships = append(relationships, schema.Relationship{
+// 				Source:         roleArn,
+// 				SourceProperty: "arn",
+// 				Target:         edge.Destination,
+// 				TargetProperty: "arn",
+// 				Type:           "CAN_ACCESS",
+// 			})
+// 		}
+// 	}

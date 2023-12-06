@@ -6,6 +6,7 @@ import (
 
 type Organization struct {
 	Id                 string
+	OrgId              string
 	Arn                string
 	MasterAccountArn   string
 	MasterAccountId    string

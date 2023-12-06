@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go/ptr"
@@ -32,7 +33,12 @@ func AWSConfigFileLoader(AWSProfile string, version string) aws.Config {
 	cfg, err := config.LoadDefaultConfig(context.TODO(), config.WithSharedConfigProfile(AWSProfile), config.WithDefaultRegion("us-east-1"), config.WithRetryer(
 		func() aws.Retryer {
 			return retry.AddWithMaxAttempts(retry.NewStandard(), 3)
-		}))
+		}), config.WithAssumeRoleCredentialOptions(func(options *stscreds.AssumeRoleOptions) {
+		options.TokenProvider = func() (string, error) {
+			return "theTokenCode", nil
+		}
+	}))
+
 	if err != nil {
 		fmt.Println(err)
 		TxtLog.Println(err)

@@ -1,11 +1,10 @@
 package ingestor
 
 import (
-	"archive/zip"
 	"bufio"
 	"context"
 	"encoding/json"
-	"io"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,16 +49,16 @@ type Neo4jConfig struct {
 
 type CloudFoxIngestor struct {
 	Neo4jConfig
-	ResultsFile string
-	Driver      neo4j.DriverWithContext
-	TmpDir      string
+	//ResultsFile string
+	Driver neo4j.DriverWithContext
+	TmpDir string
 }
 
-func NewCloudFoxIngestor(resultsFile string, username string, password string, server string) (*CloudFoxIngestor, error) {
+func NewCloudFoxIngestor() (*CloudFoxIngestor, error) {
 	config := Neo4jConfig{
-		Uri:      server,
-		Username: username,
-		Password: password,
+		Uri:      "neo4j://localhost:7687",
+		Username: "neo4j",
+		Password: "cloudfox",
 	}
 	driver, err := neo4j.NewDriverWithContext(config.Uri, neo4j.BasicAuth(config.Username, config.Password, ""))
 	if err != nil {
@@ -67,92 +66,74 @@ func NewCloudFoxIngestor(resultsFile string, username string, password string, s
 	}
 	return &CloudFoxIngestor{
 		Neo4jConfig: config,
-		ResultsFile: resultsFile,
-		Driver:      driver,
+		//ResultsFile: resultsFile,
+		Driver: driver,
 	}, nil
 }
 
-func unzipToTemp(zipFilePath string) (string, error) {
-	// Create a temporary directory to extract the zip file to
-	tempDir, err := os.MkdirTemp("", "cirro")
-	if err != nil {
-		return "", err
-	}
-
-	// Open the zip file and extract to a temporary directory
-	zipfile, err := zip.OpenReader(zipFilePath)
-	if err != nil {
-		return "", err
-	}
-	defer zipfile.Close()
-
-	for _, file := range zipfile.File {
-		path := filepath.Join(tempDir, file.Name)
-		log.Debugf("Extracting file: %s", path)
-
-		fileData, err := file.Open()
-		if err != nil {
-			return "", err
-		}
-		defer fileData.Close()
-
-		newFile, err := os.Create(path)
-		if err != nil {
-			return "", err
-		}
-		defer newFile.Close()
-
-		if _, err := io.Copy(newFile, fileData); err != nil {
-			return "", err
-		}
-	}
-	return tempDir, nil
-}
-
-// func (i *CloudFoxIngestor) ProcessFile(path string, info os.FileInfo) error {
-// 	log.Infof("Processing file: %s", info.Name())
-
-// 	switch info.Name() {
-// 	case "users.jsonl":
-// 		return i.ProcessFileObjects(path, schema.GraphUser, schema.GraphObject)
-// 	case "groups.jsonl":
-// 		return i.ProcessFileObjects(path, schema.GraphGroup, schema.GraphObject)
-// 	case "servicePrincipals.jsonl":
-// 		return i.ProcessFileObjects(path, schema.GraphServicePrincipal, schema.GraphObject)
-// 	case "applications.jsonl":
-// 		return i.ProcessFileObjects(path, schema.GraphApplication, schema.GraphObject)
-// 	case "devices.jsonl":
-// 		return i.ProcessFileObjects(path, schema.GraphDevice, schema.GraphObject)
-// 	case "directoryRoles.jsonl":
-// 		return i.ProcessFileObjects(path, schema.GraphRole, schema.GraphObject)
-// 	case "subscriptions.jsonl":
-// 		return i.ProcessFileObjects(path, schema.Subscription, schema.ArmResource)
-// 	case "tenants.jsonl":
-// 		return i.ProcessFileObjects(path, schema.Tenant, schema.ArmResource)
-// 	case "rbac.jsonl":
-// 		return i.ProcessFileObjects(path, schema.AzureRbac, "")
-// 	default:
-// 		return nil
+// func unzipToTemp(zipFilePath string) (string, error) {
+// 	// Create a temporary directory to extract the zip file to
+// 	tempDir, err := os.MkdirTemp("", "cloudfox-graph")
+// 	if err != nil {
+// 		return "", err
 // 	}
-// }
 
-// function that takes objects, object type and then makes relationships
+// 	// Open the zip file and extract to a temporary directory
+// 	zipfile, err := zip.OpenReader(zipFilePath)
+// 	if err != nil {
+// 		return "", err
+// 	}
+// 	defer zipfile.Close()
 
-// func (i *CloudFoxIngestor) ProcessObjectsFromSlice(objects []interface{}, objectType schema.NodeLabel, generalType schema.NodeLabel) error {
-// func (i *CloudFoxIngestor) ProcessObjectsFromSlice(accounts []models.Account, objectType schema.NodeLabel, generalType schema.NodeLabel) error {
-// 	var object = models.NodeLabelToNodeMap[objectType]
+// 	for _, file := range zipfile.File {
+// 		path := filepath.Join(tempDir, file.Name)
+// 		log.Debugf("Extracting file: %s", path)
 
-// 	//Iterate over the lines and create the nodes
-// 	for _, account := range accounts {
-// 		relationships := object.MakeRelationships()
-// 		if err := i.InsertDBObjects(account, relationships, []schema.NodeLabel{generalType, objectType}); err != nil {
-// 			log.Error(err)
-// 			continue
+// 		fileData, err := file.Open()
+// 		if err != nil {
+// 			return "", err
 // 		}
+// 		defer fileData.Close()
 
+// 		newFile, err := os.Create(path)
+// 		if err != nil {
+// 			return "", err
+// 		}
+// 		defer newFile.Close()
+
+// 		if _, err := io.Copy(newFile, fileData); err != nil {
+// 			return "", err
+// 		}
 // 	}
-// 	return nil
+// 	return tempDir, nil
 // }
+
+func (i *CloudFoxIngestor) ProcessFile(path string, info os.FileInfo) error {
+	log.Infof("Processing file: %s", info.Name())
+
+	switch info.Name() {
+	// case "accounts.jsonl":
+	// 	return i.ProcessFileObjects(path, schema.Account, schema.Account)
+	// case "roles.jsonl":
+	// 	return i.ProcessFileObjects(path, schema.Role, schema.Role)
+	// case "servicePrincipals.jsonl":
+	// 	return i.ProcessFileObjects(path, schema.GraphServicePrincipal, schema.GraphObject)
+	// case "applications.jsonl":
+	// 	return i.ProcessFileObjects(path, schema.GraphApplication, schema.GraphObject)
+	// case "devices.jsonl":
+	// 	return i.ProcessFileObjects(path, schema.GraphDevice, schema.GraphObject)
+	// case "directoryRoles.jsonl":
+	// 	return i.ProcessFileObjects(path, schema.GraphRole, schema.GraphObject)
+	// case "subscriptions.jsonl":
+	// 	return i.ProcessFileObjects(path, schema.Subscription, schema.ArmResource)
+	// case "tenants.jsonl":
+	// 	return i.ProcessFileObjects(path, schema.Tenant, schema.ArmResource)
+	// case "rbac.jsonl":
+	// 	return i.ProcessFileObjects(path, schema.AzureRbac, "")
+	default:
+		return nil
+	}
+}
 
 func (i *CloudFoxIngestor) ProcessFileObjects(path string, objectType schema.NodeLabel, generalType schema.NodeLabel) error {
 
@@ -195,13 +176,19 @@ func (i *CloudFoxIngestor) InsertDBObjects(object schema.Node, relationships []s
 
 	// Insert the node
 	if object != nil {
-		nodeMap := schema.AsNeo4j(&object)
+		nodeMap, err := schema.ConvertCustomTypesToNeo4j(&object)
+		if err != nil {
+			log.Errorf("Error converting custom types to neo4j: %s -- %v", err, object)
+			return err
+		}
+
+		//nodeMap := schema.AsNeo4j(&object)
 		nodeQueryParams := map[string]interface{}{
-			"id":         nodeMap["id"],
+			"id":         nodeMap["Id"],
 			"labels":     labels,
 			"properties": nodeMap,
 		}
-		_, err := neo4j.ExecuteQuery(goCtx, i.Driver, MergeNodeQueryTemplate, nodeQueryParams, neo4j.EagerResultTransformer, neo4j.ExecuteQueryWithDatabase("neo4j"))
+		_, err = neo4j.ExecuteQuery(goCtx, i.Driver, MergeNodeQueryTemplate, nodeQueryParams, neo4j.EagerResultTransformer, neo4j.ExecuteQueryWithDatabase("neo4j"))
 		if err != nil {
 			log.Errorf("Error inserting node: %s -- %v", err, nodeQueryParams)
 			return err
@@ -242,50 +229,43 @@ func (i *CloudFoxIngestor) InsertDBObjects(object schema.Node, relationships []s
 	return nil
 }
 
-func (i *CloudFoxIngestor) Run() error {
+func (i *CloudFoxIngestor) Run(graphOutputDir string) error {
 	goCtx := context.Background()
 	log.Infof("Verifying connectivity to Neo4J at %s", i.Uri)
 	if err := i.Driver.VerifyConnectivity(goCtx); err != nil {
 		return err
 	}
 	defer i.Driver.Close(goCtx)
+	var err error
 
 	// Get the label to model map
 
 	// Create constraints and indexes
-	// log.Info("Creating constraints and indexes for labels")
-	// for label := range models.NodeLabelToNodeMap {
-	// 	for _, query := range []string{CreateConstraintQueryTemplate, CreateIndexQueryTemplate} {
-	// 		_, err := neo4j.ExecuteQuery(goCtx, i.Driver, fmt.Sprintf(query, label), nil, neo4j.EagerResultTransformer, neo4j.ExecuteQueryWithDatabase("neo4j"))
-	// 		if err != nil {
-	// 			log.Error(err)
-	// 			continue
-	// 		}
-	// 	}
-	// }
-
-	// Unzip the results file to a temporary directory
-	tempDir, err := unzipToTemp(i.ResultsFile)
-	if err != nil {
-		return err
+	log.Info("Creating constraints and indexes for labels")
+	for label := range models.NodeLabelToNodeMap {
+		for _, query := range []string{CreateConstraintQueryTemplate, CreateIndexQueryTemplate} {
+			_, err := neo4j.ExecuteQuery(goCtx, i.Driver, fmt.Sprintf(query, label), nil, neo4j.EagerResultTransformer, neo4j.ExecuteQueryWithDatabase("neo4j"))
+			if err != nil {
+				log.Error(err)
+				continue
+			}
+		}
 	}
-	defer os.RemoveAll(tempDir)
-	log.Debugf("Using temp dir: %s", tempDir)
 
-	// Open the temporary directory and iterate over the files
+	// Process the files in the output directory
 	fileWg := new(sync.WaitGroup)
-	filepath.Walk(tempDir, func(path string, info os.FileInfo, err error) error {
+	filepath.Walk(graphOutputDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
-		if tempDir == path {
+		if graphOutputDir == path {
 			return nil
 		}
 
 		fileWg.Add(1)
 		go func(path string) {
 			defer fileWg.Done()
-			//i.ProcessFile(path, info)
+			i.ProcessFile(path, info)
 			log.Infof("Finished processing file: %s", info.Name())
 		}(path)
 		return nil

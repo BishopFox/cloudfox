@@ -455,3 +455,15 @@ func adjustBodyForTable(tableHeaders []string, fullHeaders []string, fullBody []
 
 	return adjustedBody, selectedHeaders
 }
+
+func WriteJsonlFile(file *os.File, data interface{}) error {
+	bytes, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+
+	if _, err := file.Write(append(bytes, "\n"...)); err != nil {
+		return err
+	}
+	return nil
+}

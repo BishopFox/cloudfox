@@ -1,21 +1,17 @@
 package aws
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
-	"net/url"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/BishopFox/cloudfox/internal/aws/policy"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
-	"github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/sirupsen/logrus"
 )
@@ -62,44 +58,10 @@ type RoleTrustRow struct {
 
 type AnalyzedRole struct {
 	roleARN   *string
-	trustsDoc trustPolicyDocument
+	trustsDoc policy.TrustPolicyDocument
 	// trustType  string // UNUSED FIELD, PLEASE REVIEW
 	Admin      string
 	CanPrivEsc string
-}
-
-type trustPolicyDocument struct {
-	Version   string                    `json:"Version"`
-	Statement []RoleTrustStatementEntry `json:"Statement"`
-}
-
-type RoleTrustStatementEntry struct {
-	Sid       string `json:"Sid"`
-	Effect    string `json:"Effect"`
-	Principal struct {
-		AWS       ListOfPrincipals `json:"AWS"`
-		Service   ListOfPrincipals `json:"Service"`
-		Federated ListOfPrincipals `json:"Federated"`
-	} `json:"Principal"`
-	Action    string `json:"Action"`
-	Condition struct {
-		StringEquals struct {
-			StsExternalID string `json:"sts:ExternalId"`
-			SAMLAud       string `json:"SAML:aud"`
-			OidcEksSub    string `json:"OidcEksSub"`
-			OidcEksAud    string `json:"OidcEksAud"`
-			CognitoAud    string `json:"cognito-identity.amazonaws.com:aud"`
-		} `json:"StringEquals"`
-		StringLike struct {
-			TokenActionsGithubusercontentComSub ListOfPrincipals `json:"token.actions.githubusercontent.com:sub"`
-			TokenActionsGithubusercontentComAud string           `json:"token.actions.githubusercontent.com:aud"`
-			OidcEksSub                          string           `json:"OidcEksSub"`
-			OidcEksAud                          string           `json:"OidcEksAud"`
-		} `json:"StringLike"`
-		ForAnyValueStringLike struct {
-			CognitoAMR string `json:"cognito-identity.amazonaws.com:amr"`
-		} `json:"ForAnyValue:StringLike"`
-	} `json:"Condition"`
 }
 
 func (m *RoleTrustsModule) PrintRoleTrusts(outputDirectory string, verbosity int) {
@@ -134,6 +96,7 @@ func (m *RoleTrustsModule) PrintRoleTrusts(outputDirectory string, verbosity int
 
 		}
 	}
+
 	o := internal.OutputClient{
 		Verbosity:     verbosity,
 		CallingModule: m.output.CallingModule,
@@ -279,7 +242,7 @@ func (m *RoleTrustsModule) printServiceTrusts(outputDirectory string) ([]string,
 		tableCols = strings.Split(m.AWSTableCols, ",")
 		// If the user specified wide as the output format, use these columns.
 	} else if m.AWSOutputType == "wide" {
-		tableCols = []string{"Role Arn", "Trusted Service", "IsAdmin?", "CanPrivEscToAdmin?"}
+		tableCols = []string{"Account", "Role Arn", "Trusted Service", "IsAdmin?", "CanPrivEscToAdmin?"}
 		// Otherwise, use the default columns for this module (brief)
 	} else {
 		tableCols = []string{"Role Name", "Trusted Service", "IsAdmin?", "CanPrivEscToAdmin?"}
@@ -347,7 +310,7 @@ func (m *RoleTrustsModule) printFederatedTrusts(outputDirectory string) ([]strin
 		tableCols = strings.Split(m.AWSTableCols, ",")
 		// If the user specified wide as the output format, use these columns.
 	} else if m.AWSOutputType == "wide" {
-		tableCols = []string{"Role Arn", "Trusted Provider", "Trusted Subject", "IsAdmin?", "CanPrivEscToAdmin?"}
+		tableCols = []string{"Account", "Role Arn", "Trusted Provider", "Trusted Subject", "IsAdmin?", "CanPrivEscToAdmin?"}
 		// Otherwise, use the default columns for this module (brief)
 	} else {
 		tableCols = []string{"Role Name", "Trusted Provider", "Trusted Subject", "IsAdmin?", "CanPrivEscToAdmin?"}
@@ -387,7 +350,7 @@ func (m *RoleTrustsModule) printFederatedTrusts(outputDirectory string) ([]strin
 
 }
 
-func parseFederatedTrustPolicy(statement RoleTrustStatementEntry) (string, string) {
+func parseFederatedTrustPolicy(statement policy.RoleTrustStatementEntry) (string, string) {
 	var column2, column3 string
 	if statement.Condition.StringLike.TokenActionsGithubusercontentComAud != "" || len(statement.Condition.StringLike.TokenActionsGithubusercontentComSub) > 0 {
 		column2 = "GitHub Actions" //  (" + statement.Principal.Federated[0] + ")"
@@ -447,7 +410,7 @@ func (m *RoleTrustsModule) getAllRoleTrusts() {
 	}
 
 	for _, role := range ListRoles {
-		trustsdoc, err := parseRoleTrustPolicyDocument(role)
+		trustsdoc, err := policy.ParseRoleTrustPolicyDocument(role)
 		if err != nil {
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
@@ -466,41 +429,4 @@ func (m *RoleTrustsModule) getAllRoleTrusts() {
 
 	}
 
-}
-
-func parseRoleTrustPolicyDocument(role types.Role) (trustPolicyDocument, error) {
-	document, _ := url.QueryUnescape(aws.ToString(role.AssumeRolePolicyDocument))
-
-	// These next six lines are a hack, needed because the EKS OIDC json field name is dynamic
-	// and therefore can't be used to unmarshall in a predictable way. The hack involves replacing
-	// the random pattern with a predictable one so that we can add the predictable one in the struct
-	// used to unmarshall.
-	pattern := `(\w+)\:`
-	pattern2 := `".[a-zA-Z0-9\-\.]+/id/`
-	var reEKSSub = regexp.MustCompile(pattern2 + pattern + "sub")
-	var reEKSAud = regexp.MustCompile(pattern2 + pattern + "aud")
-	document = reEKSSub.ReplaceAllString(document, "\"OidcEksSub")
-	document = reEKSAud.ReplaceAllString(document, "\"OidcEksAud")
-
-	var parsedDocumentToJSON trustPolicyDocument
-	_ = json.Unmarshal([]byte(document), &parsedDocumentToJSON)
-	return parsedDocumentToJSON, nil
-}
-
-// A custom unmarshaller is necessary because the list of principals can be an array of strings or a string.
-// https://stackoverflow.com/questions/65854778/parsing-arn-from-iam-policy-using-regex
-type ListOfPrincipals []string
-
-func (r *ListOfPrincipals) UnmarshalJSON(b []byte) error {
-	var s string
-	if err := json.Unmarshal(b, &s); err == nil {
-		*r = append(*r, s)
-		return nil
-	}
-	var ss []string
-	if err := json.Unmarshal(b, &ss); err == nil {
-		*r = ss
-		return nil
-	}
-	return errors.New("cannot unmarshal neither to a string nor a slice of strings")
 }
