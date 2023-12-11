@@ -52,6 +52,7 @@ const (
 	CanBeAssumedBy        RelationshipType = "CanBeAssumedBy"
 	CanBeAssumedByTest    RelationshipType = "CanBeAssumedByTest"
 	CanAssumeTest         RelationshipType = "CanAssumeTest"
+	CanAccess             RelationshipType = "CAN_ACCESS"
 )
 
 const (

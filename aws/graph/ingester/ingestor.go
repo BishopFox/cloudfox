@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,7 +17,7 @@ import (
 
 const (
 	// Neo4j
-	MergeNodeQueryTemplate = `CALL apoc.merge.node([$labels[0]], {id: $id}, $properties, $properties) YIELD node as obj
+	MergeNodeQueryTemplate = `CALL apoc.merge.node([$labels[0]], {Id: $Id}, $properties, $properties) YIELD node as obj
 	CALL apoc.create.setLabels(obj, $labels) YIELD node as labeledObj
 	RETURN labeledObj`
 
@@ -30,11 +29,11 @@ const (
 
 	// Using sprintf to insert the label name since the driver doesn't support parameters for labels here
 	// %[1]s is a nice way to say "insert the first parameter here"
-	CreateConstraintQueryTemplate = "CREATE CONSTRAINT IF NOT EXISTS FOR (n: %s) REQUIRE n.id IS UNIQUE"
-	CreateIndexQueryTemplate      = "CREATE INDEX %[1]s_id IF NOT EXISTS FOR (n: %[1]s) ON (n.id)"
+	CreateConstraintQueryTemplate = "CREATE CONSTRAINT IF NOT EXISTS FOR (n: %s) REQUIRE n.Id IS UNIQUE"
+	CreateIndexQueryTemplate      = "CREATE INDEX %[1]s_Id IF NOT EXISTS FOR (n: %[1]s) ON (n.Id)"
 
 	PostProcessMergeQueryTemplate = `MATCH (n)
-	WITH n.id AS id, COLLECT(n) AS nodesToMerge
+	WITH n.Id AS Id, COLLECT(n) AS nodesToMerge
 	WHERE size(nodesToMerge) > 1
 	CALL apoc.refactor.mergeNodes(nodesToMerge, {properties: 'combine', mergeRels:true})
 	YIELD node
@@ -112,10 +111,10 @@ func (i *CloudFoxIngestor) ProcessFile(path string, info os.FileInfo) error {
 	log.Infof("Processing file: %s", info.Name())
 
 	switch info.Name() {
-	// case "accounts.jsonl":
-	// 	return i.ProcessFileObjects(path, schema.Account, schema.Account)
-	// case "roles.jsonl":
-	// 	return i.ProcessFileObjects(path, schema.Role, schema.Role)
+	case "accounts.jsonl":
+		return i.ProcessFileObjects(path, schema.Account, schema.Account)
+	case "roles.jsonl":
+		return i.ProcessFileObjects(path, schema.Role, schema.Role)
 	// case "servicePrincipals.jsonl":
 	// 	return i.ProcessFileObjects(path, schema.GraphServicePrincipal, schema.GraphObject)
 	// case "applications.jsonl":
@@ -184,7 +183,7 @@ func (i *CloudFoxIngestor) InsertDBObjects(object schema.Node, relationships []s
 
 		//nodeMap := schema.AsNeo4j(&object)
 		nodeQueryParams := map[string]interface{}{
-			"id":         nodeMap["Id"],
+			"Id":         nodeMap["Id"],
 			"labels":     labels,
 			"properties": nodeMap,
 		}
@@ -204,10 +203,10 @@ func (i *CloudFoxIngestor) InsertDBObjects(object schema.Node, relationships []s
 			var currentRelationship map[string]interface{}
 
 			if relationship.SourceProperty == "" {
-				relationship.SourceProperty = "id"
+				relationship.SourceProperty = "Id"
 			}
 			if relationship.TargetProperty == "" {
-				relationship.TargetProperty = "id"
+				relationship.TargetProperty = "Id"
 			}
 			relationshipBytes, err := json.Marshal(relationship)
 			if err != nil {
@@ -241,16 +240,16 @@ func (i *CloudFoxIngestor) Run(graphOutputDir string) error {
 	// Get the label to model map
 
 	// Create constraints and indexes
-	log.Info("Creating constraints and indexes for labels")
-	for label := range models.NodeLabelToNodeMap {
-		for _, query := range []string{CreateConstraintQueryTemplate, CreateIndexQueryTemplate} {
-			_, err := neo4j.ExecuteQuery(goCtx, i.Driver, fmt.Sprintf(query, label), nil, neo4j.EagerResultTransformer, neo4j.ExecuteQueryWithDatabase("neo4j"))
-			if err != nil {
-				log.Error(err)
-				continue
-			}
-		}
-	}
+	// log.Info("Creating constraints and indexes for labels")
+	// for label := range models.NodeLabelToNodeMap {
+	// 	for _, query := range []string{CreateConstraintQueryTemplate, CreateIndexQueryTemplate} {
+	// 		_, err := neo4j.ExecuteQuery(goCtx, i.Driver, fmt.Sprintf(query, label), nil, neo4j.EagerResultTransformer, neo4j.ExecuteQueryWithDatabase("neo4j"))
+	// 		if err != nil {
+	// 			log.Error(err)
+	// 			continue
+	// 		}
+	// 	}
+	// }
 
 	// Process the files in the output directory
 	fileWg := new(sync.WaitGroup)

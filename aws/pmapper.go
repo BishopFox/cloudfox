@@ -269,8 +269,25 @@ func (m *PmapperModule) doesNodeHavePathToAdmin(startNode Node) bool {
 					if p != "" {
 						if startNode.Arn != destNode.Arn {
 							// if we got here there is a path
-							//fmt.Printf("%s has a path %s who is an admin.\n", startNode.Arn, destNode.Arn)
-							//fmt.Println(path)
+							fmt.Printf("%s has a path %s who is an admin.\n", startNode.Arn, destNode.Arn)
+							fmt.Println(path)
+							// if we got here theres a path. Lets print the reason and the short reason for each edge in the path to the screen
+							for i := 0; i < len(path)-1; i++ {
+								for _, edge := range m.Edges {
+									if edge.Source == path[i] && edge.Destination == path[i+1] {
+										// print it like this: [start node] [reason] [end node]
+										fmt.Printf("   %s %s %s\n", path[i], edge.Reason, path[i+1])
+									}
+									// shortest path only finds the shortest path. We want to find all paths. So we need to find all paths that have the same start and end nodes from the path, but going back to the main edges slice
+									for _, edge := range GlobalPmapperEdges {
+										if edge.Source == path[i] && edge.Destination == path[i+1] {
+											// print it like this: [start node] [reason] [end node]
+											fmt.Printf("   %s %s %s\n", path[i], edge.Reason, path[i+1])
+										}
+									}
+								}
+							}
+
 							return true
 						}
 
@@ -327,42 +344,63 @@ func (m *PmapperModule) GenerateCypherStatements(goCtx context.Context, driver n
 }
 
 func (m *PmapperModule) generateNodeCreateStatement(node Node, i int) (string, map[string]interface{}) {
-	var ptype string
+	var ptype, label, query string
+	var params map[string]any
 
 	if strings.Contains(node.Arn, "role") {
+		label = GetResourceNameFromArn(node.Arn)
 		ptype = "Role"
+		params = map[string]any{
+			"Id":          node.Arn,
+			"ARN":         node.Arn,
+			"Name":        GetResourceNameFromArn(node.Arn),
+			"IdValue":     node.IDValue,
+			"IsAdminP":    node.IsAdmin,
+			"PathToAdmin": node.PathToAdmin,
+		}
+
 	} else if strings.Contains(node.Arn, "user") {
+		label = GetResourceNameFromArn(node.Arn)
 		ptype = "User"
-		node.TrustPolicy = ""
+		//node.TrustPolicy = ""
+		params = map[string]any{
+			"Id":          node.Arn,
+			"ARN":         node.Arn,
+			"Name":        GetResourceNameFromArn(node.Arn),
+			"IdValue":     node.IDValue,
+			"IsAdminP":    node.IsAdmin,
+			"PathToAdmin": node.PathToAdmin,
+		}
+
 	} else if strings.Contains(node.Arn, "group") {
+		label = GetResourceNameFromArn(node.Arn)
 		ptype = "Group"
 	}
+	label = strings.ReplaceAll(label, "-", "_")
+	label = strings.ReplaceAll(label, ".", "_")
 
-	query := `MERGE (n:%s {arn: $arn, idValue: $idValue, isAdmin: $isAdmin, name: $name, principalType: $principalType})`
-	params := map[string]interface{}{
-		"arn":           node.Arn,
-		"idValue":       node.IDValue,
-		"isAdmin":       node.IsAdmin,
-		"name":          node.Arn,
-		"principalType": ptype,
-	}
+	query = `MERGE (%s:%s {Id: $Id, ARN: $ARN, Name: $Name, IdValue: $IdValue, IsAdminP: $IsAdminP, PathToAdmin: $PathToAdmin})`
 
-	return fmt.Sprintf(query, ptype), params
+	//sanitizedArn := sanitizeArnForNeo4jLabel(node.Arn)
+	//id := fmt.Sprintf("%s_%s", sanitizedArn, ptype)
+
+	fmt.Println(fmt.Sprintf(query, label, ptype), params)
+	return fmt.Sprintf(query, label, ptype), params
 }
 
 func (m *PmapperModule) generateEdgeCreateStatement(edge Edge, i int) (string, map[string]interface{}) {
 	// Sanitize ARNs for matching nodes
-	srcArnSanitized := sanitizeArnForNeo4jLabel(edge.Source)
-	destArnSanitized := sanitizeArnForNeo4jLabel(edge.Destination)
+	//srcArnSanitized := sanitizeArnForNeo4jLabel(edge.Source)
+	//destArnSanitized := sanitizeArnForNeo4jLabel(edge.Destination)
 
-	query := `MATCH (a {arn: $srcArn}), (b {arn: $destArn}) CREATE (a)-[:CAN_ACCESS {reason: $reason, shortReason: $shortReason}]->(b)`
-	params := map[string]interface{}{
-		"srcArn":      srcArnSanitized,
-		"destArn":     destArnSanitized,
+	query := `MATCH (a {ARN: $srcArn}), (b {ARN: $destArn}) CREATE (a)-[:CAN_ACCESS {reason: $reason, shortReason: $shortReason}]->(b)`
+	params := map[string]any{
+		"srcArn":      edge.Source,
+		"destArn":     edge.Destination,
 		"reason":      edge.Reason,
 		"shortReason": edge.ShortReason,
 	}
-
+	fmt.Println(query, params)
 	return query, params
 }
 

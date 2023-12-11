@@ -294,6 +294,7 @@ func (m *GraphCommand) collectRoleDataForGraph() []models.Role {
 			for _, service := range statement.Principal.Service {
 				TrustedServices = append(TrustedServices, models.TrustedService{
 					TrustedService: service,
+					AccountID:      accountId,
 					//IsAdmin:           false,
 					//CanPrivEscToAdmin: false,
 				})
@@ -352,10 +353,10 @@ func (m *GraphCommand) collectRoleDataForGraph() []models.Role {
 
 		//create new object of type models.Role
 		role := models.Role{
-			Id:                        aws.ToString(role.RoleId),
+			Id:                        aws.ToString(role.Arn),
 			AccountID:                 accountId,
-			RoleARN:                   aws.ToString(role.Arn),
-			RoleName:                  aws.ToString(role.RoleName),
+			ARN:                       aws.ToString(role.Arn),
+			Name:                      aws.ToString(role.RoleName),
 			TrustsDoc:                 trustsdoc,
 			TrustedPrincipals:         TrustedPrincipals,
 			TrustedServices:           TrustedServices,

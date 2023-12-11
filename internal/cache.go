@@ -159,7 +159,7 @@ func LoadCacheFromGobFiles(directory string) error {
 		err = decoder.Decode(&entry)
 		if err != nil {
 			sharedLogger.Errorf("Could not decode the following file: %s", filename)
-			return err
+			continue
 		}
 
 		// the key should remove the directory and the .json suffix from the filename and also trim the first slash

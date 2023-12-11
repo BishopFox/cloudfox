@@ -879,7 +879,6 @@ func runFilesystemsCommand(cmd *cobra.Command, args []string) {
 }
 
 func runGraphCommand(cmd *cobra.Command, args []string) {
-	//gaadWg := new(sync.WaitGroup)
 	for _, profile := range AWSProfiles {
 		//var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)

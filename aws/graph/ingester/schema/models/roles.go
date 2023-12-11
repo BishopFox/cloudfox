@@ -11,23 +11,29 @@ import (
 
 type User struct {
 	Id                string
-	UserArn           string
-	UserName          string
+	ARN               string
+	Name              string
 	IsAdmin           string
 	CanPrivEscToAdmin string
+	IdValue           string
+	IsAdminP          bool
+	PathToAdmin       bool
 }
 
 type Role struct {
 	Id                        string
 	AccountID                 string
-	RoleARN                   string
-	RoleName                  string
+	ARN                       string
+	Name                      string
 	TrustsDoc                 policy.TrustPolicyDocument
 	TrustedPrincipals         []TrustedPrincipal
 	TrustedServices           []TrustedService
 	TrustedFederatedProviders []TrustedFederatedProvider
 	CanPrivEscToAdmin         string
 	IsAdmin                   string
+	IdValue                   string
+	IsAdminP                  bool
+	PathToAdmin               bool
 }
 
 type TrustedPrincipal struct {
@@ -39,6 +45,7 @@ type TrustedPrincipal struct {
 
 type TrustedService struct {
 	TrustedService string
+	AccountID      string
 	//IsAdmin           bool
 	//CanPrivEscToAdmin bool
 }
@@ -57,10 +64,10 @@ func (a *Role) MakeRelationships() []schema.Relationship {
 
 	// get thisAccount id from role arn
 	var thisAccount string
-	if len(a.RoleARN) >= 25 {
-		thisAccount = a.RoleARN[13:25]
+	if len(a.ARN) >= 25 {
+		thisAccount = a.ARN[13:25]
 	} else {
-		fmt.Sprintf("Could not get account number from this role arn%s", a.RoleARN)
+		fmt.Sprintf("Could not get account number from this role arn%s", a.ARN)
 	}
 
 	// make a relationship between each role and the account it belongs to
@@ -149,7 +156,7 @@ func (a *Role) MakeRelationships() []schema.Relationship {
 						// lets only focus on rows that have an effect of Allow
 						if strings.EqualFold(PermissionsRow.Effect, "Allow") {
 							// if the resource is * or the resource is this role arn, then this principal can assume this role
-							if PermissionsRow.Resource == "*" || strings.Contains(PermissionsRow.Resource, a.RoleARN) {
+							if PermissionsRow.Resource == "*" || strings.Contains(PermissionsRow.Resource, a.ARN) {
 								// make a CAN_ASSUME relationship between the trusted principal and this role
 								//evalutate if the princiapl is a user or a role and set a variable accordingly
 								//var principalType schema.NodeLabel
@@ -211,7 +218,7 @@ func (a *Role) MakeRelationships() []schema.Relationship {
 						// lets only focus on rows that have an effect of Allow
 						if strings.EqualFold(PermissionsRow.Effect, "Allow") {
 							// if the resource is * or the resource is this role arn, then this principal can assume this role
-							if PermissionsRow.Resource == "*" || strings.Contains(PermissionsRow.Resource, a.RoleARN) {
+							if PermissionsRow.Resource == "*" || strings.Contains(PermissionsRow.Resource, a.ARN) {
 								// make a CAN_ASSUME relationship between the trusted principal and this role
 
 								if strings.EqualFold(PermissionsRow.Type, "User") {
@@ -222,6 +229,13 @@ func (a *Role) MakeRelationships() []schema.Relationship {
 										TargetLabel:      schema.Role,
 										RelationshipType: schema.CanAssumeCrossAccount,
 									})
+									relationships = append(relationships, schema.Relationship{
+										SourceNodeID:     PermissionsRow.Arn,
+										TargetNodeID:     a.Id,
+										SourceLabel:      schema.User,
+										TargetLabel:      schema.Role,
+										RelationshipType: schema.CanAccess,
+									})
 								} else if strings.EqualFold(PermissionsRow.Type, "Role") {
 									relationships = append(relationships, schema.Relationship{
 										SourceNodeID:     PermissionsRow.Arn,
@@ -229,6 +243,13 @@ func (a *Role) MakeRelationships() []schema.Relationship {
 										SourceLabel:      schema.Role,
 										TargetLabel:      schema.Role,
 										RelationshipType: schema.CanAssumeCrossAccount,
+									})
+									relationships = append(relationships, schema.Relationship{
+										SourceNodeID:     PermissionsRow.Arn,
+										TargetNodeID:     a.Id,
+										SourceLabel:      schema.Role,
+										TargetLabel:      schema.Role,
+										RelationshipType: schema.CanAccess,
 									})
 								}
 								// // make a CAN_BE_ASSUMED_BY relationship between this role and the trusted principal
@@ -253,7 +274,7 @@ func (a *Role) MakeRelationships() []schema.Relationship {
 	for _, TrustedService := range a.TrustedServices {
 		// make relationship from trusted service to this role of type can assume
 		relationships = append(relationships, schema.Relationship{
-			SourceNodeID:     TrustedService.TrustedService,
+			SourceNodeID:     TrustedService.TrustedService + "_" + TrustedService.AccountID,
 			TargetNodeID:     a.Id,
 			SourceLabel:      schema.Service,
 			TargetLabel:      schema.Role,
@@ -262,7 +283,7 @@ func (a *Role) MakeRelationships() []schema.Relationship {
 		// make relationship from this role to trusted service of type can be assumed by
 		relationships = append(relationships, schema.Relationship{
 			SourceNodeID:     a.Id,
-			TargetNodeID:     TrustedService.TrustedService,
+			TargetNodeID:     TrustedService.TrustedService + "_" + TrustedService.AccountID,
 			SourceLabel:      schema.Role,
 			TargetLabel:      schema.Service,
 			RelationshipType: schema.Trusts,
