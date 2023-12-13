@@ -39,15 +39,25 @@ func AWSConfigFileLoader(AWSProfile string, version string, AwsMfaToken string) 
 	// The AssumeRoleOptions below are used to pass the MFA token to the AssumeRole call (when applicable)
 	if _, ok := ConfigMap[AWSProfile]; !ok {
 		// Ensures the profile in the aws config file meets all requirements (valid keys and a region defined). I noticed some calls fail without a default region.
-		cfg, err = config.LoadDefaultConfig(context.TODO(), config.WithSharedConfigProfile(AWSProfile), config.WithDefaultRegion("us-east-1"), config.WithRetryer(
-			func() aws.Retryer {
-				return retry.AddWithMaxAttempts(retry.NewStandard(), 3)
-			}), config.WithAssumeRoleCredentialOptions(func(options *stscreds.AssumeRoleOptions) {
-			options.TokenProvider = func() (string, error) {
-				return AwsMfaToken, nil
-			}
-		}),
-		)
+		if AwsMfaToken != "" {
+			cfg, err = config.LoadDefaultConfig(context.TODO(), config.WithSharedConfigProfile(AWSProfile), config.WithDefaultRegion("us-east-1"), config.WithRetryer(
+				func() aws.Retryer {
+					return retry.AddWithMaxAttempts(retry.NewStandard(), 3)
+				}), config.WithAssumeRoleCredentialOptions(func(options *stscreds.AssumeRoleOptions) {
+				options.TokenProvider = func() (string, error) {
+					return AwsMfaToken, nil
+				}
+			}),
+			)
+		} else {
+			cfg, err = config.LoadDefaultConfig(context.TODO(), config.WithSharedConfigProfile(AWSProfile), config.WithDefaultRegion("us-east-1"), config.WithRetryer(
+				func() aws.Retryer {
+					return retry.AddWithMaxAttempts(retry.NewStandard(), 3)
+				}), config.WithAssumeRoleCredentialOptions(func(options *stscreds.AssumeRoleOptions) {
+				options.TokenProvider = stscreds.StdinTokenProvider
+			}),
+			)
+		}
 
 		if err != nil {
 			fmt.Println(err)
