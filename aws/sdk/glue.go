@@ -27,6 +27,7 @@ func init() {
 	gob.Register(glueTypes.Job{})
 	gob.Register([]glueTypes.Table{})
 	gob.Register([]glueTypes.Database{})
+	gob.Register([]policy.Policy{})
 }
 
 func CachedGlueListDevEndpoints(GlueClient AWSGlueClientInterface, accountID string, region string) ([]string, error) {
