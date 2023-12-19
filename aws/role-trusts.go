@@ -314,7 +314,7 @@ func (m *RoleTrustsModule) printServiceTrusts(outputDirectory string) ([]string,
 
 	// sort the rows based on column 2 (service)
 	sort.SliceStable(body, func(i, j int) bool {
-		return body[i][1] < body[j][1]
+		return body[i][3] < body[j][3]
 	})
 
 	return header, body, tableCols
