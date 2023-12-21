@@ -109,7 +109,7 @@ var (
 
 	ApiGwCommand = &cobra.Command{
 		Use:     "api-gw",
-		Aliases: []string{"gw", "gateways"},
+		Aliases: []string{"gw", "gateways", "api-gws"},
 		Short:   "Enumerate API gateways. Get a loot file with formatted cURL requests.",
 		Long: "\nUse case examples:\n" +
 			os.Args[0] + " aws api-gw --profile readonly_profile",
@@ -121,7 +121,7 @@ var (
 	CheckBucketPolicies bool
 	BucketsCommand      = &cobra.Command{
 		Use:     "buckets",
-		Aliases: []string{"bucket"},
+		Aliases: []string{"bucket", "s3"},
 		Short:   "Enumerate all of the buckets. Get loot file with s3 commands to list/download bucket contents",
 		Long: "\nUse case examples:\n" +
 			"List all buckets create a file with pre-populated aws s3 commands:\n" +
