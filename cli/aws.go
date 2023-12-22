@@ -1244,6 +1244,7 @@ func runWorkloadsCommand(cmd *cobra.Command, args []string) {
 			EC2Client:       ec2.NewFromConfig(AWSConfig),
 			LambdaClient:    lambda.NewFromConfig(AWSConfig),
 			AppRunnerClient: apprunner.NewFromConfig(AWSConfig),
+			IAMClient:       iam.NewFromConfig(AWSConfig),
 			Caller:          *caller,
 			AWSRegions:      internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
 			SkipAdminCheck:  AWSSkipAdminCheck,

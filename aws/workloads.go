@@ -1,7 +1,9 @@
 package aws
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -11,6 +13,8 @@ import (
 	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/iam"
+	iamTypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
@@ -36,9 +40,10 @@ type WorkloadsModule struct {
 	//LightsailClient sdk.MockedLightsailClient
 	//SagemakerClient *sagemaker.Client
 
-	pmapperMod   PmapperModule
-	pmapperError error
-	iamSimClient IamSimulatorModule
+	pmapperMod                PmapperModule
+	pmapperError              error
+	iamSimClient              IamSimulatorModule
+	InstanceProfileToRolesMap map[string][]iamTypes.Role
 
 	// Main module data
 	Workloads      []Workload
@@ -96,6 +101,9 @@ func (m *WorkloadsModule) PrintWorkloads(outputDirectory string, verbosity int) 
 
 	// Create a channel to signal to stop
 	go m.Receiver(dataReceiver, receiverDone)
+
+	// Get roles from instance profiles to use for EC2 instance to role lookups
+	m.getRolesFromInstanceProfiles()
 
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
@@ -208,14 +216,28 @@ func (m *WorkloadsModule) PrintWorkloads(outputDirectory string, verbosity int) 
 				Wrap: m.WrapTable,
 			},
 		}
+
+		o.PrefixIdentifier = m.AWSProfile
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
+
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
 			Header:    m.output.Headers,
 			Body:      m.output.Body,
 			TableCols: tableCols,
 			Name:      m.output.CallingModule,
 		})
-		o.PrefixIdentifier = m.AWSProfile
-		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
+
+		// Create another table file that contains only the admin roles or the ones that can privesc to admin. Call another function to do this.
+
+		body := m.adminOnlyResults(m.output.Headers, m.output.Body)
+		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
+			Header:            m.output.Headers,
+			Body:              body,
+			TableCols:         tableCols,
+			Name:              fmt.Sprintf("%s-admin", m.output.CallingModule),
+			SkipPrintToScreen: true,
+		})
+
 		o.WriteFullOutput(o.Table.TableFiles, nil)
 		fmt.Printf("[%s][%s] %s compute workloads found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
@@ -287,17 +309,13 @@ func (m *WorkloadsModule) getEC2WorkloadsPerRegion(r string, wg *sync.WaitGroup,
 		<-semaphore
 	}()
 
-	var name string
 	// Get EC2 instances
 	ec2Instances, err := sdk.CachedEC2DescribeInstances(m.EC2Client, aws.ToString(m.Caller.Account), r)
 	if err != nil {
 		m.modLog.Error(err)
 	}
 	for _, instance := range ec2Instances {
-		var role string
-		if instance.IamInstanceProfile != nil {
-			role = aws.ToString(instance.IamInstanceProfile.Arn)
-		}
+		var profileArn, profileName, name string
 
 		// The name is in a tag so we have to do this to grab the value from the right tag
 		for _, tag := range instance.Tags {
@@ -309,13 +327,29 @@ func (m *WorkloadsModule) getEC2WorkloadsPerRegion(r string, wg *sync.WaitGroup,
 			name = aws.ToString(instance.InstanceId)
 		}
 
-		dataReceiver <- Workload{
-			AWSService: "EC2",
-			Region:     r,
-			Type:       "instance",
-			Name:       name,
-			Arn:        fmt.Sprintf("arn:aws:ec2:%s:%s:instance/%s", r, aws.ToString(m.Caller.Account), aws.ToString(instance.InstanceId)),
-			Role:       role,
+		if instance.IamInstanceProfile != nil {
+			profileArn = aws.ToString(instance.IamInstanceProfile.Arn)
+
+			// Extracting instance profile name from ARN
+			profileName = strings.Split(profileArn, "/")[len(strings.Split(profileArn, "/"))-1]
+
+			// Describe the IAM instance profile
+			profileOutput, err := sdk.CachedIamGetInstanceProfile(m.IAMClient, aws.ToString(m.Caller.Account), profileName)
+			if err != nil {
+				log.Printf("failed to get instance profile for %s, %v", profileArn, err)
+				continue
+			}
+
+			for _, role := range profileOutput.Roles {
+				dataReceiver <- Workload{
+					AWSService: "EC2",
+					Region:     r,
+					Type:       "instance",
+					Name:       name,
+					Arn:        fmt.Sprintf("arn:aws:ec2:%s:%s:instance/%s", r, aws.ToString(m.Caller.Account), aws.ToString(instance.InstanceId)),
+					Role:       aws.ToString(role.Arn),
+				}
+			}
 		}
 	}
 }
@@ -385,17 +419,17 @@ func (m *WorkloadsModule) getLambdaWorkloadsPerRegion(r string, wg *sync.WaitGro
 		m.modLog.Error(err)
 	}
 	for _, function := range lambdaFunctions {
-		var role string
-		if function.Role != nil {
-			role = aws.ToString(function.Role)
-		}
+		//var role string
+		// if function.Role != nil {
+		// 	role = aws.ToString(function.Role)
+		// }
 		dataReceiver <- Workload{
 			AWSService: "Lambda",
 			Region:     r,
 			Type:       "function",
 			Name:       aws.ToString(function.FunctionName),
 			Arn:        aws.ToString(function.FunctionArn),
-			Role:       role,
+			Role:       aws.ToString(function.Role),
 		}
 	}
 }
@@ -431,4 +465,75 @@ func (m *WorkloadsModule) getAppRunnerWorkloadsPerRegion(r string, wg *sync.Wait
 			Role:       role,
 		}
 	}
+}
+
+func (m *WorkloadsModule) adminOnlyResults(headers []string, body [][]string) [][]string {
+	var adminOnlyBody [][]string
+	var adminOnlyHeaders []string
+	var adminOnlyTableCols []string
+	var adminColIndex int
+	var canPrivEscColIndex int
+
+	// First find which col is the admin col and which is the can privesc col and simply note which index they are in. Then we can use those indexes to see if the value in the body is "YES".
+	// For any row where isAdmin or CanPrivEsc is "YES", we will append that row to the adminOnlyBody.
+
+	// Find the index of the admin col
+	for i, header := range headers {
+		if header == "IsAdminRole?" {
+			adminOnlyHeaders = append(adminOnlyHeaders, header)
+			adminOnlyTableCols = append(adminOnlyTableCols, header)
+			adminColIndex = i
+		}
+	}
+
+	// Find the index of the can privesc col
+	for i, header := range headers {
+		if header == "CanPrivEscToAdmin?" {
+			adminOnlyHeaders = append(adminOnlyHeaders, header)
+			adminOnlyTableCols = append(adminOnlyTableCols, header)
+			canPrivEscColIndex = i
+		}
+	}
+
+	// Now that we have the indexes of the admin and can privesc cols, we can iterate through the body and append the rows where isAdmin or CanPrivEsc is "YES" to the adminOnlyBody
+	for _, row := range body {
+		if row[adminColIndex] == "YES" || row[canPrivEscColIndex] == "YES" {
+			adminOnlyBody = append(adminOnlyBody, row)
+		}
+	}
+
+	return adminOnlyBody
+}
+
+func (m *WorkloadsModule) getRolesFromInstanceProfiles() {
+
+	// The "PaginationControl" value is nil when there's no more data to return.
+	var PaginationMarker *string
+	PaginationControl := true
+	m.InstanceProfileToRolesMap = map[string][]iamTypes.Role{}
+
+	for PaginationControl {
+		ListInstanceProfiles, err := m.IAMClient.ListInstanceProfiles(
+			context.TODO(),
+			&(iam.ListInstanceProfilesInput{
+				Marker: PaginationMarker,
+			}),
+		)
+
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			break
+		}
+		for _, instanceProfile := range ListInstanceProfiles.InstanceProfiles {
+			m.InstanceProfileToRolesMap[aws.ToString(instanceProfile.InstanceProfileId)] = instanceProfile.Roles
+		}
+		if aws.ToString(ListInstanceProfiles.Marker) != "" {
+			PaginationMarker = ListInstanceProfiles.Marker
+		} else {
+			PaginationMarker = nil
+			break
+		}
+	}
+
 }
