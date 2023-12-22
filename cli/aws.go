@@ -445,6 +445,15 @@ var (
 		PostRun: awsPostRun,
 	}
 
+	WorkloadsCommand = &cobra.Command{
+		Use:     "workloads",
+		Short:   "Finds workloads with admin permissions or a path to admin permissions",
+		Long:    "\nUse case examples:\n" + os.Args[0] + " aws workloads --profile readonly_profile",
+		PreRun:  awsPreRun,
+		Run:     runWorkloadsCommand,
+		PostRun: awsPostRun,
+	}
+
 	AllChecksCommand = &cobra.Command{
 
 		Use:     "all-checks",
@@ -1223,6 +1232,31 @@ func runTagsCommand(cmd *cobra.Command, args []string) {
 	}
 }
 
+func runWorkloadsCommand(cmd *cobra.Command, args []string) {
+	for _, profile := range AWSProfiles {
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
+		if err != nil {
+			continue
+		}
+		m := aws.WorkloadsModule{
+			ECSClient:       ecs.NewFromConfig(AWSConfig),
+			EC2Client:       ec2.NewFromConfig(AWSConfig),
+			LambdaClient:    lambda.NewFromConfig(AWSConfig),
+			AppRunnerClient: apprunner.NewFromConfig(AWSConfig),
+			Caller:          *caller,
+			AWSRegions:      internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
+			SkipAdminCheck:  AWSSkipAdminCheck,
+			AWSProfile:      profile,
+			Goroutines:      Goroutines,
+			WrapTable:       AWSWrapTable,
+			AWSOutputType:   AWSOutputType,
+			AWSTableCols:    AWSTableCols,
+		}
+		m.PrintWorkloads(AWSOutputDirectory, Verbosity)
+	}
+}
+
 func runECSTasksCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
@@ -1887,6 +1921,7 @@ func init() {
 		ResourceTrustsCommand,
 		OrgsCommand,
 		DatabasesCommand,
+		WorkloadsCommand,
 	)
 
 }
