@@ -187,6 +187,15 @@ func (m *WorkloadsModule) PrintWorkloads(outputDirectory string, verbosity int) 
 
 	// Table rows
 	for i := range m.Workloads {
+		// If the role is an admin or can privesc to admin, make it magenta
+		if m.Workloads[i].Admin == "YES" || m.Workloads[i].CanPrivEsc == "YES" {
+			m.Workloads[i].AWSService = magenta(m.Workloads[i].AWSService)
+			m.Workloads[i].Region = magenta(m.Workloads[i].Region)
+			m.Workloads[i].Name = magenta(m.Workloads[i].Name)
+			m.Workloads[i].Role = magenta(m.Workloads[i].Role)
+			m.Workloads[i].Admin = magenta(m.Workloads[i].Admin)
+			m.Workloads[i].CanPrivEsc = magenta(m.Workloads[i].CanPrivEsc)
+		}
 
 		m.output.Body = append(
 			m.output.Body,
@@ -194,13 +203,11 @@ func (m *WorkloadsModule) PrintWorkloads(outputDirectory string, verbosity int) 
 				aws.ToString(m.Caller.Account),
 				m.Workloads[i].AWSService,
 				m.Workloads[i].Region,
-				//m.Workloads[i].Type,
 				m.Workloads[i].Name,
 				m.Workloads[i].Arn,
 				m.Workloads[i].Role,
 				m.Workloads[i].Admin,
 				m.Workloads[i].CanPrivEsc,
-				//m.Workloads[i].Public,
 			},
 		)
 
@@ -374,27 +381,35 @@ func (m *WorkloadsModule) getECSWorkloadsPerRegion(r string, wg *sync.WaitGroup,
 	for _, cluster := range ecsClusters {
 
 		// Get ECS tasks
-		ecsTasks, err := sdk.CachedECSListTasks(m.ECSClient, aws.ToString(m.Caller.Account), r, cluster)
+		taskARNs, err := sdk.CachedECSListTasks(m.ECSClient, aws.ToString(m.Caller.Account), r, cluster)
 		if err != nil {
 			m.modLog.Error(err)
 		}
-		for _, task := range ecsTasks {
+
+		Tasks, err := sdk.CachedECSDescribeTasks(m.ECSClient, aws.ToString(m.Caller.Account), r, cluster, taskARNs)
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			return
+		}
+
+		for _, task := range Tasks {
+			var role string
 			// Get ECS task definition
-			ecsTaskDefinition, err := sdk.CachedECSDescribeTaskDefinition(m.ECSClient, aws.ToString(m.Caller.Account), r, task)
+			ecsTaskDefinition, err := sdk.CachedECSDescribeTaskDefinition(m.ECSClient, aws.ToString(m.Caller.Account), r, aws.ToString(task.TaskDefinitionArn))
 			if err != nil {
 				m.modLog.Error(err)
 			}
-			var role string
-			if ecsTaskDefinition.ExecutionRoleArn != nil {
-				role = aws.ToString(ecsTaskDefinition.ExecutionRoleArn)
+			if ecsTaskDefinition.TaskRoleArn != nil {
+				role = aws.ToString(ecsTaskDefinition.TaskRoleArn)
 			}
 
 			dataReceiver <- Workload{
 				AWSService: "ECS",
 				Region:     r,
 				Type:       "task",
-				Name:       task,
-				Arn:        task,
+				Name:       getNameFromARN(aws.ToString(task.TaskDefinitionArn)),
+				Arn:        aws.ToString(task.TaskArn),
 				Role:       role,
 			}
 		}
