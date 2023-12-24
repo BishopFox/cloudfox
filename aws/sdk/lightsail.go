@@ -21,7 +21,6 @@ func init() {
 	//need to do this to avoid conflicts with the Instance type in the ec2 package
 	type lightsailInstance lightsailTypes.Instance
 	gob.Register([]lightsailInstance{})
-
 	gob.Register([]lightsailTypes.ContainerService{})
 
 }

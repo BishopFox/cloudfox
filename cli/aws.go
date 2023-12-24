@@ -108,10 +108,21 @@ var (
 		PostRun: awsPostRun,
 	}
 
+	ApiGwCommand = &cobra.Command{
+		Use:     "api-gw",
+		Aliases: []string{"gw", "gateways", "api-gws"},
+		Short:   "Enumerate API gateways. Get a loot file with formatted cURL requests.",
+		Long: "\nUse case examples:\n" +
+			os.Args[0] + " aws api-gw --profile readonly_profile",
+		PreRun:  awsPreRun,
+		Run:     runApiGwCommand,
+		PostRun: awsPostRun,
+	}
+
 	CheckBucketPolicies bool
 	BucketsCommand      = &cobra.Command{
 		Use:     "buckets",
-		Aliases: []string{"bucket"},
+		Aliases: []string{"bucket", "s3"},
 		Short:   "Enumerate all of the buckets. Get loot file with s3 commands to list/download bucket contents",
 		Long: "\nUse case examples:\n" +
 			"List all buckets create a file with pre-populated aws s3 commands:\n" +
@@ -607,6 +618,26 @@ func runAccessKeysCommand(cmd *cobra.Command, args []string) {
 			AWSTableCols:  AWSTableCols,
 		}
 		m.PrintAccessKeys(AccessKeysFilter, AWSOutputDirectory, Verbosity)
+	}
+}
+
+func runApiGwCommand(cmd *cobra.Command, args []string) {
+	for _, profile := range AWSProfiles {
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
+		if err != nil {
+			continue
+		}
+		m := aws.ApiGwModule{
+			APIGatewayClient:   apigateway.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			APIGatewayv2Client: apigatewayv2.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+
+			Caller:     *caller,
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile: profile,
+			Goroutines: Goroutines,
+			WrapTable:  AWSWrapTable,
+		}
+		m.PrintApiGws(AWSOutputDirectory, Verbosity)
 	}
 }
 
@@ -1507,6 +1538,19 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 
 		endpoints.PrintEndpoints(AWSOutputDirectory, Verbosity)
 
+		gateways := aws.ApiGwModule{
+			APIGatewayv2Client: apiGatewayv2Client,
+			APIGatewayClient:   apiGatewayClient,
+
+			Caller:     *caller,
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSProfile: profile,
+			Goroutines: Goroutines,
+			WrapTable:  AWSWrapTable,
+		}
+
+		gateways.PrintApiGws(AWSOutputDirectory, Verbosity)
+
 		databases := aws.DatabasesModule{
 			RDSClient:      rdsClient,
 			RedshiftClient: redshiftClient,
@@ -1857,6 +1901,7 @@ func init() {
 
 	AWSCommands.AddCommand(
 		AllChecksCommand,
+		ApiGwCommand,
 		RoleTrustCommand,
 		AccessKeysCommand,
 		InstancesCommand,
