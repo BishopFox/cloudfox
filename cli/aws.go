@@ -514,21 +514,33 @@ func awsPreRun(cmd *cobra.Command, args []string) {
 		if err != nil {
 			continue
 		}
-		fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+		fmt.Printf("[%s][%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), cyan(profile), *caller.Arn)
+	}
+	for _, profile := range AWSProfiles {
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
+		if err != nil {
+			continue
+		}
 
 		if AWSUseCache {
 			cacheDirectory := filepath.Join(AWSOutputDirectory, "cached-data", "aws", ptr.ToString(caller.Account))
 			err = internal.LoadCacheFromGobFiles(cacheDirectory)
 			if err != nil {
 				if err == internal.ErrDirectoryDoesNotExist {
-					fmt.Printf("[%s] No cache directory for %s. Skipping loading cached data.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), ptr.ToString(caller.Account))
+					fmt.Printf("[%s][%s] No cache directory for %s. Skipping loading cached data.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), cyan(profile), ptr.ToString(caller.Account))
 				} else {
-					fmt.Printf("[%s] No cache data for %s. Error: %v\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), ptr.ToString(caller.Account), err)
+					fmt.Printf("[%s][%s] No cache data for %s. Error: %v\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), cyan(profile), ptr.ToString(caller.Account), err)
 					// Possibly return/exit here, depending on your requirements.
 				}
 			} else {
-				fmt.Printf("[%s] Loaded cached AWS data for to %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), ptr.ToString(caller.Account))
+				fmt.Printf("[%s][%s] Loaded cached AWS data for to %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), cyan(profile), ptr.ToString(caller.Account))
 			}
+		}
+	}
+	for _, profile := range AWSProfiles {
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
+		if err != nil {
+			continue
 		}
 
 		orgModuleClient := aws.InitOrgClient(*caller, profile, cmd.Root().Version, Goroutines, AWSMFAToken)
@@ -536,12 +548,12 @@ func awsPreRun(cmd *cobra.Command, args []string) {
 		if isPartOfOrg {
 			isMgmtAccount := orgModuleClient.IsManagementAccount(orgModuleClient.DescribeOrgOutput, ptr.ToString(caller.Account))
 			if isMgmtAccount {
-				fmt.Printf("[%s] Account is part of an Organization and is the Management account\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)))
+				fmt.Printf("[%s][%s] Account is part of an Organization and is the Management account\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), cyan(profile))
 			} else {
-				fmt.Printf("[%s] Account is part of an Organization and is a child account. Management Account: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), ptr.ToString(orgModuleClient.DescribeOrgOutput.MasterAccountId))
+				fmt.Printf("[%s][%s] Account is part of an Organization and is a child account. Management Account: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), cyan(profile), ptr.ToString(orgModuleClient.DescribeOrgOutput.MasterAccountId))
 			}
 		} else {
-			fmt.Printf("[%s] Account is not part of an Organization\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)))
+			fmt.Printf("[%s][%s] Account is not part of an Organization\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), cyan(profile))
 		}
 		//}
 	}
@@ -563,7 +575,7 @@ func awsPostRun(cmd *cobra.Command, args []string) {
 			log.Fatalf("failed to save cache: %v", err)
 		}
 
-		fmt.Printf("[%s] Cached AWS data written to %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), outputDirectory)
+		fmt.Printf("[%s][%s] Cached AWS data written to %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), cyan(profile), outputDirectory)
 
 	}
 }
@@ -582,13 +594,13 @@ func FindOrgMgmtAccountAndReorderAccounts(AWSProfiles []string, version string) 
 			err = internal.LoadCacheFromGobFiles(cacheDirectory)
 			if err != nil {
 				if err == internal.ErrDirectoryDoesNotExist {
-					fmt.Printf("[%s] No cache directory for %s. Skipping loading cached data.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), ptr.ToString(caller.Account))
+					fmt.Printf("[%s][%s] No cache directory for %s. Skipping loading cached data.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), cyan(profile), ptr.ToString(caller.Account))
 				} else {
-					fmt.Printf("[%s] No cache data for %s. Error: %v\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), ptr.ToString(caller.Account), err)
+					fmt.Printf("[%s][%s] No cache data for %s. Error: %v\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), cyan(profile), ptr.ToString(caller.Account), err)
 					// Possibly return/exit here, depending on your requirements.
 				}
 			} else {
-				fmt.Printf("[%s] Loaded cached AWS data for to %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), ptr.ToString(caller.Account))
+				fmt.Printf("[%s][%s] Loaded cached AWS data for to %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), cyan(profile), ptr.ToString(caller.Account))
 			}
 		}
 		orgModuleClient := aws.InitOrgClient(*caller, profile, version, Goroutines, AWSMFAToken)
@@ -599,7 +611,7 @@ func FindOrgMgmtAccountAndReorderAccounts(AWSProfiles []string, version string) 
 		isMgmtAccount := orgModuleClient.IsManagementAccount(orgModuleClient.DescribeOrgOutput, ptr.ToString(caller.Account))
 		if isMgmtAccount {
 			mgmtAccount := ptr.ToString(caller.Account)
-			fmt.Printf("[%s] Found an Organization Management Account: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), mgmtAccount)
+			fmt.Printf("[%s][%s] Found an Organization Management Account: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), cyan(profile), mgmtAccount)
 			AWSProfiles = internal.ReorganizeAWSProfiles(AWSProfiles, profile)
 		} else {
 			// add each child account to the mgmtAccounts map which uses the mgmt account as the key
