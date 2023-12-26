@@ -456,6 +456,15 @@ var (
 		PostRun: awsPostRun,
 	}
 
+	WorkloadsCommand = &cobra.Command{
+		Use:     "workloads",
+		Short:   "Finds workloads with admin permissions or a path to admin permissions",
+		Long:    "\nUse case examples:\n" + os.Args[0] + " aws workloads --profile readonly_profile",
+		PreRun:  awsPreRun,
+		Run:     runWorkloadsCommand,
+		PostRun: awsPostRun,
+	}
+
 	AllChecksCommand = &cobra.Command{
 
 		Use:     "all-checks",
@@ -495,7 +504,7 @@ func awsPreRun(cmd *cobra.Command, args []string) {
 
 	// if multiple profiles were used, ensure the management account is first
 	// if AWSProfilesList != "" || AWSAllProfiles {
-	// 	AWSProfiles = FindOrgMgmtAccountAndReorderAccounts(AWSProfiles, cmd.Root().Version)
+	// 	AWSProfiles = FindOrgMgmtAccountAndReorderAccounts(AWSProfiles, cmd.Root().Version, AWSMFAToken)
 	// } else {
 
 	// loop through every profile in AWSProfiles and run isCallerMgmtAccountPartofOrg.
@@ -505,21 +514,33 @@ func awsPreRun(cmd *cobra.Command, args []string) {
 		if err != nil {
 			continue
 		}
-		fmt.Printf("[%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), *caller.Arn)
+		fmt.Printf("[%s][%s] AWS Caller Identity: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), cyan(profile), *caller.Arn)
+	}
+	for _, profile := range AWSProfiles {
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
+		if err != nil {
+			continue
+		}
 
 		if AWSUseCache {
 			cacheDirectory := filepath.Join(AWSOutputDirectory, "cached-data", "aws", ptr.ToString(caller.Account))
 			err = internal.LoadCacheFromGobFiles(cacheDirectory)
 			if err != nil {
 				if err == internal.ErrDirectoryDoesNotExist {
-					fmt.Printf("[%s] No cache directory for %s. Skipping loading cached data.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), ptr.ToString(caller.Account))
+					fmt.Printf("[%s][%s] No cache directory for %s. Skipping loading cached data.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), cyan(profile), ptr.ToString(caller.Account))
 				} else {
-					fmt.Printf("[%s] No cache data for %s. Error: %v\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), ptr.ToString(caller.Account), err)
+					fmt.Printf("[%s][%s] No cache data for %s. Error: %v\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), cyan(profile), ptr.ToString(caller.Account), err)
 					// Possibly return/exit here, depending on your requirements.
 				}
 			} else {
-				fmt.Printf("[%s] Loaded cached AWS data for to %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), ptr.ToString(caller.Account))
+				fmt.Printf("[%s][%s] Loaded cached AWS data for to %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), cyan(profile), ptr.ToString(caller.Account))
 			}
+		}
+	}
+	for _, profile := range AWSProfiles {
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
+		if err != nil {
+			continue
 		}
 
 		orgModuleClient := aws.InitOrgClient(*caller, profile, cmd.Root().Version, Goroutines, AWSMFAToken)
@@ -527,12 +548,12 @@ func awsPreRun(cmd *cobra.Command, args []string) {
 		if isPartOfOrg {
 			isMgmtAccount := orgModuleClient.IsManagementAccount(orgModuleClient.DescribeOrgOutput, ptr.ToString(caller.Account))
 			if isMgmtAccount {
-				fmt.Printf("[%s] Account is part of an Organization and is the Management account\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)))
+				fmt.Printf("[%s][%s] Account is part of an Organization and is the Management account\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), cyan(profile))
 			} else {
-				fmt.Printf("[%s] Account is part of an Organization and is a child account. Management Account: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), ptr.ToString(orgModuleClient.DescribeOrgOutput.MasterAccountId))
+				fmt.Printf("[%s][%s] Account is part of an Organization and is a child account. Management Account: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), cyan(profile), ptr.ToString(orgModuleClient.DescribeOrgOutput.MasterAccountId))
 			}
 		} else {
-			fmt.Printf("[%s] Account is not part of an Organization\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)))
+			fmt.Printf("[%s][%s] Account is not part of an Organization\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), cyan(profile))
 		}
 		//}
 	}
@@ -554,7 +575,7 @@ func awsPostRun(cmd *cobra.Command, args []string) {
 			log.Fatalf("failed to save cache: %v", err)
 		}
 
-		fmt.Printf("[%s] Cached AWS data written to %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), outputDirectory)
+		fmt.Printf("[%s][%s] Cached AWS data written to %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), cyan(profile), outputDirectory)
 
 	}
 }
@@ -573,13 +594,13 @@ func FindOrgMgmtAccountAndReorderAccounts(AWSProfiles []string, version string) 
 			err = internal.LoadCacheFromGobFiles(cacheDirectory)
 			if err != nil {
 				if err == internal.ErrDirectoryDoesNotExist {
-					fmt.Printf("[%s] No cache directory for %s. Skipping loading cached data.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), ptr.ToString(caller.Account))
+					fmt.Printf("[%s][%s] No cache directory for %s. Skipping loading cached data.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), cyan(profile), ptr.ToString(caller.Account))
 				} else {
-					fmt.Printf("[%s] No cache data for %s. Error: %v\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), ptr.ToString(caller.Account), err)
+					fmt.Printf("[%s][%s] No cache data for %s. Error: %v\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), cyan(profile), ptr.ToString(caller.Account), err)
 					// Possibly return/exit here, depending on your requirements.
 				}
 			} else {
-				fmt.Printf("[%s] Loaded cached AWS data for to %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), ptr.ToString(caller.Account))
+				fmt.Printf("[%s][%s] Loaded cached AWS data for to %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), cyan(profile), ptr.ToString(caller.Account))
 			}
 		}
 		orgModuleClient := aws.InitOrgClient(*caller, profile, version, Goroutines, AWSMFAToken)
@@ -590,7 +611,7 @@ func FindOrgMgmtAccountAndReorderAccounts(AWSProfiles []string, version string) 
 		isMgmtAccount := orgModuleClient.IsManagementAccount(orgModuleClient.DescribeOrgOutput, ptr.ToString(caller.Account))
 		if isMgmtAccount {
 			mgmtAccount := ptr.ToString(caller.Account)
-			fmt.Printf("[%s] Found an Organization Management Account: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), mgmtAccount)
+			fmt.Printf("[%s][%s] Found an Organization Management Account: %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), cyan(profile), mgmtAccount)
 			AWSProfiles = internal.ReorganizeAWSProfiles(AWSProfiles, profile)
 		} else {
 			// add each child account to the mgmtAccounts map which uses the mgmt account as the key
@@ -623,16 +644,16 @@ func runAccessKeysCommand(cmd *cobra.Command, args []string) {
 
 func runApiGwCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
-		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
 		if err != nil {
 			continue
 		}
 		m := aws.ApiGwModule{
-			APIGatewayClient:   apigateway.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			APIGatewayv2Client: apigatewayv2.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			APIGatewayClient:   apigateway.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)),
+			APIGatewayv2Client: apigatewayv2.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)),
 
 			Caller:     *caller,
-			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
 			AWSProfile: profile,
 			Goroutines: Goroutines,
 			WrapTable:  AWSWrapTable,
@@ -1254,6 +1275,32 @@ func runTagsCommand(cmd *cobra.Command, args []string) {
 	}
 }
 
+func runWorkloadsCommand(cmd *cobra.Command, args []string) {
+	for _, profile := range AWSProfiles {
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
+		if err != nil {
+			continue
+		}
+		m := aws.WorkloadsModule{
+			ECSClient:       ecs.NewFromConfig(AWSConfig),
+			EC2Client:       ec2.NewFromConfig(AWSConfig),
+			LambdaClient:    lambda.NewFromConfig(AWSConfig),
+			AppRunnerClient: apprunner.NewFromConfig(AWSConfig),
+			IAMClient:       iam.NewFromConfig(AWSConfig),
+			Caller:          *caller,
+			AWSRegions:      internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
+			SkipAdminCheck:  AWSSkipAdminCheck,
+			AWSProfile:      profile,
+			Goroutines:      Goroutines,
+			WrapTable:       AWSWrapTable,
+			AWSOutputType:   AWSOutputType,
+			AWSTableCols:    AWSTableCols,
+		}
+		m.PrintWorkloads(AWSOutputDirectory, Verbosity)
+	}
+}
+
 func runECSTasksCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
@@ -1327,6 +1374,7 @@ func runNetworkPortsCommand(cmd *cobra.Command, args []string) {
 }
 
 func runAllChecksCommand(cmd *cobra.Command, args []string) {
+	Verbosity = 1
 	for _, profile := range AWSProfiles {
 		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
@@ -1543,7 +1591,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			APIGatewayClient:   apiGatewayClient,
 
 			Caller:     *caller,
-			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
 			AWSProfile: profile,
 			Goroutines: Goroutines,
 			WrapTable:  AWSWrapTable,
@@ -1890,7 +1938,7 @@ func init() {
 	AWSCommands.PersistentFlags().BoolVarP(&AWSAllProfiles, "all-profiles", "a", false, "Use all AWS CLI profiles in AWS credentials file")
 	AWSCommands.PersistentFlags().BoolVarP(&AWSConfirm, "yes", "y", false, "Non-interactive mode (like apt/yum)")
 	AWSCommands.PersistentFlags().StringVarP(&AWSOutputType, "output", "o", "brief", "[\"brief\" | \"wide\" ]")
-	AWSCommands.PersistentFlags().IntVarP(&Verbosity, "verbosity", "v", 1, "1 = Print control messages only\n2 = Print control messages, module output\n3 = Print control messages, module output, and loot file output\n")
+	AWSCommands.PersistentFlags().IntVarP(&Verbosity, "verbosity", "v", 2, "1 = Print control messages only\n2 = Print control messages, module output\n3 = Print control messages, module output, and loot file output\n")
 	AWSCommands.PersistentFlags().StringVar(&AWSOutputDirectory, "outdir", defaultOutputDir, "Output Directory ")
 	AWSCommands.PersistentFlags().IntVarP(&Goroutines, "max-goroutines", "g", 30, "Maximum number of concurrent goroutines")
 	AWSCommands.PersistentFlags().BoolVar(&AWSSkipAdminCheck, "skip-admin-check", false, "Skip check to determine if role is an Admin")
@@ -1932,6 +1980,7 @@ func init() {
 		ResourceTrustsCommand,
 		OrgsCommand,
 		DatabasesCommand,
+		WorkloadsCommand,
 	)
 
 }

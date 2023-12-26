@@ -23,6 +23,7 @@ type AWSIAMClientInterface interface {
 	SimulatePrincipalPolicy(ctx context.Context, params *iam.SimulatePrincipalPolicyInput, optFns ...func(*iam.Options)) (*iam.SimulatePrincipalPolicyOutput, error)
 	ListInstanceProfiles(ctx context.Context, params *iam.ListInstanceProfilesInput, optFns ...func(*iam.Options)) (*iam.ListInstanceProfilesOutput, error)
 	ListGroups(ctx context.Context, params *iam.ListGroupsInput, optFns ...func(*iam.Options)) (*iam.ListGroupsOutput, error)
+	GetInstanceProfile(ctx context.Context, params *iam.GetInstanceProfileInput, optFns ...func(*iam.Options)) (*iam.GetInstanceProfileOutput, error)
 }
 
 func init() {
@@ -34,6 +35,7 @@ func init() {
 	gob.Register([]iamTypes.InstanceProfile{})
 	gob.Register([]iamTypes.EvaluationResult{})
 	gob.Register(customGAADOutput{})
+	gob.Register(iamTypes.InstanceProfile{})
 }
 
 func CachedIamListUsers(IAMClient AWSIAMClientInterface, accountID string) ([]iamTypes.User, error) {
@@ -286,5 +288,30 @@ func CachedIamListGroups(IAMClient AWSIAMClientInterface, accountID string) ([]i
 
 	internal.Cache.Set(cacheKey, Groups, cache.DefaultExpiration)
 	return Groups, nil
+
+}
+
+func CachedIamGetInstanceProfile(IAMClient AWSIAMClientInterface, accountID string, instanceProfileName string) (iamTypes.InstanceProfile, error) {
+	var InstanceProfile iamTypes.InstanceProfile
+	cacheKey := fmt.Sprintf("%s-iam-GetInstanceProfile-%s", accountID, instanceProfileName)
+	cached, found := internal.Cache.Get(cacheKey)
+	if found {
+		return cached.(iamTypes.InstanceProfile), nil
+	}
+
+	GetInstanceProfile, err := IAMClient.GetInstanceProfile(
+		context.TODO(),
+		&iam.GetInstanceProfileInput{
+			InstanceProfileName: &instanceProfileName,
+		},
+	)
+	if err != nil {
+		return InstanceProfile, err
+	}
+
+	InstanceProfile = *GetInstanceProfile.InstanceProfile
+
+	internal.Cache.Set(cacheKey, InstanceProfile, cache.DefaultExpiration)
+	return InstanceProfile, nil
 
 }

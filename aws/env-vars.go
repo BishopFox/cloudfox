@@ -66,6 +66,7 @@ type EnvironmentVariable struct {
 	region              string
 	environmentVarName  string
 	environmentVarValue string
+	interesting         bool
 }
 
 func (m *EnvsModule) PrintEnvs(outputDirectory string, verbosity int) {
@@ -161,19 +162,35 @@ func (m *EnvsModule) PrintEnvs(outputDirectory string, verbosity int) {
 		}
 	}
 
+	m.determineIfInteresting()
 	//Table rows
 	for _, envVar := range m.EnvironmentVariables {
-		m.output.Body = append(
-			m.output.Body, []string{
-				aws.ToString(m.Caller.Account),
-				envVar.service,
-				envVar.region,
-				envVar.name,
-				envVar.environmentVarName,
-				envVar.environmentVarValue,
-			},
-		)
+
+		if envVar.interesting {
+			m.output.Body = append(
+				m.output.Body, []string{
+					aws.ToString(m.Caller.Account),
+					envVar.service,
+					envVar.region,
+					envVar.name,
+					magenta(envVar.environmentVarName),
+					magenta(envVar.environmentVarValue),
+				},
+			)
+		} else {
+			m.output.Body = append(
+				m.output.Body, []string{
+					aws.ToString(m.Caller.Account),
+					envVar.service,
+					envVar.region,
+					envVar.name,
+					envVar.environmentVarName,
+					envVar.environmentVarValue,
+				},
+			)
+		}
 	}
+
 	if len(m.output.Body) > 0 {
 
 		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
@@ -185,14 +202,27 @@ func (m *EnvsModule) PrintEnvs(outputDirectory string, verbosity int) {
 				Wrap: m.WrapTable,
 			},
 		}
+
+		o.PrefixIdentifier = m.AWSProfile
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
+
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
 			Header:    m.output.Headers,
 			Body:      m.output.Body,
 			TableCols: tableCols,
 			Name:      m.output.CallingModule,
 		})
-		o.PrefixIdentifier = m.AWSProfile
-		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
+
+		// Create another table file that only contains the environment variables that seem to be secrets.
+		body := m.interestingEnvVarsOnly()
+		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
+			Header:            m.output.Headers,
+			Body:              body,
+			TableCols:         tableCols,
+			Name:              fmt.Sprintf("%s-interesting", m.output.CallingModule),
+			SkipPrintToScreen: true,
+		})
+
 		o.WriteFullOutput(o.Table.TableFiles, nil)
 		fmt.Printf("[%s][%s] %s environment variables found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 
@@ -200,6 +230,20 @@ func (m *EnvsModule) PrintEnvs(outputDirectory string, verbosity int) {
 		fmt.Printf("[%s][%s] No environment variables found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
 	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
+}
+
+func (m *EnvsModule) determineIfInteresting() {
+	for i, envVar := range m.EnvironmentVariables {
+		// If the environment variable name contains the word secret, key, token, or password, we'll make it magenta to make it stand out.
+		lowerEnvVar := strings.ToLower(envVar.environmentVarName)
+		if (strings.Contains(lowerEnvVar, "secret") && !strings.Contains(lowerEnvVar, "arn")) ||
+			strings.Contains(lowerEnvVar, "key") ||
+			strings.Contains(lowerEnvVar, "token") ||
+			strings.Contains(lowerEnvVar, "user") ||
+			strings.Contains(lowerEnvVar, "pass") {
+			m.EnvironmentVariables[i].interesting = true
+		}
+	}
 }
 
 func EnvVarsContains(element EnvironmentVariable, array []EnvironmentVariable) bool {
@@ -785,4 +829,23 @@ func (m *EnvsModule) getSagemakerEnvironmentVariablesPerRegion(r string, wg *syn
 		}
 
 	}
+}
+
+func (m *EnvsModule) interestingEnvVarsOnly() [][]string {
+	var interestingBody [][]string
+	for _, envVar := range m.EnvironmentVariables {
+		if envVar.interesting {
+			interestingBody = append(
+				m.output.Body, []string{
+					aws.ToString(m.Caller.Account),
+					envVar.service,
+					envVar.region,
+					envVar.name,
+					magenta(envVar.environmentVarName),
+					magenta(envVar.environmentVarValue),
+				},
+			)
+		}
+	}
+	return interestingBody
 }

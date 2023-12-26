@@ -38,13 +38,14 @@ type TableClient struct {
 }
 
 type TableFile struct {
-	Name             string
-	TableFilePointer afero.File
-	CSVFilePointer   afero.File
-	JSONFilePointer  afero.File
-	TableCols        []string
-	Header           []string
-	Body             [][]string
+	Name              string
+	TableFilePointer  afero.File
+	CSVFilePointer    afero.File
+	JSONFilePointer   afero.File
+	TableCols         []string
+	Header            []string
+	Body              [][]string
+	SkipPrintToScreen bool
 }
 
 type LootClient struct {
@@ -181,6 +182,9 @@ func (l *LootClient) writeLootFiles() []string {
 
 func (b *TableClient) printTablesToScreen(tableFiles []TableFile) {
 	for _, tf := range tableFiles {
+		if tf.SkipPrintToScreen {
+			continue
+		}
 		tf.Body, tf.Header = adjustBodyForTable(tf.TableCols, tf.Header, tf.Body)
 		standardColumnWidth := 1000
 		t := table.New(os.Stdout)
