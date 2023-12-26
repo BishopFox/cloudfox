@@ -504,7 +504,7 @@ func awsPreRun(cmd *cobra.Command, args []string) {
 
 	// if multiple profiles were used, ensure the management account is first
 	// if AWSProfilesList != "" || AWSAllProfiles {
-	// 	AWSProfiles = FindOrgMgmtAccountAndReorderAccounts(AWSProfiles, cmd.Root().Version)
+	// 	AWSProfiles = FindOrgMgmtAccountAndReorderAccounts(AWSProfiles, cmd.Root().Version, AWSMFAToken)
 	// } else {
 
 	// loop through every profile in AWSProfiles and run isCallerMgmtAccountPartofOrg.
@@ -632,16 +632,16 @@ func runAccessKeysCommand(cmd *cobra.Command, args []string) {
 
 func runApiGwCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
-		caller, err := internal.AWSWhoami(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
 		if err != nil {
 			continue
 		}
 		m := aws.ApiGwModule{
-			APIGatewayClient:   apigateway.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
-			APIGatewayv2Client: apigatewayv2.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version)),
+			APIGatewayClient:   apigateway.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)),
+			APIGatewayv2Client: apigatewayv2.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)),
 
 			Caller:     *caller,
-			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
 			AWSProfile: profile,
 			Goroutines: Goroutines,
 			WrapTable:  AWSWrapTable,
@@ -1578,7 +1578,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			APIGatewayClient:   apiGatewayClient,
 
 			Caller:     *caller,
-			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version),
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
 			AWSProfile: profile,
 			Goroutines: Goroutines,
 			WrapTable:  AWSWrapTable,
