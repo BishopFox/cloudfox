@@ -77,6 +77,7 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 		"module": m.output.CallingModule,
 	})
 	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
+	var filename string
 	var actionList []string
 	var pmapperCommands []string
 	var pmapperOutFileName string
@@ -103,35 +104,35 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 		if action != "" {
 			// The user specified a specific --principal and a specific --action
 			fmt.Printf("[%s][%s] Checking to see if %s can do %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), principal, action)
-			m.output.FullFilename = filepath.Join(fmt.Sprintf("%s-custom-%s", m.output.CallingModule, strconv.FormatInt((time.Now().Unix()), 10)))
+			filename = filepath.Join(fmt.Sprintf("%s-custom-%s", m.output.CallingModule, strconv.FormatInt((time.Now().Unix()), 10)))
 			actionList = append(actionList, action)
 			m.getPolicySimulatorResult((&principal), actionList, resource, dataReceiver)
 
 		} else {
 			// The user specified a specific --principal, but --action was empty
 			fmt.Printf("[%s][%s] Checking to see if %s can do any actions of interest.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), principal)
-			m.output.FullFilename = filepath.Join(fmt.Sprintf("%s-custom-%s", m.output.CallingModule, strconv.FormatInt((time.Now().Unix()), 10)))
+			filename = filepath.Join(fmt.Sprintf("%s-custom-%s", m.output.CallingModule, strconv.FormatInt((time.Now().Unix()), 10)))
 			m.getPolicySimulatorResult((&principal), defaultActionNames, resource, dataReceiver)
 		}
 	} else {
 		if action != "" {
 			// The did not specify a specific --principal, but they did specify an --action
 			fmt.Printf("[%s][%s] Checking to see if any principal can do %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), action)
-			m.output.FullFilename = filepath.Join(fmt.Sprintf("%s-custom-%s", m.output.CallingModule, strconv.FormatInt((time.Now().Unix()), 10)))
+			filename = filepath.Join(fmt.Sprintf("%s-custom-%s", m.output.CallingModule, strconv.FormatInt((time.Now().Unix()), 10)))
 			actionList = append(actionList, action)
 			wg.Add(1)
 			m.getIAMUsers(wg, actionList, resource, dataReceiver)
 			wg.Add(1)
 			m.getIAMRoles(wg, actionList, resource, dataReceiver)
-			pmapperOutFileName = filepath.Join(m.output.FullFilename, "loot", fmt.Sprintf("pmapper-output-%s.txt", action))
+			pmapperOutFileName = filepath.Join(filename, "loot", fmt.Sprintf("pmapper-output-%s.txt", action))
 			pmapperCommands = append(pmapperCommands, fmt.Sprintf("pmapper --profile %s query \"who can do %s with %s\" | tee %s\n", m.AWSProfile, action, resource, pmapperOutFileName))
 		} else {
 			// Both --principal and --action are empty. Run in default mode!
 			fmt.Printf("[%s][%s] Running multiple iam-simulator queries for account %s. (This command can be pretty slow, FYI)\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
-			m.output.FullFilename = m.output.CallingModule
+			filename = m.output.CallingModule
 			m.executeChecks(wg, resource, dataReceiver)
 			for _, action := range defaultActionNames {
-				pmapperOutFileName = filepath.Join(m.output.FullFilename, "loot", fmt.Sprintf("pmapper-output-%s.txt", action))
+				pmapperOutFileName = filepath.Join(filename, "loot", fmt.Sprintf("pmapper-output-%s.txt", action))
 				pmapperCommands = append(pmapperCommands, fmt.Sprintf("pmapper --profile %s query \"who can do %s with %s\" | tee %s\n", m.AWSProfile, action, resource, pmapperOutFileName))
 			}
 
@@ -212,7 +213,7 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 			Header:    m.output.Headers,
 			Body:      m.output.Body,
 			TableCols: tableCols,
-			Name:      m.output.CallingModule,
+			Name:      filename,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
