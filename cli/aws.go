@@ -1362,6 +1362,7 @@ func runNetworkPortsCommand(cmd *cobra.Command, args []string) {
 }
 
 func runAllChecksCommand(cmd *cobra.Command, args []string) {
+	Verbosity = 1
 	for _, profile := range AWSProfiles {
 		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
@@ -1925,7 +1926,7 @@ func init() {
 	AWSCommands.PersistentFlags().BoolVarP(&AWSAllProfiles, "all-profiles", "a", false, "Use all AWS CLI profiles in AWS credentials file")
 	AWSCommands.PersistentFlags().BoolVarP(&AWSConfirm, "yes", "y", false, "Non-interactive mode (like apt/yum)")
 	AWSCommands.PersistentFlags().StringVarP(&AWSOutputType, "output", "o", "brief", "[\"brief\" | \"wide\" ]")
-	AWSCommands.PersistentFlags().IntVarP(&Verbosity, "verbosity", "v", 1, "1 = Print control messages only\n2 = Print control messages, module output\n3 = Print control messages, module output, and loot file output\n")
+	AWSCommands.PersistentFlags().IntVarP(&Verbosity, "verbosity", "v", 2, "1 = Print control messages only\n2 = Print control messages, module output\n3 = Print control messages, module output, and loot file output\n")
 	AWSCommands.PersistentFlags().StringVar(&AWSOutputDirectory, "outdir", defaultOutputDir, "Output Directory ")
 	AWSCommands.PersistentFlags().IntVarP(&Goroutines, "max-goroutines", "g", 30, "Maximum number of concurrent goroutines")
 	AWSCommands.PersistentFlags().BoolVar(&AWSSkipAdminCheck, "skip-admin-check", false, "Skip check to determine if role is an Admin")
