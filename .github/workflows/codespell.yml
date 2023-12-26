@@ -13,4 +13,4 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - run: pip install --user codespell
-    - run: codespell --ignore-words-list="aks"  # --skip="*.css,*.js,*.lock,*.po"
+    - run: codespell --ignore-words-list="aks" --skip="*.sum"
