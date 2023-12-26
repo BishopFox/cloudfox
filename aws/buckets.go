@@ -326,7 +326,7 @@ func (m *BucketsModule) isPublicAccessBlocked(bucketName string, r string) bool 
 	if err != nil {
 		return false
 	}
-	return publicAccessBlock.IgnorePublicAcls
+	return aws.ToBool(publicAccessBlock.IgnorePublicAcls) && aws.ToBool(publicAccessBlock.BlockPublicPolicy) && aws.ToBool(publicAccessBlock.RestrictPublicBuckets)
 
 }
 
