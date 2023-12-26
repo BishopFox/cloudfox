@@ -81,6 +81,7 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 	var actionList []string
 	var pmapperCommands []string
 	var pmapperOutFileName string
+	var inputArn string
 
 	if m.AWSProfile == "" {
 		m.AWSProfile = internal.BuildAWSPath(m.Caller)
@@ -106,13 +107,37 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 			fmt.Printf("[%s][%s] Checking to see if %s can do %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), principal, action)
 			filename = filepath.Join(fmt.Sprintf("%s-custom-%s", m.output.CallingModule, strconv.FormatInt((time.Now().Unix()), 10)))
 			actionList = append(actionList, action)
-			m.getPolicySimulatorResult((&principal), actionList, resource, dataReceiver)
+			// if user supplied a principal name without the arn, try to create the arn as a user and as a role and run both
+			if !strings.Contains(principal, "arn:") {
+				// try as a role
+				inputArn = fmt.Sprintf("arn:aws:iam::%s:role/%s", aws.ToString(m.Caller.Account), principal)
+				m.getPolicySimulatorResult((&inputArn), actionList, resource, dataReceiver)
+				// try as a user
+				inputArn = fmt.Sprintf("arn:aws:iam::%s:user/%s", aws.ToString(m.Caller.Account), principal)
+				m.getPolicySimulatorResult((&inputArn), actionList, resource, dataReceiver)
+			} else {
+				// the arn was supplied so just run it
+				m.getPolicySimulatorResult((&principal), actionList, resource, dataReceiver)
+			}
 
 		} else {
 			// The user specified a specific --principal, but --action was empty
 			fmt.Printf("[%s][%s] Checking to see if %s can do any actions of interest.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), principal)
 			filename = filepath.Join(fmt.Sprintf("%s-custom-%s", m.output.CallingModule, strconv.FormatInt((time.Now().Unix()), 10)))
-			m.getPolicySimulatorResult((&principal), defaultActionNames, resource, dataReceiver)
+
+			// if user supplied a principal name without the arn, try to create the arn as a user and as a role and run both
+			if !strings.Contains(principal, "arn:") {
+				// try as a role
+				inputArn = fmt.Sprintf("arn:aws:iam::%s:role/%s", aws.ToString(m.Caller.Account), principal)
+				m.getPolicySimulatorResult((&inputArn), defaultActionNames, resource, dataReceiver)
+				// try as a user
+				inputArn = fmt.Sprintf("arn:aws:iam::%s:user/%s", aws.ToString(m.Caller.Account), principal)
+				m.getPolicySimulatorResult((&inputArn), defaultActionNames, resource, dataReceiver)
+			} else {
+				// the arn was supplied so just run it
+				m.getPolicySimulatorResult((&principal), defaultActionNames, resource, dataReceiver)
+			}
+
 		}
 	} else {
 		if action != "" {
