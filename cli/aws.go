@@ -1888,6 +1888,23 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		}
 		iamSimulator.PrintIamSimulator(SimulatorPrincipal, SimulatorAction, SimulatorResource, AWSOutputDirectory, Verbosity)
 
+		workloads := aws.WorkloadsModule{
+			ECSClient:       ecsClient,
+			EC2Client:       ec2Client,
+			LambdaClient:    lambdaClient,
+			AppRunnerClient: appRunnerClient,
+			IAMClient:       iamClient,
+			Caller:          *caller,
+			AWSRegions:      internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
+			SkipAdminCheck:  AWSSkipAdminCheck,
+			AWSProfile:      profile,
+			Goroutines:      Goroutines,
+			WrapTable:       AWSWrapTable,
+			AWSOutputType:   AWSOutputType,
+			AWSTableCols:    AWSTableCols,
+		}
+		workloads.PrintWorkloads(AWSOutputDirectory, Verbosity)
+
 		fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("That's it! Check your output files for situational awareness and check your loot files for next steps."))
 		fmt.Printf("[%s] %s\n\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("FYI, we skipped the outbound-assumed-roles module in all-checks (really long run time). Make sure to try it out manually."))
 	}

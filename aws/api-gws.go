@@ -12,9 +12,7 @@ import (
 	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/apigateway"
 	apigatewayTypes "github.com/aws/aws-sdk-go-v2/service/apigateway/types"
-	"github.com/aws/aws-sdk-go-v2/service/apigatewayv2"
 	apigatewayV2Types "github.com/aws/aws-sdk-go-v2/service/apigatewayv2/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/bishopfox/awsservicemap"
@@ -25,8 +23,8 @@ var CURL_COMMAND string = "curl -X %s %s"
 
 type ApiGwModule struct {
 	// General configuration data
-	APIGatewayClient   *apigateway.Client
-	APIGatewayv2Client *apigatewayv2.Client
+	APIGatewayClient   sdk.APIGatewayClientInterface
+	APIGatewayv2Client sdk.APIGatewayv2ClientInterface
 
 	Caller     sts.GetCallerIdentityOutput
 	AWSRegions []string
