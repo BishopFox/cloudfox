@@ -1,7 +1,6 @@
 package aws
 
 import (
-	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -40,7 +39,7 @@ func TestApiGw(t *testing.T) {
 		t.Fatalf("Cannot read output file at %s: %s", resultsFilePath, err)
 	}
 	//print the results file to the screen
-	fmt.Println(string(resultsFile))
+	//fmt.Println(string(resultsFile))
 
 	// I want a test that runs the main function and checks the output to see if the following items are in the output: "https://qwerty.execute-api.us-east-1.amazonaws.com/stage1/path1", "https://asdfsdfasdf.execute-api.us-east-1.amazonaws.com/stage1/route2"
 

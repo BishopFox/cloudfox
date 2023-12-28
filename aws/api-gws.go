@@ -125,13 +125,17 @@ func (m *ApiGwModule) PrintApiGws(outputDirectory string, verbosity int) {
 
 	}
 	if len(m.output.Body) > 0 {
-		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
+		filepath := filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
 
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,
 			Table: internal.TableClient{
-				Wrap: m.WrapTable,
+				Wrap:          m.WrapTable,
+				DirectoryName: filepath,
+			},
+			Loot: internal.LootClient{
+				DirectoryName: filepath,
 			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
@@ -140,9 +144,13 @@ func (m *ApiGwModule) PrintApiGws(outputDirectory string, verbosity int) {
 			Name:   m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
-		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		o.WriteFullOutput(o.Table.TableFiles, nil)
-		m.writeLoot(o.Table.DirectoryName, verbosity)
+		loot := m.writeLoot(o.Table.DirectoryName, verbosity)
+		o.Loot.LootFiles = append(o.Loot.LootFiles, internal.LootFile{
+			Name:     m.output.CallingModule,
+			Contents: loot,
+		})
+		o.WriteFullOutput(o.Table.TableFiles, o.Loot.LootFiles)
+
 		fmt.Printf("[%s][%s] %s API gateways found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 	} else {
 		fmt.Printf("[%s][%s] No API gateways found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
@@ -197,7 +205,7 @@ func (m *ApiGwModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan
 	}
 }
 
-func (m *ApiGwModule) writeLoot(outputDirectory string, verbosity int) {
+func (m *ApiGwModule) writeLoot(outputDirectory string, verbosity int) string {
 	path := filepath.Join(outputDirectory, "loot")
 	err := os.MkdirAll(path, os.ModePerm)
 	if err != nil {
@@ -235,12 +243,12 @@ func (m *ApiGwModule) writeLoot(outputDirectory string, verbosity int) {
 		out += line + "\n"
 	}
 
-	err = os.WriteFile(f, []byte(out), 0644)
-	if err != nil {
-		m.modLog.Error(err.Error())
-		m.CommandCounter.Error++
-		panic(err.Error())
-	}
+	// err = os.WriteFile(f, []byte(out), 0644)
+	// if err != nil {
+	// 	m.modLog.Error(err.Error())
+	// 	m.CommandCounter.Error++
+	// 	panic(err.Error())
+	// }
 
 	if verbosity > 2 {
 		fmt.Println()
@@ -250,6 +258,8 @@ func (m *ApiGwModule) writeLoot(outputDirectory string, verbosity int) {
 	}
 
 	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), f)
+
+	return out
 
 }
 

@@ -144,8 +144,11 @@ func (l *LootClient) createLootFiles(lootFiles []LootFile) {
 		if l.DirectoryName == "" {
 			l.DirectoryName = "."
 		}
-		if _, err := fileSystem.Stat(l.DirectoryName); os.IsNotExist(err) {
-			err = fileSystem.MkdirAll(l.DirectoryName, 0700)
+
+		lootDirectory := path.Join(l.DirectoryName, "loot")
+
+		if _, err := fileSystem.Stat(lootDirectory); os.IsNotExist(err) {
+			err = fileSystem.MkdirAll(lootDirectory, 0700)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -156,7 +159,7 @@ func (l *LootClient) createLootFiles(lootFiles []LootFile) {
 
 		l.LootFiles[i].Name = fmt.Sprintf("%s.txt", file.Name)
 
-		filePointer, err := fileSystem.OpenFile(path.Join(l.DirectoryName, l.LootFiles[i].Name), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+		filePointer, err := fileSystem.OpenFile(path.Join(lootDirectory, l.LootFiles[i].Name), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 		if err != nil {
 			log.Fatalf("error creating output file: %s", err)
 		}
@@ -169,7 +172,7 @@ func (l *LootClient) writeLootFiles() []string {
 	var fullFilePaths []string
 	for _, file := range l.LootFiles {
 		contents := []byte(file.Contents)
-		fullPath := path.Join(l.DirectoryName, file.Name)
+		fullPath := path.Join(l.DirectoryName, "loot", file.Name)
 
 		err := os.WriteFile(fullPath, contents, 0644)
 		if err != nil {
