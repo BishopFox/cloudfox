@@ -1,6 +1,6 @@
 module github.com/BishopFox/cloudfox
 
-go 1.20
+go 1.21.2
 
 require (
 	github.com/Azure/azure-sdk-for-go v68.0.0+incompatible
@@ -63,7 +63,11 @@ require (
 	golang.org/x/crypto v0.17.0
 )
 
-require github.com/golang-jwt/jwt/v5 v5.2.0 // indirect
+require (
+	github.com/bishopfox/knownawsaccountslookup v0.0.0-20231228165844-c37ef8df33cb // indirect
+	github.com/golang-jwt/jwt/v5 v5.2.0 // indirect
+	gopkg.in/yaml.v2 v2.4.0 // indirect
+)
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.9.1 // indirect

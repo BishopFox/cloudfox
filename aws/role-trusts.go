@@ -17,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/bishopfox/knownawsaccountslookup"
 	"github.com/sirupsen/logrus"
 )
 
@@ -41,6 +42,8 @@ type RoleTrustsModule struct {
 	// Main module data
 	AnalyzedRoles  []AnalyzedRole
 	RoleTrustTable []RoleTrustRow
+
+	vendors *knownawsaccountslookup.Vendors
 
 	// Used to store output data for pretty printing
 	output internal.OutputData2
@@ -113,6 +116,9 @@ func (m *RoleTrustsModule) PrintRoleTrusts(outputDirectory string, verbosity int
 		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
 	localAdminMap := make(map[string]bool)
+	m.vendors = knownawsaccountslookup.NewVendorMap()
+	m.vendors.PopulateKnownAWSAccounts()
+
 	fmt.Printf("[%s][%s] Enumerating role trusts for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 	//fmt.Printf("[%s][%s] Looking for pmapper data for this account and building a PrivEsc graph in golang if it exists.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	m.pmapperMod, m.pmapperError = initPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines)
@@ -235,23 +241,31 @@ func (m *RoleTrustsModule) printPrincipalTrusts(outputDirectory string) ([]strin
 	for _, role := range m.AnalyzedRoles {
 		for _, statement := range role.trustsDoc.Statement {
 			for _, principal := range statement.Principal.AWS {
+				if strings.Contains(principal, ":root") {
+					//check to see if the accountID is known
+					accountID := strings.Split(principal, ":")[4]
+					vendorName := m.vendors.GetVendorNameFromAccountID(accountID)
+					if vendorName != "" {
+						principal = fmt.Sprintf("%s (%s)", principal, vendorName)
+					}
 
-				RoleTrustRow := RoleTrustRow{
-					RoleARN:          aws.ToString(role.roleARN),
-					RoleName:         GetResourceNameFromArn(aws.ToString(role.roleARN)),
-					TrustedPrincipal: principal,
-					ExternalID:       statement.Condition.StringEquals.StsExternalID,
-					IsAdmin:          role.Admin,
-					CanPrivEsc:       role.CanPrivEsc,
+					RoleTrustRow := RoleTrustRow{
+						RoleARN:          aws.ToString(role.roleARN),
+						RoleName:         GetResourceNameFromArn(aws.ToString(role.roleARN)),
+						TrustedPrincipal: principal,
+						ExternalID:       statement.Condition.StringEquals.StsExternalID,
+						IsAdmin:          role.Admin,
+						CanPrivEsc:       role.CanPrivEsc,
+					}
+					body = append(body, []string{
+						aws.ToString(m.Caller.Account),
+						RoleTrustRow.RoleARN,
+						RoleTrustRow.RoleName,
+						RoleTrustRow.TrustedPrincipal,
+						RoleTrustRow.ExternalID,
+						RoleTrustRow.IsAdmin,
+						RoleTrustRow.CanPrivEsc})
 				}
-				body = append(body, []string{
-					aws.ToString(m.Caller.Account),
-					RoleTrustRow.RoleARN,
-					RoleTrustRow.RoleName,
-					RoleTrustRow.TrustedPrincipal,
-					RoleTrustRow.ExternalID,
-					RoleTrustRow.IsAdmin,
-					RoleTrustRow.CanPrivEsc})
 			}
 		}
 	}
@@ -302,6 +316,11 @@ func (m *RoleTrustsModule) printPrincipalTrustsRootOnly(outputDirectory string) 
 		for _, statement := range role.trustsDoc.Statement {
 			for _, principal := range statement.Principal.AWS {
 				if strings.Contains(principal, ":root") && statement.Condition.StringEquals.StsExternalID == "" {
+					accountID := strings.Split(principal, ":")[4]
+					vendorName := m.vendors.GetVendorNameFromAccountID(accountID)
+					if vendorName != "" {
+						principal = fmt.Sprintf("%s (%s)", principal, vendorName)
+					}
 
 					RoleTrustRow := RoleTrustRow{
 						RoleARN:          aws.ToString(role.roleARN),
