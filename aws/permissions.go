@@ -77,7 +77,7 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputDirectory string, verbo
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "permissions"
-	m.output.FullFilename = m.output.CallingModule
+	filename := m.output.CallingModule
 	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
@@ -88,7 +88,7 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputDirectory string, verbo
 	fmt.Printf("[%s][%s] Enumerating IAM permissions for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 
 	if principal != "" {
-		m.output.FullFilename = filepath.Join(fmt.Sprintf("%s-custom-%s", m.output.CallingModule, strconv.FormatInt((time.Now().Unix()), 10)))
+		filename = filepath.Join(fmt.Sprintf("%s-custom-%s", m.output.CallingModule, strconv.FormatInt((time.Now().Unix()), 10)))
 	}
 
 	m.GetGAAD()
@@ -179,7 +179,7 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputDirectory string, verbo
 			Header:    m.output.Headers,
 			TableCols: tableCols,
 			Body:      m.output.Body,
-			Name:      m.output.CallingModule,
+			Name:      filename,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))

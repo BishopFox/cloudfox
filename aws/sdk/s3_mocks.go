@@ -66,10 +66,10 @@ func (m *MockedS3Client) GetBucketPolicy(ctx context.Context, input *s3.GetBucke
 func (m *MockedS3Client) GetPublicAccessBlock(ctx context.Context, input *s3.GetPublicAccessBlockInput, options ...func(*s3.Options)) (*s3.GetPublicAccessBlockOutput, error) {
 	return &s3.GetPublicAccessBlockOutput{
 		PublicAccessBlockConfiguration: &s3Types.PublicAccessBlockConfiguration{
-			BlockPublicAcls:       true,
-			BlockPublicPolicy:     true,
-			IgnorePublicAcls:      true,
-			RestrictPublicBuckets: true,
+			BlockPublicAcls:       aws.Bool(true),
+			BlockPublicPolicy:     aws.Bool(true),
+			IgnorePublicAcls:      aws.Bool(true),
+			RestrictPublicBuckets: aws.Bool(true),
 		},
 	}, nil
 }
