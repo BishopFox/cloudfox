@@ -39,6 +39,7 @@ type Role struct {
 type TrustedPrincipal struct {
 	TrustedPrincipal string
 	ExternalID       string
+	VendorName       string
 	//IsAdmin           bool
 	//CanPrivEscToAdmin bool
 }
@@ -267,6 +268,15 @@ func (a *Role) MakeRelationships() []schema.Relationship {
 
 				}
 			}
+			// If the role trusts :root in another account and the trusted principal is a vendor, we will make a relationship between our role and a vendor node instead of a principal node
+		} else if strings.Contains(TrustedPrincipal.TrustedPrincipal, ":root") && TrustedPrincipal.VendorName != "" {
+			relationships = append(relationships, schema.Relationship{
+				SourceNodeID:     TrustedPrincipal.TrustedPrincipal,
+				TargetNodeID:     a.Id,
+				SourceLabel:      schema.Vendor,
+				TargetLabel:      schema.Role,
+				RelationshipType: schema.CanAssume,
+			})
 		}
 
 	}

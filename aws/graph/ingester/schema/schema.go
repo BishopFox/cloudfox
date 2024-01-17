@@ -62,6 +62,7 @@ const (
 	Organization      NodeLabel = "Org"
 	Service           NodeLabel = "Service"
 	Principal         NodeLabel = "Principal"
+	Vendor            NodeLabel = "Vendor"
 	Role              NodeLabel = "Role"
 	Group             NodeLabel = "Group"
 	User              NodeLabel = "User"

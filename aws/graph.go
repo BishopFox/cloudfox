@@ -13,6 +13,7 @@ import (
 	"github.com/BishopFox/cloudfox/internal/aws/policy"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/bishopfox/knownawsaccountslookup"
 	"github.com/sirupsen/logrus"
 )
 
@@ -35,6 +36,8 @@ type GraphCommand struct {
 	pmapperMod   PmapperModule
 	pmapperError error
 
+	vendors *knownawsaccountslookup.Vendors
+
 	// Main module data
 	// Used to store output data for pretty printing
 	output internal.OutputData2
@@ -54,6 +57,9 @@ func (m *GraphCommand) RunGraphCommand() {
 	if m.AWSProfile == "" {
 		m.AWSProfile = internal.BuildAWSPath(m.Caller)
 	}
+
+	m.vendors = knownawsaccountslookup.NewVendorMap()
+	m.vendors.PopulateKnownAWSAccounts()
 
 	m.modLog.Info("Collecting data for graph ingestor...")
 
@@ -280,12 +286,20 @@ func (m *GraphCommand) collectRoleDataForGraph() []models.Role {
 		//var TrustedFederatedSubjects string
 		var trustedProvider string
 		var trustedSubjects string
+		var vendorName string
 
 		for _, statement := range trustsdoc.Statement {
 			for _, principal := range statement.Principal.AWS {
+				if strings.Contains(principal, ":root") {
+					//check to see if the accountID is known
+					accountID := strings.Split(principal, ":")[4]
+					vendorName = m.vendors.GetVendorNameFromAccountID(accountID)
+				}
+
 				TrustedPrincipals = append(TrustedPrincipals, models.TrustedPrincipal{
 					TrustedPrincipal: principal,
 					ExternalID:       statement.Condition.StringEquals.StsExternalID,
+					VendorName:       vendorName,
 					//IsAdmin:           false,
 					//CanPrivEscToAdmin: false,
 				})
