@@ -238,6 +238,9 @@ func (m *PmapperModule) PrintPmapperData(outputDirectory string, verbosity int) 
 			Table: internal.TableClient{
 				Wrap: m.WrapTable,
 			},
+			Loot: internal.LootClient{
+				DirectoryName: m.output.FilePath,
+			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
 			Header:    m.output.Headers,
@@ -247,7 +250,12 @@ func (m *PmapperModule) PrintPmapperData(outputDirectory string, verbosity int) 
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		o.WriteFullOutput(o.Table.TableFiles, nil)
+		loot := m.writeLoot(o.Table.DirectoryName, verbosity)
+		o.Loot.LootFiles = append(o.Loot.LootFiles, internal.LootFile{
+			Name:     m.output.CallingModule,
+			Contents: loot,
+		})
+		o.WriteFullOutput(o.Table.TableFiles, o.Loot.LootFiles)
 		//m.writeLoot(o.Table.DirectoryName, verbosity)
 
 		fmt.Printf("[%s][%s] %s principals who are admin or have a path to admin identified.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
@@ -268,26 +276,6 @@ func (m *PmapperModule) doesNodeHavePathToAdmin(startNode Node) bool {
 				for _, p := range path {
 					if p != "" {
 						if startNode.Arn != destNode.Arn {
-							// if we got here there is a path
-							fmt.Printf("%s has a path %s who is an admin.\n", startNode.Arn, destNode.Arn)
-							fmt.Println(path)
-							// if we got here theres a path. Lets print the reason and the short reason for each edge in the path to the screen
-							for i := 0; i < len(path)-1; i++ {
-								for _, edge := range m.Edges {
-									if edge.Source == path[i] && edge.Destination == path[i+1] {
-										// print it like this: [start node] [reason] [end node]
-										fmt.Printf("   %s %s %s\n", path[i], edge.Reason, path[i+1])
-									}
-									// shortest path only finds the shortest path. We want to find all paths. So we need to find all paths that have the same start and end nodes from the path, but going back to the main edges slice
-									for _, edge := range GlobalPmapperEdges {
-										if edge.Source == path[i] && edge.Destination == path[i+1] {
-											// print it like this: [start node] [reason] [end node]
-											fmt.Printf("   %s %s %s\n", path[i], edge.Reason, path[i+1])
-										}
-									}
-								}
-							}
-
 							return true
 						}
 
@@ -297,6 +285,70 @@ func (m *PmapperModule) doesNodeHavePathToAdmin(startNode Node) bool {
 		}
 	}
 	return false
+}
+
+func (m *PmapperModule) writeLoot(outputDirectory string, verbosity int) string {
+	path := filepath.Join(outputDirectory, "loot")
+	err := os.MkdirAll(path, os.ModePerm)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		panic(err.Error())
+	}
+	f := filepath.Join(path, "pmapper-privesc-paths-enhanced.txt")
+
+	var admins, out string
+
+	for _, startNode := range m.Nodes {
+		if startNode.IsAdmin {
+			admins += fmt.Sprintf("ADMIN FOUND: %s\n", startNode.Arn)
+		} else {
+			for _, destNode := range m.Nodes {
+				if destNode.IsAdmin {
+					path, _ := graph.ShortestPath(m.pmapperGraph, startNode.Arn, destNode.Arn)
+					for _, p := range path {
+						if p != "" {
+							if startNode.Arn != destNode.Arn {
+								// if we got here there is a path
+								out += fmt.Sprintf("PATH TO ADMIN FOUND\n   Start: %s\n     End: %s\n Path(s):\n", startNode.Arn, destNode.Arn)
+								//fmt.Println(path)
+								// if we got here theres a path. Lets print the reason and the short reason for each edge in the path to the screen
+								for i := 0; i < len(path)-1; i++ {
+									for _, edge := range m.Edges {
+										if edge.Source == path[i] && edge.Destination == path[i+1] {
+											// print it like this: [start node] [reason] [end node]
+											out += fmt.Sprintf("     %s %s %s\n", path[i], edge.Reason, path[i+1])
+										}
+										// shortest path only finds the shortest path. We want to find all paths. So we need to find all paths that have the same start and end nodes from the path, but going back to the main edges slice
+										//for _, edge := range GlobalPmapperEdges {
+										// 	if edge.Source == path[i] && edge.Destination == path[i+1] {
+										// 		// print it like this: [start node] [reason] [end node]
+										// 		out += fmt.Sprintf("   %s %s %s\n", path[i], edge.Reason, path[i+1])
+										// 	}
+										// }
+									}
+								}
+								out += fmt.Sprintf("\n")
+
+							}
+
+						}
+					}
+				}
+			}
+		}
+	}
+	out = admins + "\n\n" + out
+
+	if verbosity > 2 {
+		fmt.Println()
+		fmt.Println("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("Beginning of loot file"))
+		fmt.Print(out)
+		fmt.Printf("[%s][%s] %s \n\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("End of loot file"))
+	}
+	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), f)
+	return out
+
 }
 
 func (m *PmapperModule) readPmapperData(accountID *string) error {
