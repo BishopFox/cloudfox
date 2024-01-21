@@ -23,6 +23,7 @@ type DatabasesModule struct {
 	RedshiftClient sdk.AWSRedShiftClientInterface
 	DynamoDBClient sdk.DynamoDBClientInterface
 	DocDBClient    sdk.DocDBClientInterface
+	NeptuneClient  sdk.NeptuneClientInterface
 
 	Caller        sts.GetCallerIdentityOutput
 	AWSRegions    []string
@@ -68,13 +69,13 @@ func (m *DatabasesModule) PrintDatabases(outputDirectory string, verbosity int) 
 	}
 
 	fmt.Printf("[%s][%s] Enumerating databases for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
-	fmt.Printf("[%s][%s] Supported Services: RDS, DynamoDB\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	fmt.Printf("[%s][%s] Supported Services: RDS, Redshift, DynamoDB, DocumentDB, Neptune\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 
 	wg := new(sync.WaitGroup)
 	semaphore := make(chan struct{}, m.Goroutines)
 	// Create a channel to signal the spinner aka task status goroutine to finish
 	spinnerDone := make(chan bool)
-	//fire up the the task status spinner/updated
+	//fire up the task status spinner/updated
 	go internal.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
 
 	//create a channel to receive the objects
@@ -217,46 +218,96 @@ func (m *DatabasesModule) Receiver(receiver chan Database, receiverDone chan boo
 func (m *DatabasesModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Database) {
 	defer wg.Done()
 
-	servicemap := &awsservicemap.AwsServiceMap{
+	serviceMap := &awsservicemap.AwsServiceMap{
 		JsonFileSource: "DOWNLOAD_FROM_AWS",
 	}
-	res, err := servicemap.IsServiceInRegion("rds", r)
-	if err != nil {
-		m.modLog.Error(err)
-	}
-	if res {
-		m.CommandCounter.Total++
-		wg.Add(1)
-		go m.getRdsClustersPerRegion(r, wg, semaphore, dataReceiver)
-	}
-	res, err = servicemap.IsServiceInRegion("redshift", r)
-	if err != nil {
-		m.modLog.Error(err)
-	}
-	if res {
-		m.CommandCounter.Total++
-		wg.Add(1)
-		m.getRedshiftDatabasesPerRegion(r, wg, semaphore, dataReceiver)
-	}
-	res, err = servicemap.IsServiceInRegion("dynamodb", r)
-	if err != nil {
-		m.modLog.Error(err)
-	}
-	if res {
-		m.CommandCounter.Total++
-		wg.Add(1)
-		m.getDynamoDBTablesPerRegion(r, wg, semaphore, dataReceiver)
-	}
-	res, err = servicemap.IsServiceInRegion("docdb", r)
-	if err != nil {
-		m.modLog.Error(err)
-	}
-	if res {
-		m.CommandCounter.Total++
-		wg.Add(1)
-		m.getDocDBTablesPerRegion(r, wg, semaphore, dataReceiver)
-	}
+	m.executeRdsCheck(r, wg, semaphore, dataReceiver, serviceMap)
+	m.executeRedshiftCheck(r, wg, semaphore, dataReceiver, serviceMap)
+	m.executeDynamoDbCheck(r, wg, semaphore, dataReceiver, serviceMap)
+	m.executeDocDbCheck(r, wg, semaphore, dataReceiver, serviceMap)
+	m.executeNeptuneCheck(r, wg, semaphore, dataReceiver, serviceMap)
+}
 
+type check struct {
+	region       string
+	wg           *sync.WaitGroup
+	semaphore    chan struct{}
+	dataReceiver chan Database
+	serviceMap   *awsservicemap.AwsServiceMap
+	service      string
+	executor     func(string, *sync.WaitGroup, chan struct{}, chan Database)
+}
+
+func (m *DatabasesModule) executeCheck(check check) {
+	res, err := check.serviceMap.IsServiceInRegion(check.service, check.region)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		check.wg.Add(1)
+		go check.executor(check.region, check.wg, check.semaphore, check.dataReceiver)
+	}
+}
+
+func (m *DatabasesModule) executeRdsCheck(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Database, servicemap *awsservicemap.AwsServiceMap) {
+	m.executeCheck(check{
+		region:       r,
+		wg:           wg,
+		semaphore:    semaphore,
+		dataReceiver: dataReceiver,
+		serviceMap:   servicemap,
+		service:      "rds",
+		executor:     m.getRdsClustersPerRegion,
+	})
+}
+
+func (m *DatabasesModule) executeRedshiftCheck(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Database, servicemap *awsservicemap.AwsServiceMap) {
+	m.executeCheck(check{
+		region:       r,
+		wg:           wg,
+		semaphore:    semaphore,
+		dataReceiver: dataReceiver,
+		serviceMap:   servicemap,
+		service:      "redshift",
+		executor:     m.getRedshiftDatabasesPerRegion,
+	})
+}
+
+func (m *DatabasesModule) executeDynamoDbCheck(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Database, servicemap *awsservicemap.AwsServiceMap) {
+	m.executeCheck(check{
+		region:       r,
+		wg:           wg,
+		semaphore:    semaphore,
+		dataReceiver: dataReceiver,
+		serviceMap:   servicemap,
+		service:      "dynamodb",
+		executor:     m.getDynamoDBTablesPerRegion,
+	})
+}
+
+func (m *DatabasesModule) executeDocDbCheck(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Database, servicemap *awsservicemap.AwsServiceMap) {
+	m.executeCheck(check{
+		region:       r,
+		wg:           wg,
+		semaphore:    semaphore,
+		dataReceiver: dataReceiver,
+		serviceMap:   servicemap,
+		service:      "docdb",
+		executor:     m.getDocDBTablesPerRegion,
+	})
+}
+
+func (m *DatabasesModule) executeNeptuneCheck(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Database, servicemap *awsservicemap.AwsServiceMap) {
+	m.executeCheck(check{
+		region:       r,
+		wg:           wg,
+		semaphore:    semaphore,
+		dataReceiver: dataReceiver,
+		serviceMap:   servicemap,
+		service:      "neptune",
+		executor:     m.getNeptuneDatabasesPerRegion,
+	})
 }
 
 func (m *DatabasesModule) writeLoot(outputDirectory string, verbosity int) {
@@ -310,7 +361,7 @@ func (m *DatabasesModule) getRdsClustersPerRegion(r string, wg *sync.WaitGroup, 
 	DBInstances, err := sdk.CachedRDSDescribeDBInstances(m.RDSClient, aws.ToString(m.Caller.Account), r)
 	if err != nil {
 		if errors.As(err, &oe) {
-			m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
+			m.Errors = append(m.Errors, fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation()))
 		}
 		m.modLog.Error(err.Error())
 		m.CommandCounter.Error++
@@ -343,9 +394,7 @@ func (m *DatabasesModule) getRdsClustersPerRegion(r string, wg *sync.WaitGroup, 
 				Public:     public,
 			}
 		}
-
 	}
-
 }
 
 func (m *DatabasesModule) getRedshiftDatabasesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Database) {
@@ -369,7 +418,7 @@ func (m *DatabasesModule) getRedshiftDatabasesPerRegion(r string, wg *sync.WaitG
 
 	if err != nil {
 		if errors.As(err, &oe) {
-			m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
+			m.Errors = append(m.Errors, fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation()))
 		}
 		m.modLog.Error(err.Error())
 		m.CommandCounter.Error++
@@ -442,7 +491,6 @@ func (m *DatabasesModule) getDynamoDBTablesPerRegion(r string, wg *sync.WaitGrou
 			Endpoint:   "N/A",
 		}
 	}
-
 }
 
 func (m *DatabasesModule) getDocDBTablesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Database) {
@@ -484,6 +532,47 @@ func (m *DatabasesModule) getDocDBTablesPerRegion(r string, wg *sync.WaitGroup, 
 			Port:       port,
 			UserName:   userName,
 			//Size:       strconv.Itoa(int(size)),
+		}
+	}
+}
+
+func (m *DatabasesModule) getNeptuneDatabasesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Database) {
+	defer func() {
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+		wg.Done()
+
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+
+	clusters, err := sdk.CachedNeptuneDescribeDBClusters(m.NeptuneClient, aws.ToString(m.Caller.Account), r)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	for _, cluster := range clusters {
+		name := aws.ToString(cluster.DBClusterIdentifier)
+
+		endpoint := aws.ToString(cluster.Endpoint)
+		port := aws.ToInt32(cluster.Port)
+		userName := aws.ToString(cluster.MasterUsername)
+		engine := aws.ToString(cluster.Engine)
+
+		dataReceiver <- Database{
+			AWSService: "Neptune",
+			Region:     r,
+			Name:       name,
+			Engine:     engine,
+			Endpoint:   endpoint,
+			Port:       port,
+			UserName:   userName,
 		}
 	}
 }

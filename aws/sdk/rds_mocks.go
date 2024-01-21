@@ -9,10 +9,10 @@ import (
 	rdsTypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
 )
 
-type MOckedRDSClient struct {
+type MockedRDSClient struct {
 }
 
-func (m *MOckedRDSClient) DescribeDBInstances(ctx context.Context, input *rds.DescribeDBInstancesInput, options ...func(*rds.Options)) (*rds.DescribeDBInstancesOutput, error) {
+func (m *MockedRDSClient) DescribeDBInstances(ctx context.Context, input *rds.DescribeDBInstancesInput, options ...func(*rds.Options)) (*rds.DescribeDBInstancesOutput, error) {
 	return &rds.DescribeDBInstancesOutput{
 		DBInstances: []rdsTypes.DBInstance{
 			{
