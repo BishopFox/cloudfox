@@ -64,7 +64,7 @@ func (m *CodeBuildModule) PrintCodeBuildProjects(outputDirectory string, verbosi
 	}
 
 	fmt.Printf("[%s][%s] Enumerating CodeBuild projects for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
-	m.pmapperMod, m.pmapperError = initPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines)
+	m.pmapperMod, m.pmapperError = InitPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines)
 	m.iamSimClient = InitIamCommandClient(m.IAMClient, m.Caller, m.AWSProfile, m.Goroutines)
 
 	wg := new(sync.WaitGroup)

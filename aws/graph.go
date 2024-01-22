@@ -63,8 +63,11 @@ func (m *GraphCommand) RunGraphCommand() {
 
 	m.modLog.Info("Collecting data for graph ingestor...")
 
-	m.pmapperMod, m.pmapperError = initPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines)
+	m.pmapperMod, m.pmapperError = InitPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines)
+
+	////////////////
 	// Accounts
+	////////////////
 
 	accounts := m.collectAccountDataForGraph()
 	// write data to jsonl file for ingestor to read
@@ -89,7 +92,36 @@ func (m *GraphCommand) RunGraphCommand() {
 		}
 	}
 
+	////////////////
+	// Users
+	////////////////
+
+	// users := m.collectUserDataForGraph()
+	// // write data to jsonl file for ingestor to read
+	// fileName = fmt.Sprintf("%s/graph/%s/%s.jsonl", m.output.Directory, aws.ToString(m.Caller.Account), "users")
+	// // create file and directory if it doesnt exist
+	// if err := os.MkdirAll(fmt.Sprintf("%s/graph/%s", m.output.Directory, aws.ToString(m.Caller.Account)), 0755); err != nil {
+	// 	m.modLog.Error(err)
+	// 	return
+	// }
+
+	// outputFile, err = os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	// if err != nil {
+	// 	m.modLog.Error(err)
+	// 	return
+	// }
+	// defer outputFile.Close()
+
+	// for _, user := range users {
+	// 	if err := internal.WriteJsonlFile(outputFile, user); err != nil {
+	// 		m.modLog.Error(err)
+	// 		return
+	// 	}
+	// }
+
+	////////////////
 	// Roles
+	////////////////
 
 	roles := m.collectRoleDataForGraph()
 	// write data to jsonl file for ingestor to read

@@ -947,6 +947,16 @@ func runGraphCommand(cmd *cobra.Command, args []string) {
 		common.PermissionRowsFromAllProfiles = append(common.PermissionRowsFromAllProfiles, PermissionsCommandClient.Rows...)
 	}
 
+	// for _, profile := range AWSProfiles {
+	// 	caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
+	// 	if err != nil {
+	// 		continue
+	// 	}
+
+	// 	fmt.PrintLn("Importing Pmapper for " + profile)
+
+	// }
+
 	for _, profile := range AWSProfiles {
 		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)

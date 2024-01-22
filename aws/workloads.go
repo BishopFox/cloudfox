@@ -82,7 +82,7 @@ func (m *WorkloadsModule) PrintWorkloads(outputDirectory string, verbosity int) 
 	fmt.Printf("[%s][%s] Enumerating compute workloads in all regions for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 	fmt.Printf("[%s][%s] Supported Services: App Runner, EC2, ECS, Lambda \n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 
-	m.pmapperMod, m.pmapperError = initPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines)
+	m.pmapperMod, m.pmapperError = InitPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines)
 	m.iamSimClient = InitIamCommandClient(m.IAMClient, m.Caller, m.AWSProfile, m.Goroutines)
 
 	wg := new(sync.WaitGroup)

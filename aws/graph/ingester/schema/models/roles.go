@@ -9,17 +9,6 @@ import (
 	"github.com/BishopFox/cloudfox/internal/common"
 )
 
-type User struct {
-	Id                string
-	ARN               string
-	Name              string
-	IsAdmin           string
-	CanPrivEscToAdmin string
-	IdValue           string
-	IsAdminP          bool
-	PathToAdmin       bool
-}
-
 type Role struct {
 	Id                        string
 	AccountID                 string

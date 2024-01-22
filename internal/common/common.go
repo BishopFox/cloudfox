@@ -1,5 +1,7 @@
 package common
 
+import "github.com/dominikbraun/graph"
+
 type PermissionsRow struct {
 	AWSService string
 	Type       string
@@ -15,3 +17,5 @@ type PermissionsRow struct {
 }
 
 var PermissionRowsFromAllProfiles []PermissionsRow
+
+var GlobalGraph graph.Graph[string, string]

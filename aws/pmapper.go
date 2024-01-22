@@ -18,8 +18,6 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-var GlobalPmapperEdges []Edge
-
 type PmapperModule struct {
 	// General configuration data
 	Caller        sts.GetCallerIdentityOutput
@@ -39,6 +37,12 @@ type PmapperModule struct {
 	// Used to store output data for pretty printing
 	output internal.OutputData2
 	modLog *logrus.Entry
+}
+
+type PmapperOutputRow struct {
+	Start string
+	End   string
+	Paths []string
 }
 
 type Edge struct {
@@ -250,6 +254,14 @@ func (m *PmapperModule) PrintPmapperData(outputDirectory string, verbosity int) 
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
+
+		header, body := m.createPmapperTableData(outputDirectory)
+		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
+			Header: header,
+			Body:   body,
+			Name:   "pmapper-privesc-paths-enhanced",
+		})
+
 		loot := m.writeLoot(o.Table.DirectoryName, verbosity)
 		o.Loot.LootFiles = append(o.Loot.LootFiles, internal.LootFile{
 			Name:     m.output.CallingModule,
@@ -287,6 +299,63 @@ func (m *PmapperModule) doesNodeHavePathToAdmin(startNode Node) bool {
 	return false
 }
 
+func (m *PmapperModule) createPmapperTableData(outputDirectory string) ([]string, [][]string) {
+	var header []string
+	var body [][]string
+
+	header = []string{
+		"Start",
+		"End",
+		"Path(s)",
+	}
+
+	var paths string
+	var admins, privescPathsBody [][]string
+
+	for _, startNode := range m.Nodes {
+		if startNode.IsAdmin {
+			admins = append(admins, []string{startNode.Arn, "", "ADMIN"})
+
+		} else {
+			for _, destNode := range m.Nodes {
+				if destNode.IsAdmin {
+					path, _ := graph.ShortestPath(m.pmapperGraph, startNode.Arn, destNode.Arn)
+					// if we have a path,
+
+					if len(path) > 0 {
+						if startNode.Arn != destNode.Arn {
+							paths = ""
+							// if we got here theres a path. Lets print the reason and the short reason for each edge in the path to the screen
+							for i := 0; i < len(path)-1; i++ {
+								for _, edge := range m.Edges {
+									if edge.Source == path[i] && edge.Destination == path[i+1] {
+
+										//Some pmapper reasons have commas in them so lets get rid of them in the csvOutputdata
+										edge.Reason = strings.ReplaceAll(edge.Reason, ",", " and")
+										paths += fmt.Sprintf("%s %s %s\n", path[i], edge.Reason, path[i+1])
+									}
+
+								}
+							}
+							//trim the last newline from csvPaths
+							paths = strings.TrimSuffix(paths, "\n")
+							privescPathsBody = append(privescPathsBody, []string{startNode.Arn, destNode.Arn, paths})
+
+						}
+
+					}
+				}
+			}
+		}
+	}
+
+	// create body by first adding the admins and then the privesc paths
+	body = append(body, admins...)
+	body = append(body, privescPathsBody...)
+	return header, body
+
+}
+
 func (m *PmapperModule) writeLoot(outputDirectory string, verbosity int) string {
 	path := filepath.Join(outputDirectory, "loot")
 	err := os.MkdirAll(path, os.ModePerm)
@@ -306,33 +375,33 @@ func (m *PmapperModule) writeLoot(outputDirectory string, verbosity int) string 
 			for _, destNode := range m.Nodes {
 				if destNode.IsAdmin {
 					path, _ := graph.ShortestPath(m.pmapperGraph, startNode.Arn, destNode.Arn)
-					for _, p := range path {
-						if p != "" {
-							if startNode.Arn != destNode.Arn {
-								// if we got here there is a path
-								out += fmt.Sprintf("PATH TO ADMIN FOUND\n   Start: %s\n     End: %s\n Path(s):\n", startNode.Arn, destNode.Arn)
-								//fmt.Println(path)
-								// if we got here theres a path. Lets print the reason and the short reason for each edge in the path to the screen
-								for i := 0; i < len(path)-1; i++ {
-									for _, edge := range m.Edges {
-										if edge.Source == path[i] && edge.Destination == path[i+1] {
-											// print it like this: [start node] [reason] [end node]
-											out += fmt.Sprintf("     %s %s %s\n", path[i], edge.Reason, path[i+1])
-										}
-										// shortest path only finds the shortest path. We want to find all paths. So we need to find all paths that have the same start and end nodes from the path, but going back to the main edges slice
-										//for _, edge := range GlobalPmapperEdges {
-										// 	if edge.Source == path[i] && edge.Destination == path[i+1] {
-										// 		// print it like this: [start node] [reason] [end node]
-										// 		out += fmt.Sprintf("   %s %s %s\n", path[i], edge.Reason, path[i+1])
-										// 	}
-										// }
-									}
-								}
-								out += fmt.Sprintf("\n")
+					// if we have a path,
 
+					if len(path) > 0 {
+						if startNode.Arn != destNode.Arn {
+							// if we got here there is a path
+							out += fmt.Sprintf("PATH TO ADMIN FOUND\n   Start: %s\n     End: %s\n Path(s):\n", startNode.Arn, destNode.Arn)
+							//fmt.Println(path)
+							// if we got here theres a path. Lets print the reason and the short reason for each edge in the path to the screen
+							for i := 0; i < len(path)-1; i++ {
+								for _, edge := range m.Edges {
+									if edge.Source == path[i] && edge.Destination == path[i+1] {
+										// print it like this: [start node] [reason] [end node]
+										out += fmt.Sprintf("     %s %s %s\n", path[i], edge.Reason, path[i+1])
+									}
+									// shortest path only finds the shortest path. We want to find all paths. So we need to find all paths that have the same start and end nodes from the path, but going back to the main edges slice
+									//for _, edge := range GlobalPmapperEdges {
+									// 	if edge.Source == path[i] && edge.Destination == path[i+1] {
+									// 		// print it like this: [start node] [reason] [end node]
+									// 		out += fmt.Sprintf("   %s %s %s\n", path[i], edge.Reason, path[i+1])
+									// 	}
+									// }
+								}
 							}
+							out += fmt.Sprintf("\n")
 
 						}
+
 					}
 				}
 			}
