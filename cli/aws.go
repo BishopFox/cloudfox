@@ -448,7 +448,7 @@ var (
 
 		Use:     "pmapper",
 		Aliases: []string{"Pmapper", "pmapperParse"},
-		Short:   "",
+		Short:   "Looks for pmapper data for the account and builds a PrivEsc graph in golang if it exists.",
 		Long: "\nUse case examples:\n" +
 			os.Args[0] + " aws ",
 		PreRun:  awsPreRun,
