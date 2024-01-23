@@ -450,7 +450,7 @@ var (
 
 		Use:     "pmapper",
 		Aliases: []string{"Pmapper", "pmapperParse"},
-		Short:   "",
+		Short:   "Looks for pmapper data for the account and builds a PrivEsc graph in golang if it exists.",
 		Long: "\nUse case examples:\n" +
 			os.Args[0] + " aws ",
 		PreRun:  awsPreRun,
@@ -1232,6 +1232,7 @@ func runRAMCommand(cmd *cobra.Command, args []string) {
 
 func runResourceTrustsCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
 		if err != nil {
 			continue
@@ -1245,6 +1246,7 @@ func runResourceTrustsCommand(cmd *cobra.Command, args []string) {
 			CloudFoxVersion: cmd.Root().Version,
 			AWSOutputType:   AWSOutputType,
 			AWSTableCols:    AWSTableCols,
+			AWSConfig:       AWSConfig,
 		}
 		m.PrintResources(AWSOutputDirectory, Verbosity)
 	}

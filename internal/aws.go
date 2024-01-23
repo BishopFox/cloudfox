@@ -60,15 +60,22 @@ func AWSConfigFileLoader(AWSProfile string, version string, AwsMfaToken string) 
 		}
 
 		if err != nil {
-			fmt.Println(err)
-			TxtLog.Println(err)
+			//fmt.Println(err)
+			if AWSProfile != "" {
+				TxtLog.Println(err)
+				fmt.Printf("[%s][%s] The specified profile [%s] does not exist or there was an error loading the credentials.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), cyan(AWSProfile), AWSProfile)
+				TxtLog.Fatalf("Could not retrieve the specified profile name %s", err)
+			} else {
+				fmt.Printf("[%s][%s] Error retrieving credentials from environment variables, or the instance metadata service.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), cyan(AWSProfile))
+				TxtLog.Fatalf("Error retrieving credentials from environment variables, or the instance metadata service.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), cyan(AWSProfile))
+			}
+			//os.Exit(1)
 		}
 
 		_, err := cfg.Credentials.Retrieve(context.TODO())
 
 		if err != nil {
 			fmt.Printf("[%s][%s] Error retrieving credentials from environment variables, or the instance metadata service.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), cyan(AWSProfile))
-			TxtLog.Printf("Could not retrieve the specified profile name %s", err)
 
 		} else {
 			// update the config map with the new config for future lookups
