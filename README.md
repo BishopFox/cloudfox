@@ -62,12 +62,19 @@ For the full documentation please refer to our [wiki](https://github.com/BishopF
    [Install Go](https://golang.org/doc/install), clone the CloudFox repository and compile from source
    ```
    # git clone https://github.com/BishopFox/cloudfox.git
-   ...omitted for brevity...
    # cd ./cloudfox
    # Make any changes necessary
    # go build .
    # ./cloudfox
    ```
+
+**Option 5:** Testing a bug fix
+  ```
+  git clone git@github.com:BishopFox/cloudfox.git
+  git checkout seth-dev 
+  go build .
+  ./cloudfox [rest of the command options]
+  ```
 
 # Prerequisites
 
