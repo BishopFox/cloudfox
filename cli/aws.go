@@ -1169,6 +1169,7 @@ func runRAMCommand(cmd *cobra.Command, args []string) {
 
 func runResourceTrustsCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
 		if err != nil {
 			continue
@@ -1182,6 +1183,7 @@ func runResourceTrustsCommand(cmd *cobra.Command, args []string) {
 			CloudFoxVersion: cmd.Root().Version,
 			AWSOutputType:   AWSOutputType,
 			AWSTableCols:    AWSTableCols,
+			AWSConfig:       AWSConfig,
 		}
 		m.PrintResources(AWSOutputDirectory, Verbosity)
 	}

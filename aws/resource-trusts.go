@@ -13,6 +13,8 @@ import (
 	"github.com/BishopFox/cloudfox/internal/aws/policy"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/arn"
+	"github.com/aws/aws-sdk-go-v2/service/glue"
+	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
@@ -20,14 +22,14 @@ import (
 
 type ResourceTrustsModule struct {
 	// General configuration data
-	Caller        sts.GetCallerIdentityOutput
-	AWSRegions    []string
-	Goroutines    int
-	WrapTable     bool
-	AWSOutputType string
-	AWSTableCols  string
-	AWSMFAToken   string
-
+	Caller          sts.GetCallerIdentityOutput
+	AWSRegions      []string
+	Goroutines      int
+	WrapTable       bool
+	AWSOutputType   string
+	AWSTableCols    string
+	AWSMFAToken     string
+	AWSConfig       aws.Config
 	AWSProfile      string
 	CloudFoxVersion string
 
@@ -292,7 +294,13 @@ func (m *ResourceTrustsModule) getSNSTopicsPerRegion(r string, wg *sync.WaitGrou
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	cloudFoxSNSClient := InitCloudFoxSNSClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines, m.WrapTable, m.AWSMFAToken)
+	var cloudFoxSNSClient SNSModule
+
+	if strings.Contains(m.AWSProfile, "-AROA") {
+		cloudFoxSNSClient = InitCloudFoxSNSClient(m.Caller, "", m.CloudFoxVersion, m.Goroutines, m.WrapTable, m.AWSMFAToken)
+	} else {
+		cloudFoxSNSClient = InitCloudFoxSNSClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines, m.WrapTable, m.AWSMFAToken)
+	}
 
 	ListTopics, err := cloudFoxSNSClient.listTopics(r)
 	if err != nil {
@@ -368,7 +376,13 @@ func (m *ResourceTrustsModule) getS3Buckets(wg *sync.WaitGroup, semaphore chan s
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	cloudFoxS3Client := initCloudFoxS3Client(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.AWSMFAToken)
+	var cloudFoxS3Client BucketsModule
+
+	if strings.Contains(m.AWSProfile, "-AROA") {
+		cloudFoxS3Client = initCloudFoxS3Client(m.Caller, "", m.CloudFoxVersion, m.AWSMFAToken)
+	} else {
+		cloudFoxS3Client = initCloudFoxS3Client(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.AWSMFAToken)
+	}
 
 	ListBuckets, err := sdk.CachedListBuckets(cloudFoxS3Client.S3Client, aws.ToString(m.Caller.Account))
 	if err != nil {
@@ -451,7 +465,13 @@ func (m *ResourceTrustsModule) getSQSQueuesPerRegion(r string, wg *sync.WaitGrou
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	cloudFoxSQSClient := InitSQSClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
+	var cloudFoxSQSClient SQSModule
+
+	if strings.Contains(m.AWSProfile, "-AROA") {
+		cloudFoxSQSClient = InitSQSClient(m.Caller, "", m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
+	} else {
+		cloudFoxSQSClient = InitSQSClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
+	}
 
 	ListQueues, err := cloudFoxSQSClient.listQueues(r)
 	if err != nil {
@@ -513,7 +533,13 @@ func (m *ResourceTrustsModule) getECRRecordsPerRegion(r string, wg *sync.WaitGro
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	cloudFoxECRClient := InitECRClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
+	var cloudFoxECRClient ECRModule
+
+	if strings.Contains(m.AWSProfile, "-AROA") {
+		cloudFoxECRClient = InitECRClient(m.Caller, "", m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
+	} else {
+		cloudFoxECRClient = InitECRClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
+	}
 
 	DescribeRepositories, err := sdk.CachedECRDescribeRepositories(cloudFoxECRClient.ECRClient, aws.ToString(m.Caller.Account), r)
 	if err != nil {
@@ -577,7 +603,13 @@ func (m *ResourceTrustsModule) getCodeBuildResourcePoliciesPerRegion(r string, w
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	cloudFoxCodeBuildClient := InitCodeBuildClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
+	var cloudFoxCodeBuildClient CodeBuildModule
+
+	if strings.Contains(m.AWSProfile, "-AROA") {
+		cloudFoxCodeBuildClient = InitCodeBuildClient(m.Caller, "", m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
+	} else {
+		cloudFoxCodeBuildClient = InitCodeBuildClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
+	}
 
 	ListProjects, err := sdk.CachedCodeBuildListProjects(cloudFoxCodeBuildClient.CodeBuildClient, aws.ToString(cloudFoxCodeBuildClient.Caller.Account), r)
 	if err != nil {
@@ -651,7 +683,13 @@ func (m *ResourceTrustsModule) getLambdaPolicyPerRegion(r string, wg *sync.WaitG
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	cloudFoxLambdaClient := InitLambdaClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
+	var cloudFoxLambdaClient LambdasModule
+
+	if strings.Contains(m.AWSProfile, "-AROA") {
+		cloudFoxLambdaClient = InitLambdaClient(m.Caller, "", m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
+	} else {
+		cloudFoxLambdaClient = InitLambdaClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
+	}
 
 	ListFunctions, err := cloudFoxLambdaClient.listFunctions(r)
 	if err != nil {
@@ -716,7 +754,13 @@ func (m *ResourceTrustsModule) getEFSfilesystemPoliciesPerRegion(r string, wg *s
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	cloudFoxEFSClient := InitFileSystemsClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
+	var cloudFoxEFSClient FilesystemsModule
+
+	if strings.Contains(m.AWSProfile, "-AROA") {
+		cloudFoxEFSClient = InitFileSystemsClient(m.Caller, "", m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
+	} else {
+		cloudFoxEFSClient = InitFileSystemsClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
+	}
 
 	ListFileSystems, err := sdk.CachedDescribeFileSystems(cloudFoxEFSClient.EFSClient, aws.ToString(m.Caller.Account), r)
 	if err != nil {
@@ -786,7 +830,13 @@ func (m *ResourceTrustsModule) getSecretsManagerSecretsPoliciesPerRegion(r strin
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	cloudFoxSecretsManagerClient := InitSecretsManagerClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
+	var cloudFoxSecretsManagerClient *secretsmanager.Client
+
+	if strings.Contains(m.AWSProfile, "-AROA") {
+		cloudFoxSecretsManagerClient = InitSecretsManagerClient(m.Caller, "", m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
+	} else {
+		cloudFoxSecretsManagerClient = InitSecretsManagerClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
+	}
 
 	ListSecrets, err := sdk.CachedSecretsManagerListSecrets(cloudFoxSecretsManagerClient, aws.ToString(m.Caller.Account), r)
 	if err != nil {
@@ -852,7 +902,13 @@ func (m *ResourceTrustsModule) getGlueResourcePoliciesPerRegion(r string, wg *sy
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	cloudFoxGlueClient := InitGlueClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
+	var cloudFoxGlueClient *glue.Client
+
+	if strings.Contains(m.AWSProfile, "-AROA") {
+		cloudFoxGlueClient = InitGlueClient(m.Caller, "", m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
+	} else {
+		cloudFoxGlueClient = InitGlueClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
+	}
 
 	ResourcePolicies, err := sdk.CachedGlueGetResourcePolicies(cloudFoxGlueClient, aws.ToString(m.Caller.Account), r)
 	if err != nil {
