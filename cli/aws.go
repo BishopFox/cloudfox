@@ -1008,6 +1008,14 @@ func runGraphCommand(cmd *cobra.Command, args []string) {
 			modelRole := aws.ConvertIAMRoleToModelRole(role, vendors)
 			GlobalRoles = append(GlobalRoles, modelRole)
 		}
+		// make vertices
+		// you can't update verticies - so we need to make all of the vertices that are roles in the in-scope accounts
+		// all at once to make sure they have the most information possible
+		fmt.Println("Making vertices for " + profile)
+		for _, role := range GlobalRoles {
+			role.MakeVertices(GlobalGraph)
+		}
+
 		//making edges
 		fmt.Println("Making edges for " + profile)
 		for _, role := range GlobalRoles {

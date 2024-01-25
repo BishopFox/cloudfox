@@ -330,24 +330,26 @@ func (a *Role) MakeRelationships() []schema.Relationship {
 	return relationships
 }
 
-// func (a *Role) MakeVertex() {
+func (a *Role) MakeVertices(GlobalGraph graph.Graph[string, string]) {
 
-// 	// make a vertex for this role as populate all of the data in the Role struct as attributes
-// 	err := GlobalGraph.AddVertex(
-// 		a.Id,
-// 		graph.VertexAttribute("Name", a.Name),
-// 		graph.VertexAttribute("Type", "Role"),
-// 		graph.VertexAttribute("AccountID", a.AccountID),
-// 		graph.VertexAttribute("ARN", a.ARN),
-// 		graph.VertexAttribute("CanPrivEscToAdmin", a.CanPrivEscToAdmin),
-// 		graph.VertexAttribute("IsAdmin", a.IsAdmin),
-// 		graph.VertexAttribute("IdValue", a.IdValue),
-// 		graph.VertexAttribute("IsAdminP", a.IsAdminP),
-// 		graph.VertexAttribute("PathToAdminSameAccount", a.PathToAdminSameAccount),
-// 		graph.VertexAttribute("PathToAdminCrossAccount", a.PathToAdminCrossAccount),
-// 	)
+	// make a vertex for this role as populate all of the data in the Role struct as attributes
+	err := GlobalGraph.AddVertex(
+		a.Id,
+		graph.VertexAttribute("Name", a.Name),
+		graph.VertexAttribute("Type", "Role"),
+		graph.VertexAttribute("AccountID", a.AccountID),
+		graph.VertexAttribute("ARN", a.ARN),
+		graph.VertexAttribute("CanPrivEscToAdmin", a.CanPrivEscToAdmin),
+		graph.VertexAttribute("IsAdmin", a.IsAdmin),
+		graph.VertexAttribute("IdValue", a.IdValue),
+	)
+	if err != nil {
+		if err == graph.ErrVertexAlreadyExists {
+			fmt.Println(a.Id + " already exists")
+		}
+	}
 
-// }
+}
 
 func (a *Role) MakeEdges(GlobalGraph graph.Graph[string, string]) []schema.Relationship {
 	var relationships []schema.Relationship
