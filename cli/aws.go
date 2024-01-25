@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/BishopFox/cloudfox/aws"
+	"github.com/BishopFox/cloudfox/aws/graph/ingester/schema/models"
 	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/BishopFox/cloudfox/internal/common"
@@ -60,6 +61,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/smithy-go/ptr"
+	"github.com/bishopfox/knownawsaccountslookup"
+	"github.com/dominikbraun/graph"
 	"github.com/fatih/color"
 	"github.com/kyokomi/emoji"
 	"github.com/spf13/cobra"
@@ -932,31 +935,12 @@ func runFilesystemsCommand(cmd *cobra.Command, args []string) {
 }
 
 func runGraphCommand(cmd *cobra.Command, args []string) {
-	for _, profile := range AWSProfiles {
-		//var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
-		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
-		if err != nil {
-			continue
-		}
+	GlobalGraph := graph.New(graph.StringHash, graph.Directed())
+	//var PermissionRowsFromAllProfiles []common.PermissionsRow
+	var GlobalRoles []models.Role
 
-		//instantiate a permissions client and populate the permissions data
-		fmt.Println("Getting GAAD for " + profile)
-		PermissionsCommandClient := aws.InitPermissionsClient(*caller, profile, cmd.Root().Version, Goroutines, AWSMFAToken)
-		PermissionsCommandClient.GetGAAD()
-		PermissionsCommandClient.ParsePermissions("")
-		common.PermissionRowsFromAllProfiles = append(common.PermissionRowsFromAllProfiles, PermissionsCommandClient.Rows...)
-	}
-
-	// for _, profile := range AWSProfiles {
-	// 	caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
-	// 	if err != nil {
-	// 		continue
-	// 	}
-
-	// 	fmt.PrintLn("Importing Pmapper for " + profile)
-
-	// }
-
+	vendors := knownawsaccountslookup.NewVendorMap()
+	vendors.PopulateKnownAWSAccounts()
 	for _, profile := range AWSProfiles {
 		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
@@ -964,22 +948,123 @@ func runGraphCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 
-		graphCommandClient := aws.GraphCommand{
-			Caller:             *caller,
-			AWSProfile:         profile,
-			Goroutines:         Goroutines,
-			AWSRegions:         internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
-			WrapTable:          AWSWrapTable,
-			AWSOutputType:      AWSOutputType,
-			AWSTableCols:       AWSTableCols,
-			AWSOutputDirectory: AWSOutputDirectory,
-			Verbosity:          Verbosity,
-			AWSConfig:          AWSConfig,
-			Version:            cmd.Root().Version,
-			SkipAdminCheck:     AWSSkipAdminCheck,
+		//Gather all Permissions data
+		fmt.Println("Getting GAAD for " + profile)
+		PermissionsCommandClient := aws.InitPermissionsClient(*caller, profile, cmd.Root().Version, Goroutines, AWSMFAToken)
+		PermissionsCommandClient.GetGAAD()
+		PermissionsCommandClient.ParsePermissions("")
+		common.PermissionRowsFromAllProfiles = append(common.PermissionRowsFromAllProfiles, PermissionsCommandClient.Rows...)
+
+		// Gather all Pmapper data
+		fmt.Println("Importing Pmapper for " + profile)
+		pmapperMod, pmapperError := aws.InitPmapperGraph(*caller, AWSProfile, Goroutines)
+		if pmapperError != nil {
+			fmt.Println("Error importing pmapper data: " + pmapperError.Error())
 		}
-		graphCommandClient.RunGraphCommand()
+		for _, node := range pmapperMod.Nodes {
+			GlobalGraph.AddVertex(node.Arn)
+		}
+		for _, edge := range pmapperMod.Edges {
+			err := GlobalGraph.AddEdge(
+				edge.Source,
+				edge.Destination,
+				graph.EdgeAttribute(edge.ShortReason, edge.Reason),
+			)
+			if err != nil {
+				if err == graph.ErrEdgeAlreadyExists {
+					// update the ege by copying the existing graph.Edge with attributes and add the new attributes
+					//fmt.Println("Edge already exists")
+
+					// get the existing edge
+					existingEdge, _ := GlobalGraph.Edge(edge.Source, edge.Destination)
+					// get the map of attributes
+					existingProperties := existingEdge.Properties
+					// add the new attributes to attributes map within the properties struct
+					// Check if the Attributes map is initialized, if not, initialize it
+					if existingProperties.Attributes == nil {
+						existingProperties.Attributes = make(map[string]string)
+					}
+
+					// Add or update the attribute
+					existingProperties.Attributes[edge.ShortReason] = edge.Reason
+					GlobalGraph.UpdateEdge(
+						edge.Source,
+						edge.Destination,
+						graph.EdgeAttributes(existingProperties.Attributes),
+					)
+				}
+			}
+
+		}
+
+		//Gather all role data
+		fmt.Println("Getting Roles for " + profile)
+		IAMCommandClient := aws.InitIAMClient(AWSConfig)
+		ListRolesOutput, err := sdk.CachedIamListRoles(IAMCommandClient, ptr.ToString(caller.Account))
+		if err != nil {
+			internal.TxtLog.Error(err)
+		}
+		for _, role := range ListRolesOutput {
+			modelRole := aws.ConvertIAMRoleToModelRole(role, vendors)
+			GlobalRoles = append(GlobalRoles, modelRole)
+		}
+		//making edges
+		fmt.Println("Making edges for " + profile)
+		for _, role := range GlobalRoles {
+			role.MakeEdges(GlobalGraph)
+		}
+
+		// print how many nodes and edges are in the graph to the screen and exit
+
+		for _, profile := range AWSProfiles {
+			var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
+			caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
+			if err != nil {
+				continue
+			}
+
+			// 	graphCommandClient := aws.GraphCommand{
+			// 		Caller:             *caller,
+			// 		AWSProfile:         profile,
+			// 		Goroutines:         Goroutines,
+			// 		AWSRegions:         internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
+			// 		WrapTable:          AWSWrapTable,
+			// 		AWSOutputType:      AWSOutputType,
+			// 		AWSTableCols:       AWSTableCols,
+			// 		AWSOutputDirectory: AWSOutputDirectory,
+			// 		Verbosity:          Verbosity,
+			// 		AWSConfig:          AWSConfig,
+			// 		Version:            cmd.Root().Version,
+			// 		SkipAdminCheck:     AWSSkipAdminCheck,
+			// 	}
+			// 	graphCommandClient.RunGraphCommand()
+
+			graphCommandClient := aws.GraphCommand2{
+				Caller:             *caller,
+				AWSProfile:         profile,
+				Goroutines:         Goroutines,
+				AWSRegions:         internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
+				WrapTable:          AWSWrapTable,
+				AWSOutputType:      AWSOutputType,
+				AWSTableCols:       AWSTableCols,
+				AWSOutputDirectory: AWSOutputDirectory,
+				Verbosity:          Verbosity,
+				AWSConfig:          AWSConfig,
+				Version:            cmd.Root().Version,
+				SkipAdminCheck:     AWSSkipAdminCheck,
+				GlobalGraph:        GlobalGraph,
+			}
+
+			graphCommandClient.RunGraphCommand2()
+		}
+
 	}
+	// // print the edges to the screen
+	// edges, _ := GlobalGraph.Edges()
+	// for _, edge := range edges {
+	// 	fmt.Println(edge)
+	// }
+
 }
 
 func runIamSimulatorCommand(cmd *cobra.Command, args []string) {

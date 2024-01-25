@@ -115,7 +115,39 @@ func (m *PmapperModule) createAndPopulateGraph() graph.Graph[string, string] {
 	}
 
 	for _, edge := range m.Edges {
-		_ = pmapperGraph.AddEdge(edge.Source, edge.Destination)
+		err := pmapperGraph.AddEdge(
+			edge.Source,
+			edge.Destination,
+			graph.EdgeAttribute(edge.ShortReason, edge.Reason),
+		)
+		if err != nil {
+			if err == graph.ErrEdgeAlreadyExists {
+				// update the ege by copying the existing graph.Edge with attributes and add the new attributes
+				//fmt.Println("Edge already exists, but adding a new one!")
+
+				// get the existing edge
+				existingEdge, _ := pmapperGraph.Edge(edge.Source, edge.Destination)
+				// get the map of attributes
+				existingProperties := existingEdge.Properties
+				// add the new attributes to attributes map within the properties struct
+				// Check if the Attributes map is initialized, if not, initialize it
+				if existingProperties.Attributes == nil {
+					existingProperties.Attributes = make(map[string]string)
+				}
+
+				// Add or update the attribute
+				existingProperties.Attributes[edge.ShortReason] = edge.Reason
+				//Update the edge
+				pmapperGraph.UpdateEdge(
+					edge.Source,
+					edge.Destination,
+					graph.EdgeAttributes(existingProperties.Attributes),
+				)
+
+			}
+			//fmt.Println(edge.Reason)
+		}
+
 	}
 
 	//internal.Cache.Set(cacheKey, pmapperGraph, cache.DefaultExpiration)
