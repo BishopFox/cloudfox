@@ -1175,15 +1175,15 @@ func runResourceTrustsCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.ResourceTrustsModule{
-			Caller:          *caller,
-			AWSProfile:      profile,
-			Goroutines:      Goroutines,
-			AWSRegions:      internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
-			WrapTable:       AWSWrapTable,
-			CloudFoxVersion: cmd.Root().Version,
-			AWSOutputType:   AWSOutputType,
-			AWSTableCols:    AWSTableCols,
-			AWSConfig:       AWSConfig,
+			Caller:             *caller,
+			AWSProfileProvided: profile,
+			Goroutines:         Goroutines,
+			AWSRegions:         internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
+			WrapTable:          AWSWrapTable,
+			CloudFoxVersion:    cmd.Root().Version,
+			AWSOutputType:      AWSOutputType,
+			AWSTableCols:       AWSTableCols,
+			AWSConfig:          AWSConfig,
 		}
 		m.PrintResources(AWSOutputDirectory, Verbosity)
 	}
@@ -1802,15 +1802,16 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		cloudFoxSNSClient.PrintSNS(AWSOutputDirectory, Verbosity)
 
 		resourceTrustsCommand := aws.ResourceTrustsModule{
-			Caller:          *caller,
-			AWSProfile:      profile,
-			Goroutines:      Goroutines,
-			AWSRegions:      internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
-			WrapTable:       AWSWrapTable,
-			CloudFoxVersion: cmd.Root().Version,
-			AWSOutputType:   AWSOutputType,
-			AWSTableCols:    AWSTableCols,
-			AWSMFAToken:     AWSMFAToken,
+			Caller:             *caller,
+			AWSProfileProvided: profile,
+			Goroutines:         Goroutines,
+			AWSRegions:         internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
+			WrapTable:          AWSWrapTable,
+			CloudFoxVersion:    cmd.Root().Version,
+			AWSOutputType:      AWSOutputType,
+			AWSTableCols:       AWSTableCols,
+			AWSMFAToken:        AWSMFAToken,
+			AWSConfig:          AWSConfig,
 		}
 		resourceTrustsCommand.PrintResources(AWSOutputDirectory, Verbosity)
 
