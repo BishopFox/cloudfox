@@ -29,7 +29,7 @@ type ResourceTrustsModule struct {
 	AWSMFAToken        string
 	AWSConfig          aws.Config
 	AWSProfileProvided string
-	AWSProfileFake     string
+	AWSProfileStub     string
 	CloudFoxVersion    string
 
 	Resources2     []Resource2
@@ -65,12 +65,14 @@ func (m *ResourceTrustsModule) PrintResources(outputDirectory string, verbosity 
 	})
 
 	if m.AWSProfileProvided == "" {
-		m.AWSProfileFake = internal.BuildAWSPath(m.Caller)
+		m.AWSProfileStub = internal.BuildAWSPath(m.Caller)
+	} else {
+		m.AWSProfileStub = m.AWSProfileProvided
 	}
 	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfileProvided, aws.ToString(m.Caller.Account)))
 
-	fmt.Printf("[%s][%s] Enumerating Resources with resource policies for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfileFake), aws.ToString(m.Caller.Account))
-	fmt.Printf("[%s][%s] Supported Services: CodeBuild, ECR, EFS, Glue, Lambda, SecretsManager, S3, SNS, SQS\n", cyan(m.output.CallingModule), cyan(m.AWSProfileFake))
+	fmt.Printf("[%s][%s] Enumerating Resources with resource policies for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfileStub), aws.ToString(m.Caller.Account))
+	fmt.Printf("[%s][%s] Supported Services: CodeBuild, ECR, EFS, Glue, Lambda, SecretsManager, S3, SNS, SQS\n", cyan(m.output.CallingModule), cyan(m.AWSProfileStub))
 	wg := new(sync.WaitGroup)
 	semaphore := make(chan struct{}, m.Goroutines)
 
@@ -174,16 +176,16 @@ func (m *ResourceTrustsModule) PrintResources(outputDirectory string, verbosity 
 			TableCols: tableCols,
 			Name:      m.output.CallingModule,
 		})
-		o.PrefixIdentifier = m.AWSProfileFake
-		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfileFake, aws.ToString(m.Caller.Account)))
+		o.PrefixIdentifier = m.AWSProfileStub
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfileStub, aws.ToString(m.Caller.Account)))
 		o.WriteFullOutput(o.Table.TableFiles, nil)
 		//m.writeLoot(o.Table.DirectoryName, verbosity)
-		fmt.Printf("[%s][%s] %s resource policies found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfileFake), strconv.Itoa(len(m.output.Body)))
+		fmt.Printf("[%s][%s] %s resource policies found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfileStub), strconv.Itoa(len(m.output.Body)))
 		//fmt.Printf("[%s][%s] Resource policies stored to: %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.getLootDir())
 	} else {
-		fmt.Printf("[%s][%s] No resource policies found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfileFake))
+		fmt.Printf("[%s][%s] No resource policies found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfileStub))
 	}
-	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfileFake), m.output.CallingModule)
+	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfileStub), m.output.CallingModule)
 
 }
 
