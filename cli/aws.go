@@ -448,7 +448,7 @@ var (
 
 		Use:     "pmapper",
 		Aliases: []string{"Pmapper", "pmapperParse"},
-		Short:   "",
+		Short:   "Looks for pmapper data for the account and builds a PrivEsc graph in golang if it exists.",
 		Long: "\nUse case examples:\n" +
 			os.Args[0] + " aws ",
 		PreRun:  awsPreRun,
@@ -927,13 +927,13 @@ func runIamSimulatorCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.IamSimulatorModule{
-			IAMClient:     iam.NewFromConfig(AWSConfig),
-			Caller:        *caller,
-			AWSProfile:    profile,
-			Goroutines:    Goroutines,
-			WrapTable:     AWSWrapTable,
-			AWSOutputType: AWSOutputType,
-			AWSTableCols:  AWSTableCols,
+			IAMClient:          iam.NewFromConfig(AWSConfig),
+			Caller:             *caller,
+			AWSProfileProvided: profile,
+			Goroutines:         Goroutines,
+			WrapTable:          AWSWrapTable,
+			AWSOutputType:      AWSOutputType,
+			AWSTableCols:       AWSTableCols,
 		}
 		m.PrintIamSimulator(SimulatorPrincipal, SimulatorAction, SimulatorResource, AWSOutputDirectory, Verbosity)
 	}
@@ -1169,19 +1169,21 @@ func runRAMCommand(cmd *cobra.Command, args []string) {
 
 func runResourceTrustsCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
 		if err != nil {
 			continue
 		}
 		m := aws.ResourceTrustsModule{
-			Caller:          *caller,
-			AWSProfile:      profile,
-			Goroutines:      Goroutines,
-			AWSRegions:      internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
-			WrapTable:       AWSWrapTable,
-			CloudFoxVersion: cmd.Root().Version,
-			AWSOutputType:   AWSOutputType,
-			AWSTableCols:    AWSTableCols,
+			Caller:             *caller,
+			AWSProfileProvided: profile,
+			Goroutines:         Goroutines,
+			AWSRegions:         internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
+			WrapTable:          AWSWrapTable,
+			CloudFoxVersion:    cmd.Root().Version,
+			AWSOutputType:      AWSOutputType,
+			AWSTableCols:       AWSTableCols,
+			AWSConfig:          AWSConfig,
 		}
 		m.PrintResources(AWSOutputDirectory, Verbosity)
 	}
@@ -1800,15 +1802,16 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		cloudFoxSNSClient.PrintSNS(AWSOutputDirectory, Verbosity)
 
 		resourceTrustsCommand := aws.ResourceTrustsModule{
-			Caller:          *caller,
-			AWSProfile:      profile,
-			Goroutines:      Goroutines,
-			AWSRegions:      internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
-			WrapTable:       AWSWrapTable,
-			CloudFoxVersion: cmd.Root().Version,
-			AWSOutputType:   AWSOutputType,
-			AWSTableCols:    AWSTableCols,
-			AWSMFAToken:     AWSMFAToken,
+			Caller:             *caller,
+			AWSProfileProvided: profile,
+			Goroutines:         Goroutines,
+			AWSRegions:         internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
+			WrapTable:          AWSWrapTable,
+			CloudFoxVersion:    cmd.Root().Version,
+			AWSOutputType:      AWSOutputType,
+			AWSTableCols:       AWSTableCols,
+			AWSMFAToken:        AWSMFAToken,
+			AWSConfig:          AWSConfig,
 		}
 		resourceTrustsCommand.PrintResources(AWSOutputDirectory, Verbosity)
 
@@ -1878,15 +1881,32 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		pmapperCommand.PrintPmapperData(AWSOutputDirectory, Verbosity)
 
 		iamSimulator := aws.IamSimulatorModule{
-			IAMClient:     iamClient,
-			Caller:        *caller,
-			AWSProfile:    profile,
-			Goroutines:    Goroutines,
-			WrapTable:     AWSWrapTable,
-			AWSOutputType: AWSOutputType,
-			AWSTableCols:  AWSTableCols,
+			IAMClient:          iamClient,
+			Caller:             *caller,
+			AWSProfileProvided: profile,
+			Goroutines:         Goroutines,
+			WrapTable:          AWSWrapTable,
+			AWSOutputType:      AWSOutputType,
+			AWSTableCols:       AWSTableCols,
 		}
 		iamSimulator.PrintIamSimulator(SimulatorPrincipal, SimulatorAction, SimulatorResource, AWSOutputDirectory, Verbosity)
+
+		workloads := aws.WorkloadsModule{
+			ECSClient:       ecsClient,
+			EC2Client:       ec2Client,
+			LambdaClient:    lambdaClient,
+			AppRunnerClient: appRunnerClient,
+			IAMClient:       iamClient,
+			Caller:          *caller,
+			AWSRegions:      internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
+			SkipAdminCheck:  AWSSkipAdminCheck,
+			AWSProfile:      profile,
+			Goroutines:      Goroutines,
+			WrapTable:       AWSWrapTable,
+			AWSOutputType:   AWSOutputType,
+			AWSTableCols:    AWSTableCols,
+		}
+		workloads.PrintWorkloads(AWSOutputDirectory, Verbosity)
 
 		fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("That's it! Check your output files for situational awareness and check your loot files for next steps."))
 		fmt.Printf("[%s] %s\n\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("FYI, we skipped the outbound-assumed-roles module in all-checks (really long run time). Make sure to try it out manually."))
