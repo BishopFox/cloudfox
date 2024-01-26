@@ -1,6 +1,6 @@
 module github.com/BishopFox/cloudfox
 
-go 1.20
+go 1.21.2
 
 require (
 	github.com/Azure/azure-sdk-for-go v68.0.0+incompatible
@@ -65,7 +65,9 @@ require (
 
 require (
 	github.com/aws/aws-sdk-go-v2/service/neptune v1.28.2 // indirect
+	github.com/bishopfox/knownawsaccountslookup v0.0.0-20231228165844-c37ef8df33cb // indirect
 	github.com/golang-jwt/jwt/v5 v5.2.0 // indirect
+	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
 
 require (

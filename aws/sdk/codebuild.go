@@ -87,7 +87,7 @@ func CachedCodeBuildBatchGetProjects(CodeBuildClient CodeBuildClientInterface, a
 		return project, err
 	}
 
-	internal.Cache.Set(cacheKey, BatchGetProjects.Projects[0], cache.DefaultExpiration)
+	internal.Cache.Set(cacheKey, BatchGetProjects.Projects, cache.DefaultExpiration)
 	return BatchGetProjects.Projects[0], nil
 }
 

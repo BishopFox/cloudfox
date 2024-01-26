@@ -512,6 +512,21 @@ func (m *InstancesModule) loadInstanceData(instance types.Instance, region strin
 
 	if instance.IamInstanceProfile == nil {
 		profile = "NoInstanceProfile"
+		dataReceiver <- MappedInstance{
+			ID:               aws.ToString(instance.InstanceId),
+			Name:             aws.ToString(&name),
+			Arn:              fmt.Sprintf("arn:aws:ec2:%s:%s:instance/%s", region, aws.ToString(m.Caller.Account), aws.ToString(instance.InstanceId)),
+			AvailabilityZone: aws.ToString(instance.Placement.AvailabilityZone),
+			State:            string(instance.State.Name),
+			ExternalIP:       externalIP,
+			PrivateIP:        aws.ToString(instance.PrivateIpAddress),
+			Profile:          profile,
+			Role:             "",
+			Region:           region,
+			Admin:            adminRole,
+			CanPrivEsc:       "",
+		}
+
 	} else {
 		profileArn = aws.ToString(instance.IamInstanceProfile.Arn)
 
