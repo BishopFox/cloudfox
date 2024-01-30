@@ -21,6 +21,8 @@ const AZ_INVENTORY_MODULE_NAME = "inventory"
 const AZ_VMS_MODULE_NAME = "vms"
 const AZ_RBAC_MODULE_NAME = "rbac"
 const AZ_STORAGE_MODULE_NAME = "storage"
+const AZ_NSG_LINKS_MODULE_NAME = "nsg-links"
+const AZ_NSG_RULES_MODULE_NAME = "nsg-rules"
 
 // Microsoft endpoints
 const AZ_RESOURCE_MANAGER_ENDPOINT = "https://management.azure.com/"

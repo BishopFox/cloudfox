@@ -16,82 +16,80 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/smithy-go/ptr"
 	"github.com/fatih/color"
-	"github.com/kyokomi/emoji"
 )
 
-func AzRBACCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, Version string, AzVerbosity int, AzWrapTable bool, AzMergedTable bool) error {
+type AzRBACModule struct {
+	AzClient            *internal.AzureClient
+	Log                 *internal.Logger
+}
+
+func (m *AzRBACModule) AzRBACCommand() error {
 	// setup logging client
 	o := internal.OutputClient{
-		Verbosity:     AzVerbosity,
+		Verbosity:     m.AzClient.AzVerbosity,
 		CallingModule: globals.AZ_RBAC_MODULE_NAME,
 		Table: internal.TableClient{
-			Wrap: AzWrapTable,
+			Wrap: m.AzClient.AzWrapTable,
 		},
 	}
 	// initiate command specific client
 	var c CloudFoxRBACclient
+	c.RBACModule = m
 	// set up table vars
 	var header []string
 	var body [][]string
 
-	var AzSubscriptionInfo SubsriptionInfo
 
-	if AzTenantID != "" && AzSubscription == "" {
+	if len(m.AzClient.AzTenants) > 0 {
 		// cloudfox azure rbac --tenant [TENANT_ID | PRIMARY_DOMAIN]
+		for _, AzTenant := range m.AzClient.AzTenants {
 
-		var err error
-		tenantInfo := populateTenant(AzTenantID)
-		if err != nil {
-			return err
+			var err error
+			if err != nil {
+				return err
+			}
+			o.PrefixIdentifier = *AzTenant.DefaultDomain
+			o.Table.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, *AzTenant.DefaultDomain, "1-tenant-level")
+
+			m.Log.Infof(nil, "Enumerating RBAC permissions for tenant %s (%s)", *AzTenant.DefaultDomain, *AzTenant.TenantID)
+			header, body, err = m.getRBACperTenant(ptr.ToString(AzTenant.TenantID), c)
+			if err != nil {
+				return err
+			}
+			o.Table.TableFiles = append(o.Table.TableFiles,
+				internal.TableFile{
+					Header: header,
+					Body:   body,
+					Name:   fmt.Sprintf(globals.AZ_RBAC_MODULE_NAME)})
+
 		}
-		o.PrefixIdentifier = ptr.ToString(tenantInfo.DefaultDomain)
-		o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), "1-tenant-level")
-
-		fmt.Printf("[%s][%s] Enumerating RBAC permissions for tenant %s\n",
-			color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_RBAC_MODULE_NAME),
-			fmt.Sprintf("%s (%s)", ptr.ToString(tenantInfo.DefaultDomain), ptr.ToString(tenantInfo.ID)))
-
-		header, body, err = getRBACperTenant(ptr.ToString(tenantInfo.ID), c)
-		if err != nil {
-			return err
-		}
-		o.Table.TableFiles = append(o.Table.TableFiles,
-			internal.TableFile{
-				Header: header,
-				Body:   body,
-				Name:   fmt.Sprintf(globals.AZ_RBAC_MODULE_NAME)})
-
-	} else if AzTenantID == "" && AzSubscription != "" {
-		// cloudfox azure rbac --subscription [SUBSCRIPTION_ID | SUBSCRIPTION_NAME]
-		tenantID := ptr.ToString(GetTenantIDPerSubscription(AzSubscription))
-		tenantInfo := populateTenant(tenantID)
-		AzSubscriptionInfo = PopulateSubsriptionType(AzSubscription)
-		o.PrefixIdentifier = AzSubscriptionInfo.Name
-		o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), AzSubscriptionInfo.Name)
-
-		fmt.Printf("[%s][%s] Enumerating RBAC permissions for subscription %s\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_RBAC_MODULE_NAME),
-			fmt.Sprintf("%s (%s)", AzSubscriptionInfo.Name, AzSubscriptionInfo.ID))
-		header, body = getRBACperSubscription(ptr.ToString(tenantInfo.ID), AzSubscriptionInfo.ID, c)
-		o.Table.TableFiles = append(o.Table.TableFiles,
-			internal.TableFile{
-				Header: header,
-				Body:   body,
-				Name:   fmt.Sprintf(globals.AZ_RBAC_MODULE_NAME)})
-
 	} else {
-		// Error: please make a valid flag selection
-		fmt.Println("Please enter a valid input with a valid flag. Use --help for info.")
+		// cloudfox azure rbac --subscription [SUBSCRIPTION_ID | SUBSCRIPTION_NAME]
+		for _, AzSubscription := range m.AzClient.AzSubscriptions {
+			tenantInfo := populateTenant(*AzSubscription.TenantID)
+			o.PrefixIdentifier = ptr.ToString(AzSubscription.DisplayName)
+			o.Table.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), *AzSubscription.DisplayName)
+
+			m.Log.Infof(nil, "Enumerating RBAC permissions for subscription %s (%s)", ptr.ToString(AzSubscription.DisplayName), *AzSubscription.SubscriptionID)
+			header, body = m.getRBACperSubscription(ptr.ToString(tenantInfo.ID), *AzSubscription.SubscriptionID, c)
+			o.Table.TableFiles = append(o.Table.TableFiles,
+				internal.TableFile{
+					Header: header,
+					Body:   body,
+					Name:   fmt.Sprintf(globals.AZ_RBAC_MODULE_NAME)})
+		}
+
 	}
 
 	if body != nil {
-		//internal.OutputSelector(AzVerbosity, AzOutputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_RBAC_MODULE_NAME, AzWrapTable, controlMessagePrefix)
+		//internal.OutputSelector(m.AzClient.AzVerbosity, AzOutputFormat, header, body, outputDirectory, fileNameWithoutExtension, globals.AZ_RBAC_MODULE_NAME, AzWrapTable, controlMessagePrefix)
 		o.WriteFullOutput(o.Table.TableFiles, nil)
 
 	}
 	return nil
 }
 
-func getRBACperTenant(AzTenantID string, c CloudFoxRBACclient) ([]string, [][]string, error) {
+func (m *AzRBACModule) getRBACperTenant(AzTenantID string, c CloudFoxRBACclient) ([]string, [][]string, error) {
 	var selectedSubs, resultsHeader []string
 	var resultsBody, b [][]string
 	for _, s := range GetSubscriptions() {
@@ -110,7 +108,7 @@ func getRBACperTenant(AzTenantID string, c CloudFoxRBACclient) ([]string, [][]st
 	return resultsHeader, resultsBody, nil
 }
 
-func getRBACperSubscription(AzTenantID, AzSubscriptionID string, c CloudFoxRBACclient) ([]string, [][]string) {
+func (m *AzRBACModule) getRBACperSubscription(AzTenantID, AzSubscriptionID string, c CloudFoxRBACclient) ([]string, [][]string) {
 	var resultsHeader []string
 	var resultsBody [][]string
 	for _, s := range GetSubscriptions() {
@@ -126,6 +124,7 @@ type CloudFoxRBACclient struct {
 	roleAssignments []authorization.RoleAssignment
 	roleDefinitions []authorization.RoleDefinition
 	AADUsers        []graphrbac.User
+	RBACModule      *AzRBACModule
 }
 
 func (c *CloudFoxRBACclient) initialize(tenantID string, subscriptionIDs []string) error {
@@ -134,19 +133,19 @@ func (c *CloudFoxRBACclient) initialize(tenantID string, subscriptionIDs []strin
 	c.roleAssignments = nil
 	c.roleDefinitions = nil
 
-	c.AADUsers, err = getAzureADUsers(tenantID)
+	c.AADUsers, err = c.RBACModule.getAzureADUsers(tenantID)
 	if err != nil {
 		return fmt.Errorf("[%s] failed to get users for tenant %s: %s", color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME), tenantID, err)
 	}
 
 	for _, subID := range subscriptionIDs {
-		rd, err := getRoleDefinitions(subID)
+		rd, err := c.RBACModule.getRoleDefinitions(subID)
 		if err != nil {
 			fmt.Printf("[%s] failed to get role definitions for subscription %s: %s. Skipping it.\n", color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME), subID, err)
 		}
 		c.roleDefinitions = append(c.roleDefinitions, rd...)
 
-		ra, err := getRoleAssignments(subID)
+		ra, err := c.RBACModule.getRoleAssignments(subID)
 		if err != nil {
 			fmt.Printf("[%s] failed to get role assignments for subscription %s: %s. Skipping it.\n", color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME), subID, err)
 		}
@@ -171,7 +170,7 @@ func (c *CloudFoxRBACclient) GetRelevantRBACData(tenantID, subscriptionID string
 	}
 	// Sort the results by userDisplayName using slice.Sort
 	sortedResults := results
-	sort.Slice(sortedResults, func(i, j int) bool {
+	sort.Slice(sortedResults, func (i, j int) bool {
 		return sortedResults[i].userDisplayName < sortedResults[j].userDisplayName
 	})
 
@@ -216,9 +215,11 @@ type RoleAssignmentRelevantData struct {
 	roleName        string
 }
 
-var getAzureADUsers = getAzureADUsersOriginal
+func (m *AzRBACModule) getAzureADUsers(tenantID string) ([]graphrbac.User, error) {
+	return m.getAzureADUsersOriginal(tenantID)
+}
 
-func getAzureADUsersOriginal(tenantID string) ([]graphrbac.User, error) {
+func (m *AzRBACModule) getAzureADUsersOriginal(tenantID string) ([]graphrbac.User, error) {
 	var users []graphrbac.User
 	client := internal.GetAADUsersClient(tenantID)
 	for page, err := client.List(context.TODO(), "", ""); page.NotDone(); page.Next() {
@@ -234,7 +235,7 @@ func getAzureADUsersOriginal(tenantID string) ([]graphrbac.User, error) {
 	return users, nil
 }
 
-func mockedGetAzureADUsers(tenantID string) ([]graphrbac.User, error) {
+func (m *AzRBACModule) mockedGetAzureADUsers(tenantID string) ([]graphrbac.User, error) {
 	var users AzureADUsersTestFile
 
 	file, err := os.ReadFile(globals.AAD_USERS_TEST_FILE)
@@ -248,10 +249,10 @@ func mockedGetAzureADUsers(tenantID string) ([]graphrbac.User, error) {
 	return users.AzureADUsers, nil
 }
 
-func generateAzureADUsersTestFIle(tenantID string) {
+func (m *AzRBACModule) generateAzureADUsersTestFIle(tenantID string) {
 	// The READ-ONLY ObjectID attribute needs to be included manually in the test file
 	// ObjectID *string `json:"objectId,omitempty"`
-	users, err := getAzureADUsers(tenantID)
+	users, err := m.getAzureADUsers(tenantID)
 	if err != nil {
 		log.Fatalf("could not enumerate users for tenant %s", tenantID)
 	}
@@ -269,9 +270,11 @@ type AzureADUsersTestFile struct {
 	AzureADUsers []graphrbac.User `json:"azureADUsers"`
 }
 
-var getRoleDefinitions = getRoleDefinitionsOriginal
+func (m *AzRBACModule) getRoleDefinitions(subscriptionID string) ([]authorization.RoleDefinition, error) {
+	return m.getRoleDefinitionsOriginal(subscriptionID)
+}
 
-func getRoleDefinitionsOriginal(subscriptionID string) ([]authorization.RoleDefinition, error) {
+func (m *AzRBACModule) getRoleDefinitionsOriginal(subscriptionID string) ([]authorization.RoleDefinition, error) {
 	client := internal.GetRoleDefinitionsClient(subscriptionID)
 	var roleDefinitions []authorization.RoleDefinition
 	for page, err := client.List(context.TODO(), "", ""); page.NotDone(); page.Next() {
@@ -287,7 +290,7 @@ func getRoleDefinitionsOriginal(subscriptionID string) ([]authorization.RoleDefi
 	return roleDefinitions, nil
 }
 
-func mockedGetRoleDefinitions(subscriptionID string) ([]authorization.RoleDefinition, error) {
+func (m *AzRBACModule) mockedGetRoleDefinitions(subscriptionID string) ([]authorization.RoleDefinition, error) {
 	var roleDefinitions RoleDefinitionTestFile
 	file, err := os.ReadFile(globals.ROLE_DEFINITIONS_TEST_FILE)
 	if err != nil {
@@ -300,16 +303,16 @@ func mockedGetRoleDefinitions(subscriptionID string) ([]authorization.RoleDefini
 	return roleDefinitions.RoleDefinitions, nil
 }
 
-func generateRoleDefinitionsTestFile(subscriptionID string) {
+func (m *AzRBACModule) generateRoleDefinitionsTestFile(subscriptionID string) {
 	// The READ-ONLY ID attribute needs to be included manually in the test file.
 	// This attribute is the unique identifier for the role.
 	// ID *string `json:"id,omitempty"`.
 
-	roleDefinitions, err := getRoleDefinitions(subscriptionID)
+	roleDefinitions, err := m.getRoleDefinitions(subscriptionID)
 	if err != nil {
 		log.Fatal(err)
 	}
-	roleAssignments, err := getRoleAssignments(subscriptionID)
+	roleAssignments, err := m.getRoleAssignments(subscriptionID)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -346,9 +349,11 @@ type RoleDefinitionTestFile struct {
 	RoleDefinitions []authorization.RoleDefinition `json:"roleDefinitions"`
 }
 
-var getRoleAssignments = getRoleAssignmentsOriginal
+func (m *AzRBACModule) getRoleAssignments(subscriptionID string) ([]authorization.RoleAssignment, error) {
+	return m.getRoleAssignmentsOriginal(subscriptionID)
+}
 
-func getRoleAssignmentsOriginal(subscriptionID string) ([]authorization.RoleAssignment, error) {
+func (m *AzRBACModule) getRoleAssignmentsOriginal(subscriptionID string) ([]authorization.RoleAssignment, error) {
 	var roleAssignments []authorization.RoleAssignment
 	client := internal.GetRoleAssignmentsClient(subscriptionID)
 	for page, err := client.List(context.TODO(), ""); page.NotDone(); page.Next() {
@@ -363,7 +368,7 @@ func getRoleAssignmentsOriginal(subscriptionID string) ([]authorization.RoleAssi
 	return roleAssignments, nil
 }
 
-func mockedGetRoleAssignments(subscriptionID string) ([]authorization.RoleAssignment, error) {
+func (m *AzRBACModule) mockedGetRoleAssignments(subscriptionID string) ([]authorization.RoleAssignment, error) {
 	var allRoleAssignments, roleAssignmentsResults []authorization.RoleAssignment
 	file, err := os.ReadFile(globals.ROLE_ASSIGNMENTS_TEST_FILE)
 	if err != nil {
@@ -382,8 +387,8 @@ func mockedGetRoleAssignments(subscriptionID string) ([]authorization.RoleAssign
 	return roleAssignmentsResults, nil
 }
 
-func generateRoleAssignmentsTestFile(subscriptionID string) {
-	ra, err := getRoleAssignments(subscriptionID)
+func (m *AzRBACModule) generateRoleAssignmentsTestFile(subscriptionID string) {
+	ra, err := m.getRoleAssignments(subscriptionID)
 	if err != nil {
 		log.Fatalf("could not generate role assignments for subscription %s", subscriptionID)
 	}

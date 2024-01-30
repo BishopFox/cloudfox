@@ -15,27 +15,31 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/smithy-go/ptr"
-	"github.com/fatih/color"
-	"github.com/kyokomi/emoji"
 )
 
-func AzWhoamiCommand(AzOutputDirectory, version string, AzWrapTable bool, AzVerbosity int, AzWhoamiListRGsAlso bool) error {
+type AzWhoamiModule struct {
+	AzClient            *internal.AzureClient
+	Log                 *internal.Logger
+}
+
+func (m *AzWhoamiModule) AzWhoamiCommand(AzWhoamiListRGsAlso bool) error {
 	o := internal.OutputClient{
-		Verbosity:     AzVerbosity,
+		Verbosity:     m.AzClient.AzVerbosity,
 		CallingModule: globals.AZ_WHOAMI_MODULE_NAME,
 		Table: internal.TableClient{
-			Wrap: AzWrapTable,
+			Wrap: m.AzClient.AzWrapTable,
 		},
 	}
 
-	fmt.Printf("[%s][%s] Enumerating Azure CLI sessions...\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", version)), color.CyanString(globals.AZ_WHOAMI_MODULE_NAME))
+
+	m.Log.Info(nil, "Enumerating Azure CLI sessions...")
 	var header []string
 	var body [][]string
 	o.PrefixIdentifier = "N/A"
 	if !AzWhoamiListRGsAlso {
 		// cloudfox azure whoami
 		header, body = getWhoamiRelevantDataSubsOnly()
-		o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, "whoami-data")
+		o.Table.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, "whoami-data")
 		// append timestamp to filename (time from epoch)
 		o.Table.TableFiles = append(o.Table.TableFiles,
 			internal.TableFile{
@@ -46,7 +50,7 @@ func AzWhoamiCommand(AzOutputDirectory, version string, AzWrapTable bool, AzVerb
 	} else {
 		// cloudfox azure whoami --list-rgs
 		header, body = getWhoamiRelevantDataPerRG()
-		o.Table.DirectoryName = filepath.Join(ptr.ToString(internal.GetLogDirPath()), globals.AZ_DIR_BASE, "whoami-data")
+		o.Table.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, "whoami-data")
 		o.Table.TableFiles = append(o.Table.TableFiles,
 			internal.TableFile{
 				Header: header,
@@ -64,10 +68,10 @@ func getWhoamiRelevantDataPerRG() ([]string, [][]string) {
 	tableHead := []string{"Tenant ID", "Tentant Primary Domain", "Subscription ID", "Subscription Name", "RG Name", "Region"}
 	var tableBody [][]string
 
-	for _, t := range getTenants() {
+	for _, t := range GetTenants() {
 		for _, s := range GetSubscriptions() {
 			if ptr.ToString(t.TenantID) == ptr.ToString(s.TenantID) {
-				for _, rg := range getResourceGroups(ptr.ToString(s.SubscriptionID)) {
+				for _, rg := range GetResourceGroups(ptr.ToString(s.SubscriptionID)) {
 					tableBody = append(
 						tableBody,
 						[]string{
@@ -90,7 +94,7 @@ func getWhoamiRelevantDataSubsOnly() ([]string, [][]string) {
 	tableHead := []string{"Tenant ID", "Tenant Primary Domain", "Subscription ID", "Subscription Name"}
 	var tableBody [][]string
 
-	for _, t := range getTenants() {
+	for _, t := range GetTenants() {
 		for _, s := range GetSubscriptions() {
 			if ptr.ToString(t.TenantID) == ptr.ToString(s.TenantID) {
 				tableBody = append(
@@ -108,9 +112,9 @@ func getWhoamiRelevantDataSubsOnly() ([]string, [][]string) {
 	return tableHead, tableBody
 }
 
-var getTenants = getTenantsOriginal
+var GetTenants = GetTenantsOriginal
 
-func getTenantsOriginal() []subscriptions.TenantIDDescription {
+func GetTenantsOriginal() []subscriptions.TenantIDDescription {
 	tenantsClient := internal.GetTenantsClient()
 	var results []subscriptions.TenantIDDescription
 	for page, err := tenantsClient.List(context.TODO()); page.NotDone(); err = page.Next() {
@@ -163,9 +167,9 @@ func mockedGetSubscriptions() []subscriptions.Subscription {
 	return results
 }
 
-var getResourceGroups = getResourceGroupsOriginal
+var GetResourceGroups = GetResourceGroupsOriginal
 
-func getResourceGroupsOriginal(subscriptionID string) []resources.Group {
+func GetResourceGroupsOriginal(subscriptionID string) []resources.Group {
 	var results []resources.Group
 	rgClient := internal.GetResourceGroupsClient(subscriptionID)
 

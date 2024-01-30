@@ -16,106 +16,108 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/smithy-go/ptr"
-	"github.com/fatih/color"
-	"github.com/kyokomi/emoji"
 )
 
-func AzVMsCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, Version string, AzVerbosity int, AzWrapTable bool, AzMergedTable bool) error {
+type AzVMsModule struct {
+	AzClient            *internal.AzureClient
+	Log                 *internal.Logger
+}
 
-	if AzTenantID != "" && AzSubscription == "" {
-		// cloudfox azure vms --tenant [TENANT_ID | PRIMARY_DOMAIN]
-		tenantInfo := populateTenant(AzTenantID)
 
-		if AzMergedTable {
-			// set up table vars
-			var header []string
-			var body [][]string
-			var userData string
+func (m *AzVMsModule) AzVMsCommand() error {
 
-			o := internal.OutputClient{
-				Verbosity:     AzVerbosity,
-				CallingModule: globals.AZ_VMS_MODULE_NAME,
-				Table: internal.TableClient{
-					Wrap: AzWrapTable,
-				},
-			}
-			fmt.Printf("[%s][%s] Enumerating VMs for tenant %s\n",
-				color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_VMS_MODULE_NAME),
-				fmt.Sprintf("%s (%s)", ptr.ToString(tenantInfo.DefaultDomain), ptr.ToString(tenantInfo.ID)))
-
-			o.PrefixIdentifier = ptr.ToString(tenantInfo.DefaultDomain)
-			o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), "1-tenant-level")
-
-			// populate the table data
-			header, body, userData = getVMsPerTenantID(ptr.ToString(tenantInfo.ID))
-
-			o.Table.TableFiles = append(o.Table.TableFiles,
-				internal.TableFile{
-					Header: header,
-					Body:   body,
-					Name:   fmt.Sprintf(globals.AZ_VMS_MODULE_NAME)})
-
-			if body != nil {
-				if userData != "" {
-					o.Loot.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), "loot")
-					o.Loot.LootFiles = append(o.Loot.LootFiles,
-						internal.LootFile{
-							Contents: userData,
-							Name:     "virtualmachines-user-data"})
-					o.WriteFullOutput(o.Table.TableFiles, o.Loot.LootFiles)
-					fmt.Println()
-				} else {
-
-					o.WriteFullOutput(o.Table.TableFiles, nil)
-					fmt.Println()
-				}
-
-			}
-		} else {
-
-			for _, s := range GetSubscriptionsPerTenantID(ptr.ToString(tenantInfo.ID)) {
-				runVMsCommandForSingleSubscription(ptr.ToString(s.SubscriptionID), AzOutputDirectory, AzVerbosity, AzWrapTable, Version)
-			}
-		}
-
-	} else if AzTenantID == "" && AzSubscription != "" {
-		// cloudfox azure vms --subscription [SUBSCRIPTION_ID | SUBSCRIPTION_NAME]
-		runVMsCommandForSingleSubscription(AzSubscription, AzOutputDirectory, AzVerbosity, AzWrapTable, Version)
-
-	} else {
-		// Error: please make a valid flag selection
-		fmt.Println("Please enter a valid input with a valid flag. Use --help for info.")
+	o := internal.OutputClient{
+		Verbosity:    m.AzClient.AzVerbosity,
+		CallingModule: globals.AZ_VMS_MODULE_NAME,
+		Table: internal.TableClient{
+			Wrap: m.AzClient.AzWrapTable,
+		},
 	}
 
+	if len(m.AzClient.AzTenants) > 0 {
+		// cloudfox azure inventory --tenant [TENANT_ID | PRIMARY_DOMAIN]
+		for _, AzTenant := range m.AzClient.AzTenants {
+
+			if m.AzClient.AzMergedTable {
+				// set up table vars
+				var header []string
+				var body [][]string
+				var userData string
+
+				o := internal.OutputClient{
+					Verbosity:     m.AzClient.AzVerbosity,
+					CallingModule: globals.AZ_INVENTORY_MODULE_NAME,
+					Table: internal.TableClient{
+						Wrap: m.AzClient.AzWrapTable,
+					},
+				}
+
+				m.Log.Infof(nil, "Enumerating VMs for tenant %s (%s)", ptr.ToString(AzTenant.DefaultDomain), ptr.ToString(AzTenant.TenantID))
+
+				o.PrefixIdentifier = ptr.ToString(AzTenant.DefaultDomain)
+				o.Table.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(AzTenant.DefaultDomain), "1-tenant-level")
+
+				//populate the table data
+				header, body, userData = m.getVMsPerTenantID(ptr.ToString(AzTenant.TenantID))
+
+				o.Table.TableFiles = append(o.Table.TableFiles,
+					internal.TableFile{
+						Header: header,
+						Body:   body,
+						Name:   fmt.Sprintf(globals.AZ_VMS_MODULE_NAME)})
+
+				if body != nil {
+					if userData != "" {
+						o.Loot.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(AzTenant.DefaultDomain), "loot")
+						o.Loot.LootFiles = append(o.Loot.LootFiles,
+							internal.LootFile{
+								Contents: userData,
+								Name:     "virtualmachines-user-data"})
+						o.WriteFullOutput(o.Table.TableFiles, o.Loot.LootFiles)
+						fmt.Println()
+					} else {
+						o.WriteFullOutput(o.Table.TableFiles, nil)
+						fmt.Println()
+					}
+				}
+			} else {
+				for _, AzSubscription := range GetSubscriptionsPerTenantID(ptr.ToString(AzTenant.TenantID)) {
+					m.runVMsCommandForSingleSubscription(*AzTenant.DefaultDomain, &AzSubscription)
+				}
+			}
+		} 
+	} else {
+		// ./cloudfox azure inventory --subscription [SUBSCRIPTION_ID | SUBSCRIPTION_NAME]
+		for tenantSlug, AzSubscriptions := range m.AzClient.AzSubscriptionsAlt {
+			for _, AzSubscription := range AzSubscriptions {
+				m.runVMsCommandForSingleSubscription(tenantSlug, AzSubscription)
+			}
+		}
+	}
+	o.WriteFullOutput(o.Table.TableFiles, nil)
 	return nil
 }
 
-func runVMsCommandForSingleSubscription(AzSubscription string, AzOutputDirectory string, AzVerbosity int, AzWrapTable bool, Version string) error {
+func (m *AzVMsModule) runVMsCommandForSingleSubscription(tenantSlug string, AzSubscription *subscriptions.Subscription) error {
 	// set up table vars
 	var header []string
 	var body [][]string
 	var userData string
 
 	o := internal.OutputClient{
-		Verbosity:     AzVerbosity,
+		Verbosity:     m.AzClient.AzVerbosity,
 		CallingModule: globals.AZ_VMS_MODULE_NAME,
 		Table: internal.TableClient{
-			Wrap: AzWrapTable,
+			Wrap: m.AzClient.AzWrapTable,
 		},
 	}
-	var AzSubscriptionInfo SubsriptionInfo
-	tenantID := ptr.ToString(GetTenantIDPerSubscription(AzSubscription))
-	tenantInfo := populateTenant(tenantID)
-	AzSubscriptionInfo = PopulateSubsriptionType(AzSubscription)
-	o.PrefixIdentifier = AzSubscriptionInfo.Name
-	o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), AzSubscriptionInfo.Name)
+	o.PrefixIdentifier = *AzSubscription.DisplayName
+	o.Table.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, tenantSlug, *AzSubscription.DisplayName)
 
-	fmt.Printf("[%s][%s] Enumerating VMs for subscription %s\n",
-		color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_VMS_MODULE_NAME),
-		fmt.Sprintf("%s (%s)", AzSubscriptionInfo.Name, AzSubscriptionInfo.ID))
+	m.Log.Infof(nil, "Enumerating VMs in subscription %s (%s)", *AzSubscription.DisplayName, *AzSubscription.SubscriptionID)
 
 	// populate the table data
-	header, body, userData = getVMsPerSubscriptionID(AzSubscriptionInfo.ID)
+	header, body, userData = m.getVMsPerSubscriptionID(tenantSlug, AzSubscription)
 
 	o.Table.TableFiles = append(o.Table.TableFiles,
 		internal.TableFile{
@@ -125,7 +127,7 @@ func runVMsCommandForSingleSubscription(AzSubscription string, AzOutputDirectory
 
 	if body != nil {
 		if userData != "" {
-			o.Loot.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), AzSubscriptionInfo.Name, "loot")
+			o.Loot.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, tenantSlug, *AzSubscription.DisplayName, "loot")
 			o.Loot.LootFiles = append(o.Loot.LootFiles,
 				internal.LootFile{
 					Contents: userData,
@@ -143,59 +145,65 @@ func runVMsCommandForSingleSubscription(AzSubscription string, AzOutputDirectory
 	return nil
 }
 
-func getVMsPerTenantID(AzTenantID string) ([]string, [][]string, string) {
+func (m *AzVMsModule) getVMsPerTenantID(AzTenantID string) ([]string, [][]string, string) {
 	var resultsHeader []string
 	var resultsBody, b [][]string
 	var userDataCombined, userData string
 	var err error
 
 	for _, s := range GetSubscriptionsPerTenantID(AzTenantID) {
-		for _, rg := range getResourceGroups(ptr.ToString(s.SubscriptionID)) {
-			resultsHeader, b, userData, err = getComputeRelevantData(s, rg)
+		for _, rg := range GetResourceGroups(ptr.ToString(s.SubscriptionID)) {
+			resultsHeader, b, userData, err = m.getComputeRelevantData(s, rg)
 			if err != nil {
-				fmt.Printf("[%s] Could not enumerate VMs for resource group %s in subscription %s\n", color.CyanString(globals.AZ_VMS_MODULE_NAME), ptr.ToString(rg.Name), ptr.ToString(s.SubscriptionID))
+				m.Log.Warnf(nil, "Could not enumerate VMs for resource group %s in subscription %s", ptr.ToString(rg.Name), ptr.ToString(s.SubscriptionID))
 			} else {
 				resultsBody = append(resultsBody, b...)
 				userDataCombined += userData
 			}
-
 		}
 	}
 	return resultsHeader, resultsBody, userDataCombined
 }
 
-func getVMsPerSubscriptionID(AzSubscriptionID string) ([]string, [][]string, string) {
+func (m *AzVMsModule) getVMsPerSubscriptionID(tenantSlug string, AzSubscription *subscriptions.Subscription) ([]string, [][]string, string) {
 	var resultsHeader []string
 	var resultsBody, b [][]string
 	var userDataCombined, userData string
 	var err error
 
-	for _, s := range GetSubscriptions() {
-		if ptr.ToString(s.SubscriptionID) == AzSubscriptionID {
-			for _, rg := range getResourceGroups(ptr.ToString(s.SubscriptionID)) {
-				resultsHeader, b, userData, err = getComputeRelevantData(s, rg)
-				if err != nil {
-					fmt.Printf("[%s] Could not enumerate VMs for resource group %s in subscription %s\n", color.CyanString(globals.AZ_VMS_MODULE_NAME), ptr.ToString(rg.Name), ptr.ToString(s.SubscriptionID))
-				} else {
-					resultsBody = append(resultsBody, b...)
-					userDataCombined += userData
-				}
-			}
+	for _, rg := range GetResourceGroups(ptr.ToString(AzSubscription.SubscriptionID)) {
+		resultsHeader, b, userData, err = m.getComputeRelevantData(*AzSubscription, rg)
+		if err != nil {
+			m.Log.Warnf(nil, "Could not enumerate VMs for resource group %s in subscription %s", ptr.ToString(rg.Name), ptr.ToString(AzSubscription.SubscriptionID))
+		} else {
+			resultsBody = append(resultsBody, b...)
+			userDataCombined += userData
 		}
 	}
 	return resultsHeader, resultsBody, userDataCombined
 }
 
-func getComputeRelevantData(sub subscriptions.Subscription, rg resources.Group) ([]string, [][]string, string, error) {
+func (m *AzVMsModule) getComputeRelevantData(sub subscriptions.Subscription, rg resources.Group) ([]string, [][]string, string, error) {
 	header := []string{"Subscription Name", "VM Name", "VM Location", "Private IPs", "Public IPs", "Admin Username", "Resource Group Name"}
 	var body [][]string
 	var userDataString string
+
+	// User has requested specific resource groups, filtering
+	if len(m.AzClient.AzRGs) > 0 {
+		for _, AzRG := range m.AzClient.AzRGs {
+			if *rg.Name == *AzRG.Name {
+				goto ADD_RESOURCE
+			}
+		}
+		return header, body, userDataString, nil
+	}
+	ADD_RESOURCE:
 
 	subscriptionID := ptr.ToString(sub.SubscriptionID)
 	subscriptionName := ptr.ToString(sub.DisplayName)
 	resourceGroupName := ptr.ToString(rg.Name)
 
-	vms, err := getComputeVMsPerResourceGroup(subscriptionID, resourceGroupName)
+	vms, err := m.getComputeVMsPerResourceGroup(subscriptionID, resourceGroupName)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("error fetching vms for resource group %s: %s", resourceGroupName, err)
 	}
@@ -250,9 +258,12 @@ func getComputeRelevantData(sub subscriptions.Subscription, rg resources.Group) 
 	return header, body, userDataString, nil
 }
 
-var getComputeVMsPerResourceGroup = getComputeVMsPerResourceGroupOriginal
 
-func getComputeVMsPerResourceGroupOriginal(subscriptionID string, resourceGroup string) ([]compute.VirtualMachine, error) {
+func (m *AzVMsModule) getComputeVMsPerResourceGroup(subscriptionID string, resourceGroup string) ([]compute.VirtualMachine, error) {
+	return m.getComputeVMsPerResourceGroupOriginal(subscriptionID, resourceGroup)
+}
+
+func (m *AzVMsModule) getComputeVMsPerResourceGroupOriginal(subscriptionID string, resourceGroup string) ([]compute.VirtualMachine, error) {
 	computeClient := internal.GetVirtualMachinesClient(subscriptionID)
 	var vms []compute.VirtualMachine
 
@@ -277,8 +288,16 @@ func getComputeVmInfo(subscriptionID string, resourceGroup string, vmName string
 	}
 	return vm, nil
 }
+func getComputeVmInstanceView(subscriptionID string, resourceGroup string, vmName string) (compute.VirtualMachine, error) {
+	computeClient := internal.GetVirtualMachinesClient(subscriptionID)
+	vm, err := computeClient.Get(context.Background(), resourceGroup, vmName, compute.InstanceViewTypesInstanceView)
+	if err != nil {
+		return compute.VirtualMachine{}, fmt.Errorf("could not get vm %s. %s", vmName, err)
+	}
+	return vm, nil
+}
 
-func mockedGetComputeVMsPerResourceGroup(subscriptionID, resourceGroup string) ([]compute.VirtualMachine, error) {
+func (m *AzVMsModule) mockedGetComputeVMsPerResourceGroup(subscriptionID, resourceGroup string) ([]compute.VirtualMachine, error) {
 	testFile, err := os.ReadFile(globals.VMS_TEST_FILE)
 	if err != nil {
 		return nil, fmt.Errorf("could not read file %s", globals.VMS_TEST_FILE)
@@ -306,7 +325,7 @@ func getIPs(subscriptionID string, resourceGroup string, vm compute.VirtualMachi
 
 	if vm.VirtualMachineProperties.NetworkProfile.NetworkInterfaces != nil {
 		for _, nicReference := range *vm.VirtualMachineProperties.NetworkProfile.NetworkInterfaces {
-			nic, err := getNICdetails(subscriptionID, resourceGroup, nicReference)
+			nic, err := getNICdetails(subscriptionID, resourceGroup, nicReference, "")
 			if err != nil {
 				return []string{err.Error()}, []string{err.Error()}
 			}
@@ -330,13 +349,15 @@ func getIPs(subscriptionID string, resourceGroup string, vm compute.VirtualMachi
 	return privateIPs, publicIPs
 }
 
-var getNICdetails = getNICdetailsOriginal
+func getNICdetails(subscriptionID string, resourceGroup string, nicReference compute.NetworkInterfaceReference, expand string) (network.Interface, error) {
+	return getNICdetailsOriginal(subscriptionID, resourceGroup, nicReference, expand)
+}
 
-func getNICdetailsOriginal(subscriptionID string, resourceGroup string, nicReference compute.NetworkInterfaceReference) (network.Interface, error) {
+func getNICdetailsOriginal(subscriptionID string, resourceGroup string, nicReference compute.NetworkInterfaceReference, expand string) (network.Interface, error) {
 	client := internal.GetNICClient(subscriptionID)
 	NICName := strings.Split(ptr.ToString(nicReference.ID), "/")[len(strings.Split(ptr.ToString(nicReference.ID), "/"))-1]
 
-	nic, err := client.Get(context.TODO(), resourceGroup, NICName, "")
+	nic, err := client.Get(context.TODO(), resourceGroup, NICName, expand)
 	if err != nil {
 		return network.Interface{}, fmt.Errorf("NICnotFound_%s", NICName)
 	}
@@ -344,7 +365,7 @@ func getNICdetailsOriginal(subscriptionID string, resourceGroup string, nicRefer
 	return nic, nil
 }
 
-func mockedGetNICdetails(subscriptionID, resourceGroup string, nicReference compute.NetworkInterfaceReference) (network.Interface, error) {
+func (m *AzVMsModule) mockedGetNICdetails(subscriptionID, resourceGroup string, nicReference compute.NetworkInterfaceReference) (network.Interface, error) {
 	testFile, err := os.ReadFile(globals.NICS_TEST_FILE)
 	if err != nil {
 		return network.Interface{}, fmt.Errorf("NICnotFound_%s", globals.NICS_TEST_FILE)
@@ -364,7 +385,9 @@ func mockedGetNICdetails(subscriptionID, resourceGroup string, nicReference comp
 	return network.Interface{}, fmt.Errorf("NICnotFound_%s", ptr.ToString(nicReference.ID))
 }
 
-var getPublicIP = getPublicIPOriginal
+func getPublicIP(subscriptionID string, resourceGroup string, ip network.InterfaceIPConfiguration) (*string, error) {
+	return getPublicIPOriginal(subscriptionID, resourceGroup, ip)
+}
 
 func getPublicIPOriginal(subscriptionID string, resourceGroup string, ip network.InterfaceIPConfiguration) (*string, error) {
 	client := internal.GetPublicIPClient(subscriptionID)
@@ -380,7 +403,7 @@ func getPublicIPOriginal(subscriptionID string, resourceGroup string, ip network
 	return publicIPExpanded.PublicIPAddressPropertiesFormat.IPAddress, nil
 }
 
-func mockedGetPublicIP(subscriptionID, resourceGroup string, ip network.InterfaceIPConfiguration) (*string, error) {
+func (m *AzVMsModule) mockedGetPublicIP(subscriptionID, resourceGroup string, ip network.InterfaceIPConfiguration) (*string, error) {
 	f, err := os.ReadFile(globals.PUBLIC_IPS_TEST_FILE)
 	if err != nil {
 		return nil, fmt.Errorf("IPNotFound_%s", globals.PUBLIC_IPS_TEST_FILE)

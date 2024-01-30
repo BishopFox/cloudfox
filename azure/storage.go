@@ -9,98 +9,99 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/subscriptions"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/storage/mgmt/storage"
+	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/container"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/smithy-go/ptr"
 	"github.com/fatih/color"
-	"github.com/kyokomi/emoji"
 )
 
 // Color functions
 var cyan = color.New(color.FgCyan).SprintFunc()
 
-func AzStorageCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, Version string, AzVerbosity int, AzWrapTable bool, AzMergedTable bool) error {
+type AzStorageModule struct {
+	AzClient            *internal.AzureClient
+	Log                 *internal.Logger
+}
+
+func (m *AzStorageModule) AzStorageCommand() error {
 
 	var publicBlobURLs []string
 
-	if AzTenantID != "" && AzSubscription == "" {
+	if len(m.AzClient.AzTenants) > 0 {
 		// cloudfox azure storage --tenant [TENANT_ID | PRIMARY_DOMAIN]
-		tenantInfo := populateTenant(AzTenantID)
+		for _, AzTenant := range m.AzClient.AzTenants {
 
-		if AzMergedTable {
+			if m.AzClient.AzMergedTable {
 
-			// set up table vars
-			var header []string
-			var body [][]string
-			// setup logging client
-			o := internal.OutputClient{
-				Verbosity:     AzVerbosity,
-				CallingModule: globals.AZ_STORAGE_MODULE_NAME,
-				Table: internal.TableClient{
-					Wrap: AzWrapTable,
-				},
-			}
+				// set up table vars
+				var header []string
+				var body [][]string
+				// setup logging client
+				o := internal.OutputClient{
+					Verbosity:     m.AzClient.AzVerbosity,
+					CallingModule: globals.AZ_STORAGE_MODULE_NAME,
+					Table: internal.TableClient{
+						Wrap: m.AzClient.AzWrapTable,
+					},
+				}
 
-			var err error
+				var err error
 
-			fmt.Printf("[%s][%s] Enumerating storage accounts for tenant %s\n",
-				color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_RBAC_MODULE_NAME),
-				fmt.Sprintf("%s (%s)", ptr.ToString(tenantInfo.DefaultDomain), ptr.ToString(tenantInfo.ID)))
+				m.Log.Infof([]string{}, "Enumerating storage accounts for tenant %s (%s)", ptr.ToString(AzTenant.DefaultDomain), ptr.ToString(AzTenant.TenantID))
 
-			o.PrefixIdentifier = ptr.ToString(tenantInfo.DefaultDomain)
-			o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), "1-tenant-level")
+				o.PrefixIdentifier = ptr.ToString(AzTenant.DefaultDomain)
+				o.Table.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(AzTenant.DefaultDomain), "1-tenant-level")
 
-			header, body, publicBlobURLs, err = getStorageInfoPerTenant(ptr.ToString(tenantInfo.ID))
+				header, body, publicBlobURLs, err = m.getStorageInfoPerTenant(ptr.ToString(AzTenant.TenantID))
 
-			if err != nil {
-				return err
-			}
-			o.Table.TableFiles = append(o.Table.TableFiles,
-				internal.TableFile{
-					Header: header,
-					Body:   body,
-					Name:   fmt.Sprintf(globals.AZ_STORAGE_MODULE_NAME)})
-
-			if body != nil {
-				o.WriteFullOutput(o.Table.TableFiles, nil)
-			}
-			if publicBlobURLs != nil {
-				err := writeBlobURLslootFile(globals.AZ_STORAGE_MODULE_NAME, o.PrefixIdentifier, o.Table.DirectoryName, publicBlobURLs)
 				if err != nil {
 					return err
 				}
-			}
+				o.Table.TableFiles = append(o.Table.TableFiles,
+					internal.TableFile{
+						Header: header,
+						Body:   body,
+						Name:   fmt.Sprintf(globals.AZ_STORAGE_MODULE_NAME)})
 
-		} else {
+				if body != nil {
+					o.WriteFullOutput(o.Table.TableFiles, nil)
+				}
+				if publicBlobURLs != nil {
+					err := m.writeBlobURLslootFile(globals.AZ_STORAGE_MODULE_NAME, o.PrefixIdentifier, o.Table.DirectoryName, publicBlobURLs)
+					if err != nil {
+						return err
+					}
+				}
 
-			for _, s := range GetSubscriptionsPerTenantID(ptr.ToString(tenantInfo.ID)) {
-				runStorageCommandForSingleSubcription(ptr.ToString(s.SubscriptionID), AzOutputDirectory, AzVerbosity, AzWrapTable, Version)
+			} else {
+				for _, AzSubscription := range GetSubscriptionsPerTenantID(ptr.ToString(AzTenant.TenantID)) {
+					m.runStorageCommandForSingleSubscription(*AzTenant.DefaultDomain, &AzSubscription)
+				}
 			}
 		}
-
-	} else if AzTenantID == "" && AzSubscription != "" {
-		//cloudfox azure storage  --subscription [SUBSCRIPTION_ID | SUBSCRIPTION_NAME]
-		runStorageCommandForSingleSubcription(AzSubscription, AzOutputDirectory, AzVerbosity, AzWrapTable, Version)
-
 	} else {
-		// Error: please make a valid flag selection
-		fmt.Println("Please enter a valid input with a valid flag. Use --help for info.")
+		for tenantSlug, AzSubscriptions := range m.AzClient.AzSubscriptionsAlt {
+			for _, AzSubscription := range AzSubscriptions {
+				m.runStorageCommandForSingleSubscription(tenantSlug, AzSubscription)
+			}
+		}
 	}
-
 	return nil
 }
 
-func runStorageCommandForSingleSubcription(AzSubscription string, AzOutputDirectory string, AzVerbosity int, AzWrapTable bool, Version string) error {
+func (m *AzStorageModule) runStorageCommandForSingleSubscription(tenantSlug string, AzSubscription *subscriptions.Subscription) error {
 	var err error
 	// setup logging client
 	o := internal.OutputClient{
-		Verbosity:     AzVerbosity,
+		Verbosity:     m.AzClient.AzVerbosity,
 		CallingModule: globals.AZ_STORAGE_MODULE_NAME,
 		Table: internal.TableClient{
-			Wrap: AzWrapTable,
+			Wrap: m.AzClient.AzWrapTable,
 		},
 	}
 
@@ -109,19 +110,11 @@ func runStorageCommandForSingleSubcription(AzSubscription string, AzOutputDirect
 	var body [][]string
 	var publicBlobURLs []string
 
-	tenantID := ptr.ToString(GetTenantIDPerSubscription(AzSubscription))
-	tenantInfo := populateTenant(tenantID)
-	AzSubscriptionInfo := PopulateSubsriptionType(AzSubscription)
-	o.PrefixIdentifier = AzSubscriptionInfo.Name
-	o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), AzSubscriptionInfo.Name)
+	o.PrefixIdentifier = *AzSubscription.DisplayName
+	o.Table.DirectoryName = filepath.Join(m.AzClient.AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, tenantSlug, *AzSubscription.DisplayName)
 
-	fmt.Printf(
-		"[%s][%s] Enumerating storage accounts for subscription %s\n",
-		color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)),
-		color.CyanString(globals.AZ_STORAGE_MODULE_NAME),
-		fmt.Sprintf("%s (%s)", AzSubscriptionInfo.Name, AzSubscriptionInfo.ID))
-	//AzTenantID := ptr.ToString(GetTenantIDPerSubscription(AzSubscription))
-	header, body, publicBlobURLs, err = getStorageInfoPerSubscription(ptr.ToString(tenantInfo.ID), AzSubscriptionInfo.ID)
+	m.Log.Infof([]string{}, "Enumerating storage accounts for subscription %s (%s)", *AzSubscription.DisplayName, *AzSubscription.SubscriptionID)
+	header, body, publicBlobURLs, err = m.getStorageInfoPerSubscription(*AzSubscription.TenantID, *AzSubscription.SubscriptionID)
 	if err != nil {
 		return err
 	}
@@ -136,7 +129,7 @@ func runStorageCommandForSingleSubcription(AzSubscription string, AzOutputDirect
 
 	}
 	if publicBlobURLs != nil {
-		err := writeBlobURLslootFile(globals.AZ_STORAGE_MODULE_NAME, o.PrefixIdentifier, o.Table.DirectoryName, publicBlobURLs)
+		err := m.writeBlobURLslootFile(globals.AZ_STORAGE_MODULE_NAME, o.PrefixIdentifier, o.Table.DirectoryName, publicBlobURLs)
 		if err != nil {
 			return err
 		}
@@ -145,7 +138,7 @@ func runStorageCommandForSingleSubcription(AzSubscription string, AzOutputDirect
 
 }
 
-func writeBlobURLslootFile(callingModule, controlMessagePrefix, outputDirectory string, publicBlobURLs []string) error {
+func (m *AzStorageModule) writeBlobURLslootFile(callingModule, controlMessagePrefix, outputDirectory string, publicBlobURLs []string) error {
 	lootDirectory := filepath.Join(outputDirectory, "loot")
 	lootFilePath := filepath.Join(lootDirectory, "public-blob-urls.txt")
 
@@ -171,14 +164,14 @@ func writeBlobURLslootFile(callingModule, controlMessagePrefix, outputDirectory 
 	return nil
 }
 
-func getStorageInfoPerTenant(AzTenantID string) ([]string, [][]string, []string, error) {
+func (m *AzStorageModule) getStorageInfoPerTenant(AzTenantID string) ([]string, [][]string, []string, error) {
 	var err error
 	var header []string
 	var body, b [][]string
 	var publicBlobURLs []string
 
 	for _, s := range GetSubscriptionsPerTenantID(AzTenantID) {
-		header, b, publicBlobURLs, err = getRelevantStorageAccountData(AzTenantID, ptr.ToString(s.SubscriptionID))
+		header, b, publicBlobURLs, err = m.getRelevantStorageAccountData(AzTenantID, ptr.ToString(s.SubscriptionID))
 		if err != nil {
 			return nil, nil, nil, err
 		} else {
@@ -188,7 +181,7 @@ func getStorageInfoPerTenant(AzTenantID string) ([]string, [][]string, []string,
 	return header, body, publicBlobURLs, nil
 }
 
-func getStorageInfoPerSubscription(AzTenantID, AzSubscriptionID string) ([]string, [][]string, []string, error) {
+func (m *AzStorageModule) getStorageInfoPerSubscription(AzTenantID, AzSubscriptionID string) ([]string, [][]string, []string, error) {
 	var err error
 	var header []string
 	var body [][]string
@@ -196,7 +189,7 @@ func getStorageInfoPerSubscription(AzTenantID, AzSubscriptionID string) ([]strin
 
 	for _, s := range GetSubscriptions() {
 		if ptr.ToString(s.SubscriptionID) == AzSubscriptionID {
-			header, body, publicBlobURLs, err = getRelevantStorageAccountData(AzTenantID, ptr.ToString(s.SubscriptionID))
+			header, body, publicBlobURLs, err = m.getRelevantStorageAccountData(AzTenantID, ptr.ToString(s.SubscriptionID))
 			if err != nil {
 				return nil, nil, nil, err
 			}
@@ -205,20 +198,34 @@ func getStorageInfoPerSubscription(AzTenantID, AzSubscriptionID string) ([]strin
 	return header, body, publicBlobURLs, nil
 }
 
-func getRelevantStorageAccountData(tenantID, subscriptionID string) ([]string, [][]string, []string, error) {
+func (m *AzStorageModule) getRelevantStorageAccountData(tenantID, subscriptionID string) ([]string, [][]string, []string, error) {
 	tableHeader := []string{"Subscription Name", "Storage Account Name", "Container Name", "Access Status"}
 	var tableBody [][]string
 	var publicBlobURLs []string
-	storageAccounts, err := getStorageAccounts(subscriptionID)
+	var urls []string
+	var containers map[string]string
+	storageAccounts, err := m.getStorageAccounts(subscriptionID)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	for _, sa := range storageAccounts {
 		blobClient, err := internal.GetStorageAccountBlobClient(tenantID, ptr.ToString(sa.Name))
+		// if resource group were submitted, do filtering
+		if len(m.AzClient.AzRGs) > 0 {
+			fmt.Println(*sa.ID)
+			for _, AzRG := range m.AzClient.AzRGs {
+				metaResource, _ := azure.ParseResourceID(*sa.ID)
+				if metaResource.ResourceGroup == *AzRG.Name {
+					goto ADD_RESOURCE
+				}
+			}
+			goto SKIP_RESOURCE
+		}
+		ADD_RESOURCE:
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		containers, err := getStorageAccountContainers(blobClient)
+		containers, err = m.getStorageAccountContainers(blobClient)
 		if err != nil {
 			// rather than return an error, we'll just add a row to the table highlighting the storage account name and that we couldn't get the containers
 
@@ -240,20 +247,23 @@ func getRelevantStorageAccountData(tenantID, subscriptionID string) ([]string, [
 					containerName,
 					accessType})
 		}
-		urls, err := getPublicBlobURLs(blobClient, ptr.ToString(sa.Name), containers)
+		urls, err = m.getPublicBlobURLs(blobClient, ptr.ToString(sa.Name), containers)
 		if err == nil {
 			continue
 			//return nil, nil, nil, err
 		}
 		publicBlobURLs = append(publicBlobURLs, urls...)
+		SKIP_RESOURCE:
 
 	}
 	return tableHeader, tableBody, publicBlobURLs, nil
 }
 
-var getStorageAccounts = getStorageAccountsOriginal
+func (m *AzStorageModule) getStorageAccounts(subscriptionID string) ([]storage.Account, error) {
+	return m.getStorageAccountsOriginal(subscriptionID)
+}
 
-func getStorageAccountsOriginal(subscriptionID string) ([]storage.Account, error) {
+func (m *AzStorageModule) getStorageAccountsOriginal(subscriptionID string) ([]storage.Account, error) {
 	storageClient := internal.GetStorageClient(subscriptionID)
 	var storageAccounts []storage.Account
 	for page, err := storageClient.List(context.TODO()); page.NotDone(); page.Next() {
@@ -265,7 +275,7 @@ func getStorageAccountsOriginal(subscriptionID string) ([]storage.Account, error
 	return storageAccounts, nil
 }
 
-func mockedGetStorageAccounts(subscriptionID string) ([]storage.Account, error) {
+func (m *AzStorageModule) mockedGetStorageAccounts(subscriptionID string) ([]storage.Account, error) {
 	testFile, err := os.ReadFile(globals.STORAGE_ACCOUNTS_TEST_FILE)
 	if err != nil {
 		return nil, fmt.Errorf("could not open storage accounts test file %s", globals.STORAGE_ACCOUNTS_TEST_FILE)
@@ -284,7 +294,7 @@ func mockedGetStorageAccounts(subscriptionID string) ([]storage.Account, error) 
 	return storageAccountsResults, nil
 }
 
-func getStorageAccountContainers(client *azblob.Client) (map[string]string, error) {
+func (m *AzStorageModule) getStorageAccountContainers(client *azblob.Client) (map[string]string, error) {
 	containers := make(map[string]string)
 	pager := client.NewListContainersPager(&azblob.ListContainersOptions{
 		Include: azblob.ListContainersInclude{Metadata: true, Deleted: true},
@@ -305,11 +315,11 @@ func getStorageAccountContainers(client *azblob.Client) (map[string]string, erro
 	return containers, nil
 }
 
-func getPublicBlobURLs(client *azblob.Client, storageAccountName string, containers map[string]string) ([]string, error) {
+func (m *AzStorageModule) getPublicBlobURLs(client *azblob.Client, storageAccountName string, containers map[string]string) ([]string, error) {
 	var publicBlobURLs []string
 	for containerName, accessType := range containers {
 		if accessType == "public" {
-			url, err := getPublicBlobURLsForContainer(client, storageAccountName, containerName)
+			url, err := m.getPublicBlobURLsForContainer(client, storageAccountName, containerName)
 			if err != nil {
 				//return nil, err
 				continue
@@ -320,19 +330,19 @@ func getPublicBlobURLs(client *azblob.Client, storageAccountName string, contain
 	return publicBlobURLs, nil
 }
 
-func getPublicBlobURLsForContainer(client *azblob.Client, storageAccountName, containerName string) ([]string, error) {
-	blobNames, err := getAllBlobsForContainer(client, containerName)
+func (m *AzStorageModule) getPublicBlobURLsForContainer(client *azblob.Client, storageAccountName, containerName string) ([]string, error) {
+	blobNames, err := m.getAllBlobsForContainer(client, containerName)
 	if err != nil {
 		return nil, err
 	}
-	publicBlobURLs, err := validatePublicBlobURLs(storageAccountName, containerName, blobNames)
+	publicBlobURLs, err := m.validatePublicBlobURLs(storageAccountName, containerName, blobNames)
 	if err != nil {
 		return nil, err
 	}
 	return publicBlobURLs, nil
 }
 
-func getAllBlobsForContainer(blobClient *azblob.Client, containerName string) ([]string, error) {
+func (m *AzStorageModule) getAllBlobsForContainer(blobClient *azblob.Client, containerName string) ([]string, error) {
 	var blobNames []string
 
 	pager := blobClient.NewListBlobsFlatPager(containerName, &azblob.ListBlobsFlatOptions{
@@ -352,7 +362,7 @@ func getAllBlobsForContainer(blobClient *azblob.Client, containerName string) ([
 	return blobNames, nil
 }
 
-func validatePublicBlobURLs(storageAccountName, containerName string, blobNames []string) ([]string, error) {
+func (m *AzStorageModule) validatePublicBlobURLs(storageAccountName, containerName string, blobNames []string) ([]string, error) {
 	var publicBlobURLs []string
 
 	if blobNames == nil {

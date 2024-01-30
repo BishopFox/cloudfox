@@ -1,27 +1,46 @@
 package cli
 
 import (
-	"log"
-
 	"github.com/BishopFox/cloudfox/azure"
+	"github.com/BishopFox/cloudfox/internal"
+	az "github.com/Azure/go-autorest/autorest/azure"
 	"github.com/spf13/cobra"
+	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/subscriptions"
+	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/resources"
 )
 
 var (
-	AzTenantID        string
-	AzSubscription    string
-	AzRGName          string
-	AzOutputFormat    string
-	AzOutputDirectory string
-	AzVerbosity       int
-	AzWrapTable       bool
-	AzMergedTable     bool
+	// output options
+	AzOutputFormat     string
+	AzOutputDirectory  string
+	AzVerbosity        int
+	AzWrapTable        bool
+	AzMergedTable      bool
+
+	// resource selectors
+	AzTenantRefs       []string
+	AzSubscriptionRefs []string
+	AzRGRefs           []string
+	AzResourceRefs     []string
+
+
+	// Shared resources for all modules
+	AzClient           *internal.AzureClient
+	AzTenants          []*subscriptions.TenantIDDescription
+	AzSubscriptions    []*subscriptions.Subscription
+	AzRGs              []*resources.Group
+	AzResources        []*az.Resource
+
+	// command specific variables
+	// netscan ipv4
+	AzSourceIPv4       string
 
 	AzCommands = &cobra.Command{
 		Use:     "azure",
 		Aliases: []string{"az"},
 		Long:    `See "Available Commands" for Azure Modules below`,
 		Short:   "See \"Available Commands\" for Azure Modules below",
+		PersistentPreRun:  azurePreRun,
 		Run: func(cmd *cobra.Command, args []string) {
 			cmd.Help()
 		},
@@ -34,12 +53,8 @@ var (
 		Long: `
 Display Available Azure CLI Sessions:
 ./cloudfox az whoami`,
-		Run: func(cmd *cobra.Command, args []string) {
-			err := azure.AzWhoamiCommand(AzOutputDirectory, cmd.Root().Version, AzWrapTable, AzVerbosity, AzWhoamiListRGsAlso)
-			if err != nil {
-				log.Fatal(err)
-			}
-		},
+		Run: runAzWhoamiCommand,
+		PersistentPreRun: func (cmd *cobra.Command, args []string) {},
 	}
 	AzInventoryCommand = &cobra.Command{
 		Use:     "inventory",
@@ -52,12 +67,7 @@ Enumerate inventory for a specific tenant:
 Enumerate inventory for a specific subscription:
 ./cloudfox az inventory --subscription SUBSCRIPTION_ID
 `,
-		Run: func(cmd *cobra.Command, args []string) {
-			err := azure.AzInventoryCommand(AzTenantID, AzSubscription, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
-			if err != nil {
-				log.Fatal(err)
-			}
-		},
+		Run: runAzInventoryCommand,
 	}
 	AzRBACCommand = &cobra.Command{
 		Use:     "rbac",
@@ -70,13 +80,7 @@ Enumerate role assignments for a specific tenant:
 Enumerate role assignments for a specific subscription:
 ./cloudfox az rbac --subscription SUBSCRIPTION_ID
 `,
-		Run: func(cmd *cobra.Command, args []string) {
-
-			err := azure.AzRBACCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
-			if err != nil {
-				log.Fatal(err)
-			}
-		},
+		Run: runAzRBACCommand,
 	}
 	AzVMsCommand = &cobra.Command{
 		Use:     "vms",
@@ -88,12 +92,7 @@ Enumerate VMs for a specific tenant:
 
 Enumerate VMs for a specific subscription:
 ./cloudfox az vms --subscription SUBSCRIPTION_ID`,
-		Run: func(cmd *cobra.Command, args []string) {
-			err := azure.AzVMsCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
-			if err != nil {
-				log.Fatal(err)
-			}
-		},
+		Run: runAzVMsCommand,
 	}
 	AzStorageCommand = &cobra.Command{
 		Use:     "storage",
@@ -106,26 +105,182 @@ Enumerate storage accounts for a specific tenant:
 Enumerate storage accounts for a specific subscription:
 ./cloudfox az storage --subscription SUBSCRIPTION_ID
 `,
-		Run: func(cmd *cobra.Command, args []string) {
-			err := azure.AzStorageCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
-			if err != nil {
-				log.Fatal(err)
-			}
-		},
+		Run: runAzStorageCommand,
+	}
+	AzNSGRulesCommand = &cobra.Command{
+		Use:     "nsg-rules",
+		Aliases: []string{},
+		Short:   "Enumerates azure Network Security Group rules",
+		Long: `
+Enumerate Network Security Groups rules for a specific tenant:
+./cloudfox az nsg-rukes --tenant TENANT_ID
+
+Enumerate Network Security Groups rules for a specific subscription:
+./cloudfox az nsg-rules --subscription SUBSCRIPTION_ID
+
+Enumerate rules for a specific Network Security Group:
+./cloudfox az nsg-rules --nsg NSG_ID
+`,
+		Run: runAzNSGRulesCommand,
+	}
+	AzNSGLinksCommand = &cobra.Command{
+		Use:     "nsg-links",
+		Aliases: []string{},
+		Short:   "Enumerates azure Network Security Groups links",
+		Long: `
+Enumerate Network Security Groups links for a specific tenant:
+./cloudfox az nsg-links --tenant TENANT_ID
+
+Enumerate Network Security Groups links for a specific subscription:
+./cloudfox az nsg-links --subscription SUBSCRIPTION_ID
+
+Enumerate links for a specific Network Security Group:
+./cloudfox az nsg-links --nsg NSG_ID
+`,
+		Run: runAzNSGLinksCommand,
+	}
+	AzNetScanCommand = &cobra.Command{
+		Use:     "netscan",
+		Aliases: []string{},
+		Short:   "Enumerates internal network targets",
+		Long: `
+Enumerate targets with a specific resource as origin:
+./cloudfox az nsg-links --resource-id /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}
+
+Enumerate targets with a specific IP address as origin
+./cloudfox az nsg-links --ipv4 A.B.C.D
+`,
+		Run: runAzNetScanCommand,
 	}
 )
+
+func runAzWhoamiCommand (cmd *cobra.Command, args []string) {
+	AzClient = new(internal.AzureClient)
+	AzClient.Log = internal.NewLogger("azure")
+	AzClient.Log.Announce(nil, "Analyzing local Azure credentials")
+	AzClient.Version = cmd.Root().Version
+	AzClient.AzWrapTable = AzWrapTable
+	AzClient.AzMergedTable = AzMergedTable
+	AzClient.AzVerbosity = AzVerbosity
+	AzClient.AzOutputFormat = AzOutputFormat
+	AzClient.AzOutputDirectory = AzOutputDirectory
+
+	m := azure.AzWhoamiModule{
+		AzClient: AzClient,
+		Log:      internal.NewLogger("whoami"),
+	}
+	err := m.AzWhoamiCommand(AzWhoamiListRGsAlso)
+	if err != nil {
+		m.Log.Fatal(nil, err.Error())
+	}
+}
+
+func runAzInventoryCommand (cmd *cobra.Command, args []string) {
+	m := azure.AzInventoryModule{
+		AzClient: AzClient,
+		Log:      internal.NewLogger("inventory"),
+	}
+	err := m.AzInventoryCommand()
+	if err != nil {
+		m.Log.Fatal(nil, err.Error())
+	}
+}
+
+func runAzRBACCommand (cmd *cobra.Command, args []string) {
+	m := azure.AzRBACModule{
+		AzClient: AzClient,
+		Log:      internal.NewLogger("rbac"),
+	}
+	err := m.AzRBACCommand()
+	if err != nil {
+		m.Log.Fatal(nil, err.Error())
+	}
+}
+
+func runAzVMsCommand (cmd *cobra.Command, args []string) {
+	m := azure.AzVMsModule{
+		AzClient: AzClient,
+		Log:      internal.NewLogger("vms"),
+	}
+	err := m.AzVMsCommand()
+	if err != nil {
+		m.Log.Fatal(nil, err.Error())
+	}
+}
+
+func runAzStorageCommand (cmd *cobra.Command, args []string) {
+	m := azure.AzStorageModule{
+		AzClient: AzClient,
+		Log:      internal.NewLogger("storage"),
+	}
+	err := m.AzStorageCommand()
+	if err != nil {
+		m.Log.Fatal(nil, err.Error())
+	}
+}
+
+func runAzNSGRulesCommand(cmd *cobra.Command, args []string) {
+	m := azure.AzNSGModule{
+		AzClient: AzClient,
+		Log:      internal.NewLogger("nsg"),
+	}
+	err := m.AzNSGCommand("rules")
+	if err != nil {
+		m.Log.Fatal([]string{"rules"}, err.Error())
+	}
+}
+
+func runAzNSGLinksCommand(cmd *cobra.Command, args []string) {
+	m := azure.AzNSGModule{
+		AzClient: AzClient,
+		Log:      internal.NewLogger("nsg"),
+	}
+	err := m.AzNSGCommand("links")
+	if err != nil {
+		m.Log.Fatal([]string{"links"}, err.Error())
+	}
+}
+
+func runAzNetScanCommand(cmd *cobra.Command, args []string) {
+	m := azure.AzNetScanModule{
+		AzClient: AzClient,
+		Log:      internal.NewLogger("netscan"),
+	}
+
+	err := m.AzNetScanCommand(AzSourceIPv4)
+	if err != nil {
+		m.Log.Fatal(nil, err.Error())
+	}
+}
+
+func azurePreRun(cmd *cobra.Command, args []string) {
+	AzClient = internal.NewAzureClient(AzVerbosity, AzWrapTable, AzMergedTable, AzTenantRefs, AzSubscriptionRefs, AzRGRefs, AzResourceRefs, cmd, AzOutputFormat, AzOutputDirectory)
+	nTenants := len(AzClient.AzTenants)
+	nSubscriptions := len(AzClient.AzSubscriptions)
+	nRGs := len(AzClient.AzRGs)
+	nResources := len(AzClient.AzResources)
+	nTotal := nTenants + nSubscriptions + nRGs + nResources
+	if nTotal == 0 {
+		AzClient.Log.Fatal(nil, "No valid target supplied, stopping")
+	}
+}
 
 func init() {
 
 	AzWhoamiCommand.Flags().BoolVarP(&AzWhoamiListRGsAlso, "list-rgs", "l", false, "Drill down to the resource group level")
 
+	AzNetScanCommand.Flags().StringVar(&AzSourceIPv4, "ipv4", "", "The Source IP address to run the analysis from")
+
 	// Global flags
 	AzCommands.PersistentFlags().StringVarP(&AzOutputFormat, "output", "o", "all", "[\"table\" | \"csv\" | \"all\" ]")
 	AzCommands.PersistentFlags().StringVar(&AzOutputDirectory, "outdir", defaultOutputDir, "Output Directory ")
 	AzCommands.PersistentFlags().IntVarP(&AzVerbosity, "verbosity", "v", 2, "1 = Print control messages only\n2 = Print control messages, module output\n3 = Print control messages, module output, and loot file output\n")
-	AzCommands.PersistentFlags().StringVarP(&AzTenantID, "tenant", "t", "", "Tenant name")
-	AzCommands.PersistentFlags().StringVarP(&AzSubscription, "subscription", "s", "", "Subscription ID or Name")
-	AzCommands.PersistentFlags().StringVarP(&AzRGName, "resource-group", "g", "", "Resource Group name")
+
+	AzCommands.PersistentFlags().StringSliceVarP(&AzTenantRefs, "tenant", "t", []string{}, "Tenant ID or name, repeatable")
+	AzCommands.PersistentFlags().StringSliceVarP(&AzSubscriptionRefs, "subscription", "s", []string{}, "Subscription ID or name, repeatable")
+	AzCommands.PersistentFlags().StringSliceVarP(&AzRGRefs, "resource-group", "r", []string{}, "Resource Group name or ID, repeatable")
+	AzCommands.PersistentFlags().StringSliceVarP(&AzResourceRefs, "resource-id", "i", []string{}, "Resource ID (/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}), repeatable")
+
 	AzCommands.PersistentFlags().BoolVarP(&AzWrapTable, "wrap", "w", false, "Wrap table to fit in terminal (complicates grepping)")
 	AzCommands.PersistentFlags().BoolVarP(&AzMergedTable, "merged-table", "m", false, "Writes a single table for all subscriptions in the tenant. Default writes a table per subscription.")
 
@@ -134,6 +289,9 @@ func init() {
 		AzRBACCommand,
 		AzVMsCommand,
 		AzStorageCommand,
-		AzInventoryCommand)
+		AzNSGRulesCommand,
+		AzNSGLinksCommand,
+		AzInventoryCommand,
+		AzNetScanCommand)
 
 }
