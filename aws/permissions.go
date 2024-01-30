@@ -90,7 +90,7 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputDirectory string, verbo
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "permissions"
-	m.output.FullFilename = m.output.CallingModule
+	filename := m.output.CallingModule
 	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
@@ -101,14 +101,14 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputDirectory string, verbo
 	fmt.Printf("[%s][%s] Enumerating IAM permissions for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 
 	if principal != "" {
-		m.output.FullFilename = filepath.Join(fmt.Sprintf("%s-custom-%s", m.output.CallingModule, strconv.FormatInt((time.Now().Unix()), 10)))
+		filename = filepath.Join(fmt.Sprintf("%s-custom-%s", m.output.CallingModule, strconv.FormatInt((time.Now().Unix()), 10)))
 	}
 
 	m.getGAAD()
 	m.parsePermissions(principal)
 
 	m.output.Headers = []string{
-		//"Service",
+		"Account",
 		"Type",
 		"Name",
 		"Arn",
@@ -126,7 +126,7 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputDirectory string, verbo
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
-				//m.Rows[i].AWSService,
+				aws.ToString(m.Caller.Account),
 				m.Rows[i].Type,
 				m.Rows[i].Name,
 				m.Rows[i].Arn,
@@ -161,7 +161,9 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputDirectory string, verbo
 			tableCols = strings.Split(m.AWSTableCols, ",")
 			// If the user specified wide as the output format, use these columns.
 		} else if m.AWSOutputType == "wide" {
-			tableCols = []string{"Type",
+			tableCols = []string{
+				"Account",
+				"Type",
 				//"Name",
 				"Arn",
 				"Policy",
@@ -173,7 +175,8 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputDirectory string, verbo
 				"Condition"}
 			// Otherwise, use the default columns for this module (brief)
 		} else {
-			tableCols = []string{"Type",
+			tableCols = []string{
+				"Type",
 				"Name",
 				//"Arn",
 				"Policy",
@@ -189,7 +192,7 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputDirectory string, verbo
 			Header:    m.output.Headers,
 			TableCols: tableCols,
 			Body:      m.output.Body,
-			Name:      m.output.CallingModule,
+			Name:      filename,
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))

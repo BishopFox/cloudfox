@@ -3,8 +3,10 @@ package sdk
 import (
 	"context"
 	"encoding/gob"
+	"errors"
 
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/BishopFox/cloudfox/internal/aws/policy"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/glue"
 	glueTypes "github.com/aws/aws-sdk-go-v2/service/glue/types"
@@ -16,6 +18,7 @@ type AWSGlueClientInterface interface {
 	ListJobs(ctx context.Context, params *glue.ListJobsInput, optFns ...func(*glue.Options)) (*glue.ListJobsOutput, error)
 	GetTables(ctx context.Context, params *glue.GetTablesInput, optFns ...func(*glue.Options)) (*glue.GetTablesOutput, error)
 	GetDatabases(ctx context.Context, params *glue.GetDatabasesInput, optFns ...func(*glue.Options)) (*glue.GetDatabasesOutput, error)
+	GetResourcePolicies(ctx context.Context, params *glue.GetResourcePoliciesInput, optFns ...func(*glue.Options)) (*glue.GetResourcePoliciesOutput, error)
 }
 
 func init() {
@@ -24,6 +27,7 @@ func init() {
 	gob.Register(glueTypes.Job{})
 	gob.Register([]glueTypes.Table{})
 	gob.Register([]glueTypes.Database{})
+	gob.Register([]policy.Policy{})
 }
 
 func CachedGlueListDevEndpoints(GlueClient AWSGlueClientInterface, accountID string, region string) ([]string, error) {
@@ -190,3 +194,55 @@ func CachedGlueGetDatabases(GlueClient AWSGlueClientInterface, accountID string,
 
 	return databases, nil
 }
+
+func CachedGlueGetResourcePolicies(GlueClient AWSGlueClientInterface, accountID string, region string) ([]policy.Policy, error) {
+	var PaginationControl *string
+	var GluePolicy policy.Policy
+	var policies []policy.Policy
+	var policyJSON string
+	cacheKey := "glue-GetResourcePolicies-" + accountID + "-" + region
+	cached, found := internal.Cache.Get(cacheKey)
+	if found {
+		sharedLogger.Debug("Using cached Glue resource policies data")
+		return cached.([]policy.Policy), nil
+	}
+
+	for {
+		GetResourcePolicies, err := GlueClient.GetResourcePolicies(
+			context.TODO(),
+			&glue.GetResourcePoliciesInput{
+				NextToken: PaginationControl,
+			},
+			func(o *glue.Options) {
+				o.Region = region
+			},
+		)
+		if err != nil {
+			sharedLogger.Error(err.Error())
+			break
+		}
+
+		for _, policyPointer := range GetResourcePolicies.GetResourcePoliciesResponseList {
+			policyJSON = aws.ToString(policyPointer.PolicyInJson)
+			GluePolicy, err = policy.ParseJSONPolicy([]byte(policyJSON))
+			if err != nil {
+				return policies, errors.New("error parsing Glue policy")
+			}
+			policies = append(policies, GluePolicy)
+		}
+
+		// Pagination control.
+		if GetResourcePolicies.NextToken != nil {
+			PaginationControl = GetResourcePolicies.NextToken
+		} else {
+			PaginationControl = nil
+			break
+		}
+	}
+
+	internal.Cache.Set(cacheKey, policies, cache.DefaultExpiration)
+
+	return policies, nil
+}
+
+// in the resource trust command, need to parse the actual resource policies to determine the resources for the cloudfox table. crazy pants

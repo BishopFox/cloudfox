@@ -110,7 +110,7 @@ func (m *SNSModule) PrintSNS(outputDirectory string, verbosity int) {
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
-
+		"Account",
 		"ARN",
 		"Public?",
 		"Resource Policy Summary",
@@ -129,6 +129,7 @@ func (m *SNSModule) PrintSNS(outputDirectory string, verbosity int) {
 		tableCols = strings.Split(m.AWSTableCols, ",")
 	} else if m.AWSOutputType == "wide" {
 		tableCols = []string{
+			"Account",
 			"ARN",
 			"Public?",
 			"Resource Policy Summary",
@@ -152,6 +153,7 @@ func (m *SNSModule) PrintSNS(outputDirectory string, verbosity int) {
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
+				aws.ToString(m.Caller.Account),
 				m.Topics[i].ARN,
 				m.Topics[i].IsPublic,
 				m.Topics[i].ResourcePolicySummary,

@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/apigatewayv2"
 	"github.com/aws/aws-sdk-go-v2/service/apprunner"
 	"github.com/aws/aws-sdk-go-v2/service/athena"
+	"github.com/aws/aws-sdk-go-v2/service/cloud9"
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -45,6 +46,7 @@ type Inventory2Module struct {
 	APIGatewayv2Client     *apigatewayv2.Client
 	AppRunnerClient        *apprunner.Client
 	AthenaClient           *athena.Client
+	Cloud9Client           *cloud9.Client
 	CloudFormationClient   *cloudformation.Client
 	CloudfrontClient       *cloudfront.Client
 	CodeArtifactClient     sdk.AWSCodeArtifactClientInterface
@@ -129,6 +131,7 @@ func (m *Inventory2Module) PrintInventoryPerRegion(outputDirectory string, verbo
 		"Athena Databases",
 		//"Athena Data Catalogs",
 		"AppRunner Services",
+		"Cloud9 Environments",
 		"CloudFormation Stacks",
 		"Cloudfront Distributions",
 		"CodeArtifact Repositories",
@@ -453,6 +456,16 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 		go m.getAthenaDatabasesPerRegion(r, wg, semaphore)
 		// wg.Add(1)
 		// go m.getAthenaDataCatalogsPerRegion(r, wg, semaphore)
+	}
+
+	res, err = servicemap.IsServiceInRegion("cloud9", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		go m.getCloud9EnvironmentsPerRegion(r, wg, semaphore)
 	}
 
 	res, err = servicemap.IsServiceInRegion("cloudformation", r)
@@ -2844,6 +2857,48 @@ func (m *Inventory2Module) getStepFunctionsPerRegion(r string, wg *sync.WaitGrou
 	m.serviceMap[service][r] = totalCountThisServiceThisRegion
 	m.totalRegionCounts[r] = m.totalRegionCounts[r] + totalCountThisServiceThisRegion
 	m.serviceMap["total"][r] = m.serviceMap["total"][r] + totalCountThisServiceThisRegion
+	m.mu.Unlock()
+}
+
+func (m *Inventory2Module) getCloud9EnvironmentsPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}) {
+	defer func() {
+		wg.Done()
+		m.CommandCounter.Executing--
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	m.CommandCounter.Total++
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+	var totalCountThisServiceThisRegion = 0
+	var service = "Cloud9 Environments"
+	var resourceNames []string
+
+	Environments, err := sdk.CachedCloud9ListEnvironments(m.Cloud9Client, aws.ToString(m.Caller.Account), r)
+
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+
+	}
+
+	// Add this page of resources to the total count
+	totalCountThisServiceThisRegion = totalCountThisServiceThisRegion + len(Environments)
+
+	// Add this page of resources to the module's resource list
+	for _, env := range Environments {
+		arn := "arn:aws:cloud9:" + r + ":" + aws.ToString(m.Caller.Account) + ":environment:" + env
+		resourceNames = append(resourceNames, arn)
+	}
+
+	// No more pages, update the module's service map
+	m.mu.Lock()
+	m.resources = append(m.resources, resourceNames...)
+	m.serviceMap[service][r] = totalCountThisServiceThisRegion
+
 	m.mu.Unlock()
 }
 

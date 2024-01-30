@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go/ptr"
@@ -25,32 +26,76 @@ var (
 	TxtLoggerName = "root"
 	TxtLog        = TxtLogger()
 	UtilsFs       = afero.NewOsFs()
+	credsMap      = map[string]aws.Credentials{}
+	ConfigMap     = map[string]aws.Config{}
 )
 
-func AWSConfigFileLoader(AWSProfile string, version string) aws.Config {
-	// Ensures the profile in the aws config file meets all requirements (valid keys and a region defined). I noticed some calls fail without a default region.
-	cfg, err := config.LoadDefaultConfig(context.TODO(), config.WithSharedConfigProfile(AWSProfile), config.WithDefaultRegion("us-east-1"), config.WithRetryer(
-		func() aws.Retryer {
-			return retry.AddWithMaxAttempts(retry.NewStandard(), 3)
-		}))
-	if err != nil {
-		fmt.Println(err)
-		TxtLog.Println(err)
-	}
+func AWSConfigFileLoader(AWSProfile string, version string, AwsMfaToken string) aws.Config {
+	// Loads the AWS config file and returns a config object
 
-	_, err = cfg.Credentials.Retrieve(context.TODO())
-	if err != nil {
-		fmt.Printf("[%s][%s] Error retrieving credentials from environment variables, or the instance metadata service.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), cyan(AWSProfile))
-		TxtLog.Printf("Could not retrieve the specified profile name %s", err)
+	var cfg aws.Config
+	var err error
+	// Check if the profile is already in the config map. If not, load it and retrieve the credentials. If it is, return the cached config object
+	// The AssumeRoleOptions below are used to pass the MFA token to the AssumeRole call (when applicable)
+	if _, ok := ConfigMap[AWSProfile]; !ok {
+		// Ensures the profile in the aws config file meets all requirements (valid keys and a region defined). I noticed some calls fail without a default region.
+		if AwsMfaToken != "" {
+			cfg, err = config.LoadDefaultConfig(context.TODO(), config.WithSharedConfigProfile(AWSProfile), config.WithDefaultRegion("us-east-1"), config.WithRetryer(
+				func() aws.Retryer {
+					return retry.AddWithMaxAttempts(retry.NewStandard(), 3)
+				}), config.WithAssumeRoleCredentialOptions(func(options *stscreds.AssumeRoleOptions) {
+				options.TokenProvider = func() (string, error) {
+					return AwsMfaToken, nil
+				}
+			}),
+			)
+		} else {
+			cfg, err = config.LoadDefaultConfig(context.TODO(), config.WithSharedConfigProfile(AWSProfile), config.WithDefaultRegion("us-east-1"), config.WithRetryer(
+				func() aws.Retryer {
+					return retry.AddWithMaxAttempts(retry.NewStandard(), 3)
+				}), config.WithAssumeRoleCredentialOptions(func(options *stscreds.AssumeRoleOptions) {
+				options.TokenProvider = stscreds.StdinTokenProvider
+			}),
+			)
+		}
 
+		if err != nil {
+			//fmt.Println(err)
+			if AWSProfile != "" {
+				TxtLog.Println(err)
+				fmt.Printf("[%s][%s] The specified profile [%s] does not exist or there was an error loading the credentials.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), cyan(AWSProfile), AWSProfile)
+				TxtLog.Fatalf("Could not retrieve the specified profile name %s", err)
+			} else {
+				fmt.Printf("[%s][%s] Error retrieving credentials from environment variables, or the instance metadata service.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), cyan(AWSProfile))
+				TxtLog.Fatalf("Error retrieving credentials from environment variables, or the instance metadata service.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), cyan(AWSProfile))
+			}
+			//os.Exit(1)
+		}
+
+		_, err := cfg.Credentials.Retrieve(context.TODO())
+
+		if err != nil {
+			fmt.Printf("[%s][%s] Error retrieving credentials from environment variables, or the instance metadata service.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), cyan(AWSProfile))
+
+		} else {
+			// update the config map with the new config for future lookups
+			ConfigMap[AWSProfile] = cfg
+			//return the config object for this first iteration
+			return cfg
+
+		}
+	} else {
+		//fmt.Println("Using cached config")
+		cfg = ConfigMap[AWSProfile]
+		return cfg
 	}
 	return cfg
 }
 
-func AWSWhoami(awsProfile string, version string) (*sts.GetCallerIdentityOutput, error) {
+func AWSWhoami(awsProfile string, version string, AwsMfaToken string) (*sts.GetCallerIdentityOutput, error) {
 	// Connects to STS and checks caller identity. Same as running "aws sts get-caller-identity"
 	//fmt.Printf("[%s] Retrieving caller's identity\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)))
-	STSService := sts.NewFromConfig(AWSConfigFileLoader(awsProfile, version))
+	STSService := sts.NewFromConfig(AWSConfigFileLoader(awsProfile, version, AwsMfaToken))
 	CallerIdentity, err := STSService.GetCallerIdentity(context.TODO(), &sts.GetCallerIdentityInput{})
 	if err != nil {
 		fmt.Printf("[%s][%s] Could not get caller's identity\n\nError: %s\n\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), cyan(awsProfile), err)
@@ -61,9 +106,9 @@ func AWSWhoami(awsProfile string, version string) (*sts.GetCallerIdentityOutput,
 	return CallerIdentity, err
 }
 
-func GetEnabledRegions(awsProfile string, version string) []string {
+func GetEnabledRegions(awsProfile string, version string, AwsMfaToken string) []string {
 	var enabledRegions []string
-	ec2Client := ec2.NewFromConfig(AWSConfigFileLoader(awsProfile, version))
+	ec2Client := ec2.NewFromConfig(ConfigMap[awsProfile])
 	regions, err := ec2Client.DescribeRegions(
 		context.TODO(),
 		&ec2.DescribeRegionsInput{

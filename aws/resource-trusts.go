@@ -20,15 +20,17 @@ import (
 
 type ResourceTrustsModule struct {
 	// General configuration data
-	Caller        sts.GetCallerIdentityOutput
-	AWSRegions    []string
-	Goroutines    int
-	WrapTable     bool
-	AWSOutputType string
-	AWSTableCols  string
-
-	AWSProfile      string
-	CloudFoxVersion string
+	Caller             sts.GetCallerIdentityOutput
+	AWSRegions         []string
+	Goroutines         int
+	WrapTable          bool
+	AWSOutputType      string
+	AWSTableCols       string
+	AWSMFAToken        string
+	AWSConfig          aws.Config
+	AWSProfileProvided string
+	AWSProfileStub     string
+	CloudFoxVersion    string
 
 	Resources2     []Resource2
 	CommandCounter internal.CommandCounter
@@ -47,6 +49,10 @@ type Resource2 struct {
 	ResourcePolicySummary string
 	Public                string
 	Interesting           string
+	TrustedPrincipals     string
+	TrustsCrossAccount    string
+	TrustsAllAccounts     string
+	HasConditions         string
 }
 
 func (m *ResourceTrustsModule) PrintResources(outputDirectory string, verbosity int) {
@@ -57,13 +63,16 @@ func (m *ResourceTrustsModule) PrintResources(outputDirectory string, verbosity 
 	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
-	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-	if m.AWSProfile == "" {
-		m.AWSProfile = internal.BuildAWSPath(m.Caller)
-	}
 
-	fmt.Printf("[%s][%s] Enumerating Resources with resource policies for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
-	fmt.Printf("[%s][%s] Supported Services: CodeBuild, ECR, EFS, Lambda, S3, SNS, SQS\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	if m.AWSProfileProvided == "" {
+		m.AWSProfileStub = internal.BuildAWSPath(m.Caller)
+	} else {
+		m.AWSProfileStub = m.AWSProfileProvided
+	}
+	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfileProvided, aws.ToString(m.Caller.Account)))
+
+	fmt.Printf("[%s][%s] Enumerating Resources with resource policies for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfileStub), aws.ToString(m.Caller.Account))
+	fmt.Printf("[%s][%s] Supported Services: CodeBuild, ECR, EFS, Glue, Lambda, SecretsManager, S3, SNS, SQS\n", cyan(m.output.CallingModule), cyan(m.AWSProfileStub))
 	wg := new(sync.WaitGroup)
 	semaphore := make(chan struct{}, m.Goroutines)
 
@@ -98,7 +107,7 @@ func (m *ResourceTrustsModule) PrintResources(outputDirectory string, verbosity 
 
 	// add - if struct is not empty do this. otherwise, dont write anything.
 	m.output.Headers = []string{
-		//"Account ID",
+		"Account",
 		"ARN",
 		"Public",
 		"Interesting",
@@ -118,7 +127,7 @@ func (m *ResourceTrustsModule) PrintResources(outputDirectory string, verbosity 
 		tableCols = strings.Split(m.AWSTableCols, ",")
 	} else if m.AWSOutputType == "wide" {
 		tableCols = []string{
-			//"Account ID",
+			"Account",
 			"ARN",
 			"Public",
 			"Interesting",
@@ -144,7 +153,7 @@ func (m *ResourceTrustsModule) PrintResources(outputDirectory string, verbosity 
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
-				//m.Resources2[i].AccountID,
+				aws.ToString(m.Caller.Account),
 				m.Resources2[i].ARN,
 				m.Resources2[i].Public,
 				m.Resources2[i].Interesting,
@@ -167,16 +176,16 @@ func (m *ResourceTrustsModule) PrintResources(outputDirectory string, verbosity 
 			TableCols: tableCols,
 			Name:      m.output.CallingModule,
 		})
-		o.PrefixIdentifier = m.AWSProfile
-		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
+		o.PrefixIdentifier = m.AWSProfileStub
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfileStub, aws.ToString(m.Caller.Account)))
 		o.WriteFullOutput(o.Table.TableFiles, nil)
 		//m.writeLoot(o.Table.DirectoryName, verbosity)
-		fmt.Printf("[%s][%s] %s resource policies found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
+		fmt.Printf("[%s][%s] %s resource policies found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfileStub), strconv.Itoa(len(m.output.Body)))
 		//fmt.Printf("[%s][%s] Resource policies stored to: %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.getLootDir())
 	} else {
-		fmt.Printf("[%s][%s] No resource policies found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+		fmt.Printf("[%s][%s] No resource policies found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfileStub))
 	}
-	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
+	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfileStub), m.output.CallingModule)
 
 }
 
@@ -243,6 +252,24 @@ func (m *ResourceTrustsModule) executeChecks(r string, wg *sync.WaitGroup, semap
 		wg.Add(1)
 		m.getEFSfilesystemPoliciesPerRegion(r, wg, semaphore, dataReceiver)
 	}
+	res, err = servicemap.IsServiceInRegion("secretsmanager", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		m.getSecretsManagerSecretsPoliciesPerRegion(r, wg, semaphore, dataReceiver)
+	}
+	res, err = servicemap.IsServiceInRegion("glue", r)
+	if err != nil {
+		m.modLog.Error(err)
+	}
+	if res {
+		m.CommandCounter.Total++
+		wg.Add(1)
+		m.getGlueResourcePoliciesPerRegion(r, wg, semaphore, dataReceiver)
+	}
 
 }
 
@@ -269,7 +296,7 @@ func (m *ResourceTrustsModule) getSNSTopicsPerRegion(r string, wg *sync.WaitGrou
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	cloudFoxSNSClient := InitCloudFoxSNSClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines, m.WrapTable)
+	cloudFoxSNSClient := InitCloudFoxSNSClient(m.Caller, m.AWSProfileProvided, m.CloudFoxVersion, m.Goroutines, m.WrapTable, m.AWSMFAToken)
 
 	ListTopics, err := cloudFoxSNSClient.listTopics(r)
 	if err != nil {
@@ -345,7 +372,7 @@ func (m *ResourceTrustsModule) getS3Buckets(wg *sync.WaitGroup, semaphore chan s
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	cloudFoxS3Client := initCloudFoxS3Client(m.Caller, m.AWSProfile, m.CloudFoxVersion)
+	cloudFoxS3Client := initCloudFoxS3Client(m.Caller, m.AWSProfileProvided, m.CloudFoxVersion, m.AWSMFAToken)
 
 	ListBuckets, err := sdk.CachedListBuckets(cloudFoxS3Client.S3Client, aws.ToString(m.Caller.Account))
 	if err != nil {
@@ -428,7 +455,7 @@ func (m *ResourceTrustsModule) getSQSQueuesPerRegion(r string, wg *sync.WaitGrou
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	cloudFoxSQSClient := InitSQSClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines)
+	cloudFoxSQSClient := InitSQSClient(m.Caller, m.AWSProfileProvided, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
 
 	ListQueues, err := cloudFoxSQSClient.listQueues(r)
 	if err != nil {
@@ -490,9 +517,9 @@ func (m *ResourceTrustsModule) getECRRecordsPerRegion(r string, wg *sync.WaitGro
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	cloudFoxECRClient := InitECRClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines)
+	cloudFoxECRClient := InitECRClient(m.Caller, m.AWSProfileProvided, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
 
-	DescribeRepositories, err := cloudFoxECRClient.describeRepositories(r)
+	DescribeRepositories, err := sdk.CachedECRDescribeRepositories(cloudFoxECRClient.ECRClient, aws.ToString(m.Caller.Account), r)
 	if err != nil {
 		m.modLog.Error(err.Error())
 		return
@@ -554,7 +581,7 @@ func (m *ResourceTrustsModule) getCodeBuildResourcePoliciesPerRegion(r string, w
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	cloudFoxCodeBuildClient := InitCodeBuildClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines)
+	cloudFoxCodeBuildClient := InitCodeBuildClient(m.Caller, m.AWSProfileProvided, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
 
 	ListProjects, err := sdk.CachedCodeBuildListProjects(cloudFoxCodeBuildClient.CodeBuildClient, aws.ToString(cloudFoxCodeBuildClient.Caller.Account), r)
 	if err != nil {
@@ -628,7 +655,7 @@ func (m *ResourceTrustsModule) getLambdaPolicyPerRegion(r string, wg *sync.WaitG
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	cloudFoxLambdaClient := InitLambdaClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines)
+	cloudFoxLambdaClient := InitLambdaClient(m.Caller, m.AWSProfileProvided, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
 
 	ListFunctions, err := cloudFoxLambdaClient.listFunctions(r)
 	if err != nil {
@@ -693,7 +720,7 @@ func (m *ResourceTrustsModule) getEFSfilesystemPoliciesPerRegion(r string, wg *s
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	cloudFoxEFSClient := InitFileSystemsClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines)
+	cloudFoxEFSClient := InitFileSystemsClient(m.Caller, m.AWSProfileProvided, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
 
 	ListFileSystems, err := sdk.CachedDescribeFileSystems(cloudFoxEFSClient.EFSClient, aws.ToString(m.Caller.Account), r)
 	if err != nil {
@@ -743,6 +770,134 @@ func (m *ResourceTrustsModule) getEFSfilesystemPoliciesPerRegion(r string, wg *s
 					Name:                  aws.ToString(fs.Name),
 					Region:                r,
 					Interesting:           isInteresting,
+				}
+			}
+		}
+	}
+}
+
+// getSecretsManagerSecretsPoliciesPerRegion retrieves the resource policies for all Secrets Manager secrets in the specified region.
+// It sends the resulting Resource2 objects to the dataReceiver channel.
+// It uses a semaphore to limit the number of concurrent requests and a WaitGroup to wait for all requests to complete.
+// It takes the region to search in, the WaitGroup to use, the semaphore to use, and the dataReceiver channel to send results to.
+func (m *ResourceTrustsModule) getSecretsManagerSecretsPoliciesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Resource2) {
+	defer func() {
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+		wg.Done()
+
+	}()
+	semaphore <- struct{}{}
+	defer func() { <-semaphore }()
+
+	cloudFoxSecretsManagerClient := InitSecretsManagerClient(m.Caller, m.AWSProfileProvided, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
+
+	ListSecrets, err := sdk.CachedSecretsManagerListSecrets(cloudFoxSecretsManagerClient, aws.ToString(m.Caller.Account), r)
+	if err != nil {
+		sharedLogger.Error(err.Error())
+		return
+	}
+
+	for _, s := range ListSecrets {
+		var isPublic string
+		var statementSummaryInEnglish string
+		var isInteresting string = "No"
+		secretPolicy, err := sdk.CachedSecretsManagerGetResourcePolicy(cloudFoxSecretsManagerClient, aws.ToString(s.ARN), r, aws.ToString(m.Caller.Account))
+		if err != nil {
+			sharedLogger.Error(err.Error())
+			m.CommandCounter.Error++
+			continue
+		}
+
+		if secretPolicy.IsPublic() {
+			isPublic = magenta("Yes")
+			isInteresting = magenta("Yes")
+
+		} else {
+			isPublic = "No"
+		}
+
+		if !secretPolicy.IsEmpty() {
+			for i, statement := range secretPolicy.Statement {
+				prefix := ""
+				if len(secretPolicy.Statement) > 1 {
+					prefix = fmt.Sprintf("Statement %d says: ", i)
+					statementSummaryInEnglish = prefix + statement.GetStatementSummaryInEnglish(*m.Caller.Account) + "\n"
+				} else {
+					statementSummaryInEnglish = statement.GetStatementSummaryInEnglish(*m.Caller.Account)
+				}
+				statementSummaryInEnglish = strings.TrimSuffix(statementSummaryInEnglish, "\n")
+				if isResourcePolicyInteresting(statementSummaryInEnglish) {
+					//magenta(statementSummaryInEnglish)
+					isInteresting = magenta("Yes")
+				}
+
+				dataReceiver <- Resource2{
+					AccountID:             aws.ToString(m.Caller.Account),
+					ARN:                   aws.ToString(s.ARN),
+					ResourcePolicySummary: statementSummaryInEnglish,
+					Public:                isPublic,
+					Name:                  aws.ToString(s.Name),
+					Region:                r,
+					Interesting:           isInteresting,
+				}
+			}
+		}
+	}
+}
+
+func (m *ResourceTrustsModule) getGlueResourcePoliciesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Resource2) {
+	defer func() {
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+		wg.Done()
+
+	}()
+	semaphore <- struct{}{}
+	defer func() { <-semaphore }()
+
+	cloudFoxGlueClient := InitGlueClient(m.Caller, m.AWSProfileProvided, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
+
+	ResourcePolicies, err := sdk.CachedGlueGetResourcePolicies(cloudFoxGlueClient, aws.ToString(m.Caller.Account), r)
+	if err != nil {
+		sharedLogger.Error(err.Error())
+		return
+	}
+
+	for _, resourcePolicy := range ResourcePolicies {
+		var isPublic string
+		var statementSummaryInEnglish string
+		var isInteresting string = "No"
+
+		if resourcePolicy.IsPublic() {
+			isPublic = magenta("Yes")
+			isInteresting = magenta("Yes")
+
+		} else {
+			isPublic = "No"
+		}
+
+		if !resourcePolicy.IsEmpty() {
+			for _, statement := range resourcePolicy.Statement {
+				statementSummaryInEnglish = statement.GetStatementSummaryInEnglish(*m.Caller.Account)
+				resources := statement.Resource
+				for _, resource := range resources {
+
+					statementSummaryInEnglish = strings.TrimSuffix(statementSummaryInEnglish, "\n")
+					if isResourcePolicyInteresting(statementSummaryInEnglish) {
+						//magenta(statementSummaryInEnglish)
+						isInteresting = magenta("Yes")
+					}
+
+					dataReceiver <- Resource2{
+						AccountID:             aws.ToString(m.Caller.Account),
+						ARN:                   resource,
+						ResourcePolicySummary: statementSummaryInEnglish,
+						Public:                isPublic,
+						Name:                  resource,
+						Region:                r,
+						Interesting:           isInteresting,
+					}
 				}
 			}
 		}

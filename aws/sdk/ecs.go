@@ -116,7 +116,7 @@ func CachedECSDescribeTasks(ECSClient AWSECSClientInterface, accountID string, r
 	var taskDetails []ecsTypes.Task
 	//replace semi-colons with underscores in task definition name
 	clusterFileSystemSafe := strings.ReplaceAll(cluster, ":", "_")
-	clusterFileSystemSafe = strings.ReplaceAll(cluster, "/", "_")
+	clusterFileSystemSafe = strings.ReplaceAll(clusterFileSystemSafe, "/", "_")
 	cacheKey := fmt.Sprintf("%s-ecs-DescribeTasks-%s-%s", accountID, region, clusterFileSystemSafe)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
@@ -149,7 +149,7 @@ func CachedECSDescribeTaskDefinition(ECSClient AWSECSClientInterface, accountID 
 	var taskDefinitionDetails ecsTypes.TaskDefinition
 	//replace semi-colons with underscores in task definition name
 	taskDefinitionFileSystemSafe := strings.ReplaceAll(taskDefinition, ":", "_")
-	taskDefinitionFileSystemSafe = strings.ReplaceAll(taskDefinition, "/", "_")
+	taskDefinitionFileSystemSafe = strings.ReplaceAll(taskDefinitionFileSystemSafe, "/", "_")
 	cacheKey := fmt.Sprintf("%s-ecs-DescribeTaskDefinition-%s-%s", accountID, region, taskDefinitionFileSystemSafe)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {

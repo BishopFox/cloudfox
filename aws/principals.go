@@ -95,7 +95,7 @@ func (m *IamPrincipalsModule) PrintIamPrincipals(outputDirectory string, verbosi
 	//fmt.Printf("\nAnalyzed Resources by Region\n\n")
 
 	m.output.Headers = []string{
-		"Service",
+		"Account",
 		"Type",
 		"Name",
 		"Arn",
@@ -116,7 +116,7 @@ func (m *IamPrincipalsModule) PrintIamPrincipals(outputDirectory string, verbosi
 		tableCols = strings.Split(m.AWSTableCols, ",")
 	} else if m.AWSOutputType == "wide" {
 		tableCols = []string{
-			"Service",
+			"Account",
 			"Type",
 			"Name",
 			"Arn",
@@ -127,7 +127,6 @@ func (m *IamPrincipalsModule) PrintIamPrincipals(outputDirectory string, verbosi
 		// Otherwise, use the default columns.
 	} else {
 		tableCols = []string{
-			"Service",
 			"Type",
 			"Name",
 			"Arn",
@@ -141,7 +140,7 @@ func (m *IamPrincipalsModule) PrintIamPrincipals(outputDirectory string, verbosi
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
-				m.Users[i].AWSService,
+				aws.ToString(m.Caller.Account),
 				m.Users[i].Type,
 				m.Users[i].Name,
 				m.Users[i].Arn,
@@ -156,7 +155,7 @@ func (m *IamPrincipalsModule) PrintIamPrincipals(outputDirectory string, verbosi
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
-				m.Roles[i].AWSService,
+				aws.ToString(m.Caller.Account),
 				m.Roles[i].Type,
 				m.Roles[i].Name,
 				m.Roles[i].Arn,

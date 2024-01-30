@@ -164,7 +164,7 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputDir
 	<-receiverDone
 
 	m.output.Headers = []string{
-		"Service",
+		"Account",
 		"Region",
 		"Type",
 		//"Source Account",
@@ -187,7 +187,7 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputDir
 		tableCols = strings.Split(m.AWSTableCols, ",")
 	} else if m.AWSOutputType == "wide" {
 		tableCols = []string{
-			"Service",
+			"Account",
 			"Region",
 			"Type",
 			//"Source Account",
@@ -200,7 +200,6 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputDir
 	} else {
 
 		tableCols = []string{
-			"Service",
 			"Region",
 			"Type",
 			//"Source Account",
@@ -216,7 +215,7 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputDir
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
-				m.OutboundAssumeRoleEntries[i].AWSService,
+				aws.ToString(m.Caller.Account),
 				m.OutboundAssumeRoleEntries[i].Region,
 				m.OutboundAssumeRoleEntries[i].Type,
 				//m.OutboundAssumeRoleEntries[i].SourceAccount,

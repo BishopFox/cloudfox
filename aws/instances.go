@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -222,6 +223,7 @@ func (m *InstancesModule) printGeneralInstanceData(outputDirectory string, dataR
 	// Prepare Table headers
 	//m.output.Headers = table.Row{
 	m.output.Headers = []string{
+		"Account",
 		//"ID",
 		"Name",
 		//"Arn",
@@ -249,6 +251,7 @@ func (m *InstancesModule) printGeneralInstanceData(outputDirectory string, dataR
 		// If the user specified wide as the output format, use these columns.
 	} else if m.AWSOutputType == "wide" {
 		tableCols = []string{
+			"Account",
 			//"ID",
 			"Name",
 			//"Arn",
@@ -290,6 +293,7 @@ func (m *InstancesModule) printGeneralInstanceData(outputDirectory string, dataR
 			m.output.Body,
 			//table.Row{
 			[]string{
+				aws.ToString(m.Caller.Account),
 				//instance.ID,
 				instance.Name,
 				//instance.Arn,
@@ -487,9 +491,8 @@ func (m *InstancesModule) loadInstanceData(instance types.Instance, region strin
 
 	var profile string
 	var externalIP string
-	var name string = ""
 	var adminRole string = ""
-	var roleArn string = ""
+	var profileArn, profileName, name string
 
 	// The name is in a tag so we have to do this to grab the value from the right tag
 	for _, tag := range instance.Tags {
@@ -509,34 +512,50 @@ func (m *InstancesModule) loadInstanceData(instance types.Instance, region strin
 
 	if instance.IamInstanceProfile == nil {
 		profile = "NoInstanceProfile"
-	} else {
-		// This returns only the role name without the preceding forward slash.
-		profileARN := aws.ToString(instance.IamInstanceProfile.Arn)
-		profileID := aws.ToString(instance.IamInstanceProfile.Id)
-		profile = strings.Split(profileARN, "/")[len(strings.Split(profileARN, "/"))-1]
-
-		if roles, ok := m.InstanceProfileToRolesMap[profileID]; ok {
-			for _, role := range roles {
-				roleArn = aws.ToString(role.Arn)
-			}
+		dataReceiver <- MappedInstance{
+			ID:               aws.ToString(instance.InstanceId),
+			Name:             aws.ToString(&name),
+			Arn:              fmt.Sprintf("arn:aws:ec2:%s:%s:instance/%s", region, aws.ToString(m.Caller.Account), aws.ToString(instance.InstanceId)),
+			AvailabilityZone: aws.ToString(instance.Placement.AvailabilityZone),
+			State:            string(instance.State.Name),
+			ExternalIP:       externalIP,
+			PrivateIP:        aws.ToString(instance.PrivateIpAddress),
+			Profile:          profile,
+			Role:             "",
+			Region:           region,
+			Admin:            adminRole,
+			CanPrivEsc:       "",
 		}
 
-	}
-	dataReceiver <- MappedInstance{
-		ID:               aws.ToString(instance.InstanceId),
-		Name:             aws.ToString(&name),
-		Arn:              fmt.Sprintf("arn:aws:ec2:%s:%s:instance/%s", region, aws.ToString(m.Caller.Account), aws.ToString(instance.InstanceId)),
-		AvailabilityZone: aws.ToString(instance.Placement.AvailabilityZone),
-		State:            string(instance.State.Name),
-		ExternalIP:       externalIP,
-		PrivateIP:        aws.ToString(instance.PrivateIpAddress),
-		Profile:          profile,
-		Role:             roleArn,
-		Region:           region,
-		Admin:            adminRole,
-		CanPrivEsc:       "",
-	}
+	} else {
+		profileArn = aws.ToString(instance.IamInstanceProfile.Arn)
 
+		// Extracting instance profile name from ARN
+		profileName = strings.Split(profileArn, "/")[len(strings.Split(profileArn, "/"))-1]
+
+		// Describe the IAM instance profile
+		profileOutput, err := sdk.CachedIamGetInstanceProfile(m.IAMClient, aws.ToString(m.Caller.Account), profileName)
+		if err != nil {
+			log.Printf("failed to get instance profile for %s, %v", profileArn, err)
+		}
+
+		for _, role := range profileOutput.Roles {
+			dataReceiver <- MappedInstance{
+				ID:               aws.ToString(instance.InstanceId),
+				Name:             aws.ToString(&name),
+				Arn:              fmt.Sprintf("arn:aws:ec2:%s:%s:instance/%s", region, aws.ToString(m.Caller.Account), aws.ToString(instance.InstanceId)),
+				AvailabilityZone: aws.ToString(instance.Placement.AvailabilityZone),
+				State:            string(instance.State.Name),
+				ExternalIP:       externalIP,
+				PrivateIP:        aws.ToString(instance.PrivateIpAddress),
+				Profile:          profile,
+				Role:             aws.ToString(role.Arn),
+				Region:           region,
+				Admin:            adminRole,
+				CanPrivEsc:       "",
+			}
+		}
+	}
 }
 
 func (m *InstancesModule) getRolesFromInstanceProfiles() {

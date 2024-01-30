@@ -97,6 +97,7 @@ func (m *SecretsModule) PrintSecrets(outputDirectory string, verbosity int) {
 	//	fmt.Printf("\nAnalyzed Resources by Region\n\n")
 
 	m.output.Headers = []string{
+		"Account",
 		"Service",
 		"Region",
 		"Name",
@@ -116,6 +117,7 @@ func (m *SecretsModule) PrintSecrets(outputDirectory string, verbosity int) {
 		tableCols = strings.Split(m.AWSTableCols, ",")
 	} else if m.AWSOutputType == "wide" {
 		tableCols = []string{
+			"Account",
 			"Service",
 			"Region",
 			"Name",
@@ -136,6 +138,7 @@ func (m *SecretsModule) PrintSecrets(outputDirectory string, verbosity int) {
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
+				aws.ToString(m.Caller.Account),
 				m.Secrets[i].AWSService,
 				m.Secrets[i].Region,
 				m.Secrets[i].Name,

@@ -23,3 +23,38 @@ func (m *MockedSecretsManagerClient) ListSecrets(ctx context.Context, input *sec
 		},
 	}, nil
 }
+
+func (m *MockedSecretsManagerClient) GetResourcePolicy(ctx context.Context, input *secretsmanager.GetResourcePolicyInput, options ...func(*secretsmanager.Options)) (*secretsmanager.GetResourcePolicyOutput, error) {
+	return &secretsmanager.GetResourcePolicyOutput{
+		ResourcePolicy: aws.String(`{
+			"Version": "2012-10-17",
+			"Statement": [
+				{
+					"Sid": "RetrieveSecret",
+					"Effect": "Allow",
+					"Principal": {
+						"AWS": "arn:aws:iam::123456789012:root"
+					},
+					"Action": [
+						"secretsmanager:GetSecretValue",
+						"secretsmanager:DescribeSecret",
+						"secretsmanager:ListSecretVersionIds"
+					],
+					"Resource": "*"
+				},
+				{
+					"Sid": "RetrieveSecret",
+					"Effect": "Allow",
+					"Principal": {
+						"AWS": "arn:aws:iam::123456789012:root"
+					},
+					"Action": [
+						"secretsmanager:GetSecretValue",
+						"secretsmanager:DescribeSecret",
+					],
+					"Resource": "*"
+				}
+			]
+		}`),
+	}, nil
+}
