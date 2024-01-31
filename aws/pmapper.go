@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/BishopFox/cloudfox/internal/aws/policy"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/dominikbraun/graph"
@@ -53,19 +54,52 @@ type Edge struct {
 }
 
 type Node struct {
-	Arn                 string             `json:"arn"`
-	IDValue             string             `json:"id_value"`
-	AttachedPolicies    []AttachedPolicies `json:"attached_policies"`
-	GroupMemberships    []interface{}      `json:"group_memberships"`
-	TrustPolicy         interface{}        `json:"trust_policy"`
-	InstanceProfile     interface{}        `json:"instance_profile"`
-	ActivePassword      bool               `json:"active_password"`
-	AccessKeys          int                `json:"access_keys"`
-	IsAdmin             bool               `json:"is_admin"`
-	PermissionsBoundary interface{}        `json:"permissions_boundary"`
-	HasMfa              bool               `json:"has_mfa"`
-	Tags                Tags               `json:"tags"`
-	PathToAdmin         bool
+	Arn                       string `json:"arn"`
+	Type                      string
+	AccountID                 string
+	Name                      string
+	IDValue                   string             `json:"id_value"`
+	AttachedPolicies          []AttachedPolicies `json:"attached_policies"`
+	GroupMemberships          []interface{}      `json:"group_memberships"`
+	TrustPolicy               interface{}        `json:"trust_policy"`
+	TrustsDoc                 policy.TrustPolicyDocument
+	TrustedPrincipals         []TrustedPrincipal
+	TrustedServices           []TrustedService
+	TrustedFederatedProviders []TrustedFederatedProvider
+	InstanceProfile           interface{} `json:"instance_profile"`
+	ActivePassword            bool        `json:"active_password"`
+	AccessKeys                int         `json:"access_keys"`
+	IsAdmin                   bool        `json:"is_admin"`
+	PathToAdmin               bool
+	PermissionsBoundary       interface{} `json:"permissions_boundary"`
+	HasMfa                    bool        `json:"has_mfa"`
+	Tags                      Tags        `json:"tags"`
+	CanPrivEscToAdminString   string
+	IsAdminString             string
+	VendorName                string
+}
+
+type TrustedPrincipal struct {
+	TrustedPrincipal string
+	ExternalID       string
+	VendorName       string
+	//IsAdmin           bool
+	//CanPrivEscToAdmin bool
+}
+
+type TrustedService struct {
+	TrustedService string
+	AccountID      string
+	//IsAdmin           bool
+	//CanPrivEscToAdmin bool
+}
+
+type TrustedFederatedProvider struct {
+	TrustedFederatedProvider string
+	ProviderShortName        string
+	TrustedSubjects          string
+	//IsAdmin                  bool
+	//CanPrivEscToAdmin        bool
 }
 
 type AttachedPolicies struct {
@@ -87,9 +121,16 @@ func (m *PmapperModule) initPmapperGraph() error {
 	for i := range m.Nodes {
 		if m.doesNodeHavePathToAdmin(m.Nodes[i]) {
 			m.Nodes[i].PathToAdmin = true
+			m.Nodes[i].CanPrivEscToAdminString = "Yes"
 			//fmt.Println(m.Nodes[i].Arn, m.Nodes[i].IsAdmin, m.Nodes[i].PathToAdmin)
 		} else {
 			m.Nodes[i].PathToAdmin = false
+			m.Nodes[i].CanPrivEscToAdminString = "No"
+		}
+		if m.Nodes[i].IsAdmin {
+			m.Nodes[i].IsAdminString = "Yes"
+		} else {
+			m.Nodes[i].IsAdminString = "No"
 		}
 	}
 
@@ -159,7 +200,11 @@ func (m *PmapperModule) DoesPrincipalHavePathToAdmin(principal string) bool {
 	for i := range m.Nodes {
 		if m.Nodes[i].Arn == principal {
 			if m.Nodes[i].PathToAdmin {
+				m.Nodes[i].CanPrivEscToAdminString = "Yes"
 				return true
+			} else {
+				m.Nodes[i].CanPrivEscToAdminString = "No"
+				return false
 			}
 		}
 
@@ -171,7 +216,11 @@ func (m *PmapperModule) DoesPrincipalHaveAdmin(principal string) bool {
 	for i := range m.Nodes {
 		if m.Nodes[i].Arn == principal {
 			if m.Nodes[i].IsAdmin {
+				m.Nodes[i].IsAdminString = "Yes"
 				return true
+			} else {
+				m.Nodes[i].IsAdminString = "No"
+				return false
 			}
 		}
 

@@ -330,6 +330,46 @@ func (a *Role) MakeRelationships() []schema.Relationship {
 	return relationships
 }
 
+// func (a *Node) GenerateAttributes() map[string]string {
+// 	attributes := make(map[string]string)
+// 	attributes["Id"] = a.Id
+// 	attributes["Name"] = a.Name
+// 	attributes["Type"] = "Role"
+// 	attributes["AccountID"] = a.AccountID
+// 	attributes["ARN"] = a.ARN
+// 	attributes["CanPrivEscToAdmin"] = a.CanPrivEscToAdmin
+// 	attributes["IsAdmin"] = a.IsAdmin
+// 	attributes["IdValue"] = a.IdValue
+// 	return attributes
+// }
+
+// func (a *Role) MergeAttributes(newAttributes map[string]string) {
+// 	if a.Id == "" {
+// 		a.Id = newAttributes["Id"]
+// 	}
+// 	if a.Name == "" {
+// 		a.Name = newAttributes["Name"]
+// 	}
+// 	if a.Type == "" {
+// 		a.Type = newAttributes["Type"]
+// 	}
+// 	if a.AccountID == "" {
+// 		a.AccountID = newAttributes["AccountID"]
+// 	}
+// 	if a.ARN == "" {
+// 		a.ARN = newAttributes["ARN"]
+// 	}
+// 	if a.CanPrivEscToAdmin == "" {
+// 		a.CanPrivEscToAdmin = newAttributes["CanPrivEscToAdmin"]
+// 	}
+// 	if a.IsAdmin == "" {
+// 		a.IsAdmin = newAttributes["IsAdmin"]
+// 	}
+// 	if a.IdValue == "" {
+// 		a.IdValue = newAttributes["IdValue"]
+// 	}
+// }
+
 func (a *Role) MakeVertices(GlobalGraph graph.Graph[string, string]) {
 
 	// make a vertex for this role as populate all of the data in the Role struct as attributes
@@ -350,6 +390,37 @@ func (a *Role) MakeVertices(GlobalGraph graph.Graph[string, string]) {
 	}
 
 }
+
+// func MakeAllVertices(GlobalRoles []Role, GlobalPmapperGraph aws.PmapperModule) (GlobalGraph graph.Graph[string, string]) {
+
+// 	// for all nodes in the GlobalPmapperGraph, check to see if they exist in the GlobalRoles slice. If they do, then update the node with the new data. If they don't, then add the node to the GlobalRoles slice
+// 	for _, node := range GlobalPmapperGraph.Nodes {
+// 		// check to see if the node exists in the GlobalRoles slice
+// 		var nodeExists bool
+// 		for _, role := range GlobalRoles {
+// 			if node.Id == role.Id {
+// 				nodeExists = true
+// 			}
+// 		}
+
+// 	// // make a vertex for this role as populate all of the data in the Role struct as attributes
+// 	// err := GlobalGraph.AddVertex(
+// 	// 	a.Id,
+// 	// 	graph.VertexAttribute("Name", a.Name),
+// 	// 	graph.VertexAttribute("Type", "Role"),
+// 	// 	graph.VertexAttribute("AccountID", a.AccountID),
+// 	// 	graph.VertexAttribute("ARN", a.ARN),
+// 	// 	graph.VertexAttribute("CanPrivEscToAdmin", a.CanPrivEscToAdmin),
+// 	// 	graph.VertexAttribute("IsAdmin", a.IsAdmin),
+// 	// 	graph.VertexAttribute("IdValue", a.IdValue),
+// 	// )
+// 	// if err != nil {
+// 	// 	if err == graph.ErrVertexAlreadyExists {
+// 	// 		fmt.Println(a.Id + " already exists")
+// 	// 	}
+// 	// }
+
+// }
 
 func (a *Role) MakeEdges(GlobalGraph graph.Graph[string, string]) []schema.Relationship {
 	var relationships []schema.Relationship

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	ingestor "github.com/BishopFox/cloudfox/aws/graph/ingester"
@@ -13,10 +12,8 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/BishopFox/cloudfox/internal/aws/policy"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/bishopfox/knownawsaccountslookup"
-	"github.com/dominikbraun/graph"
 	"github.com/sirupsen/logrus"
 )
 
@@ -45,28 +42,6 @@ type GraphCommand struct {
 	// Used to store output data for pretty printing
 	output internal.OutputData2
 
-	modLog *logrus.Entry
-}
-
-type GraphCommand2 struct {
-
-	// General configuration data
-	Caller             sts.GetCallerIdentityOutput
-	AWSRegions         []string
-	Goroutines         int
-	AWSProfile         string
-	WrapTable          bool
-	AWSOutputType      string
-	AWSTableCols       string
-	Verbosity          int
-	AWSOutputDirectory string
-	AWSConfig          aws.Config
-	Version            string
-	SkipAdminCheck     bool
-
-	GlobalGraph graph.Graph[string, string]
-
-	output internal.OutputData2
 	modLog *logrus.Entry
 }
 
@@ -189,57 +164,6 @@ func (m *GraphCommand) RunGraphCommand() {
 	// back to regular stuff
 
 	ingestor.Run(fmt.Sprintf("%s/graph/%s", m.output.Directory, aws.ToString(m.Caller.Account)))
-
-}
-
-func (m *GraphCommand2) RunGraphCommand2() {
-
-	// These struct values are used by the output module
-	m.output.Verbosity = m.Verbosity
-	m.output.Directory = m.AWSOutputDirectory
-	m.output.CallingModule = "graph"
-	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
-		"module": m.output.CallingModule,
-	})
-	if m.AWSProfile == "" {
-		m.AWSProfile = internal.BuildAWSPath(m.Caller)
-	}
-	m.output.FilePath = filepath.Join(m.AWSOutputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-
-	m.output.Headers = []string{
-		"Account",
-		"Principal Arn",
-		"IsAdmin?",
-		"CanPrivEscToAdmin?",
-	}
-
-	// If the user specified table columns, use those.
-	// If the user specified -o wide, use the wide default cols for this module.
-	// Otherwise, use the hardcoded default cols for this module.
-	var tableCols []string
-	// If the user specified table columns, use those.
-	if m.AWSTableCols != "" {
-		// If the user specified wide as the output format, use these columns.
-		// remove any spaces between any commas and the first letter after the commas
-		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ", ", ",")
-		m.AWSTableCols = strings.ReplaceAll(m.AWSTableCols, ",  ", ",")
-		tableCols = strings.Split(m.AWSTableCols, ",")
-	} else if m.AWSOutputType == "wide" {
-		tableCols = []string{
-			"Account",
-			"Principal Arn",
-			"IsAdmin?",
-			"CanPrivEscToAdmin?",
-		}
-		// Otherwise, use the default columns.
-	} else {
-		tableCols = []string{
-			"Principal Arn",
-			"IsAdmin?",
-			"CanPrivEscToAdmin?",
-		}
-	}
-	internal.TxtLog.Debug("tableCols: ", tableCols)
 
 }
 
@@ -489,117 +413,4 @@ func (m *GraphCommand) collectRoleDataForGraph() []models.Role {
 		roles = append(roles, role)
 	}
 	return roles
-}
-
-func ConvertIAMRoleToModelRole(role types.Role, vendors *knownawsaccountslookup.Vendors) models.Role {
-	var isAdmin, canPrivEscToAdmin string
-
-	accountId := strings.Split(aws.ToString(role.Arn), ":")[4]
-	trustsdoc, err := policy.ParseRoleTrustPolicyDocument(role)
-	if err != nil {
-		internal.TxtLog.Error(err.Error())
-		return models.Role{}
-	}
-
-	var TrustedPrincipals []models.TrustedPrincipal
-	var TrustedServices []models.TrustedService
-	var TrustedFederatedProviders []models.TrustedFederatedProvider
-	//var TrustedFederatedSubjects string
-	var trustedProvider string
-	var trustedSubjects string
-	var vendorName string
-
-	for _, statement := range trustsdoc.Statement {
-		for _, principal := range statement.Principal.AWS {
-			if strings.Contains(principal, ":root") {
-				//check to see if the accountID is known
-				accountID := strings.Split(principal, ":")[4]
-				vendorName = vendors.GetVendorNameFromAccountID(accountID)
-			}
-
-			TrustedPrincipals = append(TrustedPrincipals, models.TrustedPrincipal{
-				TrustedPrincipal: principal,
-				ExternalID:       statement.Condition.StringEquals.StsExternalID,
-				VendorName:       vendorName,
-				//IsAdmin:           false,
-				//CanPrivEscToAdmin: false,
-			})
-
-		}
-		for _, service := range statement.Principal.Service {
-			TrustedServices = append(TrustedServices, models.TrustedService{
-				TrustedService: service,
-				AccountID:      accountId,
-				//IsAdmin:           false,
-				//CanPrivEscToAdmin: false,
-			})
-
-		}
-		for _, federated := range statement.Principal.Federated {
-			if statement.Condition.StringLike.TokenActionsGithubusercontentComAud != "" || len(statement.Condition.StringLike.TokenActionsGithubusercontentComSub) > 0 {
-				trustedProvider = "GitHub"
-				trustedSubjects := strings.Join(statement.Condition.StringLike.TokenActionsGithubusercontentComSub, ",")
-				if trustedSubjects == "" {
-					trustedSubjects = "ALL REPOS!!!"
-				} else {
-					trustedSubjects = "Repos: " + trustedSubjects
-				}
-
-			} else if statement.Condition.StringEquals.SAMLAud == "https://signin.aws.amazon.com/saml" {
-				if strings.Contains(statement.Principal.Federated[0], "AWSSSO") {
-					trustedProvider = "AWS SSO" // (" + statement.Principal.Federated[0] + ")"
-				} else if strings.Contains(statement.Principal.Federated[0], "Okta") {
-					trustedProvider = "Okta" //  (" + statement.Principal.Federated[0] + ")"
-				}
-				trustedSubjects = "Not applicable"
-			} else if statement.Condition.StringEquals.OidcEksAud != "" || statement.Condition.StringEquals.OidcEksSub != "" || statement.Condition.StringLike.OidcEksAud != "" || statement.Condition.StringLike.OidcEksSub != "" {
-				trustedProvider = "EKS" // (" + statement.Principal.Federated[0] + ")"
-				if statement.Condition.StringEquals.OidcEksSub != "" {
-					trustedSubjects = statement.Condition.StringEquals.OidcEksSub
-				} else if statement.Condition.StringLike.OidcEksSub != "" {
-					trustedSubjects = statement.Condition.StringLike.OidcEksSub
-				} else {
-					trustedSubjects = "ALL SERVICE ACCOUNTS!"
-				}
-			} else if statement.Principal.Federated[0] == "cognito-identity.amazonaws.com" {
-				trustedProvider = "Cognito" // (" + statement.Principal.Federated[0] + ")"
-				if statement.Condition.ForAnyValueStringLike.CognitoAMR != "" {
-					trustedSubjects = statement.Condition.ForAnyValueStringLike.CognitoAMR
-				}
-			} else {
-				if trustedProvider == "" && strings.Contains(statement.Principal.Federated[0], "oidc.eks") {
-					trustedProvider = "EKS" // (" + statement.Principal.Federated[0] + ")"
-					trustedSubjects = "ALL SERVICE ACCOUNTS!"
-				} else if trustedProvider == "" && strings.Contains(statement.Principal.Federated[0], "AWSSSO") {
-					trustedProvider = "AWS SSO" // (" + statement.Principal.Federated[0] + ")"
-				}
-				trustedSubjects = "Not applicable"
-			}
-
-			TrustedFederatedProviders = append(TrustedFederatedProviders, models.TrustedFederatedProvider{
-				TrustedFederatedProvider: federated,
-				ProviderShortName:        trustedProvider,
-				TrustedSubjects:          trustedSubjects,
-				//IsAdmin:                  false,
-				//CanPrivEscToAdmin:        false,
-			})
-		}
-	}
-
-	//create new object of type models.Role
-	cfRole := models.Role{
-		Id:                        aws.ToString(role.Arn),
-		AccountID:                 accountId,
-		ARN:                       aws.ToString(role.Arn),
-		Name:                      aws.ToString(role.RoleName),
-		TrustsDoc:                 trustsdoc,
-		TrustedPrincipals:         TrustedPrincipals,
-		TrustedServices:           TrustedServices,
-		TrustedFederatedProviders: TrustedFederatedProviders,
-		CanPrivEscToAdmin:         canPrivEscToAdmin,
-		IsAdmin:                   isAdmin,
-	}
-	//roles = append(roles, role)
-
-	return cfRole
 }

@@ -6,9 +6,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/BishopFox/cloudfox/aws"
-	"github.com/BishopFox/cloudfox/aws/graph/ingester/schema/models"
 	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/BishopFox/cloudfox/internal/common"
@@ -63,6 +63,7 @@ import (
 	"github.com/aws/smithy-go/ptr"
 	"github.com/bishopfox/knownawsaccountslookup"
 	"github.com/dominikbraun/graph"
+	"github.com/dominikbraun/graph/draw"
 	"github.com/fatih/color"
 	"github.com/kyokomi/emoji"
 	"github.com/spf13/cobra"
@@ -134,6 +135,17 @@ var (
 			os.Args[0] + " aws buckets --profile test_account",
 		PreRun:  awsPreRun,
 		Run:     runBucketsCommand,
+		PostRun: awsPostRun,
+	}
+
+	CaperCommand = &cobra.Command{
+		Use:     "caper",
+		Aliases: []string{"caperParse"},
+		Short:   "Cross-Account Privilege Escalation Route finder. Best run with multiple profiles, ideally the -l flag",
+		Long: "\nUse case examples:\n" +
+			os.Args[0] + " aws caper -l file_with_profile_names.txt",
+		PreRun:  awsPreRun,
+		Run:     runCaperCommand,
 		PostRun: awsPostRun,
 	}
 
@@ -935,9 +947,51 @@ func runFilesystemsCommand(cmd *cobra.Command, args []string) {
 }
 
 func runGraphCommand(cmd *cobra.Command, args []string) {
+	for _, profile := range AWSProfiles {
+		//var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
+		if err != nil {
+			continue
+		}
+
+		//instantiate a permissions client and populate the permissions data
+		fmt.Println("Getting GAAD for " + profile)
+		PermissionsCommandClient := aws.InitPermissionsClient(*caller, profile, cmd.Root().Version, Goroutines, AWSMFAToken)
+		PermissionsCommandClient.GetGAAD()
+		PermissionsCommandClient.ParsePermissions("")
+		common.PermissionRowsFromAllProfiles = append(common.PermissionRowsFromAllProfiles, PermissionsCommandClient.Rows...)
+	}
+
+	for _, profile := range AWSProfiles {
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
+		if err != nil {
+			continue
+		}
+
+		graphCommandClient := aws.GraphCommand{
+			Caller:             *caller,
+			AWSProfile:         profile,
+			Goroutines:         Goroutines,
+			AWSRegions:         internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
+			WrapTable:          AWSWrapTable,
+			AWSOutputType:      AWSOutputType,
+			AWSTableCols:       AWSTableCols,
+			AWSOutputDirectory: AWSOutputDirectory,
+			Verbosity:          Verbosity,
+			AWSConfig:          AWSConfig,
+			Version:            cmd.Root().Version,
+			SkipAdminCheck:     AWSSkipAdminCheck,
+		}
+		graphCommandClient.RunGraphCommand()
+	}
+}
+
+func runCaperCommand(cmd *cobra.Command, args []string) {
 	GlobalGraph := graph.New(graph.StringHash, graph.Directed())
 	//var PermissionRowsFromAllProfiles []common.PermissionsRow
-	var GlobalRoles []models.Role
+	var GlobalPmapperData aws.PmapperModule
+	var GlobalNodes []aws.Node
 
 	vendors := knownawsaccountslookup.NewVendorMap()
 	vendors.PopulateKnownAWSAccounts()
@@ -955,47 +1009,74 @@ func runGraphCommand(cmd *cobra.Command, args []string) {
 		PermissionsCommandClient.ParsePermissions("")
 		common.PermissionRowsFromAllProfiles = append(common.PermissionRowsFromAllProfiles, PermissionsCommandClient.Rows...)
 
-		// Gather all Pmapper data
+		// Gather all Pmapper data.
 		fmt.Println("Importing Pmapper for " + profile)
 		pmapperMod, pmapperError := aws.InitPmapperGraph(*caller, AWSProfile, Goroutines)
 		if pmapperError != nil {
 			fmt.Println("Error importing pmapper data: " + pmapperError.Error())
 		}
+
 		for _, node := range pmapperMod.Nodes {
-			GlobalGraph.AddVertex(node.Arn)
+			// add node to GlobalPmapperData
+			//GlobalPmapperData.Nodes = append(GlobalPmapperData.Nodes, node)
+			GlobalNodes = append(GlobalNodes, node)
 		}
+
 		for _, edge := range pmapperMod.Edges {
-			err := GlobalGraph.AddEdge(
-				edge.Source,
-				edge.Destination,
-				graph.EdgeAttribute(edge.ShortReason, edge.Reason),
-			)
-			if err != nil {
-				if err == graph.ErrEdgeAlreadyExists {
-					// update the ege by copying the existing graph.Edge with attributes and add the new attributes
-					//fmt.Println("Edge already exists")
-
-					// get the existing edge
-					existingEdge, _ := GlobalGraph.Edge(edge.Source, edge.Destination)
-					// get the map of attributes
-					existingProperties := existingEdge.Properties
-					// add the new attributes to attributes map within the properties struct
-					// Check if the Attributes map is initialized, if not, initialize it
-					if existingProperties.Attributes == nil {
-						existingProperties.Attributes = make(map[string]string)
-					}
-
-					// Add or update the attribute
-					existingProperties.Attributes[edge.ShortReason] = edge.Reason
-					GlobalGraph.UpdateEdge(
-						edge.Source,
-						edge.Destination,
-						graph.EdgeAttributes(existingProperties.Attributes),
-					)
-				}
-			}
-
+			// add edge to GlobalPmapperData
+			GlobalPmapperData.Edges = append(GlobalPmapperData.Edges, edge)
 		}
+
+		// for _, node := range pmapperMod.Nodes {
+		// 	var admin, pathToAdmin string
+		// 	if node.IsAdmin {
+		// 		admin = "yes"
+		// 	} else {
+		// 		admin = "no"
+		// 	}
+		// 	if node.PathToAdmin {
+		// 		pathToAdmin = "yes"
+		// 	} else {
+		// 		pathToAdmin = "no"
+		// 	}
+
+		// 	GlobalGraph.AddVertex(node.Arn,
+		// 		graph.VertexAttribute("IsAdmin", admin),
+		// 		graph.VertexAttribute("PathToAdmin", pathToAdmin),
+		// 	)
+		//}
+		// for _, edge := range pmapperMod.Edges {
+		// 	err := GlobalGraph.AddEdge(
+		// 		edge.Source,
+		// 		edge.Destination,
+		// 		graph.EdgeAttribute(edge.ShortReason, edge.Reason),
+		// 	)
+		// 	if err != nil {
+		// 		if err == graph.ErrEdgeAlreadyExists {
+		// 			// update the ege by copying the existing graph.Edge with attributes and add the new attributes
+		// 			//fmt.Println("Edge already exists")
+
+		// 			// get the existing edge
+		// 			existingEdge, _ := GlobalGraph.Edge(edge.Source, edge.Destination)
+		// 			// get the map of attributes
+		// 			existingProperties := existingEdge.Properties
+		// 			// add the new attributes to attributes map within the properties struct
+		// 			// Check if the Attributes map is initialized, if not, initialize it
+		// 			if existingProperties.Attributes == nil {
+		// 				existingProperties.Attributes = make(map[string]string)
+		// 			}
+
+		// 			// Add or update the attribute
+		// 			existingProperties.Attributes[edge.ShortReason] = edge.Reason
+		// 			GlobalGraph.UpdateEdge(
+		// 				edge.Source,
+		// 				edge.Destination,
+		// 				graph.EdgeAttributes(existingProperties.Attributes),
+		// 			)
+		// 		}
+		// 	}
+
+		// }
 
 		//Gather all role data
 		fmt.Println("Getting Roles for " + profile)
@@ -1005,74 +1086,124 @@ func runGraphCommand(cmd *cobra.Command, args []string) {
 			internal.TxtLog.Error(err)
 		}
 		for _, role := range ListRolesOutput {
-			modelRole := aws.ConvertIAMRoleToModelRole(role, vendors)
-			GlobalRoles = append(GlobalRoles, modelRole)
-		}
-		// make vertices
-		// you can't update verticies - so we need to make all of the vertices that are roles in the in-scope accounts
-		// all at once to make sure they have the most information possible
-		fmt.Println("Making vertices for " + profile)
-		for _, role := range GlobalRoles {
-			role.MakeVertices(GlobalGraph)
+			node := aws.ConvertIAMRoleToNode(role, vendors)
+
+			// First insert the role itself into the Nodes slice
+			GlobalNodes = append(GlobalNodes, node)
+			// Then insert all of the vertices that are in the role's trust policy
+			GlobalNodes = append(GlobalNodes, aws.FindVerticesInRoleTrust(node, vendors)...)
+
 		}
 
-		//making edges
-		fmt.Println("Making edges for " + profile)
-		for _, role := range GlobalRoles {
-			role.MakeEdges(GlobalGraph)
+		//Gather all user data
+		fmt.Println("Getting Users for " + profile)
+		ListUsersOutput, err := sdk.CachedIamListUsers(IAMCommandClient, ptr.ToString(caller.Account))
+		if err != nil {
+			internal.TxtLog.Error(err)
 		}
+		for _, user := range ListUsersOutput {
+			GlobalNodes = append(GlobalNodes, aws.ConvertIAMUserToNode(user))
 
-		// print how many nodes and edges are in the graph to the screen and exit
-
-		for _, profile := range AWSProfiles {
-			var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
-			caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
-			if err != nil {
-				continue
-			}
-
-			// 	graphCommandClient := aws.GraphCommand{
-			// 		Caller:             *caller,
-			// 		AWSProfile:         profile,
-			// 		Goroutines:         Goroutines,
-			// 		AWSRegions:         internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
-			// 		WrapTable:          AWSWrapTable,
-			// 		AWSOutputType:      AWSOutputType,
-			// 		AWSTableCols:       AWSTableCols,
-			// 		AWSOutputDirectory: AWSOutputDirectory,
-			// 		Verbosity:          Verbosity,
-			// 		AWSConfig:          AWSConfig,
-			// 		Version:            cmd.Root().Version,
-			// 		SkipAdminCheck:     AWSSkipAdminCheck,
-			// 	}
-			// 	graphCommandClient.RunGraphCommand()
-
-			graphCommandClient := aws.GraphCommand2{
-				Caller:             *caller,
-				AWSProfile:         profile,
-				Goroutines:         Goroutines,
-				AWSRegions:         internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
-				WrapTable:          AWSWrapTable,
-				AWSOutputType:      AWSOutputType,
-				AWSTableCols:       AWSTableCols,
-				AWSOutputDirectory: AWSOutputDirectory,
-				Verbosity:          Verbosity,
-				AWSConfig:          AWSConfig,
-				Version:            cmd.Root().Version,
-				SkipAdminCheck:     AWSSkipAdminCheck,
-				GlobalGraph:        GlobalGraph,
-			}
-
-			graphCommandClient.RunGraphCommand2()
 		}
 
 	}
-	// // print the edges to the screen
-	// edges, _ := GlobalGraph.Edges()
-	// for _, edge := range edges {
-	// 	fmt.Println(edge)
-	// }
 
+	//GlobalGraph := models.MakeAllVertices(GlobalRoles, GlobalPmapperData)
+
+	// make vertices
+	// you can't update verticies - so we need to make all of the vertices that are roles in the in-scope accounts
+	// all at once to make sure they have the most information possible
+	fmt.Println("Making vertices for all profiles")
+	// for _, role := range GlobalRoles {
+	// 	role.MakeVertices(GlobalGraph)
+	// }
+	mergedNodes := aws.MergeNodes(GlobalNodes)
+	for _, node := range mergedNodes {
+		GlobalGraph.AddVertex(
+			node.Arn,
+			graph.VertexAttribute("Type", node.Type),
+			graph.VertexAttribute("Name", node.Name),
+			graph.VertexAttribute("VendorName", node.VendorName),
+			graph.VertexAttribute("IsAdminString", node.IsAdminString),
+			graph.VertexAttribute("CanPrivEscToAdminString", node.CanPrivEscToAdminString),
+			graph.VertexAttribute("AccountID", node.AccountID),
+		)
+
+	}
+
+	// make pmapper edges
+	for _, edge := range GlobalPmapperData.Edges {
+		err := GlobalGraph.AddEdge(
+			edge.Source,
+			edge.Destination,
+			graph.EdgeAttribute(edge.ShortReason, edge.Reason),
+		)
+		if err != nil {
+			if err == graph.ErrEdgeAlreadyExists {
+				// update the ege by copying the existing graph.Edge with attributes and add the new attributes
+				//fmt.Println("Edge already exists")
+
+				// get the existing edge
+				existingEdge, _ := GlobalGraph.Edge(edge.Source, edge.Destination)
+				// get the map of attributes
+				existingProperties := existingEdge.Properties
+				// add the new attributes to attributes map within the properties struct
+				// Check if the Attributes map is initialized, if not, initialize it
+				if existingProperties.Attributes == nil {
+					existingProperties.Attributes = make(map[string]string)
+				}
+
+				// Add or update the attribute
+				existingProperties.Attributes[edge.ShortReason] = edge.Reason
+				GlobalGraph.UpdateEdge(
+					edge.Source,
+					edge.Destination,
+					graph.EdgeAttributes(existingProperties.Attributes),
+				)
+			}
+		}
+	}
+
+	//making edges
+	fmt.Println("Making edges for all profiles")
+	for _, node := range mergedNodes {
+		if node.Type == "Role" {
+			node.MakeRoleEdges(GlobalGraph)
+		}
+	}
+
+	// print how many nodes and edges are in the graph to the screen and exit
+
+	for _, profile := range AWSProfiles {
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
+		if err != nil {
+			continue
+		}
+
+		caperCommandClient := aws.CaperCommand{
+			Caller:             *caller,
+			AWSProfile:         profile,
+			Goroutines:         Goroutines,
+			AWSRegions:         internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
+			WrapTable:          AWSWrapTable,
+			AWSOutputType:      AWSOutputType,
+			AWSTableCols:       AWSTableCols,
+			AWSOutputDirectory: AWSOutputDirectory,
+			Verbosity:          Verbosity,
+			AWSConfig:          AWSConfig,
+			Version:            cmd.Root().Version,
+			SkipAdminCheck:     AWSSkipAdminCheck,
+			GlobalGraph:        GlobalGraph,
+		}
+
+		caperCommandClient.RunCaperCommand()
+		filename := fmt.Sprintf("./mygraph-%s-%s.gv", ptr.ToString(caller.Account), time.Now().Format("2006-01-02-15-04-05"))
+		file, _ := os.Create(filename)
+		_ = draw.DOT(GlobalGraph, file, draw.GraphAttribute(
+			"ranksep", "3",
+		))
+	}
 }
 
 func runIamSimulatorCommand(cmd *cobra.Command, args []string) {
@@ -2123,39 +2254,40 @@ func init() {
 	AWSCommands.PersistentFlags().StringVar(&AWSMFAToken, "mfa-token", "", "MFA Token")
 
 	AWSCommands.AddCommand(
+		AccessKeysCommand,
 		AllChecksCommand,
 		ApiGwCommand,
-		RoleTrustCommand,
-		AccessKeysCommand,
-		InstancesCommand,
-		ECSTasksCommand,
-		ElasticNetworkInterfacesCommand,
-		InventoryCommand,
-		EndpointsCommand,
-		SecretsCommand,
-		Route53Command,
-		ECRCommand,
-		SQSCommand,
-		SNSCommand,
-		EKSCommand,
-		OutboundAssumedRolesCommand,
-		EnvsCommand,
-		PrincipalsCommand,
-		IamSimulatorCommand,
-		FilesystemsCommand,
 		BucketsCommand,
-		PermissionsCommand,
+		CaperCommand,
 		CloudformationCommand,
 		CodeBuildCommand,
-		RAMCommand,
-		TagsCommand,
+		DatabasesCommand,
+		ECSTasksCommand,
+		ECRCommand,
+		EKSCommand,
+		ElasticNetworkInterfacesCommand,
+		EndpointsCommand,
+		EnvsCommand,
+		FilesystemsCommand,
+		GraphCommand,
+		IamSimulatorCommand,
+		InstancesCommand,
+		InventoryCommand,
 		LambdasCommand,
 		NetworkPortsCommand,
-		PmapperCommand,
-		ResourceTrustsCommand,
 		OrgsCommand,
-		DatabasesCommand,
-		GraphCommand,
+		OutboundAssumedRolesCommand,
+		PermissionsCommand,
+		PrincipalsCommand,
+		PmapperCommand,
+		RAMCommand,
+		ResourceTrustsCommand,
+		RoleTrustCommand,
+		Route53Command,
+		SQSCommand,
+		SNSCommand,
+		SecretsCommand,
+		TagsCommand,
 		WorkloadsCommand,
 	)
 

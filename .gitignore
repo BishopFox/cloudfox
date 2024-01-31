@@ -71,3 +71,7 @@ cloudfox
 *.csv
 *.log
 dist/
+
+# graphvis files
+*.gv
+*.svg
