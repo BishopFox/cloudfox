@@ -31,10 +31,11 @@ type PmapperModule struct {
 	WrapTable  bool
 
 	// Main module data
-	pmapperGraph   graph.Graph[string, string]
-	Nodes          []Node
-	Edges          []Edge
-	CommandCounter internal.CommandCounter
+	PmapperDataBasePath string
+	pmapperGraph        graph.Graph[string, string]
+	Nodes               []Node
+	Edges               []Edge
+	CommandCounter      internal.CommandCounter
 	// Used to store output data for pretty printing
 	output internal.OutputData2
 	modLog *logrus.Entry

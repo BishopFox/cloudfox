@@ -75,13 +75,14 @@ var (
 	red              = color.New(color.FgRed).SprintFunc()
 	defaultOutputDir = ptr.ToString(internal.GetLogDirPath())
 
-	AWSProfile      string
-	AWSProfilesList string
-	AWSAllProfiles  bool
-	AWSProfiles     []string
-	AWSConfirm      bool
-	AWSOutputType   string
-	AWSTableCols    string
+	AWSProfile          string
+	AWSProfilesList     string
+	AWSAllProfiles      bool
+	AWSProfiles         []string
+	AWSConfirm          bool
+	AWSOutputType       string
+	AWSTableCols        string
+	PmapperDataBasePath string
 
 	AWSOutputDirectory string
 	AWSSkipAdminCheck  bool
@@ -141,7 +142,10 @@ var (
 	CaperCommand = &cobra.Command{
 		Use:     "caper",
 		Aliases: []string{"caperParse"},
-		Short:   "Cross-Account Privilege Escalation Route finder. Best run with multiple profiles, ideally the -l flag",
+		Short: "Cross-Account Privilege Escalation Route finder.\n" +
+			"Needs to be run with multiple profiles using -l or -a flag\n" +
+			"Needs pmapper data to be present",
+
 		Long: "\nUse case examples:\n" +
 			os.Args[0] + " aws caper -l file_with_profile_names.txt",
 		PreRun:  awsPreRun,
@@ -460,7 +464,6 @@ var (
 		Run:     runTagsCommand,
 		PostRun: awsPostRun,
 	}
-
 	PmapperCommand = &cobra.Command{
 
 		Use:     "pmapper",
@@ -1182,19 +1185,20 @@ func runCaperCommand(cmd *cobra.Command, args []string) {
 		}
 
 		caperCommandClient := aws.CaperCommand{
-			Caller:             *caller,
-			AWSProfile:         profile,
-			Goroutines:         Goroutines,
-			AWSRegions:         internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
-			WrapTable:          AWSWrapTable,
-			AWSOutputType:      AWSOutputType,
-			AWSTableCols:       AWSTableCols,
-			AWSOutputDirectory: AWSOutputDirectory,
-			Verbosity:          Verbosity,
-			AWSConfig:          AWSConfig,
-			Version:            cmd.Root().Version,
-			SkipAdminCheck:     AWSSkipAdminCheck,
-			GlobalGraph:        GlobalGraph,
+			Caller:              *caller,
+			AWSProfile:          profile,
+			Goroutines:          Goroutines,
+			AWSRegions:          internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
+			WrapTable:           AWSWrapTable,
+			AWSOutputType:       AWSOutputType,
+			AWSTableCols:        AWSTableCols,
+			AWSOutputDirectory:  AWSOutputDirectory,
+			Verbosity:           Verbosity,
+			AWSConfig:           AWSConfig,
+			Version:             cmd.Root().Version,
+			SkipAdminCheck:      AWSSkipAdminCheck,
+			GlobalGraph:         GlobalGraph,
+			PmapperDataBasePath: PmapperDataBasePath,
 		}
 
 		caperCommandClient.RunCaperCommand()
@@ -1401,12 +1405,13 @@ func runPmapperCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.PmapperModule{
-			Caller:        *caller,
-			AWSProfile:    profile,
-			Goroutines:    Goroutines,
-			WrapTable:     AWSWrapTable,
-			AWSOutputType: AWSOutputType,
-			AWSTableCols:  AWSTableCols,
+			Caller:              *caller,
+			AWSProfile:          profile,
+			Goroutines:          Goroutines,
+			WrapTable:           AWSWrapTable,
+			AWSOutputType:       AWSOutputType,
+			AWSTableCols:        AWSTableCols,
+			PmapperDataBasePath: PmapperDataBasePath,
 		}
 		m.PrintPmapperData(AWSOutputDirectory, Verbosity)
 	}
@@ -2238,6 +2243,10 @@ func init() {
 	// buckets command flags (for bucket policies)
 	BucketsCommand.Flags().BoolVarP(&CheckBucketPolicies, "with-policies", "", false, "Analyze bucket policies (this is already done in the resource-trusts command)")
 
+	// pmapper flag for pmapper and caper commands
+	//PmapperCommand.Flags().StringVarP(&PmapperDataBasePath, "pmapper-data-basepath", "pdata", "", "Supply the base path for the pmapper data files (useful if you have copied them from another machine)")
+	//CaperCommand.Flags().StringVarP(&PmapperDataBasePath, "pmapper-data-basepath", "pdata", "", "Supply the base path for the pmapper data files (useful if you have copied them from another machine)")
+
 	// Global flags for the AWS modules
 	AWSCommands.PersistentFlags().StringVarP(&AWSProfile, "profile", "p", "", "AWS CLI Profile Name")
 	AWSCommands.PersistentFlags().StringVarP(&AWSProfilesList, "profiles-list", "l", "", "File containing a AWS CLI profile names separated by newlines")
@@ -2252,6 +2261,7 @@ func init() {
 	AWSCommands.PersistentFlags().BoolVarP(&AWSUseCache, "cached", "c", false, "Load cached data from disk. Faster, but if changes have been recently made you'll miss them")
 	AWSCommands.PersistentFlags().StringVarP(&AWSTableCols, "cols", "t", "", "Comma separated list of columns to display in table output")
 	AWSCommands.PersistentFlags().StringVar(&AWSMFAToken, "mfa-token", "", "MFA Token")
+	AWSCommands.PersistentFlags().StringVar(&PmapperDataBasePath, "pmapper-data-basepath", "", "Supply the base path for the pmapper data files (useful if you have copied them from another machine)")
 
 	AWSCommands.AddCommand(
 		AccessKeysCommand,

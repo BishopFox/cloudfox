@@ -19,19 +19,20 @@ import (
 type CaperCommand struct {
 
 	// General configuration data
-	Caller             sts.GetCallerIdentityOutput
-	AWSRegions         []string
-	Goroutines         int
-	AWSProfile         string
-	WrapTable          bool
-	AWSOutputType      string
-	AWSTableCols       string
-	Verbosity          int
-	AWSOutputDirectory string
-	AWSConfig          aws.Config
-	Version            string
-	SkipAdminCheck     bool
-	GlobalGraph        graph.Graph[string, string]
+	Caller              sts.GetCallerIdentityOutput
+	AWSRegions          []string
+	Goroutines          int
+	AWSProfile          string
+	WrapTable           bool
+	AWSOutputType       string
+	AWSTableCols        string
+	Verbosity           int
+	AWSOutputDirectory  string
+	AWSConfig           aws.Config
+	Version             string
+	SkipAdminCheck      bool
+	GlobalGraph         graph.Graph[string, string]
+	PmapperDataBasePath string
 
 	output internal.OutputData2
 	modLog *logrus.Entry
@@ -164,7 +165,11 @@ func (m *CaperCommand) generateInboundPrivEscTableData() ([]string, [][]string, 
 
 							//trim the last newline from csvPaths
 							paths = strings.TrimSuffix(paths, "\n")
-							privescPathsBody = append(privescPathsBody, []string{aws.ToString(m.Caller.Account), s, d, paths})
+							if destinationVertexWithProperties.Attributes["IsAdminString"] == "Yes" {
+								privescPathsBody = append(privescPathsBody, []string{aws.ToString(m.Caller.Account), s, magenta(d), paths})
+							} else {
+								privescPathsBody = append(privescPathsBody, []string{aws.ToString(m.Caller.Account), s, d, paths})
+							}
 
 						}
 					}
@@ -322,12 +327,12 @@ func FindVerticesInRoleTrust(a Node, vendors *knownawsaccountslookup.Vendors) []
 	var newNodes []Node
 
 	// get thisAccount id from role arn
-	var thisAccount string
-	if len(a.Arn) >= 25 {
-		thisAccount = a.Arn[13:25]
-	} else {
-		fmt.Sprintf("Could not get account number from this role arn%s", a.Arn)
-	}
+	// var thisAccount string
+	// if len(a.Arn) >= 25 {
+	// 	thisAccount = a.Arn[13:25]
+	// } else {
+	// 	fmt.Sprintf("Could not get account number from this role arn%s", a.Arn)
+	// }
 
 	for _, TrustedPrincipal := range a.TrustedPrincipals {
 		//get account id from the trusted principal arn
@@ -341,30 +346,32 @@ func FindVerticesInRoleTrust(a Node, vendors *knownawsaccountslookup.Vendors) []
 		// If the role trusts a principal in this account or another account using the :root notation, then we need to iterate over all of the rows in AllPermissionsRows to find the principals that have sts:AssumeRole permissions on this role
 		// if the role we are looking at trusts root in it's own account
 
-		if strings.Contains(TrustedPrincipal.TrustedPrincipal, fmt.Sprintf("%s:root", thisAccount)) {
+		// if strings.Contains(TrustedPrincipal.TrustedPrincipal, fmt.Sprintf("%s:root", thisAccount)) {
 
-			newNodes = append(newNodes, Node{
-				Arn:       a.Arn,
-				Type:      "Account",
-				AccountID: a.AccountID,
-				Name:      a.Name,
-			})
+		// 	newNodes = append(newNodes, Node{
+		// 		Arn:       a.Arn,
+		// 		Type:      "Account",
+		// 		AccountID: a.AccountID,
+		// 		Name:      a.Name,
+		// 	})
 
-		} else if strings.Contains(TrustedPrincipal.TrustedPrincipal, ":root") && TrustedPrincipal.VendorName != "" {
+		// } else
+
+		if strings.Contains(TrustedPrincipal.TrustedPrincipal, ":root") && TrustedPrincipal.VendorName != "" {
 			newNodes = append(newNodes, Node{
-				Arn:        a.Arn,
+				Arn:        fmt.Sprintf("%s-%s", a.Arn, TrustedPrincipal.VendorName),
 				Type:       "Account",
 				AccountID:  a.AccountID,
 				Name:       a.Name,
 				VendorName: TrustedPrincipal.VendorName,
 			})
 
-		} else if strings.Contains(TrustedPrincipal.TrustedPrincipal, fmt.Sprintf("%s:root", trustedPrincipalAccount)) {
-			newNodes = append(newNodes, Node{
-				Arn:       TrustedPrincipal.TrustedPrincipal,
-				Type:      "Account",
-				AccountID: trustedPrincipalAccount,
-			})
+			// } else if strings.Contains(TrustedPrincipal.TrustedPrincipal, fmt.Sprintf("%s:root", trustedPrincipalAccount)) {
+			// 	newNodes = append(newNodes, Node{
+			// 		Arn:       TrustedPrincipal.TrustedPrincipal,
+			// 		Type:      "Account",
+			// 		AccountID: trustedPrincipalAccount,
+			// 	})
 
 		} else if strings.Contains(TrustedPrincipal.TrustedPrincipal, fmt.Sprintf(":user")) {
 			newNodes = append(newNodes, Node{
@@ -393,14 +400,6 @@ func FindVerticesInRoleTrust(a Node, vendors *knownawsaccountslookup.Vendors) []
 				Type:      "AssumedRole",
 				AccountID: trustedPrincipalAccount,
 			})
-
-		} else if strings.Contains(TrustedPrincipal.TrustedPrincipal, fmt.Sprintf(":assumed-role")) {
-			newNodes = append(newNodes, Node{
-				Arn:       TrustedPrincipal.TrustedPrincipal,
-				Type:      "AssumedRole",
-				AccountID: trustedPrincipalAccount,
-			})
-
 		}
 	}
 	// pmapper takes care of this part so commenting out for now - but leaving as a placeholder
@@ -532,59 +531,6 @@ func mergeNodeData(existingNode Node, newNode Node) Node {
 	return existingNode
 }
 
-func (a *Node) mergeAttributes(newAttributes map[string]any) {
-	if a.Arn == "" {
-		a.Arn = newAttributes["Arn"].(string)
-	}
-	if a.Name == "" {
-		a.Name = newAttributes["Name"].(string)
-	}
-	if a.Type == "" {
-		a.Type = newAttributes["Type"].(string)
-	}
-	if a.AccountID == "" {
-		a.AccountID = newAttributes["AccountID"].(string)
-	}
-	if a.CanPrivEscToAdminString == "" {
-		a.CanPrivEscToAdminString = newAttributes["CanPrivEscToAdminString"].(string)
-	}
-	if a.IsAdminString == "" {
-		a.IsAdminString = newAttributes["IsAdminString"].(string)
-	}
-	if a.VendorName == "" {
-		a.VendorName = newAttributes["VendorName"].(string)
-	}
-	// if a.AccessKeys does not exist, set it to the value in newAttributes
-	if a.AccessKeys == 0 {
-		a.AccessKeys = newAttributes["AccessKeys"].(int)
-	}
-	if a.ActivePassword == false {
-		a.ActivePassword = newAttributes["ActivePassword"].(bool)
-	}
-	if a.HasMfa == false {
-		a.HasMfa = newAttributes["HasMfa"].(bool)
-	}
-	if a.PathToAdmin == false {
-		a.PathToAdmin = newAttributes["PathToAdmin"].(bool)
-	}
-	if a.AttachedPolicies == nil {
-		a.AttachedPolicies = newAttributes["AttachedPolicies"].([]AttachedPolicies)
-	}
-	if a.TrustedFederatedProviders == nil {
-		a.TrustedFederatedProviders = newAttributes["TrustedFederatedProviders"].([]TrustedFederatedProvider)
-	}
-	if a.TrustedPrincipals == nil {
-		a.TrustedPrincipals = newAttributes["TrustedPrincipals"].([]TrustedPrincipal)
-	}
-	if a.TrustedServices == nil {
-		a.TrustedServices = newAttributes["TrustedServices"].([]TrustedService)
-	}
-	// if a.TrustsDoc.Statement == nil {
-	// 	a.TrustsDoc = newAttributes["TrustsDoc"].(policy.TrustPolicyDocument)
-	// }
-
-}
-
 func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 
 	// get thisAccount id from role arn
@@ -616,8 +562,34 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 				graph.EdgeAttribute("AssumeRole", "can assume (because of an explicit same account trust) "),
 			)
 			if err != nil {
-				fmt.Println(err)
-				fmt.Println(TrustedPrincipal.TrustedPrincipal + a.Arn + "Same account explicit trust")
+				//fmt.Println(err)
+				//fmt.Println(TrustedPrincipal.TrustedPrincipal + a.Arn + "Same account explicit trust")
+				if err == graph.ErrEdgeAlreadyExists {
+					// update the ege by copying the existing graph.Edge with attributes and add the new attributes
+					//fmt.Println("Edge already exists")
+
+					// get the existing edge
+					existingEdge, _ := GlobalGraph.Edge(TrustedPrincipal.TrustedPrincipal, a.Arn)
+					// get the map of attributes
+					existingProperties := existingEdge.Properties
+					// add the new attributes to attributes map within the properties struct
+					// Check if the Attributes map is initialized, if not, initialize it
+					if existingProperties.Attributes == nil {
+						existingProperties.Attributes = make(map[string]string)
+					}
+
+					// Add or update the attribute
+					existingProperties.Attributes["AssumeRole"] = "can assume (because of an explicit same account trust) "
+					err = GlobalGraph.UpdateEdge(
+						TrustedPrincipal.TrustedPrincipal,
+						a.Arn,
+						graph.EdgeAttributes(existingProperties.Attributes),
+					)
+					if err != nil {
+						fmt.Println(err)
+					}
+				}
+
 			}
 		}
 
@@ -647,9 +619,9 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 							// if the resource is * or the resource is this role arn, then this principal can assume this role
 							if PermissionsRow.Resource == "*" || strings.Contains(PermissionsRow.Resource, a.Arn) {
 								// make a CAN_ASSUME relationship between the trusted principal and this role
-								//evalutate if the princiapl is a user or a role and set a variable accordingly
+								//evaluate if the principal is a user or a role and set a variable accordingly
 								//var principalType schema.NodeLabel
-								if strings.EqualFold(PermissionsRow.Type, "User") {
+								if strings.EqualFold(PermissionsRow.Type, "User") || strings.EqualFold(PermissionsRow.Type, "Role") {
 									err := GlobalGraph.AddEdge(
 										PermissionsRow.Arn,
 										a.Arn,
@@ -657,19 +629,33 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 										graph.EdgeAttribute("AssumeRole", "can assume (because of a same account root trust and trusted principal has permission to assume role) "),
 									)
 									if err != nil {
-										fmt.Println(err)
-										fmt.Println(PermissionsRow.Arn + a.Arn + "Same account root trust and trusted principal has permission to assume role")
-									}
-								} else if strings.EqualFold(PermissionsRow.Type, "Role") {
-									err := GlobalGraph.AddEdge(
-										PermissionsRow.Arn,
-										a.Arn,
-										//graph.EdgeAttribute("AssumeRole", "Same account root trust and trusted principal has permission to assume role"),
-										graph.EdgeAttribute("AssumeRole", "can assume (because of a same account root trust and trusted principal has permission to assume role) "),
-									)
-									if err != nil {
-										fmt.Println(err)
-										fmt.Println(PermissionsRow.Arn + a.Arn + "Same account root trust and trusted principal has permission to assume role")
+										// fmt.Println(err)
+										// fmt.Println(PermissionsRow.Arn + a.Arn + "Same account root trust and trusted principal has permission to assume role")
+										if err == graph.ErrEdgeAlreadyExists {
+											// update the ege by copying the existing graph.Edge with attributes and add the new attributes
+
+											// get the existing edge
+											existingEdge, _ := GlobalGraph.Edge(PermissionsRow.Arn, a.Arn)
+											// get the map of attributes
+											existingProperties := existingEdge.Properties
+											// add the new attributes to attributes map within the properties struct
+											// Check if the Attributes map is initialized, if not, initialize it
+											if existingProperties.Attributes == nil {
+												existingProperties.Attributes = make(map[string]string)
+											}
+
+											// Add or update the attribute
+											existingProperties.Attributes["AssumeRole"] = "can assume (because of a same account root trust and trusted principal has permission to assume role) "
+											err = GlobalGraph.UpdateEdge(
+												PermissionsRow.Arn,
+												a.Arn,
+												graph.EdgeAttributes(existingProperties.Attributes),
+											)
+											if err != nil {
+												fmt.Println(err)
+											}
+										}
+
 									}
 								}
 							}
@@ -689,8 +675,32 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 				graph.EdgeAttribute("VendorAssumeRole", "can assume (because of a cross account root trust and trusted principal is a vendor) "),
 			)
 			if err != nil {
-				fmt.Println(err)
-				fmt.Println(TrustedPrincipal.VendorName + a.Arn + "Cross account root trust and trusted principal is a vendor")
+				// fmt.Println(err)
+				// fmt.Println(TrustedPrincipal.VendorName + a.Arn + "Cross account root trust and trusted principal is a vendor")
+				if err == graph.ErrEdgeAlreadyExists {
+					// update the ege by copying the existing graph.Edge with attributes and add the new attributes
+
+					// get the existing edge
+					existingEdge, _ := GlobalGraph.Edge(TrustedPrincipal.VendorName, a.Arn)
+					// get the map of attributes
+					existingProperties := existingEdge.Properties
+					// add the new attributes to attributes map within the properties struct
+					// Check if the Attributes map is initialized, if not, initialize it
+					if existingProperties.Attributes == nil {
+						existingProperties.Attributes = make(map[string]string)
+					}
+
+					// Add or update the attribute
+					existingProperties.Attributes["VendorAssumeRole"] = "can assume (because of a cross account root trust and trusted principal is a vendor) "
+					err := GlobalGraph.UpdateEdge(
+						fmt.Sprintf("%s-%s", a.Arn, TrustedPrincipal.VendorName),
+						a.Arn,
+						graph.EdgeAttributes(existingProperties.Attributes),
+					)
+					if err != nil {
+						fmt.Println(err)
+					}
+				}
 
 			}
 		} else if strings.Contains(TrustedPrincipal.TrustedPrincipal, fmt.Sprintf("%s:root", trustedPrincipalAccount)) {
@@ -723,8 +733,32 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 										graph.EdgeAttribute("CrossAccountAssumeRole", "can assume (because of a cross account root trust and trusted principal has permission to assume role) "),
 									)
 									if err != nil {
-										fmt.Println(err)
-										fmt.Println(PermissionsRow.Arn + a.Arn + "Cross account root trust and trusted principal has permission to assume role")
+										//fmt.Println(err)
+										//fmt.Println(PermissionsRow.Arn + a.Arn + "Cross account root trust and trusted principal has permission to assume role")
+										if err == graph.ErrEdgeAlreadyExists {
+											// update the ege by copying the existing graph.Edge with attributes and add the new attributes
+
+											// get the existing edge
+											existingEdge, _ := GlobalGraph.Edge(PermissionsRow.Arn, a.Arn)
+											// get the map of attributes
+											existingProperties := existingEdge.Properties
+											// add the new attributes to attributes map within the properties struct
+											// Check if the Attributes map is initialized, if not, initialize it
+											if existingProperties.Attributes == nil {
+												existingProperties.Attributes = make(map[string]string)
+											}
+
+											// Add or update the attribute
+											existingProperties.Attributes["CrossAccountAssumeRole"] = "can assume (because of a cross account root trust and trusted principal has permission to assume role) "
+											err = GlobalGraph.UpdateEdge(
+												PermissionsRow.Arn,
+												a.Arn,
+												graph.EdgeAttributes(existingProperties.Attributes),
+											)
+											if err != nil {
+												fmt.Println(err)
+											}
+										}
 									}
 
 								} else if strings.EqualFold(PermissionsRow.Type, "Role") {
@@ -735,8 +769,32 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 										graph.EdgeAttribute("CrossAccountAssumeRole", "can assume (because of a cross account root trust and trusted principal has permission to assume role) "),
 									)
 									if err != nil {
-										fmt.Println(err)
-										fmt.Println(PermissionsRow.Arn + a.Arn + "Cross account root trust and trusted principal has permission to assume role")
+										//fmt.Println(err)
+										//fmt.Println(PermissionsRow.Arn + a.Arn + "Cross account root trust and trusted principal has permission to assume role")
+										if err == graph.ErrEdgeAlreadyExists {
+											// update the ege by copying the existing graph.Edge with attributes and add the new attributes
+
+											// get the existing edge
+											existingEdge, _ := GlobalGraph.Edge(PermissionsRow.Arn, a.Arn)
+											// get the map of attributes
+											existingProperties := existingEdge.Properties
+											// add the new attributes to attributes map within the properties struct
+											// Check if the Attributes map is initialized, if not, initialize it
+											if existingProperties.Attributes == nil {
+												existingProperties.Attributes = make(map[string]string)
+											}
+
+											// Add or update the attribute
+											existingProperties.Attributes["CrossAccountAssumeRole"] = "can assume (because of a cross account root trust and trusted principal has permission to assume role) "
+											err = GlobalGraph.UpdateEdge(
+												PermissionsRow.Arn,
+												a.Arn,
+												graph.EdgeAttributes(existingProperties.Attributes),
+											)
+											if err != nil {
+												fmt.Println(err)
+											}
+										}
 									}
 								}
 							}
@@ -765,8 +823,32 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 			graph.EdgeAttribute("FederatedAssumeRole", "can assume (because of a trusted federated provider) "),
 		)
 		if err != nil {
-			fmt.Println(err)
-			fmt.Println(TrustedFederatedProvider.TrustedFederatedProvider + a.Arn + "Trusted federated provider")
+			//fmt.Println(err)
+			//fmt.Println(TrustedFederatedProvider.TrustedFederatedProvider + a.Arn + "Trusted federated provider")
+			if err == graph.ErrEdgeAlreadyExists {
+				// update the ege by copying the existing graph.Edge with attributes and add the new attributes
+
+				// get the existing edge
+				existingEdge, _ := GlobalGraph.Edge(TrustedFederatedProvider.TrustedFederatedProvider, a.Arn)
+				// get the map of attributes
+				existingProperties := existingEdge.Properties
+				// add the new attributes to attributes map within the properties struct
+				// Check if the Attributes map is initialized, if not, initialize it
+				if existingProperties.Attributes == nil {
+					existingProperties.Attributes = make(map[string]string)
+				}
+
+				// Add or update the attribute
+				existingProperties.Attributes["FederatedAssumeRole"] = "can assume (because of a trusted federated provider) "
+				err = GlobalGraph.UpdateEdge(
+					TrustedFederatedProvider.TrustedFederatedProvider,
+					a.Arn,
+					graph.EdgeAttributes(existingProperties.Attributes),
+				)
+				if err != nil {
+					fmt.Println(err)
+				}
+			}
 		}
 
 	}
