@@ -836,7 +836,7 @@ func (m *EnvsModule) interestingEnvVarsOnly() [][]string {
 	for _, envVar := range m.EnvironmentVariables {
 		if envVar.interesting {
 			interestingBody = append(
-				m.output.Body, []string{
+				interestingBody, []string{
 					aws.ToString(m.Caller.Account),
 					envVar.service,
 					envVar.region,
