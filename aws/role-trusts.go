@@ -204,33 +204,34 @@ func (m *RoleTrustsModule) printPrincipalTrusts(outputDirectory string) ([]strin
 	for _, role := range m.AnalyzedRoles {
 		for _, statement := range role.trustsDoc.Statement {
 			for _, principal := range statement.Principal.AWS {
-				if strings.Contains(principal, ":root") {
-					//check to see if the accountID is known
+				//check to see if the accountID is known
+				if strings.Contains(principal, "arn:aws:iam::") || strings.Contains(principal, "root") {
 					accountID := strings.Split(principal, ":")[4]
 					vendorName := m.vendors.GetVendorNameFromAccountID(accountID)
 					if vendorName != "" {
 						principal = fmt.Sprintf("%s (%s)", principal, vendorName)
 					}
-
-					RoleTrustRow := RoleTrustRow{
-						RoleARN:          aws.ToString(role.roleARN),
-						RoleName:         GetResourceNameFromArn(aws.ToString(role.roleARN)),
-						TrustedPrincipal: principal,
-						ExternalID:       statement.Condition.StringEquals.StsExternalID,
-						IsAdmin:          role.Admin,
-						CanPrivEsc:       role.CanPrivEsc,
-					}
-					body = append(body, []string{
-						aws.ToString(m.Caller.Account),
-						RoleTrustRow.RoleARN,
-						RoleTrustRow.RoleName,
-						RoleTrustRow.TrustedPrincipal,
-						RoleTrustRow.ExternalID,
-						RoleTrustRow.IsAdmin,
-						RoleTrustRow.CanPrivEsc})
 				}
+
+				RoleTrustRow := RoleTrustRow{
+					RoleARN:          aws.ToString(role.roleARN),
+					RoleName:         GetResourceNameFromArn(aws.ToString(role.roleARN)),
+					TrustedPrincipal: principal,
+					ExternalID:       statement.Condition.StringEquals.StsExternalID,
+					IsAdmin:          role.Admin,
+					CanPrivEsc:       role.CanPrivEsc,
+				}
+				body = append(body, []string{
+					aws.ToString(m.Caller.Account),
+					RoleTrustRow.RoleARN,
+					RoleTrustRow.RoleName,
+					RoleTrustRow.TrustedPrincipal,
+					RoleTrustRow.ExternalID,
+					RoleTrustRow.IsAdmin,
+					RoleTrustRow.CanPrivEsc})
 			}
 		}
+
 	}
 
 	m.sortTrustsTablePerTrustedPrincipal()

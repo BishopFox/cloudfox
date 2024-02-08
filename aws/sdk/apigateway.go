@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/apigateway"
 	apiGatewayTypes "github.com/aws/aws-sdk-go-v2/service/apigateway/types"
+	"github.com/patrickmn/go-cache"
 )
 
 type APIGatewayClientInterface interface {
@@ -66,7 +67,7 @@ func CachedApiGatewayGetRestAPIs(client APIGatewayClientInterface, accountID str
 		}
 		PaginationControl = GetRestApis.Position
 	}
-
+	internal.Cache.Set(cacheKey, restAPIs, cache.DefaultExpiration)
 	return restAPIs, nil
 }
 
@@ -92,6 +93,7 @@ func CachedApiGatewayGetStages(client APIGatewayClientInterface, accountID strin
 		return apigateway.GetStagesOutput{}, err
 	}
 
+	internal.Cache.Set(cacheKey, GetStages, cache.DefaultExpiration)
 	return *GetStages, err
 }
 
@@ -129,7 +131,7 @@ func CachedApiGatewayGetResources(client APIGatewayClientInterface, accountID st
 		}
 		PaginationControl = GetResources.Position
 	}
-
+	internal.Cache.Set(cacheKey, resources, cache.DefaultExpiration)
 	return resources, nil
 }
 
@@ -166,7 +168,7 @@ func CachedApiGatewayGetDomainNames(client APIGatewayClientInterface, accountID 
 		}
 		PaginationControl = GetDomainNames.Position
 	}
-
+	internal.Cache.Set(cacheKey, domainNames, cache.DefaultExpiration)
 	return domainNames, nil
 }
 
@@ -204,7 +206,7 @@ func CachedApiGatewayGetBasePathMappings(client APIGatewayClientInterface, accou
 		}
 		PaginationControl = GetBasePathMappings.Position
 	}
-
+	internal.Cache.Set(cacheKey, basePathMappings, cache.DefaultExpiration)
 	return basePathMappings, nil
 }
 
@@ -233,6 +235,7 @@ func CachedApiGatewayGetMethod(client APIGatewayClientInterface, accountID strin
 		return apigateway.GetMethodOutput{}, err
 	}
 
+	internal.Cache.Set(cacheKey, GetMethod, cache.DefaultExpiration)
 	return *GetMethod, nil
 
 }
@@ -271,6 +274,7 @@ func CachedApiGatewayGetUsagePlans(client APIGatewayClientInterface, accountID s
 		PaginationControl = GetUsagePlans.Position
 	}
 
+	internal.Cache.Set(cacheKey, usagePlans, cache.DefaultExpiration)
 	return usagePlans, nil
 }
 
@@ -309,5 +313,6 @@ func CachedApiGatewayGetUsagePlanKeys(client APIGatewayClientInterface, accountI
 		PaginationControl = GetUsagePlanKeys.Position
 	}
 
+	internal.Cache.Set(cacheKey, usagePlanKeys, cache.DefaultExpiration)
 	return usagePlanKeys, nil
 }

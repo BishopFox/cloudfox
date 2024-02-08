@@ -13,8 +13,6 @@ import (
 	"github.com/BishopFox/cloudfox/internal/aws/policy"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/arn"
-	"github.com/aws/aws-sdk-go-v2/service/glue"
-	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/bishopfox/awsservicemap"
 	"github.com/sirupsen/logrus"
@@ -22,16 +20,17 @@ import (
 
 type ResourceTrustsModule struct {
 	// General configuration data
-	Caller          sts.GetCallerIdentityOutput
-	AWSRegions      []string
-	Goroutines      int
-	WrapTable       bool
-	AWSOutputType   string
-	AWSTableCols    string
-	AWSMFAToken     string
-	AWSConfig       aws.Config
-	AWSProfile      string
-	CloudFoxVersion string
+	Caller             sts.GetCallerIdentityOutput
+	AWSRegions         []string
+	Goroutines         int
+	WrapTable          bool
+	AWSOutputType      string
+	AWSTableCols       string
+	AWSMFAToken        string
+	AWSConfig          aws.Config
+	AWSProfileProvided string
+	AWSProfileStub     string
+	CloudFoxVersion    string
 
 	Resources2     []Resource2
 	CommandCounter internal.CommandCounter
@@ -64,13 +63,16 @@ func (m *ResourceTrustsModule) PrintResources(outputDirectory string, verbosity 
 	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
-	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-	if m.AWSProfile == "" {
-		m.AWSProfile = internal.BuildAWSPath(m.Caller)
-	}
 
-	fmt.Printf("[%s][%s] Enumerating Resources with resource policies for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
-	fmt.Printf("[%s][%s] Supported Services: CodeBuild, ECR, EFS, Glue, Lambda, SecretsManager, S3, SNS, SQS\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	if m.AWSProfileProvided == "" {
+		m.AWSProfileStub = internal.BuildAWSPath(m.Caller)
+	} else {
+		m.AWSProfileStub = m.AWSProfileProvided
+	}
+	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfileProvided, aws.ToString(m.Caller.Account)))
+
+	fmt.Printf("[%s][%s] Enumerating Resources with resource policies for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfileStub), aws.ToString(m.Caller.Account))
+	fmt.Printf("[%s][%s] Supported Services: CodeBuild, ECR, EFS, Glue, Lambda, SecretsManager, S3, SNS, SQS\n", cyan(m.output.CallingModule), cyan(m.AWSProfileStub))
 	wg := new(sync.WaitGroup)
 	semaphore := make(chan struct{}, m.Goroutines)
 
@@ -174,16 +176,16 @@ func (m *ResourceTrustsModule) PrintResources(outputDirectory string, verbosity 
 			TableCols: tableCols,
 			Name:      m.output.CallingModule,
 		})
-		o.PrefixIdentifier = m.AWSProfile
-		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
+		o.PrefixIdentifier = m.AWSProfileStub
+		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfileStub, aws.ToString(m.Caller.Account)))
 		o.WriteFullOutput(o.Table.TableFiles, nil)
 		//m.writeLoot(o.Table.DirectoryName, verbosity)
-		fmt.Printf("[%s][%s] %s resource policies found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
+		fmt.Printf("[%s][%s] %s resource policies found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfileStub), strconv.Itoa(len(m.output.Body)))
 		//fmt.Printf("[%s][%s] Resource policies stored to: %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.getLootDir())
 	} else {
-		fmt.Printf("[%s][%s] No resource policies found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+		fmt.Printf("[%s][%s] No resource policies found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfileStub))
 	}
-	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
+	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfileStub), m.output.CallingModule)
 
 }
 
@@ -294,13 +296,7 @@ func (m *ResourceTrustsModule) getSNSTopicsPerRegion(r string, wg *sync.WaitGrou
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	var cloudFoxSNSClient SNSModule
-
-	if strings.Contains(m.AWSProfile, "-AROA") {
-		cloudFoxSNSClient = InitCloudFoxSNSClient(m.Caller, "", m.CloudFoxVersion, m.Goroutines, m.WrapTable, m.AWSMFAToken)
-	} else {
-		cloudFoxSNSClient = InitCloudFoxSNSClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines, m.WrapTable, m.AWSMFAToken)
-	}
+	cloudFoxSNSClient := InitCloudFoxSNSClient(m.Caller, m.AWSProfileProvided, m.CloudFoxVersion, m.Goroutines, m.WrapTable, m.AWSMFAToken)
 
 	ListTopics, err := cloudFoxSNSClient.listTopics(r)
 	if err != nil {
@@ -376,13 +372,7 @@ func (m *ResourceTrustsModule) getS3Buckets(wg *sync.WaitGroup, semaphore chan s
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	var cloudFoxS3Client BucketsModule
-
-	if strings.Contains(m.AWSProfile, "-AROA") {
-		cloudFoxS3Client = initCloudFoxS3Client(m.Caller, "", m.CloudFoxVersion, m.AWSMFAToken)
-	} else {
-		cloudFoxS3Client = initCloudFoxS3Client(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.AWSMFAToken)
-	}
+	cloudFoxS3Client := initCloudFoxS3Client(m.Caller, m.AWSProfileProvided, m.CloudFoxVersion, m.AWSMFAToken)
 
 	ListBuckets, err := sdk.CachedListBuckets(cloudFoxS3Client.S3Client, aws.ToString(m.Caller.Account))
 	if err != nil {
@@ -465,13 +455,7 @@ func (m *ResourceTrustsModule) getSQSQueuesPerRegion(r string, wg *sync.WaitGrou
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	var cloudFoxSQSClient SQSModule
-
-	if strings.Contains(m.AWSProfile, "-AROA") {
-		cloudFoxSQSClient = InitSQSClient(m.Caller, "", m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
-	} else {
-		cloudFoxSQSClient = InitSQSClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
-	}
+	cloudFoxSQSClient := InitSQSClient(m.Caller, m.AWSProfileProvided, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
 
 	ListQueues, err := cloudFoxSQSClient.listQueues(r)
 	if err != nil {
@@ -533,13 +517,7 @@ func (m *ResourceTrustsModule) getECRRecordsPerRegion(r string, wg *sync.WaitGro
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	var cloudFoxECRClient ECRModule
-
-	if strings.Contains(m.AWSProfile, "-AROA") {
-		cloudFoxECRClient = InitECRClient(m.Caller, "", m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
-	} else {
-		cloudFoxECRClient = InitECRClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
-	}
+	cloudFoxECRClient := InitECRClient(m.Caller, m.AWSProfileProvided, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
 
 	DescribeRepositories, err := sdk.CachedECRDescribeRepositories(cloudFoxECRClient.ECRClient, aws.ToString(m.Caller.Account), r)
 	if err != nil {
@@ -603,13 +581,7 @@ func (m *ResourceTrustsModule) getCodeBuildResourcePoliciesPerRegion(r string, w
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	var cloudFoxCodeBuildClient CodeBuildModule
-
-	if strings.Contains(m.AWSProfile, "-AROA") {
-		cloudFoxCodeBuildClient = InitCodeBuildClient(m.Caller, "", m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
-	} else {
-		cloudFoxCodeBuildClient = InitCodeBuildClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
-	}
+	cloudFoxCodeBuildClient := InitCodeBuildClient(m.Caller, m.AWSProfileProvided, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
 
 	ListProjects, err := sdk.CachedCodeBuildListProjects(cloudFoxCodeBuildClient.CodeBuildClient, aws.ToString(cloudFoxCodeBuildClient.Caller.Account), r)
 	if err != nil {
@@ -683,13 +655,7 @@ func (m *ResourceTrustsModule) getLambdaPolicyPerRegion(r string, wg *sync.WaitG
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	var cloudFoxLambdaClient LambdasModule
-
-	if strings.Contains(m.AWSProfile, "-AROA") {
-		cloudFoxLambdaClient = InitLambdaClient(m.Caller, "", m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
-	} else {
-		cloudFoxLambdaClient = InitLambdaClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
-	}
+	cloudFoxLambdaClient := InitLambdaClient(m.Caller, m.AWSProfileProvided, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
 
 	ListFunctions, err := cloudFoxLambdaClient.listFunctions(r)
 	if err != nil {
@@ -754,13 +720,7 @@ func (m *ResourceTrustsModule) getEFSfilesystemPoliciesPerRegion(r string, wg *s
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	var cloudFoxEFSClient FilesystemsModule
-
-	if strings.Contains(m.AWSProfile, "-AROA") {
-		cloudFoxEFSClient = InitFileSystemsClient(m.Caller, "", m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
-	} else {
-		cloudFoxEFSClient = InitFileSystemsClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
-	}
+	cloudFoxEFSClient := InitFileSystemsClient(m.Caller, m.AWSProfileProvided, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
 
 	ListFileSystems, err := sdk.CachedDescribeFileSystems(cloudFoxEFSClient.EFSClient, aws.ToString(m.Caller.Account), r)
 	if err != nil {
@@ -830,13 +790,7 @@ func (m *ResourceTrustsModule) getSecretsManagerSecretsPoliciesPerRegion(r strin
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	var cloudFoxSecretsManagerClient *secretsmanager.Client
-
-	if strings.Contains(m.AWSProfile, "-AROA") {
-		cloudFoxSecretsManagerClient = InitSecretsManagerClient(m.Caller, "", m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
-	} else {
-		cloudFoxSecretsManagerClient = InitSecretsManagerClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
-	}
+	cloudFoxSecretsManagerClient := InitSecretsManagerClient(m.Caller, m.AWSProfileProvided, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
 
 	ListSecrets, err := sdk.CachedSecretsManagerListSecrets(cloudFoxSecretsManagerClient, aws.ToString(m.Caller.Account), r)
 	if err != nil {
@@ -902,13 +856,7 @@ func (m *ResourceTrustsModule) getGlueResourcePoliciesPerRegion(r string, wg *sy
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	var cloudFoxGlueClient *glue.Client
-
-	if strings.Contains(m.AWSProfile, "-AROA") {
-		cloudFoxGlueClient = InitGlueClient(m.Caller, "", m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
-	} else {
-		cloudFoxGlueClient = InitGlueClient(m.Caller, m.AWSProfile, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
-	}
+	cloudFoxGlueClient := InitGlueClient(m.Caller, m.AWSProfileProvided, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
 
 	ResourcePolicies, err := sdk.CachedGlueGetResourcePolicies(cloudFoxGlueClient, aws.ToString(m.Caller.Account), r)
 	if err != nil {

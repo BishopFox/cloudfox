@@ -22,10 +22,10 @@ import (
 func InitIamCommandClient(iamSimPPClient sdk.AWSIAMClientInterface, caller sts.GetCallerIdentityOutput, AWSProfile string, Goroutines int) IamSimulatorModule {
 
 	iamSimMod := IamSimulatorModule{
-		IAMClient:  iamSimPPClient,
-		Caller:     caller,
-		AWSProfile: AWSProfile,
-		Goroutines: Goroutines,
+		IAMClient:          iamSimPPClient,
+		Caller:             caller,
+		AWSProfileProvided: AWSProfile,
+		Goroutines:         Goroutines,
 	}
 
 	return iamSimMod
