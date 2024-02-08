@@ -50,6 +50,7 @@ type OutboundAssumeRoleEntry struct {
 	SourcePrincipal      string
 	DestinationAccount   string
 	DestinationPrincipal string
+	Action               string
 	LogTimestamp         string
 }
 
@@ -117,6 +118,24 @@ type CloudTrailEvent struct {
 	} `json:"tlsDetails"`
 }
 
+var interestingCrossAccountEventNames = []string{
+	"AssumeRole",
+	"AssumeRoleWithSAML",
+	"AssumeRoleWithWebIdentity",
+	"GetObject",
+	"ListBuckets",
+	"BatchGetImage",
+	"GetDownloadUrlForLayer",
+	"SendMessage",
+	"GetQueueUrl",
+	"Invoke20150331",
+	"RunInstances",
+	"RunTask",
+	"StartTask",
+	"CreateTask",
+	"CreateTaskSet",
+}
+
 func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputDirectory string, verbosity int) {
 	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
@@ -171,6 +190,7 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputDir
 		"Source Principal",
 		//"Destination Account",
 		"Destination Principal",
+		"Action",
 		"Log Entry Timestamp",
 	}
 
@@ -194,6 +214,7 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputDir
 			"Source Principal",
 			//"Destination Account",
 			"Destination Principal",
+			"Action",
 			"Log Entry Timestamp",
 		}
 		// Otherwise, use the default columns.
@@ -206,6 +227,7 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputDir
 			"Source Principal",
 			//"Destination Account",
 			"Destination Principal",
+			"Action",
 			"Log Entry Timestamp",
 		}
 	}
@@ -222,6 +244,7 @@ func (m *OutboundAssumedRolesModule) PrintOutboundRoleTrusts(days int, outputDir
 				m.OutboundAssumeRoleEntries[i].SourcePrincipal,
 				//m.OutboundAssumeRoleEntries[i].DestinationAccount,
 				m.OutboundAssumeRoleEntries[i].DestinationPrincipal,
+				m.OutboundAssumeRoleEntries[i].Action,
 				m.OutboundAssumeRoleEntries[i].LogTimestamp,
 			},
 		)
@@ -279,9 +302,12 @@ func (m *OutboundAssumedRolesModule) executeChecks(r string, wg *sync.WaitGroup,
 		m.modLog.Error(err)
 	}
 	if res {
+		// wg.Add(1)
+		// m.CommandCounter.Total++
+		// m.getAssumeRoleLogEntriesPerRegion(r, wg, semaphore, dataReceiver)
 		wg.Add(1)
 		m.CommandCounter.Total++
-		m.getAssumeRoleLogEntriesPerRegion(r, wg, semaphore, dataReceiver)
+		m.getCrossAccountBatchGetImageEntriesPerRegion(r, wg, semaphore, dataReceiver)
 	}
 
 }
@@ -359,10 +385,115 @@ func (m *OutboundAssumedRolesModule) getAssumeRoleLogEntriesPerRegion(r string, 
 					SourcePrincipal:      sourcePrincipal,
 					DestinationAccount:   destinationAccount,
 					DestinationPrincipal: destinationPrincipal,
+					Action:               "sts:AssumeRole",
 					LogTimestamp:         logTimestamp,
 				}
 			}
 
+		}
+
+		// The "NextToken" value is nil when there's no more data to return.
+		if LookupEvents.NextToken != nil {
+			PaginationControl = LookupEvents.NextToken
+			pages++
+		} else {
+			PaginationControl = nil
+			break
+		}
+	}
+
+}
+
+// get cross account batch get image entries
+func (m *OutboundAssumedRolesModule) getCrossAccountBatchGetImageEntriesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan OutboundAssumeRoleEntry) {
+	defer func() {
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+		wg.Done()
+
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
+	var PaginationControl *string
+	//var LookupAttributes []types.LookupAttributes
+	//var LookupAttribute types.LookupAttribute
+	var pages int
+
+	days := 0 - m.Days
+	endTime := aws.Time(time.Now())
+	startTime := endTime.AddDate(0, 0, days)
+	for {
+		LookupEvents, err := m.CloudTrailClient.LookupEvents(
+			context.TODO(),
+			&cloudtrail.LookupEventsInput{
+				EndTime:   endTime,
+				StartTime: &startTime,
+				// LookupAttributes: []cloudtrailTypes.LookupAttribute{
+				// 	{
+				// 		AttributeKey:   cloudtrailTypes.LookupAttributeKeyEventName,
+				// 		AttributeValue: aws.String("BatchGetImage"),
+				// 	},
+				// },
+				NextToken: PaginationControl,
+			},
+
+			func(o *cloudtrail.Options) {
+				o.Region = r
+			},
+		)
+		if err != nil {
+			m.modLog.Error(err.Error())
+			m.CommandCounter.Error++
+			break
+		}
+
+		for _, event := range LookupEvents.Events {
+			//eventData := *event.CloudTrailEvent
+			//fmt.Println(eventData)
+			var sourceAccount, sourcePrincipal, destinationAccount, destinationPrincipal, userType string
+			cloudtrailEvent := CloudTrailEvent{}
+			json.Unmarshal([]byte(*event.CloudTrailEvent), &cloudtrailEvent)
+
+			for _, eventName := range interestingCrossAccountEventNames {
+				if aws.ToString(event.EventName) == eventName {
+
+					// extract the source account and principal
+					if cloudtrailEvent.UserIdentity.Type == "AssumedRole" || cloudtrailEvent.UserIdentity.Type == "IAMUser" || cloudtrailEvent.UserIdentity.Type == "Role" {
+						if cloudtrailEvent.UserIdentity.Type == "AssumedRole" {
+							sourcePrincipal = cloudtrailEvent.UserIdentity.SessionContext.SessionIssuer.Arn
+						} else {
+							sourcePrincipal = cloudtrailEvent.UserIdentity.Arn
+						}
+						userType = cloudtrailEvent.UserIdentity.Type
+						sourceAccount = cloudtrailEvent.UserIdentity.AccountID
+
+						//fmt.Printf("%s,%s,%s,%s\n", sourceAccount, sourcePrincipal, destinationAccount, destinationPrincipal)
+
+						if cloudtrailEvent.Resources != nil {
+							destinationAccount = cloudtrailEvent.Resources[0].AccountID
+							destinationPrincipal = cloudtrailEvent.Resources[0].Arn
+							if sourceAccount != destinationAccount {
+								logTimestamp := cloudtrailEvent.EventTime.Format("2006-01-02 15:04:05")
+								dataReceiver <- OutboundAssumeRoleEntry{
+									AWSService:           "CloudTrail",
+									Region:               r,
+									Type:                 userType,
+									SourceAccount:        sourceAccount,
+									SourcePrincipal:      sourcePrincipal,
+									DestinationAccount:   destinationAccount,
+									DestinationPrincipal: destinationPrincipal,
+									Action:               aws.ToString(event.EventName),
+									LogTimestamp:         logTimestamp,
+								}
+							}
+						}
+
+					}
+				}
+			}
 		}
 
 		// The "NextToken" value is nil when there's no more data to return.

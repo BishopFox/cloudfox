@@ -206,6 +206,7 @@ func (m *RoleTrustsModule) printPrincipalTrusts(outputDirectory string) ([]strin
 			for _, principal := range statement.Principal.AWS {
 				if strings.Contains(principal, ":root") {
 					//check to see if the accountID is known
+					fmt.Println(principal)
 					accountID := strings.Split(principal, ":")[4]
 					vendorName := m.vendors.GetVendorNameFromAccountID(accountID)
 					if vendorName != "" {
@@ -279,6 +280,7 @@ func (m *RoleTrustsModule) printPrincipalTrustsRootOnly(outputDirectory string) 
 		for _, statement := range role.trustsDoc.Statement {
 			for _, principal := range statement.Principal.AWS {
 				if strings.Contains(principal, ":root") && statement.Condition.StringEquals.StsExternalID == "" {
+					fmt.Println(principal)
 					accountID := strings.Split(principal, ":")[4]
 					vendorName := m.vendors.GetVendorNameFromAccountID(accountID)
 					if vendorName != "" {

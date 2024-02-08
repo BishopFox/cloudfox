@@ -98,7 +98,7 @@ type TrustedService struct {
 type TrustedFederatedProvider struct {
 	TrustedFederatedProvider string
 	ProviderShortName        string
-	TrustedSubjects          string
+	TrustedSubjects          []string
 	//IsAdmin                  bool
 	//CanPrivEscToAdmin        bool
 }

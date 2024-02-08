@@ -206,7 +206,7 @@ func ConvertIAMRoleToNode(role types.Role, vendors *knownawsaccountslookup.Vendo
 	var TrustedFederatedProviders []TrustedFederatedProvider
 	//var TrustedFederatedSubjects string
 	var trustedProvider string
-	var trustedSubjects string
+	var trustedSubjects []string
 	var vendorName string
 
 	for _, statement := range trustsdoc.Statement {
@@ -238,12 +238,14 @@ func ConvertIAMRoleToNode(role types.Role, vendors *knownawsaccountslookup.Vendo
 		for _, federated := range statement.Principal.Federated {
 			if statement.Condition.StringLike.TokenActionsGithubusercontentComAud != "" || len(statement.Condition.StringLike.TokenActionsGithubusercontentComSub) > 0 {
 				trustedProvider = "GitHub"
-				trustedSubjects := strings.Join(statement.Condition.StringLike.TokenActionsGithubusercontentComSub, ",")
-				if trustedSubjects == "" {
-					trustedSubjects = "ALL REPOS!!!"
-				} else {
-					trustedSubjects = "Repos: " + trustedSubjects
+				//trustedSubjects = strings.Join(statement.Condition.StringLike.TokenActionsGithubusercontentComSub, ",")
+				trustedSubjects = statement.Condition.StringLike.TokenActionsGithubusercontentComSub
+				if strings.Join(statement.Condition.StringLike.TokenActionsGithubusercontentComSub, ",") == "" {
+					trustedSubjects = append(trustedSubjects, "ALL REPOS")
 				}
+				// 	} else {
+				// 	trustedSubjects = "Repos: " + trustedSubjects
+				// }
 
 			} else if statement.Condition.StringEquals.SAMLAud == "https://signin.aws.amazon.com/saml" {
 				if strings.Contains(statement.Principal.Federated[0], "AWSSSO") {
@@ -251,29 +253,29 @@ func ConvertIAMRoleToNode(role types.Role, vendors *knownawsaccountslookup.Vendo
 				} else if strings.Contains(statement.Principal.Federated[0], "Okta") {
 					trustedProvider = "Okta" //  (" + statement.Principal.Federated[0] + ")"
 				}
-				trustedSubjects = "Not applicable"
+				trustedSubjects = append(trustedSubjects, "Not applicable")
 			} else if statement.Condition.StringEquals.OidcEksAud != "" || statement.Condition.StringEquals.OidcEksSub != "" || statement.Condition.StringLike.OidcEksAud != "" || statement.Condition.StringLike.OidcEksSub != "" {
 				trustedProvider = "EKS" // (" + statement.Principal.Federated[0] + ")"
 				if statement.Condition.StringEquals.OidcEksSub != "" {
-					trustedSubjects = statement.Condition.StringEquals.OidcEksSub
+					trustedSubjects = append(trustedSubjects, statement.Condition.StringEquals.OidcEksSub)
 				} else if statement.Condition.StringLike.OidcEksSub != "" {
-					trustedSubjects = statement.Condition.StringLike.OidcEksSub
+					trustedSubjects = append(trustedSubjects, statement.Condition.StringLike.OidcEksSub)
 				} else {
-					trustedSubjects = "ALL SERVICE ACCOUNTS!"
+					trustedSubjects = append(trustedSubjects, "ALL SERVICE ACCOUNTS!")
 				}
 			} else if statement.Principal.Federated[0] == "cognito-identity.amazonaws.com" {
 				trustedProvider = "Cognito" // (" + statement.Principal.Federated[0] + ")"
 				if statement.Condition.ForAnyValueStringLike.CognitoAMR != "" {
-					trustedSubjects = statement.Condition.ForAnyValueStringLike.CognitoAMR
+					trustedSubjects = append(trustedSubjects, statement.Condition.ForAnyValueStringLike.CognitoAMR)
 				}
 			} else {
 				if trustedProvider == "" && strings.Contains(statement.Principal.Federated[0], "oidc.eks") {
 					trustedProvider = "EKS" // (" + statement.Principal.Federated[0] + ")"
-					trustedSubjects = "ALL SERVICE ACCOUNTS!"
+					trustedSubjects = append(trustedSubjects, "ALL SERVICE ACCOUNTS!")
 				} else if trustedProvider == "" && strings.Contains(statement.Principal.Federated[0], "AWSSSO") {
 					trustedProvider = "AWS SSO" // (" + statement.Principal.Federated[0] + ")"
 				}
-				trustedSubjects = "Not applicable"
+				trustedSubjects = append(trustedSubjects, "Not applicable")
 			}
 
 			TrustedFederatedProviders = append(TrustedFederatedProviders, TrustedFederatedProvider{
@@ -359,10 +361,11 @@ func FindVerticesInRoleTrust(a Node, vendors *knownawsaccountslookup.Vendors) []
 
 		if strings.Contains(TrustedPrincipal.TrustedPrincipal, ":root") && TrustedPrincipal.VendorName != "" {
 			newNodes = append(newNodes, Node{
-				Arn:        fmt.Sprintf("%s-%s", a.Arn, TrustedPrincipal.VendorName),
+				Arn: fmt.Sprintf("%s [%s]", TrustedPrincipal.TrustedPrincipal, TrustedPrincipal.VendorName),
+				//Arn:        TrustedPrincipal.VendorName,
 				Type:       "Account",
-				AccountID:  a.AccountID,
-				Name:       a.Name,
+				AccountID:  trustedPrincipalAccount,
+				Name:       TrustedPrincipal.VendorName,
 				VendorName: TrustedPrincipal.VendorName,
 			})
 
@@ -411,11 +414,20 @@ func FindVerticesInRoleTrust(a Node, vendors *knownawsaccountslookup.Vendors) []
 	for _, TrustedFederatedProvider := range a.TrustedFederatedProviders {
 		// make relationship from trusted federated provider to this role of type can assume
 
-		newNodes = append(newNodes, Node{
-			Arn:       TrustedFederatedProvider.TrustedFederatedProvider,
-			Type:      "FederatedIdentity",
-			AccountID: a.AccountID,
-		})
+		var providerAndSubject string
+		for _, trustedSubject := range TrustedFederatedProvider.TrustedSubjects {
+			if trustedSubject == "Not applicable" {
+				providerAndSubject = TrustedFederatedProvider.ProviderShortName
+			} else {
+				providerAndSubject = TrustedFederatedProvider.ProviderShortName + ":" + trustedSubject
+			}
+			newNodes = append(newNodes, Node{
+				Arn:       providerAndSubject,
+				Name:      TrustedFederatedProvider.ProviderShortName,
+				Type:      "FederatedIdentity",
+				AccountID: a.AccountID,
+			})
+		}
 
 	}
 
@@ -609,11 +621,12 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 				}
 
 				if PermissionsRowAccount == thisAccount {
-					// lets only look for rows that have sts:AssumeRole permissions
-					if strings.EqualFold(PermissionsRow.Action, "sts:AssumeRole") ||
-						strings.EqualFold(PermissionsRow.Action, "*") ||
-						strings.EqualFold(PermissionsRow.Action, "sts:Assume*") ||
-						strings.EqualFold(PermissionsRow.Action, "sts:*") {
+					if matchesAfterExpansion(PermissionsRow.Action, "sts:AssumeRole") {
+						// // lets only look for rows that have sts:AssumeRole permissions
+						// if strings.EqualFold(PermissionsRow.Action, "sts:AssumeRole") ||
+						// 	strings.EqualFold(PermissionsRow.Action, "*") ||
+						// 	strings.EqualFold(PermissionsRow.Action, "sts:Assume*") ||
+						// 	strings.EqualFold(PermissionsRow.Action, "sts:*") {
 						// lets only focus on rows that have an effect of Allow
 						if strings.EqualFold(PermissionsRow.Effect, "Allow") {
 							// if the resource is * or the resource is this role arn, then this principal can assume this role
@@ -669,7 +682,8 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 
 			err := GlobalGraph.AddEdge(
 				//TrustedPrincipal.TrustedPrincipal,
-				TrustedPrincipal.VendorName,
+				//TrustedPrincipal.VendorName,
+				fmt.Sprintf("%s [%s]", TrustedPrincipal.TrustedPrincipal, TrustedPrincipal.VendorName),
 				a.Arn,
 				//graph.EdgeAttribute("VendorAssumeRole", "Cross account root trust and trusted principal is a vendor"),
 				graph.EdgeAttribute("VendorAssumeRole", "can assume (because of a cross account root trust and trusted principal is a vendor) "),
@@ -693,7 +707,8 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 					// Add or update the attribute
 					existingProperties.Attributes["VendorAssumeRole"] = "can assume (because of a cross account root trust and trusted principal is a vendor) "
 					err := GlobalGraph.UpdateEdge(
-						fmt.Sprintf("%s-%s", a.Arn, TrustedPrincipal.VendorName),
+						//fmt.Sprintf("%s-%s", a.Arn, TrustedPrincipal.VendorName),
+						TrustedPrincipal.TrustedPrincipal,
 						a.Arn,
 						graph.EdgeAttributes(existingProperties.Attributes),
 					)
@@ -715,10 +730,11 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 				}
 				if PermissionsRowAccount == trustedPrincipalAccount {
 					// lets only look for rows that have sts:AssumeRole permissions
-					if strings.EqualFold(PermissionsRow.Action, "sts:AssumeRole") ||
-						strings.EqualFold(PermissionsRow.Action, "*") ||
-						strings.EqualFold(PermissionsRow.Action, "sts:Assume*") ||
-						strings.EqualFold(PermissionsRow.Action, "sts:*") {
+					if matchesAfterExpansion(PermissionsRow.Action, "sts:AssumeRole") {
+						// if strings.EqualFold(PermissionsRow.Action, "sts:AssumeRole") ||
+						// 	strings.EqualFold(PermissionsRow.Action, "*") ||
+						// 	strings.EqualFold(PermissionsRow.Action, "sts:Assume*") ||
+						// 	strings.EqualFold(PermissionsRow.Action, "sts:*") {
 						// lets only focus on rows that have an effect of Allow
 						if strings.EqualFold(PermissionsRow.Effect, "Allow") {
 							// if the resource is * or the resource is this role arn, then this principal can assume this role
@@ -816,41 +832,50 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 	for _, TrustedFederatedProvider := range a.TrustedFederatedProviders {
 		// make relationship from trusted federated provider to this role of type can assume
 
-		err := GlobalGraph.AddEdge(
-			TrustedFederatedProvider.TrustedFederatedProvider,
-			a.Arn,
-			//graph.EdgeAttribute("FederatedAssumeRole", "Trusted federated provider"),
-			graph.EdgeAttribute("FederatedAssumeRole", "can assume (because of a trusted federated provider) "),
-		)
-		if err != nil {
-			//fmt.Println(err)
-			//fmt.Println(TrustedFederatedProvider.TrustedFederatedProvider + a.Arn + "Trusted federated provider")
-			if err == graph.ErrEdgeAlreadyExists {
-				// update the ege by copying the existing graph.Edge with attributes and add the new attributes
+		var providerAndSubject string
+		for _, trustedSubject := range TrustedFederatedProvider.TrustedSubjects {
+			if trustedSubject == "Not applicable" {
+				providerAndSubject = TrustedFederatedProvider.ProviderShortName
+			} else {
+				providerAndSubject = TrustedFederatedProvider.ProviderShortName + ":" + trustedSubject
+			}
 
-				// get the existing edge
-				existingEdge, _ := GlobalGraph.Edge(TrustedFederatedProvider.TrustedFederatedProvider, a.Arn)
-				// get the map of attributes
-				existingProperties := existingEdge.Properties
-				// add the new attributes to attributes map within the properties struct
-				// Check if the Attributes map is initialized, if not, initialize it
-				if existingProperties.Attributes == nil {
-					existingProperties.Attributes = make(map[string]string)
-				}
+			err := GlobalGraph.AddEdge(
+				providerAndSubject,
+				a.Arn,
+				//graph.EdgeAttribute("FederatedAssumeRole", "Trusted federated provider"),
+				graph.EdgeAttribute("FederatedAssumeRole", "can assume (because of a trusted federated provider) "),
+			)
+			if err != nil {
+				//fmt.Println(err)
+				//fmt.Println(TrustedFederatedProvider.TrustedFederatedProvider + a.Arn + "Trusted federated provider")
+				if err == graph.ErrEdgeAlreadyExists {
+					// update the ege by copying the existing graph.Edge with attributes and add the new attributes
 
-				// Add or update the attribute
-				existingProperties.Attributes["FederatedAssumeRole"] = "can assume (because of a trusted federated provider) "
-				err = GlobalGraph.UpdateEdge(
-					TrustedFederatedProvider.TrustedFederatedProvider,
-					a.Arn,
-					graph.EdgeAttributes(existingProperties.Attributes),
-				)
-				if err != nil {
-					fmt.Println(err)
+					// get the existing edge
+					existingEdge, _ := GlobalGraph.Edge(TrustedFederatedProvider.TrustedFederatedProvider, a.Arn)
+					// get the map of attributes
+					existingProperties := existingEdge.Properties
+					// add the new attributes to attributes map within the properties struct
+					// Check if the Attributes map is initialized, if not, initialize it
+					if existingProperties.Attributes == nil {
+						existingProperties.Attributes = make(map[string]string)
+					}
+
+					// Add or update the attribute
+					existingProperties.Attributes["FederatedAssumeRole"] = "can assume (because of a trusted federated provider) "
+					err = GlobalGraph.UpdateEdge(
+						providerAndSubject,
+						a.Arn,
+						graph.EdgeAttributes(existingProperties.Attributes),
+					)
+					if err != nil {
+						fmt.Println(err)
+					}
 				}
 			}
-		}
 
+		}
 	}
 
 }

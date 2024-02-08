@@ -2227,7 +2227,7 @@ func init() {
 	SNSCommand.Flags().BoolVarP(&StoreSNSAccessPolicies, "policies", "", false, "Store all flagged access policies along with the output")
 
 	//  outbound-assumed-roles module flags
-	OutboundAssumedRolesCommand.Flags().IntVarP(&OutboundAssumedRolesDays, "days", "d", 7, "How many days of CloudTrail events should we go back and look at.")
+	OutboundAssumedRolesCommand.Flags().IntVarP(&OutboundAssumedRolesDays, "days", "d", -7, "How many days of CloudTrail events should we go back and look at.")
 
 	//  iam-simulator module flags
 	IamSimulatorCommand.Flags().StringVar(&SimulatorPrincipal, "principal", "", "Principal Arn")
