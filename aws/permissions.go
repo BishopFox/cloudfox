@@ -409,6 +409,10 @@ func (m *IamPermissionsModule) getPermissionsFromAttachedPolicy(arn string, atta
 					//parsedPolicyDocument, _ := parsePolicyDocument(d.Document)
 					document, _ := url.QueryUnescape(aws.ToString(d.Document))
 					parsedPolicyDocument, _ := policy.ParseJSONPolicy([]byte(document))
+
+					// hasStsAssumeRole := parsedPolicyDocument.DoesPolicyHaveMatchingStatement("Allow", "sts:AssumeRole", "*")
+					// fmt.Println(hasStsAssumeRole)
+
 					for _, s = range parsedPolicyDocument.Statement {
 						//version := parsedPolicyDocument.Version
 						effect := s.Effect

@@ -991,6 +991,7 @@ func runGraphCommand(cmd *cobra.Command, args []string) {
 }
 
 func runCaperCommand(cmd *cobra.Command, args []string) {
+
 	GlobalGraph := graph.New(graph.StringHash, graph.Directed())
 	//var PermissionRowsFromAllProfiles []common.PermissionsRow
 	var GlobalPmapperData aws.PmapperModule
@@ -1029,57 +1030,6 @@ func runCaperCommand(cmd *cobra.Command, args []string) {
 			// add edge to GlobalPmapperData
 			GlobalPmapperData.Edges = append(GlobalPmapperData.Edges, edge)
 		}
-
-		// for _, node := range pmapperMod.Nodes {
-		// 	var admin, pathToAdmin string
-		// 	if node.IsAdmin {
-		// 		admin = "yes"
-		// 	} else {
-		// 		admin = "no"
-		// 	}
-		// 	if node.PathToAdmin {
-		// 		pathToAdmin = "yes"
-		// 	} else {
-		// 		pathToAdmin = "no"
-		// 	}
-
-		// 	GlobalGraph.AddVertex(node.Arn,
-		// 		graph.VertexAttribute("IsAdmin", admin),
-		// 		graph.VertexAttribute("PathToAdmin", pathToAdmin),
-		// 	)
-		//}
-		// for _, edge := range pmapperMod.Edges {
-		// 	err := GlobalGraph.AddEdge(
-		// 		edge.Source,
-		// 		edge.Destination,
-		// 		graph.EdgeAttribute(edge.ShortReason, edge.Reason),
-		// 	)
-		// 	if err != nil {
-		// 		if err == graph.ErrEdgeAlreadyExists {
-		// 			// update the ege by copying the existing graph.Edge with attributes and add the new attributes
-		// 			//fmt.Println("Edge already exists")
-
-		// 			// get the existing edge
-		// 			existingEdge, _ := GlobalGraph.Edge(edge.Source, edge.Destination)
-		// 			// get the map of attributes
-		// 			existingProperties := existingEdge.Properties
-		// 			// add the new attributes to attributes map within the properties struct
-		// 			// Check if the Attributes map is initialized, if not, initialize it
-		// 			if existingProperties.Attributes == nil {
-		// 				existingProperties.Attributes = make(map[string]string)
-		// 			}
-
-		// 			// Add or update the attribute
-		// 			existingProperties.Attributes[edge.ShortReason] = edge.Reason
-		// 			GlobalGraph.UpdateEdge(
-		// 				edge.Source,
-		// 				edge.Destination,
-		// 				graph.EdgeAttributes(existingProperties.Attributes),
-		// 			)
-		// 		}
-		// 	}
-
-		// }
 
 		//Gather all role data
 		fmt.Println("Getting Roles for " + profile)

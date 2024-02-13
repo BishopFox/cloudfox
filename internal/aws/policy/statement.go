@@ -6,13 +6,14 @@ import (
 )
 
 type PolicyStatement struct {
-	Sid       string                   `json:"Sid,omitempty"`
-	Effect    string                   `json:"Effect"`
-	Principal PolicyStatementPrincipal `json:"Principal,omitempty"`
-	Action    ListOrString             `json:"Action"`
-	NotAction ListOrString             `json:"NotAction,omitempty"`
-	Resource  ListOrString             `json:"Resource,omitempty"`
-	Condition PolicyStatementCondition `json:"Condition,omitempty"`
+	Sid         string                   `json:"Sid,omitempty"`
+	Effect      string                   `json:"Effect"`
+	Principal   PolicyStatementPrincipal `json:"Principal,omitempty"`
+	Action      ListOrString             `json:"Action"`
+	NotAction   ListOrString             `json:"NotAction,omitempty"`
+	Resource    ListOrString             `json:"Resource,omitempty"`
+	NotResource ListOrString             `json:"NotResource,omitempty"`
+	Condition   PolicyStatementCondition `json:"Condition,omitempty"`
 }
 
 func (ps *PolicyStatement) IsEmpty() bool {

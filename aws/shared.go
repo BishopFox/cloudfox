@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"regexp"
 	"runtime"
 	"strings"
 
@@ -186,31 +185,4 @@ func removeStringFromSlice(slice []string, element string) []string {
 		}
 	}
 	return slice
-}
-
-// source: https://github.com/nccgroup/PMapper/blob/master/principalmapper/querying/local_policy_simulation.py
-func composePattern(stringToTransform string) *regexp.Regexp {
-	// Escape special characters and replace wildcards
-	escaped := strings.ReplaceAll(stringToTransform, ".", "\\.")
-	escaped = strings.ReplaceAll(escaped, "*", ".*")
-	escaped = strings.ReplaceAll(escaped, "?", ".")
-	escaped = strings.ReplaceAll(escaped, "$", "\\$")
-	escaped = strings.ReplaceAll(escaped, "^", "\\^")
-
-	// Compile the regular expression, ignoring case
-	pattern, err := regexp.Compile("(?i)^" + escaped + "$")
-	if err != nil {
-		panic("regexp compile error: " + err.Error())
-	}
-	return pattern
-}
-
-// source: https://github.com/nccgroup/PMapper/blob/master/principalmapper/querying/local_policy_simulation.py
-// matchesAfterExpansion checks the stringToCheck against stringToCheckAgainst.
-func matchesAfterExpansion(stringFromPolicyToCheck, stringToCheckAgainst string) bool {
-	// Transform the stringToCheckAgainst into a regex pattern
-	pattern := composePattern(stringToCheckAgainst)
-
-	// Check if the pattern matches stringToCheck
-	return pattern.MatchString(stringFromPolicyToCheck)
 }

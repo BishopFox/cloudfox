@@ -96,6 +96,7 @@ func (m *CaperCommand) generateInboundPrivEscTableData() ([]string, [][]string, 
 		"Account",
 		"Source",
 		"Target",
+		"isTargetAdmin",
 		"Summary",
 	}
 
@@ -112,6 +113,7 @@ func (m *CaperCommand) generateInboundPrivEscTableData() ([]string, [][]string, 
 			"Account",
 			"Source",
 			"Target",
+			"isTargetAdmin",
 			"Summary",
 		}
 		// Otherwise, use these columns.
@@ -119,6 +121,7 @@ func (m *CaperCommand) generateInboundPrivEscTableData() ([]string, [][]string, 
 		tableCols = []string{
 			"Source",
 			"Target",
+			"isTargetAdmin",
 			"Summary",
 		}
 	}
@@ -166,9 +169,19 @@ func (m *CaperCommand) generateInboundPrivEscTableData() ([]string, [][]string, 
 							//trim the last newline from csvPaths
 							paths = strings.TrimSuffix(paths, "\n")
 							if destinationVertexWithProperties.Attributes["IsAdminString"] == "Yes" {
-								privescPathsBody = append(privescPathsBody, []string{aws.ToString(m.Caller.Account), s, magenta(d), paths})
+								privescPathsBody = append(privescPathsBody, []string{
+									aws.ToString(m.Caller.Account),
+									s,
+									magenta(d),
+									magenta(destinationVertexWithProperties.Attributes["IsAdminString"]),
+									paths})
 							} else {
-								privescPathsBody = append(privescPathsBody, []string{aws.ToString(m.Caller.Account), s, d, paths})
+								privescPathsBody = append(privescPathsBody, []string{
+									aws.ToString(m.Caller.Account),
+									s,
+									d,
+									destinationVertexWithProperties.Attributes["IsAdminString"],
+									paths})
 							}
 
 						}
@@ -621,7 +634,7 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 				}
 
 				if PermissionsRowAccount == thisAccount {
-					if matchesAfterExpansion(PermissionsRow.Action, "sts:AssumeRole") {
+					if policy.MatchesAfterExpansion(PermissionsRow.Action, "sts:AssumeRole") {
 						// // lets only look for rows that have sts:AssumeRole permissions
 						// if strings.EqualFold(PermissionsRow.Action, "sts:AssumeRole") ||
 						// 	strings.EqualFold(PermissionsRow.Action, "*") ||
@@ -730,7 +743,7 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 				}
 				if PermissionsRowAccount == trustedPrincipalAccount {
 					// lets only look for rows that have sts:AssumeRole permissions
-					if matchesAfterExpansion(PermissionsRow.Action, "sts:AssumeRole") {
+					if policy.MatchesAfterExpansion(PermissionsRow.Action, "sts:AssumeRole") {
 						// if strings.EqualFold(PermissionsRow.Action, "sts:AssumeRole") ||
 						// 	strings.EqualFold(PermissionsRow.Action, "*") ||
 						// 	strings.EqualFold(PermissionsRow.Action, "sts:Assume*") ||
