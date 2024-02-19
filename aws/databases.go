@@ -370,29 +370,31 @@ func (m *DatabasesModule) getRdsClustersPerRegion(r string, wg *sync.WaitGroup, 
 
 	var public string
 	for _, instance := range DBInstances {
-		if instance.Endpoint != nil {
-			name := aws.ToString(instance.DBInstanceIdentifier)
-			port := instance.Endpoint.Port
-			endpoint := aws.ToString(instance.Endpoint.Address)
-			engine := aws.ToString(instance.Engine)
+		if instance.Endpoint == nil || isNeptune(instance.Engine) {
+			continue
+		}
 
-			if aws.ToBool(instance.PubliclyAccessible) {
-				public = "True"
-			} else {
-				public = "False"
-			}
+		name := aws.ToString(instance.DBInstanceIdentifier)
+		port := instance.Endpoint.Port
+		endpoint := aws.ToString(instance.Endpoint.Address)
+		engine := aws.ToString(instance.Engine)
 
-			dataReceiver <- Database{
-				AWSService: "RDS",
-				Region:     r,
-				Name:       name,
-				Engine:     engine,
-				Endpoint:   endpoint,
-				UserName:   aws.ToString(instance.MasterUsername),
-				Port:       aws.ToInt32(port),
-				Protocol:   aws.ToString(instance.Engine),
-				Public:     public,
-			}
+		if aws.ToBool(instance.PubliclyAccessible) {
+			public = "True"
+		} else {
+			public = "False"
+		}
+
+		dataReceiver <- Database{
+			AWSService: "RDS",
+			Region:     r,
+			Name:       name,
+			Engine:     engine,
+			Endpoint:   endpoint,
+			UserName:   aws.ToString(instance.MasterUsername),
+			Port:       aws.ToInt32(port),
+			Protocol:   aws.ToString(instance.Engine),
+			Public:     public,
 		}
 	}
 }
@@ -558,6 +560,10 @@ func (m *DatabasesModule) getNeptuneDatabasesPerRegion(r string, wg *sync.WaitGr
 	}
 
 	for _, cluster := range clusters {
+		if !isNeptune(cluster.Engine) {
+			continue
+		}
+
 		name := aws.ToString(cluster.DBClusterIdentifier)
 
 		endpoint := aws.ToString(cluster.Endpoint)
@@ -575,4 +581,8 @@ func (m *DatabasesModule) getNeptuneDatabasesPerRegion(r string, wg *sync.WaitGr
 			UserName:   userName,
 		}
 	}
+}
+
+func isNeptune(engine *string) bool {
+	return *engine == "neptune"
 }
