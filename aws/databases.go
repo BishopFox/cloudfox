@@ -54,6 +54,7 @@ type Database struct {
 	Protocol   string
 	Public     string
 	Size       string
+	Roles      string
 }
 
 func (m *DatabasesModule) PrintDatabases(outputDirectory string, verbosity int) {
@@ -113,7 +114,8 @@ func (m *DatabasesModule) PrintDatabases(outputDirectory string, verbosity int) 
 		"Size",
 		"UserName",
 		"Endpoint",
-		//"Port",
+		"Port",
+		"Roles",
 		//"Protocol",
 		//"Public",
 
@@ -140,6 +142,8 @@ func (m *DatabasesModule) PrintDatabases(outputDirectory string, verbosity int) 
 			"Size",
 			"UserName",
 			"Endpoint",
+			"Port",
+			"Roles",
 		}
 		// Otherwise, use the default columns.
 	} else {
@@ -151,6 +155,7 @@ func (m *DatabasesModule) PrintDatabases(outputDirectory string, verbosity int) 
 			"Size",
 			"UserName",
 			"Endpoint",
+			"Port",
 		}
 	}
 
@@ -167,7 +172,8 @@ func (m *DatabasesModule) PrintDatabases(outputDirectory string, verbosity int) 
 				m.Databases[i].Size,
 				m.Databases[i].UserName,
 				m.Databases[i].Endpoint,
-				// strconv.Itoa(int(m.Databases[i].Port)),
+				strconv.Itoa(int(m.Databases[i].Port)),
+				m.Databases[i].Roles,
 				// m.Databases[i].Protocol,
 				// m.Databases[i].Public,
 			},
@@ -221,11 +227,11 @@ func (m *DatabasesModule) executeChecks(r string, wg *sync.WaitGroup, semaphore 
 	serviceMap := &awsservicemap.AwsServiceMap{
 		JsonFileSource: "DOWNLOAD_FROM_AWS",
 	}
-	m.executeRdsCheck(r, wg, semaphore, dataReceiver, serviceMap)
+	m.executeRdsCheck(r, wg, semaphore, dataReceiver, serviceMap) // Also returns Neptune and DocDB databases
 	m.executeRedshiftCheck(r, wg, semaphore, dataReceiver, serviceMap)
 	m.executeDynamoDbCheck(r, wg, semaphore, dataReceiver, serviceMap)
-	m.executeDocDbCheck(r, wg, semaphore, dataReceiver, serviceMap)
-	m.executeNeptuneCheck(r, wg, semaphore, dataReceiver, serviceMap)
+	//m.executeDocDbCheck(r, wg, semaphore, dataReceiver, serviceMap)
+	//m.executeNeptuneCheck(r, wg, semaphore, dataReceiver, serviceMap)
 }
 
 type check struct {
@@ -358,43 +364,56 @@ func (m *DatabasesModule) getRdsClustersPerRegion(r string, wg *sync.WaitGroup, 
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
 
-	DBInstances, err := sdk.CachedRDSDescribeDBInstances(m.RDSClient, aws.ToString(m.Caller.Account), r)
+	DBClusters, err := sdk.CachedRDSDescribeDBClusters(m.RDSClient, aws.ToString(m.Caller.Account), r)
 	if err != nil {
-		if errors.As(err, &oe) {
-			m.Errors = append(m.Errors, fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation()))
-		}
 		m.modLog.Error(err.Error())
 		m.CommandCounter.Error++
 		return
 	}
 
-	var public string
-	for _, instance := range DBInstances {
-		if instance.Endpoint == nil || isNeptune(instance.Engine) {
+	for _, cluster := range DBClusters {
+		var public string
+		var service string
+		var roles string
+		if cluster.Endpoint == nil {
 			continue
 		}
 
-		name := aws.ToString(instance.DBInstanceIdentifier)
-		port := instance.Endpoint.Port
-		endpoint := aws.ToString(instance.Endpoint.Address)
-		engine := aws.ToString(instance.Engine)
+		name := aws.ToString(cluster.DBClusterIdentifier)
+		port := cluster.Port
+		endpoint := aws.ToString(cluster.Endpoint)
+		engine := aws.ToString(cluster.Engine)
 
-		if aws.ToBool(instance.PubliclyAccessible) {
+		if aws.ToBool(cluster.PubliclyAccessible) {
 			public = "True"
 		} else {
 			public = "False"
 		}
 
+		if isNeptune(cluster.Engine) {
+			service = "Neptune"
+		} else if isDocDB(cluster.Engine) {
+			service = "DocsDB"
+		} else {
+			service = "RDS"
+		}
+
+		associatedRoles := cluster.AssociatedRoles
+		for _, role := range associatedRoles {
+			roles = roles + aws.ToString(role.RoleArn) + " "
+		}
+
 		dataReceiver <- Database{
-			AWSService: "RDS",
+			AWSService: service,
 			Region:     r,
 			Name:       name,
 			Engine:     engine,
 			Endpoint:   endpoint,
-			UserName:   aws.ToString(instance.MasterUsername),
+			UserName:   aws.ToString(cluster.MasterUsername),
 			Port:       aws.ToInt32(port),
-			Protocol:   aws.ToString(instance.Engine),
+			Protocol:   aws.ToString(cluster.Engine),
 			Public:     public,
+			Roles:      roles,
 		}
 	}
 }
@@ -432,19 +451,19 @@ func (m *DatabasesModule) getRedshiftDatabasesPerRegion(r string, wg *sync.WaitG
 		name := aws.ToString(cluster.DBName)
 		//id := workspace.Id
 		endpoint := aws.ToString(cluster.Endpoint.Address)
+		port := aws.ToInt32(cluster.Endpoint.Port)
 
 		if aws.ToBool(cluster.PubliclyAccessible) {
 			public = "True"
 		} else {
 			public = "False"
 		}
-		port := cluster.Endpoint.Port
 		dataReceiver <- Database{
 			AWSService: awsService,
 			Region:     r,
 			Name:       name,
 			Endpoint:   endpoint,
-			Port:       aws.ToInt32(port),
+			Port:       port,
 			Protocol:   protocol,
 			Public:     public,
 		}
@@ -585,4 +604,8 @@ func (m *DatabasesModule) getNeptuneDatabasesPerRegion(r string, wg *sync.WaitGr
 
 func isNeptune(engine *string) bool {
 	return *engine == "neptune"
+}
+
+func isDocDB(engine *string) bool {
+	return *engine == "docdb"
 }

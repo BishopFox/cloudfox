@@ -2,7 +2,6 @@ package sdk
 
 import (
 	"context"
-	"encoding/gob"
 	"fmt"
 
 	"github.com/BishopFox/cloudfox/internal"
@@ -17,7 +16,7 @@ type NeptuneClientInterface interface {
 }
 
 func init() {
-	gob.RegisterName("neptune.DBCluster", []neptuneTypes.DBCluster{})
+	//gob.RegisterName("neptune.DBCluster", []neptuneTypes.DBCluster{})
 }
 
 func CachedNeptuneDescribeDBClusters(client NeptuneClientInterface, accountID string, region string) ([]neptuneTypes.DBCluster, error) {
