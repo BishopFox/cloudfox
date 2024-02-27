@@ -21,7 +21,7 @@ type DocDBClientInterface interface {
 
 func init() {
 	gob.Register([]docdbTypes.GlobalCluster{})
-	gob.Register([]docdbTypes.DBCluster{})
+	//gob.Register([]docdbTypes.DBCluster{})
 	//gob.Register([]docdbTypes.DBInstance{})
 
 }
