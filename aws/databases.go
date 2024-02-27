@@ -3,7 +3,6 @@ package aws
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -181,13 +180,17 @@ func (m *DatabasesModule) PrintDatabases(outputDirectory string, verbosity int) 
 
 	}
 	if len(m.output.Body) > 0 {
-		m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
+		filepath := filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
 
 		o := internal.OutputClient{
 			Verbosity:     verbosity,
 			CallingModule: m.output.CallingModule,
 			Table: internal.TableClient{
-				Wrap: m.WrapTable,
+				Wrap:          m.WrapTable,
+				DirectoryName: filepath,
+			},
+			Loot: internal.LootClient{
+				DirectoryName: filepath,
 			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
@@ -197,9 +200,15 @@ func (m *DatabasesModule) PrintDatabases(outputDirectory string, verbosity int) 
 			Name:      m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
-		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		o.WriteFullOutput(o.Table.TableFiles, nil)
-		m.writeLoot(o.Table.DirectoryName, verbosity)
+		loot := m.writeLoot(filepath, verbosity)
+		//o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
+		//m.writeLoot(o.Table.DirectoryName, verbosity)
+		o.Loot.LootFiles = append(o.Loot.LootFiles, internal.LootFile{
+			Name:     "databases-UrlsOnly.txt",
+			Contents: loot,
+		})
+		o.WriteFullOutput(o.Table.TableFiles, o.Loot.LootFiles)
+
 		fmt.Printf("[%s][%s] %s databases found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
 	} else {
 		fmt.Printf("[%s][%s] No databases found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
@@ -227,7 +236,7 @@ func (m *DatabasesModule) executeChecks(r string, wg *sync.WaitGroup, semaphore 
 	serviceMap := &awsservicemap.AwsServiceMap{
 		JsonFileSource: "DOWNLOAD_FROM_AWS",
 	}
-	m.executeRdsCheck(r, wg, semaphore, dataReceiver, serviceMap) // Also returns Neptune and DocDB databases
+	m.executeRdsCheck(r, wg, semaphore, dataReceiver, serviceMap) // Also returns Neptune and DocDB
 	m.executeRedshiftCheck(r, wg, semaphore, dataReceiver, serviceMap)
 	m.executeDynamoDbCheck(r, wg, semaphore, dataReceiver, serviceMap)
 	//m.executeDocDbCheck(r, wg, semaphore, dataReceiver, serviceMap)
@@ -316,14 +325,8 @@ func (m *DatabasesModule) executeNeptuneCheck(r string, wg *sync.WaitGroup, sema
 	})
 }
 
-func (m *DatabasesModule) writeLoot(outputDirectory string, verbosity int) {
+func (m *DatabasesModule) writeLoot(outputDirectory string, verbosity int) string {
 	path := filepath.Join(outputDirectory, "loot")
-	err := os.MkdirAll(path, os.ModePerm)
-	if err != nil {
-		m.modLog.Error(err.Error())
-		m.CommandCounter.Error++
-		panic(err.Error())
-	}
 	f := filepath.Join(path, "databases-UrlsOnly.txt")
 
 	var out string
@@ -332,12 +335,12 @@ func (m *DatabasesModule) writeLoot(outputDirectory string, verbosity int) {
 		out = out + fmt.Sprintln(database.Endpoint)
 	}
 
-	err = os.WriteFile(f, []byte(out), 0644)
-	if err != nil {
-		m.modLog.Error(err.Error())
-		m.CommandCounter.Error++
-		panic(err.Error())
-	}
+	// err = os.WriteFile(f, []byte(out), 0644)
+	// if err != nil {
+	// 	m.modLog.Error(err.Error())
+	// 	m.CommandCounter.Error++
+	// 	panic(err.Error())
+	// }
 
 	if verbosity > 2 {
 		fmt.Println()
@@ -347,6 +350,8 @@ func (m *DatabasesModule) writeLoot(outputDirectory string, verbosity int) {
 	}
 
 	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), f)
+
+	return out
 
 }
 

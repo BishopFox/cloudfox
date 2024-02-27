@@ -9,6 +9,7 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/aws/smithy-go/ptr"
 	"github.com/spf13/afero"
 )
 
@@ -29,7 +30,8 @@ func TestApiGw(t *testing.T) {
 
 	fs := internal.MockFileSystem(true)
 	defer internal.MockFileSystem(false)
-	tmpDir := "~/.cloudfox/"
+	//tmpDir := "~/.cloudfox/"
+	tmpDir := ptr.ToString(internal.GetLogDirPath())
 
 	m.PrintApiGws(tmpDir, 2)
 
