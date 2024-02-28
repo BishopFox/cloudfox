@@ -21,8 +21,6 @@ type DatabasesModule struct {
 	RDSClient      sdk.RDSClientInterface
 	RedshiftClient sdk.AWSRedShiftClientInterface
 	DynamoDBClient sdk.DynamoDBClientInterface
-	DocDBClient    sdk.DocDBClientInterface
-	NeptuneClient  sdk.NeptuneClientInterface
 
 	Caller        sts.GetCallerIdentityOutput
 	AWSRegions    []string

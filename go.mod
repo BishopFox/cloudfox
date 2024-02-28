@@ -52,6 +52,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.26.6
 	github.com/aws/smithy-go v1.19.0
 	github.com/bishopfox/awsservicemap v1.0.3
+	github.com/bishopfox/knownawsaccountslookup v0.0.0-20231228165844-c37ef8df33cb
 	github.com/dominikbraun/graph v0.23.0
 	github.com/fatih/color v1.16.0
 	github.com/jedib0t/go-pretty v4.3.0+incompatible
@@ -64,8 +65,6 @@ require (
 )
 
 require (
-	github.com/aws/aws-sdk-go-v2/service/neptune v1.28.2 // indirect
-	github.com/bishopfox/knownawsaccountslookup v0.0.0-20231228165844-c37ef8df33cb // indirect
 	github.com/golang-jwt/jwt/v5 v5.2.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
