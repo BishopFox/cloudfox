@@ -239,8 +239,6 @@ func (m *DatabasesModule) executeChecks(r string, wg *sync.WaitGroup, semaphore 
 	m.executeRdsCheck(r, wg, semaphore, dataReceiver, serviceMap) // Also returns Neptune and DocDB
 	m.executeRedshiftCheck(r, wg, semaphore, dataReceiver, serviceMap)
 	m.executeDynamoDbCheck(r, wg, semaphore, dataReceiver, serviceMap)
-	//m.executeDocDbCheck(r, wg, semaphore, dataReceiver, serviceMap)
-	//m.executeNeptuneCheck(r, wg, semaphore, dataReceiver, serviceMap)
 }
 
 type check struct {
@@ -298,30 +296,6 @@ func (m *DatabasesModule) executeDynamoDbCheck(r string, wg *sync.WaitGroup, sem
 		serviceMap:   servicemap,
 		service:      "dynamodb",
 		executor:     m.getDynamoDBTablesPerRegion,
-	})
-}
-
-func (m *DatabasesModule) executeDocDbCheck(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Database, servicemap *awsservicemap.AwsServiceMap) {
-	m.executeCheck(check{
-		region:       r,
-		wg:           wg,
-		semaphore:    semaphore,
-		dataReceiver: dataReceiver,
-		serviceMap:   servicemap,
-		service:      "docdb",
-		executor:     m.getDocDBTablesPerRegion,
-	})
-}
-
-func (m *DatabasesModule) executeNeptuneCheck(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Database, servicemap *awsservicemap.AwsServiceMap) {
-	m.executeCheck(check{
-		region:       r,
-		wg:           wg,
-		semaphore:    semaphore,
-		dataReceiver: dataReceiver,
-		serviceMap:   servicemap,
-		service:      "neptune",
-		executor:     m.getNeptuneDatabasesPerRegion,
 	})
 }
 
@@ -515,94 +489,6 @@ func (m *DatabasesModule) getDynamoDBTablesPerRegion(r string, wg *sync.WaitGrou
 			Size:       strconv.Itoa(int(size)),
 			UserName:   "N/A",
 			Endpoint:   "N/A",
-		}
-	}
-}
-
-func (m *DatabasesModule) getDocDBTablesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Database) {
-	defer func() {
-		m.CommandCounter.Executing--
-		m.CommandCounter.Complete++
-		wg.Done()
-
-	}()
-	semaphore <- struct{}{}
-	defer func() {
-		<-semaphore
-	}()
-	// m.CommandCounter.Total++
-	m.CommandCounter.Pending--
-	m.CommandCounter.Executing++
-	awsService := "DocDB"
-
-	Clusters, err := sdk.CachedDocDBDescribeDBClusters(m.DocDBClient, aws.ToString(m.Caller.Account), r)
-	if err != nil {
-		m.modLog.Error(err.Error())
-		m.CommandCounter.Error++
-		return
-	}
-
-	for _, cluster := range Clusters {
-		name := aws.ToString(cluster.DBClusterIdentifier)
-
-		endpoint := aws.ToString(cluster.Endpoint)
-		port := aws.ToInt32(cluster.Port)
-		//size := aws.ToInt64(TableOutput.Table.TableSizeBytes)
-		userName := aws.ToString(cluster.MasterUsername)
-
-		dataReceiver <- Database{
-			AWSService: awsService,
-			Region:     r,
-			Name:       name,
-			Endpoint:   endpoint,
-			Port:       port,
-			UserName:   userName,
-			//Size:       strconv.Itoa(int(size)),
-		}
-	}
-}
-
-func (m *DatabasesModule) getNeptuneDatabasesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Database) {
-	defer func() {
-		m.CommandCounter.Executing--
-		m.CommandCounter.Complete++
-		wg.Done()
-
-	}()
-	semaphore <- struct{}{}
-	defer func() {
-		<-semaphore
-	}()
-	m.CommandCounter.Pending--
-	m.CommandCounter.Executing++
-
-	clusters, err := sdk.CachedNeptuneDescribeDBClusters(m.NeptuneClient, aws.ToString(m.Caller.Account), r)
-	if err != nil {
-		m.modLog.Error(err.Error())
-		m.CommandCounter.Error++
-		return
-	}
-
-	for _, cluster := range clusters {
-		if !isNeptune(cluster.Engine) {
-			continue
-		}
-
-		name := aws.ToString(cluster.DBClusterIdentifier)
-
-		endpoint := aws.ToString(cluster.Endpoint)
-		port := aws.ToInt32(cluster.Port)
-		userName := aws.ToString(cluster.MasterUsername)
-		engine := aws.ToString(cluster.Engine)
-
-		dataReceiver <- Database{
-			AWSService: "Neptune",
-			Region:     r,
-			Name:       name,
-			Engine:     engine,
-			Endpoint:   endpoint,
-			Port:       port,
-			UserName:   userName,
 		}
 	}
 }
