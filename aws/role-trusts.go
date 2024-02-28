@@ -242,10 +242,12 @@ func (m *RoleTrustsModule) printPrincipalTrusts(outputDirectory string) ([]strin
 		for _, statement := range role.trustsDoc.Statement {
 			for _, principal := range statement.Principal.AWS {
 				//check to see if the accountID is known
-				accountID := strings.Split(principal, ":")[4]
-				vendorName := m.vendors.GetVendorNameFromAccountID(accountID)
-				if vendorName != "" {
-					principal = fmt.Sprintf("%s (%s)", principal, vendorName)
+				if strings.Contains(principal, "arn:aws:iam::") || strings.Contains(principal, "root") {
+					accountID := strings.Split(principal, ":")[4]
+					vendorName := m.vendors.GetVendorNameFromAccountID(accountID)
+					if vendorName != "" {
+						principal = fmt.Sprintf("%s (%s)", principal, vendorName)
+					}
 				}
 
 				RoleTrustRow := RoleTrustRow{

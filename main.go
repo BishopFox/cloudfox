@@ -10,7 +10,7 @@ import (
 var (
 	rootCmd = &cobra.Command{
 		Use:     os.Args[0],
-		Version: "1.13.2",
+		Version: "1.13.4-prerelease",
 	}
 )
 
