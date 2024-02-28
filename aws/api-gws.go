@@ -2,7 +2,6 @@ package aws
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -144,7 +143,7 @@ func (m *ApiGwModule) PrintApiGws(outputDirectory string, verbosity int) {
 			Name:   m.output.CallingModule,
 		})
 		o.PrefixIdentifier = m.AWSProfile
-		loot := m.writeLoot(o.Table.DirectoryName, verbosity)
+		loot := m.writeLoot(filepath, verbosity)
 		o.Loot.LootFiles = append(o.Loot.LootFiles, internal.LootFile{
 			Name:     m.output.CallingModule,
 			Contents: loot,
@@ -207,12 +206,6 @@ func (m *ApiGwModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan
 
 func (m *ApiGwModule) writeLoot(outputDirectory string, verbosity int) string {
 	path := filepath.Join(outputDirectory, "loot")
-	err := os.MkdirAll(path, os.ModePerm)
-	if err != nil {
-		m.modLog.Error(err.Error())
-		m.CommandCounter.Error++
-		panic(err.Error())
-	}
 	f := filepath.Join(path, "api-gws.txt")
 
 	var out string

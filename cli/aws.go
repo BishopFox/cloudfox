@@ -44,6 +44,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/kinesis"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/lightsail"
+	"github.com/aws/aws-sdk-go-v2/service/neptune"
 	"github.com/aws/aws-sdk-go-v2/service/mq"
 	"github.com/aws/aws-sdk-go-v2/service/opensearch"
 	"github.com/aws/aws-sdk-go-v2/service/organizations"
@@ -177,7 +178,7 @@ var (
 	DatabasesCommand = &cobra.Command{
 		Use:     "databases",
 		Aliases: []string{"db", "rds", "redshift", "dbs"},
-		Short:   "Enumerate RDS databases. Get a loot file with connection strings.",
+		Short:   "Enumerate databases. Get a loot file with connection strings.",
 		Long: "\nUse case examples:\n" +
 			os.Args[0] + " aws databases --profile readonly_profile",
 		PreRun:  awsPreRun,
@@ -771,6 +772,7 @@ func runDatabasesCommand(cmd *cobra.Command, args []string) {
 			RedshiftClient: redshift.NewFromConfig(AWSConfig),
 			DynamoDBClient: dynamodb.NewFromConfig(AWSConfig),
 			DocDBClient:    docdb.NewFromConfig(AWSConfig),
+			NeptuneClient:  neptune.NewFromConfig(AWSConfig),
 			Caller:         *caller,
 			AWSRegions:     internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
 			AWSProfile:     profile,
