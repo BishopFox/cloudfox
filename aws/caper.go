@@ -139,13 +139,13 @@ func (m *CaperCommand) generateInboundPrivEscTableData() ([]string, [][]string, 
 	// }
 	//edges, _ := m.GlobalGraph.Edges()
 	//var reason string
-	adjacencyMap, _ := m.GlobalGraph.AdjacencyMap()
-	for destination := range adjacencyMap {
+	allGlobalNodes, _ := m.GlobalGraph.AdjacencyMap()
+	for destination := range allGlobalNodes {
 		d, destinationVertexWithProperties, _ := m.GlobalGraph.VertexWithProperties(destination)
 		//for the destination vertex, we only want to deal with the ones that are in this account
 		if destinationVertexWithProperties.Attributes["AccountID"] == aws.ToString(m.Caller.Account) {
 			// now let's look at every other vertex and see if it has a path to this destination
-			for source := range adjacencyMap {
+			for source := range allGlobalNodes {
 				s, sourceVertexWithProperties, _ := m.GlobalGraph.VertexWithProperties(source)
 				//for the source vertex, we only want to deal with the ones that are NOT in this account
 				if sourceVertexWithProperties.Attributes["AccountID"] != aws.ToString(m.Caller.Account) {
@@ -225,9 +225,9 @@ func ConvertIAMRoleToNode(role types.Role, vendors *knownawsaccountslookup.Vendo
 	for _, statement := range trustsdoc.Statement {
 		for _, principal := range statement.Principal.AWS {
 			if strings.Contains(principal, ":root") {
-				//check to see if the accountID is known
-				accountID := strings.Split(principal, ":")[4]
-				vendorName = vendors.GetVendorNameFromAccountID(accountID)
+				//check to see if the vendorAccountID is known
+				vendorAccountID := strings.Split(principal, ":")[4]
+				vendorName = vendors.GetVendorNameFromAccountID(vendorAccountID)
 			}
 
 			TrustedPrincipals = append(TrustedPrincipals, TrustedPrincipal{
@@ -267,15 +267,27 @@ func ConvertIAMRoleToNode(role types.Role, vendors *knownawsaccountslookup.Vendo
 					trustedProvider = "Okta" //  (" + statement.Principal.Federated[0] + ")"
 				}
 				trustedSubjects = append(trustedSubjects, "Not applicable")
-			} else if statement.Condition.StringEquals.OidcEksAud != "" || statement.Condition.StringEquals.OidcEksSub != "" || statement.Condition.StringLike.OidcEksAud != "" || statement.Condition.StringLike.OidcEksSub != "" {
-				trustedProvider = "EKS" // (" + statement.Principal.Federated[0] + ")"
-				if statement.Condition.StringEquals.OidcEksSub != "" {
-					trustedSubjects = append(trustedSubjects, statement.Condition.StringEquals.OidcEksSub)
-				} else if statement.Condition.StringLike.OidcEksSub != "" {
-					trustedSubjects = append(trustedSubjects, statement.Condition.StringLike.OidcEksSub)
-				} else {
+			} else if statement.Condition.StringEquals.OidcEksAud != "" || statement.Condition.StringEquals.OidcEksSub != nil || statement.Condition.StringLike.OidcEksAud != "" || statement.Condition.StringLike.OidcEksSub != nil {
+				trustedProvider = statement.Principal.Federated[0]
+				//providerAccountId := strings.Split(statement.Principal.Federated[0], ":")[4]
+				// we only care about cross account trusts here, so we only care if the OIDC provider is from another account.
+				//if providerAccountId != accountId {
+				//trustedProvider = "EKS" // (" + statement.Principal.Federated[0] + ")"
+				if statement.Condition.StringEquals.OidcEksSub != nil {
+					if len(statement.Condition.StringEquals.OidcEksSub) > 0 {
+						trustedSubjects = append(trustedSubjects, statement.Condition.StringEquals.OidcEksSub...)
+					}
+				}
+				if statement.Condition.StringLike.OidcEksSub != nil {
+					if len(statement.Condition.StringLike.OidcEksSub) > 0 {
+						trustedSubjects = append(trustedSubjects, statement.Condition.StringLike.OidcEksSub...)
+					}
+
+				}
+				if len(trustedSubjects) == 0 {
 					trustedSubjects = append(trustedSubjects, "ALL SERVICE ACCOUNTS!")
 				}
+				//}
 			} else if statement.Principal.Federated[0] == "cognito-identity.amazonaws.com" {
 				trustedProvider = "Cognito" // (" + statement.Principal.Federated[0] + ")"
 				if statement.Condition.ForAnyValueStringLike.CognitoAMR != "" {
@@ -634,12 +646,8 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 				}
 
 				if PermissionsRowAccount == thisAccount {
+					// lets only look for rows that have sts:AssumeRole permissions
 					if policy.MatchesAfterExpansion(PermissionsRow.Action, "sts:AssumeRole") {
-						// // lets only look for rows that have sts:AssumeRole permissions
-						// if strings.EqualFold(PermissionsRow.Action, "sts:AssumeRole") ||
-						// 	strings.EqualFold(PermissionsRow.Action, "*") ||
-						// 	strings.EqualFold(PermissionsRow.Action, "sts:Assume*") ||
-						// 	strings.EqualFold(PermissionsRow.Action, "sts:*") {
 						// lets only focus on rows that have an effect of Allow
 						if strings.EqualFold(PermissionsRow.Effect, "Allow") {
 							// if the resource is * or the resource is this role arn, then this principal can assume this role
@@ -892,3 +900,5 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 	}
 
 }
+
+// func (a *Node) MakeUserEdges(GlobalGraph graph.Graph[string, string]) {

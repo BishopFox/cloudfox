@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/BishopFox/cloudfox/aws"
 	"github.com/BishopFox/cloudfox/aws/sdk"
@@ -44,8 +43,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/kinesis"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/lightsail"
-	"github.com/aws/aws-sdk-go-v2/service/neptune"
 	"github.com/aws/aws-sdk-go-v2/service/mq"
+	"github.com/aws/aws-sdk-go-v2/service/neptune"
 	"github.com/aws/aws-sdk-go-v2/service/opensearch"
 	"github.com/aws/aws-sdk-go-v2/service/organizations"
 	"github.com/aws/aws-sdk-go-v2/service/organizations/types"
@@ -64,7 +63,6 @@ import (
 	"github.com/aws/smithy-go/ptr"
 	"github.com/bishopfox/knownawsaccountslookup"
 	"github.com/dominikbraun/graph"
-	"github.com/dominikbraun/graph/draw"
 	"github.com/fatih/color"
 	"github.com/kyokomi/emoji"
 	"github.com/spf13/cobra"
@@ -1022,18 +1020,20 @@ func runCaperCommand(cmd *cobra.Command, args []string) {
 			fmt.Println("Error importing pmapper data: " + pmapperError.Error())
 		}
 
+		// add pmapper nodes to GlobalNodes (which will also soon include iam roles and users)
 		for _, node := range pmapperMod.Nodes {
 			// add node to GlobalPmapperData
 			//GlobalPmapperData.Nodes = append(GlobalPmapperData.Nodes, node)
 			GlobalNodes = append(GlobalNodes, node)
 		}
 
+		// same for adding pmapper edges to GlobalPmapperData
 		for _, edge := range pmapperMod.Edges {
 			// add edge to GlobalPmapperData
 			GlobalPmapperData.Edges = append(GlobalPmapperData.Edges, edge)
 		}
 
-		//Gather all role data
+		//Gather all role data so we can later process all of the role trusts and add external nodes not looked at by pmapper
 		fmt.Println("Getting Roles for " + profile)
 		IAMCommandClient := aws.InitIAMClient(AWSConfig)
 		ListRolesOutput, err := sdk.CachedIamListRoles(IAMCommandClient, ptr.ToString(caller.Account))
@@ -1051,6 +1051,8 @@ func runCaperCommand(cmd *cobra.Command, args []string) {
 		}
 
 		//Gather all user data
+		// Currently, there is no need to parse groups and build group-user relationships because
+		// the permissions command (and common.PermissionRowsFromAllProfiles above already has mapped/assigned group permissions to users within the group
 		fmt.Println("Getting Users for " + profile)
 		ListUsersOutput, err := sdk.CachedIamListUsers(IAMCommandClient, ptr.ToString(caller.Account))
 		if err != nil {
@@ -1066,7 +1068,7 @@ func runCaperCommand(cmd *cobra.Command, args []string) {
 	//GlobalGraph := models.MakeAllVertices(GlobalRoles, GlobalPmapperData)
 
 	// make vertices
-	// you can't update verticies - so we need to make all of the vertices that are roles in the in-scope accounts
+	// you can't update vertices - so we need to make all of the vertices that are roles in the in-scope accounts
 	// all at once to make sure they have the most information possible
 	fmt.Println("Making vertices for all profiles")
 	// for _, role := range GlobalRoles {
@@ -1087,6 +1089,8 @@ func runCaperCommand(cmd *cobra.Command, args []string) {
 	}
 
 	// make pmapper edges
+	//you can update edges, so we can just merge attributes as needed
+	// first we add the edges that already exist in pmapper, then later we will make more edges based on the cloudfox role trusts logic
 	for _, edge := range GlobalPmapperData.Edges {
 		err := GlobalGraph.AddEdge(
 			edge.Source,
@@ -1120,14 +1124,17 @@ func runCaperCommand(cmd *cobra.Command, args []string) {
 	}
 
 	//making edges
+	// these are the cloudfox created edges mainly based on role trusts
+	// at least for now, we don't need to make edges for users, groups, or anything else because pmapper already has all of the edges we need
 	fmt.Println("Making edges for all profiles")
 	for _, node := range mergedNodes {
 		if node.Type == "Role" {
 			node.MakeRoleEdges(GlobalGraph)
 		}
+		// if node.Type == "User" {
+		// 	node.MakeUserEdges(GlobalGraph)
+		// }
 	}
-
-	// print how many nodes and edges are in the graph to the screen and exit
 
 	for _, profile := range AWSProfiles {
 		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
@@ -1154,11 +1161,16 @@ func runCaperCommand(cmd *cobra.Command, args []string) {
 		}
 
 		caperCommandClient.RunCaperCommand()
-		filename := fmt.Sprintf("./mygraph-%s-%s.gv", ptr.ToString(caller.Account), time.Now().Format("2006-01-02-15-04-05"))
-		file, _ := os.Create(filename)
-		_ = draw.DOT(GlobalGraph, file, draw.GraphAttribute(
-			"ranksep", "3",
-		))
+
+		// playing around with creating a graphviz file for image rendering.
+		// the goal here is to be able to export this graph data to a format that can be easily imported in neo4j.
+		// this is a work in progress and not yet complete
+
+		// filename := fmt.Sprintf("./mygraph-%s-%s.gv", ptr.ToString(caller.Account), time.Now().Format("2006-01-02-15-04-05"))
+		// file, _ := os.Create(filename)
+		// _ = draw.DOT(GlobalGraph, file, draw.GraphAttribute(
+		// 	"ranksep", "3",
+		// ))
 	}
 }
 

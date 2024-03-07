@@ -363,15 +363,16 @@ func (m *GraphCommand) collectRoleDataForGraph() []models.Role {
 						trustedProvider = "Okta" //  (" + statement.Principal.Federated[0] + ")"
 					}
 					trustedSubjects = "Not applicable"
-				} else if statement.Condition.StringEquals.OidcEksAud != "" || statement.Condition.StringEquals.OidcEksSub != "" || statement.Condition.StringLike.OidcEksAud != "" || statement.Condition.StringLike.OidcEksSub != "" {
+				} else if statement.Condition.StringEquals.OidcEksAud != "" || statement.Condition.StringEquals.OidcEksSub != nil || statement.Condition.StringLike.OidcEksAud != "" || statement.Condition.StringLike.OidcEksSub != nil {
 					trustedProvider = "EKS" // (" + statement.Principal.Federated[0] + ")"
-					if statement.Condition.StringEquals.OidcEksSub != "" {
-						trustedSubjects = statement.Condition.StringEquals.OidcEksSub
-					} else if statement.Condition.StringLike.OidcEksSub != "" {
-						trustedSubjects = statement.Condition.StringLike.OidcEksSub
-					} else {
-						trustedSubjects = "ALL SERVICE ACCOUNTS!"
-					}
+					// if statement.Condition.StringEquals.OidcEksSub != "" {
+					// 	trustedSubjects = statement.Condition.StringEquals.OidcEksSub
+					// } else if statement.Condition.StringLike.OidcEksSub != "" {
+					// 	trustedSubjects = statement.Condition.StringLike.OidcEksSub
+					// } else {
+					// 	trustedSubjects = "ALL SERVICE ACCOUNTS!"
+					// }
+					trustedSubjects = "ALL SERVICE ACCOUNTS!"
 				} else if statement.Principal.Federated[0] == "cognito-identity.amazonaws.com" {
 					trustedProvider = "Cognito" // (" + statement.Principal.Federated[0] + ")"
 					if statement.Condition.ForAnyValueStringLike.CognitoAMR != "" {

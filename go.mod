@@ -2,6 +2,8 @@ module github.com/BishopFox/cloudfox
 
 go 1.21.2
 
+toolchain go1.21.6
+
 require (
 	github.com/Azure/azure-sdk-for-go v68.0.0+incompatible
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.4.0

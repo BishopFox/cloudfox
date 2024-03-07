@@ -26,16 +26,16 @@ type RoleTrustStatementEntry struct {
 	Action    string `json:"Action"`
 	Condition struct {
 		StringEquals struct {
-			StsExternalID string `json:"sts:ExternalId"`
-			SAMLAud       string `json:"SAML:aud"`
-			OidcEksSub    string `json:"OidcEksSub"`
-			OidcEksAud    string `json:"OidcEksAud"`
-			CognitoAud    string `json:"cognito-identity.amazonaws.com:aud"`
+			StsExternalID string           `json:"sts:ExternalId"`
+			SAMLAud       string           `json:"SAML:aud"`
+			OidcEksSub    ListOfPrincipals `json:"OidcEksSub"`
+			OidcEksAud    string           `json:"OidcEksAud"`
+			CognitoAud    string           `json:"cognito-identity.amazonaws.com:aud"`
 		} `json:"StringEquals"`
 		StringLike struct {
 			TokenActionsGithubusercontentComSub ListOfPrincipals `json:"token.actions.githubusercontent.com:sub"`
 			TokenActionsGithubusercontentComAud string           `json:"token.actions.githubusercontent.com:aud"`
-			OidcEksSub                          string           `json:"OidcEksSub"`
+			OidcEksSub                          ListOfPrincipals `json:"OidcEksSub"`
 			OidcEksAud                          string           `json:"OidcEksAud"`
 		} `json:"StringLike"`
 		ForAnyValueStringLike struct {
