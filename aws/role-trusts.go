@@ -1,21 +1,17 @@
 package aws
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
-	"net/url"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/BishopFox/cloudfox/internal/aws/policy"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
-	"github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/bishopfox/knownawsaccountslookup"
 	"github.com/sirupsen/logrus"
@@ -65,44 +61,10 @@ type RoleTrustRow struct {
 
 type AnalyzedRole struct {
 	roleARN   *string
-	trustsDoc trustPolicyDocument
+	trustsDoc policy.TrustPolicyDocument
 	// trustType  string // UNUSED FIELD, PLEASE REVIEW
 	Admin      string
 	CanPrivEsc string
-}
-
-type trustPolicyDocument struct {
-	Version   string                    `json:"Version"`
-	Statement []RoleTrustStatementEntry `json:"Statement"`
-}
-
-type RoleTrustStatementEntry struct {
-	Sid       string `json:"Sid"`
-	Effect    string `json:"Effect"`
-	Principal struct {
-		AWS       ListOfPrincipals `json:"AWS"`
-		Service   ListOfPrincipals `json:"Service"`
-		Federated ListOfPrincipals `json:"Federated"`
-	} `json:"Principal"`
-	Action    string `json:"Action"`
-	Condition struct {
-		StringEquals struct {
-			StsExternalID string `json:"sts:ExternalId"`
-			SAMLAud       string `json:"SAML:aud"`
-			OidcEksSub    string `json:"OidcEksSub"`
-			OidcEksAud    string `json:"OidcEksAud"`
-			CognitoAud    string `json:"cognito-identity.amazonaws.com:aud"`
-		} `json:"StringEquals"`
-		StringLike struct {
-			TokenActionsGithubusercontentComSub ListOfPrincipals `json:"token.actions.githubusercontent.com:sub"`
-			TokenActionsGithubusercontentComAud string           `json:"token.actions.githubusercontent.com:aud"`
-			OidcEksSub                          string           `json:"OidcEksSub"`
-			OidcEksAud                          string           `json:"OidcEksAud"`
-		} `json:"StringLike"`
-		ForAnyValueStringLike struct {
-			CognitoAMR string `json:"cognito-identity.amazonaws.com:amr"`
-		} `json:"ForAnyValue:StringLike"`
-	} `json:"Condition"`
 }
 
 func (m *RoleTrustsModule) PrintRoleTrusts(outputDirectory string, verbosity int) {
@@ -140,6 +102,7 @@ func (m *RoleTrustsModule) PrintRoleTrusts(outputDirectory string, verbosity int
 
 		}
 	}
+
 	o := internal.OutputClient{
 		Verbosity:     verbosity,
 		CallingModule: m.output.CallingModule,
@@ -189,12 +152,12 @@ func (m *RoleTrustsModule) PrintRoleTrusts(outputDirectory string, verbosity int
 		fmt.Printf("[%s][%s] No role trusts found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
 	if len(servicesBody) > 0 {
-		fmt.Printf("[%s][%s] %s principal role trusts found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(servicesBody)))
+		fmt.Printf("[%s][%s] %s service role trusts found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(servicesBody)))
 	} else {
 		fmt.Printf("[%s][%s] No role trusts found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
 	if len(federatedBody) > 0 {
-		fmt.Printf("[%s][%s] %s principal role trusts found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(federatedBody)))
+		fmt.Printf("[%s][%s] %s federated role trusts found.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(federatedBody)))
 	} else {
 		fmt.Printf("[%s][%s] No role trusts found, skipping the creation of an output file.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	}
@@ -373,7 +336,7 @@ func (m *RoleTrustsModule) printServiceTrusts(outputDirectory string) ([]string,
 		tableCols = strings.Split(m.AWSTableCols, ",")
 		// If the user specified wide as the output format, use these columns.
 	} else if m.AWSOutputType == "wide" {
-		tableCols = []string{"Role Arn", "Trusted Service", "IsAdmin?", "CanPrivEscToAdmin?"}
+		tableCols = []string{"Account", "Role Arn", "Trusted Service", "IsAdmin?", "CanPrivEscToAdmin?"}
 		// Otherwise, use the default columns for this module (brief)
 	} else {
 		tableCols = []string{"Role Name", "Trusted Service", "IsAdmin?", "CanPrivEscToAdmin?"}
@@ -441,7 +404,7 @@ func (m *RoleTrustsModule) printFederatedTrusts(outputDirectory string) ([]strin
 		tableCols = strings.Split(m.AWSTableCols, ",")
 		// If the user specified wide as the output format, use these columns.
 	} else if m.AWSOutputType == "wide" {
-		tableCols = []string{"Role Arn", "Trusted Provider", "Trusted Subject", "IsAdmin?", "CanPrivEscToAdmin?"}
+		tableCols = []string{"Account", "Role Arn", "Trusted Provider", "Trusted Subject", "IsAdmin?", "CanPrivEscToAdmin?"}
 		// Otherwise, use the default columns for this module (brief)
 	} else {
 		tableCols = []string{"Role Name", "Trusted Provider", "Trusted Subject", "IsAdmin?", "CanPrivEscToAdmin?"}
@@ -454,23 +417,25 @@ func (m *RoleTrustsModule) printFederatedTrusts(outputDirectory string) ([]strin
 	for _, role := range m.AnalyzedRoles {
 		for _, statement := range role.trustsDoc.Statement {
 			if len(statement.Principal.Federated) > 0 {
-				provider, subject := parseFederatedTrustPolicy(statement)
-				RoleTrustRow := RoleTrustRow{
-					RoleARN:                  aws.ToString(role.roleARN),
-					RoleName:                 GetResourceNameFromArn(aws.ToString(role.roleARN)),
-					TrustedFederatedProvider: provider,
-					TrustedFederatedSubject:  subject,
-					IsAdmin:                  role.Admin,
-					CanPrivEsc:               role.CanPrivEsc,
+				provider, subjects := parseFederatedTrustPolicy(statement)
+				for _, subject := range subjects {
+					RoleTrustRow := RoleTrustRow{
+						RoleARN:                  aws.ToString(role.roleARN),
+						RoleName:                 GetResourceNameFromArn(aws.ToString(role.roleARN)),
+						TrustedFederatedProvider: provider,
+						TrustedFederatedSubject:  subject,
+						IsAdmin:                  role.Admin,
+						CanPrivEsc:               role.CanPrivEsc,
+					}
+					body = append(body, []string{
+						aws.ToString(m.Caller.Account),
+						RoleTrustRow.RoleARN,
+						RoleTrustRow.RoleName,
+						RoleTrustRow.TrustedFederatedProvider,
+						RoleTrustRow.TrustedFederatedSubject,
+						RoleTrustRow.IsAdmin,
+						RoleTrustRow.CanPrivEsc})
 				}
-				body = append(body, []string{
-					aws.ToString(m.Caller.Account),
-					RoleTrustRow.RoleARN,
-					RoleTrustRow.RoleName,
-					RoleTrustRow.TrustedFederatedProvider,
-					RoleTrustRow.TrustedFederatedSubject,
-					RoleTrustRow.IsAdmin,
-					RoleTrustRow.CanPrivEsc})
 			}
 
 		}
@@ -481,47 +446,59 @@ func (m *RoleTrustsModule) printFederatedTrusts(outputDirectory string) ([]strin
 
 }
 
-func parseFederatedTrustPolicy(statement RoleTrustStatementEntry) (string, string) {
-	var column2, column3 string
+func parseFederatedTrustPolicy(statement policy.RoleTrustStatementEntry) (string, []string) {
+	var provider string
+	var subjects []string
+	var trustedEKSSubs []string
 	if statement.Condition.StringLike.TokenActionsGithubusercontentComAud != "" || len(statement.Condition.StringLike.TokenActionsGithubusercontentComSub) > 0 {
-		column2 = "GitHub Actions" //  (" + statement.Principal.Federated[0] + ")"
-		trustedRepos := strings.Join(statement.Condition.StringLike.TokenActionsGithubusercontentComSub, "\n")
-		if trustedRepos == "" {
-			column3 = "ALL REPOS!!!"
+		provider = "GitHub Actions" //  (" + statement.Principal.Federated[0] + ")"
+		//trustedRepos := strings.Join(statement.Condition.StringLike.TokenActionsGithubusercontentComSub, "\n")
+		if len(statement.Condition.StringLike.TokenActionsGithubusercontentComSub) > 0 {
+			subjects = append(subjects, statement.Condition.StringLike.TokenActionsGithubusercontentComSub...)
 		} else {
-			column3 = trustedRepos
+			subjects = append(subjects, "ALL REPOS!!!")
 		}
+
 	} else if statement.Condition.StringEquals.SAMLAud == "https://signin.aws.amazon.com/saml" {
 		if strings.Contains(statement.Principal.Federated[0], "AWSSSO") {
-			column2 = "AWS SSO" // (" + statement.Principal.Federated[0] + ")"
+			provider = "AWS SSO" // (" + statement.Principal.Federated[0] + ")"
 		} else if strings.Contains(statement.Principal.Federated[0], "Okta") {
-			column2 = "Okta" //  (" + statement.Principal.Federated[0] + ")"
+			provider = "Okta" //  (" + statement.Principal.Federated[0] + ")"
 		}
-		column3 = "Not applicable"
-	} else if statement.Condition.StringEquals.OidcEksAud != "" || statement.Condition.StringEquals.OidcEksSub != "" || statement.Condition.StringLike.OidcEksAud != "" || statement.Condition.StringLike.OidcEksSub != "" {
-		column2 = "EKS" // (" + statement.Principal.Federated[0] + ")"
-		if statement.Condition.StringEquals.OidcEksSub != "" {
-			column3 = statement.Condition.StringEquals.OidcEksSub
-		} else if statement.Condition.StringLike.OidcEksSub != "" {
-			column3 = statement.Condition.StringLike.OidcEksSub
+		subjects = append(subjects, "Not applicable")
+	} else if statement.Condition.StringEquals.OidcEksAud != "" || statement.Condition.StringEquals.OidcEksSub != nil || statement.Condition.StringLike.OidcEksAud != "" || statement.Condition.StringLike.OidcEksSub != nil {
+		provider = "EKS" // (" + statement.Principal.Federated[0] + ")"
+		if statement.Condition.StringEquals.OidcEksSub != nil {
+			if len(statement.Condition.StringEquals.OidcEksSub) > 0 {
+				trustedEKSSubs = append(trustedEKSSubs, statement.Condition.StringEquals.OidcEksSub...)
+			}
+		}
+		if statement.Condition.StringLike.OidcEksSub != nil {
+			if len(statement.Condition.StringLike.OidcEksSub) > 0 {
+				trustedEKSSubs = append(trustedEKSSubs, statement.Condition.StringLike.OidcEksSub...)
+			}
+		}
+		if len(trustedEKSSubs) == 0 {
+			subjects = append(subjects, "ALL SERVICE ACCOUNTS!")
 		} else {
-			column3 = "ALL SERVICE ACCOUNTS!"
+			subjects = append(subjects, trustedEKSSubs...)
 		}
+
 	} else if statement.Principal.Federated[0] == "cognito-identity.amazonaws.com" {
-		column2 = "Cognito" // (" + statement.Principal.Federated[0] + ")"
+		provider = "Cognito" // (" + statement.Principal.Federated[0] + ")"
 		if statement.Condition.ForAnyValueStringLike.CognitoAMR != "" {
-			column3 = statement.Condition.ForAnyValueStringLike.CognitoAMR
+			subjects = append(subjects, statement.Condition.ForAnyValueStringLike.CognitoAMR)
 		}
 	} else {
-		if column2 == "" && strings.Contains(statement.Principal.Federated[0], "oidc.eks") {
-			column2 = "EKS" // (" + statement.Principal.Federated[0] + ")"
-			column3 = "ALL SERVICE ACCOUNTS!"
-		} else if column2 == "" && strings.Contains(statement.Principal.Federated[0], "AWSSSO") {
-			column2 = "AWS SSO" // (" + statement.Principal.Federated[0] + ")"
+		if provider == "" && strings.Contains(statement.Principal.Federated[0], "oidc.eks") {
+			provider = "EKS" // (" + statement.Principal.Federated[0] + ")"
+			subjects = append(subjects, "ALL SERVICE ACCOUNTS!")
+		} else if provider == "" && strings.Contains(statement.Principal.Federated[0], "AWSSSO") {
+			provider = "AWS SSO" // (" + statement.Principal.Federated[0] + ")"
 		}
 
 	}
-	return column2, column3
+	return provider, subjects
 }
 
 func (m *RoleTrustsModule) sortTrustsTablePerTrustedPrincipal() {
@@ -541,7 +518,7 @@ func (m *RoleTrustsModule) getAllRoleTrusts() {
 	}
 
 	for _, role := range ListRoles {
-		trustsdoc, err := parseRoleTrustPolicyDocument(role)
+		trustsdoc, err := policy.ParseRoleTrustPolicyDocument(role)
 		if err != nil {
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
@@ -560,41 +537,4 @@ func (m *RoleTrustsModule) getAllRoleTrusts() {
 
 	}
 
-}
-
-func parseRoleTrustPolicyDocument(role types.Role) (trustPolicyDocument, error) {
-	document, _ := url.QueryUnescape(aws.ToString(role.AssumeRolePolicyDocument))
-
-	// These next six lines are a hack, needed because the EKS OIDC json field name is dynamic
-	// and therefore can't be used to unmarshall in a predictable way. The hack involves replacing
-	// the random pattern with a predictable one so that we can add the predictable one in the struct
-	// used to unmarshall.
-	pattern := `(\w+)\:`
-	pattern2 := `".[a-zA-Z0-9\-\.]+/id/`
-	var reEKSSub = regexp.MustCompile(pattern2 + pattern + "sub")
-	var reEKSAud = regexp.MustCompile(pattern2 + pattern + "aud")
-	document = reEKSSub.ReplaceAllString(document, "\"OidcEksSub")
-	document = reEKSAud.ReplaceAllString(document, "\"OidcEksAud")
-
-	var parsedDocumentToJSON trustPolicyDocument
-	_ = json.Unmarshal([]byte(document), &parsedDocumentToJSON)
-	return parsedDocumentToJSON, nil
-}
-
-// A custom unmarshaller is necessary because the list of principals can be an array of strings or a string.
-// https://stackoverflow.com/questions/65854778/parsing-arn-from-iam-policy-using-regex
-type ListOfPrincipals []string
-
-func (r *ListOfPrincipals) UnmarshalJSON(b []byte) error {
-	var s string
-	if err := json.Unmarshal(b, &s); err == nil {
-		*r = append(*r, s)
-		return nil
-	}
-	var ss []string
-	if err := json.Unmarshal(b, &ss); err == nil {
-		*r = ss
-		return nil
-	}
-	return errors.New("cannot unmarshal neither to a string nor a slice of strings")
 }
