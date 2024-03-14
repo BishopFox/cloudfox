@@ -534,15 +534,16 @@ func parseFederatedTrustPolicy(statement policy.RoleTrustStatementEntry) (string
 		} else {
 			subjects = append(subjects, "ALL USERS")
 		}
-		// auth0 case
-	case strings.Contains(statement.Principal.Federated[0], "auth0.com"):
-		provider = "Auth0"
-		if len(statement.Condition.ForAnyValueStringLike.Auth0Amr) > 0 {
-			subjects = append(subjects, statement.Condition.ForAnyValueStringLike.Auth0Amr...)
-		} else {
-			subjects = append(subjects, "ALL GROUPS")
-		}
-		// circleci case
+	// auth0 case
+	//not ready yet
+	// case strings.Contains(statement.Principal.Federated[0], "auth0.com"):
+	// 	provider = "Auth0"
+	// 	if len(statement.Condition.ForAnyValueStringLike.Auth0Amr) > 0 {
+	// 		subjects = append(subjects, statement.Condition.ForAnyValueStringLike.Auth0Amr...)
+	// 	} else {
+	// 		subjects = append(subjects, "ALL GROUPS")
+	// 	}
+	// circleci case
 	case strings.Contains(statement.Principal.Federated[0], "oidc.circleci.com"):
 		provider = "CircleCI"
 		if len(statement.Condition.StringLike.CircleCIAud) > 0 {
