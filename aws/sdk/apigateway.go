@@ -72,11 +72,11 @@ func CachedApiGatewayGetRestAPIs(client APIGatewayClientInterface, accountID str
 }
 
 // create a CachedApiGatewayGetStages function that accepts a client, account id, region, and rest api id. Make sure it handles caching, the region option and pagination
-func CachedApiGatewayGetStages(client APIGatewayClientInterface, accountID string, region string, restAPIID string) (apigateway.GetStagesOutput, error) {
+func CachedApiGatewayGetStages(client APIGatewayClientInterface, accountID string, region string, restAPIID string) (*apigateway.GetStagesOutput, error) {
 	cacheKey := fmt.Sprintf("%s-apigateway-GetStages-%s-%s", accountID, region, restAPIID)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
-		return cached.(apigateway.GetStagesOutput), nil
+		return cached.(*apigateway.GetStagesOutput), nil
 	}
 
 	GetStages, err := client.GetStages(
@@ -90,11 +90,11 @@ func CachedApiGatewayGetStages(client APIGatewayClientInterface, accountID strin
 	)
 
 	if err != nil {
-		return apigateway.GetStagesOutput{}, err
+		return &apigateway.GetStagesOutput{}, err
 	}
 
 	internal.Cache.Set(cacheKey, GetStages, cache.DefaultExpiration)
-	return *GetStages, err
+	return GetStages, err
 }
 
 // create a CachedApiGatewayGetResources function that accepts a client, account id, region, and rest api id. Make sure it handles caching, the region option and pagination
@@ -211,12 +211,12 @@ func CachedApiGatewayGetBasePathMappings(client APIGatewayClientInterface, accou
 }
 
 // create a CachedApiGatewayGetMethod function that accepts a client, account id, region, rest api id, and resource id. Make sure it handles caching, the region option and pagination if needed
-func CachedApiGatewayGetMethod(client APIGatewayClientInterface, accountID string, region string, restAPIID string, resourceID string, method string) (apigateway.GetMethodOutput, error) {
+func CachedApiGatewayGetMethod(client APIGatewayClientInterface, accountID string, region string, restAPIID string, resourceID string, method string) (*apigateway.GetMethodOutput, error) {
 
 	cacheKey := fmt.Sprintf("%s-apigateway-GetMethod-%s-%s-%s-%s", accountID, region, restAPIID, resourceID, method)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
-		return cached.(apigateway.GetMethodOutput), nil
+		return cached.(*apigateway.GetMethodOutput), nil
 	}
 
 	GetMethod, err := client.GetMethod(
@@ -232,11 +232,11 @@ func CachedApiGatewayGetMethod(client APIGatewayClientInterface, accountID strin
 	)
 
 	if err != nil {
-		return apigateway.GetMethodOutput{}, err
+		return &apigateway.GetMethodOutput{}, err
 	}
 
 	internal.Cache.Set(cacheKey, GetMethod, cache.DefaultExpiration)
-	return *GetMethod, nil
+	return GetMethod, nil
 
 }
 
