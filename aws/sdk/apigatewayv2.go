@@ -21,13 +21,14 @@ type APIGatewayv2ClientInterface interface {
 }
 
 type domainName apiGatwayV2Types.DomainName
+type stage apiGatwayV2Types.Stage
 
 func init() {
 	gob.Register([]apiGatwayV2Types.Api{})
 	//need to do this to avoid conflicts with the Instance type in the ec2 package
 	gob.Register([]domainName{})
 	gob.Register([]apiGatwayV2Types.ApiMapping{})
-	gob.Register([]apiGatwayV2Types.Stage{})
+	gob.Register([]stage{})
 	gob.Register([]apiGatwayV2Types.Route{})
 }
 
