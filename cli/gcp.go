@@ -3,9 +3,9 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/BishopFox/cloudfox/gcp/commands"
+	oauthservice "github.com/BishopFox/cloudfox/gcp/services/oauthService"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/spf13/cobra"
 )
@@ -35,25 +35,29 @@ var (
 		Aliases: []string{"gcloud"},
 		Long:    `See "Available Commands" for GCP Modules below`,
 		Short:   "See \"Available Commands\" for GCP Modules below",
+		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+			if GCPProjectID != "" {
+				GCPProjectIDs = append(GCPProjectIDs, GCPProjectID)
+			} else if GCPProjectIDsFilePath != "" {
+				GCPProjectIDs = internal.LoadFileLinesIntoArray(GCPProjectIDsFilePath)
+			} else {
+				GCPLogger.InfoM("project or project-list flags not given, using default project as target", "gcp")
+			}
+			// Create a context with this value to share it with subcommands at runtime
+			ctx := context.WithValue(context.Background(), "projectIDs", GCPProjectIDs)
+
+			// Set the context for this command which all subcommands can access via [SUBCMD].Parent().Context()
+			// cmd.SetContext(ctx)
+			os := oauthservice.NewOAuthService()
+			email, err := os.WhoAmI()
+			if err != nil {
+				GCPLogger.FatalM("could not determine default user credential. Please use default applicatin default credentials: https://cloud.google.com/docs/authentication/application-default-credentials", "gcp")
+			}
+			ctx = context.WithValue(ctx, "account", email)
+			cmd.SetContext(ctx)
+		},
 	}
 )
-
-// Dynamically set the projectIDs []string based on given project or project-list value
-func initGCPProjectIDs() {
-	if GCPProjectID != "" {
-		GCPProjectIDs = append(GCPProjectIDs, GCPProjectID)
-	} else if GCPProjectIDsFilePath != "" {
-		GCPProjectIDs = internal.LoadFileLinesIntoArray(GCPProjectIDsFilePath)
-	} else {
-		GCPLogger.ErrorM("project or project-list flags must have a value", "gcp")
-		os.Exit(1)
-	}
-	// Create a context with this value to share it with subcommands at runtime
-	ctx := context.WithValue(context.Background(), "projectIDs", GCPProjectIDs)
-
-	// Set the context for this command which all subcommands can access via [SUBCMD].Parent().Context()
-	GCPCommands.SetContext(ctx)
-}
 
 // New RunAllGCPCommands function to execute all child commands
 var GCPAllChecksCommand = &cobra.Command{
@@ -73,7 +77,6 @@ var GCPAllChecksCommand = &cobra.Command{
 }
 
 func init() {
-	cobra.OnInitialize(initGCPProjectIDs)
 	// Globals flags for the GCP commands
 
 	// Allow selection of non-default account to be used when accessing gcloud API
@@ -100,6 +103,7 @@ func init() {
 		commands.GCPSecretsCommand,
 		commands.GCPIAMCommand,
 		commands.GCPInstancesCommand,
+		commands.GCPWhoAmICommand,
 		GCPAllChecksCommand,
 	)
 }

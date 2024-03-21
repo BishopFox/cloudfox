@@ -79,6 +79,7 @@ func (g GCPInstancesResults) LootFiles() []internal.LootFile {
 
 func runGCPInstancesCommand(cmd *cobra.Command, args []string) {
 	var projectIDs []string
+	var account string
 	parentCmd := cmd.Parent()
 	ctx := parentCmd.Context()
 	logger := internal.NewLogger()
@@ -88,6 +89,12 @@ func runGCPInstancesCommand(cmd *cobra.Command, args []string) {
 	} else {
 		logger.ErrorM("Could not retrieve projectIDs from flag value", globals.GCP_INSTANCES_MODULE_NAME)
 		return
+	}
+
+	if value, ok := ctx.Value("account").(string); ok {
+		account = value
+	} else {
+		logger.ErrorM("Could not retrieve account email from command", globals.GCP_IAM_MODULE_NAME)
 	}
 
 	ces := ComputeEngineService.New()
@@ -109,7 +116,7 @@ func runGCPInstancesCommand(cmd *cobra.Command, args []string) {
 	format, _ := parentCmd.PersistentFlags().GetString("output")
 	cloudfoxOutput := GCPInstancesResults{Data: results}
 
-	err := internal.HandleOutput(format, outputDirectory, verbosity, wrap, globals.GCP_INSTANCES_MODULE_NAME, "principal-stub", "resultsID-stub", cloudfoxOutput)
+	err := internal.HandleOutput(format, outputDirectory, verbosity, wrap, globals.GCP_INSTANCES_MODULE_NAME, account, "resultsID-stub", cloudfoxOutput)
 	if err != nil {
 		logger.ErrorM(err.Error(), globals.GCP_INSTANCES_MODULE_NAME)
 		return

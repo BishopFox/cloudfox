@@ -85,6 +85,7 @@ func (g GCPBigQueryResults) LootFiles() []internal.LootFile {
 
 func runGCPBigQueryCommand(cmd *cobra.Command, args []string) {
 	var projectIDs []string
+	var account string
 	parentCmd := cmd.Parent()
 	ctx := parentCmd.Context()
 	logger := internal.NewLogger()
@@ -93,6 +94,12 @@ func runGCPBigQueryCommand(cmd *cobra.Command, args []string) {
 	} else {
 		logger.ErrorM("Could not retrieve projectIDs from flag value", globals.GCP_BIGQUERY_MODULE_NAME)
 		return
+	}
+
+	if value, ok := ctx.Value("account").(string); ok {
+		account = value
+	} else {
+		logger.ErrorM("Could not retrieve account email from command", globals.GCP_BIGQUERY_MODULE_NAME)
 	}
 
 	bqService := BigQueryService.New()
@@ -116,7 +123,7 @@ func runGCPBigQueryCommand(cmd *cobra.Command, args []string) {
 	format, _ := parentCmd.PersistentFlags().GetString("output")
 	cloudfoxOutput := GCPBigQueryResults{DatasetsData: datasetsResults, TablesData: tablesResults}
 
-	err := internal.HandleOutput(format, outputDirectory, verbosity, wrap, globals.GCP_BIGQUERY_MODULE_NAME, "principal-stub", "resultsID-stub", cloudfoxOutput)
+	err := internal.HandleOutput(format, outputDirectory, verbosity, wrap, globals.GCP_BIGQUERY_MODULE_NAME, account, "resultsID-stub", cloudfoxOutput)
 	if err != nil {
 		logger.ErrorM(err.Error(), globals.GCP_BIGQUERY_MODULE_NAME)
 		return

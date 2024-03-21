@@ -116,6 +116,7 @@ func (g GCPArtifactRegistryResults) LootFiles() []internal.LootFile {
 func runGCPArtifactRegistryCommand(cmd *cobra.Command, args []string) {
 	// Retrieve projectIDs from parent (gcp command) ctx
 	var projectIDs []string
+	var account string
 	parentCmd := cmd.Parent()
 	ctx := parentCmd.Context()
 	logger := internal.NewLogger()
@@ -123,6 +124,12 @@ func runGCPArtifactRegistryCommand(cmd *cobra.Command, args []string) {
 		projectIDs = value
 	} else {
 		logger.ErrorM("Could not retrieve projectIDs from flag value", globals.GCP_ARTIFACT_RESGISTRY_MODULE_NAME)
+	}
+
+	if value, ok := ctx.Value("account").(string); ok {
+		account = value
+	} else {
+		logger.ErrorM("Could not retrieve account email from command", globals.GCP_ARTIFACT_RESGISTRY_MODULE_NAME)
 	}
 
 	client, err := artifactregistry.NewClient(ctx)
@@ -156,7 +163,7 @@ func runGCPArtifactRegistryCommand(cmd *cobra.Command, args []string) {
 	format, _ := parentCmd.PersistentFlags().GetString("output")
 	cloudfoxOutput := GCPArtifactRegistryResults{ArtifactData: artifactResults, RepositoryData: repoRestuls}
 
-	err = internal.HandleOutput(format, outputDirectory, verbosity, wrap, globals.GCP_ARTIFACT_RESGISTRY_MODULE_NAME, "principal-stub", "resultsID-stub", cloudfoxOutput)
+	err = internal.HandleOutput(format, outputDirectory, verbosity, wrap, globals.GCP_ARTIFACT_RESGISTRY_MODULE_NAME, account, "resultsID-stub", cloudfoxOutput)
 	if err != nil {
 		logger.ErrorM(err.Error(), globals.GCP_ARTIFACT_RESGISTRY_MODULE_NAME)
 		return

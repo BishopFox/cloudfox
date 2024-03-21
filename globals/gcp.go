@@ -8,6 +8,7 @@ const GCP_BUCKETS_MODULE_NAME string = "buckets"
 const GCP_INSTANCES_MODULE_NAME string = "instances"
 const GCP_IAM_MODULE_NAME string = "iam"
 const GCP_SECRETS_MODULE_NAME string = "secrets"
+const GCP_WHOAMI_MODULE_NAME string = "whoami"
 
 // const GCP_INVENTORY_MODULE_NAME string = "inventory"
 // const GCP_GCLOUD_REFRESH_TOKENS_DB_PATH = ".config/gcloud/credentials.db"

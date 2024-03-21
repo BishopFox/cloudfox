@@ -183,7 +183,7 @@ func getPublicEndpoints(fw *compute.Firewall, projectID string) ([]Endpoint, err
 	ces := ComputeEngineService.New()
 	if isExposedToInternet(fw) {
 		for _, allowed := range fw.Allowed {
-			// Handle desination ranges
+			// Handle destination ranges
 			for _, destRange := range fw.DestinationRanges {
 				if !IsInternalIP(destRange) {
 					exposed := Endpoint{

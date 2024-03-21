@@ -67,6 +67,7 @@ func (g GCPSecretsResults) LootFiles() []internal.LootFile {
 
 func runGCPSecretsCommand(cmd *cobra.Command, args []string) {
 	var projectIDs []string
+	var account string
 	parentCmd := cmd.Parent()
 	ctx := parentCmd.Context()
 	logger := internal.NewLogger()
@@ -75,6 +76,12 @@ func runGCPSecretsCommand(cmd *cobra.Command, args []string) {
 	} else {
 		logger.ErrorM("Could not retrieve projectIDs from flag value", globals.GCP_SECRETS_MODULE_NAME)
 		return
+	}
+
+	if value, ok := ctx.Value("account").(string); ok {
+		account = value
+	} else {
+		logger.ErrorM("Could not retrieve account email from command", globals.GCP_IAM_MODULE_NAME)
 	}
 
 	client, err := secretmanager.NewClient(ctx)
@@ -103,7 +110,7 @@ func runGCPSecretsCommand(cmd *cobra.Command, args []string) {
 	format, _ := parentCmd.PersistentFlags().GetString("output")
 	cloudfoxOutput := GCPSecretsResults{Data: results}
 
-	err = internal.HandleOutput(format, outputDirectory, verbosity, wrap, globals.GCP_SECRETS_MODULE_NAME, "principal-stub", "resultsID-stub", cloudfoxOutput)
+	err = internal.HandleOutput(format, outputDirectory, verbosity, wrap, globals.GCP_SECRETS_MODULE_NAME, account, "resultsID-stub", cloudfoxOutput)
 	if err != nil {
 		logger.ErrorM(err.Error(), globals.GCP_SECRETS_MODULE_NAME)
 		return
