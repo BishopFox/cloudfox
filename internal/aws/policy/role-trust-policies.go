@@ -99,12 +99,6 @@ func ParseRoleTrustPolicyDocument(role types.Role) (TrustPolicyDocument, error) 
 	// used to unmarshall.
 	pattern := `(\w+)\:`
 	pattern2 := `".[a-zA-Z0-9\-\.]+/id/`
-<<<<<<< HEAD
-	var reEKSSub = regexp.MustCompile(pattern2 + pattern + "sub")
-	var reEKSAud = regexp.MustCompile(pattern2 + pattern + "aud")
-	document = reEKSSub.ReplaceAllString(document, "\"OidcEksSub")
-	document = reEKSAud.ReplaceAllString(document, "\"OidcEksAud")
-=======
 	//auth0Pattern := `"auth0.com\:`
 	circleCIPattern := `"oidc.circleci.com/org/[a-zA-Z0-9\-]+:`
 	var reEKSSub = regexp.MustCompile(pattern2 + pattern + "sub")
@@ -118,7 +112,6 @@ func ParseRoleTrustPolicyDocument(role types.Role) (TrustPolicyDocument, error) 
 	//document = reAuth0Sub.ReplaceAllString(document, "\"Auth0Amr")
 	document = reCircleCIAud.ReplaceAllString(document, "\"CircleCIAud")
 	document = reCircleCISSub.ReplaceAllString(document, "\"CircleCISub")
->>>>>>> b73cd90323769c8adcb38901304ad165ce16f31d
 
 	var parsedDocumentToJSON TrustPolicyDocument
 	_ = json.Unmarshal([]byte(document), &parsedDocumentToJSON)
