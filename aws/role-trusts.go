@@ -449,53 +449,114 @@ func (m *RoleTrustsModule) printFederatedTrusts(outputDirectory string) ([]strin
 func parseFederatedTrustPolicy(statement policy.RoleTrustStatementEntry) (string, []string) {
 	var provider string
 	var subjects []string
-	var trustedEKSSubs []string
-	if statement.Condition.StringLike.TokenActionsGithubusercontentComAud != "" || len(statement.Condition.StringLike.TokenActionsGithubusercontentComSub) > 0 {
-		provider = "GitHub Actions" //  (" + statement.Principal.Federated[0] + ")"
-		//trustedRepos := strings.Join(statement.Condition.StringLike.TokenActionsGithubusercontentComSub, "\n")
+	if len(statement.Principal.Federated) > 1 {
+		sharedLogger.Warnf("Multiple federated providers found in the trust policy. This is not currently supported. Please review the trust policy for specifics.")
+		provider = "Multiple Federated Providers"
+		subjects = append(subjects, "Review policy for specifics\nand submit issue to cloudfox repo.")
+	}
+
+	switch {
+	// lets use the Federated field to determine the provider, then based on the provider we can grab the list of subjects
+	case strings.Contains(statement.Principal.Federated[0], "token.actions.githubusercontent.com"):
+		provider = "GitHub"
 		if len(statement.Condition.StringLike.TokenActionsGithubusercontentComSub) > 0 {
 			subjects = append(subjects, statement.Condition.StringLike.TokenActionsGithubusercontentComSub...)
+		} else if len(statement.Condition.StringEquals.TokenActionsGithubusercontentComSub) > 0 {
+			subjects = append(subjects, statement.Condition.StringEquals.TokenActionsGithubusercontentComSub...)
 		} else {
 			subjects = append(subjects, "ALL REPOS!!!")
 		}
-
-	} else if statement.Condition.StringEquals.SAMLAud == "https://signin.aws.amazon.com/saml" {
-		if strings.Contains(statement.Principal.Federated[0], "AWSSSO") {
-			provider = "AWS SSO" // (" + statement.Principal.Federated[0] + ")"
-		} else if strings.Contains(statement.Principal.Federated[0], "Okta") {
-			provider = "Okta" //  (" + statement.Principal.Federated[0] + ")"
-		}
-		subjects = append(subjects, "Not applicable")
-	} else if statement.Condition.StringEquals.OidcEksAud != "" || statement.Condition.StringEquals.OidcEksSub != nil || statement.Condition.StringLike.OidcEksAud != "" || statement.Condition.StringLike.OidcEksSub != nil {
-		provider = "EKS" // (" + statement.Principal.Federated[0] + ")"
-		if statement.Condition.StringEquals.OidcEksSub != nil {
-			if len(statement.Condition.StringEquals.OidcEksSub) > 0 {
-				trustedEKSSubs = append(trustedEKSSubs, statement.Condition.StringEquals.OidcEksSub...)
-			}
-		}
-		if statement.Condition.StringLike.OidcEksSub != nil {
-			if len(statement.Condition.StringLike.OidcEksSub) > 0 {
-				trustedEKSSubs = append(trustedEKSSubs, statement.Condition.StringLike.OidcEksSub...)
-			}
-		}
-		if len(trustedEKSSubs) == 0 {
-			subjects = append(subjects, "ALL SERVICE ACCOUNTS!")
+	case strings.Contains(statement.Principal.Federated[0], "oidc.eks"):
+		provider = "EKS"
+		if len(statement.Condition.StringLike.OidcEksSub) > 0 {
+			subjects = append(subjects, statement.Condition.StringLike.OidcEksSub...)
+		} else if len(statement.Condition.StringEquals.OidcEksSub) > 0 {
+			subjects = append(subjects, statement.Condition.StringEquals.OidcEksSub...)
 		} else {
-			subjects = append(subjects, trustedEKSSubs...)
+			subjects = append(subjects, "ALL SERVICE ACCOUNTS!!!")
+		}
+		// terraform case
+	case strings.Contains(statement.Principal.Federated[0], "app.terraform.io"):
+		provider = "Terraform Cloud"
+		if len(statement.Condition.StringLike.TerraformSub) > 0 {
+			subjects = append(subjects, statement.Condition.StringLike.TerraformSub...)
+		} else if len(statement.Condition.StringEquals.TerraformSub) > 0 {
+			subjects = append(subjects, statement.Condition.StringEquals.TerraformSub...)
+		} else {
+			subjects = append(subjects, "ALL WORKSPACES")
+		}
+		// Azure AD case
+	case strings.Contains(statement.Principal.Federated[0], "http://sts.windows.net"):
+		provider = "Azure AD"
+		if len(statement.Condition.StringLike.AzureADIss) > 0 {
+			subjects = append(subjects, statement.Condition.StringLike.AzureADIss...)
+		} else if len(statement.Condition.StringEquals.AzureADIss) > 0 {
+			subjects = append(subjects, statement.Condition.StringEquals.AzureADIss...)
+		} else {
+			subjects = append(subjects, "ALL ISSUERS")
 		}
 
-	} else if statement.Principal.Federated[0] == "cognito-identity.amazonaws.com" {
-		provider = "Cognito" // (" + statement.Principal.Federated[0] + ")"
+	// AWS SSO case
+	case strings.Contains(statement.Principal.Federated[0], "AWSSSO"):
+		provider = "AWS SSO"
+		subjects = append(subjects, "Not applicable")
+
+	// okta case
+	case strings.Contains(statement.Principal.Federated[0], "Okta"):
+		provider = "Okta"
+		subjects = append(subjects, "Not applicable")
+
+	// cognito case
+	case statement.Principal.Federated[0] == "cognito-identity.amazonaws.com":
+		provider = "Cognito"
 		if statement.Condition.ForAnyValueStringLike.CognitoAMR != "" {
 			subjects = append(subjects, statement.Condition.ForAnyValueStringLike.CognitoAMR)
+		} else {
+			subjects = append(subjects, "ALL IDENTITIES")
 		}
-	} else {
-		if provider == "" && strings.Contains(statement.Principal.Federated[0], "oidc.eks") {
-			provider = "EKS" // (" + statement.Principal.Federated[0] + ")"
-			subjects = append(subjects, "ALL SERVICE ACCOUNTS!")
-		} else if provider == "" && strings.Contains(statement.Principal.Federated[0], "AWSSSO") {
-			provider = "AWS SSO" // (" + statement.Principal.Federated[0] + ")"
+		// google workspace case
+	case strings.Contains(statement.Principal.Federated[0], "workspace.google.com"):
+		provider = "Google Workspace"
+		if len(statement.Condition.StringLike.GoogleWorkspaceSub) > 0 {
+			subjects = append(subjects, statement.Condition.StringLike.GoogleWorkspaceSub...)
+		} else if len(statement.Condition.StringEquals.GoogleWorkspaceSub) > 0 {
+			subjects = append(subjects, statement.Condition.StringEquals.GoogleWorkspaceSub...)
+		} else {
+			subjects = append(subjects, "ALL USERS")
 		}
+		// GCP case
+	case strings.Contains(statement.Principal.Federated[0], "accounts.google.com"):
+		provider = "GCP"
+		if len(statement.Condition.StringLike.GCPSub) > 0 {
+			subjects = append(subjects, statement.Condition.StringLike.GCPSub...)
+		} else if len(statement.Condition.StringEquals.GCPSub) > 0 {
+			subjects = append(subjects, statement.Condition.StringEquals.GCPSub...)
+		} else {
+			subjects = append(subjects, "ALL USERS")
+		}
+	// auth0 case
+	//not ready yet
+	// case strings.Contains(statement.Principal.Federated[0], "auth0.com"):
+	// 	provider = "Auth0"
+	// 	if len(statement.Condition.ForAnyValueStringLike.Auth0Amr) > 0 {
+	// 		subjects = append(subjects, statement.Condition.ForAnyValueStringLike.Auth0Amr...)
+	// 	} else {
+	// 		subjects = append(subjects, "ALL GROUPS")
+	// 	}
+	// circleci case
+	case strings.Contains(statement.Principal.Federated[0], "oidc.circleci.com"):
+		provider = "CircleCI"
+		if len(statement.Condition.StringLike.CircleCIAud) > 0 {
+			subjects = append(subjects, statement.Condition.StringLike.CircleCIAud...)
+		} else if len(statement.Condition.StringEquals.CircleCIAud) > 0 {
+			subjects = append(subjects, statement.Condition.StringEquals.CircleCIAud...)
+		} else {
+			subjects = append(subjects, "ALL PROJECTS")
+		}
+
+	default:
+		provider = "Unknown Federated Provider"
+		subjects = append(subjects, "Review policy for specifics\nand submit issue to cloudfox repo.")
 
 	}
 	return provider, subjects

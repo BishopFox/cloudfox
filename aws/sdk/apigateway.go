@@ -23,13 +23,32 @@ type APIGatewayClientInterface interface {
 	GetUsagePlanKeys(context.Context, *apigateway.GetUsagePlanKeysInput, ...func(*apigateway.Options)) (*apigateway.GetUsagePlanKeysOutput, error)
 }
 
+type CachedGetMethodOutput struct {
+	ApiKeyRequired      *bool
+	AuthorizationScopes []string
+	AuthorizationType   *string
+	AuthorizerId        *string
+	HttpMethod          *string
+	MethodIntegration   *apiGatewayTypes.Integration
+	MethodResponses     map[string]apiGatewayTypes.MethodResponse
+	OperationName       *string
+	RequestModels       map[string]string
+	RequestParameters   map[string]bool
+	RequestValidatorId  *string
+	ResourceId          *string
+}
+
+type CachedGetStagesOutput struct {
+	Item []apiGatewayTypes.Stage
+}
+
 func init() {
 	gob.Register([]apiGatewayTypes.RestApi{})
-	gob.Register(apigateway.GetStagesOutput{})
+	gob.Register(CachedGetStagesOutput{})
 	gob.Register([]apiGatewayTypes.Resource{})
 	gob.Register([]apiGatewayTypes.DomainName{})
 	gob.Register([]apiGatewayTypes.BasePathMapping{})
-	gob.Register(apigateway.GetMethodOutput{})
+	gob.Register(CachedGetMethodOutput{})
 	gob.Register([]apiGatewayTypes.UsagePlan{})
 	gob.Register([]apiGatewayTypes.UsagePlanKey{})
 }
@@ -72,11 +91,13 @@ func CachedApiGatewayGetRestAPIs(client APIGatewayClientInterface, accountID str
 }
 
 // create a CachedApiGatewayGetStages function that accepts a client, account id, region, and rest api id. Make sure it handles caching, the region option and pagination
-func CachedApiGatewayGetStages(client APIGatewayClientInterface, accountID string, region string, restAPIID string) (apigateway.GetStagesOutput, error) {
+func CachedApiGatewayGetStages(client APIGatewayClientInterface, accountID string, region string, restAPIID string) (*apigateway.GetStagesOutput, error) {
 	cacheKey := fmt.Sprintf("%s-apigateway-GetStages-%s-%s", accountID, region, restAPIID)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
-		return cached.(apigateway.GetStagesOutput), nil
+		// Convert cached data back to GetStagesOutput before returning
+		cachedOutput := cached.(*CachedGetStagesOutput) // Ensure this type assertion matches your caching logic
+		return fromCachedGetStagesOutput(cachedOutput), nil
 	}
 
 	GetStages, err := client.GetStages(
@@ -90,11 +111,28 @@ func CachedApiGatewayGetStages(client APIGatewayClientInterface, accountID strin
 	)
 
 	if err != nil {
-		return apigateway.GetStagesOutput{}, err
+		return &apigateway.GetStagesOutput{}, err
 	}
 
-	internal.Cache.Set(cacheKey, GetStages, cache.DefaultExpiration)
-	return *GetStages, err
+	// Convert GetStagesOutput to CachedGetStagesOutput before caching
+	cachedVersion := toCachedGetStagesOutput(GetStages)
+	internal.Cache.Set(cacheKey, cachedVersion, cache.DefaultExpiration)
+	return GetStages, err
+}
+
+// Convert from AWS SDK type to custom type for caching
+func toCachedGetStagesOutput(gso *apigateway.GetStagesOutput) *CachedGetStagesOutput {
+	return &CachedGetStagesOutput{
+		Item: gso.Item,
+	}
+}
+
+// Convert back to AWS SDK type after fetching from cache
+func fromCachedGetStagesOutput(cgso *CachedGetStagesOutput) *apigateway.GetStagesOutput {
+	return &apigateway.GetStagesOutput{
+		Item: cgso.Item,
+		// Initialize ResultMetadata or leave it as zero value if it's not required for your use case
+	}
 }
 
 // create a CachedApiGatewayGetResources function that accepts a client, account id, region, and rest api id. Make sure it handles caching, the region option and pagination
@@ -211,12 +249,14 @@ func CachedApiGatewayGetBasePathMappings(client APIGatewayClientInterface, accou
 }
 
 // create a CachedApiGatewayGetMethod function that accepts a client, account id, region, rest api id, and resource id. Make sure it handles caching, the region option and pagination if needed
-func CachedApiGatewayGetMethod(client APIGatewayClientInterface, accountID string, region string, restAPIID string, resourceID string, method string) (apigateway.GetMethodOutput, error) {
+func CachedApiGatewayGetMethod(client APIGatewayClientInterface, accountID string, region string, restAPIID string, resourceID string, method string) (*apigateway.GetMethodOutput, error) {
 
 	cacheKey := fmt.Sprintf("%s-apigateway-GetMethod-%s-%s-%s-%s", accountID, region, restAPIID, resourceID, method)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
-		return cached.(apigateway.GetMethodOutput), nil
+		// Convert cached data back to GetMethodOutput before returning
+		cachedOutput := cached.(*CachedGetMethodOutput) // Ensure this type assertion matches your caching logic
+		return fromCachedGetMethodOutput(cachedOutput), nil
 	}
 
 	GetMethod, err := client.GetMethod(
@@ -232,12 +272,49 @@ func CachedApiGatewayGetMethod(client APIGatewayClientInterface, accountID strin
 	)
 
 	if err != nil {
-		return apigateway.GetMethodOutput{}, err
+		return &apigateway.GetMethodOutput{}, err
 	}
 
-	internal.Cache.Set(cacheKey, GetMethod, cache.DefaultExpiration)
-	return *GetMethod, nil
+	// Convert GetMethodOutput to CachedGetMethodOutput before caching
+	cachedVersion := toCachedGetMethodOutput(GetMethod)
+	internal.Cache.Set(cacheKey, cachedVersion, cache.DefaultExpiration)
+	return GetMethod, nil
 
+}
+
+// Convert from AWS SDK type to custom type for caching
+func toCachedGetMethodOutput(gmo *apigateway.GetMethodOutput) *CachedGetMethodOutput {
+	return &CachedGetMethodOutput{
+		ApiKeyRequired:      gmo.ApiKeyRequired,
+		AuthorizationScopes: gmo.AuthorizationScopes,
+		AuthorizationType:   gmo.AuthorizationType,
+		AuthorizerId:        gmo.AuthorizerId,
+		HttpMethod:          gmo.HttpMethod,
+		MethodIntegration:   gmo.MethodIntegration,
+		MethodResponses:     gmo.MethodResponses,
+		OperationName:       gmo.OperationName,
+		RequestModels:       gmo.RequestModels,
+		RequestParameters:   gmo.RequestParameters,
+		RequestValidatorId:  gmo.RequestValidatorId,
+	}
+}
+
+// Convert back to AWS SDK type after fetching from cache
+func fromCachedGetMethodOutput(cgmo *CachedGetMethodOutput) *apigateway.GetMethodOutput {
+	return &apigateway.GetMethodOutput{
+		ApiKeyRequired:      cgmo.ApiKeyRequired,
+		AuthorizationScopes: cgmo.AuthorizationScopes,
+		AuthorizationType:   cgmo.AuthorizationType,
+		AuthorizerId:        cgmo.AuthorizerId,
+		HttpMethod:          cgmo.HttpMethod,
+		MethodIntegration:   cgmo.MethodIntegration,
+		MethodResponses:     cgmo.MethodResponses,
+		OperationName:       cgmo.OperationName,
+		RequestModels:       cgmo.RequestModels,
+		RequestParameters:   cgmo.RequestParameters,
+		RequestValidatorId:  cgmo.RequestValidatorId,
+		// ResultMetadata: This will be missing or zero value; handle accordingly
+	}
 }
 
 // create a CachedApiGatewayGetUsagePlans function that accepts a client, account id, region. Make sure it handles caching, the region option and pagination if needed

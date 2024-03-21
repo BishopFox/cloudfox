@@ -24,7 +24,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/codecommit"
 	"github.com/aws/aws-sdk-go-v2/service/codedeploy"
 	"github.com/aws/aws-sdk-go-v2/service/datapipeline"
-	"github.com/aws/aws-sdk-go-v2/service/docdb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
@@ -769,8 +768,6 @@ func runDatabasesCommand(cmd *cobra.Command, args []string) {
 			RDSClient:      rds.NewFromConfig(AWSConfig),
 			RedshiftClient: redshift.NewFromConfig(AWSConfig),
 			DynamoDBClient: dynamodb.NewFromConfig(AWSConfig),
-			DocDBClient:    docdb.NewFromConfig(AWSConfig),
-			NeptuneClient:  neptune.NewFromConfig(AWSConfig),
 			Caller:         *caller,
 			AWSRegions:     internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
 			AWSProfile:     profile,
@@ -1652,7 +1649,6 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		codeCommitClient := codecommit.NewFromConfig(AWSConfig)
 		codeDeployClient := codedeploy.NewFromConfig(AWSConfig)
 		dataPipelineClient := datapipeline.NewFromConfig(AWSConfig)
-		docdbClient := docdb.NewFromConfig(AWSConfig)
 		dynamodbClient := dynamodb.NewFromConfig(AWSConfig)
 		ec2Client := ec2.NewFromConfig(AWSConfig)
 		ecrClient := ecr.NewFromConfig(AWSConfig)
@@ -1861,7 +1857,6 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			RDSClient:      rdsClient,
 			RedshiftClient: redshiftClient,
 			DynamoDBClient: dynamodbClient,
-			DocDBClient:    docdbClient,
 			Caller:         *caller,
 			AWSProfile:     profile,
 			AWSRegions:     internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),

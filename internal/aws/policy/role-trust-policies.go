@@ -26,20 +26,48 @@ type RoleTrustStatementEntry struct {
 	Action    string `json:"Action"`
 	Condition struct {
 		StringEquals struct {
-			StsExternalID string           `json:"sts:ExternalId"`
-			SAMLAud       string           `json:"SAML:aud"`
-			OidcEksSub    ListOfPrincipals `json:"OidcEksSub"`
-			OidcEksAud    string           `json:"OidcEksAud"`
-			CognitoAud    string           `json:"cognito-identity.amazonaws.com:aud"`
+			StsExternalID                       string           `json:"sts:ExternalId"`
+			SAMLAud                             string           `json:"SAML:aud"`
+			TokenActionsGithubusercontentComSub ListOfPrincipals `json:"token.actions.githubusercontent.com:sub"`
+			TokenActionsGithubusercontentComAud string           `json:"token.actions.githubusercontent.com:aud"`
+			OidcEksSub                          ListOfPrincipals `json:"OidcEksSub"`
+			OidcEksAud                          string           `json:"OidcEksAud"`
+			CognitoAud                          string           `json:"cognito-identity.amazonaws.com:aud"`
+			TerraformAud                        string           `json:"app.terraform.io:aud"` // Terraform Cloud specific
+			TerraformSub                        ListOfPrincipals `json:"app.terraform.io:sub"` // Terraform Cloud specific
+			GCPAud                              string           `json:"accounts.google.com:aud"`
+			GCPSub                              ListOfPrincipals `json:"accounts.google.com:sub"`
+			AzureADIss                          ListOfPrincipals `json:"http://sts.windows.net/tenant-id/iss"` // Azure AD specific
+			AzureADSub                          ListOfPrincipals `json:"sub"`                                  // Common among OIDC providers
+			PingClientId                        string           `json:"pingidentity.com:client_id"`
+			GoogleWorkspaceAud                  string           `json:"workspace.google.com:aud"`
+			GoogleWorkspaceSub                  ListOfPrincipals `json:"workspace.google.com:sub"`
+			CircleCIAud                         ListOfPrincipals `json:"CircleCIAud"`
+			CircleCISub                         ListOfPrincipals `json:"CircleCISub"`
+			// Add other provider-specific claims here
 		} `json:"StringEquals"`
 		StringLike struct {
 			TokenActionsGithubusercontentComSub ListOfPrincipals `json:"token.actions.githubusercontent.com:sub"`
 			TokenActionsGithubusercontentComAud string           `json:"token.actions.githubusercontent.com:aud"`
 			OidcEksSub                          ListOfPrincipals `json:"OidcEksSub"`
 			OidcEksAud                          string           `json:"OidcEksAud"`
+			TerraformAud                        string           `json:"app.terraform.io:aud"` // Terraform Cloud specific
+			TerraformSub                        ListOfPrincipals `json:"app.terraform.io:sub"` // Terraform Cloud specific
+			GCPAud                              string           `json:"accounts.google.com:aud"`
+			GCPSub                              ListOfPrincipals `json:"accounts.google.com:sub"`
+			AzureADIss                          ListOfPrincipals `json:"http://sts.windows.net/tenant-id/iss"` // Azure AD specific
+			AzureADSub                          ListOfPrincipals `json:"sub"`                                  // Common among OIDC providers
+			PingClientId                        string           `json:"pingidentity.com:client_id"`
+			GoogleWorkspaceAud                  string           `json:"workspace.google.com:aud"`
+			GoogleWorkspaceSub                  ListOfPrincipals `json:"workspace.google.com:sub"`
+			CircleCIAud                         ListOfPrincipals `json:"CircleCIAud"`
+			CircleCISub                         ListOfPrincipals `json:"CircleCISub"`
+			// Add patterns for provider-specific claims that support wildcards or partial matches
 		} `json:"StringLike"`
 		ForAnyValueStringLike struct {
 			CognitoAMR string `json:"cognito-identity.amazonaws.com:amr"`
+			//Auth0Amr   ListOfPrincipals `json:"Auth0Amr"`
+			// This section can be extended with any-value-like conditions for other providers if they support such conditions
 		} `json:"ForAnyValue:StringLike"`
 	} `json:"Condition"`
 }
@@ -71,10 +99,26 @@ func ParseRoleTrustPolicyDocument(role types.Role) (TrustPolicyDocument, error) 
 	// used to unmarshall.
 	pattern := `(\w+)\:`
 	pattern2 := `".[a-zA-Z0-9\-\.]+/id/`
+<<<<<<< HEAD
 	var reEKSSub = regexp.MustCompile(pattern2 + pattern + "sub")
 	var reEKSAud = regexp.MustCompile(pattern2 + pattern + "aud")
 	document = reEKSSub.ReplaceAllString(document, "\"OidcEksSub")
 	document = reEKSAud.ReplaceAllString(document, "\"OidcEksAud")
+=======
+	//auth0Pattern := `"auth0.com\:`
+	circleCIPattern := `"oidc.circleci.com/org/[a-zA-Z0-9\-]+:`
+	var reEKSSub = regexp.MustCompile(pattern2 + pattern + "sub")
+	var reEKSAud = regexp.MustCompile(pattern2 + pattern + "aud")
+	//var reAuth0Sub = regexp.MustCompile(auth0Pattern + "amr")
+	var reCircleCIAud = regexp.MustCompile(circleCIPattern + "aud")
+	var reCircleCISSub = regexp.MustCompile(circleCIPattern + "sub")
+
+	document = reEKSSub.ReplaceAllString(document, "\"OidcEksSub")
+	document = reEKSAud.ReplaceAllString(document, "\"OidcEksAud")
+	//document = reAuth0Sub.ReplaceAllString(document, "\"Auth0Amr")
+	document = reCircleCIAud.ReplaceAllString(document, "\"CircleCIAud")
+	document = reCircleCISSub.ReplaceAllString(document, "\"CircleCISub")
+>>>>>>> b73cd90323769c8adcb38901304ad165ce16f31d
 
 	var parsedDocumentToJSON TrustPolicyDocument
 	_ = json.Unmarshal([]byte(document), &parsedDocumentToJSON)
