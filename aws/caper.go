@@ -33,6 +33,7 @@ type CaperCommand struct {
 	SkipAdminCheck      bool
 	GlobalGraph         graph.Graph[string, string]
 	PmapperDataBasePath string
+	AnalyzedAccounts    map[string]bool
 
 	output internal.OutputData2
 	modLog *logrus.Entry
@@ -249,60 +250,8 @@ func ConvertIAMRoleToNode(role types.Role, vendors *knownawsaccountslookup.Vendo
 
 		}
 		for _, federated := range statement.Principal.Federated {
-			if statement.Condition.StringLike.TokenActionsGithubusercontentComAud != "" || len(statement.Condition.StringLike.TokenActionsGithubusercontentComSub) > 0 {
-				trustedProvider = "GitHub"
-				//trustedSubjects = strings.Join(statement.Condition.StringLike.TokenActionsGithubusercontentComSub, ",")
-				trustedSubjects = statement.Condition.StringLike.TokenActionsGithubusercontentComSub
-				if strings.Join(statement.Condition.StringLike.TokenActionsGithubusercontentComSub, ",") == "" {
-					trustedSubjects = append(trustedSubjects, "ALL REPOS")
-				}
-				// 	} else {
-				// 	trustedSubjects = "Repos: " + trustedSubjects
-				// }
 
-			} else if statement.Condition.StringEquals.SAMLAud == "https://signin.aws.amazon.com/saml" {
-				if strings.Contains(statement.Principal.Federated[0], "AWSSSO") {
-					trustedProvider = "AWS SSO" // (" + statement.Principal.Federated[0] + ")"
-				} else if strings.Contains(statement.Principal.Federated[0], "Okta") {
-					trustedProvider = "Okta" //  (" + statement.Principal.Federated[0] + ")"
-				}
-				trustedSubjects = append(trustedSubjects, "Not applicable")
-			} else if statement.Condition.StringEquals.OidcEksAud != "" || statement.Condition.StringEquals.OidcEksSub != nil || statement.Condition.StringLike.OidcEksAud != "" || statement.Condition.StringLike.OidcEksSub != nil {
-				trustedProvider = statement.Principal.Federated[0]
-				//providerAccountId := strings.Split(statement.Principal.Federated[0], ":")[4]
-				// we only care about cross account trusts here, so we only care if the OIDC provider is from another account.
-				//if providerAccountId != accountId {
-				//trustedProvider = "EKS" // (" + statement.Principal.Federated[0] + ")"
-				if statement.Condition.StringEquals.OidcEksSub != nil {
-					if len(statement.Condition.StringEquals.OidcEksSub) > 0 {
-						trustedSubjects = append(trustedSubjects, statement.Condition.StringEquals.OidcEksSub...)
-					}
-				}
-				if statement.Condition.StringLike.OidcEksSub != nil {
-					if len(statement.Condition.StringLike.OidcEksSub) > 0 {
-						trustedSubjects = append(trustedSubjects, statement.Condition.StringLike.OidcEksSub...)
-					}
-
-				}
-				if len(trustedSubjects) == 0 {
-					trustedSubjects = append(trustedSubjects, "ALL SERVICE ACCOUNTS!")
-				}
-				//}
-			} else if statement.Principal.Federated[0] == "cognito-identity.amazonaws.com" {
-				trustedProvider = "Cognito" // (" + statement.Principal.Federated[0] + ")"
-				if statement.Condition.ForAnyValueStringLike.CognitoAMR != "" {
-					trustedSubjects = append(trustedSubjects, statement.Condition.ForAnyValueStringLike.CognitoAMR)
-				}
-			} else {
-				if trustedProvider == "" && strings.Contains(statement.Principal.Federated[0], "oidc.eks") {
-					trustedProvider = "EKS" // (" + statement.Principal.Federated[0] + ")"
-					trustedSubjects = append(trustedSubjects, "ALL SERVICE ACCOUNTS!")
-				} else if trustedProvider == "" && strings.Contains(statement.Principal.Federated[0], "AWSSSO") {
-					trustedProvider = "AWS SSO" // (" + statement.Principal.Federated[0] + ")"
-				}
-				trustedSubjects = append(trustedSubjects, "Not applicable")
-			}
-
+			trustedProvider, trustedSubjects = parseFederatedTrustPolicy(statement)
 			TrustedFederatedProviders = append(TrustedFederatedProviders, TrustedFederatedProvider{
 				TrustedFederatedProvider: federated,
 				ProviderShortName:        trustedProvider,
@@ -329,16 +278,6 @@ func ConvertIAMRoleToNode(role types.Role, vendors *knownawsaccountslookup.Vendo
 
 func ConvertIAMUserToNode(user types.User) Node {
 	accountId := strings.Split(aws.ToString(user.Arn), ":")[4]
-
-	//create new object of type models.User
-	// cfUser := models.User{
-	// 	Id:                aws.ToString(user.UserId),
-	// 	ARN:               aws.ToString(user.Arn),
-	// 	Name:              aws.ToString(user.UserName),
-	// 	IsAdmin:           false,
-	// 	CanPrivEscToAdmin: false,
-	// }
-
 	node := Node{
 		Arn:       aws.ToString(user.Arn),
 		Type:      "User",
@@ -386,7 +325,7 @@ func FindVerticesInRoleTrust(a Node, vendors *knownawsaccountslookup.Vendors) []
 
 		if strings.Contains(TrustedPrincipal.TrustedPrincipal, ":root") && TrustedPrincipal.VendorName != "" {
 			newNodes = append(newNodes, Node{
-				Arn: fmt.Sprintf("%s [%s]", TrustedPrincipal.TrustedPrincipal, TrustedPrincipal.VendorName),
+				Arn: fmt.Sprintf("%s [%s]", TrustedPrincipal.VendorName, TrustedPrincipal.TrustedPrincipal),
 				//Arn:        TrustedPrincipal.VendorName,
 				Type:       "Account",
 				AccountID:  trustedPrincipalAccount,
@@ -394,12 +333,13 @@ func FindVerticesInRoleTrust(a Node, vendors *knownawsaccountslookup.Vendors) []
 				VendorName: TrustedPrincipal.VendorName,
 			})
 
-			// } else if strings.Contains(TrustedPrincipal.TrustedPrincipal, fmt.Sprintf("%s:root", trustedPrincipalAccount)) {
-			// 	newNodes = append(newNodes, Node{
-			// 		Arn:       TrustedPrincipal.TrustedPrincipal,
-			// 		Type:      "Account",
-			// 		AccountID: trustedPrincipalAccount,
-			// 	})
+		} else if strings.Contains(TrustedPrincipal.TrustedPrincipal, ":root") && TrustedPrincipal.VendorName == "" {
+			// check to see if the account is one of the analyzed accounts
+			newNodes = append(newNodes, Node{
+				Arn:       TrustedPrincipal.TrustedPrincipal,
+				Type:      "Account",
+				AccountID: trustedPrincipalAccount,
+			})
 
 		} else if strings.Contains(TrustedPrincipal.TrustedPrincipal, fmt.Sprintf(":user")) {
 			newNodes = append(newNodes, Node{
@@ -444,7 +384,8 @@ func FindVerticesInRoleTrust(a Node, vendors *knownawsaccountslookup.Vendors) []
 			if trustedSubject == "Not applicable" {
 				providerAndSubject = TrustedFederatedProvider.ProviderShortName
 			} else {
-				providerAndSubject = TrustedFederatedProvider.ProviderShortName + ":" + trustedSubject
+				//providerAndSubject = TrustedFederatedProvider.ProviderShortName + ":" + trustedSubject
+				providerAndSubject = fmt.Sprintf("%s [%s]", TrustedFederatedProvider.ProviderShortName, trustedSubject)
 			}
 			newNodes = append(newNodes, Node{
 				Arn:       providerAndSubject,
@@ -704,7 +645,7 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 			err := GlobalGraph.AddEdge(
 				//TrustedPrincipal.TrustedPrincipal,
 				//TrustedPrincipal.VendorName,
-				fmt.Sprintf("%s [%s]", TrustedPrincipal.TrustedPrincipal, TrustedPrincipal.VendorName),
+				fmt.Sprintf("%s [%s]", TrustedPrincipal.VendorName, TrustedPrincipal.TrustedPrincipal),
 				a.Arn,
 				//graph.EdgeAttribute("VendorAssumeRole", "Cross account root trust and trusted principal is a vendor"),
 				graph.EdgeAttribute("VendorAssumeRole", "can assume (because of a cross account root trust and trusted principal is a vendor) "),
@@ -858,7 +799,8 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 			if trustedSubject == "Not applicable" {
 				providerAndSubject = TrustedFederatedProvider.ProviderShortName
 			} else {
-				providerAndSubject = TrustedFederatedProvider.ProviderShortName + ":" + trustedSubject
+				//providerAndSubject = TrustedFederatedProvider.ProviderShortName + ":" + trustedSubject
+				providerAndSubject = fmt.Sprintf("%s [%s]", TrustedFederatedProvider.ProviderShortName, trustedSubject)
 			}
 
 			err := GlobalGraph.AddEdge(

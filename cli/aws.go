@@ -946,6 +946,7 @@ func runFilesystemsCommand(cmd *cobra.Command, args []string) {
 }
 
 func runGraphCommand(cmd *cobra.Command, args []string) {
+
 	for _, profile := range AWSProfiles {
 		//var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
@@ -987,6 +988,8 @@ func runGraphCommand(cmd *cobra.Command, args []string) {
 }
 
 func runCaperCommand(cmd *cobra.Command, args []string) {
+	// map of all unique accountIDs and if they are included in the analysis or not
+	analyzedAccounts := make(map[string]bool)
 
 	GlobalGraph := graph.New(graph.StringHash, graph.Directed())
 	//var PermissionRowsFromAllProfiles []common.PermissionsRow
@@ -1001,6 +1004,9 @@ func runCaperCommand(cmd *cobra.Command, args []string) {
 		if err != nil {
 			continue
 		}
+
+		// add account number to analyzedAccounts map and set the value to true
+		analyzedAccounts[ptr.ToString(caller.Account)] = true
 
 		//Gather all Permissions data
 		fmt.Println("Getting GAAD for " + profile)
@@ -1081,7 +1087,12 @@ func runCaperCommand(cmd *cobra.Command, args []string) {
 			graph.VertexAttribute("CanPrivEscToAdminString", node.CanPrivEscToAdminString),
 			graph.VertexAttribute("AccountID", node.AccountID),
 		)
-
+		// for every node, check to see if the accountId exists in the analyzedAccounts map. If it does not, add it to the map and set the value to false only if the node.VendorName is empty
+		if _, ok := analyzedAccounts[node.AccountID]; !ok {
+			if node.VendorName == "" {
+				analyzedAccounts[node.AccountID] = false
+			}
+		}
 	}
 
 	// make pmapper edges
@@ -1154,6 +1165,7 @@ func runCaperCommand(cmd *cobra.Command, args []string) {
 			SkipAdminCheck:      AWSSkipAdminCheck,
 			GlobalGraph:         GlobalGraph,
 			PmapperDataBasePath: PmapperDataBasePath,
+			AnalyzedAccounts:    analyzedAccounts,
 		}
 
 		caperCommandClient.RunCaperCommand()
