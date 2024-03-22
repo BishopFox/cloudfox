@@ -87,7 +87,7 @@ func runGCPBigQueryCommand(cmd *cobra.Command, args []string) {
 	var projectIDs []string
 	var account string
 	parentCmd := cmd.Parent()
-	ctx := parentCmd.Context()
+	ctx := cmd.Context()
 	logger := internal.NewLogger()
 	if value, ok := ctx.Value("projectIDs").([]string); ok {
 		projectIDs = value
