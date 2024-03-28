@@ -495,7 +495,7 @@ func (m *PmapperModule) writeLoot(outputDirectory string, verbosity int) string 
 
 	if verbosity > 2 {
 		fmt.Println()
-		fmt.Println("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("Beginning of loot file"))
+		fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("Beginning of loot file"))
 		fmt.Print(out)
 		fmt.Printf("[%s][%s] %s \n\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("End of loot file"))
 	}
