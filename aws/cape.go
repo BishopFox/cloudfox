@@ -14,11 +14,13 @@ import (
 	"github.com/bishopfox/knownawsaccountslookup"
 	"github.com/dominikbraun/graph"
 	"github.com/sirupsen/logrus"
+	"github.com/spf13/cobra"
 )
 
-type CaperCommand struct {
+type CapeCommand struct {
 
 	// General configuration data
+	Cmd                 cobra.Command
 	Caller              sts.GetCallerIdentityOutput
 	AWSRegions          []string
 	Goroutines          int
@@ -34,17 +36,18 @@ type CaperCommand struct {
 	GlobalGraph         graph.Graph[string, string]
 	PmapperDataBasePath string
 	AnalyzedAccounts    map[string]bool
+	CapeAdminOnly       bool
 
 	output internal.OutputData2
 	modLog *logrus.Entry
 }
 
-func (m *CaperCommand) RunCaperCommand() {
+func (m *CapeCommand) RunCapeCommand() {
 
 	// These struct values are used by the output module
 	m.output.Verbosity = m.Verbosity
 	m.output.Directory = m.AWSOutputDirectory
-	m.output.CallingModule = "caper"
+	m.output.CallingModule = "cape"
 	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
@@ -86,10 +89,17 @@ func (m *CaperCommand) RunCaperCommand() {
 	// })
 
 	o.WriteFullOutput(o.Table.TableFiles, nil)
+	fmt.Println("The following accounts are trusted by this account, but were not analyzed as part of this run.")
+	fmt.Println("As a result, we cannot determine which principals in these accounts have permission to assume roles in this account.")
+	for account := range m.AnalyzedAccounts {
+		if m.AnalyzedAccounts[account] == false {
+			fmt.Println("\t\t" + account)
+		}
+	}
 
 }
 
-func (m *CaperCommand) generateInboundPrivEscTableData() ([]string, [][]string, []string) {
+func (m *CapeCommand) generateInboundPrivEscTableData() ([]string, [][]string, []string) {
 	var body [][]string
 	var tableCols []string
 	var header []string
@@ -127,85 +137,86 @@ func (m *CaperCommand) generateInboundPrivEscTableData() ([]string, [][]string, 
 		}
 	}
 
-	//var reason string
-	var paths string
 	var privescPathsBody [][]string
-	//var vertices map[string]map[string]graph.Edge[string]
-	//vertices, err := graph.TopologicalSort(m.GlobalGraph)
-	//vertices, err := m.GlobalGraph.AdjacencyMap()
 
-	// if err != nil {
-	// 	m.modLog.Error(err)
-	// 	fmt.Println("Error sorting graph: ", err)
-	// }
-	//edges, _ := m.GlobalGraph.Edges()
-	//var reason string
 	allGlobalNodes, _ := m.GlobalGraph.AdjacencyMap()
 	for destination := range allGlobalNodes {
 		d, destinationVertexWithProperties, _ := m.GlobalGraph.VertexWithProperties(destination)
-		//for the destination vertex, we only want to deal with the ones that are in this account
-		if destinationVertexWithProperties.Attributes["AccountID"] == aws.ToString(m.Caller.Account) {
-			// now let's look at every other vertex and see if it has a path to this destination
-			for source := range allGlobalNodes {
-				s, sourceVertexWithProperties, _ := m.GlobalGraph.VertexWithProperties(source)
-				//for the source vertex, we only want to deal with the ones that are NOT in this account
-				if sourceVertexWithProperties.Attributes["AccountID"] != aws.ToString(m.Caller.Account) {
-					// now let's see if there is a path from this source to our destination
-					path, _ := graph.ShortestPath(m.GlobalGraph, s, d)
-					// if we have a path, then lets document this source as having a path to our destination
-					if path != nil {
-						if s != d {
-							paths = ""
-							// if we got here theres a path. Lets print the reason and the short reason for each edge in the path to the screen
-							// and then lets print the full path to the screen
-							for i := 0; i < len(path)-1; i++ {
-								thisEdge, _ := m.GlobalGraph.Edge(path[i], path[i+1])
 
-								for _, value := range thisEdge.Properties.Attributes {
-									value = strings.ReplaceAll(value, ",", " and")
-									paths += fmt.Sprintf("%s %s %s\n", thisEdge.Source, value, thisEdge.Target)
-								}
-							}
-
-							//trim the last newline from csvPaths
-							paths = strings.TrimSuffix(paths, "\n")
-							if destinationVertexWithProperties.Attributes["IsAdminString"] == "Yes" {
-								privescPathsBody = append(privescPathsBody, []string{
-									aws.ToString(m.Caller.Account),
-									s,
-									magenta(d),
-									magenta(destinationVertexWithProperties.Attributes["IsAdminString"]),
-									paths})
-							} else {
-								privescPathsBody = append(privescPathsBody, []string{
-									aws.ToString(m.Caller.Account),
-									s,
-									d,
-									destinationVertexWithProperties.Attributes["IsAdminString"],
-									paths})
-							}
-
-						}
-					}
+		// if the user specified the CapeAdminOnly flag, then we only want to show paths to admin roles
+		if m.CapeAdminOnly {
+			// if the user specified the CapeAdminOnly flag, then we only want to show paths to admin roles
+			if destinationVertexWithProperties.Attributes["IsAdminString"] == "Yes" {
+				//for the destination vertex, we only want to deal with the ones that are in this account
+				if destinationVertexWithProperties.Attributes["AccountID"] == aws.ToString(m.Caller.Account) {
+					privescPathsBody = m.findPathsToThisDestination(allGlobalNodes, d, destinationVertexWithProperties)
+					body = append(body, privescPathsBody...)
 				}
 			}
+		} else {
+			//for the destination vertex, we only want to deal with the ones that are in this account
+			if destinationVertexWithProperties.Attributes["AccountID"] == aws.ToString(m.Caller.Account) {
+				privescPathsBody := m.findPathsToThisDestination(allGlobalNodes, d, destinationVertexWithProperties)
+				body = append(body, privescPathsBody...)
+			}
 		}
-
 	}
-
-	// if destinationVertexWithProperties.Attributes["IsAdminString"] == "Yes" {
-	// 	fmt.Println("Admin: ", d)
-	// }
-	// if destinationVertexWithProperties.Attributes["CanPrivEscToAdminString"] == "Yes" {
-	// 	fmt.Println("Has Path to admin: ", d)
-	// }
-
 	body = append(body, privescPathsBody...)
 	return header, body, tableCols
 
 }
 
-func ConvertIAMRoleToNode(role types.Role, vendors *knownawsaccountslookup.Vendors) Node {
+func (m *CapeCommand) findPathsToThisDestination(allGlobalNodes map[string]map[string]graph.Edge[string], d string, destinationVertexWithProperties graph.VertexProperties) [][]string {
+	var privescPathsBody [][]string
+	var paths string
+	// now let's look at every other vertex and see if it has a path to this destination
+	for source := range allGlobalNodes {
+		s, sourceVertexWithProperties, _ := m.GlobalGraph.VertexWithProperties(source)
+		//for the source vertex, we only want to deal with the ones that are NOT in this account
+		if sourceVertexWithProperties.Attributes["AccountID"] != aws.ToString(m.Caller.Account) {
+			// now let's see if there is a path from this source to our destination
+			path, _ := graph.ShortestPath(m.GlobalGraph, s, d)
+			// if we have a path, then lets document this source as having a path to our destination
+			if path != nil {
+				if s != d {
+					paths = ""
+					// if we got here theres a path. Lets print the reason and the short reason for each edge in the path to the screen
+					// and then lets print the full path to the screen
+					for i := 0; i < len(path)-1; i++ {
+						thisEdge, _ := m.GlobalGraph.Edge(path[i], path[i+1])
+						j := 0
+						for _, value := range thisEdge.Properties.Attributes {
+							value = strings.ReplaceAll(value, ",", " and")
+							paths += fmt.Sprintf("[Hop: %d] [Option: %d] [%s] %s [%s]\n", i, j, thisEdge.Source, value, thisEdge.Target)
+							j++
+						}
+					}
+
+					//trim the last newline from csvPaths
+					paths = strings.TrimSuffix(paths, "\n")
+					if destinationVertexWithProperties.Attributes["IsAdminString"] == "Yes" {
+						privescPathsBody = append(privescPathsBody, []string{
+							aws.ToString(m.Caller.Account),
+							s,
+							magenta(d),
+							magenta(destinationVertexWithProperties.Attributes["IsAdminString"]),
+							paths})
+					} else {
+						privescPathsBody = append(privescPathsBody, []string{
+							aws.ToString(m.Caller.Account),
+							s,
+							d,
+							destinationVertexWithProperties.Attributes["IsAdminString"],
+							paths})
+					}
+				}
+			}
+		}
+	}
+	return privescPathsBody
+}
+
+func ConvertIAMRoleToNode(role types.Role, vendors *knownawsaccountslookup.Vendors, analyzedAccounts map[string]bool) Node {
 	//var isAdmin, canPrivEscToAdmin string
 
 	accountId := strings.Split(aws.ToString(role.Arn), ":")[4]
@@ -222,13 +233,21 @@ func ConvertIAMRoleToNode(role types.Role, vendors *knownawsaccountslookup.Vendo
 	var trustedProvider string
 	var trustedSubjects []string
 	var vendorName string
+	var isAnalyzedAccount bool
 
 	for _, statement := range trustsdoc.Statement {
 		for _, principal := range statement.Principal.AWS {
 			if strings.Contains(principal, ":root") {
-				//check to see if the vendorAccountID is known
-				vendorAccountID := strings.Split(principal, ":")[4]
-				vendorName = vendors.GetVendorNameFromAccountID(vendorAccountID)
+				//check to see if the trustedRootAccountID is known
+				trustedRootAccountID := strings.Split(principal, ":")[4]
+				vendorName = vendors.GetVendorNameFromAccountID(trustedRootAccountID)
+				// check to see if trustedRootAccountID is in the m.AnalyzedAccounts map
+				if _, ok := analyzedAccounts[trustedRootAccountID]; ok {
+					isAnalyzedAccount = analyzedAccounts[trustedRootAccountID]
+				} else {
+					isAnalyzedAccount = false
+				}
+
 			}
 
 			TrustedPrincipals = append(TrustedPrincipals, TrustedPrincipal{
@@ -237,6 +256,7 @@ func ConvertIAMRoleToNode(role types.Role, vendors *knownawsaccountslookup.Vendo
 				VendorName:       vendorName,
 				//IsAdmin:           false,
 				//CanPrivEscToAdmin: false,
+				AccountIsInAnalyzedAccountList: isAnalyzedAccount,
 			})
 
 		}
@@ -250,12 +270,15 @@ func ConvertIAMRoleToNode(role types.Role, vendors *knownawsaccountslookup.Vendo
 
 		}
 		for _, federated := range statement.Principal.Federated {
+			// provider accountID
+			//accountId := strings.Split(federated, ":")[4]
 
 			trustedProvider, trustedSubjects = parseFederatedTrustPolicy(statement)
 			TrustedFederatedProviders = append(TrustedFederatedProviders, TrustedFederatedProvider{
 				TrustedFederatedProvider: federated,
 				ProviderShortName:        trustedProvider,
-				TrustedSubjects:          trustedSubjects,
+				//ProviderAccountId:        accountId,
+				TrustedSubjects: trustedSubjects,
 				//IsAdmin:                  false,
 				//CanPrivEscToAdmin:        false,
 			})
@@ -324,6 +347,7 @@ func FindVerticesInRoleTrust(a Node, vendors *knownawsaccountslookup.Vendors) []
 		// } else
 
 		if strings.Contains(TrustedPrincipal.TrustedPrincipal, ":root") && TrustedPrincipal.VendorName != "" {
+			// First lets take care of vendor accounts
 			newNodes = append(newNodes, Node{
 				Arn: fmt.Sprintf("%s [%s]", TrustedPrincipal.VendorName, TrustedPrincipal.TrustedPrincipal),
 				//Arn:        TrustedPrincipal.VendorName,
@@ -333,8 +357,17 @@ func FindVerticesInRoleTrust(a Node, vendors *knownawsaccountslookup.Vendors) []
 				VendorName: TrustedPrincipal.VendorName,
 			})
 
+		} else if strings.Contains(TrustedPrincipal.TrustedPrincipal, ":root") && !TrustedPrincipal.AccountIsInAnalyzedAccountList {
+			// Next lets take care of accounts that are not in the analyzed account list and add the full :root as the node
+
+			newNodes = append(newNodes, Node{
+				Arn:       fmt.Sprintf("%s [Not analyzed/in-scope]", TrustedPrincipal.TrustedPrincipal),
+				Type:      "Account",
+				AccountID: trustedPrincipalAccount,
+			})
+
 		} else if strings.Contains(TrustedPrincipal.TrustedPrincipal, ":root") && TrustedPrincipal.VendorName == "" {
-			// check to see if the account is one of the analyzed accounts
+			// Now with those out of the way, lets take care of the accounts that are in the analyzed account list
 			newNodes = append(newNodes, Node{
 				Arn:       TrustedPrincipal.TrustedPrincipal,
 				Type:      "Account",
@@ -387,11 +420,20 @@ func FindVerticesInRoleTrust(a Node, vendors *knownawsaccountslookup.Vendors) []
 				//providerAndSubject = TrustedFederatedProvider.ProviderShortName + ":" + trustedSubject
 				providerAndSubject = fmt.Sprintf("%s [%s]", TrustedFederatedProvider.ProviderShortName, trustedSubject)
 			}
+			//fmt.Println("TrustedFederatedProvider: ", TrustedFederatedProvider.TrustedFederatedProvider)
+			// if the TrustedFederatedProvider.TrustedFederatedProvider is an arn (check to see if it has at least 4 semicolons), grab the account id. Otherwise, use a.AccountID
+			var accountID string
+			if strings.Count(TrustedFederatedProvider.TrustedFederatedProvider, ":") >= 4 {
+				accountID = strings.Split(TrustedFederatedProvider.TrustedFederatedProvider, ":")[4]
+			} else {
+				accountID = a.AccountID
+			}
+
 			newNodes = append(newNodes, Node{
 				Arn:       providerAndSubject,
 				Name:      TrustedFederatedProvider.ProviderShortName,
 				Type:      "FederatedIdentity",
-				AccountID: a.AccountID,
+				AccountID: accountID,
 			})
 		}
 
@@ -575,7 +617,6 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 		// if the role we are looking at trusts root in it's own account
 
 		if strings.Contains(TrustedPrincipal.TrustedPrincipal, fmt.Sprintf("%s:root", thisAccount)) {
-
 			// iterate over all rows in AllPermissionsRows
 			for _, PermissionsRow := range common.PermissionRowsFromAllProfiles {
 				// but we only care about the rows that have arns that are in this account
@@ -680,6 +721,48 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 				}
 
 			}
+
+		} else if strings.Contains(TrustedPrincipal.TrustedPrincipal, fmt.Sprintf("%s:root", trustedPrincipalAccount)) && !TrustedPrincipal.AccountIsInAnalyzedAccountList {
+			// first lets check to see if the trustedRootAccountID is in the map of analzyeddAccounts
+			// if it is not, we can't interate over the permissions, so we will just have to create an edge :root princpal and this role
+
+			err := GlobalGraph.AddEdge(
+				//TrustedPrincipal.TrustedPrincipal,
+				fmt.Sprintf("%s [Not analyzed/in-scope]", TrustedPrincipal.TrustedPrincipal),
+				a.Arn,
+				//graph.EdgeAttribute("CrossAccountRootTrust", "Cross account root trust and trusted principal is not in the analyzed account list"),
+				graph.EdgeAttribute("CrossAccountRootTrust", "can assume (because of a cross account root trust and trusted principal is not in the analyzed account list) "),
+			)
+			if err != nil {
+				// fmt.Println(err)
+				// fmt.Println(TrustedPrincipal.TrustedPrincipal + a.Arn + "Cross account root trust and trusted principal is not in the analyzed account list")
+				if err == graph.ErrEdgeAlreadyExists {
+					// update the ege by copying the existing graph.Edge with attributes and add the new attributes
+
+					// get the existing edge
+					existingEdge, _ := GlobalGraph.Edge(TrustedPrincipal.TrustedPrincipal, a.Arn)
+					// get the map of attributes
+					existingProperties := existingEdge.Properties
+					// add the new attributes to attributes map within the properties struct
+					// Check if the Attributes map is initialized, if not, initialize it
+					if existingProperties.Attributes == nil {
+						existingProperties.Attributes = make(map[string]string)
+					}
+
+					// Add or update the attribute
+					existingProperties.Attributes["CrossAccountRootTrust"] = "can assume (because of a cross account root trust and trusted principal is not in the analyzed account list) "
+					err := GlobalGraph.UpdateEdge(
+						TrustedPrincipal.TrustedPrincipal,
+						a.Arn,
+						graph.EdgeAttributes(existingProperties.Attributes),
+					)
+					if err != nil {
+						fmt.Println(err)
+					}
+				}
+
+			}
+
 		} else if strings.Contains(TrustedPrincipal.TrustedPrincipal, fmt.Sprintf("%s:root", trustedPrincipalAccount)) {
 
 			// iterate over all rows in AllPermissionsRows

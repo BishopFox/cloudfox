@@ -136,17 +136,18 @@ var (
 		PostRun: awsPostRun,
 	}
 
-	CaperCommand = &cobra.Command{
-		Use:     "caper",
-		Aliases: []string{"caperParse"},
+	CapeAdminOnly bool
+	CapeCommand   = &cobra.Command{
+		Use:     "cape",
+		Aliases: []string{"capeParse"},
 		Short: "Cross-Account Privilege Escalation Route finder.\n" +
 			"Needs to be run with multiple profiles using -l or -a flag\n" +
 			"Needs pmapper data to be present",
 
 		Long: "\nUse case examples:\n" +
-			os.Args[0] + " aws caper -l file_with_profile_names.txt",
+			os.Args[0] + " aws cape -l file_with_profile_names.txt",
 		PreRun:  awsPreRun,
-		Run:     runCaperCommand,
+		Run:     runCapeCommand,
 		PostRun: awsPostRun,
 	}
 
@@ -987,7 +988,7 @@ func runGraphCommand(cmd *cobra.Command, args []string) {
 	}
 }
 
-func runCaperCommand(cmd *cobra.Command, args []string) {
+func runCapeCommand(cmd *cobra.Command, args []string) {
 	// map of all unique accountIDs and if they are included in the analysis or not
 	analyzedAccounts := make(map[string]bool)
 
@@ -998,6 +999,17 @@ func runCaperCommand(cmd *cobra.Command, args []string) {
 
 	vendors := knownawsaccountslookup.NewVendorMap()
 	vendors.PopulateKnownAWSAccounts()
+
+	for _, profile := range AWSProfiles {
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
+		if err != nil {
+			continue
+		}
+		// add account number to analyzedAccounts map and set the value to true
+		analyzedAccounts[ptr.ToString(caller.Account)] = true
+
+	}
+
 	for _, profile := range AWSProfiles {
 		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
@@ -1005,21 +1017,24 @@ func runCaperCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 
-		// add account number to analyzedAccounts map and set the value to true
-		analyzedAccounts[ptr.ToString(caller.Account)] = true
-
 		//Gather all Permissions data
 		fmt.Println("Getting GAAD for " + profile)
 		PermissionsCommandClient := aws.InitPermissionsClient(*caller, profile, cmd.Root().Version, Goroutines, AWSMFAToken)
 		PermissionsCommandClient.GetGAAD()
 		PermissionsCommandClient.ParsePermissions("")
-		common.PermissionRowsFromAllProfiles = append(common.PermissionRowsFromAllProfiles, PermissionsCommandClient.Rows...)
+		if PermissionsCommandClient.Rows != nil {
+			common.PermissionRowsFromAllProfiles = append(common.PermissionRowsFromAllProfiles, PermissionsCommandClient.Rows...)
+		} else {
+			fmt.Println("Error gathering permisisons for " + profile)
+			analyzedAccounts[ptr.ToString(caller.Account)] = false
+		}
 
 		// Gather all Pmapper data.
 		fmt.Println("Importing Pmapper for " + profile)
 		pmapperMod, pmapperError := aws.InitPmapperGraph(*caller, AWSProfile, Goroutines)
 		if pmapperError != nil {
 			fmt.Println("Error importing pmapper data: " + pmapperError.Error())
+			analyzedAccounts[ptr.ToString(caller.Account)] = false
 		}
 
 		// add pmapper nodes to GlobalNodes (which will also soon include iam roles and users)
@@ -1043,7 +1058,8 @@ func runCaperCommand(cmd *cobra.Command, args []string) {
 			internal.TxtLog.Error(err)
 		}
 		for _, role := range ListRolesOutput {
-			node := aws.ConvertIAMRoleToNode(role, vendors)
+			//node := aws.ConvertIAMRoleToNode(role, vendors)
+			node := aws.ConvertIAMRoleToNode(role, vendors, analyzedAccounts)
 
 			// First insert the role itself into the Nodes slice
 			GlobalNodes = append(GlobalNodes, node)
@@ -1150,7 +1166,8 @@ func runCaperCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 
-		caperCommandClient := aws.CaperCommand{
+		capeCommandClient := aws.CapeCommand{
+
 			Caller:              *caller,
 			AWSProfile:          profile,
 			Goroutines:          Goroutines,
@@ -1166,9 +1183,10 @@ func runCaperCommand(cmd *cobra.Command, args []string) {
 			GlobalGraph:         GlobalGraph,
 			PmapperDataBasePath: PmapperDataBasePath,
 			AnalyzedAccounts:    analyzedAccounts,
+			CapeAdminOnly:       CapeAdminOnly,
 		}
 
-		caperCommandClient.RunCaperCommand()
+		capeCommandClient.RunCapeCommand()
 
 		// playing around with creating a graphviz file for image rendering.
 		// the goal here is to be able to export this graph data to a format that can be easily imported in neo4j.
@@ -2214,9 +2232,12 @@ func init() {
 	// buckets command flags (for bucket policies)
 	BucketsCommand.Flags().BoolVarP(&CheckBucketPolicies, "with-policies", "", false, "Analyze bucket policies (this is already done in the resource-trusts command)")
 
-	// pmapper flag for pmapper and caper commands
+	// cape command flags
+	CapeCommand.Flags().BoolVar(&CapeAdminOnly, "admin-only", false, "Only return paths that lead to an admin role - much faster")
+
+	// pmapper flag for pmapper and cape commands
 	//PmapperCommand.Flags().StringVarP(&PmapperDataBasePath, "pmapper-data-basepath", "pdata", "", "Supply the base path for the pmapper data files (useful if you have copied them from another machine)")
-	//CaperCommand.Flags().StringVarP(&PmapperDataBasePath, "pmapper-data-basepath", "pdata", "", "Supply the base path for the pmapper data files (useful if you have copied them from another machine)")
+	//CapeCommand.Flags().StringVarP(&PmapperDataBasePath, "pmapper-data-basepath", "pdata", "", "Supply the base path for the pmapper data files (useful if you have copied them from another machine)")
 
 	// Global flags for the AWS modules
 	AWSCommands.PersistentFlags().StringVarP(&AWSProfile, "profile", "p", "", "AWS CLI Profile Name")
@@ -2239,7 +2260,7 @@ func init() {
 		AllChecksCommand,
 		ApiGwCommand,
 		BucketsCommand,
-		CaperCommand,
+		CapeCommand,
 		CloudformationCommand,
 		CodeBuildCommand,
 		DatabasesCommand,

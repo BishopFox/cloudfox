@@ -81,9 +81,10 @@ type Node struct {
 }
 
 type TrustedPrincipal struct {
-	TrustedPrincipal string
-	ExternalID       string
-	VendorName       string
+	TrustedPrincipal               string
+	ExternalID                     string
+	VendorName                     string
+	AccountIsInAnalyzedAccountList bool
 	//IsAdmin           bool
 	//CanPrivEscToAdmin bool
 }
@@ -97,6 +98,7 @@ type TrustedService struct {
 
 type TrustedFederatedProvider struct {
 	TrustedFederatedProvider string
+	ProviderAccountId        string
 	ProviderShortName        string
 	TrustedSubjects          []string
 	//IsAdmin                  bool

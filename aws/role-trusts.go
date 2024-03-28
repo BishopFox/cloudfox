@@ -467,7 +467,11 @@ func parseFederatedTrustPolicy(statement policy.RoleTrustStatementEntry) (string
 			subjects = append(subjects, "ALL REPOS!!!")
 		}
 	case strings.Contains(statement.Principal.Federated[0], "oidc.eks"):
-		provider = "EKS"
+		// extract accountId from statement.Principal.Federated[0]
+		accountId := strings.Split(statement.Principal.Federated[0], ":")[4]
+		provider = fmt.Sprintf("EKS-%s", accountId)
+		//provider = "EKS"
+		//provider = statement.Principal.Federated[0]
 		if len(statement.Condition.StringLike.OidcEksSub) > 0 {
 			subjects = append(subjects, statement.Condition.StringLike.OidcEksSub...)
 		} else if len(statement.Condition.StringEquals.OidcEksSub) > 0 {
