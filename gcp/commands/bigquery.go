@@ -89,10 +89,10 @@ func runGCPBigQueryCommand(cmd *cobra.Command, args []string) {
 	parentCmd := cmd.Parent()
 	ctx := cmd.Context()
 	logger := internal.NewLogger()
-	if value, ok := ctx.Value("projectIDs").([]string); ok {
+	if value, ok := ctx.Value("projectIDs").([]string); ok && len(value) > 0 {
 		projectIDs = value
 	} else {
-		logger.ErrorM("Could not retrieve projectIDs from flag value", globals.GCP_BIGQUERY_MODULE_NAME)
+		logger.ErrorM("Could not retrieve projectIDs from flag value or value is empty", globals.GCP_BIGQUERY_MODULE_NAME)
 		return
 	}
 
@@ -105,6 +105,13 @@ func runGCPBigQueryCommand(cmd *cobra.Command, args []string) {
 	bqService := BigQueryService.New()
 	var datasetsResults []BigQueryService.BigqueryDataset
 	var tablesResults []BigQueryService.BigqueryTable
+
+	// Set output params leveraging parent (gcp) pflag values
+	verbosity, _ := parentCmd.PersistentFlags().GetInt("verbosity")
+	wrap, _ := parentCmd.PersistentFlags().GetBool("wrap")
+	outputDirectory, _ := parentCmd.PersistentFlags().GetString("outdir")
+	format, _ := parentCmd.PersistentFlags().GetString("output")
+
 	for _, projectID := range projectIDs {
 		logger.InfoM(fmt.Sprintf("Retrieving BigQuery datasets and tables from project: %s", projectID), globals.GCP_BIGQUERY_MODULE_NAME)
 		result, err := bqService.BigqueryDatasetsAndTables(projectID)
@@ -115,18 +122,13 @@ func runGCPBigQueryCommand(cmd *cobra.Command, args []string) {
 
 		datasetsResults = append(datasetsResults, result.Datasets...)
 		tablesResults = append(tablesResults, result.Tables...)
-	}
+		cloudfoxOutput := GCPBigQueryResults{DatasetsData: datasetsResults, TablesData: tablesResults}
 
-	verbosity, _ := parentCmd.PersistentFlags().GetInt("verbosity")
-	wrap, _ := parentCmd.PersistentFlags().GetBool("wrap")
-	outputDirectory, _ := parentCmd.PersistentFlags().GetString("outdir")
-	format, _ := parentCmd.PersistentFlags().GetString("output")
-	cloudfoxOutput := GCPBigQueryResults{DatasetsData: datasetsResults, TablesData: tablesResults}
-
-	err := internal.HandleOutput(format, outputDirectory, verbosity, wrap, globals.GCP_BIGQUERY_MODULE_NAME, account, "resultsID-stub", cloudfoxOutput)
-	if err != nil {
-		logger.ErrorM(err.Error(), globals.GCP_BIGQUERY_MODULE_NAME)
-		return
+		err = internal.HandleOutput(format, outputDirectory, verbosity, wrap, globals.GCP_BIGQUERY_MODULE_NAME, account, projectID, cloudfoxOutput)
+		if err != nil {
+			logger.ErrorM(err.Error(), globals.GCP_BIGQUERY_MODULE_NAME)
+			return
+		}
+		logger.InfoM(fmt.Sprintf("Done writing output for project %s", projectID), globals.GCP_BIGQUERY_MODULE_NAME)
 	}
-	logger.InfoM("Done writing output", globals.GCP_BIGQUERY_MODULE_NAME)
 }

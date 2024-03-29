@@ -73,10 +73,10 @@ func runGCPBucketsCommand(cmd *cobra.Command, args []string) {
 	parentCmd := cmd.Parent()
 	ctx := cmd.Context()
 	logger := internal.NewLogger()
-	if value, ok := ctx.Value("projectIDs").([]string); ok {
+	if value, ok := ctx.Value("projectIDs").([]string); ok && len(value) > 0 {
 		projectIDs = value
 	} else {
-		logger.ErrorM("Could not retrieve projectIDs from flag value", globals.GCP_BUCKETS_MODULE_NAME)
+		logger.ErrorM("Could not retrieve projectIDs from flag value or value is empty", globals.GCP_BUCKETS_MODULE_NAME)
 	}
 
 	if value, ok := ctx.Value("account").(string); ok {
@@ -88,6 +88,13 @@ func runGCPBucketsCommand(cmd *cobra.Command, args []string) {
 	// Get the bucket info using the projectIDs and CloudStorageService
 	cs := CloudStorageService.New()
 	var results []CloudStorageService.BucketInfo
+
+	// Set output params leveraging parent (gcp) pflag values
+	verbosity, _ := parentCmd.PersistentFlags().GetInt("verbosity")
+	wrap, _ := parentCmd.PersistentFlags().GetBool("wrap")
+	outputDirectory, _ := parentCmd.PersistentFlags().GetString("outdir")
+	format, _ := parentCmd.PersistentFlags().GetString("output")
+
 	for _, projectID := range projectIDs {
 		logger.InfoM(fmt.Sprintf("Retrieving all buckets from project: %s", projectID), globals.GCP_BUCKETS_MODULE_NAME)
 		result, err := cs.Buckets(projectID)
@@ -97,19 +104,12 @@ func runGCPBucketsCommand(cmd *cobra.Command, args []string) {
 		}
 		results = append(results, result...)
 		logger.InfoM(fmt.Sprintf("Done retrieving all buckets from project: %s", projectID), globals.GCP_BUCKETS_MODULE_NAME)
+		cloudfoxOutput := GCPBucketsResults{Data: results}
+		err = internal.HandleOutput(format, outputDirectory, verbosity, wrap, globals.GCP_BUCKETS_MODULE_NAME, account, projectID, cloudfoxOutput)
+		if err != nil {
+			logger.ErrorM(err.Error(), globals.GCP_BUCKETS_MODULE_NAME)
+			return
+		}
+		logger.InfoM(fmt.Sprintf("Done writing output for project %s", projectID), globals.GCP_BUCKETS_MODULE_NAME)
 	}
-
-	// Produce output leveraging parent (gcp) pflag values
-	verbosity, _ := parentCmd.PersistentFlags().GetInt("verbosity")
-	wrap, _ := parentCmd.PersistentFlags().GetBool("wrap")
-	outputDirectory, _ := parentCmd.PersistentFlags().GetString("outdir")
-	format, _ := parentCmd.PersistentFlags().GetString("output")
-	cloudfoxOutput := GCPBucketsResults{Data: results}
-
-	err := internal.HandleOutput(format, outputDirectory, verbosity, wrap, globals.GCP_BUCKETS_MODULE_NAME, account, "resultsID-stub", cloudfoxOutput)
-	if err != nil {
-		logger.ErrorM(err.Error(), globals.GCP_BUCKETS_MODULE_NAME)
-		return
-	}
-	logger.InfoM("Done writing output", globals.GCP_BUCKETS_MODULE_NAME)
 }

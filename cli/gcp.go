@@ -41,7 +41,7 @@ var (
 			} else if GCPProjectIDsFilePath != "" {
 				GCPProjectIDs = internal.LoadFileLinesIntoArray(GCPProjectIDsFilePath)
 			} else {
-				GCPLogger.InfoM("project or project-list flags not given, using default project as target", "gcp")
+				GCPLogger.InfoM("project or project-list flags not given, commands requiring a project ID will fail", "gcp")
 			}
 			// Create a context with this value to share it with subcommands at runtime
 			ctx := context.WithValue(context.Background(), "projectIDs", GCPProjectIDs)
@@ -49,11 +49,11 @@ var (
 			// Set the context for this command which all subcommands can access via [SUBCMD].Parent().Context()
 			// cmd.SetContext(ctx)
 			os := oauthservice.NewOAuthService()
-			email, err := os.WhoAmI()
+			principal, err := os.WhoAmI()
 			if err != nil {
-				GCPLogger.FatalM("could not determine default user credential. Please use default applicatin default credentials: https://cloud.google.com/docs/authentication/application-default-credentials", "gcp")
+				GCPLogger.FatalM(fmt.Sprintf("could not determine default user credential with error %s. \n\nPlease use default application default credentials: https://cloud.google.com/docs/authentication/application-default-credentials", err.Error()), "gcp")
 			}
-			ctx = context.WithValue(ctx, "account", email)
+			ctx = context.WithValue(ctx, "account", principal.Email)
 			cmd.SetContext(ctx)
 		},
 	}

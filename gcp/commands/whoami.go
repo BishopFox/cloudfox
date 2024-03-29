@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"encoding/json"
 	"fmt"
 
 	OAuthService "github.com/BishopFox/cloudfox/gcp/services/oauthService"
@@ -25,20 +24,11 @@ func runGCPWhoAmICommand(cmd *cobra.Command, args []string) {
 	oauthService := OAuthService.NewOAuthService()
 
 	// Call the WhoAmI function
-	tokenInfoRaw, err := oauthService.WhoAmI()
+	principal, err := oauthService.WhoAmI()
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Error retrieving token info: %v", err), globals.GCP_WHOAMI_MODULE_NAME)
 		return
 	}
 
-	// Parse the JSON response to extract the email field
-	var tokenInfo struct {
-		Email string `json:"email"`
-	}
-	if err := json.Unmarshal([]byte(tokenInfoRaw), &tokenInfo); err != nil {
-		logger.ErrorM(fmt.Sprintf("Error parsing token info: %v", err), globals.GCP_WHOAMI_MODULE_NAME)
-		return
-	}
-
-	logger.InfoM(fmt.Sprintf("authenticated user email: %s", tokenInfo.Email), globals.GCP_WHOAMI_MODULE_NAME)
+	logger.InfoM(fmt.Sprintf("authenticated user email: %s", principal.Email), globals.GCP_WHOAMI_MODULE_NAME)
 }

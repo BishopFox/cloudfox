@@ -120,10 +120,10 @@ func runGCPArtifactRegistryCommand(cmd *cobra.Command, args []string) {
 	parentCmd := cmd.Parent()
 	ctx := cmd.Context()
 	logger := internal.NewLogger()
-	if value, ok := ctx.Value("projectIDs").([]string); ok {
+	if value, ok := ctx.Value("projectIDs").([]string); ok && len(value) > 0 {
 		projectIDs = value
 	} else {
-		logger.ErrorM("Could not retrieve projectIDs from flag value", globals.GCP_ARTIFACT_RESGISTRY_MODULE_NAME)
+		logger.ErrorM("Could not retrieve projectIDs from flag value or value is empty", globals.GCP_ARTIFACT_RESGISTRY_MODULE_NAME)
 	}
 
 	if value, ok := ctx.Value("account").(string); ok {
@@ -143,6 +143,12 @@ func runGCPArtifactRegistryCommand(cmd *cobra.Command, args []string) {
 	ars := ArtifactRegistryService.New(client)
 	var artifactResults []ArtifactRegistryService.ArtifactInfo
 	var repoRestuls []ArtifactRegistryService.RepositoryInfo
+
+	// Set output params leveraging parent (gcp) pflag values
+	verbosity, _ := parentCmd.PersistentFlags().GetInt("verbosity")
+	wrap, _ := parentCmd.PersistentFlags().GetBool("wrap")
+	outputDirectory, _ := parentCmd.PersistentFlags().GetString("outdir")
+	format, _ := parentCmd.PersistentFlags().GetString("output")
 	for _, projectID := range projectIDs {
 		logger.InfoM(fmt.Sprintf("Retrieving all artifact repositories and supported artifacts in all locations from project: %s", projectID), globals.GCP_ARTIFACT_RESGISTRY_MODULE_NAME)
 		result, err := ars.RepositoriesAndArtifacts(projectID)
@@ -154,19 +160,13 @@ func runGCPArtifactRegistryCommand(cmd *cobra.Command, args []string) {
 		artifactResults = append(artifactResults, result.Artifacts...)
 		repoRestuls = append(repoRestuls, result.Repositories...)
 		logger.InfoM(fmt.Sprintf("Done retrieving artifact repository resource data from project: %s", projectID), globals.GCP_ARTIFACT_RESGISTRY_MODULE_NAME)
-	}
+		cloudfoxOutput := GCPArtifactRegistryResults{ArtifactData: artifactResults, RepositoryData: repoRestuls}
 
-	// Produce output leveraging parent (gcp) pflag values
-	verbosity, _ := parentCmd.PersistentFlags().GetInt("verbosity")
-	wrap, _ := parentCmd.PersistentFlags().GetBool("wrap")
-	outputDirectory, _ := parentCmd.PersistentFlags().GetString("outdir")
-	format, _ := parentCmd.PersistentFlags().GetString("output")
-	cloudfoxOutput := GCPArtifactRegistryResults{ArtifactData: artifactResults, RepositoryData: repoRestuls}
-
-	err = internal.HandleOutput(format, outputDirectory, verbosity, wrap, globals.GCP_ARTIFACT_RESGISTRY_MODULE_NAME, account, "resultsID-stub", cloudfoxOutput)
-	if err != nil {
-		logger.ErrorM(err.Error(), globals.GCP_ARTIFACT_RESGISTRY_MODULE_NAME)
-		return
+		err = internal.HandleOutput(format, outputDirectory, verbosity, wrap, globals.GCP_ARTIFACT_RESGISTRY_MODULE_NAME, account, projectID, cloudfoxOutput)
+		if err != nil {
+			logger.ErrorM(err.Error(), globals.GCP_ARTIFACT_RESGISTRY_MODULE_NAME)
+			return
+		}
+		logger.InfoM(fmt.Sprintf("Done writing output for project %s", projectID), globals.GCP_ARTIFACT_RESGISTRY_MODULE_NAME)
 	}
-	logger.InfoM("Done writing output", globals.GCP_ARTIFACT_RESGISTRY_MODULE_NAME)
 }

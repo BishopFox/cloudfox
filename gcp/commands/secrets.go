@@ -71,10 +71,10 @@ func runGCPSecretsCommand(cmd *cobra.Command, args []string) {
 	parentCmd := cmd.Parent()
 	ctx := cmd.Context()
 	logger := internal.NewLogger()
-	if value, ok := ctx.Value("projectIDs").([]string); ok {
+	if value, ok := ctx.Value("projectIDs").([]string); ok && len(value) > 0 {
 		projectIDs = value
 	} else {
-		logger.ErrorM("Could not retrieve projectIDs from flag value", globals.GCP_SECRETS_MODULE_NAME)
+		logger.ErrorM("Could not retrieve projectIDs from flag value or value is empty", globals.GCP_SECRETS_MODULE_NAME)
 		return
 	}
 
@@ -93,6 +93,13 @@ func runGCPSecretsCommand(cmd *cobra.Command, args []string) {
 
 	ss := SecretsService.New(client)
 	var results []SecretsService.SecretInfo
+
+	// Set output params from parentCmd
+	verbosity, _ := parentCmd.PersistentFlags().GetInt("verbosity")
+	wrap, _ := parentCmd.PersistentFlags().GetBool("wrap")
+	outputDirectory, _ := parentCmd.PersistentFlags().GetString("outdir")
+	format, _ := parentCmd.PersistentFlags().GetString("output")
+
 	for _, projectID := range projectIDs {
 		logger.InfoM(fmt.Sprintf("Retrieving all secrets from project: %s", projectID), globals.GCP_SECRETS_MODULE_NAME)
 		result, err := ss.Secrets(projectID)
@@ -102,18 +109,12 @@ func runGCPSecretsCommand(cmd *cobra.Command, args []string) {
 		}
 		results = append(results, result...)
 		logger.InfoM(fmt.Sprintf("Done retrieving all secrets from project: %s", projectID), globals.GCP_SECRETS_MODULE_NAME)
+		cloudfoxOutput := GCPSecretsResults{Data: results}
+		err = internal.HandleOutput(format, outputDirectory, verbosity, wrap, globals.GCP_SECRETS_MODULE_NAME, account, projectID, cloudfoxOutput)
+		if err != nil {
+			logger.ErrorM(err.Error(), globals.GCP_SECRETS_MODULE_NAME)
+			return
+		}
+		logger.InfoM(fmt.Sprintf("Done writing output for project %s", projectID), globals.GCP_SECRETS_MODULE_NAME)
 	}
-
-	verbosity, _ := parentCmd.PersistentFlags().GetInt("verbosity")
-	wrap, _ := parentCmd.PersistentFlags().GetBool("wrap")
-	outputDirectory, _ := parentCmd.PersistentFlags().GetString("outdir")
-	format, _ := parentCmd.PersistentFlags().GetString("output")
-	cloudfoxOutput := GCPSecretsResults{Data: results}
-
-	err = internal.HandleOutput(format, outputDirectory, verbosity, wrap, globals.GCP_SECRETS_MODULE_NAME, account, "resultsID-stub", cloudfoxOutput)
-	if err != nil {
-		logger.ErrorM(err.Error(), globals.GCP_SECRETS_MODULE_NAME)
-		return
-	}
-	logger.InfoM("Done writing output", globals.GCP_SECRETS_MODULE_NAME)
 }
