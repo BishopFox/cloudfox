@@ -228,7 +228,7 @@ func (m *DirectoryModule) getDirectoriesPerRegion(r string, wg *sync.WaitGroup, 
 		<-semaphore
 	}()
 
-	// Get directorys
+	// Get directories
 	directories, err := sdk.CachedDSDescribeDirectories(m.DSClient, aws.ToString(m.Caller.Account), r)
 	if err != nil {
 		m.modLog.Error(err)
