@@ -48,7 +48,7 @@ For the full documentation please refer to our [wiki](https://github.com/BishopF
 
 | Provider| CloudFox Commands |
 | - | - |
-| AWS | 33 | 
+| AWS | 34 | 
 | Azure | 4 | 
 | GCP | Support Planned |
 | Kubernetes | Support Planned | 
@@ -140,6 +140,7 @@ Additional policy notes (as of 09/2022):
 | AWS | [sqs](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#sqs) | This command enumerates all of the sqs queues and gives you the commands to receive messages from a queue and send messages to a queue (if you have the permissions needed). This command also attempts to summarize queue resource policies if they exist.|
 | AWS | [tags](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#tags) | List all resources with tags, and all of the tags. This can be used similar to inventory as another method to identify what types of resources exist in an account. |
 | AWS | [workloads](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#workloads) | List all of the compute workloads and what role they have.  Tells you if any of the roles are admin (bad) and if you have pmapper data locally, it will tell you if any of the roles can privesc to admin (also bad) |
+| AWS | [ds](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#workloads) | List all of the AWS-managed directories and their attributes. Also summarizes the current trusts with their directions and types. |
 
 
 # Azure Commands

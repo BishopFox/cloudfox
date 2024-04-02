@@ -24,6 +24,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/codedeploy"
 	"github.com/aws/aws-sdk-go-v2/service/datapipeline"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/directoryservice"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
@@ -461,6 +462,15 @@ var (
 		Long:    "\nUse case examples:\n" + os.Args[0] + " aws workloads --profile readonly_profile",
 		PreRun:  awsPreRun,
 		Run:     runWorkloadsCommand,
+		PostRun: awsPostRun,
+	}
+
+	DirectoryServicesCommand = &cobra.Command{
+		Use:     "ds",
+		Short:   "Enumerate AWS-managed Active Directory instances and trusts",
+		Long:    "\nUse case examples:\n" + os.Args[0] + " aws clouddirectory --profile readonly_profile",
+		PreRun:  awsPreRun,
+		Run:     runDirectoryServicesCommand,
 		PostRun: awsPostRun,
 	}
 
@@ -1301,6 +1311,27 @@ func runWorkloadsCommand(cmd *cobra.Command, args []string) {
 	}
 }
 
+func runDirectoryServicesCommand(cmd *cobra.Command, args []string) {
+	for _, profile := range AWSProfiles {
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
+		if err != nil {
+			continue
+		}
+		m := aws.DirectoryModule{
+			DSClient:        directoryservice.NewFromConfig(AWSConfig),
+			Caller:          *caller,
+			AWSRegions:      internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
+			AWSProfile:      profile,
+			Goroutines:      Goroutines,
+			WrapTable:       AWSWrapTable,
+			AWSOutputType:   AWSOutputType,
+			AWSTableCols:    AWSTableCols,
+		}
+		m.PrintDirectories(AWSOutputDirectory, Verbosity)
+	}
+}
+
 func runECSTasksCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
@@ -1997,6 +2028,7 @@ func init() {
 		OrgsCommand,
 		DatabasesCommand,
 		WorkloadsCommand,
+		DirectoryServicesCommand,
 	)
 
 }

@@ -10,7 +10,7 @@ require (
 	github.com/Azure/go-autorest/autorest v0.11.29
 	github.com/Azure/go-autorest/autorest/azure/auth v0.5.12
 	github.com/aquasecurity/table v1.8.0
-	github.com/aws/aws-sdk-go-v2 v1.24.1
+	github.com/aws/aws-sdk-go-v2 v1.26.1
 	github.com/aws/aws-sdk-go-v2/config v1.26.2
 	github.com/aws/aws-sdk-go-v2/service/apigateway v1.21.6
 	github.com/aws/aws-sdk-go-v2/service/apigatewayv2 v1.18.6
@@ -50,7 +50,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.29.6
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.44.6
 	github.com/aws/aws-sdk-go-v2/service/sts v1.26.6
-	github.com/aws/smithy-go v1.19.0
+	github.com/aws/smithy-go v1.20.2
 	github.com/bishopfox/awsservicemap v1.0.3
 	github.com/bishopfox/knownawsaccountslookup v0.0.0-20231228165844-c37ef8df33cb
 	github.com/dominikbraun/graph v0.23.0
@@ -65,6 +65,7 @@ require (
 )
 
 require (
+	github.com/aws/aws-sdk-go-v2/service/directoryservice v1.24.4 // indirect
 	github.com/golang-jwt/jwt/v5 v5.2.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
@@ -85,8 +86,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.5.4 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.16.13
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.14.10 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.2.10 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.5.10 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.3.5 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.6.5 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/ini v1.7.2 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.2.9 // indirect
 	github.com/aws/aws-sdk-go-v2/service/athena v1.37.3
