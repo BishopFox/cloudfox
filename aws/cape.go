@@ -35,11 +35,19 @@ type CapeCommand struct {
 	SkipAdminCheck      bool
 	GlobalGraph         graph.Graph[string, string]
 	PmapperDataBasePath string
-	AnalyzedAccounts    map[string]bool
+	AnalyzedAccounts    map[string]CapeJobInfo
 	CapeAdminOnly       bool
 
 	output internal.OutputData2
 	modLog *logrus.Entry
+}
+
+type CapeJobInfo struct {
+	AccountID            string
+	Profile              string
+	AnalyzedSuccessfully bool
+	AdminOnlyAnalysis    bool
+	Source               string
 }
 
 func (m *CapeCommand) RunCapeCommand() {
@@ -68,7 +76,7 @@ func (m *CapeCommand) RunCapeCommand() {
 	o.Table.DirectoryName = filepath.Join(m.AWSOutputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
 
 	// Table #1: Inbound Privilege Escalation Paths
-	fmt.Println("Printing inbound privesc paths for account: ", aws.ToString(m.Caller.Account))
+	fmt.Printf("[%s][%s] Printing inbound privesc paths for account: %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 	header, body, _ := m.generateInboundPrivEscTableData()
 	o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
 		Header: header,
@@ -92,7 +100,7 @@ func (m *CapeCommand) RunCapeCommand() {
 	fmt.Println("The following accounts are trusted by this account, but were not analyzed as part of this run.")
 	fmt.Println("As a result, we cannot determine which principals in these accounts have permission to assume roles in this account.")
 	for account := range m.AnalyzedAccounts {
-		if m.AnalyzedAccounts[account] == false {
+		if m.AnalyzedAccounts[account].AnalyzedSuccessfully == false {
 			fmt.Println("\t\t" + account)
 		}
 	}
@@ -187,7 +195,7 @@ func (m *CapeCommand) findPathsToThisDestination(allGlobalNodes map[string]map[s
 						j := 0
 						for _, value := range thisEdge.Properties.Attributes {
 							value = strings.ReplaceAll(value, ",", " and")
-							paths += fmt.Sprintf("[Hop: %d] [Option: %d] [%s] %s [%s]\n", i, j, thisEdge.Source, value, thisEdge.Target)
+							paths += fmt.Sprintf("[Hop: %d] [Option: %d] [%s] [%s] [%s]\n", i, j, thisEdge.Source, value, thisEdge.Target)
 							j++
 						}
 					}
@@ -216,7 +224,7 @@ func (m *CapeCommand) findPathsToThisDestination(allGlobalNodes map[string]map[s
 	return privescPathsBody
 }
 
-func ConvertIAMRoleToNode(role types.Role, vendors *knownawsaccountslookup.Vendors, analyzedAccounts map[string]bool) Node {
+func ConvertIAMRoleToNode(role types.Role, vendors *knownawsaccountslookup.Vendors, analyzedAccounts map[string]CapeJobInfo) Node {
 	//var isAdmin, canPrivEscToAdmin string
 
 	accountId := strings.Split(aws.ToString(role.Arn), ":")[4]
@@ -243,7 +251,7 @@ func ConvertIAMRoleToNode(role types.Role, vendors *knownawsaccountslookup.Vendo
 				vendorName = vendors.GetVendorNameFromAccountID(trustedRootAccountID)
 				// check to see if trustedRootAccountID is in the m.AnalyzedAccounts map
 				if _, ok := analyzedAccounts[trustedRootAccountID]; ok {
-					isAnalyzedAccount = analyzedAccounts[trustedRootAccountID]
+					isAnalyzedAccount = analyzedAccounts[trustedRootAccountID].AnalyzedSuccessfully
 				} else {
 					isAnalyzedAccount = false
 				}
@@ -925,5 +933,3 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 	}
 
 }
-
-// func (a *Node) MakeUserEdges(GlobalGraph graph.Graph[string, string]) {

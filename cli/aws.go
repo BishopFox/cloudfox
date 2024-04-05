@@ -2,10 +2,12 @@ package cli
 
 import (
 	"encoding/gob"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/BishopFox/cloudfox/aws"
 	"github.com/BishopFox/cloudfox/aws/sdk"
@@ -70,6 +72,7 @@ var (
 	cyan             = color.New(color.FgCyan).SprintFunc()
 	green            = color.New(color.FgGreen).SprintFunc()
 	red              = color.New(color.FgRed).SprintFunc()
+	magenta          = color.New(color.FgMagenta).SprintFunc()
 	defaultOutputDir = ptr.ToString(internal.GetLogDirPath())
 
 	AWSProfile          string
@@ -137,6 +140,7 @@ var (
 	}
 
 	CapeAdminOnly bool
+	CapeJobName   string
 	CapeCommand   = &cobra.Command{
 		Use:     "cape",
 		Aliases: []string{"capeParse"},
@@ -956,7 +960,8 @@ func runGraphCommand(cmd *cobra.Command, args []string) {
 		}
 
 		//instantiate a permissions client and populate the permissions data
-		fmt.Println("Getting GAAD for " + profile)
+		fmt.Printf("[%s][%s] Getting account authorization details (GAAD) for account: %s\n", cyan("cape"), cyan(profile), ptr.ToString(caller.Account))
+
 		PermissionsCommandClient := aws.InitPermissionsClient(*caller, profile, cmd.Root().Version, Goroutines, AWSMFAToken)
 		PermissionsCommandClient.GetGAAD()
 		PermissionsCommandClient.ParsePermissions("")
@@ -990,7 +995,8 @@ func runGraphCommand(cmd *cobra.Command, args []string) {
 
 func runCapeCommand(cmd *cobra.Command, args []string) {
 	// map of all unique accountIDs and if they are included in the analysis or not
-	analyzedAccounts := make(map[string]bool)
+	//analyzedAccounts := make(map[string]bool)
+	analyzedAccounts := make(map[string]aws.CapeJobInfo)
 
 	GlobalGraph := graph.New(graph.StringHash, graph.Directed())
 	//var PermissionRowsFromAllProfiles []common.PermissionsRow
@@ -1005,8 +1011,14 @@ func runCapeCommand(cmd *cobra.Command, args []string) {
 		if err != nil {
 			continue
 		}
+		_, err = internal.InitializeCloudFoxRunData(profile, cmd.Root().Version, AWSMFAToken, AWSOutputDirectory)
+		if err != nil {
+			continue
+		}
+
 		// add account number to analyzedAccounts map and set the value to true
-		analyzedAccounts[ptr.ToString(caller.Account)] = true
+		//analyzedAccounts[ptr.ToString(caller.Account)] = true
+		analyzedAccounts[ptr.ToString(caller.Account)] = aws.CapeJobInfo{AccountID: ptr.ToString(caller.Account), Profile: profile, AnalyzedSuccessfully: true, AdminOnlyAnalysis: CapeAdminOnly, Source: "user"}
 
 	}
 
@@ -1018,7 +1030,7 @@ func runCapeCommand(cmd *cobra.Command, args []string) {
 		}
 
 		//Gather all Permissions data
-		fmt.Println("Getting GAAD for " + profile)
+		fmt.Printf("[%s][%s] Getting account authorization details (GAAD) for account: %s\n", cyan("cape"), cyan(profile), ptr.ToString(caller.Account))
 		PermissionsCommandClient := aws.InitPermissionsClient(*caller, profile, cmd.Root().Version, Goroutines, AWSMFAToken)
 		PermissionsCommandClient.GetGAAD()
 		PermissionsCommandClient.ParsePermissions("")
@@ -1026,15 +1038,19 @@ func runCapeCommand(cmd *cobra.Command, args []string) {
 			common.PermissionRowsFromAllProfiles = append(common.PermissionRowsFromAllProfiles, PermissionsCommandClient.Rows...)
 		} else {
 			fmt.Println("Error gathering permisisons for " + profile)
-			analyzedAccounts[ptr.ToString(caller.Account)] = false
+			//analyzedAccounts[ptr.ToString(caller.Account)] = false
+			analyzedAccounts[ptr.ToString(caller.Account)] = aws.CapeJobInfo{AnalyzedSuccessfully: false}
+
 		}
 
 		// Gather all Pmapper data.
-		fmt.Println("Importing Pmapper for " + profile)
+		fmt.Printf("[%s][%s] Importing Pmapper for: %s\n", cyan("cape"), cyan(profile), ptr.ToString(caller.Account))
+
 		pmapperMod, pmapperError := aws.InitPmapperGraph(*caller, AWSProfile, Goroutines)
 		if pmapperError != nil {
-			fmt.Println("Error importing pmapper data: " + pmapperError.Error())
-			analyzedAccounts[ptr.ToString(caller.Account)] = false
+			fmt.Println("Error importing pmapper data " + pmapperError.Error())
+			//analyzedAccounts[ptr.ToString(caller.Account)] = false
+			analyzedAccounts[ptr.ToString(caller.Account)] = aws.CapeJobInfo{AnalyzedSuccessfully: false}
 		}
 
 		// add pmapper nodes to GlobalNodes (which will also soon include iam roles and users)
@@ -1051,7 +1067,8 @@ func runCapeCommand(cmd *cobra.Command, args []string) {
 		}
 
 		//Gather all role data so we can later process all of the role trusts and add external nodes not looked at by pmapper
-		fmt.Println("Getting Roles for " + profile)
+		fmt.Printf("[%s][%s] Getting IAM roles for %s\n", cyan("cape"), cyan(profile), ptr.ToString(caller.Account))
+
 		IAMCommandClient := aws.InitIAMClient(AWSConfig)
 		ListRolesOutput, err := sdk.CachedIamListRoles(IAMCommandClient, ptr.ToString(caller.Account))
 		if err != nil {
@@ -1071,7 +1088,8 @@ func runCapeCommand(cmd *cobra.Command, args []string) {
 		//Gather all user data
 		// Currently, there is no need to parse groups and build group-user relationships because
 		// the permissions command (and common.PermissionRowsFromAllProfiles above already has mapped/assigned group permissions to users within the group
-		fmt.Println("Getting Users for " + profile)
+		fmt.Printf("[%s][%s] Getting IAM users for %s\n", cyan("cape"), cyan(profile), ptr.ToString(caller.Account))
+
 		ListUsersOutput, err := sdk.CachedIamListUsers(IAMCommandClient, ptr.ToString(caller.Account))
 		if err != nil {
 			internal.TxtLog.Error(err)
@@ -1088,7 +1106,8 @@ func runCapeCommand(cmd *cobra.Command, args []string) {
 	// make vertices
 	// you can't update vertices - so we need to make all of the vertices that are roles in the in-scope accounts
 	// all at once to make sure they have the most information possible
-	fmt.Println("Making vertices for all profiles")
+	fmt.Printf("[%s] Making vertices for all profiles\n", cyan("cape"))
+
 	// for _, role := range GlobalRoles {
 	// 	role.MakeVertices(GlobalGraph)
 	// }
@@ -1106,7 +1125,9 @@ func runCapeCommand(cmd *cobra.Command, args []string) {
 		// for every node, check to see if the accountId exists in the analyzedAccounts map. If it does not, add it to the map and set the value to false only if the node.VendorName is empty
 		if _, ok := analyzedAccounts[node.AccountID]; !ok {
 			if node.VendorName == "" {
-				analyzedAccounts[node.AccountID] = false
+				if node.AccountID != "" {
+					analyzedAccounts[node.AccountID] = aws.CapeJobInfo{AccountID: node.AccountID, Profile: "", AnalyzedSuccessfully: false, AdminOnlyAnalysis: CapeAdminOnly, Source: "cloudfox"}
+				}
 			}
 		}
 	}
@@ -1149,7 +1170,8 @@ func runCapeCommand(cmd *cobra.Command, args []string) {
 	//making edges
 	// these are the cloudfox created edges mainly based on role trusts
 	// at least for now, we don't need to make edges for users, groups, or anything else because pmapper already has all of the edges we need
-	fmt.Println("Making edges for all profiles")
+	fmt.Printf("[%s] Making edges for all profiles\n", cyan("cape"))
+
 	for _, node := range mergedNodes {
 		if node.Type == "Role" {
 			node.MakeRoleEdges(GlobalGraph)
@@ -1188,6 +1210,32 @@ func runCapeCommand(cmd *cobra.Command, args []string) {
 
 		capeCommandClient.RunCapeCommand()
 
+		// write a json file with job information to the output directory. Use the CapeJobName for hte file name, and have the data include the list of AWSProfiles that were analyzed
+		// this will be used by a TUI to match a job name to the list of accounts that were analyzed
+
+		if CapeJobName == "" {
+			// create random job name in the format of cape-timmefromepoch
+			CapeJobName = fmt.Sprintf("cape-%s", time.Now().Format("2006-01-02-15-04-05"))
+		}
+		filename := fmt.Sprintf("%s.json", CapeJobName)
+		filepath := filepath.Join(AWSOutputDirectory, "aws", "capeJobs")
+		err = os.MkdirAll(filepath, 0755)
+		if err != nil {
+			fmt.Println("Error creating directory: " + err.Error())
+		}
+		file, _ := os.Create(filepath + "/" + filename)
+		defer file.Close()
+		encoder := json.NewEncoder(file)
+		encoder.SetIndent("", "  ")
+		err = encoder.Encode(analyzedAccounts)
+		if err != nil {
+			fmt.Println("Error writing job data to file: " + err.Error())
+		} else {
+			fmt.Printf("[%s] Job output written to %s\n", cyan("cape"), file.Name())
+			fmt.Printf("[%s] %s\n\n", cyan("cape"), magenta("The results of the cape command are best viewed in the cape terminal user interface (TUI). Use the command below:"))
+			fmt.Printf("[%s] \tcloudfox aws -l %s cape tui\n\n", cyan("cape"), AWSProfilesList)
+		}
+
 		// playing around with creating a graphviz file for image rendering.
 		// the goal here is to be able to export this graph data to a format that can be easily imported in neo4j.
 		// this is a work in progress and not yet complete
@@ -1198,6 +1246,25 @@ func runCapeCommand(cmd *cobra.Command, args []string) {
 		// 	"ranksep", "3",
 		// ))
 	}
+}
+
+func runCapeTUICommand(cmd *cobra.Command, args []string) {
+	var capeOutputFileLocations []string
+	for _, profile := range AWSProfiles {
+		cloudfoxRunData, err := internal.InitializeCloudFoxRunData(profile, cmd.Root().Version, AWSMFAToken, AWSOutputDirectory)
+		//caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
+		if err != nil {
+			continue
+		}
+		capeOutputFileLocations = append(capeOutputFileLocations, filepath.Join(cloudfoxRunData.OutputLocation, "json", "inbound-privesc-paths.json"))
+
+	}
+	if len(capeOutputFileLocations) == 0 {
+		fmt.Printf("[%s] Could not retrieve CAPE data.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)))
+		os.Exit(1)
+	}
+	aws.CapeTUI(capeOutputFileLocations)
+
 }
 
 func runIamSimulatorCommand(cmd *cobra.Command, args []string) {
@@ -2193,6 +2260,17 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 	}
 }
 
+var CapeTuiCmd = &cobra.Command{
+	Use:     "tui",
+	Aliases: []string{"TUI", "view", "report"},
+	Short:   "View Cape's output in a TUI",
+	Long: "\nUse case examples:\n" +
+		os.Args[0] + " aws cape tui -l /path/to/profiles-used-for-cape.txt",
+	//PreRun:  awsPreRun,
+	Run: runCapeTUICommand,
+	//PostRun: awsPostRun,
+}
+
 func init() {
 	cobra.OnInitialize(initAWSProfiles)
 
@@ -2234,6 +2312,7 @@ func init() {
 
 	// cape command flags
 	CapeCommand.Flags().BoolVar(&CapeAdminOnly, "admin-only", false, "Only return paths that lead to an admin role - much faster")
+	CapeCommand.Flags().StringVar(&CapeJobName, "job-name", "", "Name of the cape job")
 
 	// pmapper flag for pmapper and cape commands
 	//PmapperCommand.Flags().StringVarP(&PmapperDataBasePath, "pmapper-data-basepath", "pdata", "", "Supply the base path for the pmapper data files (useful if you have copied them from another machine)")
@@ -2291,6 +2370,10 @@ func init() {
 		SecretsCommand,
 		TagsCommand,
 		WorkloadsCommand,
+	)
+
+	CapeCommand.AddCommand(
+		CapeTuiCmd,
 	)
 
 }

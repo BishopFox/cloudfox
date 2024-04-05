@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"context"
 	"encoding/gob"
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -32,9 +34,81 @@ var (
 	ConfigMap     = map[string]aws.Config{}
 )
 
+type CloudFoxRunData struct {
+	Profile        string
+	AccountID      string
+	OutputLocation string
+}
+
 func init() {
 	gob.Register(aws.Config{})
 	gob.Register(sts.GetCallerIdentityOutput{})
+	gob.Register(CloudFoxRunData{})
+}
+
+func InitializeCloudFoxRunData(AWSProfile string, version string, AwsMfaToken string, AWSOutputDirectory string) (CloudFoxRunData, error) {
+	var runData CloudFoxRunData
+
+	cacheDirectory := filepath.Join(AWSOutputDirectory, "cached-data", "aws")
+	filename := filepath.Join(cacheDirectory, fmt.Sprintf("CloudFoxRunData-%s.json", AWSProfile))
+	if _, err := os.Stat(filename); err == nil {
+		// unmarshall the data from the file into type CloudFoxRunData
+
+		// Open the file (this is not actually needed if you use os.ReadFile, so you can skip this)
+		file, err := os.Open(filename)
+		if err != nil {
+			return CloudFoxRunData{}, err
+		}
+		defer file.Close()
+
+		// Read the file content
+		jsonData, err := os.ReadFile(filename)
+		if err != nil {
+			return CloudFoxRunData{}, err
+		}
+
+		// Unmarshal jsonData into runData (make sure to pass a pointer to runData)
+		err = json.Unmarshal(jsonData, &runData)
+		if err != nil {
+			return CloudFoxRunData{}, err
+		}
+
+		return runData, nil
+
+	}
+
+	CallerIdentity, err := AWSWhoami(AWSProfile, version, AwsMfaToken)
+	if err != nil {
+		return CloudFoxRunData{}, err
+	}
+	outputLocation := filepath.Join(AWSOutputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", AWSProfile, ptr.ToString(CallerIdentity.Account)))
+
+	runData = CloudFoxRunData{
+		Profile:        AWSProfile,
+		AccountID:      aws.ToString(CallerIdentity.Account),
+		OutputLocation: outputLocation,
+	}
+
+	// Marshall the data to a file
+	err = os.MkdirAll(cacheDirectory, 0755)
+	if err != nil {
+		return CloudFoxRunData{}, err
+	}
+	file, err := os.Create(filename)
+	if err != nil {
+		return CloudFoxRunData{}, err
+	}
+	defer file.Close()
+	jsonData, err := json.Marshal(runData)
+	if err != nil {
+		return CloudFoxRunData{}, err
+	}
+	_, err = file.Write(jsonData)
+	if err != nil {
+		return CloudFoxRunData{}, err
+	}
+
+	return runData, nil
 }
 
 func AWSConfigFileLoader(AWSProfile string, version string, AwsMfaToken string) aws.Config {
@@ -168,40 +242,6 @@ func GetEnabledRegions(awsProfile string, version string, AwsMfaToken string) []
 	return enabledRegions
 
 }
-
-// func GetRegionsForService(awsProfile string, service string) []string {
-// 	SSMClient := ssm.NewFromConfig(AWSConfigFileLoader(awsProfile))
-// 	var PaginationControl *string
-// 	var supportedRegions []string
-// 	path := fmt.Sprintf("/aws/service/global-infrastructure/services/%s/regions", service)
-
-// 	ServiceRegions, err := SSMClient.GetParametersByPath(
-// 		context.TODO(),
-// 		&(ssm.GetParametersByPathInput{
-// 			NextToken: PaginationControl,
-// 			Path:      &path,
-// 		}),
-// 	)
-// 	if err != nil {
-// 		fmt.Println(err.Error())
-
-// 	}
-
-// 	if ServiceRegions.Parameters != nil {
-// 		for _, region := range ServiceRegions.Parameters {
-// 			name := *region.Value
-// 			supportedRegions = append(supportedRegions, name)
-// 		}
-
-// 		// The "NextToken" value is nil when there's no more data to return.
-// 		if ServiceRegions.NextToken != nil {
-// 			PaginationControl = ServiceRegions.NextToken
-// 		} else {
-// 			PaginationControl = nil
-// 		}
-// 	}
-// 	return supportedRegions
-// }
 
 // txtLogger - Returns the txt logger
 func TxtLogger() *logrus.Logger {

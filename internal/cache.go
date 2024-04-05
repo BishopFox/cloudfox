@@ -24,7 +24,6 @@ func SaveCacheToFiles(directory string, accountID string) error {
 	}
 
 	for key, item := range Cache.Items() {
-		// only if the key contains the accountID
 		if accountID != "" && strings.Contains(key, accountID) {
 			entry := cacheEntry{
 				Value: item.Object,
@@ -42,6 +41,7 @@ func SaveCacheToFiles(directory string, accountID string) error {
 				return err
 			}
 		}
+
 	}
 	return nil
 }
@@ -103,14 +103,6 @@ func SaveCacheToGobFiles(directory string, accountID string) error {
 	}
 
 	for key, item := range Cache.Items() {
-		// if accountID != "" && strings.Contains(key, accountID) ||
-		// 	strings.Contains(key, "AWSConfigFileLoader") ||
-		// 	strings.Contains(key, "GetEnabledRegions") ||
-		// 	strings.Contains(key, "GetCallerIdentity") {
-		// 	entry := cacheEntry{
-		// 		Value: item.Object,
-		// 		Exp:   item.Expiration,
-		// 	}
 
 		// only if the key contains the accountID
 		if accountID != "" && strings.Contains(key, accountID) {
@@ -126,16 +118,6 @@ func SaveCacheToGobFiles(directory string, accountID string) error {
 			}
 			defer file.Close()
 
-			// if config, ok := item.Object.(aws.Config); ok {
-			// 	cacheableConfig := converAWSConfigToCacheableAWSConfig(config)
-			// 	encoder := gob.NewEncoder(file)
-			// 	err = encoder.Encode(cacheableConfig)
-			// 	if err != nil {
-			// 		sharedLogger.Errorf("Could not encode the following key: %s", key)
-			// 		return err
-			// 	}
-
-			// } else {
 			encoder := gob.NewEncoder(file)
 			err = encoder.Encode(entry)
 			if err != nil {
@@ -147,14 +129,6 @@ func SaveCacheToGobFiles(directory string, accountID string) error {
 	}
 	return nil
 }
-
-// func converAWSConfigToCacheableAWSConfig(config aws.Config) CacheableAWSConfig {
-// 	return CacheableAWSConfig{
-// 		Region: config.Region,
-// 		//Credentials:   config.Credentials,
-// 		//ConfigSources: config.ConfigSources,
-// 	}
-// }
 
 var ErrDirectoryDoesNotExist = errors.New("directory does not exist")
 
