@@ -25,10 +25,11 @@ type ECSTasksModule struct {
 	EC2Client sdk.AWSEC2ClientInterface
 	IAMClient sdk.AWSIAMClientInterface
 
-	Caller        sts.GetCallerIdentityOutput
-	AWSRegions    []string
-	AWSOutputType string
-	AWSTableCols  string
+	Caller              sts.GetCallerIdentityOutput
+	AWSRegions          []string
+	AWSOutputType       string
+	AWSTableCols        string
+	PmapperDataBasePath string
 
 	AWSProfile     string
 	Goroutines     int
@@ -73,7 +74,7 @@ func (m *ECSTasksModule) ECSTasks(outputDirectory string, verbosity int) {
 	fmt.Printf("[%s][%s] Enumerating ECS tasks in all regions for account %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 	// Initialized the tools we'll need to check if any workload roles are admin or can privesc to admin
 	//fmt.Printf("[%s][%s] Attempting to build a PrivEsc graph in memory using local pmapper data if it exists on the filesystem.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
-	m.pmapperMod, m.pmapperError = InitPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines)
+	m.pmapperMod, m.pmapperError = InitPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines, m.PmapperDataBasePath)
 	m.iamSimClient = InitIamCommandClient(m.IAMClient, m.Caller, m.AWSProfile, m.Goroutines)
 
 	// if m.pmapperError != nil {

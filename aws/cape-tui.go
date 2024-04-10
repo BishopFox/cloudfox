@@ -358,6 +358,7 @@ func CapeTUI(outputFiles []string) {
 	preloadData, err := preloadData(outputFiles)
 	if err != nil {
 		fmt.Printf("Error preloading data: %s\n", err)
+		fmt.Println("Either remove this profile from the list of profiles, or make sure cape can run successfully for this profile")
 		os.Exit(1)
 	}
 

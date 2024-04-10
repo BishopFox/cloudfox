@@ -77,12 +77,26 @@ func (m *CapeCommand) RunCapeCommand() {
 
 	// Table #1: Inbound Privilege Escalation Paths
 	fmt.Printf("[%s][%s] Printing inbound privesc paths for account: %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
+	if !m.CapeAdminOnly {
+		fmt.Printf("[%s][%s] This can take a really long time if the number of vertices/edges is in the thousands. Consider stopping here and re-running cape with --admin-only to speed this step up!\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	} else {
+		fmt.Printf("[%s][%s] This can take a really long time if the number of vertices/edges is in the thousands.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
+	}
+
 	header, body, _ := m.generateInboundPrivEscTableData()
+
+	var fileName string
+	if m.CapeAdminOnly {
+		fileName = "inbound-privesc-paths-admin-targets-only"
+	} else {
+		fileName = "inbound-privesc-paths-all-targets"
+	}
+
 	o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
 		Header: header,
 		Body:   body,
 		//TableCols:         tableCols,
-		Name:              "inbound-privesc-paths",
+		Name:              fileName,
 		SkipPrintToScreen: false,
 	})
 
@@ -187,6 +201,7 @@ func (m *CapeCommand) findPathsToThisDestination(allGlobalNodes map[string]map[s
 			// if we have a path, then lets document this source as having a path to our destination
 			if path != nil {
 				if s != d {
+					fmt.Printf("[%s][%s] Found a path from %s to %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), s, d)
 					paths = ""
 					// if we got here theres a path. Lets print the reason and the short reason for each edge in the path to the screen
 					// and then lets print the full path to the screen

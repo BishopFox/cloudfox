@@ -77,11 +77,12 @@ func isRoleAdmin(iamSimMod IamSimulatorModule, principal *string) bool {
 
 }
 
-func InitPmapperGraph(Caller sts.GetCallerIdentityOutput, AWSProfile string, Goroutines int) (PmapperModule, error) {
+func InitPmapperGraph(Caller sts.GetCallerIdentityOutput, AWSProfile string, Goroutines int, PmapperDataBasePath string) (PmapperModule, error) {
 	pmapperMod := PmapperModule{
-		Caller:     Caller,
-		AWSProfile: AWSProfile,
-		Goroutines: Goroutines,
+		Caller:              Caller,
+		AWSProfile:          AWSProfile,
+		Goroutines:          Goroutines,
+		PmapperDataBasePath: PmapperDataBasePath,
 	}
 	err := pmapperMod.initPmapperGraph()
 	if err != nil {

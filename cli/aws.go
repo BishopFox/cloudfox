@@ -2,12 +2,10 @@ package cli
 
 import (
 	"encoding/gob"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/BishopFox/cloudfox/aws"
 	"github.com/BishopFox/cloudfox/aws/sdk"
@@ -144,10 +142,7 @@ var (
 	CapeCommand   = &cobra.Command{
 		Use:     "cape",
 		Aliases: []string{"capeParse"},
-		Short: "Cross-Account Privilege Escalation Route finder.\n" +
-			"Needs to be run with multiple profiles using -l or -a flag\n" +
-			"Needs pmapper data to be present",
-
+		Short:   "Cross-Account Privilege Escalation Route finder. Needs to be run with multiple profiles using -l or -a flag. Needs pmapper data to be present",
 		Long: "\nUse case examples:\n" +
 			os.Args[0] + " aws cape -l file_with_profile_names.txt",
 		PreRun:  awsPreRun,
@@ -746,15 +741,16 @@ func runCodeBuildCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.CodeBuildModule{
-			CodeBuildClient: codebuild.NewFromConfig(AWSConfig),
-			Caller:          *caller,
-			AWSRegions:      internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
-			AWSProfile:      profile,
-			Goroutines:      Goroutines,
-			SkipAdminCheck:  AWSSkipAdminCheck,
-			WrapTable:       AWSWrapTable,
-			AWSOutputType:   AWSOutputType,
-			AWSTableCols:    AWSTableCols,
+			CodeBuildClient:     codebuild.NewFromConfig(AWSConfig),
+			Caller:              *caller,
+			AWSRegions:          internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
+			AWSProfile:          profile,
+			Goroutines:          Goroutines,
+			SkipAdminCheck:      AWSSkipAdminCheck,
+			WrapTable:           AWSWrapTable,
+			AWSOutputType:       AWSOutputType,
+			AWSTableCols:        AWSTableCols,
+			PmapperDataBasePath: PmapperDataBasePath,
 		}
 		m.PrintCodeBuildProjects(AWSOutputDirectory, Verbosity)
 	}
@@ -851,14 +847,15 @@ func runEKSCommand(cmd *cobra.Command, args []string) {
 			IAMClient: iam.NewFromConfig(AWSConfig),
 			EKSClient: eks.NewFromConfig(AWSConfig),
 
-			Caller:         *caller,
-			AWSRegions:     internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
-			AWSProfile:     profile,
-			Goroutines:     Goroutines,
-			SkipAdminCheck: AWSSkipAdminCheck,
-			WrapTable:      AWSWrapTable,
-			AWSOutputType:  AWSOutputType,
-			AWSTableCols:   AWSTableCols,
+			Caller:              *caller,
+			AWSRegions:          internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
+			AWSProfile:          profile,
+			Goroutines:          Goroutines,
+			SkipAdminCheck:      AWSSkipAdminCheck,
+			WrapTable:           AWSWrapTable,
+			AWSOutputType:       AWSOutputType,
+			AWSTableCols:        AWSTableCols,
+			PmapperDataBasePath: PmapperDataBasePath,
 		}
 		m.EKS(AWSOutputDirectory, Verbosity)
 	}
@@ -976,18 +973,19 @@ func runGraphCommand(cmd *cobra.Command, args []string) {
 		}
 
 		graphCommandClient := aws.GraphCommand{
-			Caller:             *caller,
-			AWSProfile:         profile,
-			Goroutines:         Goroutines,
-			AWSRegions:         internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
-			WrapTable:          AWSWrapTable,
-			AWSOutputType:      AWSOutputType,
-			AWSTableCols:       AWSTableCols,
-			AWSOutputDirectory: AWSOutputDirectory,
-			Verbosity:          Verbosity,
-			AWSConfig:          AWSConfig,
-			Version:            cmd.Root().Version,
-			SkipAdminCheck:     AWSSkipAdminCheck,
+			Caller:              *caller,
+			AWSProfile:          profile,
+			Goroutines:          Goroutines,
+			AWSRegions:          internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
+			WrapTable:           AWSWrapTable,
+			AWSOutputType:       AWSOutputType,
+			AWSTableCols:        AWSTableCols,
+			AWSOutputDirectory:  AWSOutputDirectory,
+			Verbosity:           Verbosity,
+			AWSConfig:           AWSConfig,
+			Version:             cmd.Root().Version,
+			SkipAdminCheck:      AWSSkipAdminCheck,
+			PmapperDataBasePath: PmapperDataBasePath,
 		}
 		graphCommandClient.RunGraphCommand()
 	}
@@ -1022,6 +1020,33 @@ func runCapeCommand(cmd *cobra.Command, args []string) {
 
 	}
 
+	pmapperData := make(map[string]aws.PmapperModule)
+
+	for _, profile := range AWSProfiles {
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
+		if err != nil {
+			continue
+		}
+		fmt.Printf("[%s][%s] Importing Pmapper data for: %s\n", cyan("cape"), cyan(profile), ptr.ToString(caller.Account))
+		pmapperMod, pmapperError := aws.InitPmapperGraph(*caller, AWSProfile, Goroutines, PmapperDataBasePath)
+		if pmapperError != nil {
+			fmt.Println("Error importing pmapper data " + pmapperError.Error())
+			analyzedAccounts[ptr.ToString(caller.Account)] = aws.CapeJobInfo{AnalyzedSuccessfully: false}
+			// give the user the option to continue or not
+			// if they choose to continue, we will skip the pmapper data and continue with the rest of the analysis
+			// if they choose to not continue, we will exit the program
+			fmt.Printf("Would you like to continue with the analysis without the pmapper data for profile %s? (y/n)", profile)
+			var continueAnalysis string
+			fmt.Scanln(&continueAnalysis)
+			if continueAnalysis == "y" {
+				continue
+			} else {
+				os.Exit(1)
+			}
+		}
+
+		pmapperData[profile] = pmapperMod
+	}
 	for _, profile := range AWSProfiles {
 		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
@@ -1040,31 +1065,35 @@ func runCapeCommand(cmd *cobra.Command, args []string) {
 			fmt.Println("Error gathering permisisons for " + profile)
 			//analyzedAccounts[ptr.ToString(caller.Account)] = false
 			analyzedAccounts[ptr.ToString(caller.Account)] = aws.CapeJobInfo{AnalyzedSuccessfully: false}
-
 		}
 
 		// Gather all Pmapper data.
-		fmt.Printf("[%s][%s] Importing Pmapper for: %s\n", cyan("cape"), cyan(profile), ptr.ToString(caller.Account))
+		//fmt.Printf("[%s][%s] Importing Pmapper for: %s\n", cyan("cape"), cyan(profile), ptr.ToString(caller.Account))
 
-		pmapperMod, pmapperError := aws.InitPmapperGraph(*caller, AWSProfile, Goroutines)
-		if pmapperError != nil {
-			fmt.Println("Error importing pmapper data " + pmapperError.Error())
-			//analyzedAccounts[ptr.ToString(caller.Account)] = false
-			analyzedAccounts[ptr.ToString(caller.Account)] = aws.CapeJobInfo{AnalyzedSuccessfully: false}
-		}
+		// pmapperMod, pmapperError := aws.InitPmapperGraph(*caller, AWSProfile, Goroutines)
+		// if pmapperError != nil {
+		// 	fmt.Println("Error importing pmapper data " + pmapperError.Error())
+		// 	//analyzedAccounts[ptr.ToString(caller.Account)] = false
+		// 	analyzedAccounts[ptr.ToString(caller.Account)] = aws.CapeJobInfo{AnalyzedSuccessfully: false}
+		// }
+
+		pmapperMod := pmapperData[profile]
 
 		// add pmapper nodes to GlobalNodes (which will also soon include iam roles and users)
+
 		for _, node := range pmapperMod.Nodes {
 			// add node to GlobalPmapperData
 			//GlobalPmapperData.Nodes = append(GlobalPmapperData.Nodes, node)
 			GlobalNodes = append(GlobalNodes, node)
 		}
+		fmt.Printf("[%s][%s] Added %d vertices from pmapper for %s\n", cyan("cape"), cyan(profile), len(pmapperMod.Nodes), ptr.ToString(caller.Account))
 
 		// same for adding pmapper edges to GlobalPmapperData
 		for _, edge := range pmapperMod.Edges {
 			// add edge to GlobalPmapperData
 			GlobalPmapperData.Edges = append(GlobalPmapperData.Edges, edge)
 		}
+		fmt.Printf("[%s][%s] Added %d edges from pmapper for %s\n", cyan("cape"), cyan(profile), len(pmapperMod.Edges), ptr.ToString(caller.Account))
 
 		//Gather all role data so we can later process all of the role trusts and add external nodes not looked at by pmapper
 		fmt.Printf("[%s][%s] Getting IAM roles for %s\n", cyan("cape"), cyan(profile), ptr.ToString(caller.Account))
@@ -1172,13 +1201,13 @@ func runCapeCommand(cmd *cobra.Command, args []string) {
 	// at least for now, we don't need to make edges for users, groups, or anything else because pmapper already has all of the edges we need
 	fmt.Printf("[%s] Making edges for all profiles\n", cyan("cape"))
 
+	fmt.Printf("[%s] Total vertices from pmapper and cape: %d \n", cyan("cape"), len(mergedNodes))
+	fmt.Printf("[%s] Total edges from pmapper and cape: %d \n", cyan("cape"), len(GlobalPmapperData.Edges))
+
 	for _, node := range mergedNodes {
 		if node.Type == "Role" {
 			node.MakeRoleEdges(GlobalGraph)
 		}
-		// if node.Type == "User" {
-		// 	node.MakeUserEdges(GlobalGraph)
-		// }
 	}
 
 	for _, profile := range AWSProfiles {
@@ -1213,28 +1242,28 @@ func runCapeCommand(cmd *cobra.Command, args []string) {
 		// write a json file with job information to the output directory. Use the CapeJobName for hte file name, and have the data include the list of AWSProfiles that were analyzed
 		// this will be used by a TUI to match a job name to the list of accounts that were analyzed
 
-		if CapeJobName == "" {
-			// create random job name in the format of cape-timmefromepoch
-			CapeJobName = fmt.Sprintf("cape-%s", time.Now().Format("2006-01-02-15-04-05"))
-		}
-		filename := fmt.Sprintf("%s.json", CapeJobName)
-		filepath := filepath.Join(AWSOutputDirectory, "aws", "capeJobs")
-		err = os.MkdirAll(filepath, 0755)
-		if err != nil {
-			fmt.Println("Error creating directory: " + err.Error())
-		}
-		file, _ := os.Create(filepath + "/" + filename)
-		defer file.Close()
-		encoder := json.NewEncoder(file)
-		encoder.SetIndent("", "  ")
-		err = encoder.Encode(analyzedAccounts)
-		if err != nil {
-			fmt.Println("Error writing job data to file: " + err.Error())
-		} else {
-			fmt.Printf("[%s] Job output written to %s\n", cyan("cape"), file.Name())
-			fmt.Printf("[%s] %s\n\n", cyan("cape"), magenta("The results of the cape command are best viewed in the cape terminal user interface (TUI). Use the command below:"))
-			fmt.Printf("[%s] \tcloudfox aws -l %s cape tui\n\n", cyan("cape"), AWSProfilesList)
-		}
+		// if CapeJobName == "" {
+		// 	// create random job name in the format of cape-timmefromepoch
+		// 	CapeJobName = fmt.Sprintf("cape-%s", time.Now().Format("2006-01-02-15-04-05"))
+		// }
+		// filename := fmt.Sprintf("%s.json", CapeJobName)
+		// filepath := filepath.Join(AWSOutputDirectory, "aws", "capeJobs")
+		// err = os.MkdirAll(filepath, 0755)
+		// if err != nil {
+		// 	fmt.Println("Error creating directory: " + err.Error())
+		// }
+		// file, _ := os.Create(filepath + "/" + filename)
+		// defer file.Close()
+		// encoder := json.NewEncoder(file)
+		// encoder.SetIndent("", "  ")
+		// err = encoder.Encode(analyzedAccounts)
+		// if err != nil {
+		// 	fmt.Println("Error writing job data to file: " + err.Error())
+		// } else {
+		// 	fmt.Printf("[%s] Job output written to %s\n", cyan("cape"), file.Name())
+		// 	fmt.Printf("[%s] %s\n\n", cyan("cape"), magenta("The results of the cape command are best viewed in the cape terminal user interface (TUI). Use the command below:"))
+		// 	fmt.Printf("[%s] \tcloudfox aws -l %s cape tui\n\n", cyan("cape"), AWSProfilesList)
+		// }
 
 		// playing around with creating a graphviz file for image rendering.
 		// the goal here is to be able to export this graph data to a format that can be easily imported in neo4j.
@@ -1246,17 +1275,36 @@ func runCapeCommand(cmd *cobra.Command, args []string) {
 		// 	"ranksep", "3",
 		// ))
 	}
+
+	fmt.Printf("[%s] %s\n\n", cyan("cape"), magenta("The results of the cape command are best viewed in the cape terminal user interface (TUI). Use the command below:"))
+	if CapeAdminOnly {
+		fmt.Printf("\t\tcloudfox aws -l %s cape tui --admin-only\n\n", AWSProfilesList)
+	} else {
+		fmt.Printf("\t\tcloudfox aws -l %s cape tui\n\n", AWSProfilesList)
+	}
 }
 
 func runCapeTUICommand(cmd *cobra.Command, args []string) {
 	var capeOutputFileLocations []string
-	for _, profile := range AWSProfiles {
+	for i, profile := range AWSProfiles {
 		cloudfoxRunData, err := internal.InitializeCloudFoxRunData(profile, cmd.Root().Version, AWSMFAToken, AWSOutputDirectory)
 		//caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
 		if err != nil {
 			continue
 		}
-		capeOutputFileLocations = append(capeOutputFileLocations, filepath.Join(cloudfoxRunData.OutputLocation, "json", "inbound-privesc-paths.json"))
+		var fileName string
+		if CapeAdminOnly {
+			fileName = "inbound-privesc-paths-admin-targets-only.json"
+		} else {
+			fileName = "inbound-privesc-paths-all-targets.json"
+		}
+		capeOutputFileLocations = append(capeOutputFileLocations, filepath.Join(cloudfoxRunData.OutputLocation, "json", fileName))
+		//check to see if file exists, and if it doesnt, remove the profile from the list of profiles to analyze and print a message to the console
+		if _, err := os.Stat(filepath.Join(cloudfoxRunData.OutputLocation, "json", fileName)); os.IsNotExist(err) {
+			fmt.Printf("[%s] Could not retrieve CAPE data for profile %s.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), profile)
+			//remove the profile from the list of profiles to analyze
+			AWSProfiles = append(AWSProfiles[:i], AWSProfiles[i+1:]...)
+		}
 
 	}
 	if len(capeOutputFileLocations) == 0 {
@@ -1306,6 +1354,7 @@ func runInstancesCommand(cmd *cobra.Command, args []string) {
 			WrapTable:              AWSWrapTable,
 			AWSOutputType:          AWSOutputType,
 			AWSTableCols:           AWSTableCols,
+			PmapperDataBasePath:    PmapperDataBasePath,
 		}
 		m.Instances(InstancesFilter, AWSOutputDirectory, Verbosity)
 	}
@@ -1379,16 +1428,17 @@ func runLambdasCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.LambdasModule{
-			LambdaClient:   lambda.NewFromConfig(AWSConfig),
-			IAMClient:      iam.NewFromConfig(AWSConfig),
-			Caller:         *caller,
-			AWSRegions:     internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
-			AWSProfile:     profile,
-			Goroutines:     Goroutines,
-			SkipAdminCheck: AWSSkipAdminCheck,
-			WrapTable:      AWSWrapTable,
-			AWSOutputType:  AWSOutputType,
-			AWSTableCols:   AWSTableCols,
+			LambdaClient:        lambda.NewFromConfig(AWSConfig),
+			IAMClient:           iam.NewFromConfig(AWSConfig),
+			Caller:              *caller,
+			AWSRegions:          internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
+			AWSProfile:          profile,
+			Goroutines:          Goroutines,
+			SkipAdminCheck:      AWSSkipAdminCheck,
+			WrapTable:           AWSWrapTable,
+			AWSOutputType:       AWSOutputType,
+			AWSTableCols:        AWSTableCols,
+			PmapperDataBasePath: PmapperDataBasePath,
 		}
 		m.PrintLambdas(AWSOutputDirectory, Verbosity)
 	}
@@ -1546,14 +1596,15 @@ func runRoleTrustCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.RoleTrustsModule{
-			IAMClient:      iam.NewFromConfig(AWSConfig),
-			Caller:         *caller,
-			AWSProfile:     profile,
-			Goroutines:     Goroutines,
-			SkipAdminCheck: AWSSkipAdminCheck,
-			WrapTable:      AWSWrapTable,
-			AWSOutputType:  AWSOutputType,
-			AWSTableCols:   AWSTableCols,
+			IAMClient:           iam.NewFromConfig(AWSConfig),
+			Caller:              *caller,
+			AWSProfile:          profile,
+			Goroutines:          Goroutines,
+			SkipAdminCheck:      AWSSkipAdminCheck,
+			WrapTable:           AWSWrapTable,
+			AWSOutputType:       AWSOutputType,
+			AWSTableCols:        AWSTableCols,
+			PmapperDataBasePath: PmapperDataBasePath,
 		}
 		m.PrintRoleTrusts(AWSOutputDirectory, Verbosity)
 	}
@@ -1634,19 +1685,20 @@ func runWorkloadsCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.WorkloadsModule{
-			ECSClient:       ecs.NewFromConfig(AWSConfig),
-			EC2Client:       ec2.NewFromConfig(AWSConfig),
-			LambdaClient:    lambda.NewFromConfig(AWSConfig),
-			AppRunnerClient: apprunner.NewFromConfig(AWSConfig),
-			IAMClient:       iam.NewFromConfig(AWSConfig),
-			Caller:          *caller,
-			AWSRegions:      internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
-			SkipAdminCheck:  AWSSkipAdminCheck,
-			AWSProfile:      profile,
-			Goroutines:      Goroutines,
-			WrapTable:       AWSWrapTable,
-			AWSOutputType:   AWSOutputType,
-			AWSTableCols:    AWSTableCols,
+			ECSClient:           ecs.NewFromConfig(AWSConfig),
+			EC2Client:           ec2.NewFromConfig(AWSConfig),
+			LambdaClient:        lambda.NewFromConfig(AWSConfig),
+			AppRunnerClient:     apprunner.NewFromConfig(AWSConfig),
+			IAMClient:           iam.NewFromConfig(AWSConfig),
+			Caller:              *caller,
+			AWSRegions:          internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
+			SkipAdminCheck:      AWSSkipAdminCheck,
+			AWSProfile:          profile,
+			Goroutines:          Goroutines,
+			WrapTable:           AWSWrapTable,
+			AWSOutputType:       AWSOutputType,
+			AWSTableCols:        AWSTableCols,
+			PmapperDataBasePath: PmapperDataBasePath,
 		}
 		m.PrintWorkloads(AWSOutputDirectory, Verbosity)
 	}
@@ -1663,14 +1715,15 @@ func runECSTasksCommand(cmd *cobra.Command, args []string) {
 			ECSClient: ecs.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)),
 			IAMClient: iam.NewFromConfig(internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)),
 
-			Caller:         *caller,
-			AWSRegions:     internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
-			AWSProfile:     profile,
-			Goroutines:     Goroutines,
-			SkipAdminCheck: AWSSkipAdminCheck,
-			WrapTable:      AWSWrapTable,
-			AWSOutputType:  AWSOutputType,
-			AWSTableCols:   AWSTableCols,
+			Caller:              *caller,
+			AWSRegions:          internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
+			AWSProfile:          profile,
+			Goroutines:          Goroutines,
+			SkipAdminCheck:      AWSSkipAdminCheck,
+			WrapTable:           AWSWrapTable,
+			AWSOutputType:       AWSOutputType,
+			AWSTableCols:        AWSTableCols,
+			PmapperDataBasePath: PmapperDataBasePath,
 		}
 		m.ECSTasks(AWSOutputDirectory, Verbosity)
 	}
@@ -1867,6 +1920,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			WrapTable:              AWSWrapTable,
 			AWSOutputType:          AWSOutputType,
 			AWSTableCols:           AWSTableCols,
+			PmapperDataBasePath:    PmapperDataBasePath,
 		}
 		instances.Instances(InstancesFilter, AWSOutputDirectory, Verbosity)
 		route53 := aws.Route53Module{
@@ -1879,16 +1933,17 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		}
 
 		lambdasMod := aws.LambdasModule{
-			LambdaClient:   lambdaClient,
-			IAMClient:      iamClient,
-			Caller:         *caller,
-			AWSRegions:     internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
-			AWSProfile:     profile,
-			Goroutines:     Goroutines,
-			SkipAdminCheck: AWSSkipAdminCheck,
-			WrapTable:      AWSWrapTable,
-			AWSOutputType:  AWSOutputType,
-			AWSTableCols:   AWSTableCols,
+			LambdaClient:        lambdaClient,
+			IAMClient:           iamClient,
+			Caller:              *caller,
+			AWSRegions:          internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
+			AWSProfile:          profile,
+			Goroutines:          Goroutines,
+			SkipAdminCheck:      AWSSkipAdminCheck,
+			WrapTable:           AWSWrapTable,
+			AWSOutputType:       AWSOutputType,
+			AWSTableCols:        AWSTableCols,
+			PmapperDataBasePath: PmapperDataBasePath,
 		}
 		lambdasMod.PrintLambdas(AWSOutputDirectory, Verbosity)
 
@@ -1969,14 +2024,15 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			ECSClient: ecsClient,
 			IAMClient: iamClient,
 
-			Caller:         *caller,
-			AWSRegions:     internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
-			AWSProfile:     profile,
-			Goroutines:     Goroutines,
-			SkipAdminCheck: AWSSkipAdminCheck,
-			WrapTable:      AWSWrapTable,
-			AWSOutputType:  AWSOutputType,
-			AWSTableCols:   AWSTableCols,
+			Caller:              *caller,
+			AWSRegions:          internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
+			AWSProfile:          profile,
+			Goroutines:          Goroutines,
+			SkipAdminCheck:      AWSSkipAdminCheck,
+			WrapTable:           AWSWrapTable,
+			AWSOutputType:       AWSOutputType,
+			AWSTableCols:        AWSTableCols,
+			PmapperDataBasePath: PmapperDataBasePath,
 		}
 		ecstasks.ECSTasks(AWSOutputDirectory, Verbosity)
 
@@ -1984,14 +2040,15 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			EKSClient: eksClient,
 			IAMClient: iamClient,
 
-			Caller:         *caller,
-			AWSRegions:     internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
-			AWSProfile:     profile,
-			Goroutines:     Goroutines,
-			SkipAdminCheck: AWSSkipAdminCheck,
-			WrapTable:      AWSWrapTable,
-			AWSOutputType:  AWSOutputType,
-			AWSTableCols:   AWSTableCols,
+			Caller:              *caller,
+			AWSRegions:          internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
+			AWSProfile:          profile,
+			Goroutines:          Goroutines,
+			SkipAdminCheck:      AWSSkipAdminCheck,
+			WrapTable:           AWSWrapTable,
+			AWSOutputType:       AWSOutputType,
+			AWSTableCols:        AWSTableCols,
+			PmapperDataBasePath: PmapperDataBasePath,
 		}
 		eksCommand.EKS(AWSOutputDirectory, Verbosity)
 
@@ -2163,14 +2220,15 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		resourceTrustsCommand.PrintResources(AWSOutputDirectory, Verbosity)
 
 		codeBuildCommand := aws.CodeBuildModule{
-			CodeBuildClient: codeBuildClient,
-			Caller:          *caller,
-			AWSProfile:      profile,
-			Goroutines:      Goroutines,
-			AWSRegions:      internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
-			WrapTable:       AWSWrapTable,
-			AWSOutputType:   AWSOutputType,
-			AWSTableCols:    AWSTableCols,
+			CodeBuildClient:     codeBuildClient,
+			Caller:              *caller,
+			AWSProfile:          profile,
+			Goroutines:          Goroutines,
+			AWSRegions:          internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
+			WrapTable:           AWSWrapTable,
+			AWSOutputType:       AWSOutputType,
+			AWSTableCols:        AWSTableCols,
+			PmapperDataBasePath: PmapperDataBasePath,
 		}
 		codeBuildCommand.PrintCodeBuildProjects(AWSOutputDirectory, Verbosity)
 
@@ -2239,19 +2297,20 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		iamSimulator.PrintIamSimulator(SimulatorPrincipal, SimulatorAction, SimulatorResource, AWSOutputDirectory, Verbosity)
 
 		workloads := aws.WorkloadsModule{
-			ECSClient:       ecsClient,
-			EC2Client:       ec2Client,
-			LambdaClient:    lambdaClient,
-			AppRunnerClient: appRunnerClient,
-			IAMClient:       iamClient,
-			Caller:          *caller,
-			AWSRegions:      internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
-			SkipAdminCheck:  AWSSkipAdminCheck,
-			AWSProfile:      profile,
-			Goroutines:      Goroutines,
-			WrapTable:       AWSWrapTable,
-			AWSOutputType:   AWSOutputType,
-			AWSTableCols:    AWSTableCols,
+			ECSClient:           ecsClient,
+			EC2Client:           ec2Client,
+			LambdaClient:        lambdaClient,
+			AppRunnerClient:     appRunnerClient,
+			IAMClient:           iamClient,
+			Caller:              *caller,
+			AWSRegions:          internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
+			SkipAdminCheck:      AWSSkipAdminCheck,
+			AWSProfile:          profile,
+			Goroutines:          Goroutines,
+			WrapTable:           AWSWrapTable,
+			AWSOutputType:       AWSOutputType,
+			AWSTableCols:        AWSTableCols,
+			PmapperDataBasePath: PmapperDataBasePath,
 		}
 		workloads.PrintWorkloads(AWSOutputDirectory, Verbosity)
 
@@ -2312,11 +2371,10 @@ func init() {
 
 	// cape command flags
 	CapeCommand.Flags().BoolVar(&CapeAdminOnly, "admin-only", false, "Only return paths that lead to an admin role - much faster")
-	CapeCommand.Flags().StringVar(&CapeJobName, "job-name", "", "Name of the cape job")
+	//CapeCommand.Flags().StringVar(&CapeJobName, "job-name", "", "Name of the cape job")
 
-	// pmapper flag for pmapper and cape commands
-	//PmapperCommand.Flags().StringVarP(&PmapperDataBasePath, "pmapper-data-basepath", "pdata", "", "Supply the base path for the pmapper data files (useful if you have copied them from another machine)")
-	//CapeCommand.Flags().StringVarP(&PmapperDataBasePath, "pmapper-data-basepath", "pdata", "", "Supply the base path for the pmapper data files (useful if you have copied them from another machine)")
+	// cape tui command flags
+	CapeTuiCmd.Flags().BoolVar(&CapeAdminOnly, "admin-only", false, "Only return paths that lead to an admin role - much faster")
 
 	// Global flags for the AWS modules
 	AWSCommands.PersistentFlags().StringVarP(&AWSProfile, "profile", "p", "", "AWS CLI Profile Name")
@@ -2332,7 +2390,7 @@ func init() {
 	AWSCommands.PersistentFlags().BoolVarP(&AWSUseCache, "cached", "c", false, "Load cached data from disk. Faster, but if changes have been recently made you'll miss them")
 	AWSCommands.PersistentFlags().StringVarP(&AWSTableCols, "cols", "t", "", "Comma separated list of columns to display in table output")
 	AWSCommands.PersistentFlags().StringVar(&AWSMFAToken, "mfa-token", "", "MFA Token")
-	AWSCommands.PersistentFlags().StringVar(&PmapperDataBasePath, "pmapper-data-basepath", "", "Supply the base path for the pmapper data files (useful if you have copied them from another machine)")
+	AWSCommands.PersistentFlags().StringVar(&PmapperDataBasePath, "pmapper-data-basepath", "", "Supply the base path for the pmapper data files (useful if you have copied them from another machine)\nPoint to the parent directory that contains all of the pmapper data by account numbers. \n\tExample: /path/to/com.nccgroup.principalmapper/\n\tExample: ./pmapperdata/")
 
 	AWSCommands.AddCommand(
 		AccessKeysCommand,

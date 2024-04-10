@@ -31,13 +31,15 @@ type LambdasModule struct {
 	AWSOutputType string
 	AWSTableCols  string
 
-	Goroutines     int
-	AWSProfile     string
-	SkipAdminCheck bool
-	WrapTable      bool
-	pmapperMod     PmapperModule
-	pmapperError   error
-	iamSimClient   IamSimulatorModule
+	Goroutines          int
+	AWSProfile          string
+	SkipAdminCheck      bool
+	WrapTable           bool
+	pmapperMod          PmapperModule
+	pmapperError        error
+	PmapperDataBasePath string
+
+	iamSimClient IamSimulatorModule
 
 	// Main module data
 	Lambdas        []Lambda
@@ -75,7 +77,7 @@ func (m *LambdasModule) PrintLambdas(outputDirectory string, verbosity int) {
 
 	fmt.Printf("[%s][%s] Enumerating lambdas for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 	//fmt.Printf("[%s][%s] Attempting to build a PrivEsc graph in memory using local pmapper data if it exists on the filesystem.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
-	m.pmapperMod, m.pmapperError = InitPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines)
+	m.pmapperMod, m.pmapperError = InitPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines, m.PmapperDataBasePath)
 	m.iamSimClient = InitIamCommandClient(m.IAMClient, m.Caller, m.AWSProfile, m.Goroutines)
 
 	// if m.pmapperError != nil {

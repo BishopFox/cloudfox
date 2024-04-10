@@ -506,7 +506,13 @@ func (m *PmapperModule) writeLoot(outputDirectory string, verbosity int) string 
 
 func (m *PmapperModule) readPmapperData(accountID *string) error {
 
-	e, n := generatePmapperDataBasePaths(accountID)
+	var e, n string
+	if m.PmapperDataBasePath == "" {
+		e, n = generatePmapperDataBasePaths(accountID)
+	} else {
+		e = filepath.Join(m.PmapperDataBasePath, aws.ToString(accountID), "graph", "edges.json")
+		n = filepath.Join(m.PmapperDataBasePath, aws.ToString(accountID), "graph", "nodes.json")
+	}
 
 	nodesFile, err := os.Open(n)
 	if err != nil {

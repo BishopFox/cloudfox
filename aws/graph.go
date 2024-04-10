@@ -20,18 +20,19 @@ import (
 type GraphCommand struct {
 
 	// General configuration data
-	Caller             sts.GetCallerIdentityOutput
-	AWSRegions         []string
-	Goroutines         int
-	AWSProfile         string
-	WrapTable          bool
-	AWSOutputType      string
-	AWSTableCols       string
-	Verbosity          int
-	AWSOutputDirectory string
-	AWSConfig          aws.Config
-	Version            string
-	SkipAdminCheck     bool
+	Caller              sts.GetCallerIdentityOutput
+	AWSRegions          []string
+	Goroutines          int
+	AWSProfile          string
+	WrapTable           bool
+	AWSOutputType       string
+	AWSTableCols        string
+	Verbosity           int
+	AWSOutputDirectory  string
+	AWSConfig           aws.Config
+	Version             string
+	SkipAdminCheck      bool
+	PmapperDataBasePath string
 
 	pmapperMod   PmapperModule
 	pmapperError error
@@ -63,7 +64,7 @@ func (m *GraphCommand) RunGraphCommand() {
 
 	m.modLog.Info("Collecting data for graph ingestor...")
 
-	m.pmapperMod, m.pmapperError = InitPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines)
+	m.pmapperMod, m.pmapperError = InitPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines, m.PmapperDataBasePath)
 
 	////////////////
 	// Accounts
