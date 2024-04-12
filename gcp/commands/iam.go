@@ -112,7 +112,7 @@ func runGCPIAMCommand(cmd *cobra.Command, args []string) {
 		logger.InfoM(fmt.Sprintf("Done retrieving IAM information for resource: %s of type %s", projectID, resourceType), globals.GCP_IAM_MODULE_NAME)
 		cloudfoxOutput := GCPIAMResults{Data: results}
 
-		err = internal.HandleOutput(format, outputDirectory, verbosity, wrap, globals.GCP_IAM_MODULE_NAME, account, projectID, cloudfoxOutput)
+		err = internal.HandleOutput("gcp", format, outputDirectory, verbosity, wrap, globals.GCP_IAM_MODULE_NAME, account, projectID, cloudfoxOutput)
 		if err != nil {
 			logger.ErrorM(err.Error(), globals.GCP_IAM_MODULE_NAME)
 			return

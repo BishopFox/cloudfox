@@ -116,7 +116,7 @@ func runGCPInstancesCommand(cmd *cobra.Command, args []string) {
 		results = append(results, result...)
 		logger.InfoM(fmt.Sprintf("Done retrieving all instances from project: %s", projectID), globals.GCP_INSTANCES_MODULE_NAME)
 		cloudfoxOutput := GCPInstancesResults{Data: results}
-		err = internal.HandleOutput(format, outputDirectory, verbosity, wrap, globals.GCP_INSTANCES_MODULE_NAME, account, projectID, cloudfoxOutput)
+		err = internal.HandleOutput("gcp", format, outputDirectory, verbosity, wrap, globals.GCP_INSTANCES_MODULE_NAME, account, projectID, cloudfoxOutput)
 		if err != nil {
 			logger.ErrorM(err.Error(), globals.GCP_INSTANCES_MODULE_NAME)
 			return

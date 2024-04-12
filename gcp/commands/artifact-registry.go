@@ -162,7 +162,7 @@ func runGCPArtifactRegistryCommand(cmd *cobra.Command, args []string) {
 		logger.InfoM(fmt.Sprintf("Done retrieving artifact repository resource data from project: %s", projectID), globals.GCP_ARTIFACT_RESGISTRY_MODULE_NAME)
 		cloudfoxOutput := GCPArtifactRegistryResults{ArtifactData: artifactResults, RepositoryData: repoRestuls}
 
-		err = internal.HandleOutput(format, outputDirectory, verbosity, wrap, globals.GCP_ARTIFACT_RESGISTRY_MODULE_NAME, account, projectID, cloudfoxOutput)
+		err = internal.HandleOutput("gcp", format, outputDirectory, verbosity, wrap, globals.GCP_ARTIFACT_RESGISTRY_MODULE_NAME, account, projectID, cloudfoxOutput)
 		if err != nil {
 			logger.ErrorM(err.Error(), globals.GCP_ARTIFACT_RESGISTRY_MODULE_NAME)
 			return

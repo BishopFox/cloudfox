@@ -110,7 +110,7 @@ func runGCPSecretsCommand(cmd *cobra.Command, args []string) {
 		results = append(results, result...)
 		logger.InfoM(fmt.Sprintf("Done retrieving all secrets from project: %s", projectID), globals.GCP_SECRETS_MODULE_NAME)
 		cloudfoxOutput := GCPSecretsResults{Data: results}
-		err = internal.HandleOutput(format, outputDirectory, verbosity, wrap, globals.GCP_SECRETS_MODULE_NAME, account, projectID, cloudfoxOutput)
+		err = internal.HandleOutput("gcp", format, outputDirectory, verbosity, wrap, globals.GCP_SECRETS_MODULE_NAME, account, projectID, cloudfoxOutput)
 		if err != nil {
 			logger.ErrorM(err.Error(), globals.GCP_SECRETS_MODULE_NAME)
 			return

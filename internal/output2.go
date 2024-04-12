@@ -69,6 +69,7 @@ type CloudfoxOutput interface {
 // HandleOutput dynamically handles the output based on the provided arguments.
 // TODO support brief of wide
 func HandleOutput(
+	cloudProvider string,
 	format string,
 	outputDirectory string,
 	verbosity int,
@@ -79,7 +80,7 @@ func HandleOutput(
 	dataToOutput CloudfoxOutput,
 ) error {
 	// Update OutputClient fields based on arguments
-	outDirectoryPath := filepath.Join(outputDirectory, "cloudfox-output", fmt.Sprintf("%s-%s", principal, resultsIdentifier), baseCloudfoxModule)
+	outDirectoryPath := filepath.Join(outputDirectory, "cloudfox-output", cloudProvider, fmt.Sprintf("%s-%s", principal, resultsIdentifier), baseCloudfoxModule)
 	tables := dataToOutput.TableFiles()
 	lootFiles := dataToOutput.LootFiles()
 

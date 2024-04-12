@@ -25,7 +25,6 @@ func TestDatabasesCommand(t *testing.T) {
 		Goroutines:     3,
 		WrapTable:      false,
 		RDSClient:      &sdk.MockedRDSClient{},
-		NeptuneClient:  &sdk.MockedNeptuneClient{},
 		DynamoDBClient: &sdk.MockedAWSDynamoDBClient{},
 		RedshiftClient: &sdk.MockedRedshiftClient{},
 	}

@@ -124,7 +124,7 @@ func runGCPBigQueryCommand(cmd *cobra.Command, args []string) {
 		tablesResults = append(tablesResults, result.Tables...)
 		cloudfoxOutput := GCPBigQueryResults{DatasetsData: datasetsResults, TablesData: tablesResults}
 
-		err = internal.HandleOutput(format, outputDirectory, verbosity, wrap, globals.GCP_BIGQUERY_MODULE_NAME, account, projectID, cloudfoxOutput)
+		err = internal.HandleOutput("gcp", format, outputDirectory, verbosity, wrap, globals.GCP_BIGQUERY_MODULE_NAME, account, projectID, cloudfoxOutput)
 		if err != nil {
 			logger.ErrorM(err.Error(), globals.GCP_BIGQUERY_MODULE_NAME)
 			return

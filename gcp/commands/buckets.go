@@ -105,7 +105,7 @@ func runGCPBucketsCommand(cmd *cobra.Command, args []string) {
 		results = append(results, result...)
 		logger.InfoM(fmt.Sprintf("Done retrieving all buckets from project: %s", projectID), globals.GCP_BUCKETS_MODULE_NAME)
 		cloudfoxOutput := GCPBucketsResults{Data: results}
-		err = internal.HandleOutput(format, outputDirectory, verbosity, wrap, globals.GCP_BUCKETS_MODULE_NAME, account, projectID, cloudfoxOutput)
+		err = internal.HandleOutput("gcp", format, outputDirectory, verbosity, wrap, globals.GCP_BUCKETS_MODULE_NAME, account, projectID, cloudfoxOutput)
 		if err != nil {
 			logger.ErrorM(err.Error(), globals.GCP_BUCKETS_MODULE_NAME)
 			return

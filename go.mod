@@ -42,7 +42,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/lambda v1.49.6
 	github.com/aws/aws-sdk-go-v2/service/lightsail v1.32.5
 	github.com/aws/aws-sdk-go-v2/service/mq v1.20.6
-	github.com/aws/aws-sdk-go-v2/service/neptune v1.28.2
 	github.com/aws/aws-sdk-go-v2/service/opensearch v1.27.1
 	github.com/aws/aws-sdk-go-v2/service/organizations v1.23.5
 	github.com/aws/aws-sdk-go-v2/service/ram v1.23.7
@@ -70,6 +69,7 @@ require (
 	github.com/spf13/afero v1.11.0
 	github.com/spf13/cobra v1.8.0
 	golang.org/x/crypto v0.17.0
+	golang.org/x/oauth2 v0.15.0
 	google.golang.org/api v0.152.0
 	google.golang.org/genproto v0.0.0-20231106174013-bbf56f31fb17
 	google.golang.org/protobuf v1.31.0
@@ -100,7 +100,6 @@ require (
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	golang.org/x/mod v0.10.0 // indirect
-	golang.org/x/oauth2 v0.15.0 // indirect
 	golang.org/x/sync v0.5.0 // indirect
 	golang.org/x/time v0.5.0 // indirect
 	golang.org/x/tools v0.9.1 // indirect
