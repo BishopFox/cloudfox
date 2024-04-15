@@ -15,6 +15,6 @@ var (
 )
 
 func main() {
-	rootCmd.AddCommand(cli.AWSCommands, cli.AzCommands)
+	rootCmd.AddCommand(cli.AWSCommands, cli.AzCommands, cli.GCPCommands)
 	rootCmd.Execute()
 }
