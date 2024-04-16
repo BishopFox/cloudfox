@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -59,6 +60,49 @@ type LootFile struct {
 	Contents    string
 }
 
+// TODO support datastructures that enable brief or wide format
+type CloudfoxOutput interface {
+	TableFiles() []TableFile
+	LootFiles() []LootFile
+}
+
+// HandleOutput dynamically handles the output based on the provided arguments.
+// TODO support brief of wide
+func HandleOutput(
+	cloudProvider string,
+	format string,
+	outputDirectory string,
+	verbosity int,
+	wrap bool,
+	baseCloudfoxModule string,
+	principal string,
+	resultsIdentifier string,
+	dataToOutput CloudfoxOutput,
+) error {
+	// Update OutputClient fields based on arguments
+	outDirectoryPath := filepath.Join(outputDirectory, "cloudfox-output", cloudProvider, fmt.Sprintf("%s-%s", principal, resultsIdentifier), baseCloudfoxModule)
+	tables := dataToOutput.TableFiles()
+	lootFiles := dataToOutput.LootFiles()
+
+	outputClient := OutputClient{
+		Verbosity:     verbosity,
+		CallingModule: baseCloudfoxModule,
+		Table: TableClient{
+			Wrap:          wrap,
+			DirectoryName: outDirectoryPath,
+			TableFiles:    tables,
+		},
+		Loot: LootClient{
+			DirectoryName: outDirectoryPath,
+			LootFiles:     lootFiles,
+		},
+	}
+
+	// Handle output based on the verbosity level
+	outputClient.WriteFullOutput(tables, lootFiles)
+	return nil
+}
+
 func removeColorCodes(input string) string {
 	// Regular expression to match ANSI color codes
 	ansiRegExp := regexp.MustCompile(`\x1b\[[0-9;]*m`)
@@ -97,7 +141,7 @@ func removeColorCodesFromNestedSlice(input [][]string) [][]string {
 }
 
 func (o *OutputClient) WriteFullOutput(tables []TableFile, lootFiles []LootFile) {
-
+	logger := NewLogger()
 	switch o.Verbosity {
 	case 2:
 		o.Table.printTablesToScreen(tables)
@@ -127,7 +171,8 @@ func (o *OutputClient) WriteFullOutput(tables []TableFile, lootFiles []LootFile)
 	}
 
 	for _, path := range outputPaths {
-		fmt.Printf("[%s][%s] Output written to %s\n", cyan(o.CallingModule), cyan(o.PrefixIdentifier), path)
+		logger.InfoM(fmt.Sprintf("Output written to %s", path), o.CallingModule)
+		// fmt.Printf("[%s][%s] Output written to %s\n", cyan(o.CallingModule), cyan(o.PrefixIdentifier), path)
 	}
 }
 
@@ -173,7 +218,8 @@ func (l *LootClient) writeLootFiles() []string {
 	for _, file := range l.LootFiles {
 		contents := []byte(file.Contents)
 		fullPath := path.Join(l.DirectoryName, "loot", file.Name)
-		err := afero.WriteFile(fileSystem, fullPath, contents, 0644) // Use Afero's WriteFile
+
+		err := os.WriteFile(fullPath, contents, 0644)
 		if err != nil {
 			log.Fatalf("error writing loot file %s: %s", file.Name, err)
 		}
