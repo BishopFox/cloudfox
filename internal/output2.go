@@ -218,8 +218,8 @@ func (l *LootClient) writeLootFiles() []string {
 	for _, file := range l.LootFiles {
 		contents := []byte(file.Contents)
 		fullPath := path.Join(l.DirectoryName, "loot", file.Name)
-
-		err := os.WriteFile(fullPath, contents, 0644)
+		err := afero.WriteFile(fileSystem, fullPath, contents, 0644) // Use Afero's WriteFile
+		//err := os.WriteFile(fullPath, contents, 0644)
 		if err != nil {
 			log.Fatalf("error writing loot file %s: %s", file.Name, err)
 		}
