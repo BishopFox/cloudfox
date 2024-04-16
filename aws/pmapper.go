@@ -341,9 +341,10 @@ func (m *PmapperModule) PrintPmapperData(outputDirectory string, verbosity int) 
 
 		header, body := m.createPmapperTableData(outputDirectory)
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
-			Header: header,
-			Body:   body,
-			Name:   "pmapper-privesc-paths-enhanced",
+			Header:            header,
+			Body:              body,
+			Name:              "pmapper-privesc-paths-enhanced",
+			SkipPrintToScreen: true,
 		})
 
 		loot := m.writeLoot(o.Table.DirectoryName, verbosity)
@@ -448,7 +449,7 @@ func (m *PmapperModule) writeLoot(outputDirectory string, verbosity int) string 
 		m.CommandCounter.Error++
 		panic(err.Error())
 	}
-	f := filepath.Join(path, "pmapper-privesc-paths-enhanced.txt")
+	lootFilePath := filepath.Join(path, "pmapper.txt")
 
 	var admins, out string
 
@@ -499,7 +500,7 @@ func (m *PmapperModule) writeLoot(outputDirectory string, verbosity int) string 
 		fmt.Print(out)
 		fmt.Printf("[%s][%s] %s \n\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("End of loot file"))
 	}
-	fmt.Printf("[%s][%s] Loot written to [%s]\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), f)
+	fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), magenta(fmt.Sprintf("Loot file with ALL potential paths written to: [%s]", lootFilePath)))
 	return out
 
 }
@@ -631,25 +632,3 @@ func sanitizeArnForNeo4jLabel(arn string) string {
 	// Add more replacements if needed
 	return sanitized
 }
-
-// func GetRelationshipsForRole(roleArn string) []schema.Relationship {
-// 	var relationships []schema.Relationship
-// 	if strings.Contains(node.Arn, "role") {
-// 		ptype = "Role"
-// 	} else if strings.Contains(node.Arn, "user") {
-// 		ptype = "User"
-// 		node.TrustPolicy = ""
-// 	} else if strings.Contains(node.Arn, "group") {
-// 		ptype = "Group"
-// 	}
-// 	for _, edge := range m.Edges {
-// 		if edge.Source == roleArn {
-// 			relationships = append(relationships, schema.Relationship{
-// 				Source:         roleArn,
-// 				SourceProperty: "arn",
-// 				Target:         edge.Destination,
-// 				TargetProperty: "arn",
-// 				Type:           "CAN_ACCESS",
-// 			})
-// 		}
-// 	}
