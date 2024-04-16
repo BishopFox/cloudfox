@@ -2444,7 +2444,7 @@ func init() {
 		EndpointsCommand,
 		EnvsCommand,
 		FilesystemsCommand,
-		GraphCommand,
+		//GraphCommand,
 		IamSimulatorCommand,
 		InstancesCommand,
 		InventoryCommand,
