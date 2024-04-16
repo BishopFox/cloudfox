@@ -14,10 +14,10 @@ import (
 var GCPBigQueryCommand = &cobra.Command{
 	Use:     "bigquery",
 	Aliases: []string{},
-	Short:   "Display Bigauery datasets and tables information",
+	Short:   "Display Bigquery datasets and tables information",
 	Args:    cobra.MinimumNArgs(0),
 	Long: `
-Display available Bigauery datasets and tables resource information:
+Display available Bigquery datasets and tables resource information:
 cloudfox gcp bigquery`,
 	Run: runGCPBigQueryCommand,
 }

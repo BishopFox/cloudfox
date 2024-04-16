@@ -50,7 +50,7 @@ For the full documentation please refer to our [wiki](https://github.com/BishopF
 | - | - |
 | AWS | 34 | 
 | Azure | 4 | 
-| GCP | Support Planned |
+| GCP | 8 |
 | Kubernetes | Support Planned | 
 
 
@@ -111,6 +111,7 @@ Additional policy notes (as of 09/2022):
 | AWS | [access-keys](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#access-keys) | Lists active access keys for all users. Useful for cross referencing a key you found with which in-scope account it belongs to.  |
 | AWS | [api-gw](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#api-gw) | Lists API gateway endpoints and gives you custom curl commands including API tokens if they are stored in metadata. |
 | AWS | [buckets](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#filesystems)  | Lists the buckets in the account and gives you handy commands for inspecting them further.  |
+| AWS | [cape](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#cape)  |  Enumerates cross-account privilege escalation paths. Requires `pmapper` to be run first |
 | AWS | [cloudformation](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#cloudformation)  | Lists the cloudformation stacks in the account. Generates loot file with stack details, stack parameters, and stack output - look for secrets. |
 | AWS | [codebuild](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#codebuild)  | Enumerate CodeBuild projects |
 | AWS | [databases](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#databases)  | Enumerate RDS databases. Get a loot file with connection strings. |
@@ -151,6 +152,21 @@ Additional policy notes (as of 09/2022):
 | Azure | [rbac](https://github.com/BishopFox/cloudfox/wiki/Azure-Commands#rbac) | Lists Azure RBAC role assignments at subscription or tenant level |
 | Azure | [storage](https://github.com/BishopFox/cloudfox/wiki/Azure-Commands#storage) | The storage command is still under development. Currently it only displays limited data about the storage accounts | 
 | Azure | [vms](https://github.com/BishopFox/cloudfox/wiki/Azure-Commands#vms) | Enumerates useful information for Compute instances in all available resource groups and subscriptions | 
+
+
+# GCP Commands
+| Provider | Command Name | Description 
+| - | - | - |
+| GCP | [whoami](https://github.com/BishopFox/cloudfox/wiki/GCP-Commands#whoami) | Display the email address of the GCP authenticated user | 
+| GCP | [all-checks](https://github.com/BishopFox/cloudfox/wiki/GCP-Commands#all-checks) | Runs all available GCP commands | 
+| GCP | [artifact-registry](https://github.com/BishopFox/cloudfox/wiki/GCP-Commands#artifact-registry) | Display GCP artifact registry information | 
+| GCP | [bigquery](https://github.com/BishopFox/cloudfox/wiki/GCP-Commands#bigquery) | Display Bigquery datasets and tables information | 
+| GCP | [buckets](https://github.com/BishopFox/cloudfox/wiki/GCP-Commands#buckets) | Display GCP buckets information | 
+| GCP | [iam](https://github.com/BishopFox/cloudfox/wiki/GCP-Commands#iam) | Display GCP IAM information | 
+| GCP | [instances](https://github.com/BishopFox/cloudfox/wiki/GCP-Commands#instances) | Display GCP Compute Engine instances information |
+| GCP | [secrets](https://github.com/BishopFox/cloudfox/wiki/GCP-Commands#secrets) | Display GCP secrets information |
+
+
 
 # Authors
 * [Carlos Vendramini](https://github.com/carlosvendramini-bf)
