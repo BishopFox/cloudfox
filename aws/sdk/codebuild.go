@@ -20,6 +20,7 @@ type CodeBuildClientInterface interface {
 
 func init() {
 	gob.Register(codeBuildTypes.Project{})
+	gob.Register([]codeBuildTypes.Project{})
 
 }
 

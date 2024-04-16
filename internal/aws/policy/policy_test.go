@@ -150,3 +150,75 @@ func getTestFixure(filename string) (*Policy, error) {
 
 	return &policy, nil
 }
+func TestDoesPolicyHaveMatchingStatement(t *testing.T) {
+	p := &Policy{
+		Statement: []PolicyStatement{
+			{
+				Effect:   "Allow",
+				Action:   []string{"ec2:*"},
+				Resource: []string{"*"},
+			},
+			{
+				Effect:   "Allow",
+				Action:   []string{"s3:GetObject"},
+				Resource: []string{"arn:aws:s3:::bucket/*"},
+			},
+			{
+				Effect:   "Deny",
+				Action:   []string{"s3:*"},
+				Resource: []string{"arn:aws:s3:::bucket2/*"},
+			},
+		},
+	}
+
+	tests := []struct {
+		effect          string
+		actionToCheck   string
+		resourceToCheck string
+		want            bool
+	}{
+		{
+			effect:          "Allow",
+			actionToCheck:   "ec2:DescribeInstances",
+			resourceToCheck: "arn:aws:ec2:us-west-2:123456789012:instance/*",
+			want:            true,
+		},
+		{
+			effect:          "Allow",
+			actionToCheck:   "s3:GetObject",
+			resourceToCheck: "arn:aws:s3:::bucket/file.txt",
+			want:            true,
+		},
+		{
+			effect:          "Allow",
+			actionToCheck:   "s3:PutObject",
+			resourceToCheck: "arn:aws:s3:::bucket/file.txt",
+			want:            false,
+		},
+		{
+			effect:          "Deny",
+			actionToCheck:   "s3:GetObject",
+			resourceToCheck: "arn:aws:s3:::bucket2/file.txt",
+			want:            true,
+		},
+		{
+			effect:          "Deny",
+			actionToCheck:   "s3:PutObject",
+			resourceToCheck: "arn:aws:s3:::bucket2/file.txt",
+			want:            true,
+		},
+		{
+			effect:          "Deny",
+			actionToCheck:   "s3:GetObject",
+			resourceToCheck: "arn:aws:s3:::bucket/file.txt",
+			want:            false,
+		},
+	}
+
+	for _, tt := range tests {
+		actual := p.DoesPolicyHaveMatchingStatement(tt.effect, tt.actionToCheck, tt.resourceToCheck)
+		if tt.want != actual {
+			t.Errorf("DoesPolicyHaveMatchingStatement(%s, %s, %s) is %v but should be %v", tt.effect, tt.actionToCheck, tt.resourceToCheck, actual, tt.want)
+		}
+	}
+}

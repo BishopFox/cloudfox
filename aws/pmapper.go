@@ -1,6 +1,7 @@
 package aws
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -10,9 +11,11 @@ import (
 	"strings"
 
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/BishopFox/cloudfox/internal/aws/policy"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/dominikbraun/graph"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/sirupsen/logrus"
 )
 
@@ -28,13 +31,20 @@ type PmapperModule struct {
 	WrapTable  bool
 
 	// Main module data
-	pmapperGraph   graph.Graph[string, string]
-	Nodes          []Node
-	Edges          []Edge
-	CommandCounter internal.CommandCounter
+	PmapperDataBasePath string
+	pmapperGraph        graph.Graph[string, string]
+	Nodes               []Node
+	Edges               []Edge
+	CommandCounter      internal.CommandCounter
 	// Used to store output data for pretty printing
 	output internal.OutputData2
 	modLog *logrus.Entry
+}
+
+type PmapperOutputRow struct {
+	Start string
+	End   string
+	Paths []string
 }
 
 type Edge struct {
@@ -45,19 +55,54 @@ type Edge struct {
 }
 
 type Node struct {
-	Arn                 string             `json:"arn"`
-	IDValue             string             `json:"id_value"`
-	AttachedPolicies    []AttachedPolicies `json:"attached_policies"`
-	GroupMemberships    []interface{}      `json:"group_memberships"`
-	TrustPolicy         interface{}        `json:"trust_policy"`
-	InstanceProfile     interface{}        `json:"instance_profile"`
-	ActivePassword      bool               `json:"active_password"`
-	AccessKeys          int                `json:"access_keys"`
-	IsAdmin             bool               `json:"is_admin"`
-	PermissionsBoundary interface{}        `json:"permissions_boundary"`
-	HasMfa              bool               `json:"has_mfa"`
-	Tags                Tags               `json:"tags"`
-	PathToAdmin         bool
+	Arn                       string `json:"arn"`
+	Type                      string
+	AccountID                 string
+	Name                      string
+	IDValue                   string             `json:"id_value"`
+	AttachedPolicies          []AttachedPolicies `json:"attached_policies"`
+	GroupMemberships          []interface{}      `json:"group_memberships"`
+	TrustPolicy               interface{}        `json:"trust_policy"`
+	TrustsDoc                 policy.TrustPolicyDocument
+	TrustedPrincipals         []TrustedPrincipal
+	TrustedServices           []TrustedService
+	TrustedFederatedProviders []TrustedFederatedProvider
+	InstanceProfile           interface{} `json:"instance_profile"`
+	ActivePassword            bool        `json:"active_password"`
+	AccessKeys                int         `json:"access_keys"`
+	IsAdmin                   bool        `json:"is_admin"`
+	PathToAdmin               bool
+	PermissionsBoundary       interface{} `json:"permissions_boundary"`
+	HasMfa                    bool        `json:"has_mfa"`
+	Tags                      Tags        `json:"tags"`
+	CanPrivEscToAdminString   string
+	IsAdminString             string
+	VendorName                string
+}
+
+type TrustedPrincipal struct {
+	TrustedPrincipal               string
+	ExternalID                     string
+	VendorName                     string
+	AccountIsInAnalyzedAccountList bool
+	//IsAdmin           bool
+	//CanPrivEscToAdmin bool
+}
+
+type TrustedService struct {
+	TrustedService string
+	AccountID      string
+	//IsAdmin           bool
+	//CanPrivEscToAdmin bool
+}
+
+type TrustedFederatedProvider struct {
+	TrustedFederatedProvider string
+	ProviderAccountId        string
+	ProviderShortName        string
+	TrustedSubjects          []string
+	//IsAdmin                  bool
+	//CanPrivEscToAdmin        bool
 }
 
 type AttachedPolicies struct {
@@ -79,9 +124,16 @@ func (m *PmapperModule) initPmapperGraph() error {
 	for i := range m.Nodes {
 		if m.doesNodeHavePathToAdmin(m.Nodes[i]) {
 			m.Nodes[i].PathToAdmin = true
+			m.Nodes[i].CanPrivEscToAdminString = "Yes"
 			//fmt.Println(m.Nodes[i].Arn, m.Nodes[i].IsAdmin, m.Nodes[i].PathToAdmin)
 		} else {
 			m.Nodes[i].PathToAdmin = false
+			m.Nodes[i].CanPrivEscToAdminString = "No"
+		}
+		if m.Nodes[i].IsAdmin {
+			m.Nodes[i].IsAdminString = "Yes"
+		} else {
+			m.Nodes[i].IsAdminString = "No"
 		}
 	}
 
@@ -107,7 +159,39 @@ func (m *PmapperModule) createAndPopulateGraph() graph.Graph[string, string] {
 	}
 
 	for _, edge := range m.Edges {
-		_ = pmapperGraph.AddEdge(edge.Source, edge.Destination)
+		err := pmapperGraph.AddEdge(
+			edge.Source,
+			edge.Destination,
+			graph.EdgeAttribute(edge.ShortReason, edge.Reason),
+		)
+		if err != nil {
+			if err == graph.ErrEdgeAlreadyExists {
+				// update the edge by copying the existing graph.Edge with attributes and add the new attributes
+				//fmt.Println("Edge already exists, but adding a new one!")
+
+				// get the existing edge
+				existingEdge, _ := pmapperGraph.Edge(edge.Source, edge.Destination)
+				// get the map of attributes
+				existingProperties := existingEdge.Properties
+				// add the new attributes to attributes map within the properties struct
+				// Check if the Attributes map is initialized, if not, initialize it
+				if existingProperties.Attributes == nil {
+					existingProperties.Attributes = make(map[string]string)
+				}
+
+				// Add or update the attribute
+				existingProperties.Attributes[edge.ShortReason] = edge.Reason
+				//Update the edge
+				pmapperGraph.UpdateEdge(
+					edge.Source,
+					edge.Destination,
+					graph.EdgeAttributes(existingProperties.Attributes),
+				)
+
+			}
+			//fmt.Println(edge.Reason)
+		}
+
 	}
 
 	//internal.Cache.Set(cacheKey, pmapperGraph, cache.DefaultExpiration)
@@ -119,7 +203,11 @@ func (m *PmapperModule) DoesPrincipalHavePathToAdmin(principal string) bool {
 	for i := range m.Nodes {
 		if m.Nodes[i].Arn == principal {
 			if m.Nodes[i].PathToAdmin {
+				m.Nodes[i].CanPrivEscToAdminString = "Yes"
 				return true
+			} else {
+				m.Nodes[i].CanPrivEscToAdminString = "No"
+				return false
 			}
 		}
 
@@ -131,7 +219,11 @@ func (m *PmapperModule) DoesPrincipalHaveAdmin(principal string) bool {
 	for i := range m.Nodes {
 		if m.Nodes[i].Arn == principal {
 			if m.Nodes[i].IsAdmin {
+				m.Nodes[i].IsAdminString = "Yes"
 				return true
+			} else {
+				m.Nodes[i].IsAdminString = "No"
+				return false
 			}
 		}
 
@@ -234,6 +326,9 @@ func (m *PmapperModule) PrintPmapperData(outputDirectory string, verbosity int) 
 			Table: internal.TableClient{
 				Wrap: m.WrapTable,
 			},
+			Loot: internal.LootClient{
+				DirectoryName: m.output.FilePath,
+			},
 		}
 		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
 			Header:    m.output.Headers,
@@ -243,7 +338,21 @@ func (m *PmapperModule) PrintPmapperData(outputDirectory string, verbosity int) 
 		})
 		o.PrefixIdentifier = m.AWSProfile
 		o.Table.DirectoryName = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfile, aws.ToString(m.Caller.Account)))
-		o.WriteFullOutput(o.Table.TableFiles, nil)
+
+		header, body := m.createPmapperTableData(outputDirectory)
+		o.Table.TableFiles = append(o.Table.TableFiles, internal.TableFile{
+			Header:            header,
+			Body:              body,
+			Name:              "pmapper-privesc-paths-enhanced",
+			SkipPrintToScreen: true,
+		})
+
+		loot := m.writeLoot(o.Table.DirectoryName, verbosity)
+		o.Loot.LootFiles = append(o.Loot.LootFiles, internal.LootFile{
+			Name:     m.output.CallingModule,
+			Contents: loot,
+		})
+		o.WriteFullOutput(o.Table.TableFiles, o.Loot.LootFiles)
 		//m.writeLoot(o.Table.DirectoryName, verbosity)
 
 		fmt.Printf("[%s][%s] %s principals who are admin or have a path to admin identified.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), strconv.Itoa(len(m.output.Body)))
@@ -264,9 +373,6 @@ func (m *PmapperModule) doesNodeHavePathToAdmin(startNode Node) bool {
 				for _, p := range path {
 					if p != "" {
 						if startNode.Arn != destNode.Arn {
-							// if we got here there is a path
-							//fmt.Printf("%s has a path %s who is an admin.\n", startNode.Arn, destNode.Arn)
-							//fmt.Println(path)
 							return true
 						}
 
@@ -278,9 +384,136 @@ func (m *PmapperModule) doesNodeHavePathToAdmin(startNode Node) bool {
 	return false
 }
 
+func (m *PmapperModule) createPmapperTableData(outputDirectory string) ([]string, [][]string) {
+	var header []string
+	var body [][]string
+
+	header = []string{
+		"Start",
+		"End",
+		"Path(s)",
+	}
+
+	var paths string
+	var admins, privescPathsBody [][]string
+
+	for _, startNode := range m.Nodes {
+		if startNode.IsAdmin {
+			admins = append(admins, []string{startNode.Arn, "", "ADMIN"})
+
+		} else {
+			for _, destNode := range m.Nodes {
+				if destNode.IsAdmin {
+					path, _ := graph.ShortestPath(m.pmapperGraph, startNode.Arn, destNode.Arn)
+					// if we have a path,
+
+					if len(path) > 0 {
+						if startNode.Arn != destNode.Arn {
+							paths = ""
+							// if we got herethere's a path. Lets print the reason and the short reason for each edge in the path to the screen
+							for i := 0; i < len(path)-1; i++ {
+								for _, edge := range m.Edges {
+									if edge.Source == path[i] && edge.Destination == path[i+1] {
+
+										//Some pmapper reasons have commas in them so lets get rid of them in the csvOutputdata
+										edge.Reason = strings.ReplaceAll(edge.Reason, ",", " and")
+										paths += fmt.Sprintf("%s %s %s\n", path[i], edge.Reason, path[i+1])
+									}
+
+								}
+							}
+							//trim the last newline from csvPaths
+							paths = strings.TrimSuffix(paths, "\n")
+							privescPathsBody = append(privescPathsBody, []string{startNode.Arn, destNode.Arn, paths})
+
+						}
+
+					}
+				}
+			}
+		}
+	}
+
+	// create body by first adding the admins and then the privesc paths
+	body = append(body, admins...)
+	body = append(body, privescPathsBody...)
+	return header, body
+
+}
+
+func (m *PmapperModule) writeLoot(outputDirectory string, verbosity int) string {
+	path := filepath.Join(outputDirectory, "loot")
+	err := os.MkdirAll(path, os.ModePerm)
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		panic(err.Error())
+	}
+	lootFilePath := filepath.Join(path, "pmapper.txt")
+
+	var admins, out string
+
+	for _, startNode := range m.Nodes {
+		if startNode.IsAdmin {
+			admins += fmt.Sprintf("ADMIN FOUND: %s\n", startNode.Arn)
+		} else {
+			for _, destNode := range m.Nodes {
+				if destNode.IsAdmin {
+					path, _ := graph.ShortestPath(m.pmapperGraph, startNode.Arn, destNode.Arn)
+					// if we have a path,
+
+					if len(path) > 0 {
+						if startNode.Arn != destNode.Arn {
+							// if we got here there is a path
+							out += fmt.Sprintf("PATH TO ADMIN FOUND\n   Start: %s\n     End: %s\n Path(s):\n", startNode.Arn, destNode.Arn)
+							//fmt.Println(path)
+							// if we got herethere's a path. Lets print the reason and the short reason for each edge in the path to the screen
+							for i := 0; i < len(path)-1; i++ {
+								for _, edge := range m.Edges {
+									if edge.Source == path[i] && edge.Destination == path[i+1] {
+										// print it like this: [start node] [reason] [end node]
+										out += fmt.Sprintf("     %s %s %s\n", path[i], edge.Reason, path[i+1])
+									}
+									// shortest path only finds the shortest path. We want to find all paths. So we need to find all paths that have the same start and end nodes from the path, but going back to the main edges slice
+									//for _, edge := range GlobalPmapperEdges {
+									// 	if edge.Source == path[i] && edge.Destination == path[i+1] {
+									// 		// print it like this: [start node] [reason] [end node]
+									// 		out += fmt.Sprintf("   %s %s %s\n", path[i], edge.Reason, path[i+1])
+									// 	}
+									// }
+								}
+							}
+							out += fmt.Sprintf("\n")
+
+						}
+
+					}
+				}
+			}
+		}
+	}
+	out = admins + "\n\n" + out
+
+	if verbosity > 2 {
+		fmt.Println()
+		fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("Beginning of loot file"))
+		fmt.Print(out)
+		fmt.Printf("[%s][%s] %s \n\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), green("End of loot file"))
+	}
+	fmt.Printf("[%s][%s] %s \n", cyan(m.output.CallingModule), cyan(m.AWSProfile), magenta(fmt.Sprintf("Loot file with ALL potential paths written to: [%s]", lootFilePath)))
+	return out
+
+}
+
 func (m *PmapperModule) readPmapperData(accountID *string) error {
 
-	e, n := generatePmapperDataBasePaths(accountID)
+	var e, n string
+	if m.PmapperDataBasePath == "" {
+		e, n = generatePmapperDataBasePaths(accountID)
+	} else {
+		e = filepath.Join(m.PmapperDataBasePath, aws.ToString(accountID), "graph", "edges.json")
+		n = filepath.Join(m.PmapperDataBasePath, aws.ToString(accountID), "graph", "nodes.json")
+	}
 
 	nodesFile, err := os.Open(n)
 	if err != nil {
@@ -300,4 +533,102 @@ func (m *PmapperModule) readPmapperData(accountID *string) error {
 
 	return nil
 
+}
+
+func (m *PmapperModule) GenerateCypherStatements(goCtx context.Context, driver neo4j.DriverWithContext) error {
+	// Insert nodes
+	for i, node := range m.Nodes {
+		query, params := m.generateNodeCreateStatement(node, i)
+		if err := m.executeCypherQuery(goCtx, driver, query, params); err != nil {
+			return err
+		}
+	}
+
+	// Insert edges
+	for i, edge := range m.Edges {
+		query, params := m.generateEdgeCreateStatement(edge, i)
+		if err := m.executeCypherQuery(goCtx, driver, query, params); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (m *PmapperModule) generateNodeCreateStatement(node Node, i int) (string, map[string]interface{}) {
+	var ptype, label, query string
+	var params map[string]any
+
+	if strings.Contains(node.Arn, "role") {
+		label = GetResourceNameFromArn(node.Arn)
+		ptype = "Role"
+		params = map[string]any{
+			"Id":          node.Arn,
+			"ARN":         node.Arn,
+			"Name":        GetResourceNameFromArn(node.Arn),
+			"IdValue":     node.IDValue,
+			"IsAdminP":    node.IsAdmin,
+			"PathToAdmin": node.PathToAdmin,
+		}
+
+	} else if strings.Contains(node.Arn, "user") {
+		label = GetResourceNameFromArn(node.Arn)
+		ptype = "User"
+		//node.TrustPolicy = ""
+		params = map[string]any{
+			"Id":          node.Arn,
+			"ARN":         node.Arn,
+			"Name":        GetResourceNameFromArn(node.Arn),
+			"IdValue":     node.IDValue,
+			"IsAdminP":    node.IsAdmin,
+			"PathToAdmin": node.PathToAdmin,
+		}
+
+	} else if strings.Contains(node.Arn, "group") {
+		label = GetResourceNameFromArn(node.Arn)
+		ptype = "Group"
+	}
+	label = strings.ReplaceAll(label, "-", "_")
+	label = strings.ReplaceAll(label, ".", "_")
+
+	query = `MERGE (%s:%s {Id: $Id, ARN: $ARN, Name: $Name, IdValue: $IdValue, IsAdminP: $IsAdminP, PathToAdmin: $PathToAdmin})`
+
+	//sanitizedArn := sanitizeArnForNeo4jLabel(node.Arn)
+	//id := fmt.Sprintf("%s_%s", sanitizedArn, ptype)
+
+	fmt.Println(fmt.Sprintf(query, label, ptype), params)
+	return fmt.Sprintf(query, label, ptype), params
+}
+
+func (m *PmapperModule) generateEdgeCreateStatement(edge Edge, i int) (string, map[string]interface{}) {
+	// Sanitize ARNs for matching nodes
+	//srcArnSanitized := sanitizeArnForNeo4jLabel(edge.Source)
+	//destArnSanitized := sanitizeArnForNeo4jLabel(edge.Destination)
+
+	query := `MATCH (a {ARN: $srcArn}), (b {ARN: $destArn}) CREATE (a)-[:CAN_ACCESS {reason: $reason, shortReason: $shortReason}]->(b)`
+	params := map[string]any{
+		"srcArn":      edge.Source,
+		"destArn":     edge.Destination,
+		"reason":      edge.Reason,
+		"shortReason": edge.ShortReason,
+	}
+	fmt.Println(query, params)
+	return query, params
+}
+
+func (m *PmapperModule) executeCypherQuery(ctx context.Context, driver neo4j.DriverWithContext, query string, params map[string]interface{}) error {
+	_, err := neo4j.ExecuteQuery(ctx, driver, query, params, neo4j.EagerResultTransformer, neo4j.ExecuteQueryWithDatabase("neo4j"))
+	if err != nil {
+		sharedLogger.Errorf("Error executing query: %s -- %v", err, params)
+		return err
+	}
+	return nil
+}
+
+func sanitizeArnForNeo4jLabel(arn string) string {
+	// Replace non-allowed characters with underscores or other allowed characters
+	sanitized := strings.ReplaceAll(arn, ":", "_")
+	sanitized = strings.ReplaceAll(sanitized, "-", "_")
+	// Add more replacements if needed
+	return sanitized
 }

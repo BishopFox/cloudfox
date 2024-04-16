@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dominikbraun/graph"
 	"github.com/patrickmn/go-cache"
 )
 
@@ -23,7 +24,6 @@ func SaveCacheToFiles(directory string, accountID string) error {
 	}
 
 	for key, item := range Cache.Items() {
-		// only if the key contains the accountID
 		if accountID != "" && strings.Contains(key, accountID) {
 			entry := cacheEntry{
 				Value: item.Object,
@@ -41,6 +41,7 @@ func SaveCacheToFiles(directory string, accountID string) error {
 				return err
 			}
 		}
+
 	}
 	return nil
 }
@@ -89,6 +90,12 @@ type cacheEntry struct {
 	Exp   int64
 }
 
+type CacheableAWSConfig struct {
+	Region string
+	//Credentials   aws.CredentialsProvider
+	//ConfigSources []interface{}
+}
+
 func SaveCacheToGobFiles(directory string, accountID string) error {
 	err := os.MkdirAll(directory, 0755)
 	if err != nil {
@@ -96,6 +103,7 @@ func SaveCacheToGobFiles(directory string, accountID string) error {
 	}
 
 	for key, item := range Cache.Items() {
+
 		// only if the key contains the accountID
 		if accountID != "" && strings.Contains(key, accountID) {
 			entry := cacheEntry{
@@ -116,6 +124,7 @@ func SaveCacheToGobFiles(directory string, accountID string) error {
 				sharedLogger.Errorf("Could not encode the following key: %s", key)
 				return err
 			}
+			//	}
 		}
 	}
 	return nil
@@ -169,5 +178,28 @@ func LoadCacheFromGobFiles(directory string) error {
 	}
 
 	//fmt.Println("Cache loaded from files.")
+	return nil
+}
+
+func SaveGraphToGob[K comparable, T any](directory string, name string, g *graph.Graph[K, T]) error {
+	err := os.MkdirAll(directory, 0755)
+	if err != nil {
+		return err
+	}
+
+	filename := filepath.Join(directory, name+".gob")
+	file, err := os.Create(filename)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	encoder := gob.NewEncoder(file)
+	err = encoder.Encode(g)
+	if err != nil {
+		sharedLogger.Errorf("Could not encode the following graph: %s", name)
+		return err
+
+	}
 	return nil
 }

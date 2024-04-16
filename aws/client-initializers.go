@@ -3,11 +3,13 @@ package aws
 import (
 	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/aws/aws-sdk-go-v2/service/efs"
 	"github.com/aws/aws-sdk-go-v2/service/fsx"
 	"github.com/aws/aws-sdk-go-v2/service/glue"
+	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/organizations"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -17,7 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
-func initIAMSimClient(iamSimPPClient sdk.AWSIAMClientInterface, caller sts.GetCallerIdentityOutput, AWSProfile string, Goroutines int) IamSimulatorModule {
+func InitIamCommandClient(iamSimPPClient sdk.AWSIAMClientInterface, caller sts.GetCallerIdentityOutput, AWSProfile string, Goroutines int) IamSimulatorModule {
 
 	iamSimMod := IamSimulatorModule{
 		IAMClient:          iamSimPPClient,
@@ -116,7 +118,7 @@ func InitFileSystemsClient(caller sts.GetCallerIdentityOutput, AWSProfile string
 	return fileSystemsClient
 }
 
-func InitOrgClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int, AWSMFAToken string) OrgModule {
+func InitOrgsClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int, AWSMFAToken string) OrgModule {
 	var AWSConfig = internal.AWSConfigFileLoader(AWSProfile, cfVersion, AWSMFAToken)
 	orgClient := OrgModule{
 		OrganizationsClient: organizations.NewFromConfig(AWSConfig),
@@ -127,6 +129,17 @@ func InitOrgClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVers
 	return orgClient
 }
 
+func InitPermissionsClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int, AWSMFAToken string) IamPermissionsModule {
+	var AWSConfig = internal.AWSConfigFileLoader(AWSProfile, cfVersion, AWSMFAToken)
+	permissionsClient := IamPermissionsModule{
+		IAMClient:  iam.NewFromConfig(AWSConfig),
+		Caller:     caller,
+		AWSProfile: AWSProfile,
+		AWSRegions: internal.GetEnabledRegions(AWSProfile, cfVersion, AWSMFAToken),
+	}
+	return permissionsClient
+}
+
 func InitSecretsManagerClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int, AWSMFAToken string) *secretsmanager.Client {
 	var AWSConfig = internal.AWSConfigFileLoader(AWSProfile, cfVersion, AWSMFAToken)
 	return secretsmanager.NewFromConfig(AWSConfig)
@@ -135,4 +148,12 @@ func InitSecretsManagerClient(caller sts.GetCallerIdentityOutput, AWSProfile str
 func InitGlueClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int, AWSMFAToken string) *glue.Client {
 	var AWSConfig = internal.AWSConfigFileLoader(AWSProfile, cfVersion, AWSMFAToken)
 	return glue.NewFromConfig(AWSConfig)
+}
+
+func InitOrgClient(AWSConfig aws.Config) *organizations.Client {
+	return organizations.NewFromConfig(AWSConfig)
+}
+
+func InitIAMClient(AWSConfig aws.Config) *iam.Client {
+	return iam.NewFromConfig(AWSConfig)
 }

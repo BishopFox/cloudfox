@@ -31,8 +31,10 @@ type RoleTrustsModule struct {
 	AWSOutputType  string
 	AWSTableCols   string
 
-	pmapperMod   PmapperModule
-	pmapperError error
+	pmapperMod          PmapperModule
+	pmapperError        error
+	PmapperDataBasePath string
+
 	iamSimClient IamSimulatorModule
 
 	// Main module data
@@ -83,8 +85,8 @@ func (m *RoleTrustsModule) PrintRoleTrusts(outputDirectory string, verbosity int
 
 	fmt.Printf("[%s][%s] Enumerating role trusts for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
 	//fmt.Printf("[%s][%s] Looking for pmapper data for this account and building a PrivEsc graph in golang if it exists.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
-	m.pmapperMod, m.pmapperError = initPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines)
-	m.iamSimClient = initIAMSimClient(m.IAMClient, m.Caller, m.AWSProfile, m.Goroutines)
+	m.pmapperMod, m.pmapperError = InitPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines, m.PmapperDataBasePath)
+	m.iamSimClient = InitIamCommandClient(m.IAMClient, m.Caller, m.AWSProfile, m.Goroutines)
 	// if m.pmapperError != nil {
 	// 	fmt.Printf("[%s][%s] No pmapper data found for this account. Using cloudfox's iam-simulator for role analysis\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
 	// } else {
@@ -467,7 +469,11 @@ func parseFederatedTrustPolicy(statement policy.RoleTrustStatementEntry) (string
 			subjects = append(subjects, "ALL REPOS!!!")
 		}
 	case strings.Contains(statement.Principal.Federated[0], "oidc.eks"):
-		provider = "EKS"
+		// extract accountId from statement.Principal.Federated[0]
+		accountId := strings.Split(statement.Principal.Federated[0], ":")[4]
+		provider = fmt.Sprintf("EKS-%s", accountId)
+		//provider = "EKS"
+		//provider = statement.Principal.Federated[0]
 		if len(statement.Condition.StringLike.OidcEksSub) > 0 {
 			subjects = append(subjects, statement.Condition.StringLike.OidcEksSub...)
 		} else if len(statement.Condition.StringEquals.OidcEksSub) > 0 {
@@ -496,9 +502,11 @@ func parseFederatedTrustPolicy(statement policy.RoleTrustStatementEntry) (string
 			subjects = append(subjects, "ALL ISSUERS")
 		}
 
-	// AWS SSO case
+	///AWS SSO case
 	case strings.Contains(statement.Principal.Federated[0], "AWSSSO"):
-		provider = "AWS SSO"
+		//provider = "AWS SSO"
+		accountId := strings.Split(statement.Principal.Federated[0], ":")[4]
+		provider = fmt.Sprintf("AWSSSO-%s", accountId)
 		subjects = append(subjects, "Not applicable")
 
 	// okta case
@@ -553,6 +561,10 @@ func parseFederatedTrustPolicy(statement policy.RoleTrustStatementEntry) (string
 		} else {
 			subjects = append(subjects, "ALL PROJECTS")
 		}
+	case strings.Contains(statement.Principal.Federated[0], "saml-provider"):
+		// the provider name is the last part of the ARN
+		provider = strings.Split(statement.Principal.Federated[0], ":saml-provider/")[1]
+		subjects = append(subjects, "Not applicable")
 
 	default:
 		provider = "Unknown Federated Provider"

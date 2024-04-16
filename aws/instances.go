@@ -24,12 +24,13 @@ import (
 
 type InstancesModule struct {
 	// General configuration data
-	EC2Client     sdk.AWSEC2ClientInterface
-	IAMClient     sdk.AWSIAMClientInterface
-	Caller        sts.GetCallerIdentityOutput
-	AWSRegions    []string
-	AWSOutputType string
-	AWSTableCols  string
+	EC2Client           sdk.AWSEC2ClientInterface
+	IAMClient           sdk.AWSIAMClientInterface
+	Caller              sts.GetCallerIdentityOutput
+	AWSRegions          []string
+	AWSOutputType       string
+	AWSTableCols        string
+	PmapperDataBasePath string
 
 	Goroutines                int
 	UserDataAttributesOnly    bool
@@ -94,8 +95,8 @@ func (m *InstancesModule) Instances(filter string, outputDirectory string, verbo
 
 	// Initialized the tools we'll need to check if any workload roles are admin or can privesc to admin
 	//fmt.Printf("[%s][%s] Attempting to build a PrivEsc graph in memory using local pmapper data if it exists on the filesystem.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))
-	m.pmapperMod, m.pmapperError = initPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines)
-	m.iamSimClient = initIAMSimClient(m.IAMClient, m.Caller, m.AWSProfile, m.Goroutines)
+	m.pmapperMod, m.pmapperError = InitPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines, m.PmapperDataBasePath)
+	m.iamSimClient = InitIamCommandClient(m.IAMClient, m.Caller, m.AWSProfile, m.Goroutines)
 
 	// if m.pmapperError != nil {
 	// 	fmt.Printf("[%s][%s] No pmapper data found for this account. Using cloudfox's iam-simulator for role analysis.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile))

@@ -19,10 +19,11 @@ type CodeBuildModule struct {
 	CodeBuildClient sdk.CodeBuildClientInterface
 	IAMClient       sdk.AWSIAMClientInterface
 
-	Caller        sts.GetCallerIdentityOutput
-	AWSRegions    []string
-	AWSOutputType string
-	AWSTableCols  string
+	Caller              sts.GetCallerIdentityOutput
+	AWSRegions          []string
+	AWSOutputType       string
+	AWSTableCols        string
+	PmapperDataBasePath string
 
 	Goroutines     int
 	AWSProfile     string
@@ -64,8 +65,8 @@ func (m *CodeBuildModule) PrintCodeBuildProjects(outputDirectory string, verbosi
 	}
 
 	fmt.Printf("[%s][%s] Enumerating CodeBuild projects for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
-	m.pmapperMod, m.pmapperError = initPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines)
-	m.iamSimClient = initIAMSimClient(m.IAMClient, m.Caller, m.AWSProfile, m.Goroutines)
+	m.pmapperMod, m.pmapperError = InitPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines, m.PmapperDataBasePath)
+	m.iamSimClient = InitIamCommandClient(m.IAMClient, m.Caller, m.AWSProfile, m.Goroutines)
 
 	wg := new(sync.WaitGroup)
 	semaphore := make(chan struct{}, m.Goroutines)

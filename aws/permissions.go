@@ -11,6 +11,7 @@ import (
 	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/BishopFox/cloudfox/internal/aws/policy"
+	"github.com/BishopFox/cloudfox/internal/common"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -36,7 +37,7 @@ type IamPermissionsModule struct {
 	Users          []GAADUser
 	Roles          []GAADRole
 	Groups         []GAADGroup
-	Rows           []PermissionsRow
+	Rows           []common.PermissionsRow
 	CommandCounter internal.CommandCounter
 	// Used to store output data for pretty printing
 	output internal.OutputData2
@@ -71,20 +72,6 @@ type GAADGroup struct {
 	InlinePolicies   []types.PolicyDetail
 }
 
-type PermissionsRow struct {
-	AWSService string
-	Type       string
-	Name       string
-	Arn        string
-	PolicyType string
-	PolicyName string
-	PolicyArn  string
-	Effect     string
-	Action     string
-	Resource   string
-	Condition  string
-}
-
 func (m *IamPermissionsModule) PrintIamPermissions(outputDirectory string, verbosity int, principal string) {
 	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
@@ -104,8 +91,8 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputDirectory string, verbo
 		filename = filepath.Join(fmt.Sprintf("%s-custom-%s", m.output.CallingModule, strconv.FormatInt((time.Now().Unix()), 10)))
 	}
 
-	m.getGAAD()
-	m.parsePermissions(principal)
+	m.GetGAAD()
+	m.ParsePermissions(principal)
 
 	m.output.Headers = []string{
 		"Account",
@@ -206,10 +193,10 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputDirectory string, verbo
 	fmt.Printf("[%s][%s] For context and next steps: https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#%s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), m.output.CallingModule)
 }
 
-func (m *IamPermissionsModule) getGAAD() {
+func (m *IamPermissionsModule) GetGAAD() {
 	GAAD, err := sdk.CachedIAMGetAccountAuthorizationDetails(m.IAMClient, aws.ToString(m.Caller.Account))
 	if err != nil {
-		m.modLog.Error(err.Error())
+		TxtLogger.Error(err.Error())
 		m.CommandCounter.Error++
 		return
 	}
@@ -297,7 +284,7 @@ func (m *IamPermissionsModule) getPrincipalArn(principal string) string {
 	return arn
 }
 
-func (m *IamPermissionsModule) parsePermissions(principal string) {
+func (m *IamPermissionsModule) ParsePermissions(principal string) {
 	var inputArn string
 	for i := range m.Roles {
 		if principal == "" {
@@ -422,6 +409,10 @@ func (m *IamPermissionsModule) getPermissionsFromAttachedPolicy(arn string, atta
 					//parsedPolicyDocument, _ := parsePolicyDocument(d.Document)
 					document, _ := url.QueryUnescape(aws.ToString(d.Document))
 					parsedPolicyDocument, _ := policy.ParseJSONPolicy([]byte(document))
+
+					// hasStsAssumeRole := parsedPolicyDocument.DoesPolicyHaveMatchingStatement("Allow", "sts:AssumeRole", "*")
+					// fmt.Println(hasStsAssumeRole)
+
 					for _, s = range parsedPolicyDocument.Statement {
 						//version := parsedPolicyDocument.Version
 						effect := s.Effect
@@ -435,7 +426,7 @@ func (m *IamPermissionsModule) getPermissionsFromAttachedPolicy(arn string, atta
 									}
 									m.Rows = append(
 										m.Rows,
-										PermissionsRow{
+										common.PermissionsRow{
 											AWSService: AWSService,
 											Arn:        arn,
 											Name:       name,
@@ -462,7 +453,7 @@ func (m *IamPermissionsModule) getPermissionsFromAttachedPolicy(arn string, atta
 									}
 									m.Rows = append(
 										m.Rows,
-										PermissionsRow{
+										common.PermissionsRow{
 											AWSService: AWSService,
 											Arn:        arn,
 											Name:       name,
@@ -508,7 +499,7 @@ func (m *IamPermissionsModule) getPermissionsFromInlinePolicy(arn string, inline
 					}
 					m.Rows = append(
 						m.Rows,
-						PermissionsRow{
+						common.PermissionsRow{
 							AWSService: AWSService,
 							Arn:        arn,
 							Name:       name,
@@ -534,7 +525,7 @@ func (m *IamPermissionsModule) getPermissionsFromInlinePolicy(arn string, inline
 					}
 					m.Rows = append(
 						m.Rows,
-						PermissionsRow{
+						common.PermissionsRow{
 							AWSService: AWSService,
 							Arn:        arn,
 							Name:       name,
