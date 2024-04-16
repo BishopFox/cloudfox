@@ -24,8 +24,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/codecommit"
 	"github.com/aws/aws-sdk-go-v2/service/codedeploy"
 	"github.com/aws/aws-sdk-go-v2/service/datapipeline"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/directoryservice"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
@@ -142,10 +142,11 @@ var (
 	CapeJobName   string
 	CapeCommand   = &cobra.Command{
 		Use:     "cape",
-		Aliases: []string{"capeParse"},
+		Aliases: []string{"CAPE"},
 		Short:   "Cross-Account Privilege Escalation Route finder. Needs to be run with multiple profiles using -l or -a flag. Needs pmapper data to be present",
 		Long: "\nUse case examples:\n" +
-			os.Args[0] + " aws cape -l file_with_profile_names.txt",
+			os.Args[0] + " aws cape -l file_with_profile_names.txt --admin-only" +
+			os.Args[0] + " aws cape -l file_with_profile_names.txt # This default mode shows all inbound paths but is very slow when there are many accounts)",
 		PreRun:  awsPreRun,
 		Run:     runCapeCommand,
 		PostRun: awsPostRun,
@@ -476,9 +477,9 @@ var (
 
 	GraphCommand = &cobra.Command{
 		Use:   "graph",
-		Short: "Graph the relationships between resources",
+		Short: "INACTIVE (Use cape command instead) Graph the relationships between resources and insert into local Neo4j db",
 		Long: "\nUse case examples:\n" +
-			os.Args[0] + " aws graph --profile readonly_profile",
+			os.Args[0] + " aws graph -l /path/to/profiles",
 		PreRun:  awsPreRun,
 		Run:     runGraphCommand,
 		PostRun: awsPostRun,
@@ -1726,14 +1727,14 @@ func runDirectoryServicesCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.DirectoryModule{
-			DSClient:        directoryservice.NewFromConfig(AWSConfig),
-			Caller:          *caller,
-			AWSRegions:      internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
-			AWSProfile:      profile,
-			Goroutines:      Goroutines,
-			WrapTable:       AWSWrapTable,
-			AWSOutputType:   AWSOutputType,
-			AWSTableCols:    AWSTableCols,
+			DSClient:      directoryservice.NewFromConfig(AWSConfig),
+			Caller:        *caller,
+			AWSRegions:    internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
+			AWSProfile:    profile,
+			Goroutines:    Goroutines,
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
 		}
 		m.PrintDirectories(AWSOutputDirectory, Verbosity)
 	}
