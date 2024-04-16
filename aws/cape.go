@@ -217,7 +217,7 @@ func (m *CapeCommand) findPathsToThisDestination(allGlobalNodes map[string]map[s
 					}
 
 					paths = ""
-					// if we got here theres a path. Lets print the reason and the short reason for each edge in the path to the screen
+					// if we got here there's a path. Lets print the reason and the short reason for each edge in the path to the screen
 					// and then lets print the full path to the screen
 					for i := 0; i < len(path)-1; i++ {
 						thisEdge, _ := m.GlobalGraph.Edge(path[i], path[i+1])
@@ -622,7 +622,7 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 				//fmt.Println(err)
 				//fmt.Println(TrustedPrincipal.TrustedPrincipal + a.Arn + "Same account explicit trust")
 				if err == graph.ErrEdgeAlreadyExists {
-					// update the ege by copying the existing graph.Edge with attributes and add the new attributes
+					// update the edge by copying the existing graph.Edge with attributes and add the new attributes
 					//fmt.Println("Edge already exists")
 
 					// get the existing edge
@@ -685,7 +685,7 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 										// fmt.Println(err)
 										// fmt.Println(PermissionsRow.Arn + a.Arn + "Same account root trust and trusted principal has permission to assume role")
 										if err == graph.ErrEdgeAlreadyExists {
-											// update the ege by copying the existing graph.Edge with attributes and add the new attributes
+											// update the edge by copying the existing graph.Edge with attributes and add the new attributes
 
 											// get the existing edge
 											existingEdge, _ := GlobalGraph.Edge(PermissionsRow.Arn, a.Arn)
@@ -741,7 +741,7 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 				// fmt.Println(err)
 				// fmt.Println(TrustedPrincipal.VendorName + a.Arn + "Cross account root trust and trusted principal is a vendor")
 				if err == graph.ErrEdgeAlreadyExists {
-					// update the ege by copying the existing graph.Edge with attributes and add the new attributes
+					// update the edge by copying the existing graph.Edge with attributes and add the new attributes
 
 					// get the existing edge
 					existingEdge, _ := GlobalGraph.Edge(TrustedPrincipal.VendorName, a.Arn)
@@ -770,7 +770,7 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 
 		} else if strings.Contains(TrustedPrincipal.TrustedPrincipal, fmt.Sprintf("%s:root", trustedPrincipalAccount)) && !TrustedPrincipal.AccountIsInAnalyzedAccountList {
 			// first lets check to see if the trustedRootAccountID is in the map of analzyeddAccounts
-			// if it is not, we can't interate over the permissions, so we will just have to create an edge :root princpal and this role
+			// if it is not, we can't iterate over the permissions, so we will just have to create an edge :root princpal and this role
 
 			err := GlobalGraph.AddEdge(
 				//TrustedPrincipal.TrustedPrincipal,
@@ -783,7 +783,7 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 				// fmt.Println(err)
 				// fmt.Println(TrustedPrincipal.TrustedPrincipal + a.Arn + "Cross account root trust and trusted principal is not in the analyzed account list")
 				if err == graph.ErrEdgeAlreadyExists {
-					// update the ege by copying the existing graph.Edge with attributes and add the new attributes
+					// update the edge by copying the existing graph.Edge with attributes and add the new attributes
 
 					// get the existing edge
 					existingEdge, _ := GlobalGraph.Edge(TrustedPrincipal.TrustedPrincipal, a.Arn)
@@ -843,7 +843,7 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 										//fmt.Println(err)
 										//fmt.Println(PermissionsRow.Arn + a.Arn + "Cross account root trust and trusted principal has permission to assume role")
 										if err == graph.ErrEdgeAlreadyExists {
-											// update the ege by copying the existing graph.Edge with attributes and add the new attributes
+											// update the edge by copying the existing graph.Edge with attributes and add the new attributes
 
 											// get the existing edge
 											existingEdge, _ := GlobalGraph.Edge(PermissionsRow.Arn, a.Arn)
@@ -879,7 +879,7 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 										//fmt.Println(err)
 										//fmt.Println(PermissionsRow.Arn + a.Arn + "Cross account root trust and trusted principal has permission to assume role")
 										if err == graph.ErrEdgeAlreadyExists {
-											// update the ege by copying the existing graph.Edge with attributes and add the new attributes
+											// update the edge by copying the existing graph.Edge with attributes and add the new attributes
 
 											// get the existing edge
 											existingEdge, _ := GlobalGraph.Edge(PermissionsRow.Arn, a.Arn)
@@ -950,7 +950,7 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 				//fmt.Println(err)
 				//fmt.Println(TrustedFederatedProvider.TrustedFederatedProvider + a.Arn + "Trusted federated provider")
 				if err == graph.ErrEdgeAlreadyExists {
-					// update the ege by copying the existing graph.Edge with attributes and add the new attributes
+					// update the edge by copying the existing graph.Edge with attributes and add the new attributes
 
 					// get the existing edge
 					existingEdge, _ := GlobalGraph.Edge(TrustedFederatedProvider.TrustedFederatedProvider, a.Arn)

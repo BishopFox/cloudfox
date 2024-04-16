@@ -166,7 +166,7 @@ func (m *PmapperModule) createAndPopulateGraph() graph.Graph[string, string] {
 		)
 		if err != nil {
 			if err == graph.ErrEdgeAlreadyExists {
-				// update the ege by copying the existing graph.Edge with attributes and add the new attributes
+				// update the edge by copying the existing graph.Edge with attributes and add the new attributes
 				//fmt.Println("Edge already exists, but adding a new one!")
 
 				// get the existing edge
@@ -410,7 +410,7 @@ func (m *PmapperModule) createPmapperTableData(outputDirectory string) ([]string
 					if len(path) > 0 {
 						if startNode.Arn != destNode.Arn {
 							paths = ""
-							// if we got here theres a path. Lets print the reason and the short reason for each edge in the path to the screen
+							// if we got herethere's a path. Lets print the reason and the short reason for each edge in the path to the screen
 							for i := 0; i < len(path)-1; i++ {
 								for _, edge := range m.Edges {
 									if edge.Source == path[i] && edge.Destination == path[i+1] {
@@ -467,7 +467,7 @@ func (m *PmapperModule) writeLoot(outputDirectory string, verbosity int) string 
 							// if we got here there is a path
 							out += fmt.Sprintf("PATH TO ADMIN FOUND\n   Start: %s\n     End: %s\n Path(s):\n", startNode.Arn, destNode.Arn)
 							//fmt.Println(path)
-							// if we got here theres a path. Lets print the reason and the short reason for each edge in the path to the screen
+							// if we got herethere's a path. Lets print the reason and the short reason for each edge in the path to the screen
 							for i := 0; i < len(path)-1; i++ {
 								for _, edge := range m.Edges {
 									if edge.Source == path[i] && edge.Destination == path[i+1] {

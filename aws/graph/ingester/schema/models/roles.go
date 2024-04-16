@@ -151,7 +151,7 @@ func (a *Role) MakeRelationships() []schema.Relationship {
 							// if the resource is * or the resource is this role arn, then this principal can assume this role
 							if PermissionsRow.Resource == "*" || strings.Contains(PermissionsRow.Resource, a.ARN) {
 								// make a CAN_ASSUME relationship between the trusted principal and this role
-								//evalutate if the princiapl is a user or a role and set a variable accordingly
+								//evaluate if the princiapl is a user or a role and set a variable accordingly
 								//var principalType schema.NodeLabel
 								if strings.EqualFold(PermissionsRow.Type, "User") {
 									relationships = append(relationships, schema.Relationship{
@@ -494,7 +494,7 @@ func (a *Role) MakeEdges(GlobalGraph graph.Graph[string, string]) []schema.Relat
 							// if the resource is * or the resource is this role arn, then this principal can assume this role
 							if PermissionsRow.Resource == "*" || strings.Contains(PermissionsRow.Resource, a.ARN) {
 								// make a CAN_ASSUME relationship between the trusted principal and this role
-								//evalutate if the princiapl is a user or a role and set a variable accordingly
+								//evaluate if the princiapl is a user or a role and set a variable accordingly
 								//var principalType schema.NodeLabel
 								if strings.EqualFold(PermissionsRow.Type, "User") {
 									err := GlobalGraph.AddEdge(

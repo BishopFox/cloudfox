@@ -73,7 +73,7 @@ func (m *GraphCommand) RunGraphCommand() {
 	accounts := m.collectAccountDataForGraph()
 	// write data to jsonl file for ingestor to read
 	fileName := fmt.Sprintf("%s/graph/%s/%s.jsonl", m.output.Directory, aws.ToString(m.Caller.Account), "accounts")
-	// create file and directory if it doesnt exist
+	// create file and directory if it doesn't exist
 	if err := os.MkdirAll(fmt.Sprintf("%s/graph/%s", m.output.Directory, aws.ToString(m.Caller.Account)), 0755); err != nil {
 		m.modLog.Error(err)
 		return
@@ -100,7 +100,7 @@ func (m *GraphCommand) RunGraphCommand() {
 	// users := m.collectUserDataForGraph()
 	// // write data to jsonl file for ingestor to read
 	// fileName = fmt.Sprintf("%s/graph/%s/%s.jsonl", m.output.Directory, aws.ToString(m.Caller.Account), "users")
-	// // create file and directory if it doesnt exist
+	// // create file and directory if it doesn't exist
 	// if err := os.MkdirAll(fmt.Sprintf("%s/graph/%s", m.output.Directory, aws.ToString(m.Caller.Account)), 0755); err != nil {
 	// 	m.modLog.Error(err)
 	// 	return
@@ -127,7 +127,7 @@ func (m *GraphCommand) RunGraphCommand() {
 	roles := m.collectRoleDataForGraph()
 	// write data to jsonl file for ingestor to read
 	fileName = fmt.Sprintf("%s/graph/%s/%s.jsonl", m.output.Directory, aws.ToString(m.Caller.Account), "roles")
-	// create file and directory if it doesnt exist
+	// create file and directory if it doesn't exist
 	if err := os.MkdirAll(fmt.Sprintf("%s/graph/%s", m.output.Directory, aws.ToString(m.Caller.Account)), 0755); err != nil {
 		m.modLog.Error(err)
 		return

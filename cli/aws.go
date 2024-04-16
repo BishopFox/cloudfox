@@ -1073,7 +1073,7 @@ func runCapeCommand(cmd *cobra.Command, args []string) {
 		if PermissionsCommandClient.Rows != nil {
 			common.PermissionRowsFromAllProfiles = append(common.PermissionRowsFromAllProfiles, PermissionsCommandClient.Rows...)
 		} else {
-			fmt.Println("Error gathering permisisons for " + profile)
+			fmt.Println("Error gathering permissions for " + profile)
 			//analyzedAccounts[ptr.ToString(caller.Account)] = false
 			analyzedAccounts[ptr.ToString(caller.Account)] = aws.CapeJobInfo{AnalyzedSuccessfully: false}
 		}
@@ -1183,7 +1183,7 @@ func runCapeCommand(cmd *cobra.Command, args []string) {
 		)
 		if err != nil {
 			if err == graph.ErrEdgeAlreadyExists {
-				// update the ege by copying the existing graph.Edge with attributes and add the new attributes
+				// update theedge by copying the existing graph.Edge with attributes and add the new attributes
 				//fmt.Println("Edge already exists")
 
 				// get the existing edge
@@ -1254,7 +1254,7 @@ func runCapeCommand(cmd *cobra.Command, args []string) {
 
 		capeCommandClient.RunCapeCommand()
 
-		// write a json file with job information to the output directory. Use the CapeJobName for hte file name, and have the data include the list of AWSProfiles that were analyzed
+		// write a json file with job information to the output directory. Use the CapeJobName for the file name, and have the data include the list of AWSProfiles that were analyzed
 		// this will be used by a TUI to match a job name to the list of accounts that were analyzed
 
 		// if CapeJobName == "" {
@@ -1314,7 +1314,7 @@ func runCapeTUICommand(cmd *cobra.Command, args []string) {
 			fileName = "inbound-privesc-paths-all-targets.json"
 		}
 		capeOutputFileLocations = append(capeOutputFileLocations, filepath.Join(cloudfoxRunData.OutputLocation, "json", fileName))
-		//check to see if file exists, and if it doesnt, remove the profile from the list of profiles to analyze and print a message to the console
+		//check to see if file exists, and if it doesn't, remove the profile from the list of profiles to analyze and print a message to the console
 		if _, err := os.Stat(filepath.Join(cloudfoxRunData.OutputLocation, "json", fileName)); os.IsNotExist(err) {
 			fmt.Printf("[%s] Could not retrieve CAPE data for profile %s.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), profile)
 			//remove the profile from the list of profiles to analyze
