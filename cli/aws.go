@@ -1201,14 +1201,18 @@ func runCapeCommand(cmd *cobra.Command, args []string) {
 	// at least for now, we don't need to make edges for users, groups, or anything else because pmapper already has all of the edges we need
 	fmt.Printf("[%s] Making edges for all profiles\n", cyan("cape"))
 
-	fmt.Printf("[%s] Total vertices from pmapper and cape: %d \n", cyan("cape"), len(mergedNodes))
-	fmt.Printf("[%s] Total edges from pmapper and cape: %d \n", cyan("cape"), len(GlobalPmapperData.Edges))
+	//fmt.Printf("[%s] Total vertices from pmapper and cape: %d \n", cyan("cape"), len(mergedNodes))
 
 	for _, node := range mergedNodes {
 		if node.Type == "Role" {
 			node.MakeRoleEdges(GlobalGraph)
 		}
 	}
+
+	// count the edges in the graph
+	edges, _ := GlobalGraph.Edges()
+	fmt.Printf("[%s] Total edges from pmapper and cape: %d \n", cyan("cape"), len(mergedNodes))
+	fmt.Printf("[%s] Total edges from pmapper and cape: %d \n", cyan("cape"), len(edges))
 
 	for _, profile := range AWSProfiles {
 		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)

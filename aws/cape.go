@@ -37,6 +37,7 @@ type CapeCommand struct {
 	PmapperDataBasePath string
 	AnalyzedAccounts    map[string]CapeJobInfo
 	CapeAdminOnly       bool
+	AccountsNotAnalyzed []string
 
 	output internal.OutputData2
 	modLog *logrus.Entry
@@ -113,10 +114,13 @@ func (m *CapeCommand) RunCapeCommand() {
 	o.WriteFullOutput(o.Table.TableFiles, nil)
 	fmt.Println("The following accounts are trusted by this account, but were not analyzed as part of this run.")
 	fmt.Println("As a result, we cannot determine which principals in these accounts have permission to assume roles in this account.")
-	for account := range m.AnalyzedAccounts {
-		if m.AnalyzedAccounts[account].AnalyzedSuccessfully == false {
-			fmt.Println("\t\t" + account)
-		}
+	// for account := range m.AnalyzedAccounts {
+	// 	if m.AnalyzedAccounts[account].AnalyzedSuccessfully == false {
+	// 		fmt.Println("\t\t" + account)
+	// 	}
+	// }
+	for _, account := range m.AccountsNotAnalyzed {
+		fmt.Println("\t\t" + account)
 	}
 
 }
@@ -202,6 +206,16 @@ func (m *CapeCommand) findPathsToThisDestination(allGlobalNodes map[string]map[s
 			if path != nil {
 				if s != d {
 					fmt.Printf("[%s][%s] Found a path from %s to %s\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), s, d)
+
+					// check to see if the source account was analyzed. If not, lets add it to the list of accounts that were not analyzed
+					if strings.Contains(s, "Not analyzed/in-scope") {
+						// add it to the m.AccountsNotAnalyzed if it doesn't already exist
+						if !internal.Contains(s, m.AccountsNotAnalyzed) {
+							m.AccountsNotAnalyzed = append(m.AccountsNotAnalyzed, s)
+						}
+
+					}
+
 					paths = ""
 					// if we got here theres a path. Lets print the reason and the short reason for each edge in the path to the screen
 					// and then lets print the full path to the screen
@@ -699,6 +713,15 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 								}
 							}
 						}
+						if strings.EqualFold(PermissionsRow.Effect, "Deny") {
+							// if the action is deny, we need to remove any edges between PermissionsRow.Arn and a.Arn
+							// if the edge exists, remove it
+							err := GlobalGraph.RemoveEdge(PermissionsRow.Arn, a.Arn)
+							if err != nil {
+								fmt.Println(err)
+							}
+
+						}
 					}
 				}
 			}
@@ -881,6 +904,14 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 										}
 									}
 								}
+							}
+						}
+						if strings.EqualFold(PermissionsRow.Effect, "Deny") {
+							// if the action is deny, we need to remove any edges between PermissionsRow.Arn and a.Arn
+							// if the edge exists, remove it
+							err := GlobalGraph.RemoveEdge(PermissionsRow.Arn, a.Arn)
+							if err != nil {
+								fmt.Println(err)
 							}
 						}
 					}

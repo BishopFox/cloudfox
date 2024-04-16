@@ -502,9 +502,11 @@ func parseFederatedTrustPolicy(statement policy.RoleTrustStatementEntry) (string
 			subjects = append(subjects, "ALL ISSUERS")
 		}
 
-	// AWS SSO case
+	///AWS SSO case
 	case strings.Contains(statement.Principal.Federated[0], "AWSSSO"):
-		provider = "AWS SSO"
+		//provider = "AWS SSO"
+		accountId := strings.Split(statement.Principal.Federated[0], ":")[4]
+		provider = fmt.Sprintf("AWSSSO-%s", accountId)
 		subjects = append(subjects, "Not applicable")
 
 	// okta case

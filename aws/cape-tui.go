@@ -314,6 +314,20 @@ func getRecordsForAccount(preloadedData *PerAccountData) (table.Model, map[int]s
 	// lets load the records for the first file in the list
 
 	records := preloadedData.PrivescPaths
+	if len(records) < 1 {
+		mainTable := table.New(
+			table.WithColumns([]table.Column{
+				{Title: "Account", Width: 30},
+				{Title: "Source", Width: 30},
+				{Title: "Target", Width: 30},
+				{Title: "isTargetAdmin", Width: 30},
+			}),
+			table.WithRows([]table.Row{{"No records found", "", "", ""}}),
+			table.WithFocused(true),
+		)
+		return mainTable, nil, nil
+
+	}
 
 	// Prepare rows for the table and data for the right view
 	rows := make([]table.Row, 0, len(records)-1)
