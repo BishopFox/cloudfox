@@ -10,6 +10,7 @@ func LoadFileLinesIntoArray(input string) []string {
 	if err != nil {
 		return []string{input}
 	}
+	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
 	scanner.Split(bufio.ScanLines)
