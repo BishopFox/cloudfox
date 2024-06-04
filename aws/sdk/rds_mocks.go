@@ -21,6 +21,10 @@ func (m *MockedRDSClient) DescribeDBInstances(ctx context.Context, input *rds.De
 				EngineVersion:        aws.String("13.3"),
 				InstanceCreateTime:   aws.Time(time.Now()),
 				MasterUsername:       aws.String("postgres"),
+				Endpoint: &rdsTypes.Endpoint{
+					Address: aws.String("db1-instances-1.blah.us-west-2.rds.amazonaws.com"),
+					Port:    aws.Int32(5432),
+				},
 			},
 			{
 				DBInstanceIdentifier: aws.String("db2"),
@@ -28,6 +32,10 @@ func (m *MockedRDSClient) DescribeDBInstances(ctx context.Context, input *rds.De
 				EngineVersion:        aws.String("13.3"),
 				InstanceCreateTime:   aws.Time(time.Now()),
 				MasterUsername:       aws.String("postgres"),
+				Endpoint: &rdsTypes.Endpoint{
+					Address: aws.String("db2-instances-1.blah.us-west-2.rds.amazonaws.com"),
+					Port:    aws.Int32(5432),
+				},
 			},
 		},
 	}, nil
