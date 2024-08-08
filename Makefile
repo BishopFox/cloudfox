@@ -24,13 +24,17 @@ all: windows linux macos
 .PHONY: release
 release: clean
 	mkdir -p ./cloudfox
-	mkdir -p ./cloudfox
+
 	GOOS=windows GOARCH=amd64 go build -o ./cloudfox/cloudfox.exe .
 	zip ./cloudfox/cloudfox-windows-amd64.zip ./cloudfox/cloudfox.exe
 	rm -rf ./cloudfox/cloudfox.exe
 	
 	GOOS=linux GOARCH=amd64 go build -o ./cloudfox/cloudfox .
 	zip ./cloudfox/cloudfox-linux-amd64.zip ./cloudfox/cloudfox .
+	rm -rf ./cloudfox/cloudfox
+
+	GOOS=linux GOARCH=386 go build -o ./cloudfox/cloudfox .
+	zip ./cloudfox/cloudfox-linux-386.zip ./cloudfox/cloudfox .
 	rm -rf ./cloudfox/cloudfox
 
 	GOOS=darwin GOARCH=amd64 go build -o ./cloudfox/cloudfox .
