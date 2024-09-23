@@ -263,10 +263,11 @@ var (
 		PostRun: awsPostRun,
 	}
 
-	SimulatorResource   string
-	SimulatorAction     string
-	SimulatorPrincipal  string
-	IamSimulatorCommand = &cobra.Command{
+	SimulatorResource          string
+	SimulatorAction            string
+	SimulatorPrincipal         string
+	IamSimulatorAdminCheckOnly bool
+	IamSimulatorCommand        = &cobra.Command{
 		Use:     "iam-simulator",
 		Aliases: []string{"iamsimulator", "simulator"},
 		Short:   "Wrapper around the AWS IAM Simulate Principal Policy command",
@@ -1338,13 +1339,14 @@ func runIamSimulatorCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.IamSimulatorModule{
-			IAMClient:          iam.NewFromConfig(AWSConfig),
-			Caller:             *caller,
-			AWSProfileProvided: profile,
-			Goroutines:         Goroutines,
-			WrapTable:          AWSWrapTable,
-			AWSOutputType:      AWSOutputType,
-			AWSTableCols:       AWSTableCols,
+			IAMClient:                  iam.NewFromConfig(AWSConfig),
+			Caller:                     *caller,
+			AWSProfileProvided:         profile,
+			Goroutines:                 Goroutines,
+			WrapTable:                  AWSWrapTable,
+			AWSOutputType:              AWSOutputType,
+			AWSTableCols:               AWSTableCols,
+			IamSimulatorAdminCheckOnly: IamSimulatorAdminCheckOnly,
 		}
 		m.PrintIamSimulator(SimulatorPrincipal, SimulatorAction, SimulatorResource, AWSOutputDirectory, Verbosity)
 	}
@@ -1547,13 +1549,15 @@ func runPrincipalsCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.IamPrincipalsModule{
-			IAMClient:     iam.NewFromConfig(AWSConfig),
-			Caller:        *caller,
-			AWSProfile:    profile,
-			Goroutines:    Goroutines,
-			WrapTable:     AWSWrapTable,
-			AWSOutputType: AWSOutputType,
-			AWSTableCols:  AWSTableCols,
+			IAMClient:           iam.NewFromConfig(AWSConfig),
+			Caller:              *caller,
+			AWSProfile:          profile,
+			Goroutines:          Goroutines,
+			SkipAdminCheck:      AWSSkipAdminCheck,
+			WrapTable:           AWSWrapTable,
+			AWSOutputType:       AWSOutputType,
+			AWSTableCols:        AWSTableCols,
+			PmapperDataBasePath: PmapperDataBasePath,
 		}
 		m.PrintIamPrincipals(AWSOutputDirectory, Verbosity)
 	}
@@ -2375,9 +2379,6 @@ func init() {
 	// Map Access Keys Module Flags
 	AccessKeysCommand.Flags().StringVarP(&AccessKeysFilter, "filter", "f", "none", "Access key ID to search for")
 
-	// IAM Simulator Module Flags
-	//IamSimulatorCommand.Flags().StringVarP(&IamSimulatorFilter, "filter", "f", "none", "Access key ID to search for")
-
 	// Instances Map Module Flags
 	InstancesCommand.Flags().StringVarP(&InstancesFilter, "filter", "f", "all", "[InstanceID | InstanceIDsFile]")
 	InstancesCommand.Flags().BoolVarP(&InstanceMapUserDataAttributesOnly, "userdata", "u", false, "Use this flag to retrieve only the userData attribute from EC2 instances.")
@@ -2395,6 +2396,7 @@ func init() {
 	IamSimulatorCommand.Flags().StringVar(&SimulatorPrincipal, "principal", "", "Principal Arn")
 	IamSimulatorCommand.Flags().StringVar(&SimulatorAction, "action", "", "Action")
 	IamSimulatorCommand.Flags().StringVar(&SimulatorResource, "resource", "*", "Resource")
+	IamSimulatorCommand.Flags().BoolVar(&IamSimulatorAdminCheckOnly, "admin-check-only", false, "Only check check if principals are admin")
 
 	//  iam-simulator module flags
 	PermissionsCommand.Flags().StringVar(&PermissionsPrincipal, "principal", "", "Principal Arn")
