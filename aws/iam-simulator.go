@@ -453,7 +453,7 @@ func (m *IamSimulatorModule) isPrincipalAnAdmin(principal *string) bool {
 		"iam:PutRolePolicy",
 		"iam:AttachRolePolicy",
 		"secretsmanager:GetSecretValue",
-		"ssm:GetDocument",
+		"ssm:GetParameters",
 	}
 	for {
 		SimulatePrincipalPolicy, err := m.IAMClient.SimulatePrincipalPolicy(
