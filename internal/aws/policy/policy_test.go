@@ -222,3 +222,51 @@ func TestDoesPolicyHaveMatchingStatement(t *testing.T) {
 		}
 	}
 }
+
+func TestDoesPermissionExpansionMatch(t *testing.T) {
+
+	tests := []struct {
+		actionToExpand       string
+		actionToCheckAgainst string
+		want                 bool
+	}{
+		{
+			actionToExpand:       "sts:AssumeRole",
+			actionToCheckAgainst: "sts:AssumeRole",
+			want:                 true,
+		},
+		{
+			actionToExpand:       "*",
+			actionToCheckAgainst: "sts:AssumeRole",
+			want:                 true,
+		},
+		{
+			actionToExpand:       "sts:Assume*",
+			actionToCheckAgainst: "sts:AssumeRole",
+			want:                 true,
+		},
+		{
+			actionToExpand:       "sts:*",
+			actionToCheckAgainst: "sts:AssumeRole",
+			want:                 true,
+		},
+		{
+			actionToExpand:       "s3:GetObject",
+			actionToCheckAgainst: "sts:AssumeRole",
+			want:                 false,
+		},
+		{
+			actionToExpand:       "s3:*",
+			actionToCheckAgainst: "sts:AssumeRole",
+			want:                 false,
+		},
+	}
+
+	for _, tt := range tests {
+		actual := MatchesAfterExpansion(tt.actionToCheckAgainst, tt.actionToExpand)
+		if tt.want != actual {
+			//fmt.Printf("DoesPermissionHaveMatchingStatement(%s, %s) is %v but should be %v", tt.actionToExpand, tt.actionToCheckAgainst, actual, tt.want)
+			t.Errorf("DoesPermissionHaveMatchingStatement(%s, %s) is %v but should be %v", tt.actionToExpand, tt.actionToCheckAgainst, actual, tt.want)
+		}
+	}
+}

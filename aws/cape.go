@@ -667,6 +667,7 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 				if PermissionsRowAccount == thisAccount {
 					// lets only look for rows that have sts:AssumeRole permissions
 					if policy.MatchesAfterExpansion(PermissionsRow.Action, "sts:AssumeRole") {
+
 						// lets only focus on rows that have an effect of Allow
 						if strings.EqualFold(PermissionsRow.Effect, "Allow") {
 							// if the resource is * or the resource is this role arn, then this principal can assume this role
@@ -820,10 +821,10 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 					fmt.Sprintf("Could not get account number from this PermissionsRow%s", PermissionsRow.Arn)
 				}
 				if PermissionsRowAccount == trustedPrincipalAccount {
-					// lets only look for rows that have sts:AssumeRole permissions
-					if policy.MatchesAfterExpansion(PermissionsRow.Action, "sts:AssumeRole") {
+					// lets only look for rows that have sts:AssumeRole permis sions
+					if policy.MatchesAfterExpansion("sts:AssumeRole", PermissionsRow.Action) {
 						// if strings.EqualFold(PermissionsRow.Action, "sts:AssumeRole") ||
-						// 	strings.EqualFold(PermissionsRow.Action, "*") ||
+						// 	strings.EqualFold(PermissionsRow.Action, "*") {
 						// 	strings.EqualFold(PermissionsRow.Action, "sts:Assume*") ||
 						// 	strings.EqualFold(PermissionsRow.Action, "sts:*") {
 						// lets only focus on rows that have an effect of Allow
