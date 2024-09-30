@@ -200,7 +200,12 @@ func (m *CapeCommand) findPathsToThisDestination(allGlobalNodes map[string]map[s
 		s, sourceVertexWithProperties, _ := m.GlobalGraph.VertexWithProperties(source)
 		//for the source vertex, we only want to deal with the ones that are NOT in this account
 		if sourceVertexWithProperties.Attributes["AccountID"] != aws.ToString(m.Caller.Account) {
+			// skip if the source Name contains AWSSSO-
+			if strings.Contains(sourceVertexWithProperties.Attributes["Name"], "AWSSSO-") {
+				continue
+			}
 			// now let's see if there is a path from this source to our destination
+
 			path, _ := graph.ShortestPath(m.GlobalGraph, s, d)
 			// if we have a path, then lets document this source as having a path to our destination
 			if path != nil {
