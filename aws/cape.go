@@ -296,7 +296,7 @@ func ConvertIAMRoleToNode(role types.Role, vendors *knownawsaccountslookup.Vendo
 
 			TrustedPrincipals = append(TrustedPrincipals, TrustedPrincipal{
 				TrustedPrincipal: principal,
-				ExternalID:       statement.Condition.StringEquals.StsExternalID,
+				ExternalID:       strings.Join(statement.Condition.StringEquals.StsExternalID, "\n"),
 				VendorName:       vendorName,
 				//IsAdmin:           false,
 				//CanPrivEscToAdmin: false,
