@@ -1,7 +1,9 @@
 package aws
 
 import (
+	"bufio"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -655,6 +657,48 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 			}
 		}
 
+		// if the role trusts a principal in another account explicitly, then the principal can assume the role
+		if thisAccount != trustedPrincipalAccount {
+			// make a CAN_ASSUME relationship between the trusted principal and this role
+
+			err := GlobalGraph.AddEdge(
+				TrustedPrincipal.TrustedPrincipal,
+				a.Arn,
+				//graph.EdgeAttribute("AssumeRole", "Cross account explicit trust"),
+				graph.EdgeAttribute("AssumeRole", "can assume (because of an explicit cross account trust) "),
+			)
+			if err != nil {
+				//fmt.Println(err)
+				//fmt.Println(TrustedPrincipal.TrustedPrincipal + a.Arn + "Cross account explicit trust")
+				if err == graph.ErrEdgeAlreadyExists {
+					// update the edge by copying the existing graph.Edge with attributes and add the new attributes
+					//fmt.Println("Edge already exists")
+
+					// get the existing edge
+					existingEdge, _ := GlobalGraph.Edge(TrustedPrincipal.TrustedPrincipal, a.Arn)
+					// get the map of attributes
+					existingProperties := existingEdge.Properties
+					// add the new attributes to attributes map within the properties struct
+					// Check if the Attributes map is initialized, if not, initialize it
+					if existingProperties.Attributes == nil {
+						existingProperties.Attributes = make(map[string]string)
+					}
+
+					// Add or update the attribute
+					existingProperties.Attributes["AssumeRole"] = "can assume (because of an explicit cross account trust) "
+					err = GlobalGraph.UpdateEdge(
+						TrustedPrincipal.TrustedPrincipal,
+						a.Arn,
+						graph.EdgeAttributes(existingProperties.Attributes),
+					)
+					if err != nil {
+						fmt.Println(err)
+					}
+				}
+
+			}
+		}
+
 		// If the role trusts a principal in this account or another account using the :root notation, then we need to iterate over all of the rows in AllPermissionsRows to find the principals that have sts:AssumeRole permissions on this role
 		// if the role we are looking at trusts root in it's own account
 
@@ -984,4 +1028,22 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 		}
 	}
 
+}
+
+// function to read file specified in CapeArnIgnoreList which is seperated by newlines, and convert it to a slice of strings with each line as an entry in the slice.
+// the function accepts a string with the filename
+
+func ReadArnIgnoreListFile(filename string) ([]string, error) {
+	var arnIgnoreList []string
+	file, err := os.Open(filename)
+	if err != nil {
+		return arnIgnoreList, err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		arnIgnoreList = append(arnIgnoreList, scanner.Text())
+	}
+	return arnIgnoreList, scanner.Err()
 }

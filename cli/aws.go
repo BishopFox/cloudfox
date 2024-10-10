@@ -138,9 +138,10 @@ var (
 		PostRun: awsPostRun,
 	}
 
-	CapeAdminOnly bool
-	CapeJobName   string
-	CapeCommand   = &cobra.Command{
+	CapeAdminOnly     bool
+	CapeArnIgnoreList string
+	CapeJobName       string
+	CapeCommand       = &cobra.Command{
 		Use:     "cape",
 		Aliases: []string{"CAPE"},
 		Short:   "Cross-Account Privilege Escalation Route finder. Needs to be run with multiple profiles using -l or -a flag. Needs pmapper data to be present",
@@ -1170,6 +1171,20 @@ func runCapeCommand(cmd *cobra.Command, args []string) {
 					analyzedAccounts[node.AccountID] = aws.CapeJobInfo{AccountID: node.AccountID, Profile: "", AnalyzedSuccessfully: false, AdminOnlyAnalysis: CapeAdminOnly, Source: "cloudfox"}
 				}
 			}
+		}
+	}
+
+	// if the CapeArnIgnoreList arg is not empty, read the file and add the arns to the CapeArnIgnoreList
+	if CapeArnIgnoreList != "" {
+		// call ReadArnIgnoreListFile and add the arns to the CapeArnIgnoreList
+		arnsToIgnore, err := aws.ReadArnIgnoreListFile(CapeArnIgnoreList)
+		if err != nil {
+			fmt.Println("Error reading the arn ignore list file: " + err.Error())
+		}
+
+		// remove nodes that are in the CapeArnIgnoreList from the graph
+		for _, arn := range arnsToIgnore {
+			GlobalGraph.RemoveVertex(arn)
 		}
 	}
 
@@ -2410,6 +2425,8 @@ func init() {
 	// cape command flags
 	CapeCommand.Flags().BoolVar(&CapeAdminOnly, "admin-only", false, "Only return paths that lead to an admin role - much faster")
 	//CapeCommand.Flags().StringVar(&CapeJobName, "job-name", "", "Name of the cape job")
+	// flag that accepts a list of arns to ignore
+	CapeCommand.Flags().StringVar(&CapeArnIgnoreList, "arn-ignore-list", "", "File containing a list of ARNs to ignore separated by newlines")
 
 	// cape tui command flags
 	CapeTuiCmd.Flags().BoolVar(&CapeAdminOnly, "admin-only", false, "Only return paths that lead to an admin role - much faster")
