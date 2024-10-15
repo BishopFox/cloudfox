@@ -1030,7 +1030,7 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 
 }
 
-// function to read file specified in CapeArnIgnoreList which is seperated by newlines, and convert it to a slice of strings with each line as an entry in the slice.
+// function to read file specified in CapeArnIgnoreList which is separated by newlines, and convert it to a slice of strings with each line as an entry in the slice.
 // the function accepts a string with the filename
 
 func ReadArnIgnoreListFile(filename string) ([]string, error) {
