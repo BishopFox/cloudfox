@@ -242,7 +242,7 @@ func (m *CapeCommand) findPathsToThisDestination(allGlobalNodes map[string]map[s
 						privescPathsBody = append(privescPathsBody, []string{
 							aws.ToString(m.Caller.Account),
 							s,
-							magenta(d),
+							d,
 							magenta(destinationVertexWithProperties.Attributes["IsAdminString"]),
 							paths})
 					} else {

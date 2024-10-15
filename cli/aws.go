@@ -1334,10 +1334,20 @@ func runCapeTUICommand(cmd *cobra.Command, args []string) {
 		if _, err := os.Stat(filepath.Join(cloudfoxRunData.OutputLocation, "json", fileName)); os.IsNotExist(err) {
 			fmt.Printf("[%s] Could not retrieve CAPE data for profile %s.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), profile)
 			//remove the profile from the list of profiles to analyze
-			AWSProfiles = append(AWSProfiles[:i], AWSProfiles[i+1:]...)
+			if len(AWSProfiles) > 1 {
+				AWSProfiles = append(AWSProfiles[:i], AWSProfiles[i+1:]...)
+			} else {
+				if CapeAdminOnly {
+					fmt.Printf("[%s] Could not retrieve cape data. Did you run cape without the --admin-only flag? You'll need to run cape with --admin-only to use the tui with --admin-only\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)))
+				} else {
+					fmt.Printf("[%s] Did you run cape with the --admin-only flag? You'll need to run cape without --admin-only to use the tui without --admin-only\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)))
+				}
+				os.Exit(1)
+			}
 		}
 
 	}
+
 	if len(capeOutputFileLocations) == 0 {
 		fmt.Printf("[%s] Could not retrieve CAPE data.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)))
 		os.Exit(1)
