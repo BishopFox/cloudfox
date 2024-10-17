@@ -138,9 +138,10 @@ var (
 		PostRun: awsPostRun,
 	}
 
-	CapeAdminOnly bool
-	CapeJobName   string
-	CapeCommand   = &cobra.Command{
+	CapeAdminOnly     bool
+	CapeArnIgnoreList string
+	CapeJobName       string
+	CapeCommand       = &cobra.Command{
 		Use:     "cape",
 		Aliases: []string{"CAPE"},
 		Short:   "Cross-Account Privilege Escalation Route finder. Needs to be run with multiple profiles using -l or -a flag. Needs pmapper data to be present",
@@ -263,10 +264,11 @@ var (
 		PostRun: awsPostRun,
 	}
 
-	SimulatorResource   string
-	SimulatorAction     string
-	SimulatorPrincipal  string
-	IamSimulatorCommand = &cobra.Command{
+	SimulatorResource          string
+	SimulatorAction            string
+	SimulatorPrincipal         string
+	IamSimulatorAdminCheckOnly bool
+	IamSimulatorCommand        = &cobra.Command{
 		Use:     "iam-simulator",
 		Aliases: []string{"iamsimulator", "simulator"},
 		Short:   "Wrapper around the AWS IAM Simulate Principal Policy command",
@@ -1172,6 +1174,20 @@ func runCapeCommand(cmd *cobra.Command, args []string) {
 		}
 	}
 
+	// if the CapeArnIgnoreList arg is not empty, read the file and add the arns to the CapeArnIgnoreList
+	if CapeArnIgnoreList != "" {
+		// call ReadArnIgnoreListFile and add the arns to the CapeArnIgnoreList
+		arnsToIgnore, err := aws.ReadArnIgnoreListFile(CapeArnIgnoreList)
+		if err != nil {
+			fmt.Println("Error reading the arn ignore list file: " + err.Error())
+		}
+
+		// remove nodes that are in the CapeArnIgnoreList from the graph
+		for _, arn := range arnsToIgnore {
+			GlobalGraph.RemoveVertex(arn)
+		}
+	}
+
 	// make pmapper edges
 	//you can update edges, so we can just merge attributes as needed
 	// first we add the edges that already exist in pmapper, then later we will make more edges based on the cloudfox role trusts logic
@@ -1318,10 +1334,20 @@ func runCapeTUICommand(cmd *cobra.Command, args []string) {
 		if _, err := os.Stat(filepath.Join(cloudfoxRunData.OutputLocation, "json", fileName)); os.IsNotExist(err) {
 			fmt.Printf("[%s] Could not retrieve CAPE data for profile %s.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), profile)
 			//remove the profile from the list of profiles to analyze
-			AWSProfiles = append(AWSProfiles[:i], AWSProfiles[i+1:]...)
+			if len(AWSProfiles) > 1 {
+				AWSProfiles = append(AWSProfiles[:i], AWSProfiles[i+1:]...)
+			} else {
+				if CapeAdminOnly {
+					fmt.Printf("[%s] Could not retrieve cape data. Did you run cape without the --admin-only flag? You'll need to run cape with --admin-only to use the tui with --admin-only\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)))
+				} else {
+					fmt.Printf("[%s] Did you run cape with the --admin-only flag? You'll need to run cape without --admin-only to use the tui without --admin-only\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)))
+				}
+				os.Exit(1)
+			}
 		}
 
 	}
+
 	if len(capeOutputFileLocations) == 0 {
 		fmt.Printf("[%s] Could not retrieve CAPE data.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)))
 		os.Exit(1)
@@ -1338,13 +1364,14 @@ func runIamSimulatorCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.IamSimulatorModule{
-			IAMClient:          iam.NewFromConfig(AWSConfig),
-			Caller:             *caller,
-			AWSProfileProvided: profile,
-			Goroutines:         Goroutines,
-			WrapTable:          AWSWrapTable,
-			AWSOutputType:      AWSOutputType,
-			AWSTableCols:       AWSTableCols,
+			IAMClient:                  iam.NewFromConfig(AWSConfig),
+			Caller:                     *caller,
+			AWSProfileProvided:         profile,
+			Goroutines:                 Goroutines,
+			WrapTable:                  AWSWrapTable,
+			AWSOutputType:              AWSOutputType,
+			AWSTableCols:               AWSTableCols,
+			IamSimulatorAdminCheckOnly: IamSimulatorAdminCheckOnly,
 		}
 		m.PrintIamSimulator(SimulatorPrincipal, SimulatorAction, SimulatorResource, AWSOutputDirectory, Verbosity)
 	}
@@ -1547,13 +1574,15 @@ func runPrincipalsCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.IamPrincipalsModule{
-			IAMClient:     iam.NewFromConfig(AWSConfig),
-			Caller:        *caller,
-			AWSProfile:    profile,
-			Goroutines:    Goroutines,
-			WrapTable:     AWSWrapTable,
-			AWSOutputType: AWSOutputType,
-			AWSTableCols:  AWSTableCols,
+			IAMClient:           iam.NewFromConfig(AWSConfig),
+			Caller:              *caller,
+			AWSProfile:          profile,
+			Goroutines:          Goroutines,
+			SkipAdminCheck:      AWSSkipAdminCheck,
+			WrapTable:           AWSWrapTable,
+			AWSOutputType:       AWSOutputType,
+			AWSTableCols:        AWSTableCols,
+			PmapperDataBasePath: PmapperDataBasePath,
 		}
 		m.PrintIamPrincipals(AWSOutputDirectory, Verbosity)
 	}
@@ -2375,9 +2404,6 @@ func init() {
 	// Map Access Keys Module Flags
 	AccessKeysCommand.Flags().StringVarP(&AccessKeysFilter, "filter", "f", "none", "Access key ID to search for")
 
-	// IAM Simulator Module Flags
-	//IamSimulatorCommand.Flags().StringVarP(&IamSimulatorFilter, "filter", "f", "none", "Access key ID to search for")
-
 	// Instances Map Module Flags
 	InstancesCommand.Flags().StringVarP(&InstancesFilter, "filter", "f", "all", "[InstanceID | InstanceIDsFile]")
 	InstancesCommand.Flags().BoolVarP(&InstanceMapUserDataAttributesOnly, "userdata", "u", false, "Use this flag to retrieve only the userData attribute from EC2 instances.")
@@ -2395,6 +2421,7 @@ func init() {
 	IamSimulatorCommand.Flags().StringVar(&SimulatorPrincipal, "principal", "", "Principal Arn")
 	IamSimulatorCommand.Flags().StringVar(&SimulatorAction, "action", "", "Action")
 	IamSimulatorCommand.Flags().StringVar(&SimulatorResource, "resource", "*", "Resource")
+	IamSimulatorCommand.Flags().BoolVar(&IamSimulatorAdminCheckOnly, "admin-check-only", false, "Only check check if principals are admin")
 
 	//  iam-simulator module flags
 	PermissionsCommand.Flags().StringVar(&PermissionsPrincipal, "principal", "", "Principal Arn")
@@ -2408,6 +2435,8 @@ func init() {
 	// cape command flags
 	CapeCommand.Flags().BoolVar(&CapeAdminOnly, "admin-only", false, "Only return paths that lead to an admin role - much faster")
 	//CapeCommand.Flags().StringVar(&CapeJobName, "job-name", "", "Name of the cape job")
+	// flag that accepts a list of arns to ignore
+	CapeCommand.Flags().StringVar(&CapeArnIgnoreList, "arn-ignore-list", "", "File containing a list of ARNs to ignore separated by newlines")
 
 	// cape tui command flags
 	CapeTuiCmd.Flags().BoolVar(&CapeAdminOnly, "admin-only", false, "Only return paths that lead to an admin role - much faster")

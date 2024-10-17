@@ -26,6 +26,12 @@ type IamPrincipalsModule struct {
 	AWSProfile string
 	WrapTable  bool
 
+	SkipAdminCheck      bool
+	iamSimClient        IamSimulatorModule
+	pmapperMod          PmapperModule
+	pmapperError        error
+	PmapperDataBasePath string
+
 	// Main module data
 	Users          []User
 	Roles          []Role
@@ -43,6 +49,8 @@ type User struct {
 	Name             string
 	AttachedPolicies []string
 	InlinePolicies   []string
+	Admin            string
+	CanPrivEsc       string
 }
 
 type Group struct {
@@ -62,6 +70,8 @@ type Role struct {
 	Name             string
 	AttachedPolicies []string
 	InlinePolicies   []string
+	Admin            string
+	CanPrivEsc       string
 }
 
 func (m *IamPrincipalsModule) PrintIamPrincipals(outputDirectory string, verbosity int) {
@@ -69,6 +79,7 @@ func (m *IamPrincipalsModule) PrintIamPrincipals(outputDirectory string, verbosi
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
 	m.output.CallingModule = "principals"
+	localAdminMap := make(map[string]bool)
 	m.modLog = internal.TxtLog.WithFields(logrus.Fields{
 		"module": m.output.CallingModule,
 	})
@@ -77,6 +88,9 @@ func (m *IamPrincipalsModule) PrintIamPrincipals(outputDirectory string, verbosi
 	}
 
 	fmt.Printf("[%s][%s] Enumerating IAM Users and Roles for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), aws.ToString(m.Caller.Account))
+
+	m.pmapperMod, m.pmapperError = InitPmapperGraph(m.Caller, m.AWSProfile, m.Goroutines, m.PmapperDataBasePath)
+	m.iamSimClient = InitIamCommandClient(m.IAMClient, m.Caller, m.AWSProfile, m.Goroutines)
 
 	// wg := new(sync.WaitGroup)
 
@@ -101,6 +115,8 @@ func (m *IamPrincipalsModule) PrintIamPrincipals(outputDirectory string, verbosi
 		"Arn",
 		"AttachedPolicies",
 		"InlinePolicies",
+		"IsAdminRole?",
+		"CanPrivEscToAdmin?",
 	}
 
 	// If the user specified table columns, use those.
@@ -122,6 +138,8 @@ func (m *IamPrincipalsModule) PrintIamPrincipals(outputDirectory string, verbosi
 			"Arn",
 			//"AttachedPolicies",
 			//"InlinePolicies",
+			"IsAdminRole?",
+			"CanPrivEscToAdmin?",
 		}
 
 		// Otherwise, use the default columns.
@@ -132,11 +150,25 @@ func (m *IamPrincipalsModule) PrintIamPrincipals(outputDirectory string, verbosi
 			"Arn",
 			// "AttachedPolicies",
 			// "InlinePolicies",
+			"IsAdminRole?",
+			"CanPrivEscToAdmin?",
 		}
+	}
+
+	// Remove the pmapper row if there is no pmapper data
+	if m.pmapperError != nil {
+		sharedLogger.Errorf("%s - %s - No pmapper data found for this account. Skipping the pmapper column in the output table.", m.output.CallingModule, m.AWSProfile)
+		tableCols = removeStringFromSlice(tableCols, "CanPrivEscToAdmin?")
 	}
 
 	//Table rows
 	for i := range m.Users {
+		if m.pmapperError == nil {
+			m.Users[i].Admin, m.Users[i].CanPrivEsc = GetPmapperResults(m.SkipAdminCheck, m.pmapperMod, &m.Users[i].Arn)
+		} else {
+			m.Users[i].Admin, m.Users[i].CanPrivEsc = GetIamSimResult(m.SkipAdminCheck, &m.Users[i].Arn, m.iamSimClient, localAdminMap)
+		}
+
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
@@ -146,12 +178,19 @@ func (m *IamPrincipalsModule) PrintIamPrincipals(outputDirectory string, verbosi
 				m.Users[i].Arn,
 				strings.Join(m.Users[i].AttachedPolicies, " , "),
 				strings.Join(m.Users[i].InlinePolicies, " , "),
+				m.Users[i].Admin,
+				m.Users[i].CanPrivEsc,
 			},
 		)
 
 	}
 
 	for i := range m.Roles {
+		if m.pmapperError == nil {
+			m.Roles[i].Admin, m.Roles[i].CanPrivEsc = GetPmapperResults(m.SkipAdminCheck, m.pmapperMod, &m.Roles[i].Arn)
+		} else {
+			m.Roles[i].Admin, m.Roles[i].CanPrivEsc = GetIamSimResult(m.SkipAdminCheck, &m.Roles[i].Arn, m.iamSimClient, localAdminMap)
+		}
 		m.output.Body = append(
 			m.output.Body,
 			[]string{
@@ -161,6 +200,8 @@ func (m *IamPrincipalsModule) PrintIamPrincipals(outputDirectory string, verbosi
 				m.Roles[i].Arn,
 				strings.Join(m.Roles[i].AttachedPolicies, " , "),
 				strings.Join(m.Roles[i].InlinePolicies, " , "),
+				m.Roles[i].Admin,
+				m.Roles[i].CanPrivEsc,
 			},
 		)
 

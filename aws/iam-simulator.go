@@ -33,8 +33,9 @@ type IamSimulatorModule struct {
 	WrapTable          bool
 
 	// Main module data
-	SimulatorResults []SimulatorResult
-	CommandCounter   internal.CommandCounter
+	SimulatorResults           []SimulatorResult
+	CommandCounter             internal.CommandCounter
+	IamSimulatorAdminCheckOnly bool
 	// Used to store output data for pretty printing
 	output internal.OutputData2
 	modLog *logrus.Entry
@@ -103,6 +104,11 @@ func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, 
 	receiverDone := make(chan bool)
 
 	go m.Receiver(dataReceiver, receiverDone)
+
+	if m.IamSimulatorAdminCheckOnly {
+		// set defaultActionNames to an empty slice
+		defaultActionNames = []string{}
+	}
 
 	// This double if/else section is here to handle the cases where --principal or --action (or both) are specified.
 	if principal != "" {
@@ -354,7 +360,9 @@ func (m *IamSimulatorModule) getIAMUsers(wg *sync.WaitGroup, actions []string, r
 				Decision:   "",
 			}
 		} else {
-			m.getPolicySimulatorResult(principal, actions, resource, dataReceiver)
+			if !m.IamSimulatorAdminCheckOnly {
+				m.getPolicySimulatorResult(principal, actions, resource, dataReceiver)
+			}
 		}
 
 	}
@@ -394,7 +402,9 @@ func (m *IamSimulatorModule) getIAMRoles(wg *sync.WaitGroup, actions []string, r
 				Decision:   "",
 			}
 		} else {
-			m.getPolicySimulatorResult(principal, actions, resource, dataReceiver)
+			if !m.IamSimulatorAdminCheckOnly {
+				m.getPolicySimulatorResult(principal, actions, resource, dataReceiver)
+			}
 		}
 
 	}
@@ -443,7 +453,7 @@ func (m *IamSimulatorModule) isPrincipalAnAdmin(principal *string) bool {
 		"iam:PutRolePolicy",
 		"iam:AttachRolePolicy",
 		"secretsmanager:GetSecretValue",
-		"ssm:GetDocument",
+		"ssm:GetParameters",
 	}
 	for {
 		SimulatePrincipalPolicy, err := m.IAMClient.SimulatePrincipalPolicy(

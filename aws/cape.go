@@ -1,7 +1,9 @@
 package aws
 
 import (
+	"bufio"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -200,7 +202,12 @@ func (m *CapeCommand) findPathsToThisDestination(allGlobalNodes map[string]map[s
 		s, sourceVertexWithProperties, _ := m.GlobalGraph.VertexWithProperties(source)
 		//for the source vertex, we only want to deal with the ones that are NOT in this account
 		if sourceVertexWithProperties.Attributes["AccountID"] != aws.ToString(m.Caller.Account) {
+			// skip if the source Name contains AWSSSO-
+			if strings.Contains(sourceVertexWithProperties.Attributes["Name"], "AWSSSO-") {
+				continue
+			}
 			// now let's see if there is a path from this source to our destination
+
 			path, _ := graph.ShortestPath(m.GlobalGraph, s, d)
 			// if we have a path, then lets document this source as having a path to our destination
 			if path != nil {
@@ -235,7 +242,7 @@ func (m *CapeCommand) findPathsToThisDestination(allGlobalNodes map[string]map[s
 						privescPathsBody = append(privescPathsBody, []string{
 							aws.ToString(m.Caller.Account),
 							s,
-							magenta(d),
+							d,
 							magenta(destinationVertexWithProperties.Attributes["IsAdminString"]),
 							paths})
 					} else {
@@ -289,7 +296,7 @@ func ConvertIAMRoleToNode(role types.Role, vendors *knownawsaccountslookup.Vendo
 
 			TrustedPrincipals = append(TrustedPrincipals, TrustedPrincipal{
 				TrustedPrincipal: principal,
-				ExternalID:       statement.Condition.StringEquals.StsExternalID,
+				ExternalID:       strings.Join(statement.Condition.StringEquals.StsExternalID, "\n"),
 				VendorName:       vendorName,
 				//IsAdmin:           false,
 				//CanPrivEscToAdmin: false,
@@ -650,6 +657,48 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 			}
 		}
 
+		// if the role trusts a principal in another account explicitly, then the principal can assume the role
+		if thisAccount != trustedPrincipalAccount {
+			// make a CAN_ASSUME relationship between the trusted principal and this role
+
+			err := GlobalGraph.AddEdge(
+				TrustedPrincipal.TrustedPrincipal,
+				a.Arn,
+				//graph.EdgeAttribute("AssumeRole", "Cross account explicit trust"),
+				graph.EdgeAttribute("AssumeRole", "can assume (because of an explicit cross account trust) "),
+			)
+			if err != nil {
+				//fmt.Println(err)
+				//fmt.Println(TrustedPrincipal.TrustedPrincipal + a.Arn + "Cross account explicit trust")
+				if err == graph.ErrEdgeAlreadyExists {
+					// update the edge by copying the existing graph.Edge with attributes and add the new attributes
+					//fmt.Println("Edge already exists")
+
+					// get the existing edge
+					existingEdge, _ := GlobalGraph.Edge(TrustedPrincipal.TrustedPrincipal, a.Arn)
+					// get the map of attributes
+					existingProperties := existingEdge.Properties
+					// add the new attributes to attributes map within the properties struct
+					// Check if the Attributes map is initialized, if not, initialize it
+					if existingProperties.Attributes == nil {
+						existingProperties.Attributes = make(map[string]string)
+					}
+
+					// Add or update the attribute
+					existingProperties.Attributes["AssumeRole"] = "can assume (because of an explicit cross account trust) "
+					err = GlobalGraph.UpdateEdge(
+						TrustedPrincipal.TrustedPrincipal,
+						a.Arn,
+						graph.EdgeAttributes(existingProperties.Attributes),
+					)
+					if err != nil {
+						fmt.Println(err)
+					}
+				}
+
+			}
+		}
+
 		// If the role trusts a principal in this account or another account using the :root notation, then we need to iterate over all of the rows in AllPermissionsRows to find the principals that have sts:AssumeRole permissions on this role
 		// if the role we are looking at trusts root in it's own account
 
@@ -667,6 +716,7 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 				if PermissionsRowAccount == thisAccount {
 					// lets only look for rows that have sts:AssumeRole permissions
 					if policy.MatchesAfterExpansion(PermissionsRow.Action, "sts:AssumeRole") {
+
 						// lets only focus on rows that have an effect of Allow
 						if strings.EqualFold(PermissionsRow.Effect, "Allow") {
 							// if the resource is * or the resource is this role arn, then this principal can assume this role
@@ -820,10 +870,10 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 					fmt.Sprintf("Could not get account number from this PermissionsRow%s", PermissionsRow.Arn)
 				}
 				if PermissionsRowAccount == trustedPrincipalAccount {
-					// lets only look for rows that have sts:AssumeRole permissions
-					if policy.MatchesAfterExpansion(PermissionsRow.Action, "sts:AssumeRole") {
+					// lets only look for rows that have sts:AssumeRole permis sions
+					if policy.MatchesAfterExpansion("sts:AssumeRole", PermissionsRow.Action) {
 						// if strings.EqualFold(PermissionsRow.Action, "sts:AssumeRole") ||
-						// 	strings.EqualFold(PermissionsRow.Action, "*") ||
+						// 	strings.EqualFold(PermissionsRow.Action, "*") {
 						// 	strings.EqualFold(PermissionsRow.Action, "sts:Assume*") ||
 						// 	strings.EqualFold(PermissionsRow.Action, "sts:*") {
 						// lets only focus on rows that have an effect of Allow
@@ -978,4 +1028,22 @@ func (a *Node) MakeRoleEdges(GlobalGraph graph.Graph[string, string]) {
 		}
 	}
 
+}
+
+// function to read file specified in CapeArnIgnoreList which is separated by newlines, and convert it to a slice of strings with each line as an entry in the slice.
+// the function accepts a string with the filename
+
+func ReadArnIgnoreListFile(filename string) ([]string, error) {
+	var arnIgnoreList []string
+	file, err := os.Open(filename)
+	if err != nil {
+		return arnIgnoreList, err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		arnIgnoreList = append(arnIgnoreList, scanner.Text())
+	}
+	return arnIgnoreList, scanner.Err()
 }

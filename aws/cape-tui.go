@@ -301,7 +301,7 @@ func preloadData(filePaths []string) (*AllAccountData, error) {
 
 	for _, filePath := range filePaths {
 		fileRecords, err := loadFileRecords(filePath)
-		if err != nil {
+		if err != nil {			
 			return nil, err
 		}
 		appData.Files[filePath] = fileRecords
