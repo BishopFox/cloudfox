@@ -235,19 +235,19 @@ func (m *Route53Module) getRoute53Records() {
 			recordName = aws.ToString(record.Name)
 			recordType = string(record.Type)
 
-			for _, resourceRecord := range record.ResourceRecords {
-				recordValue := resourceRecord.Value
-				if record.AliasTarget != nil {
-					m.Records = append(
-						m.Records,
-						Record{
-							AWSService:  "Route53",
-							Name:        recordName,
-							Type:        fmt.Sprintf("Alias[%s]", recordType),
-							Value:       aws.ToString(record.AliasTarget.DNSName),
-							PrivateZone: privateZone,
-						})
-				} else {
+			if record.AliasTarget != nil {
+				m.Records = append(
+					m.Records,
+					Record{
+						AWSService:  "Route53",
+						Name:        recordName,
+						Type:        fmt.Sprintf("Alias[%s]", recordType),
+						Value:       aws.ToString(record.AliasTarget.DNSName),
+						PrivateZone: privateZone,
+					})
+			} else {
+				for _, resourceRecord := range record.ResourceRecords {
+					recordValue := resourceRecord.Value
 					m.Records = append(
 						m.Records,
 						Record{
@@ -258,8 +258,8 @@ func (m *Route53Module) getRoute53Records() {
 							PrivateZone: privateZone,
 						})
 				}
-
 			}
+
 		}
 
 	}
