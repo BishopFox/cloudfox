@@ -14,6 +14,7 @@ import (
 
 // KMSClientInterface is an interface for the AWS SDK KMS client.
 type KMSClientInterface interface {
+	ListKeys(context.Context, *kms.ListKeysInput, ...func(options *kms.Options)) (*kms.ListKeysOutput, error)
 	GetKeyPolicy(context.Context, *kms.GetKeyPolicyInput, ...func(options *kms.Options)) (*kms.GetKeyPolicyOutput, error)
 }
 
