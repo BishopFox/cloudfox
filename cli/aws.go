@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/gob"
 	"fmt"
+	"github.com/aws/aws-sdk-go-v2/service/kms"
 	"log"
 	"os"
 	"path/filepath"
@@ -1618,6 +1619,7 @@ func runResourceTrustsCommand(cmd *cobra.Command, args []string) {
 			continue
 		}
 		m := aws.ResourceTrustsModule{
+			KMSClient:          kms.NewFromConfig(AWSConfig),
 			Caller:             *caller,
 			AWSProfileProvided: profile,
 			Goroutines:         Goroutines,

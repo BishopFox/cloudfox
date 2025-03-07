@@ -19,6 +19,8 @@ import (
 )
 
 type ResourceTrustsModule struct {
+	KMSClient sdk.KMSClientInterface
+
 	// General configuration data
 	Caller             sts.GetCallerIdentityOutput
 	AWSRegions         []string
@@ -868,9 +870,7 @@ func (m *ResourceTrustsModule) getKMSPoliciesPerRegion(r string, wg *sync.WaitGr
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	cloudFoxKMSClient := InitKMSClient(m.Caller, m.AWSProfileProvided, m.CloudFoxVersion, m.Goroutines, m.AWSMFAToken)
-
-	listKeys, err := sdk.CachedKMSListKeys(cloudFoxKMSClient, aws.ToString(m.Caller.Account), r)
+	listKeys, err := sdk.CachedKMSListKeys(m.KMSClient, aws.ToString(m.Caller.Account), r)
 	if err != nil {
 		sharedLogger.Error(err.Error())
 		return
@@ -881,7 +881,7 @@ func (m *ResourceTrustsModule) getKMSPoliciesPerRegion(r string, wg *sync.WaitGr
 		var statementSummaryInEnglish string
 		var isInteresting = "No"
 
-		keyPolicy, err := sdk.CachedKMSGetKeyPolicy(cloudFoxKMSClient, r, aws.ToString(m.Caller.Account), aws.ToString(key.KeyId))
+		keyPolicy, err := sdk.CachedKMSGetKeyPolicy(m.KMSClient, r, aws.ToString(m.Caller.Account), aws.ToString(key.KeyId))
 		if err != nil {
 			sharedLogger.Error(err.Error())
 			m.CommandCounter.Error++
