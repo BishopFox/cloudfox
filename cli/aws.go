@@ -1898,6 +1898,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		sqsClient := sqs.NewFromConfig(AWSConfig)
 		ssmClient := ssm.NewFromConfig(AWSConfig)
 		stepFunctionClient := sfn.NewFromConfig(AWSConfig)
+		kmsClient := kms.NewFromConfig(AWSConfig)
 
 		fmt.Printf("[%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox :fox:")), green("Getting a lay of the land, aka \"What regions is this account using?\""))
 		inventory2 := aws.Inventory2Module{
@@ -2273,6 +2274,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		cloudFoxSNSClient.PrintSNS(AWSOutputDirectory, Verbosity)
 
 		resourceTrustsCommand := aws.ResourceTrustsModule{
+			KMSClient:          kmsClient,
 			Caller:             *caller,
 			AWSProfileProvided: profile,
 			Goroutines:         Goroutines,

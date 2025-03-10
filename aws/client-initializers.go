@@ -10,7 +10,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/fsx"
 	"github.com/aws/aws-sdk-go-v2/service/glue"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
-	"github.com/aws/aws-sdk-go-v2/service/kms"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/organizations"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -144,12 +143,6 @@ func InitPermissionsClient(caller sts.GetCallerIdentityOutput, AWSProfile string
 func InitSecretsManagerClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int, AWSMFAToken string) *secretsmanager.Client {
 	var AWSConfig = internal.AWSConfigFileLoader(AWSProfile, cfVersion, AWSMFAToken)
 	return secretsmanager.NewFromConfig(AWSConfig)
-}
-
-// InitKMSClient initializes a KMS client from aws.Config
-func InitKMSClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int, AWSMFAToken string) *kms.Client {
-	var AWSConfig = internal.AWSConfigFileLoader(AWSProfile, cfVersion, AWSMFAToken)
-	return kms.NewFromConfig(AWSConfig)
 }
 
 func InitGlueClient(caller sts.GetCallerIdentityOutput, AWSProfile string, cfVersion string, Goroutines int, AWSMFAToken string) *glue.Client {
