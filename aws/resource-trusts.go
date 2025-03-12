@@ -881,7 +881,7 @@ func (m *ResourceTrustsModule) getKMSPoliciesPerRegion(r string, wg *sync.WaitGr
 		var statementSummaryInEnglish string
 		var isInteresting = "No"
 
-		keyPolicy, err := sdk.CachedKMSGetKeyPolicy(m.KMSClient, r, aws.ToString(m.Caller.Account), aws.ToString(key.KeyId))
+		keyPolicy, err := sdk.CachedKMSGetKeyPolicy(m.KMSClient, aws.ToString(m.Caller.Account), r, aws.ToString(key.KeyId))
 		if err != nil {
 			sharedLogger.Error(err.Error())
 			m.CommandCounter.Error++
