@@ -127,7 +127,6 @@ func (m *EnvsModule) PrintEnvs(outputDirectory string, verbosity int) {
 		"Account",
 		"Service",
 		"Region",
-		"TaskDefinition",
 		"Name",
 		"Key",
 		"Value",
@@ -150,7 +149,6 @@ func (m *EnvsModule) PrintEnvs(outputDirectory string, verbosity int) {
 			"Account",
 			"Service",
 			"Region",
-			"TaskDefinition",
 			"Name",
 			"Key",
 			"Value",
@@ -159,7 +157,6 @@ func (m *EnvsModule) PrintEnvs(outputDirectory string, verbosity int) {
 		tableCols = []string{
 			"Service",
 			"Region",
-			"TaskDefinition",
 			"Name",
 			"Key",
 			"Value",
@@ -170,14 +167,20 @@ func (m *EnvsModule) PrintEnvs(outputDirectory string, verbosity int) {
 	//Table rows
 	for _, envVar := range m.EnvironmentVariables {
 
+		var finalName string
+		if envVar.taskDefinition != "" {
+			finalName = fmt.Sprintf("%s/%s", envVar.name, envVar.taskDefinition)
+		} else {
+			finalName = envVar.name
+		}
+
 		if envVar.interesting {
 			m.output.Body = append(
 				m.output.Body, []string{
 					aws.ToString(m.Caller.Account),
 					envVar.service,
 					envVar.region,
-					envVar.taskDefinition,
-					envVar.name,
+					finalName,
 					magenta(envVar.environmentVarName),
 					magenta(envVar.environmentVarValue),
 				},
@@ -188,8 +191,7 @@ func (m *EnvsModule) PrintEnvs(outputDirectory string, verbosity int) {
 					aws.ToString(m.Caller.Account),
 					envVar.service,
 					envVar.region,
-					envVar.taskDefinition,
-					envVar.name,
+					finalName,
 					envVar.environmentVarName,
 					envVar.environmentVarValue,
 				},
