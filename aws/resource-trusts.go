@@ -19,6 +19,8 @@ import (
 )
 
 type ResourceTrustsModule struct {
+	KMSClient sdk.KMSClientInterface
+
 	// General configuration data
 	Caller             sts.GetCallerIdentityOutput
 	AWSRegions         []string
@@ -55,7 +57,7 @@ type Resource2 struct {
 	HasConditions         string
 }
 
-func (m *ResourceTrustsModule) PrintResources(outputDirectory string, verbosity int) {
+func (m *ResourceTrustsModule) PrintResources(outputDirectory string, verbosity int, includeKms bool) {
 	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
@@ -72,13 +74,13 @@ func (m *ResourceTrustsModule) PrintResources(outputDirectory string, verbosity 
 	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfileProvided, aws.ToString(m.Caller.Account)))
 
 	fmt.Printf("[%s][%s] Enumerating Resources with resource policies for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfileStub), aws.ToString(m.Caller.Account))
-	fmt.Printf("[%s][%s] Supported Services: CodeBuild, ECR, EFS, Glue, Lambda, SecretsManager, S3, SNS, SQS\n", cyan(m.output.CallingModule), cyan(m.AWSProfileStub))
+	fmt.Printf("[%s][%s] Supported Services: CodeBuild, ECR, EFS, Glue, Lambda, SecretsManager, S3, SNS, SQS, KMS\n", cyan(m.output.CallingModule), cyan(m.AWSProfileStub))
 	wg := new(sync.WaitGroup)
 	semaphore := make(chan struct{}, m.Goroutines)
 
 	// Create a channel to signal the spinner aka task status goroutine to finish
 	spinnerDone := make(chan bool)
-	//fire up the the task status spinner/updated
+	//fire up the task status spinner/updated
 	go internal.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
 
 	//create a channel to receive the objects
@@ -91,7 +93,7 @@ func (m *ResourceTrustsModule) PrintResources(outputDirectory string, verbosity 
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
 		m.CommandCounter.Pending++
-		go m.executeChecks(region, wg, semaphore, dataReceiver)
+		go m.executeChecks(region, wg, semaphore, dataReceiver, includeKms)
 
 	}
 	wg.Add(1)
@@ -189,7 +191,7 @@ func (m *ResourceTrustsModule) PrintResources(outputDirectory string, verbosity 
 
 }
 
-func (m *ResourceTrustsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Resource2) {
+func (m *ResourceTrustsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Resource2, includeKms bool) {
 	defer wg.Done()
 
 	servicemap := &awsservicemap.AwsServiceMap{
@@ -269,6 +271,18 @@ func (m *ResourceTrustsModule) executeChecks(r string, wg *sync.WaitGroup, semap
 		m.CommandCounter.Total++
 		wg.Add(1)
 		m.getGlueResourcePoliciesPerRegion(r, wg, semaphore, dataReceiver)
+	}
+
+	if includeKms {
+		res, err = servicemap.IsServiceInRegion("kms", r)
+		if err != nil {
+			m.modLog.Error(err)
+		}
+		if res {
+			m.CommandCounter.Total++
+			wg.Add(1)
+			m.getKMSPoliciesPerRegion(r, wg, semaphore, dataReceiver)
+		}
 	}
 
 }
@@ -838,6 +852,74 @@ func (m *ResourceTrustsModule) getSecretsManagerSecretsPoliciesPerRegion(r strin
 					ResourcePolicySummary: statementSummaryInEnglish,
 					Public:                isPublic,
 					Name:                  aws.ToString(s.Name),
+					Region:                r,
+					Interesting:           isInteresting,
+				}
+			}
+		}
+	}
+}
+
+// getKMSPoliciesPerRegion retrieves the resource policies for all KMS keys in a specified region.
+// It sends the resulting Resource2 objects to the dataReceiver channel.
+// It uses a semaphore to limit the number of concurrent requests and a WaitGroup to wait for all requests to complete.
+// It takes the region to search in, the WaitGroup to use, the semaphore to use, and the dataReceiver channel to send results to.
+func (m *ResourceTrustsModule) getKMSPoliciesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Resource2) {
+	defer func() {
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+		wg.Done()
+	}()
+	semaphore <- struct{}{}
+	defer func() { <-semaphore }()
+
+	listKeys, err := sdk.CachedKMSListKeys(m.KMSClient, aws.ToString(m.Caller.Account), r)
+	if err != nil {
+		sharedLogger.Error(err.Error())
+		return
+	}
+
+	for _, key := range listKeys {
+		var isPublic string
+		var statementSummaryInEnglish string
+		var isInteresting = "No"
+
+		keyPolicy, err := sdk.CachedKMSGetKeyPolicy(m.KMSClient, aws.ToString(m.Caller.Account), r, aws.ToString(key.KeyId))
+		if err != nil {
+			sharedLogger.Error(err.Error())
+			m.CommandCounter.Error++
+			continue
+		}
+
+		if keyPolicy.IsPublic() {
+			isPublic = magenta("Yes")
+			isInteresting = magenta("Yes")
+		} else {
+			isPublic = "No"
+		}
+
+		if !keyPolicy.IsEmpty() {
+			for i, statement := range keyPolicy.Statement {
+				prefix := ""
+				if len(keyPolicy.Statement) > 1 {
+					prefix = fmt.Sprintf("Statement %d says: ", i)
+					statementSummaryInEnglish = prefix + statement.GetStatementSummaryInEnglish(*m.Caller.Account) + "\n"
+				} else {
+					statementSummaryInEnglish = statement.GetStatementSummaryInEnglish(*m.Caller.Account)
+				}
+
+				statementSummaryInEnglish = strings.TrimSuffix(statementSummaryInEnglish, "\n")
+				if isResourcePolicyInteresting(statementSummaryInEnglish) {
+					//magenta(statementSummaryInEnglish)
+					isInteresting = magenta("Yes")
+				}
+
+				dataReceiver <- Resource2{
+					AccountID:             aws.ToString(m.Caller.Account),
+					ARN:                   aws.ToString(key.KeyArn),
+					ResourcePolicySummary: statementSummaryInEnglish,
+					Public:                isPublic,
+					Name:                  aws.ToString(key.KeyId),
 					Region:                r,
 					Interesting:           isInteresting,
 				}

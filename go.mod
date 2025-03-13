@@ -1,8 +1,8 @@
 module github.com/BishopFox/cloudfox
 
-go 1.21.2
+go 1.22
 
-toolchain go1.21.6
+toolchain go1.24.0
 
 require (
 	cloud.google.com/go/artifactregistry v1.14.6
@@ -18,7 +18,7 @@ require (
 	github.com/Azure/go-autorest/autorest v0.11.29
 	github.com/Azure/go-autorest/autorest/azure/auth v0.5.12
 	github.com/aquasecurity/table v1.8.0
-	github.com/aws/aws-sdk-go-v2 v1.30.3
+	github.com/aws/aws-sdk-go-v2 v1.36.3
 	github.com/aws/aws-sdk-go-v2/config v1.27.27
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.27
 	github.com/aws/aws-sdk-go-v2/service/apigateway v1.25.4
@@ -70,7 +70,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.34.3
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.52.3
 	github.com/aws/aws-sdk-go-v2/service/sts v1.30.3
-	github.com/aws/smithy-go v1.20.3
+	github.com/aws/smithy-go v1.22.2
 	github.com/bishopfox/awsservicemap v1.0.3
 	github.com/bishopfox/knownawsaccountslookup v0.0.0-20231228165844-c37ef8df33cb
 	github.com/dominikbraun/graph v0.23.0
@@ -102,6 +102,7 @@ require (
 )
 
 require (
+	github.com/aws/aws-sdk-go-v2/service/kms v1.38.1
 	golang.org/x/oauth2 v0.15.0
 	google.golang.org/api v0.152.0
 	google.golang.org/genproto v0.0.0-20231106174013-bbf56f31fb17
@@ -130,8 +131,8 @@ require (
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.6.3 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.16.11 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.3.15 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.6.15 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.3.34 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.6.34 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/ini v1.8.0 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.3.15 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.11.3 // indirect
