@@ -57,7 +57,7 @@ type Resource2 struct {
 	HasConditions         string
 }
 
-func (m *ResourceTrustsModule) PrintResources(outputDirectory string, verbosity int) {
+func (m *ResourceTrustsModule) PrintResources(outputDirectory string, verbosity int, includeKms bool) {
 	// These struct values are used by the output module
 	m.output.Verbosity = verbosity
 	m.output.Directory = outputDirectory
@@ -93,7 +93,7 @@ func (m *ResourceTrustsModule) PrintResources(outputDirectory string, verbosity 
 	for _, region := range m.AWSRegions {
 		wg.Add(1)
 		m.CommandCounter.Pending++
-		go m.executeChecks(region, wg, semaphore, dataReceiver)
+		go m.executeChecks(region, wg, semaphore, dataReceiver, includeKms)
 
 	}
 	wg.Add(1)
@@ -191,7 +191,7 @@ func (m *ResourceTrustsModule) PrintResources(outputDirectory string, verbosity 
 
 }
 
-func (m *ResourceTrustsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Resource2) {
+func (m *ResourceTrustsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Resource2, includeKms bool) {
 	defer wg.Done()
 
 	servicemap := &awsservicemap.AwsServiceMap{
@@ -272,14 +272,17 @@ func (m *ResourceTrustsModule) executeChecks(r string, wg *sync.WaitGroup, semap
 		wg.Add(1)
 		m.getGlueResourcePoliciesPerRegion(r, wg, semaphore, dataReceiver)
 	}
-	res, err = servicemap.IsServiceInRegion("kms", r)
-	if err != nil {
-		m.modLog.Error(err)
-	}
-	if res {
-		m.CommandCounter.Total++
-		wg.Add(1)
-		m.getKMSPoliciesPerRegion(r, wg, semaphore, dataReceiver)
+
+	if includeKms {
+		res, err = servicemap.IsServiceInRegion("kms", r)
+		if err != nil {
+			m.modLog.Error(err)
+		}
+		if res {
+			m.CommandCounter.Total++
+			wg.Add(1)
+			m.getKMSPoliciesPerRegion(r, wg, semaphore, dataReceiver)
+		}
 	}
 
 }
