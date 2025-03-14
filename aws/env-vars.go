@@ -62,6 +62,7 @@ type EnvsModule struct {
 
 type EnvironmentVariable struct {
 	service             string
+	taskDefinition      string
 	name                string
 	region              string
 	environmentVarName  string
@@ -166,13 +167,20 @@ func (m *EnvsModule) PrintEnvs(outputDirectory string, verbosity int) {
 	//Table rows
 	for _, envVar := range m.EnvironmentVariables {
 
+		var finalName string
+		if envVar.taskDefinition != "" {
+			finalName = fmt.Sprintf("%s/%s", envVar.name, envVar.taskDefinition)
+		} else {
+			finalName = envVar.name
+		}
+
 		if envVar.interesting {
 			m.output.Body = append(
 				m.output.Body, []string{
 					aws.ToString(m.Caller.Account),
 					envVar.service,
 					envVar.region,
-					envVar.name,
+					finalName,
 					magenta(envVar.environmentVarName),
 					magenta(envVar.environmentVarValue),
 				},
@@ -183,7 +191,7 @@ func (m *EnvsModule) PrintEnvs(outputDirectory string, verbosity int) {
 					aws.ToString(m.Caller.Account),
 					envVar.service,
 					envVar.region,
-					envVar.name,
+					finalName,
 					envVar.environmentVarName,
 					envVar.environmentVarValue,
 				},
@@ -355,7 +363,7 @@ func (m *EnvsModule) getECSEnvironmentVariablesPerRegion(region string, wg *sync
 			break
 		}
 		for _, containerDefinition := range DescribeTaskDefinition.TaskDefinition.ContainerDefinitions {
-			m.getECSEnvironmentVariablesPerDefinition(containerDefinition, region, dataReceiver)
+			m.getECSEnvironmentVariablesPerDefinition(*DescribeTaskDefinition.TaskDefinition, containerDefinition, region, dataReceiver)
 		}
 	}
 }
@@ -394,12 +402,13 @@ func (m *EnvsModule) getTaskDefinitionFamilies(region string) []string {
 
 }
 
-func (m *EnvsModule) getECSEnvironmentVariablesPerDefinition(containerDefinition ecsTypes.ContainerDefinition, region string, dataReceiver chan EnvironmentVariable) {
+func (m *EnvsModule) getECSEnvironmentVariablesPerDefinition(taskDefinition ecsTypes.TaskDefinition, containerDefinition ecsTypes.ContainerDefinition, region string, dataReceiver chan EnvironmentVariable) {
 
 	if containerDefinition.Environment != nil {
 		for _, x := range containerDefinition.Environment {
 			dataReceiver <- EnvironmentVariable{
 				service:             "ECS",
+				taskDefinition:      getNameFromARN(aws.ToString(taskDefinition.TaskDefinitionArn)),
 				name:                aws.ToString(containerDefinition.Name),
 				region:              region,
 				environmentVarName:  aws.ToString(x.Name),
@@ -538,25 +547,22 @@ func (m *EnvsModule) getLightsailEnvironmentVariablesPerRegion(r string, wg *syn
 		return
 	}
 
-	if err == nil {
+	if len(ContainerServices) > 0 {
 
-		if len(ContainerServices) > 0 {
-
-			for _, containerService := range ContainerServices {
-				for _, container := range containerService.CurrentDeployment.Containers {
-					for k, v := range container.Environment {
-						name := aws.ToString(containerService.ContainerServiceName)
-						dataReceiver <- EnvironmentVariable{
-							service:             awsService,
-							name:                name,
-							region:              r,
-							environmentVarName:  k,
-							environmentVarValue: v,
-						}
+		for _, containerService := range ContainerServices {
+			for _, container := range containerService.CurrentDeployment.Containers {
+				for k, v := range container.Environment {
+					name := aws.ToString(containerService.ContainerServiceName)
+					dataReceiver <- EnvironmentVariable{
+						service:             awsService,
+						name:                name,
+						region:              r,
+						environmentVarName:  k,
+						environmentVarValue: v,
 					}
 				}
-
 			}
+
 		}
 	}
 }
@@ -675,18 +681,16 @@ func (m *EnvsModule) getSagemakerEnvironmentVariablesPerRegion(r string, wg *syn
 				m.CommandCounter.Error++
 				break
 			}
-			if err == nil {
 
-				if len(DescribeTransformJob.Environment) > 0 {
-					name := fmt.Sprintf("[Transform Job] %s", aws.ToString(DescribeTransformJob.TransformJobName))
-					for k, v := range DescribeTransformJob.Environment {
-						dataReceiver <- EnvironmentVariable{
-							service:             awsService,
-							name:                name,
-							region:              r,
-							environmentVarName:  k,
-							environmentVarValue: v,
-						}
+			if len(DescribeTransformJob.Environment) > 0 {
+				name := fmt.Sprintf("[Transform Job] %s", aws.ToString(DescribeTransformJob.TransformJobName))
+				for k, v := range DescribeTransformJob.Environment {
+					dataReceiver <- EnvironmentVariable{
+						service:             awsService,
+						name:                name,
+						region:              r,
+						environmentVarName:  k,
+						environmentVarValue: v,
 					}
 				}
 			}
@@ -738,20 +742,18 @@ func (m *EnvsModule) getSagemakerEnvironmentVariablesPerRegion(r string, wg *syn
 				m.CommandCounter.Error++
 				break
 			}
-			if err == nil {
 
-				if len(DescribeTrainingJob.Environment) > 0 {
-					name := fmt.Sprintf("[Training Job] %s", aws.ToString(DescribeTrainingJob.TrainingJobName))
-					for k, v := range DescribeTrainingJob.Environment {
-						dataReceiver <- EnvironmentVariable{
-							service:             awsService,
-							name:                name,
-							region:              r,
-							environmentVarName:  k,
-							environmentVarValue: v,
-						}
-
+			if len(DescribeTrainingJob.Environment) > 0 {
+				name := fmt.Sprintf("[Training Job] %s", aws.ToString(DescribeTrainingJob.TrainingJobName))
+				for k, v := range DescribeTrainingJob.Environment {
+					dataReceiver <- EnvironmentVariable{
+						service:             awsService,
+						name:                name,
+						region:              r,
+						environmentVarName:  k,
+						environmentVarValue: v,
 					}
+
 				}
 			}
 		}
