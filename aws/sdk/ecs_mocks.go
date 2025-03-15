@@ -135,12 +135,30 @@ func (c *MockedECSClient) DescribeTasks(ctx context.Context, input *ecs.Describe
 							Status:  aws.String(a.Status),
 						})
 					}
+
+					var containers []ecsTypes.Container
+
+					for _, container := range mockedTask.Containers {
+						containers = append(containers, ecsTypes.Container{
+							ContainerArn: aws.String(container.ContainerArn),
+							Cpu:          aws.String(container.CPU),
+							HealthStatus: ecsTypes.HealthStatus(container.HealthStatus),
+							Image:        aws.String(container.Image),
+							LastStatus:   aws.String(container.LastStatus),
+							Memory:       aws.String(container.Memory),
+							Name:         aws.String(container.Name),
+							RuntimeId:    aws.String(container.RuntimeID),
+							TaskArn:      aws.String(container.TaskArn),
+						})
+					}
+
 					tasks = append(tasks, ecsTypes.Task{
 						ClusterArn:        aws.String(mockedTask.ClusterArn),
 						TaskDefinitionArn: aws.String(mockedTask.TaskDefinitionArn),
 						LaunchType:        ecsTypes.LaunchType(*aws.String(mockedTask.LaunchType)),
 						TaskArn:           aws.String(mockedTask.TaskArn),
 						Attachments:       attachments,
+						Containers:        containers,
 					})
 				}
 			}

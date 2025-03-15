@@ -408,7 +408,8 @@ var (
 		PostRun: awsPostRun,
 	}
 
-	ResourceTrustsCommand = &cobra.Command{
+	ResourceTrustsIncludeKms bool
+	ResourceTrustsCommand    = &cobra.Command{
 		Use:     "resource-trusts",
 		Aliases: []string{"resourcetrusts", "resourcetrust"},
 		Short:   "Enumerate all resource trusts",
@@ -1630,7 +1631,7 @@ func runResourceTrustsCommand(cmd *cobra.Command, args []string) {
 			AWSTableCols:       AWSTableCols,
 			AWSConfig:          AWSConfig,
 		}
-		m.PrintResources(AWSOutputDirectory, Verbosity)
+		m.PrintResources(AWSOutputDirectory, Verbosity, ResourceTrustsIncludeKms)
 	}
 }
 
@@ -2286,7 +2287,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			AWSMFAToken:        AWSMFAToken,
 			AWSConfig:          AWSConfig,
 		}
-		resourceTrustsCommand.PrintResources(AWSOutputDirectory, Verbosity)
+		resourceTrustsCommand.PrintResources(AWSOutputDirectory, Verbosity, ResourceTrustsIncludeKms)
 
 		codeBuildCommand := aws.CodeBuildModule{
 			CodeBuildClient:     codeBuildClient,
@@ -2444,6 +2445,9 @@ func init() {
 
 	// cape tui command flags
 	CapeTuiCmd.Flags().BoolVar(&CapeAdminOnly, "admin-only", false, "Only return paths that lead to an admin role - much faster")
+
+	// Resource Trust command flags
+	ResourceTrustsCommand.Flags().BoolVar(&ResourceTrustsIncludeKms, "include-kms", false, "Include KMS keys in the output")
 
 	// Global flags for the AWS modules
 	AWSCommands.PersistentFlags().StringVarP(&AWSProfile, "profile", "p", "", "AWS CLI Profile Name")
