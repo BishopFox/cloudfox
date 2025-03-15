@@ -74,7 +74,15 @@ func (m *ResourceTrustsModule) PrintResources(outputDirectory string, verbosity 
 	m.output.FilePath = filepath.Join(outputDirectory, "cloudfox-output", "aws", fmt.Sprintf("%s-%s", m.AWSProfileProvided, aws.ToString(m.Caller.Account)))
 
 	fmt.Printf("[%s][%s] Enumerating Resources with resource policies for account %s.\n", cyan(m.output.CallingModule), cyan(m.AWSProfileStub), aws.ToString(m.Caller.Account))
-	fmt.Printf("[%s][%s] Supported Services: CodeBuild, ECR, EFS, Glue, Lambda, SecretsManager, S3, SNS, SQS, KMS\n", cyan(m.output.CallingModule), cyan(m.AWSProfileStub))
+	// if kms feature flag is enabled include kms in the supported services
+	if includeKms {
+		fmt.Printf("[%s][%s] Supported Services: CodeBuild, ECR, EFS, Glue, KMS, Lambda, SecretsManager, S3, SNS, SQS\n",
+			cyan(m.output.CallingModule), cyan(m.AWSProfileStub))
+	} else {
+		fmt.Printf("[%s][%s] Supported Services: CodeBuild, ECR, EFS, Glue, Lambda, SecretsManager, S3, SNS, "+
+			"SQS (KMS requires --include-kms feature flag)\n",
+			cyan(m.output.CallingModule), cyan(m.AWSProfileStub))
+	}
 	wg := new(sync.WaitGroup)
 	semaphore := make(chan struct{}, m.Goroutines)
 
@@ -271,15 +279,6 @@ func (m *ResourceTrustsModule) executeChecks(r string, wg *sync.WaitGroup, semap
 		m.CommandCounter.Total++
 		wg.Add(1)
 		m.getGlueResourcePoliciesPerRegion(r, wg, semaphore, dataReceiver)
-	}
-	res, err = servicemap.IsServiceInRegion("kms", r)
-	if err != nil {
-		m.modLog.Error(err)
-	}
-	if res {
-		m.CommandCounter.Total++
-		wg.Add(1)
-		m.getKMSPoliciesPerRegion(r, wg, semaphore, dataReceiver)
 	}
 
 	if includeKms {
