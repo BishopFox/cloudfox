@@ -155,7 +155,7 @@ func AWSConfigFileLoader(AWSProfile string, version string, AwsMfaToken string) 
 				TxtLog.Fatalf("Could not retrieve the specified profile name %s", err)
 			} else {
 				fmt.Printf("[%s][%s] Error retrieving credentials from environment variables, or the instance metadata service.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), cyan(AWSProfile))
-				TxtLog.Fatalf("Error retrieving credentials from environment variables, or the instance metadata service.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), cyan(AWSProfile))
+				TxtLog.Fatalf("[%s][%s]Error retrieving credentials from environment variables, or the instance metadata service.\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", version)), cyan(AWSProfile))
 			}
 			//os.Exit(1)
 		}

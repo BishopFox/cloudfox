@@ -271,6 +271,15 @@ func (m *DatabasesModule) executeRdsCheck(r string, wg *sync.WaitGroup, semaphor
 		service:      "rds",
 		executor:     m.getRdsClustersPerRegion,
 	})
+	m.executeCheck(check{
+		region:       r,
+		wg:           wg,
+		semaphore:    semaphore,
+		dataReceiver: dataReceiver,
+		serviceMap:   servicemap,
+		service:      "rds",
+		executor:     m.getRdsInstancesPerRegion,
+	})
 }
 
 func (m *DatabasesModule) executeRedshiftCheck(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Database, servicemap *awsservicemap.AwsServiceMap) {
@@ -389,6 +398,75 @@ func (m *DatabasesModule) getRdsClustersPerRegion(r string, wg *sync.WaitGroup, 
 			UserName:   aws.ToString(cluster.MasterUsername),
 			Port:       aws.ToInt32(port),
 			Protocol:   aws.ToString(cluster.Engine),
+			Public:     public,
+			Roles:      roles,
+		}
+	}
+}
+
+func (m *DatabasesModule) getRdsInstancesPerRegion(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Database) {
+	defer func() {
+		m.CommandCounter.Executing--
+		m.CommandCounter.Complete++
+		wg.Done()
+
+	}()
+	semaphore <- struct{}{}
+	defer func() {
+		<-semaphore
+	}()
+	m.CommandCounter.Pending--
+	m.CommandCounter.Executing++
+
+	DBInstances, err := sdk.CachedRDSDescribeDBInstances(m.RDSClient, aws.ToString(m.Caller.Account), r)
+
+	if err != nil {
+		m.modLog.Error(err.Error())
+		m.CommandCounter.Error++
+		return
+	}
+
+	for _, instance := range DBInstances {
+		var public string
+		var service string
+		var roles string
+		if instance.Endpoint == nil {
+			continue
+		}
+
+		name := aws.ToString(instance.DBInstanceIdentifier)
+		port := instance.Endpoint.Port
+		endpoint := aws.ToString(instance.Endpoint.Address)
+		engine := aws.ToString(instance.Engine)
+
+		if aws.ToBool(instance.PubliclyAccessible) {
+			public = "True"
+		} else {
+			public = "False"
+		}
+
+		if isNeptune(instance.Engine) {
+			service = "Neptune"
+		} else if isDocDB(instance.Engine) {
+			service = "DocsDB"
+		} else {
+			service = "RDS"
+		}
+
+		associatedRoles := instance.AssociatedRoles
+		for _, role := range associatedRoles {
+			roles = roles + aws.ToString(role.RoleArn) + " "
+		}
+
+		dataReceiver <- Database{
+			AWSService: service,
+			Region:     r,
+			Name:       name,
+			Engine:     engine,
+			Endpoint:   endpoint,
+			UserName:   aws.ToString(instance.MasterUsername),
+			Port:       aws.ToInt32(port),
+			Protocol:   aws.ToString(instance.Engine),
 			Public:     public,
 			Roles:      roles,
 		}

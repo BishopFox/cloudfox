@@ -50,6 +50,7 @@ type MappedECSTask struct {
 	Cluster               string
 	TaskDefinitionName    string
 	TaskDefinitionContent string
+	ContainerName         string
 	LaunchType            string
 	ID                    string
 	ExternalIP            string
@@ -145,6 +146,7 @@ func (m *ECSTasksModule) printECSTaskData(outputDirectory string, dataReceiver c
 		"Account",
 		"Cluster",
 		"TaskDefinition",
+		"ContainerName",
 		"LaunchType",
 		"ID",
 		"External IP",
@@ -171,6 +173,7 @@ func (m *ECSTasksModule) printECSTaskData(outputDirectory string, dataReceiver c
 			"Account",
 			"Cluster",
 			"TaskDefinition",
+			"ContainerName",
 			"LaunchType",
 			"ID",
 			"External IP",
@@ -184,6 +187,7 @@ func (m *ECSTasksModule) printECSTaskData(outputDirectory string, dataReceiver c
 		tableCols = []string{
 			"Cluster",
 			"TaskDefinition",
+			"ContainerName",
 			"LaunchType",
 			"External IP",
 			"Internal IP",
@@ -206,6 +210,7 @@ func (m *ECSTasksModule) printECSTaskData(outputDirectory string, dataReceiver c
 				aws.ToString(m.Caller.Account),
 				ecsTask.Cluster,
 				ecsTask.TaskDefinitionName,
+				ecsTask.ContainerName,
 				ecsTask.LaunchType,
 				ecsTask.ID,
 				ecsTask.ExternalIP,
@@ -368,7 +373,7 @@ func (m *ECSTasksModule) loadTasksData(clusterARN string, taskARNs []string, reg
 		return
 	}
 
-	eniIDs := []string{}
+	var eniIDs []string
 	for _, task := range Tasks {
 		eniID := getElasticNetworkInterfaceIDOfECSTask(task)
 		if eniID != "" {
@@ -394,6 +399,7 @@ func (m *ECSTasksModule) loadTasksData(clusterARN string, taskARNs []string, reg
 			Cluster:               getNameFromARN(clusterARN),
 			TaskDefinitionName:    getNameFromARN(aws.ToString(task.TaskDefinitionArn)),
 			TaskDefinitionContent: getTaskDefinitionContent(taskDefinition),
+			ContainerName:         getContainerNamesFromECSTask(task),
 			LaunchType:            string(task.LaunchType),
 			ID:                    getIDFromECSTask(aws.ToString(task.TaskArn)),
 			PrivateIP:             getPrivateIPv4AddressFromECSTask(task),
@@ -505,8 +511,18 @@ func getIDFromECSTask(arn string) string {
 	return tokens[2]
 }
 
+func getContainerNamesFromECSTask(task types.Task) string {
+	var names []string
+
+	for _, container := range task.Containers {
+		names = append(names, aws.ToString(container.Name))
+	}
+
+	return strings.Join(names, "|")
+}
+
 func getPrivateIPv4AddressFromECSTask(task types.Task) string {
-	ips := []string{}
+	var ips []string
 
 	for _, attachment := range task.Attachments {
 		if aws.ToString(attachment.Type) != "ElasticNetworkInterface" || aws.ToString(attachment.Status) != "ATTACHED" {

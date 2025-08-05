@@ -19,6 +19,7 @@ type AWSEC2ClientInterface interface {
 	DescribeVolumes(context.Context, *ec2.DescribeVolumesInput, ...func(*ec2.Options)) (*ec2.DescribeVolumesOutput, error)
 	DescribeImages(context.Context, *ec2.DescribeImagesInput, ...func(*ec2.Options)) (*ec2.DescribeImagesOutput, error)
 	DescribeInstanceAttribute(context.Context, *ec2.DescribeInstanceAttributeInput, ...func(*ec2.Options)) (*ec2.DescribeInstanceAttributeOutput, error)
+	DescribeVpcEndpoints(context.Context, *ec2.DescribeVpcEndpointsInput, ...func(options *ec2.Options)) (*ec2.DescribeVpcEndpointsOutput, error)
 }
 
 func init() {
@@ -27,7 +28,7 @@ func init() {
 	gob.Register([]ec2Types.Snapshot{})
 	gob.Register([]ec2Types.Volume{})
 	gob.Register([]ec2Types.Image{})
-
+	gob.Register([]ec2Types.VpcEndpoint{})
 }
 
 func CachedEC2DescribeInstances(client AWSEC2ClientInterface, accountID string, region string) ([]ec2Types.Instance, error) {
@@ -224,5 +225,36 @@ func CachedEC2DescribeImages(client AWSEC2ClientInterface, accountID string, reg
 
 	internal.Cache.Set(cacheKey, Images, cache.DefaultExpiration)
 	return Images, nil
+}
 
+func CachedEC2DescribeVpcEndpoints(client AWSEC2ClientInterface, accountID string, region string) ([]ec2Types.VpcEndpoint, error) {
+	var PaginationControl *string
+	var VpcEndpoints []ec2Types.VpcEndpoint
+	cacheKey := fmt.Sprintf("%s-ec2-DescribeVpcEndpoints-%s", accountID, region)
+	cached, found := internal.Cache.Get(cacheKey)
+	if found {
+		return cached.([]ec2Types.VpcEndpoint), nil
+	}
+	for {
+		DescribeVpcEndpoints, err := client.DescribeVpcEndpoints(
+			context.TODO(),
+			&(ec2.DescribeVpcEndpointsInput{
+				NextToken: PaginationControl,
+			}),
+			func(o *ec2.Options) {
+				o.Region = region
+			},
+		)
+		if err != nil {
+			return VpcEndpoints, err
+		}
+		VpcEndpoints = append(VpcEndpoints, DescribeVpcEndpoints.VpcEndpoints...)
+
+		if DescribeVpcEndpoints.NextToken == nil {
+			break
+		}
+		PaginationControl = DescribeVpcEndpoints.NextToken
+	}
+	internal.Cache.Set(cacheKey, VpcEndpoints, cache.DefaultExpiration)
+	return VpcEndpoints, nil
 }

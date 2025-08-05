@@ -26,7 +26,7 @@ type RoleTrustStatementEntry struct {
 	Action    string `json:"Action"`
 	Condition struct {
 		StringEquals struct {
-			StsExternalID                       string           `json:"sts:ExternalId"`
+			StsExternalID                       ListOfPrincipals `json:"sts:ExternalId"`
 			SAMLAud                             string           `json:"SAML:aud"`
 			TokenActionsGithubusercontentComSub ListOfPrincipals `json:"token.actions.githubusercontent.com:sub"`
 			TokenActionsGithubusercontentComAud string           `json:"token.actions.githubusercontent.com:aud"`

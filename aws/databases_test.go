@@ -42,10 +42,11 @@ func TestDatabasesCommand(t *testing.T) {
 	}
 
 	expectedResults := []string{
-		"db1.cluster-123456789012.us-west-2.rds.amazonaws.com",
-		"db2.cluster-123456789012.us-west-2.rds.amazonaws.com",
-		"db3.cluster-123456789012.us-west-2.neptune.amazonaws.com",
-		"db4.cluster-123456789012.us-west-2.docdb.amazonaws.com",
+		"db1.cluster-123456789012.us-west-2.rds.amazonaws.com", // make sure it includes the Aurora clusters
+		"db2.cluster-123456789012.us-west-2.rds.amazonaws.com", // make sure it includes the Aurora clusters
+		"db3.cluster-123456789012.us-west-2.neptune.amazonaws.com", // make sure it includes the Neptune instances
+		"db4.cluster-123456789012.us-west-2.docdb.amazonaws.com", // make sure it includes the DocumentDB instances
+		"db1-instances-1.blah.us-west-2.rds.amazonaws.com", // make sure it includes the RDS instances
 	}
 
 	for _, expected := range expectedResults {

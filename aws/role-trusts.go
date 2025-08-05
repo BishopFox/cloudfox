@@ -219,9 +219,10 @@ func (m *RoleTrustsModule) printPrincipalTrusts(outputDirectory string) ([]strin
 					RoleARN:          aws.ToString(role.roleARN),
 					RoleName:         GetResourceNameFromArn(aws.ToString(role.roleARN)),
 					TrustedPrincipal: principal,
-					ExternalID:       statement.Condition.StringEquals.StsExternalID,
-					IsAdmin:          role.Admin,
-					CanPrivEsc:       role.CanPrivEsc,
+					// if there is more than one externalID concat them using newlines
+					ExternalID: strings.Join(statement.Condition.StringEquals.StsExternalID, "\n"),
+					IsAdmin:    role.Admin,
+					CanPrivEsc: role.CanPrivEsc,
 				}
 				body = append(body, []string{
 					aws.ToString(m.Caller.Account),
@@ -281,7 +282,7 @@ func (m *RoleTrustsModule) printPrincipalTrustsRootOnly(outputDirectory string) 
 	for _, role := range m.AnalyzedRoles {
 		for _, statement := range role.trustsDoc.Statement {
 			for _, principal := range statement.Principal.AWS {
-				if strings.Contains(principal, ":root") && statement.Condition.StringEquals.StsExternalID == "" {
+				if strings.Contains(principal, ":root") && statement.Condition.StringEquals.StsExternalID == nil {
 					accountID := strings.Split(principal, ":")[4]
 					vendorName := m.vendors.GetVendorNameFromAccountID(accountID)
 					if vendorName != "" {
@@ -292,7 +293,7 @@ func (m *RoleTrustsModule) printPrincipalTrustsRootOnly(outputDirectory string) 
 						RoleARN:          aws.ToString(role.roleARN),
 						RoleName:         GetResourceNameFromArn(aws.ToString(role.roleARN)),
 						TrustedPrincipal: principal,
-						ExternalID:       statement.Condition.StringEquals.StsExternalID,
+						ExternalID:       strings.Join(statement.Condition.StringEquals.StsExternalID, "\n"),
 						IsAdmin:          role.Admin,
 						CanPrivEsc:       role.CanPrivEsc,
 					}

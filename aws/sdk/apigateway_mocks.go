@@ -22,6 +22,7 @@ func (m *MockedAWSAPIGatewayClient) GetRestApis(ctx context.Context, input *apig
 						apiGatewayTypes.EndpointTypePrivate,
 					},
 				},
+				Policy: aws.String("{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":\"*\",\"Action\":\"execute-api:Invoke\",\"Resource\":\"arn:aws:execute-api:us-west-2:123456789012:abcdefg/*/*/*\"}]}"),
 			},
 			{
 				Id:   aws.String("qwerty"),

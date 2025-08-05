@@ -17,7 +17,7 @@ package iamservice
 // 	Projects []string
 // }
 
-// // Be incorportated in iam.go
+// // Be incorporated in iam.go
 // func (m *AccessTokensModule) PrintAccessTokens(outputFormat string, outputDirectory string, verbosity int) error {
 // 	GCPLogger.InfoM(fmt.Sprintf("Enumerating GCP local access tokens (%s, %s)...", color.CyanString("default user token"), color.RedString("application-default token")), globals.GCP_ACCESSTOKENS_MODULE_NAME)
 // 	tokens := gcp.ReadRefreshTokens()

@@ -331,7 +331,7 @@ func (m *GraphCommand) collectRoleDataForGraph() []models.Role {
 
 				TrustedPrincipals = append(TrustedPrincipals, models.TrustedPrincipal{
 					TrustedPrincipal: principal,
-					ExternalID:       statement.Condition.StringEquals.StsExternalID,
+					ExternalID:       strings.Join(statement.Condition.StringEquals.StsExternalID, "\n"),
 					VendorName:       vendorName,
 					//IsAdmin:           false,
 					//CanPrivEscToAdmin: false,

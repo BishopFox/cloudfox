@@ -23,7 +23,6 @@ func TestECSTasks(t *testing.T) {
 			outputDirectory: ".",
 			verbosity:       2,
 			testModule: ECSTasksModule{
-
 				AWSProfile:     "default",
 				AWSRegions:     []string{"us-east-1", "us-west-1"},
 				Caller:         sts.GetCallerIdentityOutput{Arn: aws.String("arn:aws:iam::123456789012:user/cloudfox_unit_tests")},
@@ -33,10 +32,11 @@ func TestECSTasks(t *testing.T) {
 				ECSClient:      &sdk.MockedECSClient{},
 			},
 			expectedResult: []MappedECSTask{{
-				Cluster:    "MyCluster",
-				ID:         "74de0355a10a4f979ac495c14EXAMPLE",
-				ExternalIP: "203.0.113.12",
-				Role:       "test123",
+				Cluster:       "MyCluster",
+				ID:            "74de0355a10a4f979ac495c14EXAMPLE",
+				ContainerName: "web",
+				ExternalIP:    "203.0.113.12",
+				Role:          "test123",
 			}},
 		},
 	}
@@ -47,6 +47,9 @@ func TestECSTasks(t *testing.T) {
 			for index, expectedTask := range subtest.expectedResult {
 				if expectedTask.Cluster != subtest.testModule.MappedECSTasks[index].Cluster {
 					log.Fatal("Cluster name does not match expected value")
+				}
+				if expectedTask.ContainerName != subtest.testModule.MappedECSTasks[index].ContainerName {
+					log.Fatal("Container name does not match expected value")
 				}
 			}
 		})
