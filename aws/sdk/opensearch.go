@@ -23,7 +23,7 @@ func init() {
 	gob.Register(openSearchTypes.DomainStatus{})
 }
 
-// create CachedOpenSearchListDomainNames function that uses go-cache and pagination
+// CachedOpenSearchListDomainNames function that uses go-cache and pagination
 func CachedOpenSearchListDomainNames(client OpenSearchClientInterface, accountID string, region string) ([]openSearchTypes.DomainInfo, error) {
 	var domains []openSearchTypes.DomainInfo
 	cacheKey := fmt.Sprintf("%s-opensearch-ListDomainNames-%s", accountID, region)
@@ -50,8 +50,11 @@ func CachedOpenSearchListDomainNames(client OpenSearchClientInterface, accountID
 	return domains, nil
 }
 
-// create CachedOpenSearchDescribeDomainConfig function that uses go-cache and pagination and supports region option
+// CachedOpenSearchDescribeDomainConfig function that uses go-cache and pagination and supports region option
 func CachedOpenSearchDescribeDomainConfig(client OpenSearchClientInterface, accountID string, region string, domainName string) (openSearchTypes.DomainConfig, error) {
+
+	fmt.Printf("CachedOpenSearchDescribeDomainConfig: %s %s %s\n", accountID, region, domainName)
+
 	var DomainConfig openSearchTypes.DomainConfig
 	cacheKey := fmt.Sprintf("%s-opensearch-DescribeDomainConfig-%s-%s", accountID, region, domainName)
 	cached, found := internal.Cache.Get(cacheKey)
@@ -78,7 +81,7 @@ func CachedOpenSearchDescribeDomainConfig(client OpenSearchClientInterface, acco
 	return DomainConfig, nil
 }
 
-// create CachedOpenSearchDescribeDomain function that uses go-cache and pagination and supports region option
+// CachedOpenSearchDescribeDomain function that uses go-cache and pagination and supports region option
 func CachedOpenSearchDescribeDomain(client OpenSearchClientInterface, accountID string, region string, domainName string) (openSearchTypes.DomainStatus, error) {
 	var DomainStatus openSearchTypes.DomainStatus
 	cacheKey := fmt.Sprintf("%s-opensearch-DescribeDomain-%s-%s", accountID, region, domainName)

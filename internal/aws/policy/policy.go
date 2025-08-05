@@ -22,7 +22,7 @@ func ParseJSONPolicy(data []byte) (Policy, error) {
 	return p, nil
 }
 
-// IsNull returns true iff the Policy is empty
+// IsEmpty returns true if the Policy is empty
 // you cannot do a comparison like this: `p == Policy{}' since we use custom types in the struct`
 func (p *Policy) IsEmpty() bool {
 	out := true
@@ -37,7 +37,7 @@ func (p *Policy) IsEmpty() bool {
 	return out
 }
 
-// true iff there is at least one statement with principal * and no conditions
+// IsPublic true if there is at least one statement with principal * and no conditions
 func (p *Policy) IsPublic() bool {
 	for _, s := range p.Statement {
 		if s.IsAllow() && s.Principal.IsPublic() && s.Condition.IsEmpty() {
@@ -48,7 +48,7 @@ func (p *Policy) IsPublic() bool {
 	return false
 }
 
-// true iff there is at least one statement with principal * with conditions that do not scope access down to AWS accounts or organizations
+// IsConditionallyPublic true if there is at least one statement with principal * with conditions that do not scope access down to AWS accounts or organizations
 func (p *Policy) IsConditionallyPublic() bool {
 	for _, s := range p.Statement {
 		if s.IsAllow() && s.Principal.IsPublic() && !s.Condition.IsScopedOnAccountOrOrganization() && !s.Condition.IsEmpty() {
@@ -99,8 +99,8 @@ func composePattern(stringToTransform string) *regexp.Regexp {
 	return pattern
 }
 
-// source: https://github.com/nccgroup/PMapper/blob/master/principalmapper/querying/local_policy_simulation.py
 // MatchesAfterExpansion checks the stringToCheck against stringToCheckAgainst.
+// source: https://github.com/nccgroup/PMapper/blob/master/principalmapper/querying/local_policy_simulation.py
 func MatchesAfterExpansion(stringFromPolicyToCheck, stringToCheckAgainst string) bool {
 	// Transform the stringToCheckAgainst into a regex pattern
 	pattern := composePattern(stringToCheckAgainst)
@@ -108,9 +108,6 @@ func MatchesAfterExpansion(stringFromPolicyToCheck, stringToCheckAgainst string)
 	// Check if the pattern matches stringToCheck
 	return pattern.MatchString(stringFromPolicyToCheck)
 }
-
-
-
 
 func (p *Policy) DoesPolicyHaveMatchingStatement(effect string, actionToCheck string, resourceToCheck string) bool {
 

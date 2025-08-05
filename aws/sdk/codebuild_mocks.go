@@ -5,6 +5,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
+	codeBuildTypes "github.com/aws/aws-sdk-go-v2/service/codebuild/types"
 )
 
 type MockedCodeBuildClient struct {
@@ -15,6 +16,19 @@ func (m *MockedCodeBuildClient) ListProjects(ctx context.Context, input *codebui
 		Projects: []string{
 			"project1",
 			"project2",
+		},
+	}, nil
+}
+
+func (m *MockedCodeBuildClient) BatchGetProjects(ctx context.Context, input *codebuild.BatchGetProjectsInput, options ...func(*codebuild.Options)) (*codebuild.BatchGetProjectsOutput, error) {
+	return &codebuild.BatchGetProjectsOutput{
+		Projects: []codeBuildTypes.Project{
+			{
+				Name: aws.String("project1"),
+			},
+			{
+				Name: aws.String("project2"),
+			},
 		},
 	}, nil
 }

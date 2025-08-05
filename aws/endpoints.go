@@ -105,7 +105,7 @@ func (m *EndpointsModule) PrintEndpoints(outputDirectory string, verbosity int) 
 	semaphore := make(chan struct{}, m.Goroutines)
 	// Create a channel to signal the spinner aka task status goroutine to finish
 	spinnerDone := make(chan bool)
-	//fire up the the task status spinner/updated
+	//fire up the task status spinner/updated
 	go internal.SpinUntil(m.output.CallingModule, &m.CommandCounter, spinnerDone, "tasks")
 
 	//create a channel to receive the objects
@@ -447,7 +447,7 @@ func (m *EndpointsModule) getLambdaFunctionsPerRegion(r string, wg *sync.WaitGro
 		FunctionDetails, err := sdk.CachedLambdaGetFunctionUrlConfig(m.LambdaClient, aws.ToString(m.Caller.Account), r, name)
 		if err != nil {
 			if errors.As(err, &oe) {
-				m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
+				m.Errors = append(m.Errors, fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation()))
 			}
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
@@ -503,7 +503,7 @@ func (m *EndpointsModule) getEksClustersPerRegion(r string, wg *sync.WaitGroup, 
 
 		if err != nil {
 			if errors.As(err, &oe) {
-				m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
+				m.Errors = append(m.Errors, fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation()))
 			}
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
@@ -576,7 +576,7 @@ func (m *EndpointsModule) getMqBrokersPerRegion(r string, wg *sync.WaitGroup, se
 		)
 		if err != nil {
 			if errors.As(err, &oe) {
-				m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
+				m.Errors = append(m.Errors, fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation()))
 			}
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
@@ -629,36 +629,27 @@ func (m *EndpointsModule) getOpenSearchPerRegion(r string, wg *sync.WaitGroup, s
 	for _, domainName := range DomainNames {
 		name := aws.ToString(domainName.DomainName)
 
-		//TODO: convert this to cacehd function
-		DomainNameDetails, err := m.OpenSearchClient.DescribeDomain(
-			context.TODO(),
-			&(opensearch.DescribeDomainInput{
-				DomainName: &name,
-			}),
-			func(o *opensearch.Options) {
-				o.Region = r
-			},
-		)
+		DomainStatus, err := sdk.CachedOpenSearchDescribeDomain(m.OpenSearchClient, aws.ToString(m.Caller.Account), r, name)
+
 		if err != nil {
 			if errors.As(err, &oe) {
-				m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
+				m.Errors = append(m.Errors, fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation()))
 			}
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
 			return
 		}
 
-		raw_endpoint := DomainNameDetails.DomainStatus.Endpoint
+		rawEndpoint := DomainStatus.Endpoint
 		var endpoint string
-		var kibana_endpoint string
+		var kibanaEndpoint string
 
 		// This exits the function if an opensearch domain exists but there is no endpoint
-		if raw_endpoint == nil {
+		if rawEndpoint == nil {
 			return
 		} else {
-
-			endpoint = fmt.Sprintf("https://%s", aws.ToString(raw_endpoint))
-			kibana_endpoint = fmt.Sprintf("https://%s/_plugin/kibana/", aws.ToString(raw_endpoint))
+			endpoint = fmt.Sprintf("https://%s", aws.ToString(rawEndpoint))
+			kibanaEndpoint = fmt.Sprintf("https://%s/_plugin/kibana/", aws.ToString(rawEndpoint))
 		}
 
 		//fmt.Println(endpoint)
@@ -689,7 +680,7 @@ func (m *EndpointsModule) getOpenSearchPerRegion(r string, wg *sync.WaitGroup, s
 			AWSService: "OpenSearch",
 			Region:     r,
 			Name:       name,
-			Endpoint:   kibana_endpoint,
+			Endpoint:   kibanaEndpoint,
 			Port:       443,
 			Protocol:   "https",
 			Public:     public,
@@ -788,7 +779,7 @@ func (m *EndpointsModule) getELBv2ListenersPerRegion(r string, wg *sync.WaitGrou
 		)
 		if err != nil {
 			if errors.As(err, &oe) {
-				m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
+				m.Errors = append(m.Errors, fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation()))
 			}
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
@@ -943,7 +934,7 @@ func (m *EndpointsModule) getAPIGatewayVIPsPerRegion(r string, wg *sync.WaitGrou
 
 	if err != nil {
 		if errors.As(err, &oe) {
-			m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
+			m.Errors = append(m.Errors, fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation()))
 		}
 		m.modLog.Error(err.Error())
 		m.CommandCounter.Error++
@@ -956,7 +947,7 @@ func (m *EndpointsModule) getAPIGatewayVIPsPerRegion(r string, wg *sync.WaitGrou
 
 		if err != nil {
 			if errors.As(err, &oe) {
-				m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
+				m.Errors = append(m.Errors, fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation()))
 			}
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
@@ -1005,7 +996,7 @@ func (m *EndpointsModule) getEndpointsPerAPIGateway(r string, api apigatewayType
 
 	name := aws.ToString(api.Name)
 	id := aws.ToString(api.Id)
-	raw_endpoint := fmt.Sprintf("https://%s.execute-api.%s.amazonaws.com", id, r)
+	rawEndpoint := fmt.Sprintf("https://%s.execute-api.%s.amazonaws.com", id, r)
 	var port int32 = 443
 	protocol := "https"
 
@@ -1021,7 +1012,7 @@ func (m *EndpointsModule) getEndpointsPerAPIGateway(r string, api apigatewayType
 
 	if err != nil {
 		if errors.As(err, &oe) {
-			m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
+			m.Errors = append(m.Errors, fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation()))
 		}
 		m.modLog.Error(err.Error())
 		m.CommandCounter.Error++
@@ -1031,11 +1022,10 @@ func (m *EndpointsModule) getEndpointsPerAPIGateway(r string, api apigatewayType
 
 	if err != nil {
 		if errors.As(err, &oe) {
-			m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
+			m.Errors = append(m.Errors, fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation()))
 		}
 		m.modLog.Error(err.Error())
 		m.CommandCounter.Error++
-
 	}
 
 	for _, stage := range GetStages.Item {
@@ -1044,7 +1034,7 @@ func (m *EndpointsModule) getEndpointsPerAPIGateway(r string, api apigatewayType
 			if len(resource.ResourceMethods) != 0 {
 				path := aws.ToString(resource.Path)
 
-				endpoint := fmt.Sprintf("%s/%s%s", raw_endpoint, stageName, path)
+				endpoint := fmt.Sprintf("%s/%s%s", rawEndpoint, stageName, path)
 
 				endpoints = append(endpoints, Endpoint{
 					AWSService: awsService,
@@ -1120,7 +1110,7 @@ func (m *EndpointsModule) getAPIGatewayv2VIPsPerRegion(r string, wg *sync.WaitGr
 
 	if err != nil {
 		if errors.As(err, &oe) {
-			m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
+			m.Errors = append(m.Errors, fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation()))
 		}
 		m.modLog.Error(err.Error())
 		m.CommandCounter.Error++
@@ -1133,7 +1123,7 @@ func (m *EndpointsModule) getAPIGatewayv2VIPsPerRegion(r string, wg *sync.WaitGr
 
 		if err != nil {
 			if errors.As(err, &oe) {
-				m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
+				m.Errors = append(m.Errors, fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation()))
 			}
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
@@ -1185,7 +1175,7 @@ func (m *EndpointsModule) getEndpointsPerAPIGatewayv2(r string, api apigatewayV2
 	var public string
 
 	name := aws.ToString(api.Name)
-	raw_endpoint := aws.ToString(api.ApiEndpoint)
+	rawEndpoint := aws.ToString(api.ApiEndpoint)
 	id := aws.ToString(api.ApiId)
 	var port int32 = 443
 	protocol := "https"
@@ -1195,7 +1185,7 @@ func (m *EndpointsModule) getEndpointsPerAPIGatewayv2(r string, api apigatewayV2
 
 	if err != nil {
 		if errors.As(err, &oe) {
-			m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
+			m.Errors = append(m.Errors, fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation()))
 		}
 		m.modLog.Error(err.Error())
 		m.CommandCounter.Error++
@@ -1213,7 +1203,7 @@ func (m *EndpointsModule) getEndpointsPerAPIGatewayv2(r string, api apigatewayV2
 
 	if err != nil {
 		if errors.As(err, &oe) {
-			m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
+			m.Errors = append(m.Errors, fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation()))
 		}
 		m.modLog.Error(err.Error())
 		m.CommandCounter.Error++
@@ -1228,9 +1218,9 @@ func (m *EndpointsModule) getEndpointsPerAPIGatewayv2(r string, api apigatewayV2
 			}
 			var endpoint string
 			if stage == "" {
-				endpoint = fmt.Sprintf("%s%s", raw_endpoint, path)
+				endpoint = fmt.Sprintf("%s%s", rawEndpoint, path)
 			} else {
-				endpoint = fmt.Sprintf("%s/%s%s", raw_endpoint, stage, path)
+				endpoint = fmt.Sprintf("%s/%s%s", rawEndpoint, stage, path)
 			}
 			public = "True"
 
@@ -1267,7 +1257,7 @@ func (m *EndpointsModule) getRdsClustersPerRegion(r string, wg *sync.WaitGroup, 
 	DBInstances, err := sdk.CachedRDSDescribeDBInstances(m.RDSClient, aws.ToString(m.Caller.Account), r)
 	if err != nil {
 		if errors.As(err, &oe) {
-			m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
+			m.Errors = append(m.Errors, fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation()))
 		}
 		m.modLog.Error(err.Error())
 		m.CommandCounter.Error++
@@ -1320,12 +1310,12 @@ func (m *EndpointsModule) getRedshiftEndPointsPerRegion(r string, wg *sync.WaitG
 	awsService := "Redshift"
 	protocol := "https"
 
-	// This for loop exits at the end dependeding on whether the output hits its last page (see pagination control block at the end of the loop).
+	// This for loop exits at the end depending on whether the output hits its last page (see pagination control block at the end of the loop).
 	Clusters, err := sdk.CachedRedShiftDescribeClusters(m.RedshiftClient, aws.ToString(m.Caller.Account), r)
 
 	if err != nil {
 		if errors.As(err, &oe) {
-			m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
+			m.Errors = append(m.Errors, fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation()))
 		}
 		m.modLog.Error(err.Error())
 		m.CommandCounter.Error++
@@ -1453,12 +1443,12 @@ func (m *EndpointsModule) getCloudfrontEndpoints(wg *sync.WaitGroup, semaphore c
 	m.CommandCounter.Executing++
 	// "PaginationMarker" is a control variable used for output continuity, as AWS return the output in pages.
 	var PaginationControl *string
-	var awsService string = "Cloudfront"
-	var protocol string = "https"
-	var r string = "Global"
-	var public string = "True"
+	var awsService = "Cloudfront"
+	var protocol = "https"
+	var r = "Global"
+	var public = "True"
 
-	// This for loop exits at the end dependeding on whether the output hits its last page (see pagination control block at the end of the loop).
+	// This for loop exits at the end depending on whether the output hits its last page (see pagination control block at the end of the loop).
 	for {
 		ListDistributions, err := m.CloudfrontClient.ListDistributions(
 			context.TODO(),
@@ -1468,7 +1458,7 @@ func (m *EndpointsModule) getCloudfrontEndpoints(wg *sync.WaitGroup, semaphore c
 		)
 		if err != nil {
 			if errors.As(err, &oe) {
-				m.Errors = append(m.Errors, (fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation())))
+				m.Errors = append(m.Errors, fmt.Sprintf(" Error: Region: %s, Service: %s, Operation: %s", r, oe.Service(), oe.Operation()))
 			}
 			m.modLog.Error(err.Error())
 			m.CommandCounter.Error++
@@ -1684,8 +1674,8 @@ func (m *EndpointsModule) getLightsailContainerEndpointsPerRegion(r string, wg *
 	// m.CommandCounter.Total++
 	m.CommandCounter.Pending--
 	m.CommandCounter.Executing++
-	var public string = "True"
-	var protocol string = "https"
+	var public = "True"
+	var protocol = "https"
 	var port int32 = 443
 
 	containerServices, err := sdk.CachedLightsailGetContainerServices(m.LightsailClient, aws.ToString(m.Caller.Account), r)

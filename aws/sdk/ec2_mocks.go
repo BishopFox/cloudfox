@@ -25,6 +25,7 @@ type MockedEC2Client2 struct {
 	describeSnapshots         DescribeSnapshots
 	describeVolumes           DescribeVolumes
 	describeImages            DescribeImages
+	describeVpcEndpoints      DescribeVpcEndpoints
 }
 
 type DescribeNetworkInterfaces struct {
@@ -271,6 +272,9 @@ type DescribeInstanceAttribute struct {
 	InstanceID string `json:"InstanceId"`
 }
 
+type DescribeVpcEndpoints struct {
+}
+
 func (c *MockedEC2Client2) DescribeNetworkInterfaces(ctx context.Context, input *ec2.DescribeNetworkInterfacesInput, f ...func(o *ec2.Options)) (*ec2.DescribeNetworkInterfacesOutput, error) {
 	var nics []ec2types.NetworkInterface
 	err := json.Unmarshal(readTestFile(DESCRIBE_NETWORK_INTEFACES_TEST_FILE), &c.describeNetworkInterfaces)
@@ -383,6 +387,46 @@ func (c *MockedEC2Client2) DescribeInstanceAttribute(ctx context.Context, input 
 	return &ec2.DescribeInstanceAttributeOutput{
 		UserData: &ec2types.AttributeValue{
 			Value: aws.String("userdata"),
+		},
+	}, nil
+}
+
+func (c *MockedEC2Client2) DescribeVpcEndpoints(ctx context.Context, input *ec2.DescribeVpcEndpointsInput, f ...func(o *ec2.Options)) (*ec2.DescribeVpcEndpointsOutput, error) {
+	return &ec2.DescribeVpcEndpointsOutput{
+		VpcEndpoints: []ec2types.VpcEndpoint{
+			{
+				VpcEndpointId: aws.String("vpce-1234567890abcdefg"),
+				PolicyDocument: aws.String(`{
+					"Version": "2012-10-17",
+					"Statement": [
+						{
+							"Effect": "Allow",
+							"Principal": "*",
+							"Action": "*",
+							"Resource": "*"
+						}
+					]
+				}`),
+			},
+			{
+				VpcEndpointId: aws.String("vpce-1234567890abcdefh"),
+				PolicyDocument: aws.String(`{
+					"Version": "2012-10-17",
+					"Statement": [
+						{
+							"Effect": "Allow",
+							"Principal": "*",
+							"Action": "*",
+							"Resource": "*",
+							"Condition": {
+								"StringEquals": {
+									"aws:SourceVpce": "vpce-1234567890abcdefg"
+								}
+							}
+						}
+					]
+				}`),
+			},
 		},
 	}, nil
 }

@@ -53,7 +53,17 @@ func init() {
 	gob.Register([]apiGatewayTypes.UsagePlanKey{})
 }
 
-// create a CachedApiGatewayGetRestAPIs function that accepts a client, account id, region. Make sure it handles caching, the region option and pagination
+func IsPublicApiGateway(ra *apiGatewayTypes.RestApi) bool {
+	for _, endpointType := range ra.EndpointConfiguration.Types {
+		if endpointType == apiGatewayTypes.EndpointTypeRegional || endpointType == apiGatewayTypes.EndpointTypeEdge {
+			return true
+		}
+	}
+
+	return false
+}
+
+// CachedApiGatewayGetRestAPIs function that accepts a client, account id, region. Make sure it handles caching, the region option and pagination
 func CachedApiGatewayGetRestAPIs(client APIGatewayClientInterface, accountID string, region string) ([]apiGatewayTypes.RestApi, error) {
 	var PaginationControl *string
 	var restAPIs []apiGatewayTypes.RestApi
