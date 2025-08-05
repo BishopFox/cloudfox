@@ -109,6 +109,9 @@ func MatchesAfterExpansion(stringFromPolicyToCheck, stringToCheckAgainst string)
 	return pattern.MatchString(stringFromPolicyToCheck)
 }
 
+
+
+
 func (p *Policy) DoesPolicyHaveMatchingStatement(effect string, actionToCheck string, resourceToCheck string) bool {
 
 	for _, statement := range p.Statement {
