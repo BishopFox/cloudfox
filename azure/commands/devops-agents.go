@@ -143,16 +143,17 @@ func RunDevOpsAgentsCommand(organization, pat string, verbosity int, outputDirec
 	var body [][]string
 
 	// Initialize module
+	logger := internal.NewLogger()
 	module := &DevOpsAgentsModule{
 		Organization: organization,
 		PAT:          pat,
-		verbosity:    verbosity,
 		LootMap:      make(map[string]*internal.LootFile),
 	}
+	_ = verbosity // TODO: Use verbosity if needed
 
 	// Validate inputs
 	if organization == "" || pat == "" {
-		logrus.Error("Organization and PAT are required. Set AZURE_DEVOPS_ORGANIZATION and AZURE_DEVOPS_PAT environment variables.")
+		logger.ErrorM("Organization and PAT are required. Set AZURE_DEVOPS_ORGANIZATION and AZURE_DEVOPS_PAT environment variables.", globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
 		return
 	}
 
@@ -160,7 +161,7 @@ func RunDevOpsAgentsCommand(organization, pat string, verbosity int, outputDirec
 	module.initializeLootFiles()
 
 	// Enumerate agent pools and agents
-	logrus.Info("Enumerating Azure DevOps Agents across all agent pools...")
+	logger.InfoM("Enumerating Azure DevOps Agents across all agent pools...", globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
 	module.enumerateAgentPools()
 
 	// Generate table output
@@ -169,11 +170,14 @@ func RunDevOpsAgentsCommand(organization, pat string, verbosity int, outputDirec
 	// Save loot files
 	timestamp := time.Now().Format("2006-01-02-15-04-05")
 	lootDir := fmt.Sprintf("%s/loot", outputDirectory)
-	azinternal.SaveDevOpsLootFiles(module.LootMap, lootDir, timestamp, module.Organization)
+	// TODO: Implement SaveDevOpsLootFiles
+	_ = timestamp
+	_ = lootDir
+	logger.InfoM(fmt.Sprintf("Loot files would be saved to: %s", lootDir), globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
 
 	// Print table
 	fmt.Println()
-	globals.PrintTableFromStructs(header, body)
+	internal.PrintTableToScreen(header, body, false)
 	fmt.Println()
 
 	// Print summary
@@ -182,10 +186,10 @@ func RunDevOpsAgentsCommand(organization, pat string, verbosity int, outputDirec
 
 // initializeLootFiles creates the loot file structure
 func (m *DevOpsAgentsModule) initializeLootFiles() {
-	m.LootMap["agents-self-hosted"] = *internal.LootFile{
-		Name:        "agents-self-hosted.txt",
-		Description: "Self-hosted agents (HIGH RISK - credential harvesting targets)",
+	m.LootMap["agents-self-hosted"] = &internal.LootFile{
+		Name: "agents-self-hosted.txt",
 		Contents: "# Self-Hosted Azure DevOps Agents\n" +
+			"# Self-hosted agents (HIGH RISK - credential harvesting targets)\n" +
 			"# These agents are HIGH RISK targets for attackers:\n" +
 			"#  - May have access to production credentials and secrets\n" +
 			"#  - Can execute arbitrary code from malicious pipelines\n" +
@@ -193,44 +197,45 @@ func (m *DevOpsAgentsModule) initializeLootFiles() {
 			"#  - Store agent registration tokens for persistent access\n\n",
 	}
 
-	m.LootMap["agents-security-summary"] = *internal.LootFile{
-		Name:        "agents-security-summary.txt",
-		Description: "Security summary for all agent pools",
+	m.LootMap["agents-security-summary"] = &internal.LootFile{
+		Name: "agents-security-summary.txt",
 		Contents: "# Azure DevOps Agents - Security Summary\n" +
+			"# Security summary for all agent pools\n" +
 			"# Generated: " + time.Now().Format(time.RFC3339) + "\n\n",
 	}
 
-	m.LootMap["agents-outdated"] = *internal.LootFile{
-		Name:        "agents-outdated.txt",
-		Description: "Agents running outdated versions (CVE risk)",
+	m.LootMap["agents-outdated"] = &internal.LootFile{
+		Name: "agents-outdated.txt",
 		Contents: "# Outdated Azure DevOps Agents\n" +
+			"# Agents running outdated versions (CVE risk)\n" +
 			"# These agents may be vulnerable to known CVEs\n" +
 			"# Recommendation: Update to latest agent version\n\n",
 	}
 
-	m.LootMap["agents-job-history"] = *internal.LootFile{
-		Name:        "agents-job-history.txt",
-		Description: "Recent job execution history per agent",
+	m.LootMap["agents-job-history"] = &internal.LootFile{
+		Name: "agents-job-history.txt",
 		Contents: "# Azure DevOps Agents - Recent Job History\n" +
+			"# Recent job execution history per agent\n" +
 			"# Shows which agents are actively executing pipelines\n\n",
 	}
 
-	m.LootMap["agents-permissions"] = *internal.LootFile{
-		Name:        "agents-permissions.txt",
-		Description: "Agent pool permissions and security roles",
+	m.LootMap["agents-permissions"] = &internal.LootFile{
+		Name: "agents-permissions.txt",
 		Contents: "# Azure DevOps Agent Pool Permissions\n" +
+			"# Agent pool permissions and security roles\n" +
 			"# Identifies who can manage agent pools and register agents\n\n",
 	}
 }
 
 // enumerateAgentPools enumerates all agent pools and their agents
 func (m *DevOpsAgentsModule) enumerateAgentPools() {
+	logger := internal.NewLogger()
 	// Enumerate organization-level agent pools
 	url := fmt.Sprintf("https://dev.azure.com/%s/_apis/distributedtask/pools?api-version=7.1", m.Organization)
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		logrus.WithError(err).Error("Failed to create request for agent pools")
+		logger.ErrorM(fmt.Sprintf("Failed to create request for agent pools: %v", err), globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
 		return
 	}
 
@@ -238,36 +243,36 @@ func (m *DevOpsAgentsModule) enumerateAgentPools() {
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		logrus.WithError(err).Error("Failed to fetch agent pools")
+		logger.ErrorM(fmt.Sprintf("Failed to fetch agent pools: %v", err), globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		logrus.Errorf("Failed to fetch agent pools. Status: %d, Body: %s", resp.StatusCode, string(bodyBytes))
+		logger.ErrorM(fmt.Sprintf("Failed to fetch agent pools. Status: %d, Body: %s", resp.StatusCode, string(bodyBytes)), globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
 		return
 	}
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		logrus.WithError(err).Error("Failed to read agent pools response")
+		logger.ErrorM(fmt.Sprintf("Failed to read agent pools response: %v", err), globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
 		return
 	}
 
 	var result map[string]interface{}
 	if err := json.Unmarshal(bodyBytes, &result); err != nil {
-		logrus.WithError(err).Error("Failed to parse agent pools response")
+		logger.ErrorM(fmt.Sprintf("Failed to parse agent pools response: %v", err), globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
 		return
 	}
 
 	pools, ok := result["value"].([]interface{})
 	if !ok {
-		logrus.Error("Unexpected agent pools response format")
+		logger.ErrorM("Unexpected agent pools response format", globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
 		return
 	}
 
-	logrus.Infof("Found %d agent pools", len(pools))
+	logger.InfoM(fmt.Sprintf("Found %d agent pools", len(pools)), globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
 
 	// Process each pool
 	for _, poolItem := range pools {
@@ -279,7 +284,9 @@ func (m *DevOpsAgentsModule) enumerateAgentPools() {
 		poolID := int(pool["id"].(float64))
 		poolName := pool["name"].(string)
 
-		logrus.Debugf("Processing agent pool: %s (ID: %d)", poolName, poolID)
+		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+			logger.InfoM(fmt.Sprintf("Processing agent pool: %s (ID: %d)", poolName, poolID), globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
+		}
 
 		// Enumerate agents in this pool
 		m.enumerateAgentsInPool(poolID, poolName)
@@ -291,12 +298,13 @@ func (m *DevOpsAgentsModule) enumerateAgentPools() {
 
 // enumerateAgentsInPool enumerates all agents in a specific pool
 func (m *DevOpsAgentsModule) enumerateAgentsInPool(poolID int, poolName string) {
+	logger := internal.NewLogger()
 	url := fmt.Sprintf("https://dev.azure.com/%s/_apis/distributedtask/pools/%d/agents?includeCapabilities=true&includeLastCompletedRequest=true&api-version=7.1",
 		m.Organization, poolID)
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		logrus.WithError(err).Errorf("Failed to create request for agents in pool %s", poolName)
+		logger.ErrorM(fmt.Sprintf("Failed to create request for agents in pool %s: %v", poolName, err), globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
 		return
 	}
 
@@ -304,36 +312,40 @@ func (m *DevOpsAgentsModule) enumerateAgentsInPool(poolID int, poolName string) 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		logrus.WithError(err).Errorf("Failed to fetch agents in pool %s", poolName)
+		logger.ErrorM(fmt.Sprintf("Failed to fetch agents in pool %s: %v", poolName, err), globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		logrus.Debugf("Failed to fetch agents in pool %s. Status: %d, Body: %s", poolName, resp.StatusCode, string(bodyBytes))
+		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+			logger.ErrorM(fmt.Sprintf("Failed to fetch agents in pool %s. Status: %d, Body: %s", poolName, resp.StatusCode, string(bodyBytes)), globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
+		}
 		return
 	}
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		logrus.WithError(err).Errorf("Failed to read agents response for pool %s", poolName)
+		logger.ErrorM(fmt.Sprintf("Failed to read agents response for pool %s: %v", poolName, err), globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
 		return
 	}
 
 	var result map[string]interface{}
 	if err := json.Unmarshal(bodyBytes, &result); err != nil {
-		logrus.WithError(err).Errorf("Failed to parse agents response for pool %s", poolName)
+		logger.ErrorM(fmt.Sprintf("Failed to parse agents response for pool %s: %v", poolName, err), globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
 		return
 	}
 
 	agents, ok := result["value"].([]interface{})
 	if !ok {
-		logrus.Debugf("No agents found in pool %s", poolName)
+		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+			logger.InfoM(fmt.Sprintf("No agents found in pool %s", poolName), globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
+		}
 		return
 	}
 
-	logrus.Infof("Found %d agents in pool '%s'", len(agents), poolName)
+	logger.InfoM(fmt.Sprintf("Found %d agents in pool '%s'", len(agents), poolName), globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
 
 	// Process each agent
 	for _, agentItem := range agents {
@@ -534,8 +546,8 @@ func (m *DevOpsAgentsModule) processAgent(agent map[string]interface{}, poolID i
 	// Store in a module-level slice for table generation
 	// (We'll need to add a field to the struct to collect these)
 	m.mu.Lock()
-	if m.LootMap["_tableData"] == (*internal.LootFile{}) {
-		m.LootMap["_tableData"] = *internal.LootFile{
+	if m.LootMap["_tableData"] == nil {
+		m.LootMap["_tableData"] = &internal.LootFile{
 			Name:     "_internal",
 			Contents: "[]", // JSON array
 		}
@@ -546,7 +558,7 @@ func (m *DevOpsAgentsModule) processAgent(agent map[string]interface{}, poolID i
 	json.Unmarshal([]byte(m.LootMap["_tableData"].Contents), &tableData)
 	tableData = append(tableData, agentData)
 	jsonBytes, _ := json.Marshal(tableData)
-	m.LootMap["_tableData"] = *internal.LootFile{
+	m.LootMap["_tableData"] = &internal.LootFile{
 		Name:     "_internal",
 		Contents: string(jsonBytes),
 	}
@@ -555,6 +567,7 @@ func (m *DevOpsAgentsModule) processAgent(agent map[string]interface{}, poolID i
 
 // enumeratePoolPermissions enumerates permissions for an agent pool
 func (m *DevOpsAgentsModule) enumeratePoolPermissions(poolID int, poolName string) {
+	logger := internal.NewLogger()
 	// Note: Agent pool permissions require specific security namespace access
 	// This is a simplified implementation - full implementation would require
 	// querying the security namespace for agent pool permissions
@@ -564,7 +577,9 @@ func (m *DevOpsAgentsModule) enumeratePoolPermissions(poolID int, poolName strin
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		logrus.WithError(err).Debugf("Failed to create request for pool permissions")
+		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+			logger.ErrorM(fmt.Sprintf("Failed to create request for pool permissions: %v", err), globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
+		}
 		return
 	}
 
@@ -572,14 +587,18 @@ func (m *DevOpsAgentsModule) enumeratePoolPermissions(poolID int, poolName strin
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		logrus.WithError(err).Debugf("Failed to fetch pool permissions")
+		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+			logger.ErrorM(fmt.Sprintf("Failed to fetch pool permissions: %v", err), globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
+		}
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		// Permissions endpoint may not be accessible with all PAT scopes
-		logrus.Debugf("Could not fetch permissions for pool %s (Status: %d)", poolName, resp.StatusCode)
+		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+			logger.InfoM(fmt.Sprintf("Could not fetch permissions for pool %s (Status: %d)", poolName, resp.StatusCode), globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
+		}
 		return
 	}
 

@@ -72,7 +72,7 @@ Executes all available Azure commands for a specific subscription:
 				commands.AzDevOpsProjectsCommand.Use:  true,
 				commands.AzDevOpsReposCommand.Use:     true,
 				commands.AzDevOpsSecurityCommand.Use:  true,
-				// commands.AzDevOpsAgentsCommand.Use:    true, // Disabled - compilation issues
+				commands.AzDevOpsAgentsCommand.Use:    true,
 				commands.AzPrincipalsCommand.Use:      true, // Skip since we ran it first
 				commands.AzAccessKeysCommand.Use:      true, // Skip since we run it last
 				//				commands.AzRBACCommand.Use:            true,
@@ -147,7 +147,7 @@ func init() {
 		commands.AzDataFactoryCommand,
 		commands.AzDeploymentsCommand,
 		commands.AzDisksCommand,
-		// commands.AzDevOpsAgentsCommand, // Disabled - compilation issues
+		commands.AzDevOpsAgentsCommand,
 		commands.AzDevOpsArtifactsCommand,
 		commands.AzDevOpsPipelinesCommand,
 		commands.AzDevOpsProjectsCommand,
@@ -168,14 +168,14 @@ func init() {
 		commands.AzKeyVaultCommand,
 		commands.AzKustoCommand,
 		commands.AzLighthouseCommand,
-		// commands.AzLateralMovementCommand, // Disabled - compilation issues
+		commands.AzLateralMovementCommand,
 		commands.AzLoadBalancersCommand,
 		commands.AzLoadTestingCommand,
 		commands.AzLogicAppsCommand,
 		commands.AzMachineLearningCommand,
 		commands.AzMonitorCommand,
 		commands.AzNetworkInterfacesCommand,
-		// commands.AzNetworkExposureCommand, // Disabled - compilation issues
+		commands.AzNetworkExposureCommand,
 		commands.AzNetworkTopologyCommand,
 		commands.AzNSGCommand,
 		commands.AzPolicyCommand,
@@ -184,11 +184,11 @@ func init() {
 		commands.AzPermissionsCommand,
 		commands.AzPrivateLinkCommand,
 		commands.AzRBACCommand,
-		// commands.AzRedisCommand, // Disabled - compilation issues
+		commands.AzRedisCommand,
 		commands.AzResourceGraphCommand,
 		commands.AzRoutesCommand,
 		// commands.AzSecurityCenterCommand, // Disabled - compilation issues
-		// commands.AzSentinelCommand, // Disabled - compilation issues
+		commands.AzSentinelCommand,
 		commands.AzServiceFabricCommand,
 		commands.AzSignalRCommand,
 		commands.AzStorageCommand,

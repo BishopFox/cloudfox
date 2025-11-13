@@ -5,15 +5,12 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/securityinsights/armsecurityinsights"
+	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	azinternal "github.com/BishopFox/cloudfox/internal/azure"
-	"github.com/BishopFox/cloudfox/internal/azure/sdk"
-	"github.com/BishopFox/cloudfox/internal/common"
-	"github.com/bishopfox/knownawsaccountslookup"
 	"github.com/spf13/cobra"
 )
 
@@ -45,9 +42,8 @@ type workspaceInfo struct {
 	HasSentinel    bool
 }
 
-func (m *SentinelModule) PrintSentinelCommand(outputFormat string) {
-	m.output = outputFormat
-	m.modLog = internal.TxtLog.WithField("module", "sentinel")
+func (m *SentinelModule) PrintSentinelCommand(ctx context.Context, logger internal.Logger) {
+	m.modLog = logger
 
 	// Tables
 	m.TableFiles = &internal.TableFiles{
@@ -81,61 +77,25 @@ func (m *SentinelModule) PrintSentinelCommand(outputFormat string) {
 		LootFile:    "",
 	}
 
-	// Initialize loot map
-	m.LootMap = make(map[string]*internal.LootFile)
-	m.LootMap["sentinel-disabled-rules"] = &internal.LootFile{
-		Subtitle:   "Disabled Analytics Rules",
-		Header:     "Sentinel Analytics Rules that are disabled and may not be detecting threats",
-		Body:       "",
-		Subfolder:  m.Caller,
-		Permission: internal.AllUsersReadAndWrite,
-	}
-	m.LootMap["sentinel-high-severity"] = &internal.LootFile{
-		Subtitle:   "High Severity Incidents",
-		Header:     "Active Sentinel incidents with HIGH severity",
-		Body:       "",
-		Subfolder:  m.Caller,
-		Permission: internal.AllUsersReadAndWrite,
-	}
-	m.LootMap["sentinel-unconnected-sources"] = &internal.LootFile{
-		Subtitle:   "Disconnected Data Connectors",
-		Header:     "Sentinel data connectors that are not connected or disabled",
-		Body:       "",
-		Subfolder:  m.Caller,
-		Permission: internal.AllUsersReadAndWrite,
-	}
-	m.LootMap["sentinel-no-automation"] = &internal.LootFile{
-		Subtitle:   "Workspaces Without Automation",
-		Header:     "Sentinel workspaces with no automation rules configured",
-		Body:       "",
-		Subfolder:  m.Caller,
-		Permission: internal.AllUsersReadAndWrite,
-	}
-	m.LootMap["sentinel-setup-commands"] = &internal.LootFile{
-		Subtitle:   "Setup Commands",
-		Header:     "Commands to investigate and remediate Sentinel security issues",
-		Body:       "",
-		Subfolder:  m.Caller,
-		Permission: internal.AllUsersReadAndWrite,
-	}
+	// Initialize loot file contents (LootMap already initialized in Run function)
+	m.LootMap["sentinel-disabled-rules"].Contents += "# Disabled Analytics Rules\n" +
+		"# Sentinel Analytics Rules that are disabled and may not be detecting threats\n\n"
+	m.LootMap["sentinel-unconnected-sources"].Contents += "# Disconnected Data Connectors\n" +
+		"# Sentinel data connectors that are not connected or disabled\n\n"
+	m.LootMap["sentinel-setup-commands"].Contents += "# Setup Commands\n" +
+		"# Commands to investigate and remediate Sentinel security issues\n\n"
 
 	m.workspaceRegistry = make(map[string]workspaceInfo)
 
 	m.modLog.Info("Enumerating Microsoft Sentinel (SIEM) instances and configuration...")
-	fmt.Printf("[%s] Enumerating Microsoft Sentinel workspaces and rules for %s.\n", common.Cyan("azure"), m.AzureDescriptor)
+	fmt.Printf("[azure] Enumerating Microsoft Sentinel workspaces and rules.\n")
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute*10)
-	defer cancel()
-
-	// Get all subscriptions
-	subscriptions := sdk.CachedGetSubscriptions(m.Session)
-	m.Subscriptions = subscriptions
-
+	// Use subscriptions from context (already fetched during initialization)
 	var wg sync.WaitGroup
 	semaphore := make(chan struct{}, 10)
 
 	// Process each subscription
-	for _, subID := range subscriptions {
+	for _, subID := range m.Subscriptions {
 		wg.Add(1)
 		semaphore <- struct{}{}
 
@@ -143,10 +103,10 @@ func (m *SentinelModule) PrintSentinelCommand(outputFormat string) {
 			defer wg.Done()
 			defer func() { <-semaphore }()
 
-			subName := sdk.CachedGetSubscriptionNameFromID(m.Session, subID)
+			subName := azinternal.GetSubscriptionNameFromID(ctx, m.Session, subID)
 
 			// Process Sentinel workspaces (Sentinel is enabled on Log Analytics workspaces)
-			m.processSentinelWorkspaces(ctx, subID, subName, m.modLog)
+			m.processSentinelWorkspaces(ctx, subID, subName, logger)
 
 		}(subID)
 	}
@@ -162,11 +122,11 @@ func (m *SentinelModule) PrintSentinelCommand(outputFormat string) {
 
 func (m *SentinelModule) processSentinelWorkspaces(ctx context.Context, subID, subName string, logger internal.Logger) {
 	// Get Log Analytics workspaces and check if Sentinel is enabled
-	workspaces := sdk.CachedGetLogAnalyticsWorkspacesPerSubscription(m.Session, subID)
+	workspaces := azinternal.GetLogAnalyticsWorkspacesPerSubscription(m.Session, subID)
 
 	for _, ws := range workspaces {
-		wsName := azinternal.ParseResourceName(ws)
-		wsRG := azinternal.ParseResourceGroupFromID(ws)
+		wsName := azinternal.ExtractResourceName(ws)
+		wsRG := azinternal.GetResourceGroupFromID(ws)
 		wsID := ws
 
 		// Store workspace info
@@ -256,15 +216,20 @@ func (m *SentinelModule) processSentinelWorkspaces(ctx context.Context, subID, s
 
 func (m *SentinelModule) checkSentinelEnabled(ctx context.Context, subID, rgName, wsName string, logger internal.Logger) bool {
 	// Create Security Insights client
-	cred, err := azinternal.GetSafeSession(m.Session, subID, "https://management.azure.com/.default")
+	token, err := m.Session.GetTokenForResource("https://management.azure.com/")
 	if err != nil {
-		logger.Debugf("Failed to get credentials for subscription %s: %v", subID, err)
+		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
+			logger.InfoM(fmt.Sprintf("Failed to get token for subscription %s: %v", subID, err), globals.AZ_SENTINEL_MODULE_NAME)
+		}
 		return false
 	}
 
+	cred := azinternal.NewStaticTokenCredential(token)
 	client, err := armsecurityinsights.NewSentinelOnboardingStatesClient(subID, cred, nil)
 	if err != nil {
-		logger.Debugf("Failed to create Sentinel client for %s/%s: %v", rgName, wsName, err)
+		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
+			logger.InfoM(fmt.Sprintf("Failed to create Sentinel client for %s/%s: %v", rgName, wsName, err), globals.AZ_SENTINEL_MODULE_NAME)
+		}
 		return false
 	}
 
@@ -279,15 +244,20 @@ func (m *SentinelModule) checkSentinelEnabled(ctx context.Context, subID, rgName
 }
 
 func (m *SentinelModule) processAnalyticsRules(ctx context.Context, subID, subName, rgName, wsName string, logger internal.Logger) {
-	cred, err := azinternal.GetSafeSession(m.Session, subID, "https://management.azure.com/.default")
+	token, err := m.Session.GetTokenForResource("https://management.azure.com/")
 	if err != nil {
-		logger.Debugf("Failed to get credentials for subscription %s: %v", subID, err)
+		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
+			logger.InfoM(fmt.Sprintf("Failed to get token for subscription %s: %v", subID, err), globals.AZ_SENTINEL_MODULE_NAME)
+		}
 		return
 	}
 
+	cred := azinternal.NewStaticTokenCredential(token)
 	client, err := armsecurityinsights.NewAlertRulesClient(subID, cred, nil)
 	if err != nil {
-		logger.Debugf("Failed to create Analytics Rules client for %s/%s: %v", rgName, wsName, err)
+		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
+			logger.InfoM(fmt.Sprintf("Failed to create Analytics Rules client for %s/%s: %v", rgName, wsName, err), globals.AZ_SENTINEL_MODULE_NAME)
+		}
 		return
 	}
 
@@ -295,7 +265,9 @@ func (m *SentinelModule) processAnalyticsRules(ctx context.Context, subID, subNa
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			logger.Debugf("Failed to list analytics rules for %s/%s: %v", rgName, wsName, err)
+			if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
+				logger.InfoM(fmt.Sprintf("Failed to list analytics rules for %s/%s: %v", rgName, wsName, err), globals.AZ_SENTINEL_MODULE_NAME)
+			}
 			return
 		}
 
@@ -341,9 +313,8 @@ func (m *SentinelModule) processAnalyticsRules(ctx context.Context, subID, subNa
 						}
 						tactics = strings.Join(tacticsList, ", ")
 					}
-					if rule.Properties.Techniques != nil {
-						techniques = strings.Join(rule.Properties.Techniques, ", ")
-					}
+					// TODO: Techniques property not available in current SDK version
+					techniques = "N/A"
 					if rule.Properties.Query != nil {
 						query = *rule.Properties.Query
 						if len(query) > 100 {
@@ -424,15 +395,20 @@ func (m *SentinelModule) processAnalyticsRules(ctx context.Context, subID, subNa
 }
 
 func (m *SentinelModule) processAutomationRules(ctx context.Context, subID, subName, rgName, wsName string, logger internal.Logger) int {
-	cred, err := azinternal.GetSafeSession(m.Session, subID, "https://management.azure.com/.default")
+	token, err := m.Session.GetTokenForResource("https://management.azure.com/")
 	if err != nil {
-		logger.Debugf("Failed to get credentials for subscription %s: %v", subID, err)
+		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
+			logger.InfoM(fmt.Sprintf("Failed to get token for subscription %s: %v", subID, err), globals.AZ_SENTINEL_MODULE_NAME)
+		}
 		return 0
 	}
 
+	cred := azinternal.NewStaticTokenCredential(token)
 	client, err := armsecurityinsights.NewAutomationRulesClient(subID, cred, nil)
 	if err != nil {
-		logger.Debugf("Failed to create Automation Rules client for %s/%s: %v", rgName, wsName, err)
+		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
+			logger.InfoM(fmt.Sprintf("Failed to create Automation Rules client for %s/%s: %v", rgName, wsName, err), globals.AZ_SENTINEL_MODULE_NAME)
+		}
 		return 0
 	}
 
@@ -441,7 +417,9 @@ func (m *SentinelModule) processAutomationRules(ctx context.Context, subID, subN
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			logger.Debugf("Failed to list automation rules for %s/%s: %v", rgName, wsName, err)
+			if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
+				logger.InfoM(fmt.Sprintf("Failed to list automation rules for %s/%s: %v", rgName, wsName, err), globals.AZ_SENTINEL_MODULE_NAME)
+			}
 			return count
 		}
 
@@ -515,15 +493,20 @@ func (m *SentinelModule) processAutomationRules(ctx context.Context, subID, subN
 }
 
 func (m *SentinelModule) processDataConnectors(ctx context.Context, subID, subName, rgName, wsName string, logger internal.Logger) {
-	cred, err := azinternal.GetSafeSession(m.Session, subID, "https://management.azure.com/.default")
+	token, err := m.Session.GetTokenForResource("https://management.azure.com/")
 	if err != nil {
-		logger.Debugf("Failed to get credentials for subscription %s: %v", subID, err)
+		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
+			logger.InfoM(fmt.Sprintf("Failed to get token for subscription %s: %v", subID, err), globals.AZ_SENTINEL_MODULE_NAME)
+		}
 		return
 	}
 
+	cred := azinternal.NewStaticTokenCredential(token)
 	client, err := armsecurityinsights.NewDataConnectorsClient(subID, cred, nil)
 	if err != nil {
-		logger.Debugf("Failed to create Data Connectors client for %s/%s: %v", rgName, wsName, err)
+		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
+			logger.InfoM(fmt.Sprintf("Failed to create Data Connectors client for %s/%s: %v", rgName, wsName, err), globals.AZ_SENTINEL_MODULE_NAME)
+		}
 		return
 	}
 
@@ -531,7 +514,9 @@ func (m *SentinelModule) processDataConnectors(ctx context.Context, subID, subNa
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			logger.Debugf("Failed to list data connectors for %s/%s: %v", rgName, wsName, err)
+			if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
+				logger.InfoM(fmt.Sprintf("Failed to list data connectors for %s/%s: %v", rgName, wsName, err), globals.AZ_SENTINEL_MODULE_NAME)
+			}
 			return
 		}
 
@@ -553,16 +538,17 @@ func (m *SentinelModule) processDataConnectors(ctx context.Context, subID, subNa
 				}
 				connectorType = "Azure Active Directory"
 				if connector.Properties != nil {
-					if connector.Properties.State != nil {
-						state = string(*connector.Properties.State)
-						if state != "Connected" {
-							riskLevel = "MEDIUM"
-							securityIssues = append(securityIssues, fmt.Sprintf("State: %s", state))
-							m.LootMap["sentinel-unconnected-sources"].Contents += fmt.Sprintf(
-								"Subscription: %s (%s)\nWorkspace: %s/%s\nConnector: %s\nType: %s\nState: %s\n\n",
-								subName, subID, rgName, wsName, connectorName, connectorType, state)
-						}
+					// TODO: State property not available in current SDK version
+					state = "Unknown"
+					/*
+					if state != "Connected" {
+						riskLevel = "MEDIUM"
+						securityIssues = append(securityIssues, fmt.Sprintf("State: %s", state))
+						m.LootMap["sentinel-unconnected-sources"].Contents += fmt.Sprintf(
+							"Subscription: %s (%s)\nWorkspace: %s/%s\nConnector: %s\nType: %s\nState: %s\n\n",
+							subName, subID, rgName, wsName, connectorName, connectorType, state)
 					}
+					*/
 					if connector.Properties.DataTypes != nil {
 						dataTypes = "AAD logs"
 					}
@@ -587,13 +573,8 @@ func (m *SentinelModule) processDataConnectors(ctx context.Context, subID, subNa
 				}
 				connectorType = "Azure Security Center"
 				if connector.Properties != nil {
-					if connector.Properties.State != nil {
-						state = string(*connector.Properties.State)
-						if state != "Connected" {
-							riskLevel = "MEDIUM"
-							securityIssues = append(securityIssues, fmt.Sprintf("State: %s", state))
-						}
-					}
+					// TODO: State property not available in current SDK version
+					state = "Unknown"
 					if connector.Properties.DataTypes != nil {
 						dataTypes = "ASC alerts"
 					}
@@ -618,13 +599,8 @@ func (m *SentinelModule) processDataConnectors(ctx context.Context, subID, subNa
 				}
 				connectorType = "Microsoft Cloud App Security"
 				if connector.Properties != nil {
-					if connector.Properties.State != nil {
-						state = string(*connector.Properties.State)
-						if state != "Connected" {
-							riskLevel = "MEDIUM"
-							securityIssues = append(securityIssues, fmt.Sprintf("State: %s", state))
-						}
-					}
+					// TODO: State property not available in current SDK version
+					state = "Unknown"
 					if connector.Properties.DataTypes != nil {
 						dataTypes = "MCAS alerts and logs"
 					}
@@ -719,15 +695,20 @@ func (m *SentinelModule) processDataConnectors(ctx context.Context, subID, subNa
 }
 
 func (m *SentinelModule) processIncidents(ctx context.Context, subID, subName, rgName, wsName string, logger internal.Logger) int {
-	cred, err := azinternal.GetSafeSession(m.Session, subID, "https://management.azure.com/.default")
+	token, err := m.Session.GetTokenForResource("https://management.azure.com/")
 	if err != nil {
-		logger.Debugf("Failed to get credentials for subscription %s: %v", subID, err)
+		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
+			logger.InfoM(fmt.Sprintf("Failed to get token for subscription %s: %v", subID, err), globals.AZ_SENTINEL_MODULE_NAME)
+		}
 		return 0
 	}
 
+	cred := azinternal.NewStaticTokenCredential(token)
 	client, err := armsecurityinsights.NewIncidentsClient(subID, cred, nil)
 	if err != nil {
-		logger.Debugf("Failed to create Incidents client for %s/%s: %v", rgName, wsName, err)
+		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
+			logger.InfoM(fmt.Sprintf("Failed to create Incidents client for %s/%s: %v", rgName, wsName, err), globals.AZ_SENTINEL_MODULE_NAME)
+		}
 		return 0
 	}
 
@@ -741,7 +722,9 @@ func (m *SentinelModule) processIncidents(ctx context.Context, subID, subName, r
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			logger.Debugf("Failed to list incidents for %s/%s: %v", rgName, wsName, err)
+			if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
+				logger.InfoM(fmt.Sprintf("Failed to list incidents for %s/%s: %v", rgName, wsName, err), globals.AZ_SENTINEL_MODULE_NAME)
+			}
 			return count
 		}
 
@@ -858,7 +841,7 @@ func (m *SentinelModule) generateSummary() {
 		}
 	}
 
-	fmt.Printf("\n[%s] Microsoft Sentinel Summary:\n", common.Cyan("azure"))
+	fmt.Printf("\n[azure] Microsoft Sentinel Summary:\n")
 	fmt.Printf("  Sentinel Workspaces: %d total (%d enabled)\n", totalWorkspaces, enabledWorkspaces)
 	fmt.Printf("  Analytics Rules: %d total (%d disabled)\n", totalRules, disabledRules)
 	fmt.Printf("  Automation Rules: %d total\n", totalAutomationRules)
@@ -867,20 +850,57 @@ func (m *SentinelModule) generateSummary() {
 }
 
 func (m *SentinelModule) writeTables(analyticsRulesTableFiles, automationRulesTableFiles, dataConnectorsTableFiles, incidentsTableFiles *internal.TableFiles) {
-	// Write main workspaces table
-	azinternal.WriteTableAndLootFiles(m.TableFiles, m.output, m.WorkspaceRows, m.LootMap, m.Caller)
+	// TODO: Implement full WriteTableAndLootFiles functionality
 
-	// Write analytics rules table
-	azinternal.WriteTableAndLootFiles(analyticsRulesTableFiles, m.output, m.AnalyticsRuleRows, nil, m.Caller)
+	// Print main Sentinel workspaces table
+	if len(m.WorkspaceRows) > 0 {
+		fmt.Println("\n=== Sentinel Workspaces ===")
+		var headerStrings []string
+		for _, col := range m.TableFiles.TableCols {
+			headerStrings = append(headerStrings, col.Name)
+		}
+		internal.PrintTableToScreen(headerStrings, m.WorkspaceRows, false)
+	}
 
-	// Write automation rules table
-	azinternal.WriteTableAndLootFiles(automationRulesTableFiles, m.output, m.AutomationRuleRows, nil, m.Caller)
+	// Print analytics rules table
+	if len(m.AnalyticsRuleRows) > 0 {
+		fmt.Println("\n=== Analytics Rules ===")
+		var headerStrings []string
+		for _, col := range analyticsRulesTableFiles.TableCols {
+			headerStrings = append(headerStrings, col.Name)
+		}
+		internal.PrintTableToScreen(headerStrings, m.AnalyticsRuleRows, false)
+	}
 
-	// Write data connectors table
-	azinternal.WriteTableAndLootFiles(dataConnectorsTableFiles, m.output, m.DataConnectorRows, nil, m.Caller)
+	// Print automation rules table
+	if len(m.AutomationRuleRows) > 0 {
+		fmt.Println("\n=== Automation Rules ===")
+		var headerStrings []string
+		for _, col := range automationRulesTableFiles.TableCols {
+			headerStrings = append(headerStrings, col.Name)
+		}
+		internal.PrintTableToScreen(headerStrings, m.AutomationRuleRows, false)
+	}
 
-	// Write incidents table
-	azinternal.WriteTableAndLootFiles(incidentsTableFiles, m.output, m.IncidentRows, nil, m.Caller)
+	// Print data connectors table
+	if len(m.DataConnectorRows) > 0 {
+		fmt.Println("\n=== Data Connectors ===")
+		var headerStrings []string
+		for _, col := range dataConnectorsTableFiles.TableCols {
+			headerStrings = append(headerStrings, col.Name)
+		}
+		internal.PrintTableToScreen(headerStrings, m.DataConnectorRows, false)
+	}
+
+	// Print incidents table
+	if len(m.IncidentRows) > 0 {
+		fmt.Println("\n=== Incidents ===")
+		var headerStrings []string
+		for _, col := range incidentsTableFiles.TableCols {
+			headerStrings = append(headerStrings, col.Name)
+		}
+		internal.PrintTableToScreen(headerStrings, m.IncidentRows, false)
+	}
 }
 
 // Table column definitions
@@ -980,23 +1000,29 @@ Security Focus:
   - Assesses overall SIEM coverage and effectiveness
 `,
 	Run: func(cmd *cobra.Command, args []string) {
-		var m SentinelModule
-		m.Caller = "sentinel"
-
-		// Initialize base module
-		err := azinternal.GlobalAzureInitializationRoutine(
-			cmd,
-			&m.BaseAzureModule,
-			knownawsaccountslookup.NonAWSProvider,
-		)
+		// Initialize command context
+		cmdCtx, err := azinternal.InitializeCommandContext(cmd, globals.AZ_SENTINEL_MODULE_NAME)
 		if err != nil {
-			m.modLog.Fatal(err.Error())
+			return // error already logged by helper
+		}
+		defer cmdCtx.Session.StopMonitoring()
+
+		// Initialize module
+		m := &SentinelModule{
+			BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+			Subscriptions:   cmdCtx.Subscriptions, // Use pre-fetched subscriptions from context
+			Caller:          "sentinel",
+			LootMap: map[string]*internal.LootFile{
+				"sentinel-disabled-rules":      {Name: "sentinel-disabled-rules.txt", Contents: ""},
+				"sentinel-unconnected-sources": {Name: "sentinel-unconnected-sources.txt", Contents: ""},
+				"sentinel-setup-commands":      {Name: "sentinel-setup-commands.txt", Contents: ""},
+			},
 		}
 
-		m.PrintSentinelCommand(m.output)
+		m.PrintSentinelCommand(cmdCtx.Ctx, cmdCtx.Logger)
 	},
 }
 
 func init() {
-	AzSentinelCommand.Flags().StringVarP(&globals.AZ_OUTPUT_FORMAT, "output", "o", "table", "Output format (table, csv, json)")
+	// Flags are handled by parent command (cli.AzCommands.PersistentFlags)
 }

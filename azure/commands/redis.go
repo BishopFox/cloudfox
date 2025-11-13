@@ -254,7 +254,7 @@ func (m *RedisModule) processRedisCache(ctx context.Context, cache *armredis.Res
 				firewallClient, err := armredis.NewFirewallRulesClient(subID, cred, nil)
 				if err == nil {
 					// Get firewall rules from the cache
-					firewallPager := firewallClient.NewListByRedisResourcePager(rgName, cacheName, nil)
+					firewallPager := firewallClient.NewListPager(rgName, cacheName, nil)
 					ruleCount := 0
 					var ruleNames []string
 					for firewallPager.More() {
