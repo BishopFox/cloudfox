@@ -524,10 +524,11 @@ func (m *APIManagementModule) processAPI(ctx context.Context, api *armapimanagem
 	}
 
 	// API type (REST, SOAP, GraphQL, etc.)
+	// Note: Type field not available in current SDK version
 	apiType := "N/A"
-	if api.Properties != nil && api.Properties.Type != nil {
-		apiType = string(*api.Properties.Type)
-	}
+	// if api.Properties != nil && api.Properties.Type != nil {
+	// 	apiType = string(*api.Properties.Type)
+	// }
 
 	// Check if API is public
 	isPublic := "Unknown"

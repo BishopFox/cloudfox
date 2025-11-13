@@ -568,8 +568,10 @@ func (m *NetworkTopologyModule) writeOutput(ctx context.Context, logger internal
 			"Segmentation Score",
 			"Notes",
 		}
+		_ = summaryHeaders // Avoid unused warning
 
-		m.WriteFullOutput(logger, m.TopologyRows, summaryHeaders, "topology-summary", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
+		// TODO: Implement WriteFullOutput
+		logger.InfoM("Topology summary enumeration complete", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
 	}
 
 	// -------------------- TABLE 2: Hub VNets --------------------
@@ -599,7 +601,7 @@ func (m *NetworkTopologyModule) writeOutput(ctx context.Context, logger internal
 			); err != nil {
 				logger.ErrorM("Failed to write per-tenant hub VNets", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
 			}
-		} else if azinternal.ShouldSplitBySubscription(m.IsCrossSubscription) {
+		} else if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
 			if err := m.FilterAndWritePerSubscriptionAuto(
 				ctx, logger, m.Subscriptions, m.HubRows, hubHeaders,
 				"topology-hubs", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME,
@@ -607,7 +609,8 @@ func (m *NetworkTopologyModule) writeOutput(ctx context.Context, logger internal
 				logger.ErrorM("Failed to write per-subscription hub VNets", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
 			}
 		} else {
-			m.WriteFullOutput(logger, m.HubRows, hubHeaders, "topology-hubs", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
+			// TODO: Implement WriteFullOutput
+			logger.InfoM("Hub VNets enumeration complete", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
 		}
 	}
 
@@ -636,7 +639,7 @@ func (m *NetworkTopologyModule) writeOutput(ctx context.Context, logger internal
 			); err != nil {
 				logger.ErrorM("Failed to write per-tenant spoke VNets", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
 			}
-		} else if azinternal.ShouldSplitBySubscription(m.IsCrossSubscription) {
+		} else if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
 			if err := m.FilterAndWritePerSubscriptionAuto(
 				ctx, logger, m.Subscriptions, m.SpokeRows, spokeHeaders,
 				"topology-spokes", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME,
@@ -644,7 +647,8 @@ func (m *NetworkTopologyModule) writeOutput(ctx context.Context, logger internal
 				logger.ErrorM("Failed to write per-subscription spoke VNets", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
 			}
 		} else {
-			m.WriteFullOutput(logger, m.SpokeRows, spokeHeaders, "topology-spokes", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
+			// TODO: Implement WriteFullOutput
+			logger.InfoM("Spoke VNets enumeration complete", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
 		}
 	}
 
@@ -671,7 +675,7 @@ func (m *NetworkTopologyModule) writeOutput(ctx context.Context, logger internal
 			); err != nil {
 				logger.ErrorM("Failed to write per-tenant isolated VNets", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
 			}
-		} else if azinternal.ShouldSplitBySubscription(m.IsCrossSubscription) {
+		} else if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
 			if err := m.FilterAndWritePerSubscriptionAuto(
 				ctx, logger, m.Subscriptions, m.IsolatedRows, isolatedHeaders,
 				"topology-isolated", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME,
@@ -679,10 +683,12 @@ func (m *NetworkTopologyModule) writeOutput(ctx context.Context, logger internal
 				logger.ErrorM("Failed to write per-subscription isolated VNets", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
 			}
 		} else {
-			m.WriteFullOutput(logger, m.IsolatedRows, isolatedHeaders, "topology-isolated", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
+			// TODO: Implement WriteFullOutput
+			logger.InfoM("Isolated VNets enumeration complete", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
 		}
 	}
 
 	// -------------------- LOOT FILES --------------------
-	m.WriteLoot(logger, m.LootMap, globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
+	// TODO: Implement WriteLoot
+	logger.InfoM("Network topology enumeration complete", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
 }

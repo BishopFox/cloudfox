@@ -10,6 +10,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/compute/mgmt/compute"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/network/mgmt/network"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armsubscriptions"
 	"github.com/BishopFox/cloudfox/globals"
@@ -1786,3 +1787,30 @@ func GetVMScaleSetsForSubscription(session *SafeSession, subscriptionID string, 
 
 	return vmssInstances, nil
 }
+
+// GetVMsPerSubscription returns all VMs in a subscription
+func GetVMsPerSubscription(ctx context.Context, session *SafeSession, subscriptionID string) ([]*armcompute.VirtualMachine, error) {
+	token, err := session.GetTokenForResource(globals.CommonScopes[0])
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ARM token: %v", err)
+	}
+
+	cred := &StaticTokenCredential{Token: token}
+	client, err := armcompute.NewVirtualMachinesClient(subscriptionID, cred, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create VM client: %v", err)
+	}
+
+	var vms []*armcompute.VirtualMachine
+	pager := client.NewListAllPager(nil)
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list VMs: %v", err)
+		}
+		vms = append(vms, page.Value...)
+	}
+
+	return vms, nil
+}
+

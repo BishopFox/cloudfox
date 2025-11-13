@@ -223,7 +223,7 @@ func (m *LoadBalancersModule) processLoadBalancer(ctx context.Context, lb *armne
 					publicIPIDs = append(publicIPIDs, *frontend.Properties.PublicIPAddress.ID)
 
 					// Resolve public IP address
-					publicIP := azinternal.GetPublicIPAddress(ctx, m.Session, subID, *frontend.Properties.PublicIPAddress.ID)
+					publicIP := azinternal.GetPublicIPAddressByID(ctx, m.Session, subID, *frontend.Properties.PublicIPAddress.ID)
 					if publicIP != "" {
 						frontendIPs = append(frontendIPs, publicIP)
 					}
@@ -377,17 +377,8 @@ func (m *LoadBalancersModule) processLoadBalancer(ctx context.Context, lb *armne
 
 	// Zone redundancy
 	zones := "N/A"
-	if lb.Zones != nil && len(lb.Zones) > 0 {
-		var zoneList []string
-		for _, z := range lb.Zones {
-			if z != nil {
-				zoneList = append(zoneList, *z)
-			}
-		}
-		if len(zoneList) > 0 {
-			zones = strings.Join(zoneList, ", ")
-		}
-	}
+	// Note: Zones field not available in current SDK version
+	// TODO: Add zone detection when SDK supports it
 
 	// Build loot entries for public load balancers with NAT rules
 	if isPublic && len(natRules) > 0 {

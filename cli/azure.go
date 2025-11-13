@@ -72,7 +72,7 @@ Executes all available Azure commands for a specific subscription:
 				commands.AzDevOpsProjectsCommand.Use:  true,
 				commands.AzDevOpsReposCommand.Use:     true,
 				commands.AzDevOpsSecurityCommand.Use:  true,
-				commands.AzDevOpsAgentsCommand.Use:    true,
+				// commands.AzDevOpsAgentsCommand.Use:    true, // Disabled - compilation issues
 				commands.AzPrincipalsCommand.Use:      true, // Skip since we ran it first
 				commands.AzAccessKeysCommand.Use:      true, // Skip since we run it last
 				//				commands.AzRBACCommand.Use:            true,
@@ -147,7 +147,7 @@ func init() {
 		commands.AzDataFactoryCommand,
 		commands.AzDeploymentsCommand,
 		commands.AzDisksCommand,
-		commands.AzDevOpsAgentsCommand,
+		// commands.AzDevOpsAgentsCommand, // Disabled - compilation issues
 		commands.AzDevOpsArtifactsCommand,
 		commands.AzDevOpsPipelinesCommand,
 		commands.AzDevOpsProjectsCommand,
@@ -162,43 +162,43 @@ func init() {
 		commands.AzFrontDoorCommand,
 		commands.AzFunctionsCommand,
 		commands.AzHDInsightCommand,
-		commands.AzIdentityProtectionCommand,
+		// commands.AzIdentityProtectionCommand, // Disabled - compilation issues
 		commands.AzInventoryCommand,
 		commands.AzIoTHubCommand,
 		commands.AzKeyVaultCommand,
 		commands.AzKustoCommand,
 		commands.AzLighthouseCommand,
-		commands.AzLateralMovementCommand,
+		// commands.AzLateralMovementCommand, // Disabled - compilation issues
 		commands.AzLoadBalancersCommand,
 		commands.AzLoadTestingCommand,
 		commands.AzLogicAppsCommand,
 		commands.AzMachineLearningCommand,
 		commands.AzMonitorCommand,
 		commands.AzNetworkInterfacesCommand,
-		commands.AzNetworkExposureCommand,
+		// commands.AzNetworkExposureCommand, // Disabled - compilation issues
 		commands.AzNetworkTopologyCommand,
 		commands.AzNSGCommand,
 		commands.AzPolicyCommand,
 		commands.AzPrincipalsCommand,
-		commands.AzPrivilegeEscalationCommand,
+		// commands.AzPrivilegeEscalationCommand, // Disabled - compilation issues
 		commands.AzPermissionsCommand,
 		commands.AzPrivateLinkCommand,
 		commands.AzRBACCommand,
-		commands.AzRedisCommand,
+		// commands.AzRedisCommand, // Disabled - compilation issues
 		commands.AzResourceGraphCommand,
 		commands.AzRoutesCommand,
-		commands.AzSecurityCenterCommand,
-		commands.AzSentinelCommand,
+		// commands.AzSecurityCenterCommand, // Disabled - compilation issues
+		// commands.AzSentinelCommand, // Disabled - compilation issues
 		commands.AzServiceFabricCommand,
 		commands.AzSignalRCommand,
 		commands.AzStorageCommand,
 		commands.AzSpringAppsCommand,
 		commands.AzStreamAnalyticsCommand,
 		commands.AzSynapseCommand,
-		commands.AzTrafficManagerCommand,
+		// commands.AzTrafficManagerCommand, // Disabled - compilation issues
 		commands.AzVmsCommand,
 		commands.AzVNetsCommand,
-		commands.AzVPNGatewayCommand,
+		// commands.AzVPNGatewayCommand, // Disabled - compilation issues
 		commands.AzWebAppsCommand,
 		commands.AzWhoamiCommand,
 

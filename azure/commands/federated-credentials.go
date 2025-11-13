@@ -184,11 +184,12 @@ func (m *FederatedCredentialsModule) initializeLootFiles() {
 
 // execute runs the enumeration
 func (m *FederatedCredentialsModule) execute(ctx context.Context) {
-	m.Logger.InfoM("Enumerating service principals with federated credentials...", globals.AZ_FEDERATED_CREDENTIALS_MODULE_NAME)
+	logger := internal.NewLogger()
+	logger.InfoM("Enumerating service principals with federated credentials...", globals.AZ_FEDERATED_CREDENTIALS_MODULE_NAME)
 
 	// Step 1: Enumerate all service principals
-	servicePrincipals := m.enumerateServicePrincipals(ctx)
-	m.Logger.InfoM(fmt.Sprintf("Found %d service principals", len(servicePrincipals)), globals.AZ_FEDERATED_CREDENTIALS_MODULE_NAME)
+	servicePrincipals := m.enumerateServicePrincipals(ctx, logger)
+	logger.InfoM(fmt.Sprintf("Found %d service principals", len(servicePrincipals)), globals.AZ_FEDERATED_CREDENTIALS_MODULE_NAME)
 
 	// Step 2: For each service principal, get federated credentials
 	for spID, sp := range servicePrincipals {
@@ -205,15 +206,15 @@ func (m *FederatedCredentialsModule) execute(ctx context.Context) {
 	devopsPAT := os.Getenv("AZDO_PAT")
 	var serviceConnections []ServiceConnection
 	if devopsOrg != "" && devopsPAT != "" {
-		m.Logger.InfoM("Enumerating Azure DevOps service connections...", globals.AZ_FEDERATED_CREDENTIALS_MODULE_NAME)
+		logger.InfoM("Enumerating Azure DevOps service connections...", globals.AZ_FEDERATED_CREDENTIALS_MODULE_NAME)
 		serviceConnections = m.enumerateDevOpsServiceConnections(devopsOrg, devopsPAT)
-		m.Logger.InfoM(fmt.Sprintf("Found %d service connections", len(serviceConnections)), globals.AZ_FEDERATED_CREDENTIALS_MODULE_NAME)
+		logger.InfoM(fmt.Sprintf("Found %d service connections", len(serviceConnections)), globals.AZ_FEDERATED_CREDENTIALS_MODULE_NAME)
 	} else {
-		m.Logger.InfoM("Skipping Azure DevOps enumeration (set AZURE_DEVOPS_ORGANIZATION and AZDO_PAT to enable)", globals.AZ_FEDERATED_CREDENTIALS_MODULE_NAME)
+		logger.InfoM("Skipping Azure DevOps enumeration (set AZURE_DEVOPS_ORGANIZATION and AZDO_PAT to enable)", globals.AZ_FEDERATED_CREDENTIALS_MODULE_NAME)
 	}
 
 	// Step 4: Cross-reference with devops-agents loot files (if they exist)
-	m.crossReferenceWithAgents(devopsOrg, serviceConnections, servicePrincipals)
+	m.crossReferenceWithAgents(devopsOrg, serviceConnections, servicePrincipals, logger)
 
 	// Step 5: Generate security analysis
 	m.generateSecurityAnalysis(servicePrincipals, serviceConnections)
@@ -223,13 +224,13 @@ func (m *FederatedCredentialsModule) execute(ctx context.Context) {
 }
 
 // enumerateServicePrincipals fetches all service principals
-func (m *FederatedCredentialsModule) enumerateServicePrincipals(ctx context.Context) map[string]ServicePrincipalData {
+func (m *FederatedCredentialsModule) enumerateServicePrincipals(ctx context.Context, logger internal.Logger) map[string]ServicePrincipalData {
 	result := make(map[string]ServicePrincipalData)
 
 	// Get token for Microsoft Graph
 	token, err := m.Session.GetTokenForResource(globals.CommonScopes[1]) // Microsoft Graph
 	if err != nil || token == "" {
-		m.Logger.ErrorM("Failed to get Graph API token", globals.AZ_FEDERATED_CREDENTIALS_MODULE_NAME)
+		logger.ErrorM("Failed to get Graph API token", globals.AZ_FEDERATED_CREDENTIALS_MODULE_NAME)
 		return result
 	}
 
@@ -237,7 +238,7 @@ func (m *FederatedCredentialsModule) enumerateServicePrincipals(ctx context.Cont
 	spURL := "https://graph.microsoft.com/v1.0/servicePrincipals?$select=id,appId,displayName"
 	body, err := azinternal.GraphAPIRequestWithRetry(ctx, "GET", spURL, token)
 	if err != nil {
-		m.Logger.ErrorM(fmt.Sprintf("Failed to fetch service principals: %v", err), globals.AZ_FEDERATED_CREDENTIALS_MODULE_NAME)
+		logger.ErrorM(fmt.Sprintf("Failed to fetch service principals: %v", err), globals.AZ_FEDERATED_CREDENTIALS_MODULE_NAME)
 		return result
 	}
 
@@ -245,7 +246,7 @@ func (m *FederatedCredentialsModule) enumerateServicePrincipals(ctx context.Cont
 		Value []map[string]interface{} `json:"value"`
 	}
 	if err := json.Unmarshal(body, &data); err != nil {
-		m.Logger.ErrorM(fmt.Sprintf("Failed to parse service principals: %v", err), globals.AZ_FEDERATED_CREDENTIALS_MODULE_NAME)
+		logger.ErrorM(fmt.Sprintf("Failed to parse service principals: %v", err), globals.AZ_FEDERATED_CREDENTIALS_MODULE_NAME)
 		return result
 	}
 
@@ -610,7 +611,7 @@ func (m *FederatedCredentialsModule) getProjectServiceConnections(org, pat, proj
 }
 
 // crossReferenceWithAgents reads devops-agents loot files and links to service principals
-func (m *FederatedCredentialsModule) crossReferenceWithAgents(devopsOrg string, serviceConnections []ServiceConnection, servicePrincipals map[string]ServicePrincipalData) {
+func (m *FederatedCredentialsModule) crossReferenceWithAgents(devopsOrg string, serviceConnections []ServiceConnection, servicePrincipals map[string]ServicePrincipalData, logger internal.Logger) {
 	if devopsOrg == "" {
 		return
 	}
@@ -621,11 +622,11 @@ func (m *FederatedCredentialsModule) crossReferenceWithAgents(devopsOrg string, 
 	// Check if self-hosted agents file exists
 	agentsFile := filepath.Join(lootDir, "agents-self-hosted.txt")
 	if _, err := os.Stat(agentsFile); os.IsNotExist(err) {
-		m.Logger.InfoM("No devops-agents loot files found (run 'cloudfox azure devops-agents' first to see complete attack paths)", globals.AZ_FEDERATED_CREDENTIALS_MODULE_NAME)
+		logger.InfoM("No devops-agents loot files found (run 'cloudfox azure devops-agents' first to see complete attack paths)", globals.AZ_FEDERATED_CREDENTIALS_MODULE_NAME)
 		return
 	}
 
-	m.Logger.InfoM("Found devops-agents loot files, generating complete attack paths...", globals.AZ_FEDERATED_CREDENTIALS_MODULE_NAME)
+	logger.InfoM("Found devops-agents loot files, generating complete attack paths...", globals.AZ_FEDERATED_CREDENTIALS_MODULE_NAME)
 
 	// Read self-hosted agents file
 	agentsContent, err := os.ReadFile(agentsFile)
@@ -978,7 +979,7 @@ func (m *FederatedCredentialsModule) printResults() {
 
 	// Print table
 	fmt.Println()
-	globals.PrintTableFromStructs(header, body)
+	internal.PrintTableToScreen(header, body, false)
 	fmt.Println()
 
 	// Print summary
@@ -1016,10 +1017,3 @@ func (m *FederatedCredentialsModule) printResults() {
 	fmt.Println("  - fedcreds-summary.txt (security analysis)")
 }
 
-// min returns the minimum of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

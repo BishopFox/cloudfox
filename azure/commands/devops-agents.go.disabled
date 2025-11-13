@@ -98,14 +98,13 @@ func ListDevOpsAgents(cmd *cobra.Command, args []string) {
 
 // DevOpsAgentsModule handles enumeration of Azure DevOps Agents (pipeline runners)
 type DevOpsAgentsModule struct {
+	azinternal.BaseAzureModule
+
 	Organization string
 	PAT          string
-	AzureClient  *azinternal.AzureClient
 
-	CommandCounter azinternal.CommandCounter
-	LootMap        map[string]azinternal.AzureLoot
-	mu             sync.Mutex
-	verbosity      int
+	LootMap map[string]*internal.LootFile
+	mu      sync.Mutex
 }
 
 // PrintHelp displays help information for the devops-agents command
@@ -148,7 +147,7 @@ func RunDevOpsAgentsCommand(organization, pat string, verbosity int, outputDirec
 		Organization: organization,
 		PAT:          pat,
 		verbosity:    verbosity,
-		LootMap:      make(map[string]azinternal.AzureLoot),
+		LootMap:      make(map[string]*internal.LootFile),
 	}
 
 	// Validate inputs
@@ -183,7 +182,7 @@ func RunDevOpsAgentsCommand(organization, pat string, verbosity int, outputDirec
 
 // initializeLootFiles creates the loot file structure
 func (m *DevOpsAgentsModule) initializeLootFiles() {
-	m.LootMap["agents-self-hosted"] = azinternal.AzureLoot{
+	m.LootMap["agents-self-hosted"] = *internal.LootFile{
 		Name:        "agents-self-hosted.txt",
 		Description: "Self-hosted agents (HIGH RISK - credential harvesting targets)",
 		Contents: "# Self-Hosted Azure DevOps Agents\n" +
@@ -194,14 +193,14 @@ func (m *DevOpsAgentsModule) initializeLootFiles() {
 			"#  - Store agent registration tokens for persistent access\n\n",
 	}
 
-	m.LootMap["agents-security-summary"] = azinternal.AzureLoot{
+	m.LootMap["agents-security-summary"] = *internal.LootFile{
 		Name:        "agents-security-summary.txt",
 		Description: "Security summary for all agent pools",
 		Contents: "# Azure DevOps Agents - Security Summary\n" +
 			"# Generated: " + time.Now().Format(time.RFC3339) + "\n\n",
 	}
 
-	m.LootMap["agents-outdated"] = azinternal.AzureLoot{
+	m.LootMap["agents-outdated"] = *internal.LootFile{
 		Name:        "agents-outdated.txt",
 		Description: "Agents running outdated versions (CVE risk)",
 		Contents: "# Outdated Azure DevOps Agents\n" +
@@ -209,14 +208,14 @@ func (m *DevOpsAgentsModule) initializeLootFiles() {
 			"# Recommendation: Update to latest agent version\n\n",
 	}
 
-	m.LootMap["agents-job-history"] = azinternal.AzureLoot{
+	m.LootMap["agents-job-history"] = *internal.LootFile{
 		Name:        "agents-job-history.txt",
 		Description: "Recent job execution history per agent",
 		Contents: "# Azure DevOps Agents - Recent Job History\n" +
 			"# Shows which agents are actively executing pipelines\n\n",
 	}
 
-	m.LootMap["agents-permissions"] = azinternal.AzureLoot{
+	m.LootMap["agents-permissions"] = *internal.LootFile{
 		Name:        "agents-permissions.txt",
 		Description: "Agent pool permissions and security roles",
 		Contents: "# Azure DevOps Agent Pool Permissions\n" +
@@ -535,8 +534,8 @@ func (m *DevOpsAgentsModule) processAgent(agent map[string]interface{}, poolID i
 	// Store in a module-level slice for table generation
 	// (We'll need to add a field to the struct to collect these)
 	m.mu.Lock()
-	if m.LootMap["_tableData"] == (azinternal.AzureLoot{}) {
-		m.LootMap["_tableData"] = azinternal.AzureLoot{
+	if m.LootMap["_tableData"] == (*internal.LootFile{}) {
+		m.LootMap["_tableData"] = *internal.LootFile{
 			Name:     "_internal",
 			Contents: "[]", // JSON array
 		}
@@ -547,7 +546,7 @@ func (m *DevOpsAgentsModule) processAgent(agent map[string]interface{}, poolID i
 	json.Unmarshal([]byte(m.LootMap["_tableData"].Contents), &tableData)
 	tableData = append(tableData, agentData)
 	jsonBytes, _ := json.Marshal(tableData)
-	m.LootMap["_tableData"] = azinternal.AzureLoot{
+	m.LootMap["_tableData"] = *internal.LootFile{
 		Name:     "_internal",
 		Contents: string(jsonBytes),
 	}

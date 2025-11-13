@@ -136,8 +136,8 @@ func ListLoadBalancers(ctx context.Context, session *SafeSession, subscriptionID
 	return GetLoadBalancersPerResourceGroup(ctx, session, subscriptionID, rgName)
 }
 
-// GetPublicIPAddress resolves a public IP address from its resource ID
-func GetPublicIPAddress(ctx context.Context, session *SafeSession, subscriptionID, publicIPID string) string {
+// GetPublicIPAddressByID resolves a public IP address from its resource ID
+func GetPublicIPAddressByID(ctx context.Context, session *SafeSession, subscriptionID, publicIPID string) string {
 	ip, err := GetPublicIPByID(ctx, session, publicIPID)
 	if err != nil {
 		return ""

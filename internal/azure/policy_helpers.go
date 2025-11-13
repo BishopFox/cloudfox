@@ -245,11 +245,6 @@ type NonCompliantResource struct {
 
 // GetPolicyComplianceState retrieves policy compliance state aggregated by policy assignment
 func GetPolicyComplianceState(ctx context.Context, session *SafeSession, subscriptionID string) ([]PolicyComplianceState, error) {
-	token, err := session.GetTokenForResource(globals.CommonScopes[0])
-	if err != nil {
-		return nil, fmt.Errorf("failed to get token: %v", err)
-	}
-
 	// Use Azure Policy Insights REST API for policy states
 	// We'll aggregate compliance by policy assignment using Resource Graph or REST API
 	// For now, return mock data structure - actual implementation would use Policy Insights API

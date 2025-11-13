@@ -1267,13 +1267,6 @@ func (m *PermissionsModule) parseScope(scope, subName string) (scopeType, scopeN
 }
 
 // extractResourceName extracts resource name from resource ID
-func extractResourceName(resourceID string) string {
-	parts := strings.Split(resourceID, "/")
-	if len(parts) > 0 {
-		return parts[len(parts)-1]
-	}
-	return "Unknown"
-}
 
 // ======================
 // writeOutput - Write all collected permissions

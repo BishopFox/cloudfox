@@ -65,6 +65,20 @@ type LootFile struct {
 	Contents    string
 }
 
+// TableCol represents a column definition for table output
+type TableCol struct {
+	Name  string
+	Width int
+}
+
+// TableFiles represents table output configuration
+type TableFiles struct {
+	Directory   string
+	TableCols   []TableCol
+	ResultsFile string
+	LootFile    string
+}
+
 // TODO support datastructures that enable brief or wide format
 type CloudfoxOutput interface {
 	TableFiles() []TableFile

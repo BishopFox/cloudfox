@@ -93,6 +93,11 @@ type StaticTokenCredential struct {
 	Token string
 }
 
+// NewStaticTokenCredential creates a new StaticTokenCredential
+func NewStaticTokenCredential(token string) *StaticTokenCredential {
+	return &StaticTokenCredential{Token: token}
+}
+
 func (c *StaticTokenCredential) GetToken(ctx context.Context, opts policy.TokenRequestOptions) (azcore.AccessToken, error) {
 	return azcore.AccessToken{
 		Token:     c.Token,

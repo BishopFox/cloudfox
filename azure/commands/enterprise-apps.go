@@ -271,8 +271,8 @@ func (m *EnterpriseAppsModule) processApp(ctx context.Context, subscriptionID, s
 	ownerCount := 0
 	ownersList := "None"
 	orphanedApp := "No"
-	if app.ObjectID != nil && *app.ObjectID != "" {
-		owners, err := azinternal.GetApplicationOwners(ctx, m.Session, *app.ObjectID)
+	if app.ObjectID != "" {
+		owners, err := azinternal.GetApplicationOwners(ctx, m.Session, app.ObjectID)
 		if err == nil {
 			ownerCount = owners.OwnerCount
 			if ownerCount > 0 {
@@ -287,8 +287,8 @@ func (m *EnterpriseAppsModule) processApp(ctx context.Context, subscriptionID, s
 	// -------------------- Get publisher verification status --------------------
 	publisherStatus := "Unverified"
 	publisherName := "N/A"
-	if app.ObjectID != nil && *app.ObjectID != "" {
-		verification, err := azinternal.GetPublisherVerification(ctx, m.Session, *app.ObjectID)
+	if app.ObjectID != "" {
+		verification, err := azinternal.GetPublisherVerification(ctx, m.Session, app.ObjectID)
 		if err == nil {
 			if verification.IsVerified {
 				publisherStatus = "✓ Verified"

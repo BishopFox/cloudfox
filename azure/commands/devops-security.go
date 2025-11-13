@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
@@ -892,7 +893,7 @@ func (m *DevOpsSecurityModule) generateSecuritySummary(logger internal.Logger) {
 			"- Unprotected Secrets: %d\n"+
 			"- Weak Policies: %d\n"+
 			"- Risky Extensions: %d\n\n",
-		m.Organization, logger.TimestampString(),
+		m.Organization, time.Now().Format(time.RFC3339),
 		securityScore, posture,
 		m.TotalFindings, m.CriticalFindings, m.HighFindings, m.MediumFindings, m.LowFindings,
 		len(m.ServiceConnectionRows), len(m.VariableGroupRows), len(m.SecureFileRows), len(m.ExtensionRows), len(m.PolicyRows),

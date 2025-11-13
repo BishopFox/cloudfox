@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"os"
+        "strings"
 	"sync"
 
 	"github.com/BishopFox/cloudfox/globals"
@@ -245,7 +246,7 @@ func (m *DevOpsReposModule) processRepo(projID, projName string, r map[string]in
 
 	for _, yf := range yamlFiles {
 		// Scan YAML content for secrets
-		secretMatches := azinternal.ScanYAMLContent(yf.Content, fmt.Sprintf("%s/%s [%s]", projName, repoName, yf.Path), "repo-yaml")
+		secretMatches := azinternal.ScanYAMLContent(yf.Content, fmt.Sprintf("%s/%s [%s]", projName, repoName, yf.Path))
 		secretCount += len(secretMatches)
 
 		// Count severity levels
@@ -396,7 +397,7 @@ func (m *DevOpsReposModule) checkSecurityFiles(projName, repoName string) string
 	}
 
 	presentFiles := []string{}
-	for _, file := range securityFiles {
+	for _,  _ = range securityFiles {
 		// Check if file exists in repo (simplified - would need REST API call in real implementation)
 		// For now, we'll mark as "Not checked" since we'd need additional API calls
 		// This is a placeholder that could be enhanced with actual file existence checks

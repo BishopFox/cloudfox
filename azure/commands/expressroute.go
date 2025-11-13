@@ -237,6 +237,7 @@ func (m *ExpressRouteModule) processExpressRouteCircuit(ctx context.Context, sub
 	if circuit.Properties.ServiceKey != nil {
 		serviceKey = "***REDACTED***"
 	}
+	_ = serviceKey // Use to avoid unused warning if not used elsewhere
 
 	// Count peerings
 	privatePeeringCount := 0

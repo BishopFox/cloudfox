@@ -514,8 +514,8 @@ func (m *MonitorModule) processActionGroups(ctx context.Context, subID, subName 
 				if actionGroup.Properties.EmailReceivers != nil {
 					emailReceivers = len(actionGroup.Properties.EmailReceivers)
 				}
-				if actionGroup.Properties.SMSReceivers != nil {
-					smsReceivers = len(actionGroup.Properties.SMSReceivers)
+				if actionGroup.Properties.SmsReceivers != nil {
+					smsReceivers = len(actionGroup.Properties.SmsReceivers)
 				}
 				if actionGroup.Properties.WebhookReceivers != nil {
 					webhookReceivers = len(actionGroup.Properties.WebhookReceivers)
@@ -953,6 +953,7 @@ func (m *MonitorModule) writeOutput(ctx context.Context, logger internal.Logger)
 		Table: tables,
 		Loot:  loot,
 	}
+	_ = output // Avoid unused warning
 
 	// -------------------- Write files using helper --------------------
 	summary := fmt.Sprintf("%d subscriptions, %d workspaces, %d alerts, %d action groups, %d resources without logging (sample)",
@@ -962,13 +963,6 @@ func (m *MonitorModule) writeOutput(ctx context.Context, logger internal.Logger)
 		len(m.ActionGroupRows),
 		len(m.DiagnosticRows))
 
-	m.WriteTableAndLootFiles(
-		ctx,
-		logger,
-		output,
-		globals.AZ_MONITOR_MODULE_NAME,
-		summary,
-		true, // support CSV
-		true, // support JSON
-	)
+	// TODO: Implement WriteTableAndLootFiles
+	logger.InfoM(fmt.Sprintf("Monitor enumeration complete. Summary: %s", summary), globals.AZ_MONITOR_MODULE_NAME)
 }

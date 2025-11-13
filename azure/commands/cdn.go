@@ -616,7 +616,7 @@ func (m *CDNModule) writeOutput(ctx context.Context, logger internal.Logger) {
 			); err != nil {
 				logger.ErrorM("Failed to write per-tenant CDN profiles", globals.AZ_CDN_MODULE_NAME)
 			}
-		} else if azinternal.ShouldSplitBySubscription(m.IsCrossSubscription) {
+		} else if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
 			if err := m.FilterAndWritePerSubscriptionAuto(
 				ctx, logger, m.Subscriptions, m.ProfileRows, profileHeaders,
 				"cdn-profiles", globals.AZ_CDN_MODULE_NAME,
@@ -624,7 +624,7 @@ func (m *CDNModule) writeOutput(ctx context.Context, logger internal.Logger) {
 				logger.ErrorM("Failed to write per-subscription CDN profiles", globals.AZ_CDN_MODULE_NAME)
 			}
 		} else {
-			m.WriteFullOutput(logger, m.ProfileRows, profileHeaders, "cdn-profiles", globals.AZ_CDN_MODULE_NAME)
+			// TODO: m.WriteFullOutput(logger, m.ProfileRows, profileHeaders, "cdn-profiles", globals.AZ_CDN_MODULE_NAME)
 		}
 	}
 
@@ -661,7 +661,7 @@ func (m *CDNModule) writeOutput(ctx context.Context, logger internal.Logger) {
 			); err != nil {
 				logger.ErrorM("Failed to write per-tenant endpoints", globals.AZ_CDN_MODULE_NAME)
 			}
-		} else if azinternal.ShouldSplitBySubscription(m.IsCrossSubscription) {
+		} else if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
 			if err := m.FilterAndWritePerSubscriptionAuto(
 				ctx, logger, m.Subscriptions, m.EndpointRows, endpointHeaders,
 				"cdn-endpoints", globals.AZ_CDN_MODULE_NAME,
@@ -669,7 +669,7 @@ func (m *CDNModule) writeOutput(ctx context.Context, logger internal.Logger) {
 				logger.ErrorM("Failed to write per-subscription endpoints", globals.AZ_CDN_MODULE_NAME)
 			}
 		} else {
-			m.WriteFullOutput(logger, m.EndpointRows, endpointHeaders, "cdn-endpoints", globals.AZ_CDN_MODULE_NAME)
+			// TODO: m.WriteFullOutput(logger, m.EndpointRows, endpointHeaders, "cdn-endpoints", globals.AZ_CDN_MODULE_NAME)
 		}
 	}
 
@@ -703,7 +703,7 @@ func (m *CDNModule) writeOutput(ctx context.Context, logger internal.Logger) {
 			); err != nil {
 				logger.ErrorM("Failed to write per-tenant origins", globals.AZ_CDN_MODULE_NAME)
 			}
-		} else if azinternal.ShouldSplitBySubscription(m.IsCrossSubscription) {
+		} else if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
 			if err := m.FilterAndWritePerSubscriptionAuto(
 				ctx, logger, m.Subscriptions, m.OriginRows, originHeaders,
 				"cdn-origins", globals.AZ_CDN_MODULE_NAME,
@@ -711,10 +711,10 @@ func (m *CDNModule) writeOutput(ctx context.Context, logger internal.Logger) {
 				logger.ErrorM("Failed to write per-subscription origins", globals.AZ_CDN_MODULE_NAME)
 			}
 		} else {
-			m.WriteFullOutput(logger, m.OriginRows, originHeaders, "cdn-origins", globals.AZ_CDN_MODULE_NAME)
+			// TODO: m.WriteFullOutput(logger, m.OriginRows, originHeaders, "cdn-origins", globals.AZ_CDN_MODULE_NAME)
 		}
 	}
 
 	// -------------------- LOOT FILES --------------------
-	m.WriteLoot(logger, m.LootMap, globals.AZ_CDN_MODULE_NAME)
+	// TODO: m.WriteLoot(logger, m.LootMap, globals.AZ_CDN_MODULE_NAME)
 }

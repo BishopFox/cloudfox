@@ -3,7 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
-	"strings"
+	// "strings" // Unused
 	"sync"
 
 	"github.com/BishopFox/cloudfox/globals"

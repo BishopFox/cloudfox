@@ -1,9 +1,33 @@
 package sdk
 
 import (
+	"context"
+
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute"
 	"github.com/BishopFox/cloudfox/internal"
 	azinternal "github.com/BishopFox/cloudfox/internal/azure"
 )
+
+// CachedGetVMsPerSubscription returns cached VMs for a subscription
+func CachedGetVMsPerSubscription(session *azinternal.SafeSession, subscriptionID string) []*armcompute.VirtualMachine {
+	cacheKey := CacheKey("vms", subscriptionID, "")
+
+	// Check cache first
+	if cached, found := AzureSDKCache.Get(cacheKey); found {
+		return cached.([]*armcompute.VirtualMachine)
+	}
+
+	// Cache miss - get VMs from Azure
+	ctx := context.Background()
+	vms, err := azinternal.GetVMsPerSubscription(ctx, session, subscriptionID)
+	if err != nil {
+		return []*armcompute.VirtualMachine{}
+	}
+
+	// Store in cache
+	AzureSDKCache.Set(cacheKey, vms, 0)
+	return vms
+}
 
 // CachedGetVMsPerResourceGroupObject returns cached VMs for a resource group
 // Note: This function has a complex signature with lootMap - consider refactoring in future

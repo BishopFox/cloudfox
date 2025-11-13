@@ -248,7 +248,7 @@ func (m *DevOpsProjectsModule) processRepo(projID, projName, visibility, project
 	// SECRET SCANNING
 	for _, yf := range yamlFiles {
 		// Scan YAML content for secrets
-		secretMatches := azinternal.ScanYAMLContent(yf.Content, fmt.Sprintf("%s/%s [%s]", projName, repoName, yf.Path), "repo-yaml")
+		secretMatches := azinternal.ScanYAMLContent(yf.Content, fmt.Sprintf("%s/%s [%s]", projName, repoName, yf.Path))
 		secretCount += len(secretMatches)
 
 		// Add YAML file to loot

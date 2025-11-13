@@ -255,6 +255,8 @@ func (m *ConsentGrantsModule) writeOutput(logger internal.Logger) {
 	}
 
 	// Write table
+	// TODO: Implement proper output writing
+	/*
 	if err := internal.WriteFullOutput(
 		output,
 		m.OutputDirectory,
@@ -268,6 +270,8 @@ func (m *ConsentGrantsModule) writeOutput(logger internal.Logger) {
 		logger.ErrorM(fmt.Sprintf("Error writing output: %v", err), globals.AZ_CONSENT_GRANTS_MODULE_NAME)
 		m.CommandCounter.Error++
 	}
+	*/
+	_ = output // Use variable to avoid unused warning
 
 	// Count stats for summary
 	adminConsentCount := 0

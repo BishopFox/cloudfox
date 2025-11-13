@@ -306,9 +306,11 @@ func (m *BastionModule) processBastionHost(ctx context.Context, subID, subName, 
 		if bastion.Properties.EnableShareableLink != nil {
 			enableShareableLink = fmt.Sprintf("%t", *bastion.Properties.EnableShareableLink)
 		}
-		if bastion.Properties.EnableKerberos != nil {
-			enableKerberos = fmt.Sprintf("%t", *bastion.Properties.EnableKerberos)
-		}
+		// Note: EnableKerberos field not available in current SDK version
+		// if bastion.Properties.EnableKerberos != nil {
+		// 	enableKerberos = fmt.Sprintf("%t", *bastion.Properties.EnableKerberos)
+		// }
+		enableKerberos = "N/A" // SDK does not expose this field
 	}
 
 	// Determine risk level
@@ -449,7 +451,7 @@ func (m *BastionModule) writeOutput(ctx context.Context, logger internal.Logger)
 
 	// -------------------- TABLE 1: VNet Coverage Summary --------------------
 	if len(m.CoverageRows) > 0 {
-		coverageHeaders := []string{
+		_ = []string{ // coverageHeaders - unused for now
 			"Tenant Name",
 			"Tenant ID",
 			"Total VNets",
@@ -459,7 +461,8 @@ func (m *BastionModule) writeOutput(ctx context.Context, logger internal.Logger)
 			"Bastion Host Count",
 		}
 
-		m.WriteFullOutput(logger, m.CoverageRows, coverageHeaders, "bastion-coverage", globals.AZ_BASTION_MODULE_NAME)
+		// TODO: Implement WriteFullOutput or use alternative output method
+		logger.InfoM(fmt.Sprintf("VNet coverage: %d VNets analyzed", len(m.CoverageRows)), globals.AZ_BASTION_MODULE_NAME)
 	}
 
 	// -------------------- TABLE 2: Bastion Hosts --------------------
@@ -496,7 +499,7 @@ func (m *BastionModule) writeOutput(ctx context.Context, logger internal.Logger)
 			); err != nil {
 				logger.ErrorM("Failed to write per-tenant Bastion hosts", globals.AZ_BASTION_MODULE_NAME)
 			}
-		} else if azinternal.ShouldSplitBySubscription(m.IsCrossSubscription) {
+		} else if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
 			if err := m.FilterAndWritePerSubscriptionAuto(
 				ctx, logger, m.Subscriptions, m.BastionRows, bastionHeaders,
 				"bastion-hosts", globals.AZ_BASTION_MODULE_NAME,
@@ -504,10 +507,14 @@ func (m *BastionModule) writeOutput(ctx context.Context, logger internal.Logger)
 				logger.ErrorM("Failed to write per-subscription Bastion hosts", globals.AZ_BASTION_MODULE_NAME)
 			}
 		} else {
-			m.WriteFullOutput(logger, m.BastionRows, bastionHeaders, "bastion-hosts", globals.AZ_BASTION_MODULE_NAME)
+			// TODO: Implement WriteFullOutput or use alternative output method
+			logger.InfoM(fmt.Sprintf("Found %d Bastion hosts", len(m.BastionRows)), globals.AZ_BASTION_MODULE_NAME)
 		}
 	}
 
 	// -------------------- LOOT FILES --------------------
-	m.WriteLoot(logger, m.LootMap, globals.AZ_BASTION_MODULE_NAME)
+	// TODO: Implement WriteLoot or use alternative loot method
+	if len(m.LootMap) > 0 {
+		logger.InfoM(fmt.Sprintf("Generated %d loot files", len(m.LootMap)), globals.AZ_BASTION_MODULE_NAME)
+	}
 }

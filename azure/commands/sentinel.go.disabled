@@ -9,10 +9,10 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/securityinsights/armsecurityinsights"
-	"github.com/BishopFox/cloudfox/v2/internal"
-	azinternal "github.com/BishopFox/cloudfox/v2/internal/azure"
-	"github.com/BishopFox/cloudfox/v2/internal/azure/sdk"
-	"github.com/BishopFox/cloudfox/v2/internal/common"
+	"github.com/BishopFox/cloudfox/internal"
+	azinternal "github.com/BishopFox/cloudfox/internal/azure"
+	"github.com/BishopFox/cloudfox/internal/azure/sdk"
+	"github.com/BishopFox/cloudfox/internal/common"
 	"github.com/bishopfox/knownawsaccountslookup"
 	"github.com/spf13/cobra"
 )
@@ -29,6 +29,12 @@ type SentinelModule struct {
 	LootMap            map[string]*internal.LootFile
 	mu                 sync.Mutex
 	workspaceRegistry  map[string]workspaceInfo // Map workspace ID to info for cross-referencing
+
+	// Output fields
+	TableFiles *internal.TableFiles
+	output     string
+	modLog     internal.Logger
+	Caller     string
 }
 
 type workspaceInfo struct {

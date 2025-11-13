@@ -319,3 +319,42 @@ func IsThrottlingError(errMsg string) bool {
 
 	return false
 }
+
+// NewAuthenticatedRequest creates an HTTP request with bearer token authentication
+func NewAuthenticatedRequest(method, url, token string, body io.Reader) (*http.Request, error) {
+	req, err := http.NewRequest(method, url, body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %v", err)
+	}
+
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+
+	return req, nil
+}
+
+// SendAuthenticatedRequest sends an HTTP request and returns the response
+func SendAuthenticatedRequest(req *http.Request) (*http.Response, error) {
+	return http.DefaultClient.Do(req)
+}
+
+// UnmarshalResponseBody reads and unmarshals JSON response body
+func UnmarshalResponseBody(resp *http.Response, v interface{}) error {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response: %v", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	if err := json.Unmarshal(body, v); err != nil {
+		return fmt.Errorf("failed to unmarshal response: %v", err)
+	}
+
+	return nil
+}

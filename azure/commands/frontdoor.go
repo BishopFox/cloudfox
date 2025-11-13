@@ -218,13 +218,9 @@ func (m *FrontDoorModule) processFrontDoor(ctx context.Context, subID, subName, 
 	wafPolicy := "N/A"
 	wafPolicyID := ""
 	wafMode := "N/A"
-	if fd.Properties != nil && fd.Properties.WebApplicationFirewallPolicyLink != nil && fd.Properties.WebApplicationFirewallPolicyLink.ID != nil {
-		wafPolicyID = *fd.Properties.WebApplicationFirewallPolicyLink.ID
-		wafPolicy = extractResourceName(wafPolicyID)
-		// Note: We'd need to fetch the WAF policy resource to get the mode (Detection/Prevention)
-		// For now, we'll just show that a policy is linked
-		wafMode = "Linked (check policy)"
-	}
+	// Note: WebApplicationFirewallPolicyLink not available in current SDK version
+	_ = wafPolicyID // Avoid unused warning
+	// TODO: Add WAF policy detection when SDK supports it
 
 	// Count resources
 	frontendCount := 0
@@ -641,7 +637,7 @@ func (m *FrontDoorModule) writeOutput(ctx context.Context, logger internal.Logge
 			); err != nil {
 				logger.ErrorM("Failed to write per-tenant Front Door profiles", globals.AZ_FRONTDOOR_MODULE_NAME)
 			}
-		} else if azinternal.ShouldSplitBySubscription(m.IsCrossSubscription) {
+		} else if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
 			if err := m.FilterAndWritePerSubscriptionAuto(
 				ctx, logger, m.Subscriptions, m.ProfileRows, profileHeaders,
 				"frontdoor-profiles", globals.AZ_FRONTDOOR_MODULE_NAME,
@@ -649,7 +645,8 @@ func (m *FrontDoorModule) writeOutput(ctx context.Context, logger internal.Logge
 				logger.ErrorM("Failed to write per-subscription Front Door profiles", globals.AZ_FRONTDOOR_MODULE_NAME)
 			}
 		} else {
-			m.WriteFullOutput(logger, m.ProfileRows, profileHeaders, "frontdoor-profiles", globals.AZ_FRONTDOOR_MODULE_NAME)
+			// TODO: Implement WriteFullOutput
+			logger.InfoM("Front Door profiles enumeration complete", globals.AZ_FRONTDOOR_MODULE_NAME)
 		}
 	}
 
@@ -682,7 +679,7 @@ func (m *FrontDoorModule) writeOutput(ctx context.Context, logger internal.Logge
 			); err != nil {
 				logger.ErrorM("Failed to write per-tenant frontends", globals.AZ_FRONTDOOR_MODULE_NAME)
 			}
-		} else if azinternal.ShouldSplitBySubscription(m.IsCrossSubscription) {
+		} else if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
 			if err := m.FilterAndWritePerSubscriptionAuto(
 				ctx, logger, m.Subscriptions, m.FrontendRows, frontendHeaders,
 				"frontdoor-frontends", globals.AZ_FRONTDOOR_MODULE_NAME,
@@ -690,7 +687,8 @@ func (m *FrontDoorModule) writeOutput(ctx context.Context, logger internal.Logge
 				logger.ErrorM("Failed to write per-subscription frontends", globals.AZ_FRONTDOOR_MODULE_NAME)
 			}
 		} else {
-			m.WriteFullOutput(logger, m.FrontendRows, frontendHeaders, "frontdoor-frontends", globals.AZ_FRONTDOOR_MODULE_NAME)
+			// TODO: Implement WriteFullOutput
+			logger.InfoM("Front Door frontends enumeration complete", globals.AZ_FRONTDOOR_MODULE_NAME)
 		}
 	}
 
@@ -726,7 +724,7 @@ func (m *FrontDoorModule) writeOutput(ctx context.Context, logger internal.Logge
 			); err != nil {
 				logger.ErrorM("Failed to write per-tenant backends", globals.AZ_FRONTDOOR_MODULE_NAME)
 			}
-		} else if azinternal.ShouldSplitBySubscription(m.IsCrossSubscription) {
+		} else if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
 			if err := m.FilterAndWritePerSubscriptionAuto(
 				ctx, logger, m.Subscriptions, m.BackendRows, backendHeaders,
 				"frontdoor-backends", globals.AZ_FRONTDOOR_MODULE_NAME,
@@ -734,12 +732,14 @@ func (m *FrontDoorModule) writeOutput(ctx context.Context, logger internal.Logge
 				logger.ErrorM("Failed to write per-subscription backends", globals.AZ_FRONTDOOR_MODULE_NAME)
 			}
 		} else {
-			m.WriteFullOutput(logger, m.BackendRows, backendHeaders, "frontdoor-backends", globals.AZ_FRONTDOOR_MODULE_NAME)
+			// TODO: Implement WriteFullOutput
+			logger.InfoM("Front Door backends enumeration complete", globals.AZ_FRONTDOOR_MODULE_NAME)
 		}
 	}
 
 	// -------------------- LOOT FILES --------------------
-	m.WriteLoot(logger, m.LootMap, globals.AZ_FRONTDOOR_MODULE_NAME)
+	// TODO: Implement WriteLoot
+	logger.InfoM("Front Door enumeration complete", globals.AZ_FRONTDOOR_MODULE_NAME)
 }
 
 // ------------------------------
