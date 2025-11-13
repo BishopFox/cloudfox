@@ -85,8 +85,6 @@ func ListArc(cmd *cobra.Command, args []string) {
 		ArcRows:         [][]string{},
 		LootMap: map[string]*internal.LootFile{
 			"arc-commands":             {Name: "arc-commands", Contents: ""},
-			"arc-machines":             {Name: "arc-machines", Contents: ""},
-			"arc-identities":           {Name: "arc-identities", Contents: ""},
 			"arc-cert-extraction":      {Name: "arc-cert-extraction", Contents: ""},
 			"arc-kubernetes":           {Name: "arc-kubernetes", Contents: "# Arc-enabled Kubernetes Clusters\n\n"},
 			"arc-data-services":        {Name: "arc-data-services", Contents: "# Arc-enabled Data Services\n\n"},
@@ -234,50 +232,10 @@ func (m *ArcModule) generateLoot(subID, subName string, machine azinternal.ArcMa
 		lf.Contents += fmt.Sprintf("az connectedmachine extension list --machine-name %s --resource-group %s -o table\n\n", machine.Name, machine.ResourceGroup)
 	}
 
-	// Machines loot
-	if lf, ok := m.LootMap["arc-machines"]; ok {
-		lf.Contents += fmt.Sprintf("\n## Arc Machine: %s\n", machine.Name)
-		lf.Contents += fmt.Sprintf("# Resource Group: %s, Subscription: %s (%s)\n", machine.ResourceGroup, subName, subID)
-		lf.Contents += fmt.Sprintf("- **Location**: %s\n", machine.Location)
-		lf.Contents += fmt.Sprintf("- **Hostname**: %s\n", machine.Hostname)
-		lf.Contents += fmt.Sprintf("- **Private IP**: %s\n", machine.PrivateIP)
-		lf.Contents += fmt.Sprintf("- **OS**: %s (%s)\n", machine.OSName, machine.OSVersion)
-		lf.Contents += fmt.Sprintf("- **Status**: %s\n", machine.Status)
-		lf.Contents += fmt.Sprintf("- **Provisioning State**: %s\n", machine.ProvisioningState)
-		lf.Contents += fmt.Sprintf("- **Agent Version**: %s\n", machine.AgentVersion)
-		lf.Contents += fmt.Sprintf("- **VM ID**: %s\n", machine.VMId)
-		if machine.LastStatusChange != "" {
-			lf.Contents += fmt.Sprintf("- **Last Status Change**: %s\n", machine.LastStatusChange)
-		}
-		lf.Contents += "\n"
-	}
-
-	// Identities loot
-	if lf, ok := m.LootMap["arc-identities"]; ok {
-		if machine.IdentityType != "" && machine.IdentityType != "None" {
-			lf.Contents += fmt.Sprintf("\n## Arc Machine: %s\n", machine.Name)
-			lf.Contents += fmt.Sprintf("# Resource Group: %s, Subscription: %s (%s)\n", machine.ResourceGroup, subName, subID)
-			lf.Contents += fmt.Sprintf("- **Identity Type**: %s\n", machine.IdentityType)
-			lf.Contents += fmt.Sprintf("- **Principal ID**: %s\n", machine.PrincipalID)
-			lf.Contents += fmt.Sprintf("- **Tenant ID**: %s\n", machine.TenantID)
-			lf.Contents += fmt.Sprintf("- **OS**: %s\n", machine.OSName)
-
-			if machine.OSName == "windows" {
-				lf.Contents += fmt.Sprintf("- **Certificate Path**: C:\\ProgramData\\AzureConnectedMachineAgent\\Certs\\myCert.cer\n")
-			} else {
-				lf.Contents += fmt.Sprintf("- **Certificate Path**: /var/opt/azcmagent/certs/myCert\n")
-			}
-			lf.Contents += "\n"
-		}
-	}
-
-	// Generate extraction template if machine has managed identity
-	if machine.IdentityType != "" && machine.IdentityType != "None" {
-		if lf, ok := m.LootMap["arc-cert-extraction"]; ok {
-			template := azinternal.GenerateArcCertExtractionTemplate(machine)
-			lf.Contents += template
-			lf.Contents += "---\n\n"
-		}
+	if lf, ok := m.LootMap["arc-cert-extraction"]; ok {
+		template := azinternal.GenerateArcCertExtractionTemplate(machine)
+		lf.Contents += template
+		lf.Contents += "---\n\n"
 	}
 
 	// Add Kubernetes cluster documentation

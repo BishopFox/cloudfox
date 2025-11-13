@@ -85,7 +85,6 @@ func ListHDInsight(cmd *cobra.Command, args []string) {
 		HDIRows:         [][]string{},
 		LootMap: map[string]*internal.LootFile{
 			"hdinsight-commands":         {Name: "hdinsight-commands", Contents: ""},
-			"hdinsight-identities":       {Name: "hdinsight-identities", Contents: "# Azure HDInsight Managed Identities\n\n"},
 			"hdinsight-esp-analysis":     {Name: "hdinsight-esp-analysis", Contents: "# Enterprise Security Package (ESP) Analysis\n\n"},
 			"hdinsight-kerberos-config":  {Name: "hdinsight-kerberos-config", Contents: "# Kerberos Configuration and Security\n\n"},
 			"hdinsight-ranger-policies":  {Name: "hdinsight-ranger-policies", Contents: "# Apache Ranger Authorization Analysis\n\n"},
@@ -415,20 +414,6 @@ func (m *HDInsightModule) generateLoot(subID, subName, rgName, clusterName, clus
 		}
 	}
 	m.LootMap["hdinsight-commands"].Contents += "\n"
-
-	// Managed identities for identity tracking
-	if systemAssignedID != "N/A" || userAssignedIDs != "N/A" {
-		m.LootMap["hdinsight-identities"].Contents += fmt.Sprintf("# Cluster: %s/%s\n", rgName, clusterName)
-		m.LootMap["hdinsight-identities"].Contents += fmt.Sprintf("Subscription: %s\n", subName)
-		m.LootMap["hdinsight-identities"].Contents += fmt.Sprintf("Identity Type: %s\n", identityType)
-		if systemAssignedID != "N/A" {
-			m.LootMap["hdinsight-identities"].Contents += fmt.Sprintf("System Assigned Identity: %s\n", systemAssignedID)
-		}
-		if userAssignedIDs != "N/A" {
-			m.LootMap["hdinsight-identities"].Contents += fmt.Sprintf("User Assigned Identities: %s\n", userAssignedIDs)
-		}
-		m.LootMap["hdinsight-identities"].Contents += "\n"
-	}
 
 	// ESP Analysis
 	m.LootMap["hdinsight-esp-analysis"].Contents += fmt.Sprintf(

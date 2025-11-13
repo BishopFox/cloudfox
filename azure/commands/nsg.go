@@ -71,7 +71,6 @@ func ListNSG(cmd *cobra.Command, args []string) {
 		NSGSummaryRows:  [][]string{}, // NEW: Effective rules summary
 		LootMap: map[string]*internal.LootFile{
 			"nsg-commands":        {Name: "nsg-commands", Contents: ""},
-			"nsg-open-ports":      {Name: "nsg-open-ports", Contents: "# NSG Rules Allowing Inbound Traffic\n\n"},
 			"nsg-security-risks":  {Name: "nsg-security-risks", Contents: "# NSG Security Risks\n\n"},
 			"nsg-targeted-scans":  {Name: "nsg-targeted-scans", Contents: "# Targeted Network Scanning Commands Based on NSG Rules\n\n# Use these commands to scan specific open ports discovered in NSG rules.\n# Replace <TARGET_IP> with the actual public IP or hostname.\n\n"},
 			"nsg-effective-rules": {Name: "nsg-effective-rules", Contents: "# NSG Effective Security Rules Analysis\n\n"}, // NEW
@@ -312,14 +311,6 @@ func (m *NSGModule) generateLoot(subID, subName, rgName, nsgName, ruleName, dire
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	// Track open ports
-	m.LootMap["nsg-open-ports"].Contents += fmt.Sprintf("NSG: %s/%s\n", rgName, nsgName)
-	m.LootMap["nsg-open-ports"].Contents += fmt.Sprintf("  Rule: %s\n", ruleName)
-	m.LootMap["nsg-open-ports"].Contents += fmt.Sprintf("  Protocol: %s\n", protocol)
-	m.LootMap["nsg-open-ports"].Contents += fmt.Sprintf("  Source: %s\n", srcPrefix)
-	m.LootMap["nsg-open-ports"].Contents += fmt.Sprintf("  Destination: %s\n", dstPrefix)
-	m.LootMap["nsg-open-ports"].Contents += fmt.Sprintf("  Ports: %s\n\n", dstPort)
 
 	// Identify security risks
 	risks := []string{}

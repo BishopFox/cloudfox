@@ -68,9 +68,8 @@ func ListRoutes(cmd *cobra.Command, args []string) {
 		Subscriptions:   cmdCtx.Subscriptions,
 		RouteRows:       [][]string{},
 		LootMap: map[string]*internal.LootFile{
-			"route-commands":      {Name: "route-commands", Contents: ""},
-			"route-custom-routes": {Name: "route-custom-routes", Contents: "# Custom Routes (Non-System Routes)\\n\\n"},
-			"route-risks":         {Name: "route-risks", Contents: "# Route Table Security Risks\\n\\n"},
+			"route-commands": {Name: "route-commands", Contents: ""},
+			"route-risks":    {Name: "route-risks", Contents: "# Route Table Security Risks\\n\\n"},
 		},
 	}
 
@@ -311,16 +310,6 @@ func (m *RoutesModule) processRouteTable(ctx context.Context, subID, subName, rg
 func (m *RoutesModule) generateLoot(subID, subName, rgName, rtName, routeName, addressPrefix, nextHopType, nextHopIP string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	// Track custom routes (non-system routes)
-	if nextHopType != "System" {
-		m.LootMap["route-custom-routes"].Contents += fmt.Sprintf("Route Table: %s/%s\\n", rgName, rtName)
-		m.LootMap["route-custom-routes"].Contents += fmt.Sprintf("  Route: %s\\n", routeName)
-		m.LootMap["route-custom-routes"].Contents += fmt.Sprintf("  Address Prefix: %s\\n", addressPrefix)
-		m.LootMap["route-custom-routes"].Contents += fmt.Sprintf("  Next Hop Type: %s\\n", nextHopType)
-		m.LootMap["route-custom-routes"].Contents += fmt.Sprintf("  Next Hop IP: %s\\n", nextHopIP)
-		m.LootMap["route-custom-routes"].Contents += fmt.Sprintf("  Subscription: %s\\n\\n", subName)
-	}
 
 	// Identify security risks
 	risks := []string{}
