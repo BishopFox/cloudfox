@@ -87,11 +87,9 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 	outputDirectory, _ := parentCmd.PersistentFlags().GetString("outdir")
 	format, _ := parentCmd.PersistentFlags().GetString("output")
 
+	logger.InfoM(fmt.Sprintf("Enumerating hidden admin permissions for %s", globals.ClusterName), globals.K8S_HIDDEN_ADMINS_MODULE_NAME)
+
 	clientset := config.GetClientOrExit()
-	if clientset == nil {
-		logger.ErrorM("Error getting Kubernetes client:", globals.K8S_HIDDEN_ADMINS_MODULE_NAME)
-		os.Exit(1)
-	}
 
 	headers := []string{"Namespace", "Entity", "Type", "Scope", "Dangerous Permissions", "Source"}
 	var tableRows [][]string
@@ -320,5 +318,14 @@ kubectl get roles --all-namespaces -o json | jq -r '.items[] | select(.rules[]? 
 	)
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Error handling output: %v", err), globals.K8S_HIDDEN_ADMINS_MODULE_NAME)
+		return
 	}
+
+	if len(tableRows) > 0 {
+		logger.InfoM(fmt.Sprintf("%d hidden admin findings found", len(tableRows)), globals.K8S_HIDDEN_ADMINS_MODULE_NAME)
+	} else {
+		logger.InfoM("No hidden admin findings found, skipping output file creation", globals.K8S_HIDDEN_ADMINS_MODULE_NAME)
+	}
+
+	logger.InfoM(fmt.Sprintf("For context and next steps: https://github.com/BishopFox/cloudfox/wiki/Kubernetes-Commands#%s", globals.K8S_HIDDEN_ADMINS_MODULE_NAME), globals.K8S_HIDDEN_ADMINS_MODULE_NAME)
 }

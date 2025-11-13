@@ -48,11 +48,9 @@ func ListConfigMaps(cmd *cobra.Command, args []string) {
 	outputDirectory, _ := parentCmd.PersistentFlags().GetString("outdir")
 	format, _ := parentCmd.PersistentFlags().GetString("output")
 
+	logger.InfoM(fmt.Sprintf("Enumerating configmaps for %s", globals.ClusterName), globals.K8S_CONFIGMAPS_MODULE_NAME)
+
 	clientset := config.GetClientOrExit()
-	if clientset == nil {
-		logger.ErrorM("Error getting Kubernetes client:", globals.K8S_CONFIGMAPS_MODULE_NAME)
-		os.Exit(1)
-	}
 
 	namespaces, err := clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -193,7 +191,16 @@ Data: .data
 	)
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Error handling output: %v", err), globals.K8S_CONFIGMAPS_MODULE_NAME)
+		return
 	}
+
+	if len(outputRows) > 0 {
+		logger.InfoM(fmt.Sprintf("%d configmaps found", len(outputRows)), globals.K8S_CONFIGMAPS_MODULE_NAME)
+	} else {
+		logger.InfoM("No configmaps found, skipping output file creation", globals.K8S_CONFIGMAPS_MODULE_NAME)
+	}
+
+	logger.InfoM(fmt.Sprintf("For context and next steps: https://github.com/BishopFox/cloudfox/wiki/Kubernetes-Commands#%s", globals.K8S_CONFIGMAPS_MODULE_NAME), globals.K8S_CONFIGMAPS_MODULE_NAME)
 }
 
 func detectSensitive(data map[string]string) string {

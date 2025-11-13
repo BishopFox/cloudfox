@@ -48,11 +48,9 @@ func ListServices(cmd *cobra.Command, args []string) {
 	outputDirectory, _ := parentCmd.PersistentFlags().GetString("outdir")
 	format, _ := parentCmd.PersistentFlags().GetString("output")
 
+	logger.InfoM(fmt.Sprintf("Enumerating services for %s", globals.ClusterName), globals.K8S_SERVICES_MODULE_NAME)
+
 	clientset := config.GetClientOrExit()
-	if clientset == nil {
-		logger.ErrorM("Error getting Kubernetes client:", globals.K8S_SERVICES_MODULE_NAME)
-		os.Exit(1)
-	}
 
 	svcClient := clientset.CoreV1().Services("")
 	endpointsClient := clientset.CoreV1().Endpoints("")
@@ -264,5 +262,14 @@ func ListServices(cmd *cobra.Command, args []string) {
 	)
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Error handling output: %v", err), globals.K8S_SERVICES_MODULE_NAME)
+		return
 	}
+
+	if len(outputRows) > 0 {
+		logger.InfoM(fmt.Sprintf("%d services found", len(outputRows)), globals.K8S_SERVICES_MODULE_NAME)
+	} else {
+		logger.InfoM("No services found, skipping output file creation", globals.K8S_SERVICES_MODULE_NAME)
+	}
+
+	logger.InfoM(fmt.Sprintf("For context and next steps: https://github.com/BishopFox/cloudfox/wiki/Kubernetes-Commands#%s", globals.K8S_SERVICES_MODULE_NAME), globals.K8S_SERVICES_MODULE_NAME)
 }
