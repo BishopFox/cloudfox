@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"bufio"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/aquasecurity/table"
 	"github.com/fatih/color"
@@ -23,6 +25,9 @@ var fileSystem = afero.NewOsFs()
 
 // Color functions
 var cyan = color.New(color.FgCyan).SprintFunc()
+
+// global lock to prevent concurrent write races
+var lootFileMu sync.Mutex
 
 type OutputClient struct {
 	Verbosity        int
@@ -100,6 +105,443 @@ func HandleOutput(
 
 	// Handle output based on the verbosity level
 	outputClient.WriteFullOutput(tables, lootFiles)
+	return nil
+}
+
+// HandleStreamingOutput writes table and loot files incrementally, then finalizes tables at the end.
+// Uses the new directory structure: cloudfox-output/{CloudProvider}/{Principal}/{ScopeIdentifier}/
+func HandleStreamingOutput(
+	cloudProvider string,
+	format string,
+	outputDirectory string,
+	verbosity int,
+	wrap bool,
+	scopeType string,
+	scopeIdentifiers []string,
+	scopeNames []string,
+	principal string,
+	dataToOutput CloudfoxOutput,
+) error {
+	logger := NewLogger()
+
+	// Build scope identifier using same logic as HandleOutputSmart
+	resultsIdentifier := buildResultsIdentifier(scopeType, scopeIdentifiers, scopeNames)
+
+	// Determine base module name from first table file (for backwards compatibility)
+	baseCloudfoxModule := ""
+	if len(dataToOutput.TableFiles()) > 0 {
+		baseCloudfoxModule = dataToOutput.TableFiles()[0].Name
+	}
+
+	// Build consistent output path using NEW structure
+	outDirectoryPath := filepath.Join(
+		outputDirectory,
+		"cloudfox-output",
+		cloudProvider,
+		principal,
+		resultsIdentifier,
+	)
+
+	if err := os.MkdirAll(outDirectoryPath, 0o755); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+
+	// ---- STREAM ROWS TO TEMP FILES ----
+	for _, t := range dataToOutput.TableFiles() {
+		if verbosity > 0 {
+			tmpClient := TableClient{Wrap: wrap}
+			tmpClient.printTablesToScreen([]TableFile{t})
+		}
+
+		safeName := sanitizeFileName(t.Name)
+		tmpTablePath := filepath.Join(outDirectoryPath, safeName+".tmp")
+		if err := os.MkdirAll(filepath.Dir(tmpTablePath), 0o755); err != nil {
+			return fmt.Errorf("failed to create parent directory for temp table: %w", err)
+		}
+
+		tmpTableFile, err := os.OpenFile(tmpTablePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			return fmt.Errorf("failed to open temporary table file: %w", err)
+		}
+		defer tmpTableFile.Close()
+
+		// Append each row into the tmp file
+		for _, row := range t.Body {
+			cleanRow := removeColorCodesFromSlice(row)
+			if _, err := tmpTableFile.WriteString(strings.Join(cleanRow, ",") + "\n"); err != nil {
+				return fmt.Errorf("failed to append row to tmp table: %w", err)
+			}
+		}
+
+		// Stream CSV rows
+		if format == "all" || format == "csv" {
+			csvPath := filepath.Join(outDirectoryPath, "csv", safeName+".csv")
+			if err := os.MkdirAll(filepath.Dir(csvPath), 0o755); err != nil {
+				return fmt.Errorf("failed to create csv directory: %w", err)
+			}
+			csvFile, err := os.OpenFile(csvPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+			if err != nil {
+				return fmt.Errorf("failed to open csv file: %w", err)
+			}
+			defer csvFile.Close()
+
+			info, _ := csvFile.Stat()
+			if info.Size() == 0 {
+				_, _ = csvFile.WriteString(strings.Join(t.Header, ",") + "\n")
+			}
+			for _, row := range t.Body {
+				cleanRow := removeColorCodesFromSlice(row)
+				_, _ = csvFile.WriteString(strings.Join(cleanRow, ",") + "\n")
+			}
+		}
+
+		// Stream JSONL rows
+		if format == "all" || format == "json" {
+			if err := AppendJSONL(outDirectoryPath, t); err != nil {
+				return fmt.Errorf("failed to append JSONL: %w", err)
+			}
+		}
+	}
+
+	// ---- STREAM LOOT ----
+	for _, l := range dataToOutput.LootFiles() {
+		lootDir := filepath.Join(outDirectoryPath, "loot")
+		if err := os.MkdirAll(lootDir, 0o755); err != nil {
+			return fmt.Errorf("failed to create loot directory: %w", err)
+		}
+
+		lootPath := filepath.Join(lootDir, l.Name+".txt")
+		lootFile, err := os.OpenFile(lootPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			return fmt.Errorf("failed to open loot file: %w", err)
+		}
+		defer lootFile.Close()
+
+		scanner := bufio.NewScanner(strings.NewReader(l.Contents))
+		for scanner.Scan() {
+			if _, err := lootFile.WriteString(scanner.Text() + "\n"); err != nil {
+				return fmt.Errorf("failed to append loot line: %w", err)
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			return fmt.Errorf("error reading loot lines: %w", err)
+		}
+	}
+
+	// ---- FINALIZE TABLES MEMORY-SAFE ----
+	if err := StreamFinalizeTables(cloudProvider, format, outputDirectory, verbosity, wrap, scopeType, scopeIdentifiers, scopeNames, principal, nil); err != nil {
+		return fmt.Errorf("failed to finalize tables: %w", err)
+	}
+
+	if verbosity >= 2 {
+		logger.InfoM(fmt.Sprintf("Output written to %s", outDirectoryPath), baseCloudfoxModule)
+	}
+
+	return nil
+}
+
+// StreamFinalizeTables writes final tables line-by-line to avoid memory issues.
+// It reads each .tmp file and writes it directly to a tab-delimited .txt table.
+// Note: does not print a pretty table
+// Uses the new directory structure: cloudfox-output/{CloudProvider}/{Principal}/{ScopeIdentifier}/
+func StreamFinalizeTables(
+	cloudProvider string,
+	format string,
+	outputDirectory string,
+	verbosity int,
+	wrap bool,
+	scopeType string,
+	scopeIdentifiers []string,
+	scopeNames []string,
+	principal string,
+	header []string,
+) error {
+
+	// Build scope identifier using same logic as HandleOutputSmart
+	resultsIdentifier := buildResultsIdentifier(scopeType, scopeIdentifiers, scopeNames)
+
+	// Build consistent output path using NEW structure
+	outDirectoryPath := filepath.Join(
+		outputDirectory,
+		"cloudfox-output",
+		cloudProvider,
+		principal,
+		resultsIdentifier,
+	)
+
+	// Ensure final table directory exists
+	tableDir := filepath.Join(outDirectoryPath, "table")
+	if err := os.MkdirAll(tableDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create table directory: %w", err)
+	}
+
+	// Walk the output directory looking for .tmp files
+	err := filepath.Walk(outDirectoryPath, func(tmpPath string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() || !strings.HasSuffix(info.Name(), ".tmp") {
+			return nil
+		}
+
+		// Derive final table file name
+		baseName := strings.TrimSuffix(info.Name(), ".tmp")
+		tablePath := filepath.Join(tableDir, baseName+".txt")
+
+		// Open output .txt for writing
+		outFile, err := os.OpenFile(tablePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+		if err != nil {
+			return fmt.Errorf("failed to open final table file %s: %w", tablePath, err)
+		}
+		defer outFile.Close()
+
+		// Write header row
+		if len(header) > 0 {
+			_, _ = fmt.Fprintln(outFile, strings.Join(header, "\t"))
+		}
+
+		// Stream each row from .tmp file line-by-line
+		tmpFile, err := os.Open(tmpPath)
+		if err != nil {
+			return fmt.Errorf("failed to open tmp file %s: %w", tmpPath, err)
+		}
+		defer tmpFile.Close()
+
+		scanner := bufio.NewScanner(tmpFile)
+		for scanner.Scan() {
+			line := scanner.Text()
+			cols := strings.Split(line, ",")
+			// Remove any ANSI color codes
+			cols = removeColorCodesFromSlice(cols)
+			_, _ = fmt.Fprintln(outFile, strings.Join(cols, "\t"))
+		}
+		if scanErr := scanner.Err(); scanErr != nil {
+			return fmt.Errorf("error scanning tmp file %s: %w", tmpPath, scanErr)
+		}
+
+		// Delete the temporary .tmp file after streaming
+		_ = os.Remove(tmpPath)
+
+		return nil
+	})
+
+	return err
+}
+
+// streamRenderTableWithHeader renders a tmp file into a table with a single header row.
+func streamRenderTableWithHeader(tmpFilePath string, header []string, outFile *os.File, wrap bool) error {
+	t := table.New(outFile)
+	if !wrap {
+		t.SetColumnMaxWidth(1000)
+	}
+
+	if len(header) > 0 {
+		t.SetHeaders(header...)
+	}
+
+	t.SetRowLines(false)
+	t.SetDividers(table.UnicodeRoundedDividers)
+	t.SetAlignment(table.AlignLeft)
+	t.SetHeaderStyle(table.StyleBold)
+
+	// Stream rows from tmp file
+	f, err := os.Open(tmpFilePath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		row := strings.Split(line, ",")
+		t.AddRow(row...)
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+
+	t.Render()
+	return nil
+}
+
+//func StreamRenderTable(tmpFilePath string, header []string, outFile *os.File, wrap bool) error {
+//	t := table.New(outFile)
+//	if !wrap {
+//		t.SetColumnMaxWidth(1000)
+//	}
+//	t.SetHeaders(header...)
+//	t.SetRowLines(false)
+//	t.SetDividers(table.UnicodeRoundedDividers)
+//	t.SetAlignment(table.AlignLeft)
+//	t.SetHeaderStyle(table.StyleBold)
+//
+//	f, err := os.Open(tmpFilePath)
+//	if err != nil {
+//		return err
+//	}
+//	defer f.Close()
+//
+//	scanner := bufio.NewScanner(f)
+//	for scanner.Scan() {
+//		line := scanner.Text()
+//		row := strings.Split(line, ",")
+//		t.AddRow(row...)
+//	}
+//	if err := scanner.Err(); err != nil {
+//		return err
+//	}
+//
+//	t.Render()
+//	return nil
+//}
+
+func AppendCSV(outputDir string, table TableFile) error {
+	csvDir := filepath.Join(outputDir, "csv")
+	if err := os.MkdirAll(csvDir, 0o755); err != nil {
+		return err
+	}
+
+	filePath := filepath.Join(csvDir, table.Name+".csv")
+	f, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	writer := csv.NewWriter(f)
+	// Only write header if file is new
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if info.Size() == 0 {
+		if err := writer.Write(table.Header); err != nil {
+			return err
+		}
+	}
+
+	for _, row := range table.Body {
+		row = removeColorCodesFromSlice(row)
+		if err := writer.Write(row); err != nil {
+			return err
+		}
+	}
+	writer.Flush()
+	return writer.Error()
+}
+
+func AppendLoot(outputDir string, loot LootFile) error {
+	lootDir := filepath.Join(outputDir, "loot")
+	if err := os.MkdirAll(lootDir, 0o755); err != nil {
+		return err
+	}
+
+	filePath := filepath.Join(lootDir, loot.Name+".txt")
+	f, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if _, err := f.WriteString(loot.Contents + "\n"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func AppendJSON(outputDir string, table TableFile) error {
+	jsonDir := filepath.Join(outputDir, "json")
+	if err := os.MkdirAll(jsonDir, 0o755); err != nil {
+		return err
+	}
+
+	filePath := filepath.Join(jsonDir, table.Name+".json")
+	var existing []map[string]string
+
+	// Try to load existing JSON if file exists
+	if _, err := os.Stat(filePath); err == nil {
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			return err
+		}
+		if len(data) > 0 {
+			if err := json.Unmarshal(data, &existing); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Append new rows
+	for _, row := range table.Body {
+		rowMap := make(map[string]string)
+		for i, col := range row {
+			rowMap[table.Header[i]] = col
+		}
+		existing = append(existing, rowMap)
+	}
+
+	jsonBytes, err := json.MarshalIndent(existing, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(filePath, jsonBytes, 0644)
+}
+
+func AppendJSONL(outputDir string, table TableFile) error {
+	jsonDir := filepath.Join(outputDir, "json")
+	if err := os.MkdirAll(jsonDir, 0o755); err != nil {
+		return err
+	}
+
+	filePath := filepath.Join(jsonDir, table.Name+".jsonl")
+	f, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	for _, row := range table.Body {
+		rowMap := make(map[string]string)
+		for i, col := range row {
+			rowMap[table.Header[i]] = col
+		}
+		jsonBytes, _ := json.Marshal(rowMap)
+		if _, err := f.Write(append(jsonBytes, '\n')); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func AppendLootFile(outputDirectory, lootFileName, entry string) error {
+	// Ensure output directory exists
+	lootDir := filepath.Join(outputDirectory, "loot")
+	if err := os.MkdirAll(lootDir, 0755); err != nil {
+		return fmt.Errorf("failed to create loot directory: %w", err)
+	}
+
+	// Loot file path
+	lootPath := filepath.Join(lootDir, fmt.Sprintf("%s.txt", lootFileName))
+
+	// Lock so concurrent workers don’t clobber each other
+	lootFileMu.Lock()
+	defer lootFileMu.Unlock()
+
+	// Open in append mode
+	f, err := os.OpenFile(lootPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open loot file: %w", err)
+	}
+	defer f.Close()
+
+	// Write entry with newline
+	if _, err := f.WriteString(entry + "\n"); err != nil {
+		return fmt.Errorf("failed to write to loot file: %w", err)
+	}
+
 	return nil
 }
 
@@ -518,4 +960,265 @@ func WriteJsonlFile(file *os.File, data interface{}) error {
 		return err
 	}
 	return nil
+}
+
+func sanitizeFileName(name string) string {
+	// replace / and \ with _
+	re := regexp.MustCompile(`[\\/]+`)
+	return re.ReplaceAllString(name, "_")
+}
+
+// ============================================================================
+// NEW OUTPUT FUNCTIONS V2 - Multi-cloud support with intelligent routing
+// ============================================================================
+
+// HandleOutputV2 is the new generic output function that supports multi-cloud
+// environments (Azure, AWS, GCP) with proper scope handling.
+// This function provides a cleaner directory structure based on scope type.
+//
+// Directory structure:
+//   - Azure (tenant mode): cloudfox-output/Azure/{UPN}/{TenantName}/module.csv
+//   - Azure (subscription mode): cloudfox-output/Azure/{UPN}/{SubscriptionName}/module.csv
+//   - AWS (org mode): cloudfox-output/AWS/{Principal}/{OrgID}/module.csv
+//   - AWS (account mode): cloudfox-output/AWS/{Principal}/{AccountName}/module.csv
+//   - GCP (org mode): cloudfox-output/GCP/{Principal}/{OrgID}/module.csv
+//   - GCP (project mode): cloudfox-output/GCP/{Principal}/{ProjectName}/module.csv
+func HandleOutputV2(
+	cloudProvider string,
+	format string,
+	outputDirectory string,
+	verbosity int,
+	wrap bool,
+	scopeType string, // "tenant", "subscription", "organization", "account", "project"
+	scopeIdentifiers []string, // Tenant IDs, Subscription IDs, Account IDs, Project IDs
+	scopeNames []string, // Friendly names for scopes
+	principal string, // UPN or IAM user
+	dataToOutput CloudfoxOutput,
+) error {
+	// Build the results identifier based on scope
+	resultsIdentifier := buildResultsIdentifier(scopeType, scopeIdentifiers, scopeNames)
+
+	// Build output directory path with new structure
+	// Format: cloudfox-output/{CloudProvider}/{Principal}/{ResultsIdentifier}/
+	outDirectoryPath := filepath.Join(
+		outputDirectory,
+		"cloudfox-output",
+		cloudProvider,
+		principal,
+		resultsIdentifier,
+	)
+
+	tables := dataToOutput.TableFiles()
+	lootFiles := dataToOutput.LootFiles()
+
+	// Determine base module name from first table file (for backwards compatibility)
+	baseCloudfoxModule := ""
+	if len(tables) > 0 {
+		baseCloudfoxModule = tables[0].Name
+	}
+
+	outputClient := OutputClient{
+		Verbosity:     verbosity,
+		CallingModule: baseCloudfoxModule,
+		Table: TableClient{
+			Wrap:          wrap,
+			DirectoryName: outDirectoryPath,
+			TableFiles:    tables,
+		},
+		Loot: LootClient{
+			DirectoryName: outDirectoryPath,
+			LootFiles:     lootFiles,
+		},
+	}
+
+	// Handle output based on the verbosity level
+	outputClient.WriteFullOutput(tables, lootFiles)
+	return nil
+}
+
+// HandleOutputSmart automatically selects the best output method based on dataset size.
+// This is the RECOMMENDED function for all modules to use.
+//
+// Decision thresholds:
+//   - < 50,000 rows: Uses HandleOutputV2 (normal in-memory)
+//   - >= 50,000 rows: Uses HandleStreamingOutput (memory-efficient streaming)
+//   - >= 500,000 rows: Logs warning about large dataset
+//   - >= 1,000,000 rows: Logs critical warning, suggests optimization flags
+func HandleOutputSmart(
+	cloudProvider string,
+	format string,
+	outputDirectory string,
+	verbosity int,
+	wrap bool,
+	scopeType string,
+	scopeIdentifiers []string,
+	scopeNames []string,
+	principal string,
+	dataToOutput CloudfoxOutput,
+) error {
+	logger := NewLogger()
+
+	// Count total rows across all table files
+	totalRows := 0
+	for _, tableFile := range dataToOutput.TableFiles() {
+		totalRows += len(tableFile.Body)
+	}
+
+	// Log dataset size if verbose
+	if verbosity >= 2 {
+		logger.InfoM(fmt.Sprintf("Dataset size: %s rows", formatNumberWithCommas(totalRows)), "output")
+	}
+
+	// Decision tree based on row count
+	if totalRows >= 1000000 {
+		logger.InfoM(fmt.Sprintf("WARNING: Very large dataset detected (%s rows). Consider using per-scope flags for better performance.",
+			formatNumberWithCommas(totalRows)), "output")
+	} else if totalRows >= 500000 {
+		logger.InfoM(fmt.Sprintf("WARNING: Large dataset detected (%s rows). Using streaming output.",
+			formatNumberWithCommas(totalRows)), "output")
+	}
+
+	// Auto-select output method based on dataset size
+	if totalRows >= 50000 {
+		if verbosity >= 1 {
+			logger.InfoM(fmt.Sprintf("Using streaming output for memory efficiency (%s rows)",
+				formatNumberWithCommas(totalRows)), "output")
+		}
+
+		// Use streaming output for large datasets (new signature)
+		return HandleStreamingOutput(
+			cloudProvider,
+			format,
+			outputDirectory,
+			verbosity,
+			wrap,
+			scopeType,
+			scopeIdentifiers,
+			scopeNames,
+			principal,
+			dataToOutput,
+		)
+	}
+
+	// Use normal in-memory output for smaller datasets
+	return HandleOutputV2(
+		cloudProvider,
+		format,
+		outputDirectory,
+		verbosity,
+		wrap,
+		scopeType,
+		scopeIdentifiers,
+		scopeNames,
+		principal,
+		dataToOutput,
+	)
+}
+
+// buildResultsIdentifier creates a results identifier from scope information.
+// It prefers friendly names over IDs for better readability.
+//
+// Fallback hierarchy:
+//   - Azure: Tenant Name → Tenant GUID → Subscription Name → Subscription GUID
+//   - AWS: Org Name → Org ID → Account Alias → Account ID
+//   - GCP: Org Name → Org ID → Project Name → Project ID
+//
+// Directory Naming Convention:
+//   - Tenant-level: [T]{TenantName} or [T]{TenantGUID}
+//   - Subscription-level: [S]{SubscriptionName} or [S]{SubscriptionGUID}
+//   - Organization-level: [O]-{OrgName} or [O]-{OrgID}
+//   - Account-level: [A]-{AccountName} or [A]-{AccountID}
+//   - Project-level: [P]-{ProjectName} or [P]-{ProjectID}
+func buildResultsIdentifier(scopeType string, identifiers, names []string) string {
+	var rawName string
+
+	// Prefer friendly name if available
+	if len(names) > 0 && names[0] != "" {
+		rawName = names[0]
+	} else if len(identifiers) > 0 && identifiers[0] != "" {
+		// Fallback to identifier
+		rawName = identifiers[0]
+	} else {
+		// Ultimate fallback
+		rawName = "unknown-scope"
+	}
+
+	// Sanitize the name for Windows/Linux compatibility
+	sanitizedName := sanitizeDirectoryName(rawName)
+
+	// Add scope prefix based on scope type
+	prefix := getScopePrefix(scopeType)
+	if prefix != "" {
+		return prefix + sanitizedName
+	}
+
+	return sanitizedName
+}
+
+// getScopePrefix returns the appropriate prefix for a given scope type
+func getScopePrefix(scopeType string) string {
+	switch scopeType {
+	case "tenant":
+		return "[T]"
+	case "subscription":
+		return "[S]"
+	case "organization":
+		return "[O]"
+	case "account":
+		return "[A]"
+	case "project":
+		return "[P]"
+	default:
+		return ""
+	}
+}
+
+// sanitizeDirectoryName removes or replaces characters that are invalid in Windows/Linux directory names
+// Invalid characters: < > : " / \ | ? *
+// Also trims leading/trailing spaces and dots (Windows restriction)
+func sanitizeDirectoryName(name string) string {
+	// Replace invalid characters with underscore
+	invalidChars := []string{"<", ">", ":", "\"", "/", "\\", "|", "?", "*"}
+	sanitized := name
+	for _, char := range invalidChars {
+		sanitized = strings.ReplaceAll(sanitized, char, "_")
+	}
+
+	// Trim leading/trailing spaces and dots (Windows doesn't allow these)
+	sanitized = strings.Trim(sanitized, " .")
+
+	// If the name is empty after sanitization, use a default
+	if sanitized == "" {
+		sanitized = "unnamed"
+	}
+
+	return sanitized
+}
+
+// formatNumberWithCommas formats a number with comma separators for readability.
+// Example: 1000000 -> "1,000,000"
+func formatNumberWithCommas(n int) string {
+	// Convert to string
+	s := fmt.Sprintf("%d", n)
+
+	// Handle negative numbers
+	negative := false
+	if s[0] == '-' {
+		negative = true
+		s = s[1:]
+	}
+
+	// Add commas every 3 digits from right
+	var result []rune
+	for i, digit := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			result = append(result, ',')
+		}
+		result = append(result, digit)
+	}
+
+	if negative {
+		return "-" + string(result)
+	}
+	return string(result)
 }
