@@ -1,128 +1,122 @@
 package cli
 
 import (
-	"log"
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
 
-	"github.com/BishopFox/cloudfox/azure"
+	"github.com/BishopFox/cloudfox/azure/commands"
+	"github.com/BishopFox/cloudfox/globals"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/spf13/cobra"
 )
 
 var (
-	AzTenantID        string
-	AzSubscription    string
-	AzRGName          string
-	AzOutputFormat    string
-	AzOutputDirectory string
-	AzVerbosity       int
-	AzWrapTable       bool
-	AzMergedTable     bool
+	AzTenantID          string
+	AzSubscription      string
+	AzRGName            string
+	AzOutputFormat      string
+	AzOutputDirectory   string
+	AzVerbosity         int
+	AzWrapTable         bool
+	AzMergedTable       bool
+	AzWhoamiListRGsAlso bool
+
+	logger = internal.NewLogger()
 
 	AzCommands = &cobra.Command{
 		Use:     "azure",
 		Aliases: []string{"az"},
 		Long:    `See "Available Commands" for Azure Modules below`,
 		Short:   "See \"Available Commands\" for Azure Modules below",
+		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+			if !isAzureAuthenticated() {
+				logger.ErrorM("[ERROR] You must authenticate to Azure first. Run: az login", globals.AZ_UTILS_MODULE_NAME)
+				os.Exit(1)
+			}
+			globals.AZ_VERBOSITY = AzVerbosity
+		},
 		Run: func(cmd *cobra.Command, args []string) {
 			cmd.Help()
 		},
 	}
-	AzWhoamiListRGsAlso bool
-	AzWhoamiCommand     = &cobra.Command{
-		Use:     "whoami",
-		Aliases: []string{},
-		Short:   "Display available Azure CLI sessions",
+
+	AzAllChecksCommand = &cobra.Command{
+		Use:   "all-checks",
+		Short: "Runs all available Azure commands",
 		Long: `
-Display Available Azure CLI Sessions:
-./cloudfox az whoami`,
-		Run: func(cmd *cobra.Command, args []string) {
-			err := azure.AzWhoamiCommand(AzOutputDirectory, cmd.Root().Version, AzWrapTable, AzVerbosity, AzWhoamiListRGsAlso)
-			if err != nil {
-				log.Fatal(err)
+Executes all available Azure commands for a specific tenant:
+./cloudfox az kv --tenant TENANT_ID
+
+Executes all available Azure commands for a specific subscription:
+./cloudfox az kv --subscription SUBSCRIPTION_ID`,
+		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+			if !isAzureAuthenticated() {
+				logger.ErrorM("[ERROR] You must authenticate to Azure first. Run: az login", globals.AZ_UTILS_MODULE_NAME)
+				os.Exit(1)
 			}
+			globals.AZ_VERBOSITY = AzVerbosity
 		},
-	}
-	AzInventoryCommand = &cobra.Command{
-		Use:     "inventory",
-		Aliases: []string{"inv"},
-		Short:   "Display an inventory table of all resources per location",
-		Long: `
-Enumerate inventory for a specific tenant:
-./cloudfox az inventory --tenant TENANT_ID
-
-Enumerate inventory for a specific subscription:
-./cloudfox az inventory --subscription SUBSCRIPTION_ID
-`,
 		Run: func(cmd *cobra.Command, args []string) {
-			err := azure.AzInventoryCommand(AzTenantID, AzSubscription, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
-			if err != nil {
-				log.Fatal(err)
-			}
-		},
-	}
-	AzRBACCommand = &cobra.Command{
-		Use:     "rbac",
-		Aliases: []string{},
-		Short:   "Display role assignemts for Azure principals",
-		Long: `
-Enumerate role assignments for a specific tenant:
-./cloudfox az rbac --tenant TENANT_ID
+			// ========== STEP 1: Run Principals FIRST ==========
+			// This provides identity and RBAC role lookup for all subsequent commands
+			logger.InfoM("Running command: principals", "all-checks")
+			commands.AzPrincipalsCommand.Run(cmd, args)
 
-Enumerate role assignments for a specific subscription:
-./cloudfox az rbac --subscription SUBSCRIPTION_ID
-`,
-		Run: func(cmd *cobra.Command, args []string) {
-
-			err := azure.AzRBACCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
-			if err != nil {
-				log.Fatal(err)
+			// ========== STEP 2: Run all other commands ==========
+			// Commands we want to skip
+			skip := map[string]bool{
+				commands.AzDevOpsArtifactsCommand.Use: true,
+				commands.AzDevOpsPipelinesCommand.Use: true,
+				commands.AzDevOpsProjectsCommand.Use:  true,
+				commands.AzDevOpsReposCommand.Use:     true,
+				commands.AzDevOpsSecurityCommand.Use:  true,
+				commands.AzDevOpsAgentsCommand.Use:    true,
+				commands.AzPrincipalsCommand.Use:      true, // Skip since we ran it first
+				commands.AzAccessKeysCommand.Use:      true, // Skip since we run it last
+				//				commands.AzRBACCommand.Use:            true,
 			}
-		},
-	}
-	AzVMsCommand = &cobra.Command{
-		Use:     "vms",
-		Aliases: []string{"vms", "virtualmachines"},
-		Short:   "Enumerates Azure Compute virtual machines",
-		Long: `
-Enumerate VMs for a specific tenant:
-./cloudfox az vms --tenant TENANT_ID
 
-Enumerate VMs for a specific subscription:
-./cloudfox az vms --subscription SUBSCRIPTION_ID`,
-		Run: func(cmd *cobra.Command, args []string) {
-			err := azure.AzVMsCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
-			if err != nil {
-				log.Fatal(err)
-			}
-		},
-	}
-	AzStorageCommand = &cobra.Command{
-		Use:     "storage",
-		Aliases: []string{},
-		Short:   "Enumerates azure storage accounts",
-		Long: `
-Enumerate storage accounts for a specific tenant:
-./cloudfox az storage --tenant TENANT_ID
+			for _, childCmd := range AzCommands.Commands() {
+				// Skip self and skip unwanted commands
+				if childCmd == cmd || skip[childCmd.Use] {
+					continue
+				}
 
-Enumerate storage accounts for a specific subscription:
-./cloudfox az storage --subscription SUBSCRIPTION_ID
-`,
-		Run: func(cmd *cobra.Command, args []string) {
-			err := azure.AzStorageCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
-			if err != nil {
-				log.Fatal(err)
+				logger.InfoM(fmt.Sprintf("Running command: %s", childCmd.Use), "all-checks")
+				childCmd.Run(cmd, args)
 			}
+			// ========== STEP 3: Run Access Keys Last ==========
+			// heavy graph API usage, so run last after graph API limiting resets
+			logger.InfoM("Running command: access-keys", "all-checks")
+			commands.AzAccessKeysCommand.Run(cmd, args)
+
 		},
 	}
 )
 
-func init() {
+func isAzureAuthenticated() bool {
+	// Check for active account
+	if err := exec.Command("az", "account", "show").Run(); err != nil {
+		return false
+	}
 
-	AzWhoamiCommand.Flags().BoolVarP(&AzWhoamiListRGsAlso, "list-rgs", "l", false, "Drill down to the resource group level")
+	// Check if session token can be acquired
+	out, err := exec.Command("az", "account", "get-access-token", "--query", "accessToken", "-o", "tsv").Output()
+	if err != nil || len(strings.TrimSpace(string(out))) == 0 {
+		return false
+	}
+
+	return true
+}
+
+func init() {
 
 	// Global flags
 	AzCommands.PersistentFlags().StringVarP(&AzOutputFormat, "output", "o", "all", "[\"table\" | \"csv\" | \"all\" ]")
 	AzCommands.PersistentFlags().StringVar(&AzOutputDirectory, "outdir", defaultOutputDir, "Output Directory ")
-	AzCommands.PersistentFlags().IntVarP(&AzVerbosity, "verbosity", "v", 2, "1 = Print control messages only\n2 = Print control messages, module output\n3 = Print control messages, module output, and loot file output\n")
+	AzCommands.PersistentFlags().IntVarP(&AzVerbosity, "verbosity", "v", 2, "1 = Print control messages only\n2 = Print control messages, module output\n3 = Print control messages, module output, and loot file output\n4 = Print debug and control messages, module output, and loot file output\n")
 	AzCommands.PersistentFlags().StringVarP(&AzTenantID, "tenant", "t", "", "Tenant name")
 	AzCommands.PersistentFlags().StringVarP(&AzSubscription, "subscription", "s", "", "Subscription ID or Name")
 	AzCommands.PersistentFlags().StringVarP(&AzRGName, "resource-group", "g", "", "Resource Group name")
@@ -130,10 +124,84 @@ func init() {
 	AzCommands.PersistentFlags().BoolVarP(&AzMergedTable, "merged-table", "m", false, "Writes a single table for all subscriptions in the tenant. Default writes a table per subscription.")
 
 	AzCommands.AddCommand(
-		AzWhoamiCommand,
-		AzRBACCommand,
-		AzVMsCommand,
-		AzStorageCommand,
-		AzInventoryCommand)
+		commands.AzAccessKeysCommand,
+		commands.AzAcrCommand,
+		commands.AzAksCommand,
+		commands.AzAPIManagementCommand,
+		commands.AzAppConfigurationCommand,
+		commands.AzAppGatewayCommand,
+		commands.AzArcCommand,
+		commands.AzAutomationCommand,
+		commands.AzBackupInventoryCommand,
+		commands.AzBastionCommand,
+		commands.AzBatchCommand,
+		commands.AzCDNCommand,
+		commands.AzComplianceDashboardCommand,
+		commands.AzConditionalAccessCommand,
+		commands.AzConsentGrantsCommand,
+		commands.AzCostSecurityCommand,
+		commands.AzContainerJobsCommand,
+		commands.AzDatabasesCommand,
+		commands.AzDatabricksCommand,
+		commands.AzDataExfiltrationCommand,
+		commands.AzDataFactoryCommand,
+		commands.AzDeploymentsCommand,
+		commands.AzDisksCommand,
+		commands.AzDevOpsAgentsCommand,
+		commands.AzDevOpsArtifactsCommand,
+		commands.AzDevOpsPipelinesCommand,
+		commands.AzDevOpsProjectsCommand,
+		commands.AzDevOpsReposCommand,
+		commands.AzDevOpsSecurityCommand,
+		commands.AzEndpointsCommand,
+		commands.AzEnterpriseAppsCommand,
+		commands.AzExpressRouteCommand,
+		commands.AzFederatedCredentialsCommand,
+		commands.AzFilesystemsCommand,
+		commands.AzFirewallCommand,
+		commands.AzFrontDoorCommand,
+		commands.AzFunctionsCommand,
+		commands.AzHDInsightCommand,
+		commands.AzIdentityProtectionCommand,
+		commands.AzInventoryCommand,
+		commands.AzIoTHubCommand,
+		commands.AzKeyVaultCommand,
+		commands.AzKustoCommand,
+		commands.AzLighthouseCommand,
+		commands.AzLateralMovementCommand,
+		commands.AzLoadBalancersCommand,
+		commands.AzLoadTestingCommand,
+		commands.AzLogicAppsCommand,
+		commands.AzMachineLearningCommand,
+		commands.AzMonitorCommand,
+		commands.AzNetworkInterfacesCommand,
+		commands.AzNetworkExposureCommand,
+		commands.AzNetworkTopologyCommand,
+		commands.AzNSGCommand,
+		commands.AzPolicyCommand,
+		commands.AzPrincipalsCommand,
+		commands.AzPrivilegeEscalationCommand,
+		commands.AzPermissionsCommand,
+		commands.AzPrivateLinkCommand,
+		commands.AzRBACCommand,
+		commands.AzRedisCommand,
+		commands.AzResourceGraphCommand,
+		commands.AzRoutesCommand,
+		commands.AzSecurityCenterCommand,
+		commands.AzSentinelCommand,
+		commands.AzServiceFabricCommand,
+		commands.AzSignalRCommand,
+		commands.AzStorageCommand,
+		commands.AzSpringAppsCommand,
+		commands.AzStreamAnalyticsCommand,
+		commands.AzSynapseCommand,
+		commands.AzTrafficManagerCommand,
+		commands.AzVmsCommand,
+		commands.AzVNetsCommand,
+		commands.AzVPNGatewayCommand,
+		commands.AzWebAppsCommand,
+		commands.AzWhoamiCommand,
 
+		AzAllChecksCommand,
+	)
 }

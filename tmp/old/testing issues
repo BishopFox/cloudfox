@@ -1,0 +1,80 @@
+1 - change output to the following:
+        cloudfox-output/Azure/UPN/Tenant Name (or Tenant GUID fallback or subscription fallback)/csv
+        cloudfox-output/Azure/UPN/Tenant Name (or Tenant GUID fallback or subscription fallback)/json
+        cloudfox-output/Azure/UPN/Tenant Name (or Tenant GUID fallback or subscription fallback)/loot
+        cloudfox-output/Azure/UPN/Tenant Name (or Tenant GUID fallback or subscription fallback)/table
+
+    [] Analyze whether this would risk memory consumption and cause the application to crash on huge tenants
+    [] Determine if it would be best to place everything in a tenant level single file instead of breaking out into individual subscriptions
+    [] If running only with the tenant flag, combine all output so everything falls under the tenant GUID folder and not subscription names/GUIDs (only if analysys determines it isnt risky to create one huge file in memory)
+    [] If running with the subscription flag, no matter if the tenant flag is passed, all output should fall under subscription names/GUIDs
+    [] If running with the resource-group flag, the subscription should be required so it should follow the rules for subscription
+    [] If a new output function is required, copy func HandleOutput in internal/output2.go to something like func HandleOutputNew to make the changes
+    [] Update all Azure modules to use the new output function, looks like special care needs to be done with enterprise-apps, inventory, and rbac with currently outputs into individual subscriptions (as well as possible others)
+
+2 - Endpoint columns do not align (COMPLETED)
+    [] Review the endpoints module and fix all misalignments
+    [] Initial review found Virtual Machines hostnames contained IP addresses ip addresses were wrong
+    [] Initial review found Web App hostnames contained IP addresses ip addresses were wrong
+    [] Initial review found Azure Bastion hostname was not FQDNs ip addresses were not actual ip addresses
+    [] Initial review found Azure Firewall hostname was not FQDNs ip addresses were not actual ip addresses
+    [] Is arc IP addresses included in endpoints
+
+3a - accesskeys.go output table 
+    [] split the Expiry/Permission column into two columns 'Certificate Expiry' and 'Permission'
+    [] add principals/service account client secret and certificate
+    [] add enterprise application client secret and certificate
+    [] include additional headers: Subscription ID, Subscription Name, Resource Group, Region, Resource Name, application id, Key/Cert Name, Key/Cert Type, Identifier/Thumbprint, Cert Start Time, Cert Expiry, Permissions
+
+
+3b - webapp-credentials loot file
+    [] Should the loot file webapps-credentials be enumerated and part of the accesskeys.go output table?
+    [] Are there any other modules that use certifate based authentication that should be enumerated and placed in accesskeys.go output table
+
+4 - Make sure the following services include an "EntraID Centralized Auth" column. This column may exist already in VMs, key vaults, and databases and be called "RBAC Enabled" and should be renamed to "EntraID Centralized Auth".
+    [] virtual machines
+    [] Key Vaults
+    [] Storage Accounts
+    [] AKS
+    [] Databases
+    [] App Service / Functions
+    [] Data Explorer / Synapse / Data Lake
+    [] Azure Bastion
+    [] Azure Arc-enabled Servers
+    [] Azure Automation / Logic Apps / DevOps Agents
+    [] Any other services I may have missed
+
+5 - functions.go
+    [] Remove HTTPS, TLS, and any other columns where the output is configured in another service. For example, TLS (HTTPS) configuration is managed at the App Service level, not within your code or container image.
+
+6 - rbac.go
+    [] looks like the "Principal UPN" column header should be "Principal UPN / Application ID" and "Principal Name" should be "Principal Name / Application Name"
+    [] can you review the code to make sure any other confusing headers are corrected
+
+7 - principals.go
+    [] can you review the code to make sure any other confusing headers are corrected similar to #6 above
+    [] the RBAC roles are being populated with a GUID instead of the actual role name and not all roles are being populated
+    [] graph permissions are showing unknown
+    [] can you confirm delegated oauth2 grants are working as well since the other columns has errors
+
+8 - fine tune network-scanning-commands loot output in azure/commands/network-interfaces.go
+    [] fine tune network-scanning-commands loot output to be more targeted using enumerated port information from acls, security groups, and firewall rules.
+    [] looks like this be combined with tmp/MISSING_RESOURCES_TODO.md. maybe one large module that enumerates all of this and outputs? here are the modules
+        ## 🟢 PHASE 4: NETWORK SECURITY DEEP DIVE (Priority 3-4 weeks)
+            - [ ] **4.1** Create nsg.go module for Network Security Group rules
+            - [ ] **4.2** Create firewall.go module for Azure Firewall detailed rules
+            - [ ] **4.3** Create routes.go module for Route Tables
+            - [ ] **4.4** Create vnets.go module for Virtual Network Peerings
+
+A - Long Term roadmap for AWS: change AWS output to the following:
+    cloudfox-output/AWS/UPN/Organization (or Account ID fallback)/csv
+    cloudfox-output/AWS/UPN/Organization (or Account ID fallback)/json
+    cloudfox-output/AWS/UPN/Organization (or Account ID fallback)/loot
+    cloudfox-output/AWS/UPN/Organization (or Account ID fallback)/table
+
+B - Long Term roadmap for GCP: change AWS output to the following:
+    cloudfox-output/GCP/UPN/Organization (or Project ID fallback)/csv
+    cloudfox-output/GCP/UPN/Organization (or Project ID fallback)/json
+    cloudfox-output/GCP/UPN/Organization (or Project ID fallback)/loot
+    cloudfox-output/GCP/UPN/Organization (or Project ID fallback)/table
+

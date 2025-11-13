@@ -1,0 +1,996 @@
+package commands
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/securityinsights/armsecurityinsights"
+	"github.com/BishopFox/cloudfox/v2/internal"
+	azinternal "github.com/BishopFox/cloudfox/v2/internal/azure"
+	"github.com/BishopFox/cloudfox/v2/internal/azure/sdk"
+	"github.com/BishopFox/cloudfox/v2/internal/common"
+	"github.com/bishopfox/knownawsaccountslookup"
+	"github.com/spf13/cobra"
+)
+
+type SentinelModule struct {
+	azinternal.BaseAzureModule
+
+	Subscriptions      []string
+	WorkspaceRows      [][]string
+	AnalyticsRuleRows  [][]string
+	AutomationRuleRows [][]string
+	DataConnectorRows  [][]string
+	IncidentRows       [][]string
+	LootMap            map[string]*internal.LootFile
+	mu                 sync.Mutex
+	workspaceRegistry  map[string]workspaceInfo // Map workspace ID to info for cross-referencing
+}
+
+type workspaceInfo struct {
+	SubscriptionID string
+	ResourceGroup  string
+	WorkspaceName  string
+	WorkspaceID    string
+	HasSentinel    bool
+}
+
+func (m *SentinelModule) PrintSentinelCommand(outputFormat string) {
+	m.output = outputFormat
+	m.modLog = internal.TxtLog.WithField("module", "sentinel")
+
+	// Tables
+	m.TableFiles = &internal.TableFiles{
+		Directory:   m.Caller,
+		TableCols:   sentinelTableCols,
+		ResultsFile: "table/sentinel.txt",
+		LootFile:    "",
+	}
+	analyticsRulesTableFiles := &internal.TableFiles{
+		Directory:   m.Caller,
+		TableCols:   analyticsRulesTableCols,
+		ResultsFile: "table/sentinel-analytics-rules.txt",
+		LootFile:    "",
+	}
+	automationRulesTableFiles := &internal.TableFiles{
+		Directory:   m.Caller,
+		TableCols:   automationRulesTableCols,
+		ResultsFile: "table/sentinel-automation-rules.txt",
+		LootFile:    "",
+	}
+	dataConnectorsTableFiles := &internal.TableFiles{
+		Directory:   m.Caller,
+		TableCols:   dataConnectorsTableCols,
+		ResultsFile: "table/sentinel-data-connectors.txt",
+		LootFile:    "",
+	}
+	incidentsTableFiles := &internal.TableFiles{
+		Directory:   m.Caller,
+		TableCols:   incidentsTableCols,
+		ResultsFile: "table/sentinel-incidents.txt",
+		LootFile:    "",
+	}
+
+	// Initialize loot map
+	m.LootMap = make(map[string]*internal.LootFile)
+	m.LootMap["sentinel-disabled-rules"] = &internal.LootFile{
+		Subtitle:   "Disabled Analytics Rules",
+		Header:     "Sentinel Analytics Rules that are disabled and may not be detecting threats",
+		Body:       "",
+		Subfolder:  m.Caller,
+		Permission: internal.AllUsersReadAndWrite,
+	}
+	m.LootMap["sentinel-high-severity"] = &internal.LootFile{
+		Subtitle:   "High Severity Incidents",
+		Header:     "Active Sentinel incidents with HIGH severity",
+		Body:       "",
+		Subfolder:  m.Caller,
+		Permission: internal.AllUsersReadAndWrite,
+	}
+	m.LootMap["sentinel-unconnected-sources"] = &internal.LootFile{
+		Subtitle:   "Disconnected Data Connectors",
+		Header:     "Sentinel data connectors that are not connected or disabled",
+		Body:       "",
+		Subfolder:  m.Caller,
+		Permission: internal.AllUsersReadAndWrite,
+	}
+	m.LootMap["sentinel-no-automation"] = &internal.LootFile{
+		Subtitle:   "Workspaces Without Automation",
+		Header:     "Sentinel workspaces with no automation rules configured",
+		Body:       "",
+		Subfolder:  m.Caller,
+		Permission: internal.AllUsersReadAndWrite,
+	}
+	m.LootMap["sentinel-setup-commands"] = &internal.LootFile{
+		Subtitle:   "Setup Commands",
+		Header:     "Commands to investigate and remediate Sentinel security issues",
+		Body:       "",
+		Subfolder:  m.Caller,
+		Permission: internal.AllUsersReadAndWrite,
+	}
+
+	m.workspaceRegistry = make(map[string]workspaceInfo)
+
+	m.modLog.Info("Enumerating Microsoft Sentinel (SIEM) instances and configuration...")
+	fmt.Printf("[%s] Enumerating Microsoft Sentinel workspaces and rules for %s.\n", common.Cyan("azure"), m.AzureDescriptor)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute*10)
+	defer cancel()
+
+	// Get all subscriptions
+	subscriptions := sdk.CachedGetSubscriptions(m.Session)
+	m.Subscriptions = subscriptions
+
+	var wg sync.WaitGroup
+	semaphore := make(chan struct{}, 10)
+
+	// Process each subscription
+	for _, subID := range subscriptions {
+		wg.Add(1)
+		semaphore <- struct{}{}
+
+		go func(subID string) {
+			defer wg.Done()
+			defer func() { <-semaphore }()
+
+			subName := sdk.CachedGetSubscriptionNameFromID(m.Session, subID)
+
+			// Process Sentinel workspaces (Sentinel is enabled on Log Analytics workspaces)
+			m.processSentinelWorkspaces(ctx, subID, subName, m.modLog)
+
+		}(subID)
+	}
+
+	wg.Wait()
+
+	// Generate summary output
+	m.generateSummary()
+
+	// Write tables and loot files
+	m.writeTables(analyticsRulesTableFiles, automationRulesTableFiles, dataConnectorsTableFiles, incidentsTableFiles)
+}
+
+func (m *SentinelModule) processSentinelWorkspaces(ctx context.Context, subID, subName string, logger internal.Logger) {
+	// Get Log Analytics workspaces and check if Sentinel is enabled
+	workspaces := sdk.CachedGetLogAnalyticsWorkspacesPerSubscription(m.Session, subID)
+
+	for _, ws := range workspaces {
+		wsName := azinternal.ParseResourceName(ws)
+		wsRG := azinternal.ParseResourceGroupFromID(ws)
+		wsID := ws
+
+		// Store workspace info
+		wsInfo := workspaceInfo{
+			SubscriptionID: subID,
+			ResourceGroup:  wsRG,
+			WorkspaceName:  wsName,
+			WorkspaceID:    wsID,
+			HasSentinel:    false,
+		}
+
+		// Check if Sentinel is enabled by trying to get Sentinel metadata
+		if m.checkSentinelEnabled(ctx, subID, wsRG, wsName, logger) {
+			wsInfo.HasSentinel = true
+			m.mu.Lock()
+			m.workspaceRegistry[wsID] = wsInfo
+			m.mu.Unlock()
+
+			// If Sentinel is enabled, enumerate its components
+			m.processAnalyticsRules(ctx, subID, subName, wsRG, wsName, logger)
+			automationRuleCount := m.processAutomationRules(ctx, subID, subName, wsRG, wsName, logger)
+			m.processDataConnectors(ctx, subID, subName, wsRG, wsName, logger)
+			incidentCount := m.processIncidents(ctx, subID, subName, wsRG, wsName, logger)
+
+			// Build workspace summary row
+			riskLevel := "INFO"
+			securityIssues := []string{}
+
+			if automationRuleCount == 0 {
+				riskLevel = "MEDIUM"
+				securityIssues = append(securityIssues, "No automation rules")
+				m.LootMap["sentinel-no-automation"].Contents += fmt.Sprintf(
+					"Subscription: %s (%s)\nResource Group: %s\nWorkspace: %s\nIssue: No automation rules configured for incident response\n\n",
+					subName, subID, wsRG, wsName)
+			}
+
+			if incidentCount > 10 {
+				if riskLevel == "INFO" {
+					riskLevel = "LOW"
+				}
+				securityIssues = append(securityIssues, fmt.Sprintf("%d active incidents", incidentCount))
+			}
+
+			issuesStr := strings.Join(securityIssues, "; ")
+			if issuesStr == "" {
+				issuesStr = "None"
+			}
+
+			row := []string{
+				subName,
+				subID,
+				wsRG,
+				wsName,
+				wsID,
+				"Enabled",
+				fmt.Sprintf("%d", automationRuleCount),
+				fmt.Sprintf("%d", incidentCount),
+				riskLevel,
+				issuesStr,
+			}
+
+			m.mu.Lock()
+			m.WorkspaceRows = append(m.WorkspaceRows, row)
+			m.mu.Unlock()
+
+		} else {
+			// Workspace exists but Sentinel is not enabled
+			row := []string{
+				subName,
+				subID,
+				wsRG,
+				wsName,
+				wsID,
+				"Not Enabled",
+				"0",
+				"0",
+				"INFO",
+				"Sentinel not enabled on this workspace",
+			}
+
+			m.mu.Lock()
+			m.WorkspaceRows = append(m.WorkspaceRows, row)
+			m.mu.Unlock()
+		}
+	}
+}
+
+func (m *SentinelModule) checkSentinelEnabled(ctx context.Context, subID, rgName, wsName string, logger internal.Logger) bool {
+	// Create Security Insights client
+	cred, err := azinternal.GetSafeSession(m.Session, subID, "https://management.azure.com/.default")
+	if err != nil {
+		logger.Debugf("Failed to get credentials for subscription %s: %v", subID, err)
+		return false
+	}
+
+	client, err := armsecurityinsights.NewSentinelOnboardingStatesClient(subID, cred, nil)
+	if err != nil {
+		logger.Debugf("Failed to create Sentinel client for %s/%s: %v", rgName, wsName, err)
+		return false
+	}
+
+	// Try to get the Sentinel onboarding state
+	_, err = client.Get(ctx, rgName, wsName, "default", nil)
+	if err != nil {
+		// If we get an error, Sentinel is likely not enabled
+		return false
+	}
+
+	return true
+}
+
+func (m *SentinelModule) processAnalyticsRules(ctx context.Context, subID, subName, rgName, wsName string, logger internal.Logger) {
+	cred, err := azinternal.GetSafeSession(m.Session, subID, "https://management.azure.com/.default")
+	if err != nil {
+		logger.Debugf("Failed to get credentials for subscription %s: %v", subID, err)
+		return
+	}
+
+	client, err := armsecurityinsights.NewAlertRulesClient(subID, cred, nil)
+	if err != nil {
+		logger.Debugf("Failed to create Analytics Rules client for %s/%s: %v", rgName, wsName, err)
+		return
+	}
+
+	pager := client.NewListPager(rgName, wsName, nil)
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			logger.Debugf("Failed to list analytics rules for %s/%s: %v", rgName, wsName, err)
+			return
+		}
+
+		for _, ruleIntf := range page.Value {
+			if ruleIntf == nil {
+				continue
+			}
+
+			// Type assertion for different rule types
+			var ruleName, ruleID, ruleType, severity, enabled, tactics, techniques, query string
+			riskLevel := "INFO"
+			securityIssues := []string{}
+
+			switch rule := ruleIntf.(type) {
+			case *armsecurityinsights.ScheduledAlertRule:
+				if rule.Properties != nil {
+					if rule.Properties.DisplayName != nil {
+						ruleName = *rule.Properties.DisplayName
+					}
+					if rule.Name != nil {
+						ruleID = *rule.Name
+					}
+					ruleType = "Scheduled"
+					if rule.Properties.Severity != nil {
+						severity = string(*rule.Properties.Severity)
+					}
+					if rule.Properties.Enabled != nil {
+						enabled = fmt.Sprintf("%v", *rule.Properties.Enabled)
+						if !*rule.Properties.Enabled {
+							riskLevel = "MEDIUM"
+							securityIssues = append(securityIssues, "Rule disabled")
+							m.LootMap["sentinel-disabled-rules"].Contents += fmt.Sprintf(
+								"Subscription: %s (%s)\nWorkspace: %s/%s\nRule: %s\nSeverity: %s\nType: %s\n\n",
+								subName, subID, rgName, wsName, ruleName, severity, ruleType)
+						}
+					}
+					if rule.Properties.Tactics != nil {
+						tacticsList := make([]string, 0, len(rule.Properties.Tactics))
+						for _, t := range rule.Properties.Tactics {
+							if t != nil {
+								tacticsList = append(tacticsList, string(*t))
+							}
+						}
+						tactics = strings.Join(tacticsList, ", ")
+					}
+					if rule.Properties.Techniques != nil {
+						techniques = strings.Join(rule.Properties.Techniques, ", ")
+					}
+					if rule.Properties.Query != nil {
+						query = *rule.Properties.Query
+						if len(query) > 100 {
+							query = query[:100] + "..."
+						}
+					}
+				}
+
+			case *armsecurityinsights.MicrosoftSecurityIncidentCreationAlertRule:
+				if rule.Properties != nil {
+					if rule.Properties.DisplayName != nil {
+						ruleName = *rule.Properties.DisplayName
+					}
+					if rule.Name != nil {
+						ruleID = *rule.Name
+					}
+					ruleType = "Microsoft Security"
+					if rule.Properties.Enabled != nil {
+						enabled = fmt.Sprintf("%v", *rule.Properties.Enabled)
+						if !*rule.Properties.Enabled {
+							riskLevel = "MEDIUM"
+							securityIssues = append(securityIssues, "Rule disabled")
+						}
+					}
+				}
+
+			case *armsecurityinsights.FusionAlertRule:
+				if rule.Properties != nil {
+					if rule.Properties.AlertRuleTemplateName != nil {
+						ruleName = *rule.Properties.AlertRuleTemplateName
+					}
+					if rule.Name != nil {
+						ruleID = *rule.Name
+					}
+					ruleType = "Fusion (ML)"
+					enabled = "true"  // Fusion rules are always enabled
+					severity = "High" // Fusion rules are typically high severity
+				}
+
+			default:
+				// Unknown rule type
+				continue
+			}
+
+			issuesStr := strings.Join(securityIssues, "; ")
+			if issuesStr == "" {
+				issuesStr = "None"
+			}
+
+			row := []string{
+				subName,
+				subID,
+				rgName,
+				wsName,
+				ruleName,
+				ruleID,
+				ruleType,
+				severity,
+				enabled,
+				tactics,
+				techniques,
+				riskLevel,
+				issuesStr,
+			}
+
+			m.mu.Lock()
+			m.AnalyticsRuleRows = append(m.AnalyticsRuleRows, row)
+			m.mu.Unlock()
+
+			// Add setup command
+			if riskLevel != "INFO" {
+				m.LootMap["sentinel-setup-commands"].Contents += fmt.Sprintf(
+					"# Review disabled analytics rule: %s\naz sentinel alert-rule show --resource-group %s --workspace-name %s --rule-id %s\n\n",
+					ruleName, rgName, wsName, ruleID)
+			}
+		}
+	}
+}
+
+func (m *SentinelModule) processAutomationRules(ctx context.Context, subID, subName, rgName, wsName string, logger internal.Logger) int {
+	cred, err := azinternal.GetSafeSession(m.Session, subID, "https://management.azure.com/.default")
+	if err != nil {
+		logger.Debugf("Failed to get credentials for subscription %s: %v", subID, err)
+		return 0
+	}
+
+	client, err := armsecurityinsights.NewAutomationRulesClient(subID, cred, nil)
+	if err != nil {
+		logger.Debugf("Failed to create Automation Rules client for %s/%s: %v", rgName, wsName, err)
+		return 0
+	}
+
+	count := 0
+	pager := client.NewListPager(rgName, wsName, nil)
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			logger.Debugf("Failed to list automation rules for %s/%s: %v", rgName, wsName, err)
+			return count
+		}
+
+		for _, rule := range page.Value {
+			if rule == nil || rule.Properties == nil {
+				continue
+			}
+
+			count++
+
+			var ruleName, ruleID, order, enabled, triggerConditions, actions string
+			riskLevel := "INFO"
+			securityIssues := []string{}
+
+			if rule.Properties.DisplayName != nil {
+				ruleName = *rule.Properties.DisplayName
+			}
+			if rule.Name != nil {
+				ruleID = *rule.Name
+			}
+			if rule.Properties.Order != nil {
+				order = fmt.Sprintf("%d", *rule.Properties.Order)
+			}
+
+			// Check if enabled
+			if rule.Properties.TriggeringLogic != nil && rule.Properties.TriggeringLogic.IsEnabled != nil {
+				enabled = fmt.Sprintf("%v", *rule.Properties.TriggeringLogic.IsEnabled)
+				if !*rule.Properties.TriggeringLogic.IsEnabled {
+					riskLevel = "LOW"
+					securityIssues = append(securityIssues, "Automation disabled")
+				}
+
+				// Get trigger conditions count
+				if rule.Properties.TriggeringLogic.Conditions != nil {
+					triggerConditions = fmt.Sprintf("%d conditions", len(rule.Properties.TriggeringLogic.Conditions))
+				}
+			}
+
+			// Get actions count
+			if rule.Properties.Actions != nil {
+				actions = fmt.Sprintf("%d actions", len(rule.Properties.Actions))
+			}
+
+			issuesStr := strings.Join(securityIssues, "; ")
+			if issuesStr == "" {
+				issuesStr = "None"
+			}
+
+			row := []string{
+				subName,
+				subID,
+				rgName,
+				wsName,
+				ruleName,
+				ruleID,
+				order,
+				enabled,
+				triggerConditions,
+				actions,
+				riskLevel,
+				issuesStr,
+			}
+
+			m.mu.Lock()
+			m.AutomationRuleRows = append(m.AutomationRuleRows, row)
+			m.mu.Unlock()
+		}
+	}
+
+	return count
+}
+
+func (m *SentinelModule) processDataConnectors(ctx context.Context, subID, subName, rgName, wsName string, logger internal.Logger) {
+	cred, err := azinternal.GetSafeSession(m.Session, subID, "https://management.azure.com/.default")
+	if err != nil {
+		logger.Debugf("Failed to get credentials for subscription %s: %v", subID, err)
+		return
+	}
+
+	client, err := armsecurityinsights.NewDataConnectorsClient(subID, cred, nil)
+	if err != nil {
+		logger.Debugf("Failed to create Data Connectors client for %s/%s: %v", rgName, wsName, err)
+		return
+	}
+
+	pager := client.NewListPager(rgName, wsName, nil)
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			logger.Debugf("Failed to list data connectors for %s/%s: %v", rgName, wsName, err)
+			return
+		}
+
+		for _, connectorIntf := range page.Value {
+			if connectorIntf == nil {
+				continue
+			}
+
+			var connectorName, connectorID, connectorType, state, dataTypes string
+			riskLevel := "INFO"
+			securityIssues := []string{}
+
+			// Type assertion for different connector types
+			switch connector := connectorIntf.(type) {
+			case *armsecurityinsights.AADDataConnector:
+				if connector.Name != nil {
+					connectorName = *connector.Name
+					connectorID = *connector.Name
+				}
+				connectorType = "Azure Active Directory"
+				if connector.Properties != nil {
+					if connector.Properties.State != nil {
+						state = string(*connector.Properties.State)
+						if state != "Connected" {
+							riskLevel = "MEDIUM"
+							securityIssues = append(securityIssues, fmt.Sprintf("State: %s", state))
+							m.LootMap["sentinel-unconnected-sources"].Contents += fmt.Sprintf(
+								"Subscription: %s (%s)\nWorkspace: %s/%s\nConnector: %s\nType: %s\nState: %s\n\n",
+								subName, subID, rgName, wsName, connectorName, connectorType, state)
+						}
+					}
+					if connector.Properties.DataTypes != nil {
+						dataTypes = "AAD logs"
+					}
+				}
+
+			case *armsecurityinsights.AATPDataConnector:
+				if connector.Name != nil {
+					connectorName = *connector.Name
+					connectorID = *connector.Name
+				}
+				connectorType = "Azure ATP"
+				if connector.Properties != nil {
+					if connector.Properties.DataTypes != nil {
+						dataTypes = "ATP alerts"
+					}
+				}
+
+			case *armsecurityinsights.ASCDataConnector:
+				if connector.Name != nil {
+					connectorName = *connector.Name
+					connectorID = *connector.Name
+				}
+				connectorType = "Azure Security Center"
+				if connector.Properties != nil {
+					if connector.Properties.State != nil {
+						state = string(*connector.Properties.State)
+						if state != "Connected" {
+							riskLevel = "MEDIUM"
+							securityIssues = append(securityIssues, fmt.Sprintf("State: %s", state))
+						}
+					}
+					if connector.Properties.DataTypes != nil {
+						dataTypes = "ASC alerts"
+					}
+				}
+
+			case *armsecurityinsights.AwsCloudTrailDataConnector:
+				if connector.Name != nil {
+					connectorName = *connector.Name
+					connectorID = *connector.Name
+				}
+				connectorType = "AWS CloudTrail"
+				if connector.Properties != nil {
+					if connector.Properties.DataTypes != nil {
+						dataTypes = "CloudTrail logs"
+					}
+				}
+
+			case *armsecurityinsights.MCASDataConnector:
+				if connector.Name != nil {
+					connectorName = *connector.Name
+					connectorID = *connector.Name
+				}
+				connectorType = "Microsoft Cloud App Security"
+				if connector.Properties != nil {
+					if connector.Properties.State != nil {
+						state = string(*connector.Properties.State)
+						if state != "Connected" {
+							riskLevel = "MEDIUM"
+							securityIssues = append(securityIssues, fmt.Sprintf("State: %s", state))
+						}
+					}
+					if connector.Properties.DataTypes != nil {
+						dataTypes = "MCAS alerts and logs"
+					}
+				}
+
+			case *armsecurityinsights.MDATPDataConnector:
+				if connector.Name != nil {
+					connectorName = *connector.Name
+					connectorID = *connector.Name
+				}
+				connectorType = "Microsoft Defender ATP"
+				if connector.Properties != nil {
+					if connector.Properties.DataTypes != nil {
+						dataTypes = "MDATP alerts"
+					}
+				}
+
+			case *armsecurityinsights.OfficeDataConnector:
+				if connector.Name != nil {
+					connectorName = *connector.Name
+					connectorID = *connector.Name
+				}
+				connectorType = "Office 365"
+				if connector.Properties != nil {
+					if connector.Properties.DataTypes != nil {
+						dataTypesArr := []string{}
+						if connector.Properties.DataTypes.Exchange != nil {
+							dataTypesArr = append(dataTypesArr, "Exchange")
+						}
+						if connector.Properties.DataTypes.SharePoint != nil {
+							dataTypesArr = append(dataTypesArr, "SharePoint")
+						}
+						if connector.Properties.DataTypes.Teams != nil {
+							dataTypesArr = append(dataTypesArr, "Teams")
+						}
+						dataTypes = strings.Join(dataTypesArr, ", ")
+					}
+				}
+
+			case *armsecurityinsights.TIDataConnector:
+				if connector.Name != nil {
+					connectorName = *connector.Name
+					connectorID = *connector.Name
+				}
+				connectorType = "Threat Intelligence"
+				if connector.Properties != nil {
+					if connector.Properties.DataTypes != nil {
+						dataTypes = "TI indicators"
+					}
+				}
+
+			default:
+				// Generic data connector
+				continue
+			}
+
+			if state == "" {
+				state = "Unknown"
+			}
+
+			issuesStr := strings.Join(securityIssues, "; ")
+			if issuesStr == "" {
+				issuesStr = "None"
+			}
+
+			row := []string{
+				subName,
+				subID,
+				rgName,
+				wsName,
+				connectorName,
+				connectorID,
+				connectorType,
+				state,
+				dataTypes,
+				riskLevel,
+				issuesStr,
+			}
+
+			m.mu.Lock()
+			m.DataConnectorRows = append(m.DataConnectorRows, row)
+			m.mu.Unlock()
+
+			// Add setup command for disconnected connectors
+			if riskLevel != "INFO" {
+				m.LootMap["sentinel-setup-commands"].Contents += fmt.Sprintf(
+					"# Review disconnected data connector: %s\naz sentinel data-connector show --resource-group %s --workspace-name %s --data-connector-id %s\n\n",
+					connectorName, rgName, wsName, connectorID)
+			}
+		}
+	}
+}
+
+func (m *SentinelModule) processIncidents(ctx context.Context, subID, subName, rgName, wsName string, logger internal.Logger) int {
+	cred, err := azinternal.GetSafeSession(m.Session, subID, "https://management.azure.com/.default")
+	if err != nil {
+		logger.Debugf("Failed to get credentials for subscription %s: %v", subID, err)
+		return 0
+	}
+
+	client, err := armsecurityinsights.NewIncidentsClient(subID, cred, nil)
+	if err != nil {
+		logger.Debugf("Failed to create Incidents client for %s/%s: %v", rgName, wsName, err)
+		return 0
+	}
+
+	count := 0
+	// Filter for active incidents only
+	filter := "properties/status ne 'Closed'"
+	pager := client.NewListPager(rgName, wsName, &armsecurityinsights.IncidentsClientListOptions{
+		Filter: to.Ptr(filter),
+	})
+
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			logger.Debugf("Failed to list incidents for %s/%s: %v", rgName, wsName, err)
+			return count
+		}
+
+		for _, incident := range page.Value {
+			if incident == nil || incident.Properties == nil {
+				continue
+			}
+
+			count++
+
+			var incidentName, incidentID, title, severity, status, createdTime, alertsCount string
+			riskLevel := "INFO"
+			securityIssues := []string{}
+
+			if incident.Name != nil {
+				incidentName = *incident.Name
+				incidentID = *incident.Name
+			}
+			if incident.Properties.Title != nil {
+				title = *incident.Properties.Title
+			}
+			if incident.Properties.Severity != nil {
+				severity = string(*incident.Properties.Severity)
+				if severity == "High" {
+					riskLevel = "HIGH"
+					securityIssues = append(securityIssues, "High severity incident")
+					m.LootMap["sentinel-high-severity"].Contents += fmt.Sprintf(
+						"Subscription: %s (%s)\nWorkspace: %s/%s\nIncident: %s\nTitle: %s\nSeverity: %s\nStatus: %s\nCreated: %s\n\n",
+						subName, subID, rgName, wsName, incidentName, title, severity, status, createdTime)
+				} else if severity == "Medium" {
+					riskLevel = "MEDIUM"
+				}
+			}
+			if incident.Properties.Status != nil {
+				status = string(*incident.Properties.Status)
+			}
+			if incident.Properties.CreatedTimeUTC != nil {
+				createdTime = incident.Properties.CreatedTimeUTC.Format("2006-01-02 15:04:05")
+			}
+			if incident.Properties.AdditionalData != nil && incident.Properties.AdditionalData.AlertsCount != nil {
+				alertsCount = fmt.Sprintf("%d", *incident.Properties.AdditionalData.AlertsCount)
+			}
+
+			issuesStr := strings.Join(securityIssues, "; ")
+			if issuesStr == "" {
+				issuesStr = "None"
+			}
+
+			row := []string{
+				subName,
+				subID,
+				rgName,
+				wsName,
+				incidentName,
+				title,
+				severity,
+				status,
+				createdTime,
+				alertsCount,
+				riskLevel,
+				issuesStr,
+			}
+
+			m.mu.Lock()
+			m.IncidentRows = append(m.IncidentRows, row)
+			m.mu.Unlock()
+
+			// Add setup command for high severity incidents
+			if riskLevel == "HIGH" {
+				m.LootMap["sentinel-setup-commands"].Contents += fmt.Sprintf(
+					"# Investigate high severity incident: %s\naz sentinel incident show --resource-group %s --workspace-name %s --incident-id %s\n\n",
+					title, rgName, wsName, incidentID)
+			}
+		}
+	}
+
+	return count
+}
+
+func (m *SentinelModule) generateSummary() {
+	m.modLog.Info("Generating Sentinel summary...")
+
+	totalWorkspaces := len(m.WorkspaceRows)
+	enabledWorkspaces := 0
+	totalRules := len(m.AnalyticsRuleRows)
+	disabledRules := 0
+	totalAutomationRules := len(m.AutomationRuleRows)
+	totalDataConnectors := len(m.DataConnectorRows)
+	disconnectedConnectors := 0
+	totalIncidents := len(m.IncidentRows)
+	highSeverityIncidents := 0
+
+	for _, row := range m.WorkspaceRows {
+		if row[5] == "Enabled" {
+			enabledWorkspaces++
+		}
+	}
+
+	for _, row := range m.AnalyticsRuleRows {
+		if row[8] == "false" {
+			disabledRules++
+		}
+	}
+
+	for _, row := range m.DataConnectorRows {
+		if row[7] != "Connected" && row[7] != "Unknown" {
+			disconnectedConnectors++
+		}
+	}
+
+	for _, row := range m.IncidentRows {
+		if row[6] == "High" {
+			highSeverityIncidents++
+		}
+	}
+
+	fmt.Printf("\n[%s] Microsoft Sentinel Summary:\n", common.Cyan("azure"))
+	fmt.Printf("  Sentinel Workspaces: %d total (%d enabled)\n", totalWorkspaces, enabledWorkspaces)
+	fmt.Printf("  Analytics Rules: %d total (%d disabled)\n", totalRules, disabledRules)
+	fmt.Printf("  Automation Rules: %d total\n", totalAutomationRules)
+	fmt.Printf("  Data Connectors: %d total (%d disconnected)\n", totalDataConnectors, disconnectedConnectors)
+	fmt.Printf("  Active Incidents: %d total (%d high severity)\n", totalIncidents, highSeverityIncidents)
+}
+
+func (m *SentinelModule) writeTables(analyticsRulesTableFiles, automationRulesTableFiles, dataConnectorsTableFiles, incidentsTableFiles *internal.TableFiles) {
+	// Write main workspaces table
+	azinternal.WriteTableAndLootFiles(m.TableFiles, m.output, m.WorkspaceRows, m.LootMap, m.Caller)
+
+	// Write analytics rules table
+	azinternal.WriteTableAndLootFiles(analyticsRulesTableFiles, m.output, m.AnalyticsRuleRows, nil, m.Caller)
+
+	// Write automation rules table
+	azinternal.WriteTableAndLootFiles(automationRulesTableFiles, m.output, m.AutomationRuleRows, nil, m.Caller)
+
+	// Write data connectors table
+	azinternal.WriteTableAndLootFiles(dataConnectorsTableFiles, m.output, m.DataConnectorRows, nil, m.Caller)
+
+	// Write incidents table
+	azinternal.WriteTableAndLootFiles(incidentsTableFiles, m.output, m.IncidentRows, nil, m.Caller)
+}
+
+// Table column definitions
+var sentinelTableCols = []internal.TableCol{
+	{Name: "Subscription", Width: 25},
+	{Name: "SubscriptionID", Width: 36},
+	{Name: "ResourceGroup", Width: 30},
+	{Name: "WorkspaceName", Width: 30},
+	{Name: "WorkspaceID", Width: 50},
+	{Name: "SentinelStatus", Width: 15},
+	{Name: "AutomationRules", Width: 15},
+	{Name: "ActiveIncidents", Width: 15},
+	{Name: "RiskLevel", Width: 10},
+	{Name: "SecurityIssues", Width: 60},
+}
+
+var analyticsRulesTableCols = []internal.TableCol{
+	{Name: "Subscription", Width: 25},
+	{Name: "SubscriptionID", Width: 36},
+	{Name: "ResourceGroup", Width: 30},
+	{Name: "WorkspaceName", Width: 30},
+	{Name: "RuleName", Width: 40},
+	{Name: "RuleID", Width: 36},
+	{Name: "RuleType", Width: 20},
+	{Name: "Severity", Width: 10},
+	{Name: "Enabled", Width: 10},
+	{Name: "Tactics", Width: 40},
+	{Name: "Techniques", Width: 30},
+	{Name: "RiskLevel", Width: 10},
+	{Name: "SecurityIssues", Width: 60},
+}
+
+var automationRulesTableCols = []internal.TableCol{
+	{Name: "Subscription", Width: 25},
+	{Name: "SubscriptionID", Width: 36},
+	{Name: "ResourceGroup", Width: 30},
+	{Name: "WorkspaceName", Width: 30},
+	{Name: "RuleName", Width: 40},
+	{Name: "RuleID", Width: 36},
+	{Name: "Order", Width: 10},
+	{Name: "Enabled", Width: 10},
+	{Name: "TriggerConditions", Width: 20},
+	{Name: "Actions", Width: 20},
+	{Name: "RiskLevel", Width: 10},
+	{Name: "SecurityIssues", Width: 60},
+}
+
+var dataConnectorsTableCols = []internal.TableCol{
+	{Name: "Subscription", Width: 25},
+	{Name: "SubscriptionID", Width: 36},
+	{Name: "ResourceGroup", Width: 30},
+	{Name: "WorkspaceName", Width: 30},
+	{Name: "ConnectorName", Width: 40},
+	{Name: "ConnectorID", Width: 36},
+	{Name: "ConnectorType", Width: 30},
+	{Name: "State", Width: 15},
+	{Name: "DataTypes", Width: 40},
+	{Name: "RiskLevel", Width: 10},
+	{Name: "SecurityIssues", Width: 60},
+}
+
+var incidentsTableCols = []internal.TableCol{
+	{Name: "Subscription", Width: 25},
+	{Name: "SubscriptionID", Width: 36},
+	{Name: "ResourceGroup", Width: 30},
+	{Name: "WorkspaceName", Width: 30},
+	{Name: "IncidentID", Width: 36},
+	{Name: "Title", Width: 50},
+	{Name: "Severity", Width: 10},
+	{Name: "Status", Width: 15},
+	{Name: "CreatedTime", Width: 20},
+	{Name: "AlertsCount", Width: 12},
+	{Name: "RiskLevel", Width: 10},
+	{Name: "SecurityIssues", Width: 60},
+}
+
+var AzSentinelCommand = &cobra.Command{
+	Use:   "sentinel",
+	Short: "Enumerate Microsoft Sentinel (SIEM) workspaces, analytics rules, automation, and incidents",
+	Long: `
+Enumerate Microsoft Sentinel (Azure's cloud-native SIEM/SOAR solution) configuration:
+  - Sentinel-enabled Log Analytics workspaces
+  - Analytics rules (detection rules) and their configuration
+  - Automation rules for incident response
+  - Data connectors and their connection status
+  - Active security incidents
+
+Examples:
+  cloudfox azure sentinel --profile test_tenant
+  cloudfox azure sentinel --tenant-id <tenant-id> --subscription-id <sub-id>
+
+Security Focus:
+  - Identifies disabled analytics rules that may miss threats
+  - Finds workspaces without automation rules configured
+  - Lists disconnected data connectors reducing visibility
+  - Highlights high-severity active incidents requiring response
+  - Assesses overall SIEM coverage and effectiveness
+`,
+	Run: func(cmd *cobra.Command, args []string) {
+		var m SentinelModule
+		m.Caller = "sentinel"
+
+		// Initialize base module
+		err := azinternal.GlobalAzureInitializationRoutine(
+			cmd,
+			&m.BaseAzureModule,
+			knownawsaccountslookup.NonAWSProvider,
+		)
+		if err != nil {
+			m.modLog.Fatal(err.Error())
+		}
+
+		m.PrintSentinelCommand(m.output)
+	},
+}
+
+func init() {
+	AzSentinelCommand.Flags().StringVarP(&globals.AZ_OUTPUT_FORMAT, "output", "o", "table", "Output format (table, csv, json)")
+}

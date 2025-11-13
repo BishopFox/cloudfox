@@ -1,0 +1,128 @@
+Perfect! Here's a comprehensive breakdown of all the areas we check in whoami, which you should replicate in rbac, principals, and permissions commands:
+
+Areas Checked in whoami
+1. RBAC Scopes (3 levels)
+Tenant Root (/)
+  └─ Management Group Hierarchy
+      └─ Subscription
+          └─ Resource Group (inherited)
+              └─ Resource (inherited)
+What we check:
+
+Tenant Root (/): Highest scope, applies to everything
+Management Groups: Each MG in hierarchy via GetManagementGroupHierarchy()
+Subscription Scope: Direct + inherited from RG/Resource levels
+API Calls:
+
+// Tenant root
+raClient.NewListForScopePager("/", options)
+
+// Management group
+raClient.NewListForScopePager("/providers/Microsoft.Management/managementGroups/{mgId}", options)
+
+// Subscription (includes inherited RG/resource assignments)
+raClient.NewListForScopePager("/subscriptions/{subId}", options)
+2. PIM (Privileged Identity Management)
+Two types of PIM assignments:
+
+Eligible: Roles user CAN activate (not currently active)
+Active: Roles currently activated via PIM
+API Endpoints:
+
+// PIM Eligible
+GET https://management.azure.com/subscriptions/{subId}/providers/Microsoft.Authorization/roleEligibilityScheduleInstances?api-version=2020-10-01&$filter=asTarget()
+
+// PIM Active
+GET https://management.azure.com/subscriptions/{subId}/providers/Microsoft.Authorization/roleAssignmentScheduleInstances?api-version=2020-10-01&$filter=asTarget()
+3. Principal Expansion
+For each scope, check ALL principals:
+
+principalIDs := []string{userObjectID}
+principalIDs = append(principalIDs, groupIDs...) // Add all groups user is member of
+
+// Then for each principal:
+for _, principalID := range principalIDs {
+    // Check role assignments with filter
+    Filter: to.Ptr(fmt.Sprintf("principalId eq '%s'", principalID))
+}
+Group enumeration:
+
+Microsoft Graph: GET https://graph.microsoft.com/v1.0/users/{userId}/memberOf?$select=id
+4. Assignment Attribution
+Track how each role was obtained:
+
+Direct: Role assigned directly to user
+Group: Role assigned to a group user is member of
+Direct (PIM Eligible): Direct PIM role, not activated
+Group (PIM Eligible): Group PIM role, not activated
+Direct (PIM Active): Direct PIM role, currently activated
+Group (PIM Active): Group PIM role, currently activated
+Checklist for Other Commands
+For rbac command:
+✅ Check tenant root scope (/)
+✅ Check management group hierarchy
+✅ Check subscription scope
+✅ Check PIM eligibility schedules
+✅ Check PIM active schedules
+✅ Enumerate user's group memberships
+✅ Check each principal (user + groups)
+✅ Track assignment attribution (Direct vs Group, PIM status)
+For principals command:
+✅ Enumerate principals at all scopes (tenant root, MG, subscription)
+✅ Include PIM-eligible principals
+✅ Include PIM-active principals
+✅ Show group memberships for each principal
+✅ Show both permanent and temporary (PIM) assignments
+For permissions command:
+✅ Resolve permissions from all scopes
+✅ Include inherited permissions from parent scopes
+✅ Resolve PIM-eligible permissions
+✅ Resolve PIM-active permissions
+✅ Expand group-based permissions
+✅ Show effective permissions (all sources combined)
+Code Pattern to Replicate
+// 1. Get group memberships ONCE per user
+groupIDs := azinternal.GetUserGroupMemberships(ctx, session, userObjectID)
+principalIDs := []string{userObjectID}
+principalIDs = append(principalIDs, groupIDs...)
+
+// 2. Check RBAC at all scopes
+scopes := []string{
+    "/",  // Tenant root
+}
+// Add management groups
+mgHierarchy := azinternal.GetManagementGroupHierarchy(ctx, session, subscriptionID)
+for _, mgID := range mgHierarchy {
+    scopes = append(scopes, fmt.Sprintf("/providers/Microsoft.Management/managementGroups/%s", mgID))
+}
+// Add subscription
+scopes = append(scopes, fmt.Sprintf("/subscriptions/%s", subscriptionID))
+
+// 3. For each scope, check each principal
+for _, scope := range scopes {
+    for _, principalID := range principalIDs {
+        // Query with filter
+        pager := raClient.NewListForScopePager(scope, &armauthorization.RoleAssignmentsClientListForScopeOptions{
+            Filter: to.Ptr(fmt.Sprintf("principalId eq '%s'", principalID)),
+        })
+        // Process results...
+    }
+}
+
+// 4. Check PIM for the subscription
+pimEligibilityURL := fmt.Sprintf(".../roleEligibilityScheduleInstances?api-version=2020-10-01&$filter=asTarget()")
+pimActiveURL := fmt.Sprintf(".../roleAssignmentScheduleInstances?api-version=2020-10-01&$filter=asTarget()")
+// Filter results for user + groups
+Key Functions to Use
+// From internal/azure/principal_helpers.go
+azinternal.GetUserGroupMemberships(ctx, session, userObjectID) // Returns []string of group IDs
+
+// From internal/azure/principal_helpers.go  
+azinternal.GetManagementGroupHierarchy(ctx, session, subscriptionID) // Returns []string of MG IDs
+
+// For PIM
+azinternal.HTTPRequestWithRetry(ctx, "GET", pimURL, token, nil, azinternal.DefaultRateLimitConfig())
+Summary Table
+| Area | Regular RBAC | PIM Eligible | PIM Active | |------|--------------|--------------|------------| | Tenant Root (/) | ✅ Check | ❌ N/A | ❌ N/A | | Management Groups | ✅ Check each in hierarchy | ❌ N/A | ❌ N/A | | Subscription | ✅ Check (includes RG/resource) | ✅ Check per subscription | ✅ Check per subscription | | Principal Expansion | ✅ User + all groups | ✅ User + all groups | ✅ User + all groups | | Attribution | Direct / Group | Direct (PIM Eligible) / Group (PIM Eligible) | Direct (PIM Active) / Group (PIM Active) |
+
+This ensures complete coverage of all possible permission sources in Azure! 🎯

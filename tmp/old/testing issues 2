@@ -1,0 +1,826 @@
+streaming output:
+    [enterprise-apps] Status: 18/18 subscriptions complete (0 errors -- For details check /home/kali/.cloudfox/cloudfox-error.log)
+    [🦊 cloudfox 1.16.0 🦊 ][output] Dataset size: 99,900 rows
+    [🦊 cloudfox 1.16.0 🦊 ][output] Using streaming output for memory efficiency (99,900 rows)
+    Is there a way to speed up the calculation? do you have to caluculate all of the rows or can you set a limit once reached, stop counting and start enumerating with the streaming output? or is the calculation and enumeration done at the same time?
+
+--------------------------------------------------------------------------------------------------------------------------
+
+What is this "Status: 11/87 subscriptions complete" when there are only 18 subscriptions in the tenant?
+[🦊 cloudfox 1.16.0 🦊 ][all-checks] Running command: enterprise-apps
+[🦊 cloudfox 1.16.0 🦊 ][enterprise-apps] Fetching all service principals from tenant (one-time operation)...
+[🦊 cloudfox 1.16.0 🦊 ][enterprise-apps] Cached 1400 service principals
+[🦊 cloudfox 1.16.0 🦊 ][enterprise-apps] Enumerating resources for 18 subscription(s)
+[enterprise-apps] Status: 11/87 subscriptions complete (0 errors -- For details check /home/kali/.cloudfox/cloudfox-error.log)
+
+
+--------------------------------------------------------------------------------------------------------------------------
+
+
+DONE - update azure/commands/databases.go to always include the --dynamic-data-masking output and remove the flag
+DONE - update azure/commands/vms.go to always include the --endpoint-protection output and remove the flag
+
+DONE - azure/commands/endpoints.go
+    REMOVE from endpoints-private.csv rows that are blank or N/A in both the 'Hostname' and 'Private IP' columns for example if a load balancer is only public facing, there should be no entry within the private endpoints file
+
+
+DONE
+Search through all modules (except principals.go) for 'identity' or 'role' and make sure: 
+1 - note the modules that are outputing managed identity information
+2 - the modules should only output the GUID of the managed identity 
+3 - two columns should exist: 'User Assigned Identity ID' and 'System Assigned Identity ID'
+4 - the columns 'User Assigned Identity ID' and 'System Assigned Identity ID' should be the very last columns in the output
+5 - Add the two columns to any module that is missing them but can be assigned a managed identity.
+6 - Since columns are being shifted in the output, make sure the endpoints.go file uses the correct index numbers for hostnames and IP addresses after the changes
+
+The work flow should be:
+  To see RBAC roles for identities:
+  1. Note the System Assigned Identity ID or User Assigned Identity ID from the output
+  2. Look up that ID in principals.go output under the "Object ID" column
+  3. The "RBAC Roles (Subscription: Role)" column in principals.go shows all role assignments
+
+Display an output of all modules (.go files) and if the service uses managed identities, enumerates managed identity information, and outputs column headers for the enumeration
+
+
+DONE
+  MANAGED IDENTITY MODULES (27 services):
+
+  | Module                 | Service                  | Enumerates | Has Columns |
+  |------------------------|--------------------------|------------|-------------|
+  | ✅ acr.go               | Azure Container Registry | YES        | YES         |
+  | ⚠️ aks.go              | Azure Kubernetes Service | NO         | NO          |
+  | ✅ app-configuration.go | App Configuration        | NO         | YES         |
+  | ✅ appgw.go             | Application Gateway      | YES        | YES         |
+  | ✅ arc.go               | Azure Arc                | YES        | YES         |
+  | ✅ automation.go        | Automation Accounts      | YES        | YES         |
+  | ✅ batch.go             | Batch Accounts           | NO         | YES         |
+  | ✅ container-apps.go    | Container Apps           | NO         | YES         |
+  | ✅ databases.go         | SQL Databases            | NO         | YES         |
+  | ⚠️ databricks.go       | Databricks               | NO         | NO          |
+  | ✅ datafactory.go       | Data Factory             | YES        | YES         |
+  | ✅ functions.go         | Function Apps            | YES        | YES         |
+  | ✅ hdinsight.go         | HDInsight                | YES        | YES         |
+  | ✅ iothub.go            | IoT Hub                  | YES        | YES         |
+  | ✅ kusto.go             | Azure Data Explorer      | YES        | YES         |
+  | ✅ load-testing.go      | Load Testing             | YES        | YES         |
+  | ✅ logicapps.go         | Logic Apps               | NO         | YES         |
+  | ✅ machine-learning.go  | Machine Learning         | YES        | YES         |
+  | ✅ redis.go             | Redis Cache              | YES        | YES         |
+  | ⚠️ servicefabric.go    | Service Fabric           | NO         | NO          |
+  | ✅ signalr.go           | SignalR Service          | YES        | YES         |
+  | ✅ springapps.go        | Spring Apps              | YES        | YES         |
+  | ✅ storage.go           | Storage Accounts         | YES        | YES         |
+  | ✅ streamanalytics.go   | Stream Analytics         | YES        | YES         |
+  | ✅ synapse.go           | Synapse Analytics        | YES        | YES         |
+  | ✅ vms.go               | Virtual Machines         | NO         | YES         |
+  | ✅ webapps.go           | Web Apps                 | NO         | YES         |
+
+  Summary: 25/27 fully compliant, 2 services (AKS, Databricks, Service Fabric) missing enumeration (services support MI but SDK may need updates)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+--------------------------------------------------------------------------------------------------------------------------
+
+azure/commands/principals.go
+    headers: Tenant Name / Subscription Name	Source Service	Principal Type	User Principal Name / App ID	Display Name	Object ID	RBAC Roles	Graph Permissions	Delegated OAuth2 Grants
+    Add PIM (Privileged Identity Management) information next to the RBAC Roles column if the role is assigned via PIM
+    create a new column for "Conditional Access Policies" that shows the actual conditional access policies assigned to the principal (if any) - Should this be added to policies.go instead? 
+    
+    When i browse to subscriptions in the web portal, I can see the reader roles assigned to me, is there any way I can add this info to the principals.go output?
+    ex web portal subscriptiopn output:
+        SUBSCRIPTION NAME	SUBSCRIPTION ID	MY ROLE	CURRENT COST	SECURE SCORE	PARENT MANAGEMENT GROUP	STATUS
+        Access to Azure Active Directory(Converted to EA)	af73ff0a-2d5c-420d-a822-88fa7707540f	Reader	$1.00 	-	Tenant Root Group	Active
+        AVD	107988f4-aeee-47cc-9c71-bc10b570bfb1	Reader	0	-	Tenant Root Group	Active
+        Azure DevTest subscription 1	098a2e85-a7d1-471c-8289-ef3d2b865ce3	Reader	0	-	Tenant Root Group	Active
+        Azure subscription 1	9174a7df-4f7c-46a2-b97a-8eff66c9c13a	Reader	0	-	Tenant Root Group	Active
+        Azure subscription 1	989e1386-a82e-4d39-9387-0a453b0abb23	Reader	0	-	Tenant Root Group	Active
+        da-001	ffb9e308-1fdb-491b-b147-7f6fcdf87f16	Reader	$823.43 	56	DataAnalytics	Active
+        Free Trial	f6ee3930-287e-48f6-9265-65d8a0a8bee5	Reader	0	-	Tenant Root Group	Active
+        Infra-Azure	b6925431-d29b-4773-b4e6-bb5caae3a724	Reader	$201.37 	32	Infrastructure	Active
+        Infra-CP001	a26789d1-7c97-4947-b8e0-2fbfa9b46841	Reader	$4,714.69 	54	Infrastructure	Active
+        Infra-Lux001	ec3749f0-7c6d-4154-98af-5aa0ad238566	Reader	$276.47 	-	Infrastructure	Active
+        Infra-Testing-kl	55ce597b-ee7e-40c9-b553-5c8a9ca40115	Reader	$0.00 	-	Infrastructure	Active
+        SaaS Key Vault	040cd5c0-1e97-4375-a635-e151c3966143	Reader	$0.00 	-	Tenant Root Group	Active
+        Sandbox	a833cf8a-9acd-4953-a74c-11fd8a6e0ee4	Reader	0	-	Sandboxes	Active
+        Sandbox-Development	baf61945-78f0-4d12-bf83-fb66a6749b98	Reader	$23.33 	-	Sandboxes	Active
+        Sandbox-OpenAI	d1e2a8cc-d5fe-4f2b-a932-242379a94aca	Reader	$0.00 	-	Sandboxes	Active
+        Silver Lake Azure EA Subscription	5c4c66a6-dbbd-4c48-9315-d0f18fc7b481	Reader	$1,485.80 	-	Management	Active
+        SLVRLK-71645-prod-westus3-001	99a88db3-417a-4678-b82d-9e6b207d4798	Reader	$1,522.51 	-	Security	Active
+        Windows365	08fec198-dd5c-4607-b3a1-151833d10af9	Reader	0	-	Tenant Root Group	Active
+
+    Does principals.go include inherited permissions? If not, can we add that functionality? Maybe a new column called "Inherited Permissions" and also show where/how its inherited from? 
+    Add groups (row) to the output and their respective permissions
+    Add groups (column) (after 'Object ID') to the output for each principal showing which groups they are a member of.
+    use the principals.go module as a lookup for all of the modules with managed identities and add a new column to those modules called "Admin ?" that shows YES/NO if the managed identity is assigned an admin role like Global Admin, Privileged Role Admin, Owner, Contributer, or any other admin role
+        Modules with Managed identities
+            acr.go
+            aks.go
+            app-configuration.go
+            appgw.go
+            arc.go
+            automation.go
+            batch.go
+            container-apps.go
+            databases.go
+            databricks.go
+            datafactory.go
+            functions.go
+            hdinsight.go
+            iothub.go
+            kusto.go
+            load-testing.go
+            logicapps.go
+            machine-learning.go
+            redis.go
+            servicefabric.go
+            signalr.go
+            springapps.go
+            storage.go
+            streamanalytics.go
+            synapse.go
+            vms.go
+            webapps.go
+
+    Anything else that i may be missing?
+
+    RBAC Roles	Graph Permissions	Delegated OAuth2 Grants columns are empty - need confirmation
+
+
+--------------------------------------------------------------------------------------------------------------------------
+
+Update whoami.go to handle the new output HandleOutputSmart. Currently it outputs to the tenant name and not the guid 
+    ex. output:
+      [🦊 cloudfox 1.16.0 🦊 ][whoami-roles] Output written to /home/kali/.cloudfox/cloudfox-output/Azure/jbarcia_bishopfox.com#EXT#@silverlake.onmicrosoft.com/[T]Silver Lake/loot/whoami-commands.txt
+      [🦊 cloudfox 1.16.0 🦊 ][principals] Output written to /home/kali/.cloudfox/cloudfox-output/Azure/jbarcia_bishopfox.com#EXT#@silverlake.onmicrosoft.com/[T]01bb4114-05fe-41a0-86ae-06d45f739f99/loot/principal-commands.txt
+
+--------------------------------------------------------------------------------------------------------------------------
+
+$ ./cloudfox azure functions -t 01bb4114-05fe-41a0-86ae-06d45f739f99
+[🦊 cloudfox 1.16.0 🦊 ][functions] Enumerating resources for 18 subscription(s)
+[functions] Status: 1/18 subscriptions complete (0 errors -- For details check /home/kali/.cloudfox/cloudfox-error.log)fatal error: sync: unlock of unlocked mutex
+
+goroutine 155 [running]:
+internal/sync.fatal({0x7642337?, 0xc001b26d80?})
+        /usr/local/go/src/runtime/panic.go:1056 +0x18
+internal/sync.(*Mutex).unlockSlow(0xc0014c29f0, 0xffffffff)
+        /usr/local/go/src/internal/sync/mutex.go:204 +0x35
+internal/sync.(*Mutex).Unlock(...)
+        /usr/local/go/src/internal/sync/mutex.go:198
+sync.(*Mutex).Unlock(...)
+        /usr/local/go/src/sync/mutex.go:65
+github.com/BishopFox/cloudfox/azure/commands.(*FunctionsModule).processResourceGroup(0xc0014c28c0, {0x8147220?, 0xac56b20?}, {0xc00174e7e0, 0x24}, {0xc001888e40, 0xc}, {0xc00187dab0, 0xe}, 0xc00187df20, ...)
+        /home/joseph/github/cloudfox.azure/azure/commands/functions.go:301 +0x1425
+created by github.com/BishopFox/cloudfox/azure/commands.(*FunctionsModule).processSubscription in goroutine 60
+        /home/joseph/github/cloudfox.azure/azure/commands/functions.go:112 +0x138
+
+goroutine 1 [sync.WaitGroup.Wait]:
+sync.runtime_SemacquireWaitGroup(0xc0014c0960?, 0x80?)
+        /usr/local/go/src/runtime/sema.go:114 +0x2e
+sync.(*WaitGroup).Wait(0xc0018881b0)
+        /usr/local/go/src/sync/waitgroup.go:206 +0x85
+github.com/BishopFox/cloudfox/internal/azure.(*BaseAzureModule).RunSubscriptionEnumeration(0xc0014c28c0, {0x8147220, 0xac56b20}, {{0x75998be, 0x6}, 0xc001256d00}, {0xc001456600, 0x12, 0x41f285?}, {0x75a4171, ...}, ...)
+        /home/joseph/github/cloudfox.azure/internal/azure/command_context.go:316 +0x350
+github.com/BishopFox/cloudfox/azure/commands.(*FunctionsModule).PrintFunctions(0xc0014c28c0, {0x8147220, 0xac56b20}, {{0x75998be?, 0x0?}, 0xc001256d00?})
+        /home/joseph/github/cloudfox.azure/azure/commands/functions.go:87 +0xdb
+github.com/BishopFox/cloudfox/azure/commands.ListFunctions(0xc000e37100?, {0x759614e?, 0x4?, 0x7596152?})
+        /home/joseph/github/cloudfox.azure/azure/commands/functions.go:79 +0x468
+github.com/spf13/cobra.(*Command).execute(0xac18a60, {0xc0011a58e0, 0x2, 0x2})
+        /home/joseph/go/pkg/mod/github.com/spf13/cobra@v1.8.0/command.go:987 +0xb1b
+github.com/spf13/cobra.(*Command).ExecuteC(0xac0cf80)
+        /home/joseph/go/pkg/mod/github.com/spf13/cobra@v1.8.0/command.go:1115 +0x44f
+github.com/spf13/cobra.(*Command).Execute(...)
+        /home/joseph/go/pkg/mod/github.com/spf13/cobra@v1.8.0/command.go:1039
+main.main()
+        /home/joseph/github/cloudfox.azure/main.go:20 +0x65
+
+goroutine 5 [select]:
+go.opencensus.io/stats/view.(*worker).start(0xc000139200)
+        /home/joseph/go/pkg/mod/go.opencensus.io@v0.24.0/stats/view/worker.go:292 +0x9f
+created by go.opencensus.io/stats/view.init.0 in goroutine 1
+        /home/joseph/go/pkg/mod/go.opencensus.io@v0.24.0/stats/view/worker.go:34 +0x8d
+
+goroutine 21 [select]:
+github.com/patrickmn/go-cache.(*janitor).Run(0xc0000c7e70, 0xc000111a80)
+        /home/joseph/go/pkg/mod/github.com/patrickmn/go-cache@v2.1.0+incompatible/cache.go:1079 +0x7b
+created by github.com/patrickmn/go-cache.runJanitor in goroutine 1
+        /home/joseph/go/pkg/mod/github.com/patrickmn/go-cache@v2.1.0+incompatible/cache.go:1099 +0xdb
+
+goroutine 63 [select]:
+golang.org/x/net/http2.(*ClientConn).roundTrip(0xc00164ce00, 0xc001aad680, 0x0)
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:1351 +0x53f
+golang.org/x/net/http2.(*ClientConn).RoundTrip(...)
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:1266
+golang.org/x/net/http2.(*Transport).RoundTripOpt(0xc000e07d60, 0xc001aad680, {0xa0?, 0x5?})
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:596 +0x1ea
+golang.org/x/net/http2.(*Transport).RoundTrip(...)
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:547
+golang.org/x/net/http2.noDialH2RoundTripper.RoundTrip({0xc000e1a820?}, 0xc001aad680?)
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:3139 +0x1c
+net/http.(*Transport).roundTrip(0xc000e1a820, 0xc001aad680)
+        /usr/local/go/src/net/http/transport.go:615 +0x473
+net/http.(*Transport).RoundTrip(0xac358e0?, 0x80a9140?)
+        /usr/local/go/src/net/http/roundtrip.go:33 +0x18
+net/http.send(0xc001aad680, {0x80a9140, 0xc000e1a820}, {0xc23cc4eb6c02c201?, 0x34b1826fbb7?, 0x0?})
+        /usr/local/go/src/net/http/client.go:259 +0x5e2
+net/http.(*Client).send(0xc000e01950, 0xc001aad680, {0x1?, 0x1?, 0x0?})
+        /usr/local/go/src/net/http/client.go:180 +0x91
+net/http.(*Client).do(0xc000e01950, 0xc001aad680)
+        /usr/local/go/src/net/http/client.go:729 +0x9c9
+net/http.(*Client).Do(0x40b619?, 0x108?)
+        /usr/local/go/src/net/http/client.go:587 +0x13
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.transportPolicy.Do({{0x80ad900?, 0xc000e01950?}}, 0x413c01?)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/pipeline.go:47 +0x34
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc001ab7940)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.bodyDownloadPolicy(0xc001ab7940)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_body_download.go:20 +0x1c
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.PolicyFunc.Do(0x0?, 0x0?)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:216 +0x19
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc001ab7900)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.(*logPolicy).Do(0xc0018e2120, 0xc001ab7900)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_logging.go:122 +0x36d
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc001ab78c0)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.(*httpTracePolicy).Do(0xc001986760, 0xc001ab78c0)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_http_trace.go:93 +0x753
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc001ab7880)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.httpHeaderPolicy(0xc001ab7880)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_http_header.go:31 +0xbd
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.PolicyFunc.Do(0xc000edb0e8?, 0x5680b0?)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:216 +0x19
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc001ab7840)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/arm/runtime.httpTraceNamespacePolicy(0xc001ab7840)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/arm/runtime/policy_trace_namespace.go:29 +0x2cb
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.PolicyFunc.Do(0x5a52a09?, 0xc000edb238?)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:216 +0x19
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc001ab7800)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.(*BearerTokenPolicy).Do(0xc0019f6e60, 0xc001ab7800)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_bearer_token.go:127 +0x132
+github.com/Azure/azure-sdk-for-go/sdk/azcore/arm/runtime.(*BearerTokenPolicy).Do(0x0?, 0x0?)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/arm/runtime/policy_bearer_token.go:101 +0x17
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc000edb410)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.(*retryPolicy).Do(0x14?, 0xc001ab77c0)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_retry.go:142 +0x5c5
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc001ab7780)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/arm/runtime.(*rpRegistrationPolicy).Do(0xc001abd760, 0xc001ab7780)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/arm/runtime/policy_register_rp.go:92 +0xa5
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc001ab7740)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.telemetryPolicy.Do({{0xc001a93480?, 0x7234540?}}, 0xc001ab7740)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_telemetry.go:70 +0x1b4
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc001ab7700)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.includeResponsePolicy(0xc001ab7700)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_include_response.go:19 +0x1c
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.PolicyFunc.Do(0xc001ae05a0?, 0x24?)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:216 +0x19
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc001ab76c0)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.Pipeline.Do({{0xc001aba600?, 0x8147430?, 0xc001af4a50?}}, 0xc00174ea50?)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/pipeline.go:76 +0x45
+github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armsubscriptions.(*Client).Get(0xc001986770, {0x8147220?, 0xac56b20?}, {0xc00174ea50, 0x24}, 0x0)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/resourcemanager/resources/armsubscriptions@v1.3.0/client.go:119 +0x1e5
+github.com/BishopFox/cloudfox/internal/azure.GetSubscriptionNameFromID({0x8147220, 0xac56b20}, 0xc001257980, {0xc00174ea50, 0x24})
+        /home/joseph/github/cloudfox.azure/internal/azure/account_helpers.go:896 +0x206
+github.com/BishopFox/cloudfox/azure/commands.(*FunctionsModule).processSubscription(0xc0014c28c0, {0x8147220, 0xac56b20}, {0xc00174ea50, 0x24}, {{0x75998be?, 0x1?}, 0xc001256d00?})
+        /home/joseph/github/cloudfox.azure/azure/commands/functions.go:101 +0x75
+github.com/BishopFox/cloudfox/internal/azure.(*BaseAzureModule).RunSubscriptionEnumeration.func1({0xc00174ea50, 0x24})
+        /home/joseph/github/cloudfox.azure/internal/azure/command_context.go:311 +0x128
+created by github.com/BishopFox/cloudfox/internal/azure.(*BaseAzureModule).RunSubscriptionEnumeration in goroutine 1
+        /home/joseph/github/cloudfox.azure/internal/azure/command_context.go:296 +0x1ed
+
+goroutine 215 [select]:
+golang.org/x/net/http2.(*clientStream).writeRequest(0xc0019eb200, 0xc001aade00, 0x0)
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:1520 +0xc85
+golang.org/x/net/http2.(*clientStream).doRequest(0xc0019eb200, 0xc00174eb40?, 0x24?)
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:1381 +0x18
+created by golang.org/x/net/http2.(*ClientConn).roundTrip in goroutine 64
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:1287 +0x485
+
+goroutine 32 [select]:
+github.com/BishopFox/cloudfox/internal/azure.(*SafeSession).monitorSession(0xc001257980, {0x8147220, 0xac56b20})
+        /home/joseph/github/cloudfox.azure/internal/azure/account_helpers.go:287 +0xcb
+created by github.com/BishopFox/cloudfox/internal/azure.(*SafeSession).StartMonitoring in goroutine 1
+        /home/joseph/github/cloudfox.azure/internal/azure/account_helpers.go:265 +0xf0
+
+goroutine 62 [select]:
+golang.org/x/net/http2.(*ClientConn).roundTrip(0xc00164ce00, 0xc0019a6500, 0x0)
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:1351 +0x53f
+golang.org/x/net/http2.(*ClientConn).RoundTrip(...)
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:1266
+golang.org/x/net/http2.(*Transport).RoundTripOpt(0xc000e07d60, 0xc0019a6500, {0xe0?, 0xf0?})
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:596 +0x1ea
+golang.org/x/net/http2.(*Transport).RoundTrip(...)
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:547
+golang.org/x/net/http2.noDialH2RoundTripper.RoundTrip({0xc000e1a820?}, 0xc0019a6500?)
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:3139 +0x1c
+net/http.(*Transport).roundTrip(0xc000e1a820, 0xc0019a6500)
+        /usr/local/go/src/net/http/transport.go:615 +0x473
+net/http.(*Transport).RoundTrip(0xac358e0?, 0x80a9140?)
+        /usr/local/go/src/net/http/roundtrip.go:33 +0x18
+net/http.send(0xc0019a6500, {0x80a9140, 0xc000e1a820}, {0xc000e1a801?, 0xc001a1e550?, 0x0?})
+        /usr/local/go/src/net/http/client.go:259 +0x5e2
+net/http.(*Client).send(0xc000e01950, 0xc0019a6500, {0xc0000e9008?, 0x80a9140?, 0x0?})
+        /usr/local/go/src/net/http/client.go:180 +0x91
+net/http.(*Client).do(0xc000e01950, 0xc0019a6500)
+        /usr/local/go/src/net/http/client.go:729 +0x9c9
+net/http.(*Client).Do(0x40b619?, 0x108?)
+        /usr/local/go/src/net/http/client.go:587 +0x13
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.transportPolicy.Do({{0x80ad900?, 0xc000e01950?}}, 0x413c01?)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/pipeline.go:47 +0x34
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc0019a4740)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.bodyDownloadPolicy(0xc0019a4740)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_body_download.go:20 +0x1c
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.PolicyFunc.Do(0x0?, 0x0?)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:216 +0x19
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc0019a4700)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.(*logPolicy).Do(0xc0018e2420, 0xc0019a4700)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_logging.go:122 +0x36d
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc0019a46c0)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.(*httpTracePolicy).Do(0xc001986808, 0xc0019a46c0)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_http_trace.go:93 +0x753
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc0019a4680)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.httpHeaderPolicy(0xc0019a4680)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_http_header.go:31 +0xbd
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.PolicyFunc.Do(0xc001902e70?, 0x5680b0?)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:216 +0x19
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc0019a4640)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/arm/runtime.httpTraceNamespacePolicy(0xc0019a4640)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/arm/runtime/policy_trace_namespace.go:29 +0x2cb
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.PolicyFunc.Do(0x5a52a09?, 0xc001902fc0?)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:216 +0x19
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc0019a4600)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.(*BearerTokenPolicy).Do(0xc0019f7270, 0xc0019a4600)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_bearer_token.go:127 +0x132
+github.com/Azure/azure-sdk-for-go/sdk/azcore/arm/runtime.(*BearerTokenPolicy).Do(0x0?, 0x0?)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/arm/runtime/policy_bearer_token.go:101 +0x17
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc001903198)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.(*retryPolicy).Do(0x10?, 0xc0019a45c0)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_retry.go:142 +0x5c5
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc0019a4580)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/arm/runtime.(*rpRegistrationPolicy).Do(0xc0018d4c60, 0xc0019a4580)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/arm/runtime/policy_register_rp.go:92 +0xa5
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc0019a4540)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.telemetryPolicy.Do({{0xc0019da0f0?, 0x7234540?}}, 0xc0019a4540)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_telemetry.go:70 +0x1b4
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc0019a4500)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.includeResponsePolicy(0xc0019a4500)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_include_response.go:19 +0x1c
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.PolicyFunc.Do(0xc001af58c0?, 0xc001ae0960?)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:216 +0x19
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc0019a44c0)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.Pipeline.Do({{0xc001abaa00?, 0xc001af5830?, 0xac358e0?}}, 0xc001af5830?)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/pipeline.go:76 +0x45
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.FetcherForNextLink({0x8147430?, 0xc001af5830?}, {{0xc001abaa00?, 0xac56b20?, 0x69227e0?}}, {0x0?, 0xc001ad8960?}, 0xc0019039d8?, 0x47b9c5?)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/pager.go:137 +0x145
+github.com/BishopFox/cloudfox/internal/azure.GetResourceGroupsPerSubscription.(*ResourceGroupsClient).NewListPager.func2({0x8147220?, 0xac56b20?}, 0x0)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources@v1.2.0/resourcegroups_client.go:387 +0xf5
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.(*Pager[...]).NextPage(0x814a300, {0x8147220, 0xac56b20})
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/pager.go:80 +0x371
+github.com/BishopFox/cloudfox/internal/azure.GetResourceGroupsPerSubscription(0x0?, {0xc00174e960, 0x24})
+        /home/joseph/github/cloudfox.azure/internal/azure/account_helpers.go:1028 +0x42a
+github.com/BishopFox/cloudfox/internal/azure.(*BaseAzureModule).ResolveResourceGroups(0x8147220?, {0xc00174e960?, 0xc001257980?})
+        /home/joseph/github/cloudfox.azure/internal/azure/command_context.go:209 +0x65
+github.com/BishopFox/cloudfox/azure/commands.(*FunctionsModule).processSubscription(0xc0014c28c0, {0x8147220, 0xac56b20}, {0xc00174e960, 0x24}, {{0x75998be?, 0x1?}, 0xc001256d00?})
+        /home/joseph/github/cloudfox.azure/azure/commands/functions.go:104 +0x9c
+github.com/BishopFox/cloudfox/internal/azure.(*BaseAzureModule).RunSubscriptionEnumeration.func1({0xc00174e960, 0x24})
+        /home/joseph/github/cloudfox.azure/internal/azure/command_context.go:q311 +0x128
+created by github.com/BishopFox/cloudfox/internal/azure.(*BaseAzureModule).RunSubscriptionEnumeration in goroutine 1
+        /home/joseph/github/cloudfox.azure/internal/azure/command_context.go:296 +0x1ed
+
+goroutine 191 [select]:
+golang.org/x/net/http2.(*clientStream).writeRequest(0xc0019eac00, 0xc001aac500, 0x0)
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:1520 +0xc85
+golang.org/x/net/http2.(*clientStream).doRequest(0xc0019eac00, 0xc00174e8a0?, 0x24?)
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:1381 +0x18
+created by golang.org/x/net/http2.(*ClientConn).roundTrip in goroutine 61
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:1287 +0x485
+
+goroutine 40 [runnable]:
+internal/poll.runtime_pollWait(0x7f8d2a4c6800, 0x72)
+        /usr/local/go/src/runtime/netpoll.go:351 +0x85
+internal/poll.(*pollDesc).wait(0xc001257e80?, 0xc001ac4000?, 0x0)
+        /usr/local/go/src/internal/poll/fd_poll_runtime.go:84 +0x27
+internal/poll.(*pollDesc).waitRead(...)
+        /usr/local/go/src/internal/poll/fd_poll_runtime.go:89
+internal/poll.(*FD).Read(0xc001257e80, {0xc001ac4000, 0x3000, 0x3000})
+        /usr/local/go/src/internal/poll/fd_unix.go:165 +0x279
+net.(*netFD).Read(0xc001257e80, {0xc001ac4000?, 0xc001ac4109?, 0x5?})
+        /usr/local/go/src/net/fd_posix.go:68 +0x25
+net.(*conn).Read(0xc000e101f0, {0xc001ac4000?, 0x7f8d292fbdf8?, 0x7f8d71f94108?})
+        /usr/local/go/src/net/net.go:196 +0x45
+crypto/tls.(*atLeastReader).Read(0xc001a0f0b0, {0xc001ac4000?, 0x2ef2?, 0x2?})
+        /usr/local/go/src/crypto/tls/conn.go:816 +0x3b
+bytes.(*Buffer).ReadFrom(0xc0010fc2a8, {0x80ac840, 0xc001a0f0b0})
+        /usr/local/go/src/bytes/buffer.go:217 +0x98
+crypto/tls.(*Conn).readFromUntil(0xc0010fc008, {0x80a9540, 0xc000e101f0}, 0x445494?)
+        /usr/local/go/src/crypto/tls/conn.go:838 +0xde
+crypto/tls.(*Conn).readRecordOrCCS(0xc0010fc008, 0x0)
+        /usr/local/go/src/crypto/tls/conn.go:627 +0x3db
+crypto/tls.(*Conn).readRecord(...)
+        /usr/local/go/src/crypto/tls/conn.go:589
+crypto/tls.(*Conn).Read(0xc0010fc008, {0xc00176b000, 0x1000, 0xc000ecfcb0?})
+        /usr/local/go/src/crypto/tls/conn.go:1392 +0x145
+bufio.(*Reader).Read(0xc001746d20, {0xc0017279a0, 0x9, 0x416a00?})
+        /usr/local/go/src/bufio/bufio.go:245 +0x197
+io.ReadAtLeast({0x8096ee0, 0xc001746d20}, {0xc0017279a0, 0x9, 0x9}, 0x9)
+        /usr/local/go/src/io/io.go:335 +0x8e
+io.ReadFull(...)
+        /usr/local/go/src/io/io.go:354
+golang.org/x/net/http2.readFrameHeader({0xc0017279a0, 0x9, 0x5a4967f?}, {0x8096ee0?, 0xc001746d20?})
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/frame.go:242 +0x65
+golang.org/x/net/http2.(*Framer).ReadFrame(0xc001727960)
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/frame.go:506 +0x7d
+golang.org/x/net/http2.(*clientConnReadLoop).run(0xc000ecffa8)
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:2207 +0xca
+golang.org/x/net/http2.(*ClientConn).readLoop(0xc00164ce00)
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:2076 +0x52
+created by golang.org/x/net/http2.(*Transport).newClientConn in goroutine 39
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:865 +0xd85
+
+goroutine 61 [select]:
+golang.org/x/net/http2.(*ClientConn).roundTrip(0xc00164ce00, 0xc001aac500, 0x0)
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:1351 +0x53f
+golang.org/x/net/http2.(*ClientConn).RoundTrip(...)
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:1266
+golang.org/x/net/http2.(*Transport).RoundTripOpt(0xc000e07d60, 0xc001aac500, {0x20?, 0x37?})
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:596 +0x1ea
+golang.org/x/net/http2.(*Transport).RoundTrip(...)
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:547
+golang.org/x/net/http2.noDialH2RoundTripper.RoundTrip({0xc000e1a820?}, 0xc001aac500?)
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:3139 +0x1c
+net/http.(*Transport).roundTrip(0xc000e1a820, 0xc001aac500)
+        /usr/local/go/src/net/http/transport.go:615 +0x473
+net/http.(*Transport).RoundTrip(0xc0000e9008?, 0x80a9140?)
+        /usr/local/go/src/net/http/roundtrip.go:33 +0x18
+net/http.send(0xc001aac500, {0x80a9140, 0xc000e1a820}, {0xac53e01?, 0x7f8d292fccf8?, 0x0?})
+        /usr/local/go/src/net/http/client.go:259 +0x5e2
+net/http.(*Client).send(0xc000e01950, 0xc001aac500, {0x51?, 0xc0018c8820?, 0x0?})
+        /usr/local/go/src/net/http/client.go:180 +0x91
+net/http.(*Client).do(0xc000e01950, 0xc001aac500)
+        /usr/local/go/src/net/http/client.go:729 +0x9c9
+net/http.(*Client).Do(0x40b619?, 0x108?)
+        /usr/local/go/src/net/http/client.go:587 +0x13
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.transportPolicy.Do({{0x80ad900?, 0xc000e01950?}}, 0x413c01?)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/pipeline.go:47 +0x34
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc001ab64c0)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.bodyDownloadPolicy(0xc001ab64c0)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_body_download.go:20 +0x1c
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.PolicyFunc.Do(0x0?, 0x0?)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:216 +0x19
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc001ab6480)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.(*logPolicy).Do(0xc001959b48, 0xc001ab6480)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_logging.go:122 +0x36d
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc001ab6440)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.(*httpTracePolicy).Do(0xc001986670, 0xc001ab6440)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_http_trace.go:93 +0x753
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc001ab6400)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.httpHeaderPolicy(0xc001ab6400)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_http_header.go:31 +0xbd
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.PolicyFunc.Do(0xc0018c90e8?, 0x5680b0?)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:216 +0x19
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc001ab63c0)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/arm/runtime.httpTraceNamespacePolicy(0xc001ab63c0)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/arm/runtime/policy_trace_namespace.go:29 +0x2cb
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.PolicyFunc.Do(0x5a52a09?, 0xc0018c9238?)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:216 +0x19
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc001ab6380)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.(*BearerTokenPolicy).Do(0xc0019f6960, 0xc001ab6380)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_bearer_token.go:127 +0x132
+github.com/Azure/azure-sdk-for-go/sdk/azcore/arm/runtime.(*BearerTokenPolicy).Do(0x0?, 0x0?)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/arm/runtime/policy_bearer_token.go:101 +0x17
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc0018c9410)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.(*retryPolicy).Do(0x14?, 0xc001ab6340)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_retry.go:142 +0x5c5
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc001ab6300)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/arm/runtime.(*rpRegistrationPolicy).Do(0xc001abc000, 0xc001ab6300)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/arm/runtime/policy_register_rp.go:92 +0xa5
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc001ab62c0)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.telemetryPolicy.Do({{0xc001a92a00?, 0x7234540?}}, 0xc001ab62c0)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_telemetry.go:70 +0x1b4
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc001ab6280)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.includeResponsePolicy(0xc001ab6280)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_include_response.go:19 +0x1c
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.PolicyFunc.Do(0xc001853720?, 0x24?)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:216 +0x19
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc001ab6240)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.Pipeline.Do({{0xc001aba100?, 0x8147430?, 0xc001a9d290?}}, 0xc00174e8a0?)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/pipeline.go:76 +0x45
+github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armsubscriptions.(*Client).Get(0xc001986680, {0x8147220?, 0xac56b20?}, {0xc00174e8a0, 0x24}, 0x0)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/resourcemanager/resources/armsubscriptions@v1.3.0/client.go:119 +0x1e5
+github.com/BishopFox/cloudfox/internal/azure.GetSubscriptionNameFromID({0x8147220, 0xac56b20}, 0xc001257980, {0xc00174e8a0, 0x24})
+        /home/joseph/github/cloudfox.azure/internal/azure/account_helpers.go:896 +0x206
+github.com/BishopFox/cloudfox/azure/commands.(*FunctionsModule).processSubscription(0xc0014c28c0, {0x8147220, 0xac56b20}, {0xc00174e8a0, 0x24}, {{0x75998be?, 0x1?}, 0xc001256d00?})
+        /home/joseph/github/cloudfox.azure/azure/commands/functions.go:101 +0x75
+github.com/BishopFox/cloudfox/internal/azure.(*BaseAzureModule).RunSubscriptionEnumeration.func1({0xc00174e8a0, 0x24})
+        /home/joseph/github/cloudfox.azure/internal/azure/command_context.go:311 +0x128
+created by github.com/BishopFox/cloudfox/internal/azure.(*BaseAzureModule).RunSubscriptionEnumeration in goroutine 1
+        /home/joseph/github/cloudfox.azure/internal/azure/command_context.go:296 +0x1ed
+
+goroutine 60 [sync.WaitGroup.Wait]:
+sync.runtime_SemacquireWaitGroup(0xc00193d300?, 0xc0?)
+        /usr/local/go/src/runtime/sema.go:114 +0x2e
+sync.(*WaitGroup).Wait(0xc00187df20)
+        /usr/local/go/src/sync/waitgroup.go:206 +0x85
+github.com/BishopFox/cloudfox/azure/commands.(*FunctionsModule).processSubscription(0xc0014c28c0, {0x8147220, 0xac56b20}, {0xc00174e7e0, 0x24}, {{0x75998be?, 0x1?}, 0xc001256d00?})
+        /home/joseph/github/cloudfox.azure/azure/commands/functions.go:115 +0x265
+github.com/BishopFox/cloudfox/internal/azure.(*BaseAzureModule).RunSubscriptionEnumeration.func1({0xc00174e7e0, 0x24})
+        /home/joseph/github/cloudfox.azure/internal/azure/command_context.go:311 +0x128
+created by github.com/BishopFox/cloudfox/internal/azure.(*BaseAzureModule).RunSubscriptionEnumeration in goroutine 1
+        /home/joseph/github/cloudfox.azure/internal/azure/command_context.go:296 +0x1ed
+
+goroutine 57 [select]:
+github.com/BishopFox/cloudfox/internal.SpinUntil({0x75a4171, 0x9}, 0xc0014c2988, 0xc0014a5030, {0x75be12c, 0xd})
+        /home/joseph/github/cloudfox.azure/internal/aws.go:387 +0x287
+created by github.com/BishopFox/cloudfox/internal/azure.(*BaseAzureModule).RunSubscriptionEnumeration in goroutine 1
+        /home/joseph/github/cloudfox.azure/internal/azure/command_context.go:288 +0x1c5
+
+goroutine 64 [select]:
+golang.org/x/net/http2.(*ClientConn).roundTrip(0xc00164ce00, 0xc001aade00, 0x0)
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:1351 +0x53f
+golang.org/x/net/http2.(*ClientConn).RoundTrip(...)
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:1266
+golang.org/x/net/http2.(*Transport).RoundTripOpt(0xc000e07d60, 0xc001aade00, {0x80?, 0x7?})
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:596 +0x1ea
+golang.org/x/net/http2.(*Transport).RoundTrip(...)
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:547
+golang.org/x/net/http2.noDialH2RoundTripper.RoundTrip({0xc000e1a820?}, 0xc001aade00?)
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:3139 +0x1c
+net/http.(*Transport).roundTrip(0xc000e1a820, 0xc001aade00)
+        /usr/local/go/src/net/http/transport.go:615 +0x473
+net/http.(*Transport).RoundTrip(0xac358e0?, 0x80a9140?)
+        /usr/local/go/src/net/http/roundtrip.go:33 +0x18
+net/http.send(0xc001aade00, {0x80a9140, 0xc000e1a820}, {0x1?, 0x0?, 0x0?})
+        /usr/local/go/src/net/http/client.go:259 +0x5e2
+net/http.(*Client).send(0xc000e01950, 0xc001aade00, {0x0?, 0x0?, 0x0?})
+        /usr/local/go/src/net/http/client.go:180 +0x91
+net/http.(*Client).do(0xc000e01950, 0xc001aade00)
+        /usr/local/go/src/net/http/client.go:729 +0x9c9
+net/http.(*Client).Do(0x40b619?, 0x108?)
+        /usr/local/go/src/net/http/client.go:587 +0x13
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.transportPolicy.Do({{0x80ad900?, 0xc000e01950?}}, 0x413c01?)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/pipeline.go:47 +0x34
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc0019a40c0)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.bodyDownloadPolicy(0xc0019a40c0)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_body_download.go:20 +0x1c
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.PolicyFunc.Do(0x0?, 0x0?)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:216 +0x19
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc0019a4080)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.(*logPolicy).Do(0xc0018e22a0, 0xc0019a4080)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_logging.go:122 +0x36d
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc0019a4040)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.(*httpTracePolicy).Do(0xc0019867b0, 0xc0019a4040)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_http_trace.go:93 +0x753
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc0019a4000)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.httpHeaderPolicy(0xc0019a4000)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_http_header.go:31 +0xbd
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.PolicyFunc.Do(0xc0019b30e8?, 0x5680b0?)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:216 +0x19
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc001ab7f40)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/arm/runtime.httpTraceNamespacePolicy(0xc001ab7f40)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/arm/runtime/policy_trace_namespace.go:29 +0x2cb
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.PolicyFunc.Do(0x5a52a09?, 0xc0019b3238?)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:216 +0x19
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc001ab7f00)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.(*BearerTokenPolicy).Do(0xc0019f7090, 0xc001ab7f00)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_bearer_token.go:127 +0x132
+github.com/Azure/azure-sdk-for-go/sdk/azcore/arm/runtime.(*BearerTokenPolicy).Do(0x0?, 0x0?)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/arm/runtime/policy_bearer_token.go:101 +0x17
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc0019b3410)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.(*retryPolicy).Do(0x14?, 0xc001ab7ec0)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_retry.go:142 +0x5c5
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc001ab7e80)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/arm/runtime.(*rpRegistrationPolicy).Do(0xc0018d4160, 0xc001ab7e80)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/arm/runtime/policy_register_rp.go:92 +0xa5
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc001ab7e40)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.telemetryPolicy.Do({{0xc001a938c0?, 0x7234540?}}, 0xc001ab7e40)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_telemetry.go:70 +0x1b4
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc001ab7e00)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime.includeResponsePolicy(0xc001ab7e00)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/runtime/policy_include_response.go:19 +0x1c
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.PolicyFunc.Do(0xc001ae0780?, 0x24?)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:216 +0x19
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.(*Request).Next(0xc001ab7dc0)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/request.go:146 +0xf0
+github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/exported.Pipeline.Do({{0xc001aba800?, 0x8147430?, 0xc001af51d0?}}, 0xc00174eb40?)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/azcore@v1.20.0/internal/exported/pipeline.go:76 +0x45
+github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armsubscriptions.(*Client).Get(0xc0019867c0, {0x8147220?, 0xac56b20?}, {0xc00174eb40, 0x24}, 0x0)
+        /home/joseph/go/pkg/mod/github.com/!azure/azure-sdk-for-go/sdk/resourcemanager/resources/armsubscriptions@v1.3.0/client.go:119 +0x1e5
+github.com/BishopFox/cloudfox/internal/azure.GetSubscriptionNameFromID({0x8147220, 0xac56b20}, 0xc001257980, {0xc00174eb40, 0x24})
+        /home/joseph/github/cloudfox.azure/internal/azure/account_helpers.go:896 +0x206
+github.com/BishopFox/cloudfox/azure/commands.(*FunctionsModule).processSubscription(0xc0014c28c0, {0x8147220, 0xac56b20}, {0xc00174eb40, 0x24}, {{0x75998be?, 0x1?}, 0xc001256d00?})
+        /home/joseph/github/cloudfox.azure/azure/commands/functions.go:101 +0x75
+github.com/BishopFox/cloudfox/internal/azure.(*BaseAzureModule).RunSubscriptionEnumeration.func1({0xc00174eb40, 0x24})
+        /home/joseph/github/cloudfox.azure/internal/azure/command_context.go:311 +0x128
+created by github.com/BishopFox/cloudfox/internal/azure.(*BaseAzureModule).RunSubscriptionEnumeration in goroutine 1
+        /home/joseph/github/cloudfox.azure/internal/azure/command_context.go:296 +0x1ed
+
+goroutine 214 [select]:
+golang.org/x/net/http2.(*clientStream).writeRequest(0xc0019eb080, 0xc001aad680, 0x0)
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:1520 +0xc85
+golang.org/x/net/http2.(*clientStream).doRequest(0xc0019eb080, 0xc00174ea50?, 0x24?)
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:1381 +0x18
+created by golang.org/x/net/http2.(*ClientConn).roundTrip in goroutine 63
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:1287 +0x485
+
+goroutine 216 [select]:
+golang.org/x/net/http2.(*clientStream).writeRequest(0xc0019eb380, 0xc0019a6500, 0x0)
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:1520 +0xc85
+golang.org/x/net/http2.(*clientStream).doRequest(0xc0019eb380, 0xc00174eb40?, 0x24?)
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:1381 +0x18
+created by golang.org/x/net/http2.(*ClientConn).roundTrip in goroutine 62
+        /home/joseph/go/pkg/mod/golang.org/x/net@v0.46.0/http2/transport.go:1287 +0x485
+
+goroutine 99 [chan send]:
+github.com/BishopFox/cloudfox/internal/azure.(*BaseAzureModule).RunSubscriptionEnumeration.func1({0xc00174ede0, 0x24})
+        /home/joseph/github/cloudfox.azure/internal/azure/command_context.go:304 +0xaf
+created by github.com/BishopFox/cloudfox/internal/azure.(*BaseAzureModule).RunSubscriptionEnumeration in goroutine 1
+        /home/joseph/github/cloudfox.azure/internal/azure/command_context.go:296 +0x1ed
+goroutine 100 [chan send]:
+github.com/BishopFox/cloudfox/internal/azure.(*BaseAzureModule).RunSubscriptionEnumeration.func1({0xc00174eed0, 0x24})
+        /home/joseph/github/cloudfox.azure/internal/azure/command_context.go:304 +0xaf
+created by github.com/BishopFox/cloudfox/internal/azure.(*BaseAzureModule).RunSubscriptionEnumeration in goroutine 1
+        /home/joseph/github/cloudfox.azure/internal/azure/command_context.go:296 +0x1ed
+
+goroutine 101 [chan send]:
+github.com/BishopFox/cloudfox/internal/azure.(*BaseAzureModule).RunSubscriptionEnumeration.func1({0xc00174ef60, 0x24})
+        /home/joseph/github/cloudfox.azure/internal/azure/command_context.go:304 +0xaf
+created by github.com/BishopFox/cloudfox/internal/azure.(*BaseAzureModule).RunSubscriptionEnumeration in goroutine 1
+        /home/joseph/github/cloudfox.azure/internal/azure/command_context.go:296 +0x1ed
+
+goroutine 102 [chan send]:
+github.com/BishopFox/cloudfox/internal/azure.(*BaseAzureModule).RunSubscriptionEnumeration.func1({0xc00174f020, 0x24})
+        /home/joseph/github/cloudfox.azure/internal/azure/command_context.go:304 +0xaf
+created by github.com/BishopFox/cloudfox/internal/azure.(*BaseAzureModule).RunSubscriptionEnumeration in goroutine 1
+        /home/joseph/github/cloudfox.azure/internal/azure/command_context.go:296 +0x1ed
+
+goroutine 103 [chan send]:
+github.com/BishopFox/cloudfox/internal/azure.(*BaseAzureModule).RunSubscriptionEnumeration.func1({0xc00174f0e0, 0x24})
+        /home/joseph/github/cloudfox.azure/internal/azure/command_context.go:304 +0xaf
+created by github.com/BishopFox/cloudfox/internal/azure.(*BaseAzureModule).RunSubscriptionEnumeration in goroutine 1
+        /home/joseph/github/cloudfox.azure/internal/azure/command_context.go:296 +0x1ed
+
+goroutine 104 [chan send]:
+github.com/BishopFox/cloudfox/internal/azure.(*BaseAzureModule).RunSubscriptionEnumeration.func1({0xc00174f1a0, 0x24})
+        /home/joseph/github/cloudfox.azure/internal/azure/command_context.go:304 +0xaf
+created by github.com/BishopFox/cloudfox/internal/azure.(*BaseAzureModule).RunSubscriptionEnumeration in goroutine 1
+        /home/joseph/github/cloudfox.azure/internal/azure/command_context.go:296 +0x1ed
+
+goroutine 105 [chan send]:
+github.com/BishopFox/cloudfox/internal/azure.(*BaseAzureModule).RunSubscriptionEnumeration.func1({0xc00174f260, 0x24})
+        /home/joseph/github/cloudfox.azure/internal/azure/command_context.go:304 +0xaf
+created by github.com/BishopFox/cloudfox/internal/azure.(*BaseAzureModule).RunSubscriptionEnumeration in goroutine 1
+        /home/joseph/github/cloudfox.azure/internal/azure/command_context.go:296 +0x1ed
+
+goroutine 106 [chan send]:
+github.com/BishopFox/cloudfox/internal/azure.(*BaseAzureModule).RunSubscriptionEnumeration.func1({0xc00174f320, 0x24})
+        /home/joseph/github/cloudfox.azure/internal/azure/command_context.go:304 +0xaf
+created by github.com/BishopFox/cloudfox/internal/azure.(*BaseAzureModule).RunSubscriptionEnumeration in goroutine 1
+        /home/joseph/github/cloudfox.azure/internal/azure/command_context.go:296 +0x1ed
+
+goroutine 212 [IO wait]:
+internal/poll.runtime_pollWait(0x7f8d2a4c6e00, 0x72)
+        /usr/local/go/src/runtime/netpoll.go:351 +0x85
+internal/poll.(*pollDesc).wait(0xc001a6e500?, 0xc001ae2000?, 0x0)
+        /usr/local/go/src/internal/poll/fd_poll_runtime.go:84 +0x27
+internal/poll.(*pollDesc).waitRead(...)
+        /usr/local/go/src/internal/poll/fd_poll_runtime.go:89
+internal/poll.(*FD).Read(0xc001a6e500, {0xc001ae2000, 0x1a80, 0x1a80})
+        /usr/local/go/src/internal/poll/fd_unix.go:165 +0x279
+net.(*netFD).Read(0xc001a6e500, {0xc001ae2000?, 0xc001ae23a2?, 0x5?})
+        /usr/local/go/src/net/fd_posix.go:68 +0x25
+net.(*conn).Read(0xc0019866e0, {0xc001ae2000?, 0x7f8d292fbdf8?, 0x7f8d71f94108?})
+        /usr/local/go/src/net/net.go:196 +0x45
+crypto/tls.(*atLeastReader).Read(0xc001a0f0f8, {0xc001ae2000?, 0x16d9?, 0x5?})
+        /usr/local/go/src/crypto/tls/conn.go:816 +0x3b
+bytes.(*Buffer).ReadFrom(0xc001abe628, {0x80ac840, 0xc001a0f0f8})
+        /usr/local/go/src/bytes/buffer.go:217 +0x98
+crypto/tls.(*Conn).readFromUntil(0xc001abe388, {0x80a9540, 0xc0019866e0}, 0x445494?)
+        /usr/local/go/src/crypto/tls/conn.go:838 +0xde
+crypto/tls.(*Conn).readRecordOrCCS(0xc001abe388, 0x0)
+        /usr/local/go/src/crypto/tls/conn.go:627 +0x3db
+crypto/tls.(*Conn).readRecord(...)
+        /usr/local/go/src/crypto/tls/conn.go:589
+crypto/tls.(*Conn).Read(0xc001abe388, {0xc001943000, 0x1000, 0xc0018edca8?})
+        /usr/local/go/src/crypto/tls/conn.go:1392 +0x145
+bufio.(*Reader).Read(0xc001adb140, {0xc001727a80, 0x9, 0x416a00?})
+        /usr/local/go/src/bufio/bufio.go:245 +0x197
+io.ReadAtLeast({0x8096ee0, 0xc001adb140}, {0xc001727a80, 0x9, 0x9}, 0x9)
+        /usr/local/go/src/io/io.go:335 +0x8e
+io.ReadFull(...)
+        /usr/local/go/src/io/io.go:354
+net/http.http2readFrameHeader({0xc001727a80, 0x9, 0x6fafff?}, {0x8096ee0?, 0xc001adb140?})
+        /usr/local/go/src/net/http/h2_bundle.go:1811 +0x65
+net/http.(*http2Framer).ReadFrame(0xc001727a40)
+        /usr/local/go/src/net/http/h2_bundle.go:2078 +0x7d
+net/http.(*http2clientConnReadLoop).run(0xc0018edfa8)
+        /usr/local/go/src/net/http/h2_bundle.go:9539 +0xda
+net/http.(*http2ClientConn).readLoop(0xc0019fb180)
+        /usr/local/go/src/net/http/h2_bundle.go:9408 +0x79
+created by net/http.(*http2Transport).newClientConn in goroutine 211
+        /usr/local/go/src/net/http/h2_bundle.go:8192 +0xde5
+
+
+--------------------------------------------------------------------------------------------------------------------------
+
+$ ./cloudfox azure rbac -t 01bb4114-05fe-41a0-86ae-06d45f739f99
+[🦊 cloudfox 1.16.0 🦊 ][rbac] Enumerating resources for 18 subscription(s)
+[rbac] Status: 18/18 subscriptions complete (36 errors -- For details check /home/kali/.cloudfox/cloudfox-error.log)
+[🦊 cloudfox 1.16.0 🦊 ][rbac] Status: -18/18 subscriptions complete (36 errors -- For details check /home/kali/.cloudfox/cloudfox-error.log)
+[🦊 cloudfox 1.16.0 🦊 ][rbac] No RBAC assignments found
+
+--------------------------------------------------------------------------------------------------------------------------
+
+
+
+
+[🦊 cloudfox 1.16.0 🦊 ][all-checks] Running command: access-keys
+[🦊 cloudfox 1.16.0 🦊 ][accesskeys] Enumerating resources for 18 subscription(s)
+[accesskeys] Status: 0/18 subscriptions complete (0 errors -- For details check /home/kali/.cloudfox/cloudfox-error.log)
+[accesskeys] Status: 17/18 subscriptions complete (0 errors -- For details check /home/kali/.cloudfox/cloudfox-error.log)smart session: automatically refreshed Azure CLI tokens
+[accesskeys] Status: 17/18 subscriptions complete (0 errors -- For details check /home/kali/.cloudfox/cloudfox-error.log)
+[accesskeys] Status: 17/18 subscriptions complete (0 errors -- For details check /home/kali/.cloudfox/cloudfox-error.log)
+[accesskeys] Status: 17/18 subscriptions complete (0 errors -- For details check /home/kali/.cloudfox/cloudfox-error.log)smart session: automatically refreshed Azure CLI tokens
+[accesskeys] Status: 17/18 subscriptions complete (0 errors -- For details check /home/kali/.cloudfox/cloudfox-error.log)
+[accesskeys] Status: 17/18 subscriptions complete (0 errors -- For details check /home/kali/.cloudfox/cloudfox-error.log)
+[accesskeys] Status: 17/18 subscriptions complete (0 errors -- For details check /home/kali/.cloudfox/cloudfox-error.log)smart session: automatically refreshed Azure CLI tokens
+[accesskeys] Status: 17/18 subscriptions complete (0 errors -- For details check /home/kali/.cloudfox/cloudfox-error.log)smart session: automatically refreshed Azure CLI tokens
+[accesskeys] Status: 17/18 subscriptions complete (0 errors -- For details check /home/kali/.cloudfox/cloudfox-error.log)smart session: automatically refreshed Azure CLI tokens
+[accesskeys] Status: 17/18 subscriptions complete (0 errors -- For details check /home/kali/.cloudfox/cloudfox-error.log)smart session: automatically refreshed Azure CLI tokens
+[accesskeys] Status: 17/18 subscriptions complete (0 errors -- For details check /home/kali/.cloudfox/cloudfox-error.log)
+[accesskeys] Status: 17/18 subscriptions complete (0 errors -- For details check /home/kali/.cloudfox/cloudfox-error.log)smart session: automatically refreshed Azure CLI tokens
+[accesskeys] Status: 17/18 subscriptions complete (0 errors -- For details check /home/kali/.cloudfox/cloudfox-error.log)smart session: automatically refreshed Azure CLI tokens
+[accesskeys] Status: 17/18 subscriptions complete (0 errors -- For details check /home/kali/.cloudfox/cloudfox-error.log)smart session: automatically refreshed Azure CLI tokens
+[accesskeys] Status: 17/18 subscriptions complete (0 errors -- For details check /home/kali/.cloudfox/cloudfox-error.log)
+[accesskeys] Status: 17/18 subscriptions complete (0 errors -- For details check /home/kali/.cloudfox/cloudfox-error.log)
+[accesskeys] Status: 17/18 subscriptions complete (0 errors -- For details check /home/kali/.cloudfox/cloudfox-error.log)^C
+
+
+
+--------------------------------------------------------------------------------------------------------------------------
+
+Edit file internal/azure/command_context.go                                                                                                                                                                                               │
+│ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌ │
+│╎   378 +        if len(tenants) > 1 {                                                                                                                                                                                                    ╎│
+│╎   379 +          logger.ErrorM(fmt.Sprintf("Multiple tenants not yet supported. Provided: %v. Please run separately for each tenant.", tenants), moduleName)                                                                            ╎│
+│╎   380 +          session.StopMonitoring()                                                                                                                                                                                               ╎│
+│╎   381 +          return nil, fmt.Errorf("multiple tenants not supported")                                                                                                                                                               ╎│
+│╎   382 +        }                                                                         
+    
+--------------------------------------------------------------------------------------------------------------------------
+
+OUTPUT UPDATES
+    AWS: .cloudfox/cloudfox-output/aws/bokf-active-directory-nonprod.gbl-security-audit-permissions-431343616560
+    AZURE: .cloudfox/cloudfox-output/Azure/jbarcia_bishopfox.com#EXT#@silverlake.onmicrosoft.com/[S]AVD'
+

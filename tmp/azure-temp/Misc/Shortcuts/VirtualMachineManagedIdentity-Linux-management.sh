@@ -1,0 +1,2 @@
+# Usage - returns a Management Scoped Managed Identity token for a Virtual Machine - curl -sL 'https://raw.githubusercontent.com/NetSPI/MicroBurst/master/Misc/Shortcuts/VirtualMachineManagedIdentity-Linux-management.sh' | bash
+curl -s 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/' --header "Metadata: true"
