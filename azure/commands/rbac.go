@@ -1222,6 +1222,9 @@ func (m *RBACModule) writeOutput(ctx context.Context, logger internal.Logger) {
 		m.Subscriptions, m.TenantID, m.TenantName, m.TenantFlagPresent)
 	scopeNames = azinternal.GetSubscriptionNamesForOutput(ctx, m.Session, scopeType, scopeIDs)
 
+	// Generate loot files
+	lootFiles := m.generateRBACLootFiles()
+
 	// Prepare output (single file with all data, matching enterprise-apps pattern)
 	output := RBACOutput{
 		Table: []internal.TableFile{
@@ -1231,6 +1234,7 @@ func (m *RBACModule) writeOutput(ctx context.Context, logger internal.Logger) {
 				Body:   m.RBACRows,
 			},
 		},
+		Loot: lootFiles,
 	}
 
 	// Write output using HandleOutputSmart (auto-streaming for large datasets)
@@ -1249,4 +1253,377 @@ func (m *RBACModule) writeOutput(ctx context.Context, logger internal.Logger) {
 		logger.ErrorM(fmt.Sprintf("Error writing output: %v", err), globals.AZ_RBAC_MODULE_NAME)
 		m.CommandCounter.Error++
 	}
+}
+
+// ------------------------------
+// Loot file generation
+// ------------------------------
+
+// generateRBACLootFiles creates all RBAC loot files
+func (m *RBACModule) generateRBACLootFiles() []internal.LootFile {
+	var lootFiles []internal.LootFile
+
+	// High-privilege roles loot
+	if highPrivLoot := m.generateHighPrivilegeRolesLoot(); highPrivLoot != "" {
+		lootFiles = append(lootFiles, internal.LootFile{
+			Name:     "rbac-high-privilege-roles",
+			Contents: highPrivLoot,
+		})
+	}
+
+	// Service principals with roles
+	if spLoot := m.generateServicePrincipalsLoot(); spLoot != "" {
+		lootFiles = append(lootFiles, internal.LootFile{
+			Name:     "rbac-service-principals",
+			Contents: spLoot,
+		})
+	}
+
+	// RBAC enumeration commands
+	if cmdLoot := m.generateRBACCommandsLoot(); cmdLoot != "" {
+		lootFiles = append(lootFiles, internal.LootFile{
+			Name:     "rbac-enumeration-commands",
+			Contents: cmdLoot,
+		})
+	}
+
+	// Privilege escalation paths
+	if escalationLoot := m.generatePrivilegeEscalationLoot(); escalationLoot != "" {
+		lootFiles = append(lootFiles, internal.LootFile{
+			Name:     "rbac-privilege-escalation",
+			Contents: escalationLoot,
+		})
+	}
+
+	return lootFiles
+}
+
+// generateHighPrivilegeRolesLoot generates loot for high-privilege role assignments
+func (m *RBACModule) generateHighPrivilegeRolesLoot() string {
+	var loot strings.Builder
+
+	// Define high-privilege roles
+	highPrivRoles := map[string]string{
+		"Owner":                          "Full control over all resources and ability to delegate access",
+		"Contributor":                    "Can create and manage all types of resources but cannot grant access",
+		"User Access Administrator":      "Can manage user access to Azure resources",
+		"Role Based Access Control Administrator": "Can manage role assignments",
+		"Security Admin":                 "Can manage security policies and view security data",
+		"Privileged Role Administrator":  "Can manage role assignments in Azure AD and PIM",
+		"Global Administrator":           "Full access to all Azure AD and Azure resources",
+	}
+
+	loot.WriteString("# High-Privilege RBAC Role Assignments\n")
+	loot.WriteString("# These principals have elevated permissions that could be abused for privilege escalation\n\n")
+
+	foundHighPriv := false
+	for _, row := range m.RBACRows {
+		roleName := row[4]  // Column 4: Role Name
+		principalType := row[3]  // Column 3: Principal Type
+
+		// Check if this is a high-privilege role
+		if risk, isHighPriv := highPrivRoles[roleName]; isHighPriv {
+			foundHighPriv = true
+
+			principalGUID := row[0]
+			principalName := row[1]
+			principalUPN := row[2]
+			fullScope := row[13]
+			tenantName := row[8]
+			subscriptionScope := row[11]
+
+			loot.WriteString(fmt.Sprintf("## %s\n", roleName))
+			loot.WriteString(fmt.Sprintf("Risk: %s\n", risk))
+			loot.WriteString(fmt.Sprintf("Principal: %s (%s)\n", principalName, principalType))
+			loot.WriteString(fmt.Sprintf("Principal GUID: %s\n", principalGUID))
+			if principalUPN != "N/A" {
+				loot.WriteString(fmt.Sprintf("UPN/App ID: %s\n", principalUPN))
+			}
+			loot.WriteString(fmt.Sprintf("Tenant: %s\n", tenantName))
+			if subscriptionScope != "N/A" {
+				loot.WriteString(fmt.Sprintf("Subscription: %s\n", subscriptionScope))
+			}
+			loot.WriteString(fmt.Sprintf("Scope: %s\n", fullScope))
+			loot.WriteString("\nCommands to investigate:\n")
+			loot.WriteString(fmt.Sprintf("az role assignment list --assignee %s\n", principalGUID))
+			loot.WriteString(fmt.Sprintf("az ad user show --id %s  # If user\n", principalGUID))
+			loot.WriteString(fmt.Sprintf("az ad sp show --id %s   # If service principal\n", principalGUID))
+			loot.WriteString("\n---\n\n")
+		}
+	}
+
+	if !foundHighPriv {
+		return ""
+	}
+
+	return loot.String()
+}
+
+// generateServicePrincipalsLoot generates loot for service principals with role assignments
+func (m *RBACModule) generateServicePrincipalsLoot() string {
+	var loot strings.Builder
+
+	loot.WriteString("# Service Principals with RBAC Role Assignments\n")
+	loot.WriteString("# Service principals are application identities that can be compromised\n")
+	loot.WriteString("# Focus on: secrets/certificates, federated credentials, and managed identities\n\n")
+
+	foundSP := false
+	spMap := make(map[string][]string) // Map of SP GUID to roles
+
+	for _, row := range m.RBACRows {
+		principalType := row[3]  // Column 3: Principal Type
+
+		if principalType == "ServicePrincipal" || principalType == "Application" {
+			foundSP = true
+			principalGUID := row[0]
+			roleName := row[4]
+
+			spMap[principalGUID] = append(spMap[principalGUID], roleName)
+		}
+	}
+
+	if !foundSP {
+		return ""
+	}
+
+	// Generate loot for each SP
+	for _, row := range m.RBACRows {
+		principalType := row[3]
+
+		if principalType == "ServicePrincipal" || principalType == "Application" {
+			principalGUID := row[0]
+			principalName := row[1]
+			principalAppID := row[2]
+			roleName := row[4]
+			fullScope := row[13]
+			tenantName := row[8]
+
+			loot.WriteString(fmt.Sprintf("## Service Principal: %s\n", principalName))
+			loot.WriteString(fmt.Sprintf("Application ID: %s\n", principalAppID))
+			loot.WriteString(fmt.Sprintf("Object ID: %s\n", principalGUID))
+			loot.WriteString(fmt.Sprintf("Tenant: %s\n", tenantName))
+			loot.WriteString(fmt.Sprintf("Role: %s\n", roleName))
+			loot.WriteString(fmt.Sprintf("Scope: %s\n", fullScope))
+			loot.WriteString("\nEnumeration commands:\n")
+			loot.WriteString(fmt.Sprintf("# Get service principal details\n"))
+			loot.WriteString(fmt.Sprintf("az ad sp show --id %s\n\n", principalGUID))
+			loot.WriteString(fmt.Sprintf("# Check for credentials (secrets/certificates)\n"))
+			loot.WriteString(fmt.Sprintf("az ad app credential list --id %s\n\n", principalAppID))
+			loot.WriteString(fmt.Sprintf("# Check for federated credentials (OIDC/GitHub Actions)\n"))
+			loot.WriteString(fmt.Sprintf("az ad app federated-credential list --id %s\n\n", principalAppID))
+			loot.WriteString(fmt.Sprintf("# List all roles for this service principal\n"))
+			loot.WriteString(fmt.Sprintf("az role assignment list --assignee %s --all\n", principalGUID))
+			loot.WriteString("\n---\n\n")
+
+			// Only output once per SP
+			break
+		}
+	}
+
+	return loot.String()
+}
+
+// generateRBACCommandsLoot generates commands for further RBAC enumeration
+func (m *RBACModule) generateRBACCommandsLoot() string {
+	var loot strings.Builder
+
+	loot.WriteString("# RBAC Enumeration Commands\n")
+	loot.WriteString("# Use these commands to enumerate RBAC permissions and identify privilege escalation opportunities\n\n")
+
+	// Collect unique tenants and subscriptions
+	tenantsMap := make(map[string]string)
+	subscriptionsMap := make(map[string]bool)
+
+	for _, row := range m.RBACRows {
+		tenantID := row[9]
+		tenantName := row[8]
+		subscriptionScope := row[11]
+
+		if tenantID != "N/A" {
+			tenantsMap[tenantID] = tenantName
+		}
+		if subscriptionScope != "N/A" {
+			subscriptionsMap[subscriptionScope] = true
+		}
+	}
+
+	// Generate commands for each tenant
+	for tenantID, tenantName := range tenantsMap {
+		loot.WriteString(fmt.Sprintf("## Tenant: %s (%s)\n\n", tenantName, tenantID))
+
+		loot.WriteString("# List all role assignments\n")
+		loot.WriteString("az role assignment list --all\n\n")
+
+		loot.WriteString("# List role assignments for specific high-privilege roles\n")
+		loot.WriteString("az role assignment list --role \"Owner\" --all\n")
+		loot.WriteString("az role assignment list --role \"Contributor\" --all\n")
+		loot.WriteString("az role assignment list --role \"User Access Administrator\" --all\n\n")
+
+		loot.WriteString("# List custom role definitions (may have dangerous permissions)\n")
+		loot.WriteString("az role definition list --custom-role-only true\n\n")
+
+		loot.WriteString("# Check PIM (Privileged Identity Management) eligible assignments\n")
+		loot.WriteString("az rest --method GET --url \"https://management.azure.com/providers/Microsoft.Authorization/roleEligibilityScheduleInstances?api-version=2020-10-01\"\n\n")
+
+		loot.WriteString("# Check PIM active assignments\n")
+		loot.WriteString("az rest --method GET --url \"https://management.azure.com/providers/Microsoft.Authorization/roleAssignmentScheduleInstances?api-version=2020-10-01\"\n\n")
+	}
+
+	// Generate commands for each subscription
+	if len(subscriptionsMap) > 0 {
+		loot.WriteString("## Per-Subscription Enumeration\n\n")
+		for subscription := range subscriptionsMap {
+			loot.WriteString(fmt.Sprintf("# Subscription: %s\n", subscription))
+			loot.WriteString(fmt.Sprintf("az account set --subscription \"%s\"\n", subscription))
+			loot.WriteString("az role assignment list --all\n\n")
+		}
+	}
+
+	loot.WriteString("## Enumerate your own permissions\n")
+	loot.WriteString("# Check what actions you can perform\n")
+	loot.WriteString("az role assignment list --assignee $(az ad signed-in-user show --query id -o tsv)\n\n")
+
+	loot.WriteString("# List your effective permissions\n")
+	loot.WriteString("az role assignment list --assignee $(az ad signed-in-user show --query id -o tsv) --all\n\n")
+
+	return loot.String()
+}
+
+// generatePrivilegeEscalationLoot generates privilege escalation guidance
+func (m *RBACModule) generatePrivilegeEscalationLoot() string {
+	var loot strings.Builder
+
+	loot.WriteString("# RBAC Privilege Escalation Paths\n")
+	loot.WriteString("# Common privilege escalation techniques using RBAC permissions\n\n")
+
+	// Track which escalation paths are relevant based on roles found
+	foundRoles := make(map[string]bool)
+	for _, row := range m.RBACRows {
+		roleName := row[4]
+		foundRoles[roleName] = true
+	}
+
+	// Contributor escalation
+	if foundRoles["Contributor"] {
+		loot.WriteString("## Contributor Role → Owner\n")
+		loot.WriteString("Risk: Contributor can deploy ARM templates with managed identities that have higher privileges\n\n")
+		loot.WriteString("### Method 1: Deploy VM with managed identity\n")
+		loot.WriteString("1. Create a user-assigned managed identity with Owner role (if you have permissions)\n")
+		loot.WriteString("2. Deploy a VM with that managed identity attached\n")
+		loot.WriteString("3. Access the VM and use the managed identity to escalate privileges\n\n")
+		loot.WriteString("Commands:\n")
+		loot.WriteString("az identity create --name escalation-identity --resource-group <rg>\n")
+		loot.WriteString("az vm create --name escalation-vm --resource-group <rg> --assign-identity <identity-id>\n")
+		loot.WriteString("# SSH into VM, then:\n")
+		loot.WriteString("az login --identity\n")
+		loot.WriteString("az role assignment create --assignee <identity-id> --role Owner --scope <scope>\n\n")
+
+		loot.WriteString("### Method 2: Modify existing resource with managed identity\n")
+		loot.WriteString("1. Find existing resources with managed identities that have higher privileges\n")
+		loot.WriteString("2. Modify the resource to execute commands (run-command, custom script extension)\n")
+		loot.WriteString("3. Use the managed identity to escalate\n\n")
+		loot.WriteString("---\n\n")
+	}
+
+	// Virtual Machine Contributor escalation
+	if foundRoles["Virtual Machine Contributor"] {
+		loot.WriteString("## Virtual Machine Contributor → Code Execution\n")
+		loot.WriteString("Risk: Can execute arbitrary code on VMs using run-command\n\n")
+		loot.WriteString("Commands:\n")
+		loot.WriteString("# List all VMs\n")
+		loot.WriteString("az vm list --query '[].{Name:name, RG:resourceGroup}' -o table\n\n")
+		loot.WriteString("# Execute command on VM\n")
+		loot.WriteString("az vm run-command invoke --resource-group <rg> --name <vm> --command-id RunShellScript --scripts \"whoami; cat /etc/shadow\"\n\n")
+		loot.WriteString("# Or for Windows:\n")
+		loot.WriteString("az vm run-command invoke --resource-group <rg> --name <vm> --command-id RunPowerShellScript --scripts \"whoami; Get-ChildItem Env:\"\n\n")
+		loot.WriteString("---\n\n")
+	}
+
+	// User Access Administrator escalation
+	if foundRoles["User Access Administrator"] {
+		loot.WriteString("## User Access Administrator → Full Control\n")
+		loot.WriteString("Risk: Can assign any role to any principal, including Owner to yourself\n\n")
+		loot.WriteString("Commands:\n")
+		loot.WriteString("# Grant yourself Owner role\n")
+		loot.WriteString("az role assignment create --assignee $(az ad signed-in-user show --query id -o tsv) --role Owner --scope /subscriptions/<subscription-id>\n\n")
+		loot.WriteString("# Or grant to a service principal you control\n")
+		loot.WriteString("az role assignment create --assignee <sp-object-id> --role Owner --scope <scope>\n\n")
+		loot.WriteString("---\n\n")
+	}
+
+	// Key Vault-related roles
+	if foundRoles["Key Vault Contributor"] || foundRoles["Key Vault Administrator"] {
+		loot.WriteString("## Key Vault Permissions → Secret Access\n")
+		loot.WriteString("Risk: Can modify access policies to grant yourself secret read permissions\n\n")
+		loot.WriteString("Commands:\n")
+		loot.WriteString("# List Key Vaults\n")
+		loot.WriteString("az keyvault list\n\n")
+		loot.WriteString("# Grant yourself secret permissions\n")
+		loot.WriteString("az keyvault set-policy --name <vault-name> --upn <your-upn> --secret-permissions get list\n\n")
+		loot.WriteString("# List and extract secrets\n")
+		loot.WriteString("az keyvault secret list --vault-name <vault-name>\n")
+		loot.WriteString("az keyvault secret show --vault-name <vault-name> --name <secret-name>\n\n")
+		loot.WriteString("---\n\n")
+	}
+
+	// Automation Account Contributor
+	if foundRoles["Automation Contributor"] {
+		loot.WriteString("## Automation Contributor → Credential Harvesting\n")
+		loot.WriteString("Risk: Can create/modify runbooks to execute code with high privileges\n\n")
+		loot.WriteString("Commands:\n")
+		loot.WriteString("# List automation accounts\n")
+		loot.WriteString("az automation account list\n\n")
+		loot.WriteString("# Create a runbook that extracts credentials\n")
+		loot.WriteString("az automation runbook create --automation-account-name <account> --resource-group <rg> --name extract-creds --type PowerShell\n\n")
+		loot.WriteString("# Publish and run the runbook\n")
+		loot.WriteString("az automation runbook publish --automation-account-name <account> --resource-group <rg> --name extract-creds\n")
+		loot.WriteString("az automation runbook start --automation-account-name <account> --resource-group <rg> --name extract-creds\n\n")
+		loot.WriteString("---\n\n")
+	}
+
+	// Website Contributor
+	if foundRoles["Website Contributor"] || foundRoles["Web Plan Contributor"] {
+		loot.WriteString("## Website Contributor → Configuration Access\n")
+		loot.WriteString("Risk: Can access App Service configuration containing connection strings and secrets\n\n")
+		loot.WriteString("Commands:\n")
+		loot.WriteString("# List web apps\n")
+		loot.WriteString("az webapp list\n\n")
+		loot.WriteString("# Get app settings (may contain secrets)\n")
+		loot.WriteString("az webapp config appsettings list --name <app-name> --resource-group <rg>\n\n")
+		loot.WriteString("# Get connection strings\n")
+		loot.WriteString("az webapp config connection-string list --name <app-name> --resource-group <rg>\n\n")
+		loot.WriteString("# Download source code via Kudu\n")
+		loot.WriteString("az webapp deployment source config-zip --name <app-name> --resource-group <rg> --src <path-to-zip>\n\n")
+		loot.WriteString("---\n\n")
+	}
+
+	// Storage Account Contributor/Key Operator
+	if foundRoles["Storage Account Contributor"] || foundRoles["Storage Account Key Operator Service Role"] {
+		loot.WriteString("## Storage Account Permissions → Key Access\n")
+		loot.WriteString("Risk: Can list storage account keys and access all data\n\n")
+		loot.WriteString("Commands:\n")
+		loot.WriteString("# List storage accounts\n")
+		loot.WriteString("az storage account list\n\n")
+		loot.WriteString("# Get storage account keys\n")
+		loot.WriteString("az storage account keys list --account-name <account> --resource-group <rg>\n\n")
+		loot.WriteString("# Use keys to access blobs\n")
+		loot.WriteString("az storage blob list --account-name <account> --container-name <container> --account-key <key>\n")
+		loot.WriteString("az storage blob download-batch --account-name <account> --source <container> --destination ./downloaded --account-key <key>\n\n")
+		loot.WriteString("---\n\n")
+	}
+
+	if len(foundRoles) == 0 {
+		return ""
+	}
+
+	loot.WriteString("## General Privilege Escalation Tips\n\n")
+	loot.WriteString("1. Look for custom roles with dangerous action combinations\n")
+	loot.WriteString("2. Check for orphaned role assignments (deleted principals that can be recreated)\n")
+	loot.WriteString("3. Identify service principals with secrets vs. certificate auth\n")
+	loot.WriteString("4. Look for managed identities on resources you can access\n")
+	loot.WriteString("5. Check for PIM eligible assignments you can activate\n")
+	loot.WriteString("6. Look for role assignments at management group or tenant root scope\n")
+	loot.WriteString("7. Identify principals with write permissions on role assignments\n\n")
+
+	return loot.String()
 }
