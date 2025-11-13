@@ -88,11 +88,9 @@ func RunEnumPermissions(cmd *cobra.Command, args []string) {
 	outputDirectory, _ := parentCmd.PersistentFlags().GetString("outdir")
 	format, _ := parentCmd.PersistentFlags().GetString("output")
 
+	logger.InfoM(fmt.Sprintf("Enumerating RBAC permissions for %s", globals.ClusterName), globals.K8S_PERMISSIONS_MODULE_NAME)
+
 	clientset := config.GetClientOrExit()
-	if clientset == nil {
-		logger.ErrorM("Error getting Kubernetes client:", globals.K8S_PERMISSIONS_MODULE_NAME)
-		os.Exit(1)
-	}
 
 	// List namespaces
 	namespaces, err := clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
@@ -440,7 +438,16 @@ az aks show --name <cluster> --resource-group <rg> --query "oidcIssuerProfile"
 	)
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Error handling output: %v", err), globals.K8S_PERMISSIONS_MODULE_NAME)
+		return
 	}
+
+	if len(rows) > 0 {
+		logger.InfoM(fmt.Sprintf("%d unique permissions identified", len(rows)), globals.K8S_PERMISSIONS_MODULE_NAME)
+	} else {
+		logger.InfoM("No permissions found, skipping output file creation", globals.K8S_PERMISSIONS_MODULE_NAME)
+	}
+
+	logger.InfoM(fmt.Sprintf("For context and next steps: https://github.com/BishopFox/cloudfox/wiki/Kubernetes-Commands#%s", globals.K8S_PERMISSIONS_MODULE_NAME), globals.K8S_PERMISSIONS_MODULE_NAME)
 
 }
 

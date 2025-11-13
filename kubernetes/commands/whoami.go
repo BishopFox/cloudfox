@@ -188,11 +188,9 @@ func Whoami(cmd *cobra.Command, args []string) {
 	outputDirectory, _ := parentCmd.PersistentFlags().GetString("outdir")
 	format, _ := parentCmd.PersistentFlags().GetString("output")
 
+	logger.InfoM(fmt.Sprintf("Identifying current cluster identity for %s", globals.ClusterName), globals.K8S_WHOAMI_MODULE_NAME)
+
 	clientset := config.GetClientOrExit()
-	if clientset == nil {
-		logger.ErrorM("Kubernetes client is not initialized", globals.K8S_WHOAMI_MODULE_NAME)
-		os.Exit(1)
-	}
 
 	ssar := &v1.SelfSubjectAccessReview{
 		Spec: v1.SelfSubjectAccessReviewSpec{
@@ -271,5 +269,9 @@ func Whoami(cmd *cobra.Command, args []string) {
 	)
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Error handling output: %v", err), globals.K8S_WHOAMI_MODULE_NAME)
+		return
 	}
+
+	logger.InfoM("Identity information collected", globals.K8S_WHOAMI_MODULE_NAME)
+	logger.InfoM(fmt.Sprintf("For context and next steps: https://github.com/BishopFox/cloudfox/wiki/Kubernetes-Commands#%s", globals.K8S_WHOAMI_MODULE_NAME), globals.K8S_WHOAMI_MODULE_NAME)
 }
