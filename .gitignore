@@ -62,6 +62,8 @@ terraform.rc
 .DS_Store
 
 untracked/*
+*tmp*
+tmp/*
 output/*
 *cloudfox-output*
 cloudfox
