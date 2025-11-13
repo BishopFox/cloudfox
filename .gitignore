@@ -65,6 +65,8 @@ untracked/*
 output/*
 *cloudfox-output*
 cloudfox
+cloudfox-macos
+cloudfox-linux
 *.log
 *.bak
 *.txt

@@ -51,7 +51,7 @@ For the full documentation please refer to our [wiki](https://github.com/BishopF
 | AWS | 34 | 
 | Azure | 4 | 
 | GCP | 8 |
-| Kubernetes | Support Planned | 
+| Kubernetes | 23 | 
 
 
 # Install
@@ -103,6 +103,9 @@ Additional policy notes (as of 09/2022):
 
 ### Azure
 * Viewer or similar permissions applied. 
+
+### Kubernetes
+* `Get` and `List` on all (`*`) resources 
 
 # AWS Commands
 | Provider | Command Name | Description 
@@ -167,10 +170,46 @@ Additional policy notes (as of 09/2022):
 | GCP | [secrets](https://github.com/BishopFox/cloudfox/wiki/GCP-Commands#secrets) | Display GCP secrets information |
 
 
+# Kubernetes Commands
+
+`cloudfox kubernetes --help`
+
+or
+
+`cloudfox k8s --help`
+
+| Provider | Command Name | Description 
+| - | - | - |
+| k8s | [whoami](https://github.com/BishopFox/cloudfox/wiki/k8s-Commands#whoami) | Display the identity the kubeconfig, ServiceAccount token, or in-cluster credentials are authenticated as | 
+| k8s | [all-checks](https://github.com/BishopFox/cloudfox/wiki/k8s-Commands#all-checks) | Executes all available Kubernetes commands to collect and display information from the cluster | 
+| k8s | [configmaps](https://github.com/BishopFox/cloudfox/wiki/k8s-Commands#configmaps) | List all cluster ConfigMaps and detailed information |
+| k8s | [cronjobs](https://github.com/BishopFox/cloudfox/wiki/k8s-Commands#cronjobs) | List all cluster CronJobs |
+| k8s | [daemonsets](https://github.com/BishopFox/cloudfox/wiki/k8s-Commands#daemonsets) | List all cluster DaemonSets |
+| k8s | [deployments](https://github.com/BishopFox/cloudfox/wiki/k8s-Commands#deployments) | List all cluster Deployments |
+| k8s | [endpoints](https://github.com/BishopFox/cloudfox/wiki/k8s-Commands#endpoints) | List all cluster Endpoints |
+| k8s | [hidden-admins](https://github.com/BishopFox/cloudfox/wiki/k8s-Commands#hidden-admins) | Enumerate roles, users, groups, and service accounts with dangerous or escalatory permissions |
+| k8s | [jobs](https://github.com/BishopFox/cloudfox/wiki/k8s-Commands#jobs) | List all cluster Jobs |
+| k8s | [namespaces](https://github.com/BishopFox/cloudfox/wiki/k8s-Commands#namespaces) | List all cluster Namespaces
+| k8s | [network-exposure](https://github.com/BishopFox/cloudfox/wiki/k8s-Commands#network-exposure) | Enumerate exposed network hosts and ports
+| k8s | [network-policy](https://github.com/BishopFox/cloudfox/wiki/k8s-Commands#network-policy) | List all cluster Network Policies
+| k8s | [nodes](https://github.com/BishopFox/cloudfox/wiki/k8s-Commands#nodes) | List all cluster Nodes
+| k8s | [permissions](https://github.com/BishopFox/cloudfox/wiki/k8s-Commands#permissions) | List all cluster entities and their respective permissions
+| k8s | [pod-security](https://github.com/BishopFox/cloudfox/wiki/k8s-Commands#pod-security) | List all cluster Pod Security Policies or Admission settings
+| k8s | [pods](https://github.com/BishopFox/cloudfox/wiki/k8s-Commands#pods) | List all cluster Pods
+| k8s | [replicasets](https://github.com/BishopFox/cloudfox/wiki/k8s-Commands#replicasets) | List all cluster ReplicaSets
+| k8s | [secrets](https://github.com/BishopFox/cloudfox/wiki/k8s-Commands#secrets) | List all cluster Secrets
+| k8s | [services](https://github.com/BishopFox/cloudfox/wiki/k8s-Commands#services) | List all cluster Services
+| k8s | [statefulsets](https://github.com/BishopFox/cloudfox/wiki/k8s-Commands#statefulsets) | List all cluster StatefulSets
+| k8s | [taints-tolerations](https://github.com/BishopFox/cloudfox/wiki/k8s-Commands#taints-tolerations) | Displays for each pod which node taints it tolerates and lists taints on nodes that are not tolerated by any pods
+| k8s | [taints](https://github.com/BishopFox/cloudfox/wiki/k8s-Commands#taints) | List all cluster node taints and outputs an example YAML file with node and tolerations to create a pod
+| k8s | [tolerations](https://github.com/BishopFox/cloudfox/wiki/k8s-Commands#tolerations) | List all cluster pod tolerations and outputs an example YAML file with tolerations to create a pod
+
+
 
 # Authors
 * [Carlos Vendramini](https://github.com/carlosvendramini-bf)
 * [Seth Art (@sethsec](https://twitter.com/sethsec))
+* Joseph Barcia
 
 # Contributing
 [Wiki - How to Contribute](https://github.com/BishopFox/cloudfox/wiki#how-to-contribute)
