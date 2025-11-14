@@ -390,3 +390,147 @@ func PrettyPrintAffinity(affinity *v1.Affinity) string {
 	}
 	return string(b)
 }
+
+// Webhook Security Analysis Functions
+
+// IsWebhookExternalURL checks if a webhook URL is external (not in-cluster)
+func IsWebhookExternalURL(url string) bool {
+	if url == "" || url == "<none>" || url == "<N/A>" || url == "<external URL>" {
+		return false
+	}
+	// External URLs start with http:// or https://
+	return strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://")
+}
+
+// IsSensitiveResource checks if a resource is security-sensitive
+func IsSensitiveResource(resource string) bool {
+	sensitiveResources := []string{
+		"secrets",
+		"configmaps",
+		"pods",
+		"serviceaccounts",
+		"roles",
+		"rolebindings",
+		"clusterroles",
+		"clusterrolebindings",
+		"certificatesigningrequests",
+		"nodes",
+		"persistentvolumes",
+		"persistentvolumeclaims",
+	}
+	return contains(sensitiveResources, resource)
+}
+
+// HasWildcardOperations checks if operations list contains wildcards
+func HasWildcardOperations(operations []string) bool {
+	for _, op := range operations {
+		if op == "*" {
+			return true
+		}
+	}
+	return false
+}
+
+// HasWildcardResources checks if resources list contains wildcards
+func HasWildcardResources(resources []string) bool {
+	for _, res := range resources {
+		if res == "*" {
+			return true
+		}
+	}
+	return false
+}
+
+// GetWebhookRiskLevel calculates risk level for a webhook configuration
+// Factors: external URL, missing CABundle, wildcards, sensitive resources, failure policy, timeout
+func GetWebhookRiskLevel(
+	isExternal bool,
+	hasCABundle bool,
+	hasWildcardOps bool,
+	hasWildcardRes bool,
+	interceptsSensitive bool,
+	failurePolicy string,
+	timeoutSeconds int32,
+) string {
+	// CRITICAL: External URL without CABundle or with Fail policy (can DOS cluster)
+	if isExternal && !hasCABundle {
+		return "CRITICAL"
+	}
+	if isExternal && failurePolicy == "Fail" {
+		return "CRITICAL"
+	}
+
+	// CRITICAL: Wildcard operations or resources (intercepts everything)
+	if hasWildcardOps || hasWildcardRes {
+		return "CRITICAL"
+	}
+
+	// HIGH: External URL (exfiltration risk)
+	if isExternal {
+		return "HIGH"
+	}
+
+	// HIGH: Intercepts sensitive resources with Fail policy
+	if interceptsSensitive && failurePolicy == "Fail" {
+		return "HIGH"
+	}
+
+	// HIGH: Missing CABundle (MITM vulnerable)
+	if !hasCABundle && failurePolicy == "Fail" {
+		return "HIGH"
+	}
+
+	// MEDIUM: Intercepts sensitive resources
+	if interceptsSensitive {
+		return "MEDIUM"
+	}
+
+	// MEDIUM: Long timeout (>20s) with Fail policy (DOS risk)
+	if timeoutSeconds > 20 && failurePolicy == "Fail" {
+		return "MEDIUM"
+	}
+
+	// LOW: Basic webhook with no major risks
+	return "LOW"
+}
+
+// GetWebhookRiskDescription returns human-readable risk description
+func GetWebhookRiskDescription(
+	isExternal bool,
+	hasCABundle bool,
+	hasWildcardOps bool,
+	hasWildcardRes bool,
+	interceptsSensitive bool,
+	failurePolicy string,
+	timeoutSeconds int32,
+	sensitiveResources []string,
+) string {
+	var risks []string
+
+	if isExternal {
+		risks = append(risks, "EXTERNAL URL (data exfiltration risk)")
+	}
+	if !hasCABundle {
+		risks = append(risks, "MISSING CABundle (MITM vulnerable)")
+	}
+	if hasWildcardOps {
+		risks = append(risks, "WILDCARD operations (*)")
+	}
+	if hasWildcardRes {
+		risks = append(risks, "WILDCARD resources (*)")
+	}
+	if interceptsSensitive && len(sensitiveResources) > 0 {
+		risks = append(risks, fmt.Sprintf("intercepts sensitive resources: %s", strings.Join(sensitiveResources, ", ")))
+	}
+	if failurePolicy == "Fail" {
+		risks = append(risks, "FailurePolicy=Fail (blocks on webhook failure)")
+	}
+	if timeoutSeconds > 20 {
+		risks = append(risks, fmt.Sprintf("long timeout (%ds, DOS risk)", timeoutSeconds))
+	}
+
+	if len(risks) == 0 {
+		return "no major security risks detected"
+	}
+	return strings.Join(risks, "; ")
+}
