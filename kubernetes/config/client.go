@@ -101,6 +101,7 @@ func GetClientOrExit() *kubernetes.Clientset {
 	logger := internal.NewLogger()
 	if SharedClientSet == nil {
 		logger.ErrorM("SharedClientSet not initialized. Call InitConfig first.", globals.K8S_AUTH_MODULE_NAME)
+		os.Exit(1)
 	}
 	return SharedClientSet
 }
