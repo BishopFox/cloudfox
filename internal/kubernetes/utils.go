@@ -105,16 +105,81 @@ func contains(slice []string, item string) bool {
 }
 
 func IsDangerousRule(rule rbacv1.PolicyRule) bool {
-	dangerousVerbs := []string{"create", "update", "patch"}
-	dangerousResources := []string{"roles", "rolebindings", "clusterroles", "clusterrolebindings", "secrets", "configmaps"}
+	// Check for wildcard permissions - CRITICAL
+	for _, verb := range rule.Verbs {
+		if verb == "*" {
+			return true
+		}
+	}
+	for _, res := range rule.Resources {
+		if res == "*" {
+			return true
+		}
+	}
+
+	// Define dangerous permission categories
+	rbacModification := []string{"roles", "rolebindings", "clusterroles", "clusterrolebindings"}
+	secretAccess := []string{"secrets", "configmaps"}
 	impersonation := []string{"users", "groups", "serviceaccounts"}
+	podExecution := []string{"pods/exec", "pods/attach", "pods/portforward"}
+	privilegedWorkloads := []string{"pods", "daemonsets", "deployments", "statefulsets", "replicasets", "jobs", "cronjobs"}
+	admissionControl := []string{"validatingwebhookconfigurations", "mutatingwebhookconfigurations"}
+	certApproval := []string{"certificatesigningrequests", "certificatesigningrequests/approval"}
+	nodeAccess := []string{"nodes", "nodes/proxy"}
+	volumeAccess := []string{"persistentvolumes", "persistentvolumeclaims"}
+
+	modifyVerbs := []string{"create", "update", "patch", "delete"}
+	readVerbs := []string{"get", "list"}
 
 	for _, verb := range rule.Verbs {
 		for _, res := range rule.Resources {
-			if contains(dangerousVerbs, verb) && contains(dangerousResources, res) {
+			// RBAC modification - HIGH
+			if contains(modifyVerbs, verb) && contains(rbacModification, res) {
 				return true
 			}
+
+			// Secret/ConfigMap modification - HIGH
+			if contains(modifyVerbs, verb) && contains(secretAccess, res) {
+				return true
+			}
+
+			// Impersonation - HIGH
 			if verb == "impersonate" && contains(impersonation, res) {
+				return true
+			}
+
+			// Pod execution - HIGH (can extract secrets, execute commands)
+			if (verb == "create" || verb == "get") && contains(podExecution, res) {
+				return true
+			}
+
+			// Privileged workload creation - MEDIUM to HIGH
+			if contains(modifyVerbs, verb) && contains(privilegedWorkloads, res) {
+				return true
+			}
+
+			// Admission webhook control - CRITICAL (can intercept/modify all requests)
+			if contains(modifyVerbs, verb) && contains(admissionControl, res) {
+				return true
+			}
+
+			// Certificate approval - HIGH (can create admin certs)
+			if (verb == "create" || verb == "update" || verb == "approve") && contains(certApproval, res) {
+				return true
+			}
+
+			// Node modification - HIGH (can taint, drain, modify kubelet)
+			if contains(modifyVerbs, verb) && contains(nodeAccess, res) {
+				return true
+			}
+
+			// Volume access - MEDIUM (can read sensitive data)
+			if contains(modifyVerbs, verb) && contains(volumeAccess, res) {
+				return true
+			}
+
+			// Secret read access - MEDIUM
+			if contains(readVerbs, verb) && res == "secrets" {
 				return true
 			}
 		}
@@ -124,6 +189,182 @@ func IsDangerousRule(rule rbacv1.PolicyRule) bool {
 
 func RuleToString(rule rbacv1.PolicyRule) string {
 	return fmt.Sprintf("verbs=%v resources=%v apiGroups=%v", rule.Verbs, rule.Resources, rule.APIGroups)
+}
+
+// GetRuleRiskLevel returns the risk level of a policy rule
+// Returns: "CRITICAL", "HIGH", "MEDIUM", "LOW", or "" if not dangerous
+func GetRuleRiskLevel(rule rbacv1.PolicyRule) string {
+	// Check for wildcard permissions - CRITICAL
+	for _, verb := range rule.Verbs {
+		if verb == "*" {
+			return "CRITICAL"
+		}
+	}
+	for _, res := range rule.Resources {
+		if res == "*" {
+			return "CRITICAL"
+		}
+	}
+
+	// Define dangerous permission categories
+	rbacModification := []string{"roles", "rolebindings", "clusterroles", "clusterrolebindings"}
+	secretAccess := []string{"secrets", "configmaps"}
+	impersonation := []string{"users", "groups", "serviceaccounts"}
+	podExecution := []string{"pods/exec", "pods/attach", "pods/portforward"}
+	privilegedWorkloads := []string{"pods", "daemonsets", "deployments", "statefulsets", "replicasets", "jobs", "cronjobs"}
+	admissionControl := []string{"validatingwebhookconfigurations", "mutatingwebhookconfigurations"}
+	certApproval := []string{"certificatesigningrequests", "certificatesigningrequests/approval"}
+	nodeAccess := []string{"nodes", "nodes/proxy"}
+	volumeAccess := []string{"persistentvolumes", "persistentvolumeclaims"}
+
+	modifyVerbs := []string{"create", "update", "patch", "delete"}
+	readVerbs := []string{"get", "list"}
+
+	highestRisk := ""
+
+	for _, verb := range rule.Verbs {
+		for _, res := range rule.Resources {
+			// Admission webhook control - CRITICAL
+			if contains(modifyVerbs, verb) && contains(admissionControl, res) {
+				return "CRITICAL" // Return immediately for CRITICAL
+			}
+
+			// RBAC modification - HIGH
+			if contains(modifyVerbs, verb) && contains(rbacModification, res) {
+				if highestRisk == "" || highestRisk == "MEDIUM" || highestRisk == "LOW" {
+					highestRisk = "HIGH"
+				}
+			}
+
+			// Secret/ConfigMap modification - HIGH
+			if contains(modifyVerbs, verb) && contains(secretAccess, res) {
+				if highestRisk == "" || highestRisk == "MEDIUM" || highestRisk == "LOW" {
+					highestRisk = "HIGH"
+				}
+			}
+
+			// Impersonation - HIGH
+			if verb == "impersonate" && contains(impersonation, res) {
+				if highestRisk == "" || highestRisk == "MEDIUM" || highestRisk == "LOW" {
+					highestRisk = "HIGH"
+				}
+			}
+
+			// Pod execution - HIGH
+			if (verb == "create" || verb == "get") && contains(podExecution, res) {
+				if highestRisk == "" || highestRisk == "MEDIUM" || highestRisk == "LOW" {
+					highestRisk = "HIGH"
+				}
+			}
+
+			// Certificate approval - HIGH
+			if (verb == "create" || verb == "update" || verb == "approve") && contains(certApproval, res) {
+				if highestRisk == "" || highestRisk == "MEDIUM" || highestRisk == "LOW" {
+					highestRisk = "HIGH"
+				}
+			}
+
+			// Node modification - HIGH
+			if contains(modifyVerbs, verb) && contains(nodeAccess, res) {
+				if highestRisk == "" || highestRisk == "MEDIUM" || highestRisk == "LOW" {
+					highestRisk = "HIGH"
+				}
+			}
+
+			// Privileged workload creation - MEDIUM
+			if contains(modifyVerbs, verb) && contains(privilegedWorkloads, res) {
+				if highestRisk == "" || highestRisk == "LOW" {
+					highestRisk = "MEDIUM"
+				}
+			}
+
+			// Volume access - MEDIUM
+			if contains(modifyVerbs, verb) && contains(volumeAccess, res) {
+				if highestRisk == "" || highestRisk == "LOW" {
+					highestRisk = "MEDIUM"
+				}
+			}
+
+			// Secret read access - MEDIUM
+			if contains(readVerbs, verb) && res == "secrets" {
+				if highestRisk == "" || highestRisk == "LOW" {
+					highestRisk = "MEDIUM"
+				}
+			}
+		}
+	}
+
+	return highestRisk
+}
+
+// GetRuleRiskDescription returns a human-readable description of why a rule is dangerous
+func GetRuleRiskDescription(rule rbacv1.PolicyRule) string {
+	var descriptions []string
+
+	// Check for wildcard permissions
+	for _, verb := range rule.Verbs {
+		if verb == "*" {
+			descriptions = append(descriptions, "wildcard verbs (*)")
+		}
+	}
+	for _, res := range rule.Resources {
+		if res == "*" {
+			descriptions = append(descriptions, "wildcard resources (*)")
+		}
+	}
+
+	rbacModification := []string{"roles", "rolebindings", "clusterroles", "clusterrolebindings"}
+	secretAccess := []string{"secrets", "configmaps"}
+	impersonation := []string{"users", "groups", "serviceaccounts"}
+	podExecution := []string{"pods/exec", "pods/attach", "pods/portforward"}
+	privilegedWorkloads := []string{"pods", "daemonsets", "deployments", "statefulsets", "replicasets", "jobs", "cronjobs"}
+	admissionControl := []string{"validatingwebhookconfigurations", "mutatingwebhookconfigurations"}
+	certApproval := []string{"certificatesigningrequests", "certificatesigningrequests/approval"}
+	nodeAccess := []string{"nodes", "nodes/proxy"}
+	volumeAccess := []string{"persistentvolumes", "persistentvolumeclaims"}
+
+	modifyVerbs := []string{"create", "update", "patch", "delete"}
+	readVerbs := []string{"get", "list"}
+
+	for _, verb := range rule.Verbs {
+		for _, res := range rule.Resources {
+			if contains(modifyVerbs, verb) && contains(rbacModification, res) {
+				descriptions = append(descriptions, fmt.Sprintf("can %s %s (RBAC escalation)", verb, res))
+			}
+			if contains(modifyVerbs, verb) && contains(secretAccess, res) {
+				descriptions = append(descriptions, fmt.Sprintf("can %s %s (credential access)", verb, res))
+			}
+			if verb == "impersonate" && contains(impersonation, res) {
+				descriptions = append(descriptions, fmt.Sprintf("can impersonate %s", res))
+			}
+			if (verb == "create" || verb == "get") && contains(podExecution, res) {
+				descriptions = append(descriptions, fmt.Sprintf("can execute into pods via %s", res))
+			}
+			if contains(modifyVerbs, verb) && contains(privilegedWorkloads, res) {
+				descriptions = append(descriptions, fmt.Sprintf("can %s %s (workload manipulation)", verb, res))
+			}
+			if contains(modifyVerbs, verb) && contains(admissionControl, res) {
+				descriptions = append(descriptions, fmt.Sprintf("can %s %s (cluster-wide interception)", verb, res))
+			}
+			if (verb == "create" || verb == "update" || verb == "approve") && contains(certApproval, res) {
+				descriptions = append(descriptions, fmt.Sprintf("can %s certificates (auth bypass)", verb))
+			}
+			if contains(modifyVerbs, verb) && contains(nodeAccess, res) {
+				descriptions = append(descriptions, fmt.Sprintf("can %s %s (node compromise)", verb, res))
+			}
+			if contains(modifyVerbs, verb) && contains(volumeAccess, res) {
+				descriptions = append(descriptions, fmt.Sprintf("can %s %s (data access)", verb, res))
+			}
+			if contains(readVerbs, verb) && res == "secrets" {
+				descriptions = append(descriptions, fmt.Sprintf("can read secrets"))
+			}
+		}
+	}
+
+	if len(descriptions) == 0 {
+		return RuleToString(rule)
+	}
+	return strings.Join(descriptions, "; ")
 }
 
 func UniqueStrings(input []string) []string {
