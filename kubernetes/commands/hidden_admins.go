@@ -40,11 +40,40 @@ type HiddenAdminFinding struct {
 	RiskLevel      string
 	DangerousPerms string
 	Source         string
+	CloudIAM       string // AWS/GCP/Azure IAM role
+	ActivePods     int    // Number of pods using this SA
+	IsDefault      bool   // Is this the default SA?
+	IsWildcard     bool   // Wildcard group binding
+}
+
+type AttackPath struct {
+	StartEntity string
+	EntityType  string
+	Steps       []string
+	EndGoal     string
+	RiskLevel   string
+	Feasibility string // "Immediate", "Requires-Enum", "Complex"
 }
 
 type HiddenAdminsOutput struct {
 	Table []internal.TableFile
 	Loot  []internal.LootFile
+}
+
+// Built-in dangerous roles with risk levels
+var dangerousBuiltInRoles = map[string]string{
+	"cluster-admin":  "CRITICAL",
+	"admin":          "HIGH",
+	"edit":           "MEDIUM",
+	"system:masters": "CRITICAL",
+	"system:controller:deployment-controller": "HIGH",
+	"system:controller:replicaset-controller": "HIGH",
+	"system:controller:daemon-set-controller": "HIGH",
+	"system:controller:job-controller":        "HIGH",
+	"system:node":                             "HIGH",
+	"system:node-proxier":                     "MEDIUM",
+	"system:kube-controller-manager":          "CRITICAL",
+	"system:kube-scheduler":                   "HIGH",
 }
 
 func (h HiddenAdminsOutput) TableFiles() []internal.TableFile {
@@ -56,13 +85,40 @@ func (h HiddenAdminsOutput) LootFiles() []internal.LootFile {
 }
 
 func (h HiddenAdminFinding) ToTableRow() []string {
+	cloudIAM := h.CloudIAM
+	if cloudIAM == "" {
+		cloudIAM = "<NONE>"
+	}
+
+	activePods := fmt.Sprintf("%d", h.ActivePods)
+	if h.ActivePods == 0 && h.EntityType != "ServiceAccount" {
+		activePods = "N/A"
+	}
+
+	flags := ""
+	if h.IsDefault {
+		flags = "DEFAULT-SA"
+	}
+	if h.IsWildcard {
+		if flags != "" {
+			flags += ", "
+		}
+		flags += "WILDCARD"
+	}
+	if flags == "" {
+		flags = "-"
+	}
+
 	return []string{
+		h.RiskLevel,
 		h.Namespace,
 		h.Entity,
 		h.EntityType,
 		h.Scope,
-		h.RiskLevel,
 		h.DangerousPerms,
+		cloudIAM,
+		activePods,
+		flags,
 		h.Source,
 	}
 }
@@ -94,9 +150,66 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	headers := []string{"Namespace", "Entity", "Type", "Scope", "Risk", "Dangerous Permissions", "Source"}
+	headers := []string{"Risk", "Namespace", "Entity", "Type", "Scope", "Dangerous Permissions", "Cloud IAM", "Active Pods", "Flags", "Source"}
 	var tableRows [][]string
 	var lootLines []string
+	var attackPaths []AttackPath
+
+	// Risk statistics tracking
+	riskCounts := map[string]int{
+		"CRITICAL": 0,
+		"HIGH":     0,
+		"MEDIUM":   0,
+		"LOW":      0,
+	}
+
+	// Query all ServiceAccounts to detect cloud IAM annotations
+	serviceAccountCloudIAM := make(map[string]map[string]string) // namespace -> sa name -> cloud IAM
+	serviceAccountPodCount := make(map[string]map[string]int)    // namespace -> sa name -> pod count
+
+	logger.InfoM("Scanning ServiceAccounts for cloud IAM annotations...", globals.K8S_HIDDEN_ADMINS_MODULE_NAME)
+	serviceAccounts, err := clientset.CoreV1().ServiceAccounts("").List(ctx, v1.ListOptions{})
+	if err == nil {
+		for _, sa := range serviceAccounts.Items {
+			if serviceAccountCloudIAM[sa.Namespace] == nil {
+				serviceAccountCloudIAM[sa.Namespace] = make(map[string]string)
+			}
+			if serviceAccountPodCount[sa.Namespace] == nil {
+				serviceAccountPodCount[sa.Namespace] = make(map[string]int)
+			}
+
+			// Check for AWS IRSA (IAM Roles for ServiceAccounts)
+			if roleARN, ok := sa.Annotations["eks.amazonaws.com/role-arn"]; ok {
+				serviceAccountCloudIAM[sa.Namespace][sa.Name] = fmt.Sprintf("AWS: %s", roleARN)
+			}
+
+			// Check for GCP Workload Identity
+			if gcpSA, ok := sa.Annotations["iam.gke.io/gcp-service-account"]; ok {
+				serviceAccountCloudIAM[sa.Namespace][sa.Name] = fmt.Sprintf("GCP: %s", gcpSA)
+			}
+
+			// Check for Azure Pod Identity
+			if azureID, ok := sa.Annotations["azure.workload.identity/client-id"]; ok {
+				serviceAccountCloudIAM[sa.Namespace][sa.Name] = fmt.Sprintf("Azure: %s", azureID)
+			}
+		}
+	}
+
+	// Count active pods per ServiceAccount
+	logger.InfoM("Counting active pods per ServiceAccount...", globals.K8S_HIDDEN_ADMINS_MODULE_NAME)
+	allPods, err := clientset.CoreV1().Pods("").List(ctx, v1.ListOptions{})
+	if err == nil {
+		for _, pod := range allPods.Items {
+			saName := pod.Spec.ServiceAccountName
+			if saName == "" {
+				saName = "default"
+			}
+			if serviceAccountPodCount[pod.Namespace] == nil {
+				serviceAccountPodCount[pod.Namespace] = make(map[string]int)
+			}
+			serviceAccountPodCount[pod.Namespace][saName]++
+		}
+	}
 
 	// ClusterRoles
 	clusterRoles, err := clientset.RbacV1().ClusterRoles().List(ctx, v1.ListOptions{})
@@ -108,8 +221,14 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 		var findings []string
 		highestRisk := ""
 
+		// Check if this is a built-in dangerous role
+		if builtInRisk, isBuiltInDangerous := dangerousBuiltInRoles[role.Name]; isBuiltInDangerous {
+			findings = append(findings, fmt.Sprintf("Built-in dangerous role: %s", role.Name))
+			highestRisk = builtInRisk
+		}
+
 		if role.Name == "cluster-admin" {
-			findings = append(findings, "cluster-admin role")
+			findings = append(findings, "cluster-admin role (full cluster control)")
 			highestRisk = "CRITICAL"
 		}
 		if strings.Contains(role.Name, "system:masters") {
@@ -137,6 +256,7 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 			if highestRisk == "" {
 				highestRisk = "MEDIUM"
 			}
+			riskCounts[highestRisk]++
 			row := HiddenAdminFinding{
 				Namespace:      "<cluster>",
 				Entity:         role.Name,
@@ -166,14 +286,113 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 				}
 				role := binding.RoleRef.Name
 				riskLevel := ""
+				isWildcard := false
+				isDefault := false
+				cloudIAM := ""
+				activePods := 0
+
+				// Detect wildcard group bindings
+				if subject.Kind == "Group" {
+					if subject.Name == "system:serviceaccounts" {
+						isWildcard = true
+						riskLevel = "CRITICAL"
+						// Create attack path for wildcard binding
+						attackPaths = append(attackPaths, AttackPath{
+							StartEntity: "system:serviceaccounts (ALL ServiceAccounts)",
+							EntityType:  "Group",
+							Steps: []string{
+								"ANY ServiceAccount in ANY namespace can authenticate",
+								fmt.Sprintf("Bound to ClusterRole: %s", role),
+								"Full cluster-wide access through group membership",
+							},
+							EndGoal:     "Cluster-wide privilege escalation via any ServiceAccount",
+							RiskLevel:   "CRITICAL",
+							Feasibility: "Immediate",
+						})
+					} else if strings.HasPrefix(subject.Name, "system:serviceaccounts:") {
+						isWildcard = true
+						wildcardNS := strings.TrimPrefix(subject.Name, "system:serviceaccounts:")
+						riskLevel = "HIGH"
+						// Create attack path for namespace wildcard binding
+						attackPaths = append(attackPaths, AttackPath{
+							StartEntity: fmt.Sprintf("system:serviceaccounts:%s (ALL SAs in %s)", wildcardNS, wildcardNS),
+							EntityType:  "Group",
+							Steps: []string{
+								fmt.Sprintf("ANY ServiceAccount in namespace '%s' can authenticate", wildcardNS),
+								fmt.Sprintf("Bound to ClusterRole: %s", role),
+								"Namespace-wide access to cluster-level permissions",
+							},
+							EndGoal:     fmt.Sprintf("Privilege escalation via any ServiceAccount in %s", wildcardNS),
+							RiskLevel:   "HIGH",
+							Feasibility: "Immediate",
+						})
+					}
+				}
+
+				// Detect default ServiceAccount elevations
+				if subject.Kind == "ServiceAccount" && subject.Name == "default" {
+					isDefault = true
+					// Escalate risk for default SA
+					if riskLevel == "" || riskLevel == "MEDIUM" {
+						riskLevel = "HIGH"
+					} else if riskLevel == "HIGH" {
+						riskLevel = "CRITICAL"
+					}
+					// Create attack path for default SA elevation
+					attackPaths = append(attackPaths, AttackPath{
+						StartEntity: fmt.Sprintf("default ServiceAccount (%s)", ns),
+						EntityType:  "ServiceAccount",
+						Steps: []string{
+							"Default ServiceAccount has elevated permissions",
+							fmt.Sprintf("Bound to ClusterRole: %s", role),
+							"All pods without explicit SA use this account",
+						},
+						EndGoal:     "Privilege escalation through implicit ServiceAccount",
+						RiskLevel:   riskLevel,
+						Feasibility: "Immediate",
+					})
+				}
+
+				// Get cloud IAM and pod count for ServiceAccounts
+				if subject.Kind == "ServiceAccount" && ns != "<cluster>" {
+					if saCloudIAM, ok := serviceAccountCloudIAM[ns][subject.Name]; ok {
+						cloudIAM = saCloudIAM
+						// Create attack path for cloud IAM crosswalk
+						attackPaths = append(attackPaths, AttackPath{
+							StartEntity: fmt.Sprintf("%s/%s", ns, subject.Name),
+							EntityType:  "ServiceAccount",
+							Steps: []string{
+								fmt.Sprintf("K8s: Bound to ClusterRole %s", role),
+								fmt.Sprintf("Cloud: %s", cloudIAM),
+								"Compromise pod → K8s cluster access + Cloud IAM access",
+							},
+							EndGoal:     "Multi-cloud privilege escalation (K8s + Cloud Provider)",
+							RiskLevel:   "CRITICAL",
+							Feasibility: "Requires-Enum",
+						})
+					}
+					if podCount, ok := serviceAccountPodCount[ns][subject.Name]; ok {
+						activePods = podCount
+					}
+				}
+
+				// Check built-in dangerous roles
+				if builtInRisk, isDangerous := dangerousBuiltInRoles[role]; isDangerous {
+					if riskLevel == "" || (builtInRisk == "CRITICAL") || (builtInRisk == "HIGH" && riskLevel != "CRITICAL") {
+						riskLevel = builtInRisk
+					}
+				}
 
 				if role == "cluster-admin" || role == "system:masters" {
 					riskLevel = "CRITICAL"
 				} else if role == "admin" || role == "edit" {
-					riskLevel = "HIGH"
+					if riskLevel == "" {
+						riskLevel = "HIGH"
+					}
 				}
 
 				if riskLevel != "" {
+					riskCounts[riskLevel]++
 					row := HiddenAdminFinding{
 						Namespace:      ns,
 						Entity:         subject.Name,
@@ -182,6 +401,10 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 						RiskLevel:      riskLevel,
 						DangerousPerms: fmt.Sprintf("bound to ClusterRole %s", role),
 						Source:         fmt.Sprintf("ClusterRoleBinding %s", binding.Name),
+						CloudIAM:       cloudIAM,
+						ActivePods:     activePods,
+						IsDefault:      isDefault,
+						IsWildcard:     isWildcard,
 					}
 					tableRows = append(tableRows, row.ToTableRow())
 					lootLines = append(lootLines, row.Loot())
@@ -227,6 +450,7 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 				if highestRisk == "" {
 					highestRisk = "MEDIUM"
 				}
+				riskCounts[highestRisk]++
 				dangerousRolesInNS[role.Name] = findings
 				row := HiddenAdminFinding{
 					Namespace:      ns.Name,
@@ -285,6 +509,32 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 						riskLevel = "MEDIUM"
 					}
 					for _, subject := range binding.Subjects {
+						cloudIAM := ""
+						activePods := 0
+						isDefault := false
+
+						// Detect default ServiceAccount in namespace bindings
+						if subject.Kind == "ServiceAccount" && subject.Name == "default" {
+							isDefault = true
+							// Escalate risk for default SA
+							if riskLevel == "MEDIUM" {
+								riskLevel = "HIGH"
+							} else if riskLevel == "HIGH" {
+								riskLevel = "CRITICAL"
+							}
+						}
+
+						// Get cloud IAM and pod count for ServiceAccounts
+						if subject.Kind == "ServiceAccount" {
+							if saCloudIAM, ok := serviceAccountCloudIAM[ns.Name][subject.Name]; ok {
+								cloudIAM = saCloudIAM
+							}
+							if podCount, ok := serviceAccountPodCount[ns.Name][subject.Name]; ok {
+								activePods = podCount
+							}
+						}
+
+						riskCounts[riskLevel]++
 						row := HiddenAdminFinding{
 							Namespace:      ns.Name,
 							Entity:         subject.Name,
@@ -293,6 +543,10 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 							RiskLevel:      riskLevel,
 							DangerousPerms: bindingPerms,
 							Source:         fmt.Sprintf("RoleBinding %s", binding.Name),
+							CloudIAM:       cloudIAM,
+							ActivePods:     activePods,
+							IsDefault:      isDefault,
+							IsWildcard:     false,
 						}
 						tableRows = append(tableRows, row.ToTableRow())
 						lootLines = append(lootLines, row.Loot())
@@ -370,6 +624,163 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 		}
 	} else {
 		lootSAPodsMap = append(lootSAPodsMap, "\n# No dangerous ServiceAccounts detected in findings")
+	}
+
+	// Build Attack Path Chains loot file
+	var lootAttackPaths []string
+	lootAttackPaths = append(lootAttackPaths, `#####################################
+##### Attack Path Chain Analysis
+#####################################
+#
+# Multi-step privilege escalation paths
+# Visualizes how attackers can chain permissions
+#
+`)
+
+	if len(attackPaths) > 0 {
+		for i, path := range attackPaths {
+			lootAttackPaths = append(lootAttackPaths, fmt.Sprintf("\n## Attack Path #%d [%s - %s]", i+1, path.RiskLevel, path.Feasibility))
+			lootAttackPaths = append(lootAttackPaths, fmt.Sprintf("Start: %s (%s)", path.StartEntity, path.EntityType))
+			lootAttackPaths = append(lootAttackPaths, "\nSteps:")
+			for stepNum, step := range path.Steps {
+				lootAttackPaths = append(lootAttackPaths, fmt.Sprintf("  %d. %s", stepNum+1, step))
+			}
+			lootAttackPaths = append(lootAttackPaths, fmt.Sprintf("\nEnd Goal: %s", path.EndGoal))
+			lootAttackPaths = append(lootAttackPaths, "\n---")
+		}
+	} else {
+		lootAttackPaths = append(lootAttackPaths, "\n# No attack paths detected")
+	}
+
+	// Build Cloud IAM Crosswalk loot file
+	var lootCloudIAM []string
+	lootCloudIAM = append(lootCloudIAM, `#####################################
+##### Cloud IAM Crosswalk Analysis
+#####################################
+#
+# Kubernetes ServiceAccounts with Cloud IAM roles
+# Compromising these SAs gives BOTH K8s and Cloud access
+#
+`)
+
+	if globals.KubeContext != "" {
+		lootCloudIAM = append(lootCloudIAM, fmt.Sprintf("kubectl config use-context %s\n", globals.KubeContext))
+	}
+
+	hasCloudIAM := false
+	for ns, saMap := range serviceAccountCloudIAM {
+		for saName, cloudRole := range saMap {
+			hasCloudIAM = true
+			podCount := 0
+			if serviceAccountPodCount[ns] != nil {
+				podCount = serviceAccountPodCount[ns][saName]
+			}
+
+			lootCloudIAM = append(lootCloudIAM, fmt.Sprintf("\n## ServiceAccount: %s/%s", ns, saName))
+			lootCloudIAM = append(lootCloudIAM, fmt.Sprintf("Cloud IAM: %s", cloudRole))
+			lootCloudIAM = append(lootCloudIAM, fmt.Sprintf("Active Pods: %d", podCount))
+			lootCloudIAM = append(lootCloudIAM, "\n# Exploitation:")
+			lootCloudIAM = append(lootCloudIAM, fmt.Sprintf("kubectl get pods -n %s -o json | jq '.items[] | select(.spec.serviceAccountName==\"%s\") | .metadata.name'", ns, saName))
+			lootCloudIAM = append(lootCloudIAM, fmt.Sprintf("kubectl exec -it <pod-name> -n %s -- /bin/sh", ns))
+			lootCloudIAM = append(lootCloudIAM, "# Inside pod:")
+			lootCloudIAM = append(lootCloudIAM, "cat /var/run/secrets/kubernetes.io/serviceaccount/token")
+
+			if strings.HasPrefix(cloudRole, "AWS:") {
+				lootCloudIAM = append(lootCloudIAM, "# For AWS IRSA:")
+				lootCloudIAM = append(lootCloudIAM, "aws sts get-caller-identity")
+				lootCloudIAM = append(lootCloudIAM, "aws s3 ls")
+			} else if strings.HasPrefix(cloudRole, "GCP:") {
+				lootCloudIAM = append(lootCloudIAM, "# For GCP Workload Identity:")
+				lootCloudIAM = append(lootCloudIAM, "gcloud auth list")
+				lootCloudIAM = append(lootCloudIAM, "gcloud projects list")
+			} else if strings.HasPrefix(cloudRole, "Azure:") {
+				lootCloudIAM = append(lootCloudIAM, "# For Azure Pod Identity:")
+				lootCloudIAM = append(lootCloudIAM, "az account show")
+				lootCloudIAM = append(lootCloudIAM, "az resource list")
+			}
+			lootCloudIAM = append(lootCloudIAM, "")
+		}
+	}
+
+	if !hasCloudIAM {
+		lootCloudIAM = append(lootCloudIAM, "\n# No ServiceAccounts with cloud IAM annotations detected")
+		lootCloudIAM = append(lootCloudIAM, "# This is good - no K8s-to-Cloud privilege escalation paths")
+	}
+
+	// Build Risk Dashboard loot file
+	var lootRiskDashboard []string
+	lootRiskDashboard = append(lootRiskDashboard, `#####################################
+##### Risk Statistics Dashboard
+#####################################
+#
+# Summary of dangerous permissions by risk level
+#
+`)
+
+	totalFindings := riskCounts["CRITICAL"] + riskCounts["HIGH"] + riskCounts["MEDIUM"] + riskCounts["LOW"]
+	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("\n## Overall Statistics"))
+	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("Total Findings: %d", totalFindings))
+	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("CRITICAL Risk: %d", riskCounts["CRITICAL"]))
+	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("HIGH Risk:     %d", riskCounts["HIGH"]))
+	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("MEDIUM Risk:   %d", riskCounts["MEDIUM"]))
+	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("LOW Risk:      %d", riskCounts["LOW"]))
+
+	lootRiskDashboard = append(lootRiskDashboard, "\n## Attack Paths")
+	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("Total Attack Paths Identified: %d", len(attackPaths)))
+
+	criticalPaths := 0
+	highPaths := 0
+	immediatePaths := 0
+	for _, path := range attackPaths {
+		if path.RiskLevel == "CRITICAL" {
+			criticalPaths++
+		} else if path.RiskLevel == "HIGH" {
+			highPaths++
+		}
+		if path.Feasibility == "Immediate" {
+			immediatePaths++
+		}
+	}
+	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("  CRITICAL: %d", criticalPaths))
+	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("  HIGH: %d", highPaths))
+	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("  Immediate Exploitation: %d", immediatePaths))
+
+	lootRiskDashboard = append(lootRiskDashboard, "\n## Cloud IAM Integration")
+	cloudIAMCount := 0
+	for _, saMap := range serviceAccountCloudIAM {
+		cloudIAMCount += len(saMap)
+	}
+	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("ServiceAccounts with Cloud IAM: %d", cloudIAMCount))
+
+	defaultSACount := 0
+	wildcardCount := 0
+	for _, row := range tableRows {
+		if len(row) >= 9 {
+			flags := row[8]
+			if strings.Contains(flags, "DEFAULT-SA") {
+				defaultSACount++
+			}
+			if strings.Contains(flags, "WILDCARD") {
+				wildcardCount++
+			}
+		}
+	}
+	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("\n## Critical Misconfigurations"))
+	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("Default ServiceAccounts with Elevated Permissions: %d", defaultSACount))
+	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("Wildcard ServiceAccount Group Bindings: %d", wildcardCount))
+
+	lootRiskDashboard = append(lootRiskDashboard, "\n## Recommendations")
+	if riskCounts["CRITICAL"] > 0 {
+		lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("⚠️  URGENT: %d CRITICAL findings require immediate remediation", riskCounts["CRITICAL"]))
+	}
+	if wildcardCount > 0 {
+		lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("⚠️  URGENT: %d wildcard bindings grant excessive permissions", wildcardCount))
+	}
+	if defaultSACount > 0 {
+		lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("⚠️  WARNING: %d default ServiceAccounts have elevated permissions", defaultSACount))
+	}
+	if cloudIAMCount > 0 {
+		lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("ℹ️  INFO: %d ServiceAccounts have cloud IAM roles - ensure least privilege", cloudIAMCount))
 	}
 
 	var lootEnum []string
@@ -713,6 +1124,21 @@ kubectl label nodes <node-name> pwn=true
 		Contents: strings.Join(lootSAPodsMap, "\n"),
 	}
 
+	lootAttackPathsFile := internal.LootFile{
+		Name:     "Attack-Path-Chains",
+		Contents: strings.Join(lootAttackPaths, "\n"),
+	}
+
+	lootCloudIAMFile := internal.LootFile{
+		Name:     "Cloud-IAM-Crosswalk",
+		Contents: strings.Join(lootCloudIAM, "\n"),
+	}
+
+	lootRiskDashboardFile := internal.LootFile{
+		Name:     "Risk-Dashboard",
+		Contents: strings.Join(lootRiskDashboard, "\n"),
+	}
+
 	err = internal.HandleOutput(
 		"Kubernetes",
 		format,
@@ -724,7 +1150,7 @@ kubectl label nodes <node-name> pwn=true
 		"results",
 		HiddenAdminsOutput{
 			Table: []internal.TableFile{table},
-			Loot:  []internal.LootFile{lootAdmins, loot, lootExploitation, lootSAPods},
+			Loot:  []internal.LootFile{lootRiskDashboardFile, lootAttackPathsFile, lootCloudIAMFile, lootAdmins, loot, lootExploitation, lootSAPods},
 		},
 	)
 	if err != nil {
