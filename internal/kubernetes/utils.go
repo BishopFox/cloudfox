@@ -534,3 +534,143 @@ func GetWebhookRiskDescription(
 	}
 	return strings.Join(risks, "; ")
 }
+
+// Secret Security Analysis Functions
+
+// GetSecretRiskLevel calculates risk level for a secret
+// Factors: type, sensitive patterns, active exposure, RBAC access
+func GetSecretRiskLevel(
+	secretType string,
+	hasSensitivePattern bool,
+	mountedInPods int,
+	readableByNonDefaultSAs int,
+	hasCloudCreds bool,
+	hasPrivateKeys bool,
+	hasServiceAccountToken bool,
+	saHasDangerousPerms bool,
+) string {
+	// CRITICAL: Cloud credentials or private keys mounted in pods or widely accessible
+	if hasCloudCreds && (mountedInPods > 0 || readableByNonDefaultSAs > 5) {
+		return "CRITICAL"
+	}
+	if hasPrivateKeys && mountedInPods > 0 {
+		return "CRITICAL"
+	}
+	if hasServiceAccountToken && saHasDangerousPerms {
+		return "CRITICAL"
+	}
+
+	// HIGH: Sensitive secrets actively exposed or widely readable
+	if hasSensitivePattern && mountedInPods > 0 {
+		return "HIGH"
+	}
+	if hasCloudCreds || hasPrivateKeys {
+		return "HIGH"
+	}
+	if readableByNonDefaultSAs > 10 {
+		return "HIGH"
+	}
+
+	// MEDIUM: Sensitive secrets not actively exposed
+	if hasSensitivePattern {
+		return "MEDIUM"
+	}
+	if mountedInPods > 0 {
+		return "MEDIUM"
+	}
+	if readableByNonDefaultSAs > 3 {
+		return "MEDIUM"
+	}
+
+	// LOW: Basic secrets with limited exposure
+	return "LOW"
+}
+
+// DetectSensitiveSecretPattern checks if secret contains sensitive data patterns
+func DetectSensitiveSecretPattern(secretType, secretName string, dataKeys []string) (bool, []string) {
+	var patterns []string
+
+	// Type-based detection
+	if secretType == "kubernetes.io/dockerconfigjson" {
+		patterns = append(patterns, "Docker registry credentials")
+	}
+	if secretType == "kubernetes.io/tls" {
+		patterns = append(patterns, "TLS certificate/private key")
+	}
+	if secretType == "kubernetes.io/ssh-auth" {
+		patterns = append(patterns, "SSH authentication key")
+	}
+	if secretType == "kubernetes.io/basic-auth" {
+		patterns = append(patterns, "Basic authentication credentials")
+	}
+
+	// Key-based detection
+	for _, key := range dataKeys {
+		keyLower := strings.ToLower(key)
+
+		// Cloud provider credentials
+		if keyLower == "aws_access_key_id" || keyLower == "aws_secret_access_key" || strings.Contains(keyLower, "aws") {
+			patterns = append(patterns, "AWS credentials")
+		}
+		if keyLower == "credentials.json" || keyLower == "key.json" || strings.Contains(keyLower, "gcp") || strings.Contains(keyLower, "google") {
+			patterns = append(patterns, "GCP credentials")
+		}
+		if strings.Contains(keyLower, "azure") || keyLower == "client_secret" || keyLower == "tenant_id" {
+			patterns = append(patterns, "Azure credentials")
+		}
+
+		// Authentication credentials
+		if strings.Contains(keyLower, "password") || strings.Contains(keyLower, "passwd") {
+			patterns = append(patterns, "password")
+		}
+		if strings.Contains(keyLower, "token") || strings.Contains(keyLower, "api_key") || strings.Contains(keyLower, "apikey") {
+			patterns = append(patterns, "API token/key")
+		}
+
+		// Private keys
+		if strings.Contains(keyLower, "private_key") || strings.Contains(keyLower, "id_rsa") || strings.Contains(keyLower, "id_ed25519") || keyLower == "tls.key" {
+			patterns = append(patterns, "private key")
+		}
+
+		// Database credentials
+		if strings.Contains(keyLower, "database") || strings.Contains(keyLower, "db_") || strings.Contains(keyLower, "connection_string") || keyLower == "username" {
+			patterns = append(patterns, "database credentials")
+		}
+	}
+
+	// Name-based detection
+	nameLower := strings.ToLower(secretName)
+	if strings.Contains(nameLower, "admin") {
+		patterns = append(patterns, "admin credentials")
+	}
+	if strings.Contains(nameLower, "root") {
+		patterns = append(patterns, "root credentials")
+	}
+
+	return len(patterns) > 0, UniqueStrings(patterns)
+}
+
+// HasCloudCredentials checks if secret contains cloud provider credentials
+func HasCloudCredentials(dataKeys []string) bool {
+	for _, key := range dataKeys {
+		keyLower := strings.ToLower(key)
+		if strings.Contains(keyLower, "aws") || strings.Contains(keyLower, "gcp") || strings.Contains(keyLower, "google") || strings.Contains(keyLower, "azure") || keyLower == "credentials.json" || keyLower == "key.json" {
+			return true
+		}
+	}
+	return false
+}
+
+// HasPrivateKeys checks if secret contains private keys
+func HasPrivateKeys(secretType string, dataKeys []string) bool {
+	if secretType == "kubernetes.io/tls" || secretType == "kubernetes.io/ssh-auth" {
+		return true
+	}
+	for _, key := range dataKeys {
+		keyLower := strings.ToLower(key)
+		if strings.Contains(keyLower, "private_key") || strings.Contains(keyLower, "id_rsa") || strings.Contains(keyLower, "id_ed25519") || keyLower == "tls.key" {
+			return true
+		}
+	}
+	return false
+}
