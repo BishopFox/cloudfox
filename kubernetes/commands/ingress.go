@@ -19,14 +19,14 @@ import (
 var IngressCmd = &cobra.Command{
 	Use:     "ingress",
 	Aliases: []string{"ing"},
-	Short:   "Enumerate ingress resources and exposed HTTP/HTTPS endpoints",
+	Short:   "Enumerate ingress resources with security analysis",
 	Long: `
-Enumerate all ingress resources in the cluster including:
-  - Ingress rules and paths
-  - TLS certificates
-  - Backend services
-  - Annotations and ingress class
-  - External IPs and hostnames
+Enumerate all ingress resources in the cluster with comprehensive security analysis including:
+  - Risk-based scoring based on dangerous annotations and TLS configuration
+  - Security weakness detection (dangerous NGINX annotations, missing auth, weak TLS)
+  - External exposure analysis
+  - Backend service security assessment
+  - Exploitation techniques for identified vulnerabilities
 
   cloudfox kubernetes ingress`,
 	Run: ListIngress,
@@ -43,6 +43,23 @@ func (i IngressOutput) TableFiles() []internal.TableFile {
 
 func (i IngressOutput) LootFiles() []internal.LootFile {
 	return i.Loot
+}
+
+type IngressFinding struct {
+	Namespace         string
+	Name              string
+	IngressClass      string
+	Hosts             []string
+	Paths             []string
+	Backends          []string
+	TLSEnabled        bool
+	TLSHosts          []string
+	ExternalIPs       []string
+	Annotations       map[string]string
+	RiskLevel         string
+	SecurityIssues    []string
+	DangerousAnnotations []string
+	Exposure          string
 }
 
 func ListIngress(cmd *cobra.Command, args []string) {
@@ -66,23 +83,34 @@ func ListIngress(cmd *cobra.Command, args []string) {
 	}
 
 	headers := []string{
+		"Risk",
 		"Namespace",
 		"Ingress Name",
-		"Ingress Class",
+		"Exposure",
+		"Security Issues",
 		"Hosts",
-		"Paths",
+		"TLS",
+		"Ingress Class",
 		"Backend Services",
-		"TLS Enabled",
-		"TLS Hosts",
-		"Annotations",
 		"External IPs",
 	}
 
 	var outputRows [][]string
+	var findings []IngressFinding
+
+	// Risk level counters
+	riskCounts := map[string]int{
+		"CRITICAL": 0,
+		"HIGH":     0,
+		"MEDIUM":   0,
+		"LOW":      0,
+	}
+
 	var lootCurl []string
 	var lootTLS []string
 	var lootEnum []string
 	var lootExploit []string
+	var lootSecurityIssues []string
 
 	lootCurl = append(lootCurl, `#####################################
 ##### HTTP/HTTPS Endpoint Testing
@@ -118,6 +146,15 @@ func ListIngress(cmd *cobra.Command, args []string) {
 #
 `)
 
+	lootSecurityIssues = append(lootSecurityIssues, `#####################################
+##### Ingress Security Issues
+#####################################
+#
+# CRITICAL SECURITY ISSUES
+# Dangerous configurations and vulnerabilities in ingress resources
+#
+`)
+
 	if globals.KubeContext != "" {
 		lootEnum = append(lootEnum, fmt.Sprintf("kubectl config use-context %s\n", globals.KubeContext))
 	}
@@ -130,24 +167,24 @@ func ListIngress(cmd *cobra.Command, args []string) {
 		}
 
 		for _, ing := range ingresses.Items {
+			finding := IngressFinding{
+				Namespace:    ns.Name,
+				Name:         ing.Name,
+				Annotations:  ing.Annotations,
+			}
+
 			ingressClass := "<NONE>"
 			if ing.Spec.IngressClassName != nil {
 				ingressClass = *ing.Spec.IngressClassName
 			} else if class, ok := ing.Annotations["kubernetes.io/ingress.class"]; ok {
 				ingressClass = class
 			}
-
-			var hosts []string
-			var paths []string
-			var backends []string
-			var tlsEnabled string = "false"
-			var tlsHosts []string
-			var externalIPs []string
+			finding.IngressClass = ingressClass
 
 			// Process ingress rules
 			for _, rule := range ing.Spec.Rules {
 				if rule.Host != "" {
-					hosts = append(hosts, rule.Host)
+					finding.Hosts = append(finding.Hosts, rule.Host)
 				}
 
 				if rule.HTTP != nil {
@@ -157,22 +194,22 @@ func ListIngress(cmd *cobra.Command, args []string) {
 							pathType = string(*path.PathType)
 						}
 						pathStr := fmt.Sprintf("%s (%s)", path.Path, pathType)
-						paths = append(paths, pathStr)
+						finding.Paths = append(finding.Paths, pathStr)
 
 						// Extract backend service
 						if path.Backend.Service != nil {
 							backendStr := fmt.Sprintf("%s:%d", path.Backend.Service.Name, path.Backend.Service.Port.Number)
-							backends = append(backends, backendStr)
+							finding.Backends = append(finding.Backends, backendStr)
 						}
 					}
 				}
 			}
 
 			// Process TLS configuration
-			if len(ing.Spec.TLS) > 0 {
-				tlsEnabled = "true"
+			finding.TLSEnabled = len(ing.Spec.TLS) > 0
+			if finding.TLSEnabled {
 				for _, tls := range ing.Spec.TLS {
-					tlsHosts = append(tlsHosts, tls.Hosts...)
+					finding.TLSHosts = append(finding.TLSHosts, tls.Hosts...)
 
 					// Add TLS extraction commands
 					if tls.SecretName != "" {
@@ -189,42 +226,54 @@ func ListIngress(cmd *cobra.Command, args []string) {
 			if ing.Status.LoadBalancer.Ingress != nil {
 				for _, lb := range ing.Status.LoadBalancer.Ingress {
 					if lb.IP != "" {
-						externalIPs = append(externalIPs, lb.IP)
+						finding.ExternalIPs = append(finding.ExternalIPs, lb.IP)
 					}
 					if lb.Hostname != "" {
-						externalIPs = append(externalIPs, lb.Hostname)
+						finding.ExternalIPs = append(finding.ExternalIPs, lb.Hostname)
 					}
 				}
 			}
 
-			// Format annotations
-			var annotations []string
-			for k, v := range ing.Annotations {
-				annotations = append(annotations, fmt.Sprintf("%s=%s", k, v))
+			// Analyze security issues
+			finding.SecurityIssues, finding.DangerousAnnotations = analyzeIngressSecurity(&ing)
+
+			// Determine exposure
+			if len(finding.ExternalIPs) > 0 {
+				finding.Exposure = "Internet-facing"
+			} else {
+				finding.Exposure = "Internal"
 			}
-			sort.Strings(annotations)
+
+			// Calculate risk level
+			finding.RiskLevel = calculateIngressRiskLevel(finding.DangerousAnnotations, finding.TLSEnabled, finding.Exposure, finding.SecurityIssues)
+			riskCounts[finding.RiskLevel]++
+			findings = append(findings, finding)
 
 			// Generate curl test commands
-			for _, host := range hosts {
-				lootCurl = append(lootCurl, fmt.Sprintf("\n# Ingress: %s/%s - Host: %s", ns.Name, ing.Name, host))
+			for _, host := range finding.Hosts {
+				lootCurl = append(lootCurl, fmt.Sprintf("\n# [%s] Ingress: %s/%s - Host: %s", finding.RiskLevel, ns.Name, ing.Name, host))
 
 				// HTTP test
-				for _, path := range ing.Spec.Rules {
-					if path.HTTP != nil {
-						for _, p := range path.HTTP.Paths {
+				for _, rule := range ing.Spec.Rules {
+					if rule.HTTP != nil {
+						for _, p := range rule.HTTP.Paths {
 							lootCurl = append(lootCurl, fmt.Sprintf("curl -v http://%s%s", host, p.Path))
-							lootCurl = append(lootCurl, fmt.Sprintf("curl -v -H 'Host: %s' http://<ingress-lb-ip>%s", host, p.Path))
+							if len(finding.ExternalIPs) > 0 {
+								lootCurl = append(lootCurl, fmt.Sprintf("curl -v -H 'Host: %s' http://%s%s", host, finding.ExternalIPs[0], p.Path))
+							}
 						}
 					}
 				}
 
 				// HTTPS test if TLS enabled
-				if tlsEnabled == "true" {
-					for _, path := range ing.Spec.Rules {
-						if path.HTTP != nil {
-							for _, p := range path.HTTP.Paths {
+				if finding.TLSEnabled {
+					for _, rule := range ing.Spec.Rules {
+						if rule.HTTP != nil {
+							for _, p := range rule.HTTP.Paths {
 								lootCurl = append(lootCurl, fmt.Sprintf("curl -v -k https://%s%s", host, p.Path))
-								lootCurl = append(lootCurl, fmt.Sprintf("curl -v -k -H 'Host: %s' https://<ingress-lb-ip>%s", host, p.Path))
+								if len(finding.ExternalIPs) > 0 {
+									lootCurl = append(lootCurl, fmt.Sprintf("curl -v -k -H 'Host: %s' https://%s%s", host, finding.ExternalIPs[0], p.Path))
+								}
 							}
 						}
 					}
@@ -233,58 +282,130 @@ func ListIngress(cmd *cobra.Command, args []string) {
 			}
 
 			// Generate enumeration commands
-			lootEnum = append(lootEnum, fmt.Sprintf("\n# Namespace: %s", ns.Name))
+			lootEnum = append(lootEnum, fmt.Sprintf("\n# [%s] %s/%s", finding.RiskLevel, ns.Name, ing.Name))
 			lootEnum = append(lootEnum, fmt.Sprintf("kubectl get ingress %s -n %s -o yaml", ing.Name, ns.Name))
 			lootEnum = append(lootEnum, fmt.Sprintf("kubectl describe ingress %s -n %s", ing.Name, ns.Name))
 			lootEnum = append(lootEnum, "")
 
+			// Generate security issue details
+			if len(finding.SecurityIssues) > 0 {
+				lootSecurityIssues = append(lootSecurityIssues, fmt.Sprintf("\n### [%s] %s/%s", finding.RiskLevel, ns.Name, ing.Name))
+				lootSecurityIssues = append(lootSecurityIssues, fmt.Sprintf("# Exposure: %s", finding.Exposure))
+				lootSecurityIssues = append(lootSecurityIssues, "# Security Issues:")
+				for _, issue := range finding.SecurityIssues {
+					lootSecurityIssues = append(lootSecurityIssues, fmt.Sprintf("#   - %s", issue))
+				}
+				lootSecurityIssues = append(lootSecurityIssues, "")
+			}
+
 			// Generate exploit/attack commands
-			if ingressClass == "nginx" || strings.Contains(strings.ToLower(strings.Join(annotations, " ")), "nginx") {
-				lootExploit = append(lootExploit, fmt.Sprintf("\n# NGINX Ingress: %s/%s", ns.Name, ing.Name))
-				lootExploit = append(lootExploit, "# Test for path traversal:")
-				for _, host := range hosts {
-					lootExploit = append(lootExploit, fmt.Sprintf("curl -v 'http://%s/..;/admin'", host))
-					lootExploit = append(lootExploit, fmt.Sprintf("curl -v 'http://%s/..%%2f..%%2f..%%2fetc/passwd'", host))
+			if finding.IngressClass == "nginx" || strings.Contains(strings.ToLower(finding.IngressClass), "nginx") {
+				if len(finding.DangerousAnnotations) > 0 || len(finding.SecurityIssues) > 0 {
+					lootExploit = append(lootExploit, fmt.Sprintf("\n### [%s] NGINX Ingress: %s/%s", finding.RiskLevel, ns.Name, ing.Name))
 				}
 
 				// Check for dangerous annotations
 				if snippetAnnotation, ok := ing.Annotations["nginx.ingress.kubernetes.io/configuration-snippet"]; ok {
-					lootExploit = append(lootExploit, fmt.Sprintf("# WARNING: Ingress has configuration-snippet annotation (potential RCE):"))
+					lootExploit = append(lootExploit, fmt.Sprintf("# CRITICAL: configuration-snippet annotation (RCE risk):"))
 					lootExploit = append(lootExploit, fmt.Sprintf("# Value: %s", snippetAnnotation))
+					lootExploit = append(lootExploit, "# This annotation can be exploited for RCE if you can create/modify ingress resources")
+					lootExploit = append(lootExploit, "")
 				}
+
+				if serverSnippet, ok := ing.Annotations["nginx.ingress.kubernetes.io/server-snippet"]; ok {
+					lootExploit = append(lootExploit, fmt.Sprintf("# CRITICAL: server-snippet annotation (RCE risk):"))
+					lootExploit = append(lootExploit, fmt.Sprintf("# Value: %s", serverSnippet))
+					lootExploit = append(lootExploit, "")
+				}
+
 				if authURL, ok := ing.Annotations["nginx.ingress.kubernetes.io/auth-url"]; ok {
 					lootExploit = append(lootExploit, fmt.Sprintf("# External auth URL: %s", authURL))
 					lootExploit = append(lootExploit, "# Test authentication bypass:")
-					for _, host := range hosts {
+					for _, host := range finding.Hosts {
 						lootExploit = append(lootExploit, fmt.Sprintf("curl -v -H 'X-Original-URL: /admin' http://%s/public", host))
+						lootExploit = append(lootExploit, fmt.Sprintf("curl -v -H 'X-Original-Method: GET' http://%s/", host))
 					}
+					lootExploit = append(lootExploit, "")
+				}
+
+				// Path traversal tests
+				if len(finding.Hosts) > 0 {
+					lootExploit = append(lootExploit, "# Test for path traversal:")
+					for _, host := range finding.Hosts {
+						lootExploit = append(lootExploit, fmt.Sprintf("curl -v 'http://%s/..;/admin'", host))
+						lootExploit = append(lootExploit, fmt.Sprintf("curl -v 'http://%s/..%%2f..%%2f..%%2fetc/passwd'", host))
+						lootExploit = append(lootExploit, fmt.Sprintf("curl -v 'http://%s/%%2e%%2e/admin'", host))
+					}
+					lootExploit = append(lootExploit, "")
+				}
+			}
+
+			if finding.IngressClass == "traefik" || strings.Contains(strings.ToLower(finding.IngressClass), "traefik") {
+				lootExploit = append(lootExploit, fmt.Sprintf("\n### [%s] Traefik Ingress: %s/%s", finding.RiskLevel, ns.Name, ing.Name))
+				lootExploit = append(lootExploit, "# Check for exposed Traefik dashboard:")
+				for _, ip := range finding.ExternalIPs {
+					lootExploit = append(lootExploit, fmt.Sprintf("curl http://%s:8080/dashboard/", ip))
+					lootExploit = append(lootExploit, fmt.Sprintf("curl http://%s:8080/api/rawdata", ip))
 				}
 				lootExploit = append(lootExploit, "")
 			}
 
-			if ingressClass == "traefik" || strings.Contains(strings.ToLower(strings.Join(annotations, " ")), "traefik") {
-				lootExploit = append(lootExploit, fmt.Sprintf("\n# Traefik Ingress: %s/%s", ns.Name, ing.Name))
-				lootExploit = append(lootExploit, "# Check for exposed Traefik dashboard:")
-				for _, ip := range externalIPs {
-					lootExploit = append(lootExploit, fmt.Sprintf("curl http://%s:8080/dashboard/", ip))
+			// No TLS warning
+			if !finding.TLSEnabled && finding.Exposure == "Internet-facing" {
+				lootExploit = append(lootExploit, fmt.Sprintf("\n### [%s] No TLS: %s/%s", finding.RiskLevel, ns.Name, ing.Name))
+				lootExploit = append(lootExploit, "# WARNING: Internet-facing ingress without TLS")
+				lootExploit = append(lootExploit, "# Traffic can be intercepted and credentials stolen")
+				for _, host := range finding.Hosts {
+					lootExploit = append(lootExploit, fmt.Sprintf("# http://%s (unencrypted)", host))
 				}
 				lootExploit = append(lootExploit, "")
+			}
+
+			// Format security issues for table
+			securityIssuesStr := "<none>"
+			if len(finding.SecurityIssues) > 0 {
+				if len(finding.SecurityIssues) > 2 {
+					securityIssuesStr = strings.Join(finding.SecurityIssues[:2], "; ") + fmt.Sprintf(" (+%d more)", len(finding.SecurityIssues)-2)
+				} else {
+					securityIssuesStr = strings.Join(finding.SecurityIssues, "; ")
+				}
+			}
+
+			tlsStr := "No"
+			if finding.TLSEnabled {
+				tlsStr = "Yes"
 			}
 
 			// Build table row
 			outputRows = append(outputRows, []string{
+				finding.RiskLevel,
 				ns.Name,
 				ing.Name,
+				finding.Exposure,
+				securityIssuesStr,
+				strings.Join(k8sinternal.Unique(finding.Hosts), ", "),
+				tlsStr,
 				ingressClass,
-				strings.Join(k8sinternal.Unique(hosts), ", "),
-				strings.Join(k8sinternal.Unique(paths), ", "),
-				strings.Join(k8sinternal.Unique(backends), ", "),
-				tlsEnabled,
-				strings.Join(k8sinternal.Unique(tlsHosts), ", "),
-				strings.Join(annotations, "; "),
-				strings.Join(externalIPs, ", "),
+				strings.Join(k8sinternal.Unique(finding.Backends), ", "),
+				strings.Join(finding.ExternalIPs, ", "),
 			})
 		}
+	}
+
+	// Add summaries
+	if riskCounts["CRITICAL"] > 0 || riskCounts["HIGH"] > 0 {
+		summary := fmt.Sprintf(`
+# SUMMARY: Risk Distribution
+# CRITICAL: %d ingress resources
+# HIGH: %d ingress resources
+# MEDIUM: %d ingress resources
+# LOW: %d ingress resources
+#
+# Focus on CRITICAL and HIGH risk ingress resources for maximum impact.
+`, riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"])
+
+		lootSecurityIssues = append([]string{summary}, lootSecurityIssues...)
+		lootExploit = append([]string{summary}, lootExploit...)
 	}
 
 	table := internal.TableFile{
@@ -305,6 +426,10 @@ func ListIngress(cmd *cobra.Command, args []string) {
 		{
 			Name:     "Ingress-TLS-Extraction",
 			Contents: strings.Join(lootTLS, "\n"),
+		},
+		{
+			Name:     "Ingress-Security-Issues",
+			Contents: strings.Join(lootSecurityIssues, "\n"),
 		},
 		{
 			Name:     "Ingress-Attack-Vectors",
@@ -332,10 +457,114 @@ func ListIngress(cmd *cobra.Command, args []string) {
 	}
 
 	if len(outputRows) > 0 {
-		logger.InfoM(fmt.Sprintf("%d ingress resources found", len(outputRows)), globals.K8S_INGRESS_MODULE_NAME)
+		logger.InfoM(fmt.Sprintf("%d ingress resources found | Risk: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
+			len(outputRows),
+			riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"]),
+			globals.K8S_INGRESS_MODULE_NAME)
 	} else {
 		logger.InfoM("No ingress resources found, skipping output file creation", globals.K8S_INGRESS_MODULE_NAME)
 	}
 
 	logger.InfoM(fmt.Sprintf("For context and next steps: https://github.com/BishopFox/cloudfox/wiki/Kubernetes-Commands#%s", globals.K8S_INGRESS_MODULE_NAME), globals.K8S_INGRESS_MODULE_NAME)
+}
+
+// ====================
+// Helper Functions
+// ====================
+
+func analyzeIngressSecurity(ing *networkingv1.Ingress) ([]string, []string) {
+	var securityIssues []string
+	var dangerousAnnotations []string
+
+	// Check for dangerous NGINX annotations
+	dangerousNginxAnnotations := []string{
+		"nginx.ingress.kubernetes.io/configuration-snippet",
+		"nginx.ingress.kubernetes.io/server-snippet",
+		"nginx.ingress.kubernetes.io/auth-snippet",
+	}
+
+	for _, annot := range dangerousNginxAnnotations {
+		if _, ok := ing.Annotations[annot]; ok {
+			dangerousAnnotations = append(dangerousAnnotations, annot)
+			securityIssues = append(securityIssues, fmt.Sprintf("Dangerous annotation: %s (RCE risk)", annot))
+		}
+	}
+
+	// Check for external auth bypasses
+	if authURL, ok := ing.Annotations["nginx.ingress.kubernetes.io/auth-url"]; ok {
+		if !strings.HasPrefix(authURL, "https://") {
+			securityIssues = append(securityIssues, "External auth URL not HTTPS")
+		}
+	}
+
+	// Check for missing TLS
+	if len(ing.Spec.TLS) == 0 {
+		securityIssues = append(securityIssues, "No TLS configured")
+	}
+
+	// Check for wildcard hosts
+	for _, rule := range ing.Spec.Rules {
+		if strings.HasPrefix(rule.Host, "*") {
+			securityIssues = append(securityIssues, fmt.Sprintf("Wildcard host: %s", rule.Host))
+		}
+	}
+
+	// Check for CORS annotations
+	if corsOrigin, ok := ing.Annotations["nginx.ingress.kubernetes.io/cors-allow-origin"]; ok {
+		if corsOrigin == "*" {
+			securityIssues = append(securityIssues, "CORS allows all origins (*)")
+		}
+	}
+
+	// Check for allow-snippet-annotations
+	if allowSnippets, ok := ing.Annotations["nginx.ingress.kubernetes.io/allow-snippet-annotations"]; ok {
+		if allowSnippets == "true" {
+			securityIssues = append(securityIssues, "allow-snippet-annotations enabled")
+		}
+	}
+
+	// Check for SSL redirect disabled
+	if sslRedirect, ok := ing.Annotations["nginx.ingress.kubernetes.io/ssl-redirect"]; ok {
+		if sslRedirect == "false" {
+			securityIssues = append(securityIssues, "SSL redirect disabled")
+		}
+	}
+
+	// Check for force-ssl-redirect disabled
+	if forceSSL, ok := ing.Annotations["nginx.ingress.kubernetes.io/force-ssl-redirect"]; ok {
+		if forceSSL == "false" {
+			securityIssues = append(securityIssues, "Force SSL redirect disabled")
+		}
+	}
+
+	return securityIssues, dangerousAnnotations
+}
+
+func calculateIngressRiskLevel(dangerousAnnotations []string, tlsEnabled bool, exposure string, securityIssues []string) string {
+	// CRITICAL: Dangerous annotations + internet-facing
+	if len(dangerousAnnotations) > 0 && exposure == "Internet-facing" {
+		return "CRITICAL"
+	}
+
+	// HIGH: Dangerous annotations OR (no TLS + internet-facing)
+	if len(dangerousAnnotations) > 0 {
+		return "HIGH"
+	}
+
+	if !tlsEnabled && exposure == "Internet-facing" {
+		return "HIGH"
+	}
+
+	// MEDIUM: Security issues + internet-facing
+	if len(securityIssues) > 0 && exposure == "Internet-facing" {
+		return "MEDIUM"
+	}
+
+	// MEDIUM: No TLS but internal
+	if !tlsEnabled {
+		return "MEDIUM"
+	}
+
+	// LOW: Everything else
+	return "LOW"
 }
