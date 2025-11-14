@@ -67,45 +67,45 @@ type IngressFinding struct {
 	Exposure             string
 
 	// New security analysis fields
-	AuthEnabled          bool
-	AuthType             string
-	RateLimitEnabled     bool
-	WAFEnabled           bool
-	SensitivePaths       []string
-	BackendSecurity      string // "Secure", "Vulnerable", "Unknown"
-	CertExpiry           string // "Valid", "Expiring Soon (<30d)", "Expired", "N/A"
-	CertIssues           []string
-	SecurityHeaders      []string
-	MissingHeaders       []string
-	DefaultBackend       string
-	BackendPods          int
+	AuthEnabled           bool
+	AuthType              string
+	RateLimitEnabled      bool
+	WAFEnabled            bool
+	SensitivePaths        []string
+	BackendSecurity       string // "Secure", "Vulnerable", "Unknown"
+	CertExpiry            string // "Valid", "Expiring Soon (<30d)", "Expired", "N/A"
+	CertIssues            []string
+	SecurityHeaders       []string
+	MissingHeaders        []string
+	DefaultBackend        string
+	BackendPods           int
 	BackendServiceAccount string
 }
 
 // CertificateInfo contains TLS certificate analysis
 type CertificateInfo struct {
-	SecretName    string
-	Namespace     string
-	ExpiryStatus  string // "Valid", "Expiring Soon (<30d)", "Expired"
+	SecretName      string
+	Namespace       string
+	ExpiryStatus    string // "Valid", "Expiring Soon (<30d)", "Expired"
 	DaysUntilExpiry int
-	KeyStrength   string // "Strong (>=2048)", "Weak (<2048)"
-	IsSelfSigned  bool
-	Issues        []string
-	Subject       string
-	Issuer        string
+	KeyStrength     string // "Strong (>=2048)", "Weak (<2048)"
+	IsSelfSigned    bool
+	Issues          []string
+	Subject         string
+	Issuer          string
 }
 
 // BackendSecurityInfo contains backend service security analysis
 type BackendSecurityInfo struct {
-	ServiceName       string
-	Namespace         string
-	SecurityLevel     string // "Secure", "Vulnerable", "Unknown"
-	PodCount          int
-	ServiceAccount    string
-	HasNetworkPolicy  bool
-	Privileged        bool
-	HostNetwork       bool
-	SecurityIssues    []string
+	ServiceName      string
+	Namespace        string
+	SecurityLevel    string // "Secure", "Vulnerable", "Unknown"
+	PodCount         int
+	ServiceAccount   string
+	HasNetworkPolicy bool
+	Privileged       bool
+	HostNetwork      bool
+	SecurityIssues   []string
 }
 
 func ListIngress(cmd *cobra.Command, args []string) {
@@ -135,9 +135,14 @@ func ListIngress(cmd *cobra.Command, args []string) {
 		"Exposure",
 		"Security Issues",
 		"Hosts",
-		"TLS",
+		"TLS Status",
+		"Cert Expiry",
+		"Authentication",
+		"Rate Limit",
+		"WAF",
+		"Sensitive Paths",
+		"Backend Security",
 		"Ingress Class",
-		"Backend Services",
 		"External IPs",
 	}
 
@@ -157,6 +162,11 @@ func ListIngress(cmd *cobra.Command, args []string) {
 	var lootEnum []string
 	var lootExploit []string
 	var lootSecurityIssues []string
+	var lootRiskDashboard []string
+	var lootBackendSecurity []string
+	var lootCertificateReport []string
+	var lootAuthBypass []string
+	var lootSensitivePaths []string
 
 	lootCurl = append(lootCurl, `#####################################
 ##### HTTP/HTTPS Endpoint Testing
@@ -214,9 +224,9 @@ func ListIngress(cmd *cobra.Command, args []string) {
 
 		for _, ing := range ingresses.Items {
 			finding := IngressFinding{
-				Namespace:    ns.Name,
-				Name:         ing.Name,
-				Annotations:  ing.Annotations,
+				Namespace:   ns.Name,
+				Name:        ing.Name,
+				Annotations: ing.Annotations,
 			}
 
 			ingressClass := "<NONE>"
@@ -290,8 +300,72 @@ func ListIngress(cmd *cobra.Command, args []string) {
 				finding.Exposure = "Internal"
 			}
 
-			// Calculate risk level
-			finding.RiskLevel = calculateIngressRiskLevel(finding.DangerousAnnotations, finding.TLSEnabled, finding.Exposure, finding.SecurityIssues)
+			// Detect sensitive paths
+			finding.SensitivePaths = detectSensitivePaths(&ing)
+			if len(finding.SensitivePaths) > 0 {
+				for _, sensPath := range finding.SensitivePaths {
+					finding.SecurityIssues = append(finding.SecurityIssues, fmt.Sprintf("Sensitive path exposed: %s", sensPath))
+				}
+			}
+
+			// Detect authentication
+			finding.AuthEnabled, finding.AuthType = detectAuthentication(&ing)
+
+			// Detect rate limiting
+			finding.RateLimitEnabled = detectRateLimiting(&ing)
+
+			// Detect WAF
+			finding.WAFEnabled = detectWAF(&ing)
+
+			// Analyze security headers
+			finding.SecurityHeaders, finding.MissingHeaders = analyzeSecurityHeaders(&ing)
+
+			// Analyze TLS certificates
+			finding.CertExpiry = "N/A"
+			if finding.TLSEnabled {
+				for _, tls := range ing.Spec.TLS {
+					if tls.SecretName != "" {
+						certInfo := analyzeCertificate(ctx, clientset, ns.Name, tls.SecretName)
+						finding.CertExpiry = certInfo.ExpiryStatus
+						finding.CertIssues = append(finding.CertIssues, certInfo.Issues...)
+						break // Use first certificate for status
+					}
+				}
+			}
+
+			// Analyze backend security (for first backend as representative)
+			finding.BackendSecurity = "Unknown"
+			finding.BackendPods = 0
+			finding.BackendServiceAccount = "<NONE>"
+			if len(ing.Spec.Rules) > 0 {
+				for _, rule := range ing.Spec.Rules {
+					if rule.HTTP != nil && len(rule.HTTP.Paths) > 0 {
+						for _, path := range rule.HTTP.Paths {
+							if path.Backend.Service != nil {
+								backendInfo := analyzeBackendSecurity(ctx, clientset, ns.Name, path.Backend.Service.Name)
+								finding.BackendSecurity = backendInfo.SecurityLevel
+								finding.BackendPods = backendInfo.PodCount
+								finding.BackendServiceAccount = backendInfo.ServiceAccount
+								if len(backendInfo.SecurityIssues) > 0 {
+									finding.SecurityIssues = append(finding.SecurityIssues, backendInfo.SecurityIssues...)
+								}
+								break // Use first backend
+							}
+						}
+						if finding.BackendSecurity != "Unknown" {
+							break
+						}
+					}
+				}
+			}
+
+			// Get default backend if configured
+			if defaultBackend, ok := ing.Annotations["nginx.ingress.kubernetes.io/default-backend"]; ok {
+				finding.DefaultBackend = defaultBackend
+			}
+
+			// Calculate risk level with comprehensive security factors
+			finding.RiskLevel = calculateIngressRiskLevel(finding)
 			riskCounts[finding.RiskLevel]++
 			findings = append(findings, finding)
 
@@ -422,7 +496,35 @@ func ListIngress(cmd *cobra.Command, args []string) {
 				tlsStr = "Yes"
 			}
 
-			// Build table row
+			// Format authentication
+			authStr := "No"
+			if finding.AuthEnabled {
+				authStr = finding.AuthType
+			}
+
+			// Format rate limiting
+			rateLimitStr := "No"
+			if finding.RateLimitEnabled {
+				rateLimitStr = "Yes"
+			}
+
+			// Format WAF
+			wafStr := "No"
+			if finding.WAFEnabled {
+				wafStr = "Yes"
+			}
+
+			// Format sensitive paths
+			sensPathsStr := "<none>"
+			if len(finding.SensitivePaths) > 0 {
+				if len(finding.SensitivePaths) > 2 {
+					sensPathsStr = fmt.Sprintf("%d detected", len(finding.SensitivePaths))
+				} else {
+					sensPathsStr = strings.Join(finding.SensitivePaths, "; ")
+				}
+			}
+
+			// Build table row (15 columns)
 			outputRows = append(outputRows, []string{
 				finding.RiskLevel,
 				ns.Name,
@@ -431,8 +533,13 @@ func ListIngress(cmd *cobra.Command, args []string) {
 				securityIssuesStr,
 				strings.Join(k8sinternal.Unique(finding.Hosts), ", "),
 				tlsStr,
+				finding.CertExpiry,
+				authStr,
+				rateLimitStr,
+				wafStr,
+				sensPathsStr,
+				finding.BackendSecurity,
 				ingressClass,
-				strings.Join(k8sinternal.Unique(finding.Backends), ", "),
 				strings.Join(finding.ExternalIPs, ", "),
 			})
 		}
@@ -454,6 +561,172 @@ func ListIngress(cmd *cobra.Command, args []string) {
 		lootExploit = append([]string{summary}, lootExploit...)
 	}
 
+	// Build Risk Dashboard loot file
+	lootRiskDashboard = append(lootRiskDashboard, `#####################################
+##### Ingress Risk Statistics Dashboard
+#####################################
+#
+# Summary of ingress security posture
+#
+`)
+	totalIngresses := riskCounts["CRITICAL"] + riskCounts["HIGH"] + riskCounts["MEDIUM"] + riskCounts["LOW"]
+	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("\n## Overall Statistics"))
+	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("Total Ingress Resources: %d", totalIngresses))
+	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("CRITICAL Risk: %d", riskCounts["CRITICAL"]))
+	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("HIGH Risk:     %d", riskCounts["HIGH"]))
+	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("MEDIUM Risk:   %d", riskCounts["MEDIUM"]))
+	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("LOW Risk:      %d", riskCounts["LOW"]))
+
+	// Count various security metrics
+	internetFacingCount := 0
+	noAuthCount := 0
+	noTLSCount := 0
+	noRateLimitCount := 0
+	noWAFCount := 0
+	sensPathCount := 0
+	expiredCertCount := 0
+
+	for _, finding := range findings {
+		if finding.Exposure == "Internet-facing" {
+			internetFacingCount++
+		}
+		if !finding.AuthEnabled {
+			noAuthCount++
+		}
+		if !finding.TLSEnabled {
+			noTLSCount++
+		}
+		if !finding.RateLimitEnabled {
+			noRateLimitCount++
+		}
+		if !finding.WAFEnabled {
+			noWAFCount++
+		}
+		if len(finding.SensitivePaths) > 0 {
+			sensPathCount++
+		}
+		if finding.CertExpiry == "Expired" || finding.CertExpiry == "Expiring Soon (<30d)" {
+			expiredCertCount++
+		}
+	}
+
+	lootRiskDashboard = append(lootRiskDashboard, "\n## Security Posture")
+	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("Internet-Facing Ingresses: %d", internetFacingCount))
+	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("Missing Authentication: %d", noAuthCount))
+	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("Missing TLS: %d", noTLSCount))
+	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("Missing Rate Limiting: %d", noRateLimitCount))
+	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("Missing WAF: %d", noWAFCount))
+	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("Sensitive Paths Exposed: %d", sensPathCount))
+	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("Certificate Issues: %d", expiredCertCount))
+
+	lootRiskDashboard = append(lootRiskDashboard, "\n## Recommendations")
+	if riskCounts["CRITICAL"] > 0 {
+		lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("⚠️  URGENT: %d CRITICAL ingresses require immediate remediation", riskCounts["CRITICAL"]))
+	}
+	if noAuthCount > 0 && internetFacingCount > 0 {
+		lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("⚠️  WARNING: %d ingresses lack authentication", noAuthCount))
+	}
+	if noTLSCount > 0 {
+		lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("⚠️  WARNING: %d ingresses missing TLS encryption", noTLSCount))
+	}
+
+	// Build Backend Security loot file
+	lootBackendSecurity = append(lootBackendSecurity, `#####################################
+##### Backend Service Security Analysis
+#####################################
+#
+# Security assessment of services exposed by ingress
+#
+`)
+	for _, finding := range findings {
+		if finding.BackendSecurity != "Unknown" {
+			lootBackendSecurity = append(lootBackendSecurity, fmt.Sprintf("\n## [%s] Ingress: %s/%s", finding.RiskLevel, finding.Namespace, finding.Name))
+			lootBackendSecurity = append(lootBackendSecurity, fmt.Sprintf("Backend Security: %s", finding.BackendSecurity))
+			lootBackendSecurity = append(lootBackendSecurity, fmt.Sprintf("Backend Pods: %d", finding.BackendPods))
+			lootBackendSecurity = append(lootBackendSecurity, fmt.Sprintf("ServiceAccount: %s", finding.BackendServiceAccount))
+			if len(finding.Backends) > 0 {
+				lootBackendSecurity = append(lootBackendSecurity, fmt.Sprintf("Backends: %s", strings.Join(finding.Backends, ", ")))
+			}
+		}
+	}
+
+	// Build Certificate Report loot file
+	lootCertificateReport = append(lootCertificateReport, `#####################################
+##### TLS Certificate Report
+#####################################
+#
+# Certificate expiry and validation status
+#
+`)
+	for _, finding := range findings {
+		if finding.TLSEnabled {
+			lootCertificateReport = append(lootCertificateReport, fmt.Sprintf("\n## [%s] Ingress: %s/%s", finding.CertExpiry, finding.Namespace, finding.Name))
+			lootCertificateReport = append(lootCertificateReport, fmt.Sprintf("Certificate Status: %s", finding.CertExpiry))
+			if len(finding.CertIssues) > 0 {
+				lootCertificateReport = append(lootCertificateReport, "Certificate Issues:")
+				for _, issue := range finding.CertIssues {
+					lootCertificateReport = append(lootCertificateReport, fmt.Sprintf("  - %s", issue))
+				}
+			}
+			lootCertificateReport = append(lootCertificateReport, fmt.Sprintf("Hosts: %s", strings.Join(finding.Hosts, ", ")))
+		}
+	}
+
+	// Build Authentication Bypass loot file
+	lootAuthBypass = append(lootAuthBypass, `#####################################
+##### Authentication Bypass Techniques
+#####################################
+#
+# Test authentication bypass for ingresses
+#
+`)
+	for _, finding := range findings {
+		if !finding.AuthEnabled && finding.Exposure == "Internet-facing" {
+			lootAuthBypass = append(lootAuthBypass, fmt.Sprintf("\n### [%s] No Auth: %s/%s", finding.RiskLevel, finding.Namespace, finding.Name))
+			for _, host := range finding.Hosts {
+				lootAuthBypass = append(lootAuthBypass, fmt.Sprintf("# Direct access (no auth required):"))
+				lootAuthBypass = append(lootAuthBypass, fmt.Sprintf("curl -v http://%s/", host))
+			}
+		} else if finding.AuthEnabled && finding.AuthType == "external-auth" {
+			lootAuthBypass = append(lootAuthBypass, fmt.Sprintf("\n### [%s] External Auth: %s/%s", finding.RiskLevel, finding.Namespace, finding.Name))
+			lootAuthBypass = append(lootAuthBypass, "# Test header-based bypass:")
+			for _, host := range finding.Hosts {
+				lootAuthBypass = append(lootAuthBypass, fmt.Sprintf("curl -v -H 'X-Original-URL: /admin' http://%s/", host))
+				lootAuthBypass = append(lootAuthBypass, fmt.Sprintf("curl -v -H 'X-Forwarded-For: 127.0.0.1' http://%s/admin", host))
+			}
+		}
+	}
+
+	// Build Sensitive Paths loot file
+	lootSensitivePaths = append(lootSensitivePaths, `#####################################
+##### Sensitive Paths Exposed
+#####################################
+#
+# Admin panels, debug endpoints, and sensitive paths
+#
+`)
+	for _, finding := range findings {
+		if len(finding.SensitivePaths) > 0 {
+			lootSensitivePaths = append(lootSensitivePaths, fmt.Sprintf("\n### [%s] %s/%s", finding.RiskLevel, finding.Namespace, finding.Name))
+			lootSensitivePaths = append(lootSensitivePaths, fmt.Sprintf("Exposure: %s", finding.Exposure))
+			lootSensitivePaths = append(lootSensitivePaths, fmt.Sprintf("Authentication: %s", finding.AuthType))
+			lootSensitivePaths = append(lootSensitivePaths, "Sensitive Paths:")
+			for _, path := range finding.SensitivePaths {
+				lootSensitivePaths = append(lootSensitivePaths, fmt.Sprintf("  - %s", path))
+			}
+			if len(finding.Hosts) > 0 {
+				lootSensitivePaths = append(lootSensitivePaths, fmt.Sprintf("\n# Test access:"))
+				for _, host := range finding.Hosts {
+					for _, sensPath := range finding.SensitivePaths {
+						// Extract just the path from "path (description)" format
+						pathOnly := strings.Split(sensPath, " (")[0]
+						lootSensitivePaths = append(lootSensitivePaths, fmt.Sprintf("curl -v http://%s%s", host, pathOnly))
+					}
+				}
+			}
+		}
+	}
+
 	table := internal.TableFile{
 		Name:   "Ingress",
 		Header: headers,
@@ -461,6 +734,10 @@ func ListIngress(cmd *cobra.Command, args []string) {
 	}
 
 	lootFiles := []internal.LootFile{
+		{
+			Name:     "Ingress-Risk-Dashboard",
+			Contents: strings.Join(lootRiskDashboard, "\n"),
+		},
 		{
 			Name:     "Ingress-Enum",
 			Contents: strings.Join(lootEnum, "\n"),
@@ -474,8 +751,24 @@ func ListIngress(cmd *cobra.Command, args []string) {
 			Contents: strings.Join(lootTLS, "\n"),
 		},
 		{
+			Name:     "Ingress-Certificate-Report",
+			Contents: strings.Join(lootCertificateReport, "\n"),
+		},
+		{
 			Name:     "Ingress-Security-Issues",
 			Contents: strings.Join(lootSecurityIssues, "\n"),
+		},
+		{
+			Name:     "Ingress-Backend-Security",
+			Contents: strings.Join(lootBackendSecurity, "\n"),
+		},
+		{
+			Name:     "Ingress-Authentication-Bypass",
+			Contents: strings.Join(lootAuthBypass, "\n"),
+		},
+		{
+			Name:     "Ingress-Sensitive-Paths",
+			Contents: strings.Join(lootSensitivePaths, "\n"),
 		},
 		{
 			Name:     "Ingress-Attack-Vectors",
@@ -520,33 +813,33 @@ func ListIngress(cmd *cobra.Command, args []string) {
 
 // Sensitive paths that should be protected
 var sensitivePaths = map[string]string{
-	"/admin":           "Admin panel",
-	"/admin/":          "Admin panel",
-	"/administrator":   "Admin panel",
-	"/debug":           "Debug endpoints",
-	"/debug/":          "Debug endpoints",
-	"/debug/pprof":     "Go pprof profiling",
-	"/metrics":         "Metrics exposure",
-	"/actuator":        "Spring Boot actuator",
-	"/actuator/":       "Spring Boot actuator",
-	"/.git":            "Git repository exposure",
-	"/.git/":           "Git repository exposure",
-	"/.env":            "Environment file exposure",
-	"/.env.":           "Environment file exposure",
-	"/graphql":         "GraphQL endpoint",
-	"/graphiql":        "GraphQL IDE",
-	"/swagger":         "API documentation",
-	"/swagger-ui":      "Swagger UI",
-	"/api-docs":        "API documentation",
-	"/api/v1":          "API v1 endpoints",
-	"/__debug":         "Debug toolbar",
-	"/server-status":   "Server status",
-	"/phpinfo":         "PHP info page",
-	"/config":          "Config endpoints",
-	"/console":         "Admin console",
-	"/health":          "Health check (info leak)",
-	"/status":          "Status page (info leak)",
-	"/api/swagger":     "Swagger API docs",
+	"/admin":         "Admin panel",
+	"/admin/":        "Admin panel",
+	"/administrator": "Admin panel",
+	"/debug":         "Debug endpoints",
+	"/debug/":        "Debug endpoints",
+	"/debug/pprof":   "Go pprof profiling",
+	"/metrics":       "Metrics exposure",
+	"/actuator":      "Spring Boot actuator",
+	"/actuator/":     "Spring Boot actuator",
+	"/.git":          "Git repository exposure",
+	"/.git/":         "Git repository exposure",
+	"/.env":          "Environment file exposure",
+	"/.env.":         "Environment file exposure",
+	"/graphql":       "GraphQL endpoint",
+	"/graphiql":      "GraphQL IDE",
+	"/swagger":       "API documentation",
+	"/swagger-ui":    "Swagger UI",
+	"/api-docs":      "API documentation",
+	"/api/v1":        "API v1 endpoints",
+	"/__debug":       "Debug toolbar",
+	"/server-status": "Server status",
+	"/phpinfo":       "PHP info page",
+	"/config":        "Config endpoints",
+	"/console":       "Admin console",
+	"/health":        "Health check (info leak)",
+	"/status":        "Status page (info leak)",
+	"/api/swagger":   "Swagger API docs",
 }
 
 // detectSensitivePaths identifies sensitive paths in ingress rules
@@ -974,31 +1267,103 @@ func analyzeIngressSecurity(ing *networkingv1.Ingress) ([]string, []string) {
 	return securityIssues, dangerousAnnotations
 }
 
-func calculateIngressRiskLevel(dangerousAnnotations []string, tlsEnabled bool, exposure string, securityIssues []string) string {
-	// CRITICAL: Dangerous annotations + internet-facing
-	if len(dangerousAnnotations) > 0 && exposure == "Internet-facing" {
+func calculateIngressRiskLevel(finding IngressFinding) string {
+	riskScore := 0
+	criticalFactors := []string{}
+	highFactors := []string{}
+
+	// CRITICAL FACTORS (30+ points each)
+	if len(finding.DangerousAnnotations) > 0 && finding.Exposure == "Internet-facing" {
+		riskScore += 100
+		criticalFactors = append(criticalFactors, "Dangerous annotations + Internet-facing")
+	}
+
+	if len(finding.SensitivePaths) > 0 && !finding.AuthEnabled && finding.Exposure == "Internet-facing" {
+		riskScore += 50
+		criticalFactors = append(criticalFactors, "Unauthenticated sensitive paths exposed to Internet")
+	}
+
+	if finding.CertExpiry == "Expired" && finding.Exposure == "Internet-facing" {
+		riskScore += 40
+		criticalFactors = append(criticalFactors, "Expired certificate on Internet-facing ingress")
+	}
+
+	if finding.BackendSecurity == "Vulnerable" && finding.Exposure == "Internet-facing" {
+		riskScore += 35
+		criticalFactors = append(criticalFactors, "Vulnerable backend + Internet-facing")
+	}
+
+	// HIGH FACTORS (15-25 points each)
+	if len(finding.DangerousAnnotations) > 0 {
+		riskScore += 25
+		highFactors = append(highFactors, "Dangerous annotations present")
+	}
+
+	if !finding.TLSEnabled && finding.Exposure == "Internet-facing" {
+		riskScore += 25
+		highFactors = append(highFactors, "No TLS on Internet-facing ingress")
+	}
+
+	if !finding.AuthEnabled && finding.Exposure == "Internet-facing" {
+		riskScore += 20
+		highFactors = append(highFactors, "No authentication on Internet-facing ingress")
+	}
+
+	if finding.CertExpiry == "Expiring Soon (<30d)" {
+		riskScore += 15
+		highFactors = append(highFactors, "Certificate expiring soon")
+	}
+
+	if len(finding.SensitivePaths) > 0 && !finding.AuthEnabled {
+		riskScore += 15
+		highFactors = append(highFactors, "Unauthenticated sensitive paths")
+	}
+
+	// MEDIUM FACTORS (5-10 points each)
+	if !finding.RateLimitEnabled && finding.Exposure == "Internet-facing" {
+		riskScore += 10
+	}
+
+	if !finding.WAFEnabled && finding.Exposure == "Internet-facing" {
+		riskScore += 10
+	}
+
+	if !finding.TLSEnabled {
+		riskScore += 8
+	}
+
+	if finding.BackendSecurity == "Vulnerable" {
+		riskScore += 8
+	}
+
+	if len(finding.SensitivePaths) > 0 {
+		riskScore += 5
+	}
+
+	// LOW FACTORS (1-3 points each)
+	if !finding.AuthEnabled {
+		riskScore += 3
+	}
+
+	if !finding.RateLimitEnabled {
+		riskScore += 2
+	}
+
+	if !finding.WAFEnabled {
+		riskScore += 2
+	}
+
+	// Count general security issues
+	riskScore += len(finding.SecurityIssues)
+
+	// Determine risk level based on score
+	if riskScore >= 50 {
 		return "CRITICAL"
-	}
-
-	// HIGH: Dangerous annotations OR (no TLS + internet-facing)
-	if len(dangerousAnnotations) > 0 {
+	} else if riskScore >= 25 {
 		return "HIGH"
-	}
-
-	if !tlsEnabled && exposure == "Internet-facing" {
-		return "HIGH"
-	}
-
-	// MEDIUM: Security issues + internet-facing
-	if len(securityIssues) > 0 && exposure == "Internet-facing" {
+	} else if riskScore >= 10 {
 		return "MEDIUM"
 	}
 
-	// MEDIUM: No TLS but internal
-	if !tlsEnabled {
-		return "MEDIUM"
-	}
-
-	// LOW: Everything else
 	return "LOW"
 }
