@@ -777,3 +777,45 @@ func AnalyzeHostPath(path string, readOnly bool) (bool, string) {
 
 	return false, ""
 }
+
+// GetDeploymentRiskLevel calculates risk level for a deployment's pod template
+// This is similar to GetPodRiskLevel but includes deployment-specific factors
+func GetDeploymentRiskLevel(
+	privileged bool,
+	hostPID bool,
+	hostIPC bool,
+	hostNetwork bool,
+	hostPathCount int,
+	writableHostPaths int,
+	runAsRoot bool,
+	hasDangerousCaps bool,
+	allowPrivilegeEscalation bool,
+	hasImageWithLatestTag bool,
+	hasResourceLimits bool,
+) string {
+	// Use existing pod risk calculation as base
+	baseRisk := GetPodRiskLevel(
+		privileged,
+		hostPID,
+		hostIPC,
+		hostNetwork,
+		hostPathCount,
+		writableHostPaths,
+		runAsRoot,
+		hasDangerousCaps,
+		allowPrivilegeEscalation,
+	)
+
+	// Additional deployment-specific risk factors
+	// HIGH risk + latest tag + no resource limits = CRITICAL (supply chain + DoS risk)
+	if baseRisk == "HIGH" && hasImageWithLatestTag && !hasResourceLimits {
+		return "CRITICAL"
+	}
+
+	// HIGH risk + latest tag (supply chain risk)
+	if baseRisk == "HIGH" && hasImageWithLatestTag {
+		return "CRITICAL"
+	}
+
+	return baseRisk
+}
