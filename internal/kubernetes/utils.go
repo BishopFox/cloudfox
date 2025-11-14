@@ -674,3 +674,106 @@ func HasPrivateKeys(secretType string, dataKeys []string) bool {
 	}
 	return false
 }
+
+// Pod Security Analysis Functions
+
+// GetPodRiskLevel calculates risk level for a pod based on security context
+func GetPodRiskLevel(
+	privileged bool,
+	hostPID bool,
+	hostIPC bool,
+	hostNetwork bool,
+	hostPathCount int,
+	writableHostPaths int,
+	runAsRoot bool,
+	hasDangerousCaps bool,
+	allowPrivilegeEscalation bool,
+) string {
+	// CRITICAL: Privileged + host namespaces + writable host paths = node compromise
+	if privileged && (hostPID || hostNetwork || hostIPC) {
+		return "CRITICAL"
+	}
+	if writableHostPaths > 0 && (hostPID || hostNetwork) {
+		return "CRITICAL"
+	}
+	if privileged && writableHostPaths > 0 {
+		return "CRITICAL"
+	}
+
+	// HIGH: Container escape vectors
+	if privileged {
+		return "HIGH"
+	}
+	if hostPID || hostIPC || hostNetwork {
+		return "HIGH"
+	}
+	if writableHostPaths > 0 {
+		return "HIGH"
+	}
+	if hasDangerousCaps {
+		return "HIGH"
+	}
+
+	// MEDIUM: Potential escape vectors
+	if hostPathCount > 0 {
+		return "MEDIUM"
+	}
+	if runAsRoot && allowPrivilegeEscalation {
+		return "MEDIUM"
+	}
+
+	// LOW: Basic pod with no major risks
+	return "LOW"
+}
+
+// IsDangerousCapability checks if a capability is dangerous
+func IsDangerousCapability(cap string) bool {
+	dangerousCaps := []string{
+		"SYS_ADMIN",       // Mount, pivot_root, unshare, etc
+		"SYS_PTRACE",      // Debug processes, inject code
+		"SYS_MODULE",      // Load kernel modules
+		"DAC_READ_SEARCH", // Bypass file read permission checks
+		"DAC_OVERRIDE",    // Bypass file permission checks
+		"SYS_RAWIO",       // Raw I/O operations
+		"SYS_CHROOT",      // chroot() escape
+		"SYS_BOOT",        // Reboot system
+		"NET_ADMIN",       // Network manipulation
+		"NET_RAW",         // Raw sockets, packet sniffing
+		"SYS_TIME",        // Manipulate system clock
+		"SYS_RESOURCE",    // Override resource limits
+	}
+	return contains(dangerousCaps, cap)
+}
+
+// AnalyzeHostPath checks if a host path is sensitive
+func AnalyzeHostPath(path string, readOnly bool) (bool, string) {
+	sensitivePaths := map[string]string{
+		"/":                               "Full host filesystem access",
+		"/host":                           "Full host filesystem (mounted at /host)",
+		"/var/run/docker.sock":            "Docker socket (container escape)",
+		"/var/run/cri-dockerd.sock":       "Docker socket (container escape)",
+		"/run/containerd/containerd.sock": "Containerd socket (container escape)",
+		"/var/run/crio/crio.sock":         "CRI-O socket (container escape)",
+		"/etc":                            "Host configuration files",
+		"/etc/kubernetes":                 "Kubernetes configuration",
+		"/etc/kubernetes/manifests":       "Static pod manifests",
+		"/etc/kubernetes/pki":             "Kubernetes certificates",
+		"/var/lib/kubelet":                "Kubelet data directory",
+		"/var/lib/kubelet/pki":            "Kubelet certificates",
+		"/var/lib/docker":                 "Docker data directory",
+		"/var/lib/containerd":             "Containerd data directory",
+		"/proc":                           "Host process information",
+		"/sys":                            "Host system information",
+		"/dev":                            "Host devices",
+		"/root":                           "Host root user home",
+		"/home":                           "Host user home directories",
+	}
+
+	for sensitivePath, description := range sensitivePaths {
+		if strings.HasPrefix(path, sensitivePath) || path == sensitivePath {
+			return true, description
+		}
+	}
+
+	return false, ""
+}
