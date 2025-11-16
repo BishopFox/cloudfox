@@ -944,6 +944,82 @@ func (m *BackupInventoryModule) writeOutput(ctx context.Context, logger internal
 		TableCols: unprotectedHeader,
 	}
 
+	// -------------------- Check for multi-tenant splitting FIRST --------------------
+	if azinternal.ShouldSplitByTenant(m.IsMultiTenant, m.Tenants) {
+		// For multi-tenant splitting, we need to handle ALL 4 tables
+		// Each table needs to be split by tenant
+
+		// Split vaults by tenant
+		if err := m.FilterAndWritePerTenantAuto(ctx, logger, m.Tenants, m.VaultRows, vaultHeader,
+			"recovery-services-vaults", globals.AZ_BACKUP_INVENTORY_MODULE_NAME); err != nil {
+			logger.ErrorM(fmt.Sprintf("Error writing per-tenant vaults output: %v", err), globals.AZ_BACKUP_INVENTORY_MODULE_NAME)
+			return
+		}
+
+		// Split policies by tenant
+		if err := m.FilterAndWritePerTenantAuto(ctx, logger, m.Tenants, m.PolicyRows, policyHeader,
+			"backup-policies", globals.AZ_BACKUP_INVENTORY_MODULE_NAME); err != nil {
+			logger.ErrorM(fmt.Sprintf("Error writing per-tenant policies output: %v", err), globals.AZ_BACKUP_INVENTORY_MODULE_NAME)
+			return
+		}
+
+		// Split protected items by tenant
+		if err := m.FilterAndWritePerTenantAuto(ctx, logger, m.Tenants, m.ProtectedItemRows, protectedHeader,
+			"protected-items", globals.AZ_BACKUP_INVENTORY_MODULE_NAME); err != nil {
+			logger.ErrorM(fmt.Sprintf("Error writing per-tenant protected items output: %v", err), globals.AZ_BACKUP_INVENTORY_MODULE_NAME)
+			return
+		}
+
+		// Split unprotected VMs by tenant
+		if err := m.FilterAndWritePerTenantAuto(ctx, logger, m.Tenants, m.UnprotectedVMRows, unprotectedHeader,
+			"unprotected-vms-sample", globals.AZ_BACKUP_INVENTORY_MODULE_NAME); err != nil {
+			logger.ErrorM(fmt.Sprintf("Error writing per-tenant unprotected VMs output: %v", err), globals.AZ_BACKUP_INVENTORY_MODULE_NAME)
+			return
+		}
+
+		logger.SuccessM(fmt.Sprintf("Backup inventory complete: %d vaults, %d policies, %d protected items, %d unprotected VMs (split by tenant)",
+			len(m.VaultRows), len(m.PolicyRows), len(m.ProtectedItemRows), len(m.UnprotectedVMRows)), globals.AZ_BACKUP_INVENTORY_MODULE_NAME)
+		return
+	}
+
+	// -------------------- Check for multi-subscription splitting SECOND --------------------
+	if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
+		// For multi-subscription splitting, we need to handle ALL 4 tables
+		// Each table needs to be split by subscription
+
+		// Split vaults by subscription
+		if err := m.FilterAndWritePerSubscriptionAuto(ctx, logger, m.Subscriptions, m.VaultRows, vaultHeader,
+			"recovery-services-vaults", globals.AZ_BACKUP_INVENTORY_MODULE_NAME); err != nil {
+			logger.ErrorM(fmt.Sprintf("Error writing per-subscription vaults output: %v", err), globals.AZ_BACKUP_INVENTORY_MODULE_NAME)
+			return
+		}
+
+		// Split policies by subscription
+		if err := m.FilterAndWritePerSubscriptionAuto(ctx, logger, m.Subscriptions, m.PolicyRows, policyHeader,
+			"backup-policies", globals.AZ_BACKUP_INVENTORY_MODULE_NAME); err != nil {
+			logger.ErrorM(fmt.Sprintf("Error writing per-subscription policies output: %v", err), globals.AZ_BACKUP_INVENTORY_MODULE_NAME)
+			return
+		}
+
+		// Split protected items by subscription
+		if err := m.FilterAndWritePerSubscriptionAuto(ctx, logger, m.Subscriptions, m.ProtectedItemRows, protectedHeader,
+			"protected-items", globals.AZ_BACKUP_INVENTORY_MODULE_NAME); err != nil {
+			logger.ErrorM(fmt.Sprintf("Error writing per-subscription protected items output: %v", err), globals.AZ_BACKUP_INVENTORY_MODULE_NAME)
+			return
+		}
+
+		// Split unprotected VMs by subscription
+		if err := m.FilterAndWritePerSubscriptionAuto(ctx, logger, m.Subscriptions, m.UnprotectedVMRows, unprotectedHeader,
+			"unprotected-vms-sample", globals.AZ_BACKUP_INVENTORY_MODULE_NAME); err != nil {
+			logger.ErrorM(fmt.Sprintf("Error writing per-subscription unprotected VMs output: %v", err), globals.AZ_BACKUP_INVENTORY_MODULE_NAME)
+			return
+		}
+
+		logger.SuccessM(fmt.Sprintf("Backup inventory complete: %d vaults, %d policies, %d protected items, %d unprotected VMs (split by subscription)",
+			len(m.VaultRows), len(m.PolicyRows), len(m.ProtectedItemRows), len(m.UnprotectedVMRows)), globals.AZ_BACKUP_INVENTORY_MODULE_NAME)
+		return
+	}
+
 	// -------------------- Combine tables --------------------
 	tables := []internal.TableFile{
 		vaultTable,
@@ -968,23 +1044,39 @@ func (m *BackupInventoryModule) writeOutput(ctx context.Context, logger internal
 	}
 
 	// -------------------- Generate output --------------------
-	_ = BackupInventoryOutput{ // output - unused for now
+	output := BackupInventoryOutput{
 		Table: tables,
 		Loot:  loot,
 	}
 
-	// -------------------- Write files using helper --------------------
-	summary := fmt.Sprintf("%d subscriptions, %d vaults, %d policies, %d protected items, %d unprotected VMs (sample)",
+	// -------------------- Determine scope for output --------------------
+	scopeType, scopeIDs, scopeNames := azinternal.DetermineScopeForOutput(
+		m.Subscriptions, m.TenantID, m.TenantName, m.TenantFlagPresent)
+	scopeNames = azinternal.GetSubscriptionNamesForOutput(ctx, m.Session, scopeType, scopeIDs)
+
+	// -------------------- Write output using HandleOutputSmart --------------------
+	if err := internal.HandleOutputSmart(
+		"Azure",
+		m.Format,
+		m.OutputDirectory,
+		m.Verbosity,
+		m.WrapTable,
+		scopeType,
+		scopeIDs,
+		scopeNames,
+		m.UserUPN,
+		output,
+	); err != nil {
+		logger.ErrorM(fmt.Sprintf("Error writing output: %v", err), globals.AZ_BACKUP_INVENTORY_MODULE_NAME)
+		m.CommandCounter.Error++
+		return
+	}
+
+	// -------------------- Success summary --------------------
+	logger.SuccessM(fmt.Sprintf("Backup inventory complete: %d subscriptions, %d vaults, %d policies, %d protected items, %d unprotected VMs",
 		len(m.Subscriptions),
 		len(m.VaultRows),
 		len(m.PolicyRows),
 		len(m.ProtectedItemRows),
-		len(m.UnprotectedVMRows))
-
-	// Write output summary
-	// TODO: Implement proper table and loot file writing
-	logger.InfoM(summary, globals.AZ_BACKUP_INVENTORY_MODULE_NAME)
-	if m.Verbosity >= 1 {
-		fmt.Println(summary)
-	}
+		len(m.UnprotectedVMRows)), globals.AZ_BACKUP_INVENTORY_MODULE_NAME)
 }

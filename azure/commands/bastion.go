@@ -449,72 +449,137 @@ func (m *BastionModule) writeOutput(ctx context.Context, logger internal.Logger)
 		return
 	}
 
-	// -------------------- TABLE 1: VNet Coverage Summary --------------------
+	// Define headers
+	coverageHeaders := []string{
+		"Tenant Name",
+		"Tenant ID",
+		"Total VNets",
+		"Protected VNets",
+		"Unprotected VNets",
+		"Coverage %",
+		"Bastion Host Count",
+	}
+
+	bastionHeaders := []string{
+		"Tenant Name",
+		"Tenant ID",
+		"Subscription ID",
+		"Subscription Name",
+		"Resource Group",
+		"Region",
+		"Bastion Name",
+		"SKU",
+		"SKU Name",
+		"Provisioning State",
+		"VNet Name",
+		"DNS Name",
+		"IP Config Count",
+		"Scale Units",
+		"Native Tunneling",
+		"Disable Copy/Paste",
+		"File Copy",
+		"IP Connect",
+		"Shareable Link",
+		"Kerberos",
+		"Risk",
+		"Risk Note",
+	}
+
+	// -------------------- Check for multi-tenant splitting FIRST --------------------
+	if azinternal.ShouldSplitByTenant(m.IsMultiTenant, m.Tenants) {
+		if len(m.CoverageRows) > 0 {
+			if err := m.FilterAndWritePerTenantAuto(ctx, logger, m.Tenants, m.CoverageRows,
+				coverageHeaders, "bastion-vnet-coverage", globals.AZ_BASTION_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-tenant coverage: %v", err), globals.AZ_BASTION_MODULE_NAME)
+			}
+		}
+		if len(m.BastionRows) > 0 {
+			if err := m.FilterAndWritePerTenantAuto(ctx, logger, m.Tenants, m.BastionRows,
+				bastionHeaders, "bastion-hosts", globals.AZ_BASTION_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-tenant bastion hosts: %v", err), globals.AZ_BASTION_MODULE_NAME)
+			}
+		}
+		logger.SuccessM(fmt.Sprintf("Bastion enumeration complete: %d hosts, %d coverage rows (split by tenant)",
+			len(m.BastionRows), len(m.CoverageRows)), globals.AZ_BASTION_MODULE_NAME)
+		return
+	}
+
+	// -------------------- Check for multi-subscription splitting SECOND --------------------
+	if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
+		if len(m.CoverageRows) > 0 {
+			if err := m.FilterAndWritePerSubscriptionAuto(ctx, logger, m.Subscriptions, m.CoverageRows,
+				coverageHeaders, "bastion-vnet-coverage", globals.AZ_BASTION_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-subscription coverage: %v", err), globals.AZ_BASTION_MODULE_NAME)
+			}
+		}
+		if len(m.BastionRows) > 0 {
+			if err := m.FilterAndWritePerSubscriptionAuto(ctx, logger, m.Subscriptions, m.BastionRows,
+				bastionHeaders, "bastion-hosts", globals.AZ_BASTION_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-subscription bastion hosts: %v", err), globals.AZ_BASTION_MODULE_NAME)
+			}
+		}
+		logger.SuccessM(fmt.Sprintf("Bastion enumeration complete: %d hosts, %d coverage rows (split by subscription)",
+			len(m.BastionRows), len(m.CoverageRows)), globals.AZ_BASTION_MODULE_NAME)
+		return
+	}
+
+	// -------------------- Build tables --------------------
+	tables := []internal.TableFile{}
+
 	if len(m.CoverageRows) > 0 {
-		_ = []string{ // coverageHeaders - unused for now
-			"Tenant Name",
-			"Tenant ID",
-			"Total VNets",
-			"Protected VNets",
-			"Unprotected VNets",
-			"Coverage %",
-			"Bastion Host Count",
-		}
-
-		// TODO: Implement WriteFullOutput or use alternative output method
-		logger.InfoM(fmt.Sprintf("VNet coverage: %d VNets analyzed", len(m.CoverageRows)), globals.AZ_BASTION_MODULE_NAME)
+		tables = append(tables, internal.TableFile{
+			Name:   "bastion-vnet-coverage",
+			Header: coverageHeaders,
+			Body:   m.CoverageRows,
+		})
 	}
 
-	// -------------------- TABLE 2: Bastion Hosts --------------------
 	if len(m.BastionRows) > 0 {
-		bastionHeaders := []string{
-			"Tenant Name",
-			"Tenant ID",
-			"Subscription ID",
-			"Subscription Name",
-			"Resource Group",
-			"Region",
-			"Bastion Name",
-			"SKU",
-			"SKU Name",
-			"Provisioning State",
-			"VNet Name",
-			"DNS Name",
-			"IP Config Count",
-			"Scale Units",
-			"Native Tunneling",
-			"Disable Copy/Paste",
-			"File Copy",
-			"IP Connect",
-			"Shareable Link",
-			"Kerberos",
-			"Risk",
-			"Risk Note",
-		}
+		tables = append(tables, internal.TableFile{
+			Name:   "bastion-hosts",
+			Header: bastionHeaders,
+			Body:   m.BastionRows,
+		})
+	}
 
-		if azinternal.ShouldSplitByTenant(m.IsMultiTenant, m.Tenants) {
-			if err := m.FilterAndWritePerTenantAuto(
-				ctx, logger, m.Tenants, m.BastionRows, bastionHeaders,
-				"bastion-hosts", globals.AZ_BASTION_MODULE_NAME,
-			); err != nil {
-				logger.ErrorM("Failed to write per-tenant Bastion hosts", globals.AZ_BASTION_MODULE_NAME)
-			}
-		} else if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
-			if err := m.FilterAndWritePerSubscriptionAuto(
-				ctx, logger, m.Subscriptions, m.BastionRows, bastionHeaders,
-				"bastion-hosts", globals.AZ_BASTION_MODULE_NAME,
-			); err != nil {
-				logger.ErrorM("Failed to write per-subscription Bastion hosts", globals.AZ_BASTION_MODULE_NAME)
-			}
-		} else {
-			// TODO: Implement WriteFullOutput or use alternative output method
-			logger.InfoM(fmt.Sprintf("Found %d Bastion hosts", len(m.BastionRows)), globals.AZ_BASTION_MODULE_NAME)
+	// -------------------- Convert loot map to slice --------------------
+	var loot []internal.LootFile
+	for _, lf := range m.LootMap {
+		if lf.Contents != "" {
+			loot = append(loot, *lf)
 		}
 	}
 
-	// -------------------- LOOT FILES --------------------
-	// TODO: Implement WriteLoot or use alternative loot method
-	if len(m.LootMap) > 0 {
-		logger.InfoM(fmt.Sprintf("Generated %d loot files", len(m.LootMap)), globals.AZ_BASTION_MODULE_NAME)
+	// -------------------- Generate output --------------------
+	output := BastionOutput{
+		Table: tables,
+		Loot:  loot,
 	}
+
+	// -------------------- Determine scope for output --------------------
+	scopeType, scopeIDs, scopeNames := azinternal.DetermineScopeForOutput(
+		m.Subscriptions, m.TenantID, m.TenantName, m.TenantFlagPresent)
+	scopeNames = azinternal.GetSubscriptionNamesForOutput(ctx, m.Session, scopeType, scopeIDs)
+
+	// -------------------- Write output using HandleOutputSmart --------------------
+	if err := internal.HandleOutputSmart(
+		"Azure",
+		m.Format,
+		m.OutputDirectory,
+		m.Verbosity,
+		m.WrapTable,
+		scopeType,
+		scopeIDs,
+		scopeNames,
+		m.UserUPN,
+		output,
+	); err != nil {
+		logger.ErrorM(fmt.Sprintf("Error writing output: %v", err), globals.AZ_BASTION_MODULE_NAME)
+		m.CommandCounter.Error++
+		return
+	}
+
+	// -------------------- Success summary --------------------
+	logger.SuccessM(fmt.Sprintf("Bastion enumeration complete: %d hosts, %d coverage rows",
+		len(m.BastionRows), len(m.CoverageRows)), globals.AZ_BASTION_MODULE_NAME)
 }

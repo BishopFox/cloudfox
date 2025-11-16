@@ -235,65 +235,82 @@ func (m *ConditionalAccessModule) writeOutput(logger internal.Logger) {
 
 	// Define headers
 	headers := []string{
-		"Tenant Name",
-		"Tenant ID",
-		"Policy ID",
-		"Policy Name",
-		"State",
-		"Included Users",
-		"Excluded Users",
-		"Included Groups",
-		"Excluded Groups",
-		"Included Roles",
-		"Excluded Roles",
-		"Included Applications",
-		"Excluded Applications",
-		"Included Locations",
-		"Excluded Locations",
-		"Included Platforms",
-		"Client App Types",
-		"User Risk Levels",
-		"Sign-in Risk Levels",
-		"Grant Controls",
-		"Session Controls",
-		"Created Date",
-		"Modified Date",
+		"Tenant Name", "Tenant ID", "Policy ID", "Policy Name", "State",
+		"Included Users", "Excluded Users", "Included Groups", "Excluded Groups",
+		"Included Roles", "Excluded Roles", "Included Applications", "Excluded Applications",
+		"Included Locations", "Excluded Locations", "Included Platforms", "Client App Types",
+		"User Risk Levels", "Sign-in Risk Levels", "Grant Controls", "Session Controls",
+		"Created Date", "Modified Date",
 	}
 
 	// Generate loot files
 	lootFiles := m.generateConditionalAccessLootFiles()
 
-	// Build output
+	// -------------------- Check for split by tenant (FIRST) --------------------
+	if azinternal.ShouldSplitByTenant(m.IsMultiTenant, m.Tenants) {
+		if len(m.PolicyRows) > 0 {
+			// Split policies by tenant
+			ctx := context.Background()
+			if err := m.FilterAndWritePerTenantAuto(
+				ctx, logger, m.Tenants, m.PolicyRows, headers,
+				"conditional-access", globals.AZ_CONDITIONAL_ACCESS_MODULE_NAME,
+			); err != nil {
+				logger.ErrorM("Failed to write per-tenant Conditional Access policies", globals.AZ_CONDITIONAL_ACCESS_MODULE_NAME)
+			}
+		}
+		// Write loot files separately for multi-tenant (not split)
+		if len(lootFiles) > 0 {
+			output := ConditionalAccessOutput{
+				Table: []internal.TableFile{},
+				Loot:  lootFiles,
+			}
+			scopeType := "tenant"
+			scopeIDs := []string{m.TenantID}
+			scopeNames := []string{m.TenantName}
+			if err := internal.HandleOutputSmart(
+				"Azure", m.Format, m.OutputDirectory, m.Verbosity, m.WrapTable,
+				scopeType, scopeIDs, scopeNames, m.UserUPN, output,
+			); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing loot output: %v", err), globals.AZ_CONDITIONAL_ACCESS_MODULE_NAME)
+			}
+		}
+		return
+	}
+
+	// -------------------- Non-split case --------------------
 	output := ConditionalAccessOutput{
 		Table: []internal.TableFile{
 			{
-				Header:    headers,
-				Body:      m.PolicyRows,
-				TableCols: headers,
-				Name:      "conditional-access",
+				Header: headers,
+				Body:   m.PolicyRows,
+				Name:   "conditional-access",
 			},
 		},
 		Loot: lootFiles,
 	}
 
-	// Write table
-	// TODO: Implement proper output writing
-	/*
-	if err := internal.WriteFullOutput(
-		output,
+	// Determine scope for output (tenant-level for Graph API)
+	scopeType := "tenant"
+	scopeIDs := []string{m.TenantID}
+	scopeNames := []string{m.TenantName}
+
+	// Write output using HandleOutputSmart
+	if err := internal.HandleOutputSmart(
+		"Azure",
+		m.Format,
 		m.OutputDirectory,
 		m.Verbosity,
-		globals.AZ_CONDITIONAL_ACCESS_MODULE_NAME,
-		m.AWSProfile,
-		m.TenantID,
+		m.WrapTable,
+		scopeType,
+		scopeIDs,
+		scopeNames,
 		m.UserUPN,
 		output,
 	); err != nil {
 		logger.ErrorM(fmt.Sprintf("Error writing output: %v", err), globals.AZ_CONDITIONAL_ACCESS_MODULE_NAME)
 		m.CommandCounter.Error++
+		return
 	}
-	*/
-	_ = output // Use variable to avoid unused warning
 
 	logger.SuccessM(fmt.Sprintf("Found %d Conditional Access Policies for tenant: %s", len(m.PolicyRows), m.TenantName), globals.AZ_CONDITIONAL_ACCESS_MODULE_NAME)
 }

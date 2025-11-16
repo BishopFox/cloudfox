@@ -39,6 +39,7 @@ type PrincipalsModule struct {
 	Subscriptions []string
 	PrincipalRows [][]string
 	LootMap       map[string]*internal.LootFile
+	collectedMIs  []azinternal.ManagedIdentity // For callback access during MI enumeration
 	mu            sync.Mutex
 }
 
@@ -239,18 +240,15 @@ func (m *PrincipalsModule) processTenantPrincipals(ctx context.Context, logger i
 	if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 		logger.InfoM("Enumerating user-assigned managed identities (per-subscription)...", globals.AZ_PRINCIPALS_MODULE_NAME)
 	}
-	miList := []azinternal.ManagedIdentity{}
-	for _, sub := range m.Subscriptions {
-		mis, miErr := azinternal.ListUserAssignedManagedIdentities(ctx, m.Session, []string{sub})
-		if miErr == nil {
-			miList = append(miList, mis...)
-		} else {
-			if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
-				logger.ErrorM(fmt.Sprintf("Failed to list managed identities in subscription %s: %v", sub, miErr), globals.AZ_PRINCIPALS_MODULE_NAME)
-			}
-		}
-	}
-	for _, mi := range miList {
+
+	// Initialize MI collection list
+	m.collectedMIs = []azinternal.ManagedIdentity{}
+
+	// Use RunSubscriptionEnumeration for standardized processing
+	m.RunSubscriptionEnumeration(ctx, logger, m.Subscriptions, globals.AZ_PRINCIPALS_MODULE_NAME, m.processSubscriptionForMIs)
+
+	// Add collected MIs to principals list
+	for _, mi := range m.collectedMIs {
 		principals = append(principals, Principal{
 			Service:     "Azure Resource",
 			Type:        "UserAssignedManagedIdentity",
@@ -299,6 +297,20 @@ func (m *PrincipalsModule) processTenantPrincipals(ctx context.Context, logger i
 	}
 
 	wg.Wait()
+}
+
+// processSubscriptionForMIs processes a single subscription for managed identity collection
+func (m *PrincipalsModule) processSubscriptionForMIs(ctx context.Context, subID string, logger internal.Logger) {
+	mis, miErr := azinternal.ListUserAssignedManagedIdentities(ctx, m.Session, []string{subID})
+	if miErr == nil {
+		m.mu.Lock()
+		m.collectedMIs = append(m.collectedMIs, mis...)
+		m.mu.Unlock()
+	} else {
+		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+			logger.ErrorM(fmt.Sprintf("Failed to list managed identities in subscription %s: %v", subID, miErr), globals.AZ_PRINCIPALS_MODULE_NAME)
+		}
+	}
 }
 
 // ------------------------------

@@ -54,16 +54,18 @@ type PermissionsModule struct {
 	azinternal.BaseAzureModule // Embed common fields (15 fields)
 
 	// Module-specific fields
-	Subscriptions   []string
-	PermissionRows  [][]string // All permissions collected (one row per action)
-	RoleDefinitions map[string]*armauthorization.RoleDefinition
-	PrincipalCache  map[string]*PrincipalInfo // Cache for principal lookups
-	GroupCache      map[string]*PrincipalInfo // Cache for group lookups
-	TenantLevel     bool
-	SubLevel        bool
-	RGLevel         bool
-	Workers         int
-	mu              sync.Mutex // Protects PermissionRows and caches
+	Subscriptions      []string
+	PermissionRows     [][]string // All permissions collected (one row per action)
+	RoleDefinitions    map[string]*armauthorization.RoleDefinition
+	PrincipalCache     map[string]*PrincipalInfo // Cache for principal lookups
+	GroupCache         map[string]*PrincipalInfo // Cache for group lookups
+	TenantLevel        bool
+	SubLevel           bool
+	RGLevel            bool
+	Workers            int
+	currentPrincipals  []azinternal.PrincipalInfo // For callback access during enumeration
+	orphanedScanState  *orphanedScanState         // For callback access during orphaned scan
+	mu                 sync.Mutex                 // Protects PermissionRows and caches
 }
 
 // PrincipalInfo holds cached principal information
@@ -300,84 +302,100 @@ func (m *PermissionsModule) collectRoleDefinitions(ctx context.Context, subID st
 // scanForOrphanedPrincipals - Fallback scan for any principals with role assignments that weren't discovered
 // ======================
 func (m *PermissionsModule) scanForOrphanedPrincipals(ctx context.Context, knownPrincipals []azinternal.PrincipalInfo, logger internal.Logger) []azinternal.PrincipalInfo {
-	var orphanedPrincipals []azinternal.PrincipalInfo
-	seenPrincipals := make(map[string]bool)
-	orphanedPrincipalIDs := make(map[string]bool)
+	// Initialize scan state
+	m.orphanedScanState = &orphanedScanState{
+		seenPrincipals:       make(map[string]bool),
+		orphanedPrincipalIDs: make(map[string]bool),
+		orphanedPrincipals:   []azinternal.PrincipalInfo{},
+	}
 
 	// Build map of known principal IDs
 	for _, p := range knownPrincipals {
-		seenPrincipals[p.ObjectID] = true
+		m.orphanedScanState.seenPrincipals[p.ObjectID] = true
 	}
 
+	// Use RunSubscriptionEnumeration for standardized processing
+	m.RunSubscriptionEnumeration(ctx, logger, m.Subscriptions, globals.AZ_PERMISSIONS_MODULE_NAME, m.processSubscriptionForOrphanedScan)
+
+	return m.orphanedScanState.orphanedPrincipals
+}
+
+// orphanedScanState holds state for orphaned principal scanning
+type orphanedScanState struct {
+	seenPrincipals       map[string]bool
+	orphanedPrincipalIDs map[string]bool
+	orphanedPrincipals   []azinternal.PrincipalInfo
+}
+
+// processSubscriptionForOrphanedScan processes a single subscription for orphaned principal scanning
+func (m *PermissionsModule) processSubscriptionForOrphanedScan(ctx context.Context, subID string, logger internal.Logger) {
 	// Get ARM token
 	token, err := m.Session.GetTokenForResource(globals.CommonScopes[0])
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Failed to get token for orphaned principal scan: %v", err), globals.AZ_PERMISSIONS_MODULE_NAME)
-		return orphanedPrincipals
+		return
 	}
 
-	// Process each subscription
-	for _, subID := range m.Subscriptions {
-		cred := &azinternal.StaticTokenCredential{Token: token}
-		clientFactory, err := armauthorization.NewClientFactory(subID, cred, nil)
-		if err != nil {
-			continue
-		}
+	cred := &azinternal.StaticTokenCredential{Token: token}
+	clientFactory, err := armauthorization.NewClientFactory(subID, cred, nil)
+	if err != nil {
+		return
+	}
 
-		authClient := clientFactory.NewRoleAssignmentsClient()
+	authClient := clientFactory.NewRoleAssignmentsClient()
 
-		// Build all scopes to check
-		scopes := m.buildScopesForSubscription(ctx, subID, authClient, cred, logger)
+	// Build all scopes to check
+	scopes := m.buildScopesForSubscription(ctx, subID, authClient, cred, logger)
 
-		// Scan role assignments at each scope
-		for _, scope := range scopes {
-			pager := authClient.NewListForScopePager(scope, nil)
-			for pager.More() {
-				page, err := pager.NextPage(ctx)
-				if err != nil {
-					break
-				}
+	// Scan role assignments at each scope
+	for _, scope := range scopes {
+		pager := authClient.NewListForScopePager(scope, nil)
+		for pager.More() {
+			page, err := pager.NextPage(ctx)
+			if err != nil {
+				break
+			}
 
-				for _, ra := range page.Value {
-					if ra.Properties != nil && ra.Properties.PrincipalID != nil {
-						principalID := *ra.Properties.PrincipalID
+			for _, ra := range page.Value {
+				if ra.Properties != nil && ra.Properties.PrincipalID != nil {
+					principalID := *ra.Properties.PrincipalID
 
-						// Check if this principal is unknown
-						if !seenPrincipals[principalID] && !orphanedPrincipalIDs[principalID] {
-							orphanedPrincipalIDs[principalID] = true
+					// Check if this principal is unknown (thread-safe access with mutex)
+					m.mu.Lock()
+					isUnknown := !m.orphanedScanState.seenPrincipals[principalID] && !m.orphanedScanState.orphanedPrincipalIDs[principalID]
+					if isUnknown {
+						m.orphanedScanState.orphanedPrincipalIDs[principalID] = true
 
-							// Try to determine principal type
-							principalType := "Unknown"
-							if ra.Properties.PrincipalType != nil {
-								principalType = string(*ra.Properties.PrincipalType)
-							}
+						// Try to determine principal type
+						principalType := "Unknown"
+						if ra.Properties.PrincipalType != nil {
+							principalType = string(*ra.Properties.PrincipalType)
+						}
 
-							// Add as orphaned principal
-							orphanedPrincipals = append(orphanedPrincipals, azinternal.PrincipalInfo{
-								ObjectID:          principalID,
-								UserPrincipalName: "Unknown",
-								DisplayName:       fmt.Sprintf("Orphaned-%s", principalID[:8]),
-								UserType:          fmt.Sprintf("Orphaned%s", principalType),
-							})
+						// Add as orphaned principal
+						m.orphanedScanState.orphanedPrincipals = append(m.orphanedScanState.orphanedPrincipals, azinternal.PrincipalInfo{
+							ObjectID:          principalID,
+							UserPrincipalName: "Unknown",
+							DisplayName:       fmt.Sprintf("Orphaned-%s", principalID[:8]),
+							UserType:          fmt.Sprintf("Orphaned%s", principalType),
+						})
 
-							if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
-								logger.InfoM(fmt.Sprintf("Found orphaned principal: %s (type: %s)", principalID, principalType), globals.AZ_PERMISSIONS_MODULE_NAME)
-							}
+						if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
+							logger.InfoM(fmt.Sprintf("Found orphaned principal: %s (type: %s)", principalID, principalType), globals.AZ_PERMISSIONS_MODULE_NAME)
 						}
 					}
+					m.mu.Unlock()
 				}
 			}
 		}
-
-		// Also check PIM assignments for orphaned principals
-		m.scanPIMForOrphanedPrincipals(ctx, subID, token, seenPrincipals, orphanedPrincipalIDs, &orphanedPrincipals, logger)
 	}
 
-	return orphanedPrincipals
+	// Also check PIM assignments for orphaned principals
+	m.scanPIMForOrphanedPrincipals(ctx, subID, token, logger)
 }
 
 // Helper to scan PIM for orphaned principals
-func (m *PermissionsModule) scanPIMForOrphanedPrincipals(ctx context.Context, subID, token string, seenPrincipals, orphanedPrincipalIDs map[string]bool, orphanedPrincipals *[]azinternal.PrincipalInfo, logger internal.Logger) {
+func (m *PermissionsModule) scanPIMForOrphanedPrincipals(ctx context.Context, subID, token string, logger internal.Logger) {
 	// Check PIM Eligible
 	pimEligibilityURL := fmt.Sprintf("https://management.azure.com/subscriptions/%s/providers/Microsoft.Authorization/roleEligibilityScheduleInstances?api-version=2020-10-01", subID)
 	pimBody, err := azinternal.HTTPRequestWithRetry(ctx, "GET", pimEligibilityURL, token, nil, azinternal.DefaultRateLimitConfig())
@@ -398,17 +416,22 @@ func (m *PermissionsModule) scanPIMForOrphanedPrincipals(ctx context.Context, su
 		if json.Unmarshal(pimBody, &pimData) == nil {
 			for _, pimAssignment := range pimData.Value {
 				principalID := pimAssignment.Properties.PrincipalID
-				if !seenPrincipals[principalID] && !orphanedPrincipalIDs[principalID] {
-					orphanedPrincipalIDs[principalID] = true
+
+				// Thread-safe access with mutex
+				m.mu.Lock()
+				isUnknown := !m.orphanedScanState.seenPrincipals[principalID] && !m.orphanedScanState.orphanedPrincipalIDs[principalID]
+				if isUnknown {
+					m.orphanedScanState.orphanedPrincipalIDs[principalID] = true
 					principalType := pimAssignment.Properties.ExpandedProperties.Principal.Type
 
-					*orphanedPrincipals = append(*orphanedPrincipals, azinternal.PrincipalInfo{
+					m.orphanedScanState.orphanedPrincipals = append(m.orphanedScanState.orphanedPrincipals, azinternal.PrincipalInfo{
 						ObjectID:          principalID,
 						UserPrincipalName: "Unknown",
 						DisplayName:       fmt.Sprintf("Orphaned-%s", principalID[:8]),
 						UserType:          fmt.Sprintf("Orphaned%s", principalType),
 					})
 				}
+				m.mu.Unlock()
 			}
 		}
 	}
@@ -433,17 +456,22 @@ func (m *PermissionsModule) scanPIMForOrphanedPrincipals(ctx context.Context, su
 		if json.Unmarshal(pimBody, &pimData) == nil {
 			for _, pimAssignment := range pimData.Value {
 				principalID := pimAssignment.Properties.PrincipalID
-				if !seenPrincipals[principalID] && !orphanedPrincipalIDs[principalID] {
-					orphanedPrincipalIDs[principalID] = true
+
+				// Thread-safe access with mutex
+				m.mu.Lock()
+				isUnknown := !m.orphanedScanState.seenPrincipals[principalID] && !m.orphanedScanState.orphanedPrincipalIDs[principalID]
+				if isUnknown {
+					m.orphanedScanState.orphanedPrincipalIDs[principalID] = true
 					principalType := pimAssignment.Properties.ExpandedProperties.Principal.Type
 
-					*orphanedPrincipals = append(*orphanedPrincipals, azinternal.PrincipalInfo{
+					m.orphanedScanState.orphanedPrincipals = append(m.orphanedScanState.orphanedPrincipals, azinternal.PrincipalInfo{
 						ObjectID:          principalID,
 						UserPrincipalName: "Unknown",
 						DisplayName:       fmt.Sprintf("Orphaned-%s", principalID[:8]),
 						UserType:          fmt.Sprintf("Orphaned%s", principalType),
 					})
 				}
+				m.mu.Unlock()
 			}
 		}
 	}
@@ -741,62 +769,62 @@ func (m *PermissionsModule) getSystemMIsFromAutomation(ctx context.Context, subI
 func (m *PermissionsModule) enumeratePrincipalPermissions(ctx context.Context, principals []azinternal.PrincipalInfo, logger internal.Logger) {
 	logger.InfoM(fmt.Sprintf("Enumerating permissions for %d principals across all scopes", len(principals)), globals.AZ_PERMISSIONS_MODULE_NAME)
 
-	// Process each subscription
-	for _, subID := range m.Subscriptions {
-		subName := ""
-		for _, s := range m.TenantInfo.Subscriptions {
-			if s.ID == subID {
-				subName = s.Name
-				break
-			}
-		}
+	// Store principals in module field for callback access
+	m.currentPrincipals = principals
 
-		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
-			logger.InfoM(fmt.Sprintf("Processing subscription: %s (%s)", subName, subID), globals.AZ_PERMISSIONS_MODULE_NAME)
-		}
+	// Use RunSubscriptionEnumeration for standardized processing
+	m.RunSubscriptionEnumeration(ctx, logger, m.Subscriptions, globals.AZ_PERMISSIONS_MODULE_NAME, m.processSubscriptionForPrincipalPermissions)
+}
 
-		// Get ARM token
-		token, err := m.Session.GetTokenForResource(globals.CommonScopes[0])
-		if err != nil {
-			logger.ErrorM(fmt.Sprintf("Failed to get token for subscription %s: %v", subID, err), globals.AZ_PERMISSIONS_MODULE_NAME)
-			m.CommandCounter.Error++
-			continue
-		}
+// processSubscriptionForPrincipalPermissions processes a single subscription for principal permissions enumeration
+func (m *PermissionsModule) processSubscriptionForPrincipalPermissions(ctx context.Context, subID string, logger internal.Logger) {
+	subName := azinternal.GetSubscriptionNameFromID(ctx, m.Session, subID)
 
-		cred := &azinternal.StaticTokenCredential{Token: token}
-		clientFactory, err := armauthorization.NewClientFactory(subID, cred, nil)
-		if err != nil {
-			logger.ErrorM(fmt.Sprintf("Failed to create client factory for subscription %s: %v", subID, err), globals.AZ_PERMISSIONS_MODULE_NAME)
-			m.CommandCounter.Error++
-			continue
-		}
+	if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
+		logger.InfoM(fmt.Sprintf("Processing subscription: %s (%s)", subName, subID), globals.AZ_PERMISSIONS_MODULE_NAME)
+	}
 
-		authClient := clientFactory.NewRoleAssignmentsClient()
+	// Get ARM token
+	token, err := m.Session.GetTokenForResource(globals.CommonScopes[0])
+	if err != nil {
+		logger.ErrorM(fmt.Sprintf("Failed to get token for subscription %s: %v", subID, err), globals.AZ_PERMISSIONS_MODULE_NAME)
+		m.CommandCounter.Error++
+		return
+	}
 
-		// Build list of scopes to check
-		scopes := m.buildScopesForSubscription(ctx, subID, authClient, cred, logger)
+	cred := &azinternal.StaticTokenCredential{Token: token}
+	clientFactory, err := armauthorization.NewClientFactory(subID, cred, nil)
+	if err != nil {
+		logger.ErrorM(fmt.Sprintf("Failed to create client factory for subscription %s: %v", subID, err), globals.AZ_PERMISSIONS_MODULE_NAME)
+		m.CommandCounter.Error++
+		return
+	}
 
-		// For each principal, check their permissions at each scope
-		for _, principal := range principals {
-			// Get user's group memberships if this is a user
-			groupMemberships := make(map[string]string) // groupID -> groupName
-			if strings.EqualFold(principal.UserType, "User") || strings.EqualFold(principal.UserType, "Member") || strings.EqualFold(principal.UserType, "Guest") {
-				groupIDs := azinternal.GetUserGroupMemberships(ctx, m.Session, principal.ObjectID)
-				for _, groupID := range groupIDs {
-					// Get group info and cache it
-					groupInfo := m.getGroupInfo(ctx, groupID, logger)
-					if groupInfo != nil {
-						groupMemberships[groupID] = groupInfo.Name
-					}
+	authClient := clientFactory.NewRoleAssignmentsClient()
+
+	// Build list of scopes to check
+	scopes := m.buildScopesForSubscription(ctx, subID, authClient, cred, logger)
+
+	// For each principal, check their permissions at each scope
+	for _, principal := range m.currentPrincipals {
+		// Get user's group memberships if this is a user
+		groupMemberships := make(map[string]string) // groupID -> groupName
+		if strings.EqualFold(principal.UserType, "User") || strings.EqualFold(principal.UserType, "Member") || strings.EqualFold(principal.UserType, "Guest") {
+			groupIDs := azinternal.GetUserGroupMemberships(ctx, m.Session, principal.ObjectID)
+			for _, groupID := range groupIDs {
+				// Get group info and cache it
+				groupInfo := m.getGroupInfo(ctx, groupID, logger)
+				if groupInfo != nil {
+					groupMemberships[groupID] = groupInfo.Name
 				}
 			}
-
-			// Check role assignments at each scope for this principal
-			m.checkPrincipalAtScopes(ctx, principal, groupMemberships, scopes, subID, subName, authClient, logger)
-
-			// Check PIM for this principal
-			m.checkPrincipalPIM(ctx, principal, groupMemberships, subID, subName, token, logger)
 		}
+
+		// Check role assignments at each scope for this principal
+		m.checkPrincipalAtScopes(ctx, principal, groupMemberships, scopes, subID, subName, authClient, logger)
+
+		// Check PIM for this principal
+		m.checkPrincipalPIM(ctx, principal, groupMemberships, subID, subName, token, logger)
 	}
 }
 
@@ -1257,7 +1285,7 @@ func (m *PermissionsModule) parseScope(scope, subName string) (scopeType, scopeN
 
 		// Check for specific resource
 		if strings.Contains(scope, "/providers/") {
-			return "Resource", extractResourceName(scope)
+			return "Resource", permissionsExtractResourceName(scope)
 		}
 
 		// Subscription level
@@ -1579,15 +1607,15 @@ func (m *PermissionsModule) generateServicePrincipalPermissionsLoot() string {
 
 		// Add unique permissions, roles, and scopes
 		sp := spMap[principalGUID]
-		if !contains(sp.Permissions, permission) {
+		if !permissionsContains(sp.Permissions, permission) {
 			sp.Permissions = append(sp.Permissions, permission)
 		}
 		roleName := row[4]
-		if !contains(sp.Roles, roleName) {
+		if !permissionsContains(sp.Roles, roleName) {
 			sp.Roles = append(sp.Roles, roleName)
 		}
 		scope := row[11]
-		if !contains(sp.Scopes, scope) {
+		if !permissionsContains(sp.Scopes, scope) {
 			sp.Scopes = append(sp.Scopes, scope)
 		}
 	}
@@ -1605,7 +1633,7 @@ func (m *PermissionsModule) generateServicePrincipalPermissionsLoot() string {
 		loot.WriteString(fmt.Sprintf("## %s\n", sp.Name))
 		loot.WriteString(fmt.Sprintf("- **Object ID**: %s\n", sp.GUID))
 		loot.WriteString(fmt.Sprintf("- **App/Client ID**: %s\n", sp.AppID))
-		loot.WriteString(fmt.Sprintf("- **Roles**: %s\n", strings.Join(sp.Roles, ", "))
+		loot.WriteString(fmt.Sprintf("- **Roles**: %s\n", strings.Join(sp.Roles, ", ")))
 		loot.WriteString(fmt.Sprintf("- **Permissions**: %d dangerous permissions\n", len(sp.Permissions)))
 		loot.WriteString(fmt.Sprintf("- **Scopes**: %d\n\n", len(sp.Scopes)))
 
@@ -1946,7 +1974,8 @@ func matchesPermissionPattern(permission, pattern string) bool {
 }
 
 // contains checks if a string slice contains a string
-func contains(slice []string, item string) bool {
+// Helper functions made file-local to avoid redeclaration conflicts
+func permissionsContains(slice []string, item string) bool {
 	for _, s := range slice {
 		if s == item {
 			return true
@@ -1955,8 +1984,8 @@ func contains(slice []string, item string) bool {
 	return false
 }
 
-// extractResourceName extracts the resource name from a full Azure resource ID
-func extractResourceName(resourceID string) string {
+// permissionsExtractResourceName extracts the resource name from a full Azure resource ID
+func permissionsExtractResourceName(resourceID string) string {
 	parts := strings.Split(resourceID, "/")
 	if len(parts) > 0 {
 		return parts[len(parts)-1]

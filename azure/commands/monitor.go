@@ -925,6 +925,80 @@ func (m *MonitorModule) writeOutput(ctx context.Context, logger internal.Logger)
 		TableCols: diagnosticHeader,
 	}
 
+	// -------------------- Check for multi-tenant splitting FIRST --------------------
+	if azinternal.ShouldSplitByTenant(m.IsMultiTenant, m.Tenants) {
+		// For multi-tenant splitting, handle ALL 4 tables
+
+		// Split workspaces by tenant
+		if err := m.FilterAndWritePerTenantAuto(ctx, logger, m.Tenants, m.WorkspaceRows, workspaceHeader,
+			"log-analytics-workspaces", globals.AZ_MONITOR_MODULE_NAME); err != nil {
+			logger.ErrorM(fmt.Sprintf("Error writing per-tenant workspaces output: %v", err), globals.AZ_MONITOR_MODULE_NAME)
+			return
+		}
+
+		// Split alerts by tenant
+		if err := m.FilterAndWritePerTenantAuto(ctx, logger, m.Tenants, m.AlertRows, alertHeader,
+			"metric-alerts", globals.AZ_MONITOR_MODULE_NAME); err != nil {
+			logger.ErrorM(fmt.Sprintf("Error writing per-tenant alerts output: %v", err), globals.AZ_MONITOR_MODULE_NAME)
+			return
+		}
+
+		// Split action groups by tenant
+		if err := m.FilterAndWritePerTenantAuto(ctx, logger, m.Tenants, m.ActionGroupRows, actionGroupHeader,
+			"action-groups", globals.AZ_MONITOR_MODULE_NAME); err != nil {
+			logger.ErrorM(fmt.Sprintf("Error writing per-tenant action groups output: %v", err), globals.AZ_MONITOR_MODULE_NAME)
+			return
+		}
+
+		// Split diagnostic settings by tenant
+		if err := m.FilterAndWritePerTenantAuto(ctx, logger, m.Tenants, m.DiagnosticRows, diagnosticHeader,
+			"diagnostic-coverage-sample", globals.AZ_MONITOR_MODULE_NAME); err != nil {
+			logger.ErrorM(fmt.Sprintf("Error writing per-tenant diagnostic settings output: %v", err), globals.AZ_MONITOR_MODULE_NAME)
+			return
+		}
+
+		logger.SuccessM(fmt.Sprintf("Monitor enumeration complete: %d workspaces, %d alerts, %d action groups, %d resources without logging (split by tenant)",
+			len(m.WorkspaceRows), len(m.AlertRows), len(m.ActionGroupRows), len(m.DiagnosticRows)), globals.AZ_MONITOR_MODULE_NAME)
+		return
+	}
+
+	// -------------------- Check for multi-subscription splitting SECOND --------------------
+	if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
+		// For multi-subscription splitting, handle ALL 4 tables
+
+		// Split workspaces by subscription
+		if err := m.FilterAndWritePerSubscriptionAuto(ctx, logger, m.Subscriptions, m.WorkspaceRows, workspaceHeader,
+			"log-analytics-workspaces", globals.AZ_MONITOR_MODULE_NAME); err != nil {
+			logger.ErrorM(fmt.Sprintf("Error writing per-subscription workspaces output: %v", err), globals.AZ_MONITOR_MODULE_NAME)
+			return
+		}
+
+		// Split alerts by subscription
+		if err := m.FilterAndWritePerSubscriptionAuto(ctx, logger, m.Subscriptions, m.AlertRows, alertHeader,
+			"metric-alerts", globals.AZ_MONITOR_MODULE_NAME); err != nil {
+			logger.ErrorM(fmt.Sprintf("Error writing per-subscription alerts output: %v", err), globals.AZ_MONITOR_MODULE_NAME)
+			return
+		}
+
+		// Split action groups by subscription
+		if err := m.FilterAndWritePerSubscriptionAuto(ctx, logger, m.Subscriptions, m.ActionGroupRows, actionGroupHeader,
+			"action-groups", globals.AZ_MONITOR_MODULE_NAME); err != nil {
+			logger.ErrorM(fmt.Sprintf("Error writing per-subscription action groups output: %v", err), globals.AZ_MONITOR_MODULE_NAME)
+			return
+		}
+
+		// Split diagnostic settings by subscription
+		if err := m.FilterAndWritePerSubscriptionAuto(ctx, logger, m.Subscriptions, m.DiagnosticRows, diagnosticHeader,
+			"diagnostic-coverage-sample", globals.AZ_MONITOR_MODULE_NAME); err != nil {
+			logger.ErrorM(fmt.Sprintf("Error writing per-subscription diagnostic settings output: %v", err), globals.AZ_MONITOR_MODULE_NAME)
+			return
+		}
+
+		logger.SuccessM(fmt.Sprintf("Monitor enumeration complete: %d workspaces, %d alerts, %d action groups, %d resources without logging (split by subscription)",
+			len(m.WorkspaceRows), len(m.AlertRows), len(m.ActionGroupRows), len(m.DiagnosticRows)), globals.AZ_MONITOR_MODULE_NAME)
+		return
+	}
+
 	// -------------------- Combine tables --------------------
 	tables := []internal.TableFile{
 		workspaceTable,
@@ -953,16 +1027,35 @@ func (m *MonitorModule) writeOutput(ctx context.Context, logger internal.Logger)
 		Table: tables,
 		Loot:  loot,
 	}
-	_ = output // Avoid unused warning
 
-	// -------------------- Write files using helper --------------------
-	summary := fmt.Sprintf("%d subscriptions, %d workspaces, %d alerts, %d action groups, %d resources without logging (sample)",
+	// -------------------- Determine scope for output --------------------
+	scopeType, scopeIDs, scopeNames := azinternal.DetermineScopeForOutput(
+		m.Subscriptions, m.TenantID, m.TenantName, m.TenantFlagPresent)
+	scopeNames = azinternal.GetSubscriptionNamesForOutput(ctx, m.Session, scopeType, scopeIDs)
+
+	// -------------------- Write output using HandleOutputSmart --------------------
+	if err := internal.HandleOutputSmart(
+		"Azure",
+		m.Format,
+		m.OutputDirectory,
+		m.Verbosity,
+		m.WrapTable,
+		scopeType,
+		scopeIDs,
+		scopeNames,
+		m.UserUPN,
+		output,
+	); err != nil {
+		logger.ErrorM(fmt.Sprintf("Error writing output: %v", err), globals.AZ_MONITOR_MODULE_NAME)
+		m.CommandCounter.Error++
+		return
+	}
+
+	// -------------------- Success summary --------------------
+	logger.SuccessM(fmt.Sprintf("Monitor enumeration complete: %d subscriptions, %d workspaces, %d alerts, %d action groups, %d resources without logging",
 		len(m.Subscriptions),
 		len(m.WorkspaceRows),
 		len(m.AlertRows),
 		len(m.ActionGroupRows),
-		len(m.DiagnosticRows))
-
-	// TODO: Implement WriteTableAndLootFiles
-	logger.InfoM(fmt.Sprintf("Monitor enumeration complete. Summary: %s", summary), globals.AZ_MONITOR_MODULE_NAME)
+		len(m.DiagnosticRows)), globals.AZ_MONITOR_MODULE_NAME)
 }

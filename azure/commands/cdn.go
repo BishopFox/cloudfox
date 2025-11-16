@@ -588,27 +588,28 @@ func (m *CDNModule) writeOutput(ctx context.Context, logger internal.Logger) {
 		return
 	}
 
+	// Define headers
+	profileHeaders := []string{
+		"Tenant Name",
+		"Tenant ID",
+		"Subscription ID",
+		"Subscription Name",
+		"Resource Group",
+		"Region",
+		"Profile Name",
+		"SKU",
+		"SKU Name",
+		"Provisioning State",
+		"Resource State",
+		"Endpoint Count",
+		"Custom Domain Count",
+		"Origin Count",
+		"Risk",
+		"Risk Note",
+	}
+
 	// -------------------- TABLE 1: CDN Profiles --------------------
 	if len(m.ProfileRows) > 0 {
-		profileHeaders := []string{
-			"Tenant Name",
-			"Tenant ID",
-			"Subscription ID",
-			"Subscription Name",
-			"Resource Group",
-			"Region",
-			"Profile Name",
-			"SKU",
-			"SKU Name",
-			"Provisioning State",
-			"Resource State",
-			"Endpoint Count",
-			"Custom Domain Count",
-			"Origin Count",
-			"Risk",
-			"Risk Note",
-		}
-
 		if azinternal.ShouldSplitByTenant(m.IsMultiTenant, m.Tenants) {
 			if err := m.FilterAndWritePerTenantAuto(
 				ctx, logger, m.Tenants, m.ProfileRows, profileHeaders,
@@ -623,98 +624,162 @@ func (m *CDNModule) writeOutput(ctx context.Context, logger internal.Logger) {
 			); err != nil {
 				logger.ErrorM("Failed to write per-subscription CDN profiles", globals.AZ_CDN_MODULE_NAME)
 			}
-		} else {
-			// TODO: m.WriteFullOutput(logger, m.ProfileRows, profileHeaders, "cdn-profiles", globals.AZ_CDN_MODULE_NAME)
 		}
+		return
 	}
 
 	// -------------------- TABLE 2: CDN Endpoints --------------------
-	if len(m.EndpointRows) > 0 {
-		endpointHeaders := []string{
-			"Tenant Name",
-			"Tenant ID",
-			"Subscription ID",
-			"Subscription Name",
-			"Resource Group",
-			"Profile Name",
-			"Endpoint Name",
-			"Hostname",
-			"Exposure",
-			"Resource State",
-			"Provisioning State",
-			"HTTPS Only",
-			"HTTP Allowed",
-			"Compression Enabled",
-			"Query String Caching",
-			"Optimization Type",
-			"Custom Domains",
-			"Origin Count",
-			"Geo Filters",
-			"Risk",
-			"Risk Note",
-		}
+	endpointHeaders := []string{
+		"Tenant Name",
+		"Tenant ID",
+		"Subscription ID",
+		"Subscription Name",
+		"Resource Group",
+		"Profile Name",
+		"Endpoint Name",
+		"Hostname",
+		"Exposure",
+		"Resource State",
+		"Provisioning State",
+		"HTTPS Only",
+		"HTTP Allowed",
+		"Compression Enabled",
+		"Query String Caching",
+		"Optimization Type",
+		"Custom Domains",
+		"Origin Count",
+		"Geo Filters",
+		"Risk",
+		"Risk Note",
+	}
 
-		if azinternal.ShouldSplitByTenant(m.IsMultiTenant, m.Tenants) {
-			if err := m.FilterAndWritePerTenantAuto(
-				ctx, logger, m.Tenants, m.EndpointRows, endpointHeaders,
-				"cdn-endpoints", globals.AZ_CDN_MODULE_NAME,
-			); err != nil {
-				logger.ErrorM("Failed to write per-tenant endpoints", globals.AZ_CDN_MODULE_NAME)
-			}
-		} else if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
-			if err := m.FilterAndWritePerSubscriptionAuto(
-				ctx, logger, m.Subscriptions, m.EndpointRows, endpointHeaders,
-				"cdn-endpoints", globals.AZ_CDN_MODULE_NAME,
-			); err != nil {
-				logger.ErrorM("Failed to write per-subscription endpoints", globals.AZ_CDN_MODULE_NAME)
-			}
-		} else {
-			// TODO: m.WriteFullOutput(logger, m.EndpointRows, endpointHeaders, "cdn-endpoints", globals.AZ_CDN_MODULE_NAME)
+	if len(m.EndpointRows) > 0 && azinternal.ShouldSplitByTenant(m.IsMultiTenant, m.Tenants) {
+		if err := m.FilterAndWritePerTenantAuto(
+			ctx, logger, m.Tenants, m.EndpointRows, endpointHeaders,
+			"cdn-endpoints", globals.AZ_CDN_MODULE_NAME,
+		); err != nil {
+			logger.ErrorM("Failed to write per-tenant endpoints", globals.AZ_CDN_MODULE_NAME)
 		}
+		return
+	}
+
+	if len(m.EndpointRows) > 0 && azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
+		if err := m.FilterAndWritePerSubscriptionAuto(
+			ctx, logger, m.Subscriptions, m.EndpointRows, endpointHeaders,
+			"cdn-endpoints", globals.AZ_CDN_MODULE_NAME,
+		); err != nil {
+			logger.ErrorM("Failed to write per-subscription endpoints", globals.AZ_CDN_MODULE_NAME)
+		}
+		return
 	}
 
 	// -------------------- TABLE 3: CDN Origins --------------------
-	if len(m.OriginRows) > 0 {
-		originHeaders := []string{
-			"Tenant Name",
-			"Tenant ID",
-			"Subscription ID",
-			"Subscription Name",
-			"Resource Group",
-			"Profile Name",
-			"Endpoint Name",
-			"Origin Name",
-			"Origin Hostname",
-			"Protocol",
-			"HTTP Port",
-			"HTTPS Port",
-			"Priority",
-			"Weight",
-			"Enabled",
-			"Private Link",
-			"Risk",
-			"Risk Note",
-		}
+	originHeaders := []string{
+		"Tenant Name",
+		"Tenant ID",
+		"Subscription ID",
+		"Subscription Name",
+		"Resource Group",
+		"Profile Name",
+		"Endpoint Name",
+		"Origin Name",
+		"Origin Hostname",
+		"Protocol",
+		"HTTP Port",
+		"HTTPS Port",
+		"Priority",
+		"Weight",
+		"Enabled",
+		"Private Link",
+		"Risk",
+		"Risk Note",
+	}
 
-		if azinternal.ShouldSplitByTenant(m.IsMultiTenant, m.Tenants) {
-			if err := m.FilterAndWritePerTenantAuto(
-				ctx, logger, m.Tenants, m.OriginRows, originHeaders,
-				"cdn-origins", globals.AZ_CDN_MODULE_NAME,
-			); err != nil {
-				logger.ErrorM("Failed to write per-tenant origins", globals.AZ_CDN_MODULE_NAME)
-			}
-		} else if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
-			if err := m.FilterAndWritePerSubscriptionAuto(
-				ctx, logger, m.Subscriptions, m.OriginRows, originHeaders,
-				"cdn-origins", globals.AZ_CDN_MODULE_NAME,
-			); err != nil {
-				logger.ErrorM("Failed to write per-subscription origins", globals.AZ_CDN_MODULE_NAME)
-			}
-		} else {
-			// TODO: m.WriteFullOutput(logger, m.OriginRows, originHeaders, "cdn-origins", globals.AZ_CDN_MODULE_NAME)
+	if len(m.OriginRows) > 0 && azinternal.ShouldSplitByTenant(m.IsMultiTenant, m.Tenants) {
+		if err := m.FilterAndWritePerTenantAuto(
+			ctx, logger, m.Tenants, m.OriginRows, originHeaders,
+			"cdn-origins", globals.AZ_CDN_MODULE_NAME,
+		); err != nil {
+			logger.ErrorM("Failed to write per-tenant origins", globals.AZ_CDN_MODULE_NAME)
+		}
+		return
+	}
+
+	if len(m.OriginRows) > 0 && azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
+		if err := m.FilterAndWritePerSubscriptionAuto(
+			ctx, logger, m.Subscriptions, m.OriginRows, originHeaders,
+			"cdn-origins", globals.AZ_CDN_MODULE_NAME,
+		); err != nil {
+			logger.ErrorM("Failed to write per-subscription origins", globals.AZ_CDN_MODULE_NAME)
+		}
+		return
+	}
+
+	// -------------------- Build tables --------------------
+	tables := []internal.TableFile{}
+
+	if len(m.ProfileRows) > 0 {
+		tables = append(tables, internal.TableFile{
+			Name:   "cdn-profiles",
+			Header: profileHeaders,
+			Body:   m.ProfileRows,
+		})
+	}
+
+	if len(m.EndpointRows) > 0 {
+		tables = append(tables, internal.TableFile{
+			Name:   "cdn-endpoints",
+			Header: endpointHeaders,
+			Body:   m.EndpointRows,
+		})
+	}
+
+	if len(m.OriginRows) > 0 {
+		tables = append(tables, internal.TableFile{
+			Name:   "cdn-origins",
+			Header: originHeaders,
+			Body:   m.OriginRows,
+		})
+	}
+
+	// -------------------- Convert loot map to slice --------------------
+	var loot []internal.LootFile
+	for _, lf := range m.LootMap {
+		if lf.Contents != "" {
+			loot = append(loot, *lf)
 		}
 	}
 
-	// -------------------- LOOT FILES --------------------
-	// TODO: m.WriteLoot(logger, m.LootMap, globals.AZ_CDN_MODULE_NAME)
+	// -------------------- Generate output --------------------
+	output := CDNOutput{
+		Table: tables,
+		Loot:  loot,
+	}
+
+	// -------------------- Determine scope for output --------------------
+	scopeType, scopeIDs, scopeNames := azinternal.DetermineScopeForOutput(
+		m.Subscriptions, m.TenantID, m.TenantName, m.TenantFlagPresent)
+	scopeNames = azinternal.GetSubscriptionNamesForOutput(ctx, m.Session, scopeType, scopeIDs)
+
+	// -------------------- Write output using HandleOutputSmart --------------------
+	if err := internal.HandleOutputSmart(
+		"Azure",
+		m.Format,
+		m.OutputDirectory,
+		m.Verbosity,
+		m.WrapTable,
+		scopeType,
+		scopeIDs,
+		scopeNames,
+		m.UserUPN,
+		output,
+	); err != nil {
+		logger.ErrorM(fmt.Sprintf("Error writing output: %v", err), globals.AZ_CDN_MODULE_NAME)
+		m.CommandCounter.Error++
+		return
+	}
+
+	// -------------------- Success summary --------------------
+	logger.SuccessM(fmt.Sprintf("CDN enumeration complete: %d profiles, %d endpoints, %d origins",
+		len(m.ProfileRows), len(m.EndpointRows), len(m.OriginRows)), globals.AZ_CDN_MODULE_NAME)
 }

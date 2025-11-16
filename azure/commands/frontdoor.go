@@ -606,140 +606,155 @@ func (m *FrontDoorModule) writeOutput(ctx context.Context, logger internal.Logge
 		return
 	}
 
-	// -------------------- TABLE 1: Front Door Profiles --------------------
-	if len(m.ProfileRows) > 0 {
-		profileHeaders := []string{
-			"Tenant Name",
-			"Tenant ID",
-			"Subscription ID",
-			"Subscription Name",
-			"Resource Group",
-			"Region",
-			"Front Door Name",
-			"Enabled State",
-			"Provisioning State",
-			"Resource State",
-			"WAF Policy",
-			"WAF Mode",
-			"Frontend Count",
-			"Backend Pool Count",
-			"Routing Rule Count",
-			"Health Probe Count",
-			"Load Balancing Count",
-			"Risk",
-			"Risk Note",
-		}
+	// -------------------- Define all headers at top --------------------
+	profileHeaders := []string{
+		"Tenant Name", "Tenant ID", "Subscription ID", "Subscription Name",
+		"Resource Group", "Region", "Front Door Name", "Enabled State",
+		"Provisioning State", "Resource State", "WAF Policy", "WAF Mode",
+		"Frontend Count", "Backend Pool Count", "Routing Rule Count",
+		"Health Probe Count", "Load Balancing Count", "Risk", "Risk Note",
+	}
 
-		if azinternal.ShouldSplitByTenant(m.IsMultiTenant, m.Tenants) {
+	frontendHeaders := []string{
+		"Tenant Name", "Tenant ID", "Subscription ID", "Subscription Name",
+		"Resource Group", "Front Door Name", "Endpoint Name", "Hostname",
+		"Exposure", "Session Affinity", "Session Affinity TTL", "WAF Policy",
+		"HTTPS State", "Certificate Source", "Min TLS Version", "Risk", "Risk Note",
+	}
+
+	backendHeaders := []string{
+		"Tenant Name", "Tenant ID", "Subscription ID", "Subscription Name",
+		"Resource Group", "Front Door Name", "Backend Pool Name", "Backend Address",
+		"Backend Host Header", "Priority", "Weight", "Protocol", "Ports",
+		"Health Probe Protocol", "Health Probe Path", "Health Probe Interval",
+		"Sample Size", "Successful Samples Required", "Risk", "Risk Note",
+	}
+
+	// -------------------- Check for split by tenant (FIRST) --------------------
+	if azinternal.ShouldSplitByTenant(m.IsMultiTenant, m.Tenants) {
+		if len(m.ProfileRows) > 0 {
 			if err := m.FilterAndWritePerTenantAuto(
 				ctx, logger, m.Tenants, m.ProfileRows, profileHeaders,
 				"frontdoor-profiles", globals.AZ_FRONTDOOR_MODULE_NAME,
 			); err != nil {
 				logger.ErrorM("Failed to write per-tenant Front Door profiles", globals.AZ_FRONTDOOR_MODULE_NAME)
 			}
-		} else if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
-			if err := m.FilterAndWritePerSubscriptionAuto(
-				ctx, logger, m.Subscriptions, m.ProfileRows, profileHeaders,
-				"frontdoor-profiles", globals.AZ_FRONTDOOR_MODULE_NAME,
-			); err != nil {
-				logger.ErrorM("Failed to write per-subscription Front Door profiles", globals.AZ_FRONTDOOR_MODULE_NAME)
-			}
-		} else {
-			// TODO: Implement WriteFullOutput
-			logger.InfoM("Front Door profiles enumeration complete", globals.AZ_FRONTDOOR_MODULE_NAME)
 		}
-	}
-
-	// -------------------- TABLE 2: Frontend Endpoints --------------------
-	if len(m.FrontendRows) > 0 {
-		frontendHeaders := []string{
-			"Tenant Name",
-			"Tenant ID",
-			"Subscription ID",
-			"Subscription Name",
-			"Resource Group",
-			"Front Door Name",
-			"Endpoint Name",
-			"Hostname",
-			"Exposure",
-			"Session Affinity",
-			"Session Affinity TTL",
-			"WAF Policy",
-			"HTTPS State",
-			"Certificate Source",
-			"Min TLS Version",
-			"Risk",
-			"Risk Note",
-		}
-
-		if azinternal.ShouldSplitByTenant(m.IsMultiTenant, m.Tenants) {
+		if len(m.FrontendRows) > 0 {
 			if err := m.FilterAndWritePerTenantAuto(
 				ctx, logger, m.Tenants, m.FrontendRows, frontendHeaders,
 				"frontdoor-frontends", globals.AZ_FRONTDOOR_MODULE_NAME,
 			); err != nil {
 				logger.ErrorM("Failed to write per-tenant frontends", globals.AZ_FRONTDOOR_MODULE_NAME)
 			}
-		} else if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
-			if err := m.FilterAndWritePerSubscriptionAuto(
-				ctx, logger, m.Subscriptions, m.FrontendRows, frontendHeaders,
-				"frontdoor-frontends", globals.AZ_FRONTDOOR_MODULE_NAME,
-			); err != nil {
-				logger.ErrorM("Failed to write per-subscription frontends", globals.AZ_FRONTDOOR_MODULE_NAME)
-			}
-		} else {
-			// TODO: Implement WriteFullOutput
-			logger.InfoM("Front Door frontends enumeration complete", globals.AZ_FRONTDOOR_MODULE_NAME)
 		}
-	}
-
-	// -------------------- TABLE 3: Backend Pools --------------------
-	if len(m.BackendRows) > 0 {
-		backendHeaders := []string{
-			"Tenant Name",
-			"Tenant ID",
-			"Subscription ID",
-			"Subscription Name",
-			"Resource Group",
-			"Front Door Name",
-			"Backend Pool Name",
-			"Backend Address",
-			"Backend Host Header",
-			"Priority",
-			"Weight",
-			"Protocol",
-			"Ports",
-			"Health Probe Protocol",
-			"Health Probe Path",
-			"Health Probe Interval",
-			"Sample Size",
-			"Successful Samples Required",
-			"Risk",
-			"Risk Note",
-		}
-
-		if azinternal.ShouldSplitByTenant(m.IsMultiTenant, m.Tenants) {
+		if len(m.BackendRows) > 0 {
 			if err := m.FilterAndWritePerTenantAuto(
 				ctx, logger, m.Tenants, m.BackendRows, backendHeaders,
 				"frontdoor-backends", globals.AZ_FRONTDOOR_MODULE_NAME,
 			); err != nil {
 				logger.ErrorM("Failed to write per-tenant backends", globals.AZ_FRONTDOOR_MODULE_NAME)
 			}
-		} else if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
+		}
+		return
+	}
+
+	// -------------------- Check for split by subscription (SECOND) --------------------
+	if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
+		if len(m.ProfileRows) > 0 {
+			if err := m.FilterAndWritePerSubscriptionAuto(
+				ctx, logger, m.Subscriptions, m.ProfileRows, profileHeaders,
+				"frontdoor-profiles", globals.AZ_FRONTDOOR_MODULE_NAME,
+			); err != nil {
+				logger.ErrorM("Failed to write per-subscription Front Door profiles", globals.AZ_FRONTDOOR_MODULE_NAME)
+			}
+		}
+		if len(m.FrontendRows) > 0 {
+			if err := m.FilterAndWritePerSubscriptionAuto(
+				ctx, logger, m.Subscriptions, m.FrontendRows, frontendHeaders,
+				"frontdoor-frontends", globals.AZ_FRONTDOOR_MODULE_NAME,
+			); err != nil {
+				logger.ErrorM("Failed to write per-subscription frontends", globals.AZ_FRONTDOOR_MODULE_NAME)
+			}
+		}
+		if len(m.BackendRows) > 0 {
 			if err := m.FilterAndWritePerSubscriptionAuto(
 				ctx, logger, m.Subscriptions, m.BackendRows, backendHeaders,
 				"frontdoor-backends", globals.AZ_FRONTDOOR_MODULE_NAME,
 			); err != nil {
 				logger.ErrorM("Failed to write per-subscription backends", globals.AZ_FRONTDOOR_MODULE_NAME)
 			}
-		} else {
-			// TODO: Implement WriteFullOutput
-			logger.InfoM("Front Door backends enumeration complete", globals.AZ_FRONTDOOR_MODULE_NAME)
+		}
+		return
+	}
+
+	// -------------------- Build tables for non-split case --------------------
+	tables := []internal.TableFile{}
+
+	if len(m.ProfileRows) > 0 {
+		tables = append(tables, internal.TableFile{
+			Name:   "frontdoor-profiles",
+			Header: profileHeaders,
+			Body:   m.ProfileRows,
+		})
+	}
+
+	if len(m.FrontendRows) > 0 {
+		tables = append(tables, internal.TableFile{
+			Name:   "frontdoor-frontends",
+			Header: frontendHeaders,
+			Body:   m.FrontendRows,
+		})
+	}
+
+	if len(m.BackendRows) > 0 {
+		tables = append(tables, internal.TableFile{
+			Name:   "frontdoor-backends",
+			Header: backendHeaders,
+			Body:   m.BackendRows,
+		})
+	}
+
+	// -------------------- Convert loot map to slice --------------------
+	var loot []internal.LootFile
+	for _, lf := range m.LootMap {
+		if lf.Contents != "" {
+			loot = append(loot, *lf)
 		}
 	}
 
-	// -------------------- LOOT FILES --------------------
-	// TODO: Implement WriteLoot
-	logger.InfoM("Front Door enumeration complete", globals.AZ_FRONTDOOR_MODULE_NAME)
+	// -------------------- Generate output --------------------
+	output := FrontDoorOutput{
+		Table: tables,
+		Loot:  loot,
+	}
+
+	// -------------------- Determine scope for output --------------------
+	scopeType, scopeIDs, scopeNames := azinternal.DetermineScopeForOutput(
+		m.Subscriptions, m.TenantID, m.TenantName, m.TenantFlagPresent)
+	scopeNames = azinternal.GetSubscriptionNamesForOutput(ctx, m.Session, scopeType, scopeIDs)
+
+	// -------------------- Write output using HandleOutputSmart --------------------
+	if err := internal.HandleOutputSmart(
+		"Azure",
+		m.Format,
+		m.OutputDirectory,
+		m.Verbosity,
+		m.WrapTable,
+		scopeType,
+		scopeIDs,
+		scopeNames,
+		m.UserUPN,
+		output,
+	); err != nil {
+		logger.ErrorM(fmt.Sprintf("Error writing output: %v", err), globals.AZ_FRONTDOOR_MODULE_NAME)
+		m.CommandCounter.Error++
+		return
+	}
+
+	// -------------------- Success summary --------------------
+	logger.SuccessM(fmt.Sprintf("Front Door enumeration complete: %d profiles, %d frontends, %d backends",
+		len(m.ProfileRows), len(m.FrontendRows), len(m.BackendRows)), globals.AZ_FRONTDOOR_MODULE_NAME)
 }
 
 // ------------------------------

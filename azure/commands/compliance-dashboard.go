@@ -415,6 +415,95 @@ func (m *ComplianceDashboardModule) writeOutput(ctx context.Context, logger inte
 		return
 	}
 
+	// Define headers for all tables (for split operations)
+	policyComplianceHeader := []string{
+		"Tenant Name", "Tenant ID", "Subscription ID", "Subscription Name",
+		"Policy Definition", "Policy Assignment", "Compliant Resources",
+		"Non-Compliant Resources", "Compliance %", "Risk",
+	}
+	regulatoryComplianceHeader := []string{
+		"Tenant Name", "Tenant ID", "Subscription ID", "Subscription Name",
+		"Standard Name", "Description", "Passed Controls", "Failed Controls",
+		"Skipped Controls", "Compliance %", "State", "Risk",
+	}
+	initiativeComplianceHeader := []string{
+		"Tenant Name", "Tenant ID", "Subscription ID", "Subscription Name",
+		"Initiative Name", "Description", "Compliant Policies",
+		"Non-Compliant Policies", "Total Resources", "Non-Compliant Resources",
+		"Compliance %", "Risk",
+	}
+	nonCompliantResourceHeader := []string{
+		"Tenant Name", "Tenant ID", "Subscription ID", "Subscription Name",
+		"Resource ID", "Resource Type", "Location", "Policy Definition",
+		"Policy Assignment", "Compliance State",
+	}
+
+	// -------------------- Check for multi-tenant splitting FIRST --------------------
+	if azinternal.ShouldSplitByTenant(m.IsMultiTenant, m.Tenants) {
+		// Split all tables by tenant
+		if len(m.PolicyComplianceRows) > 0 {
+			if err := m.FilterAndWritePerTenantAuto(ctx, logger, m.Tenants, m.PolicyComplianceRows,
+				policyComplianceHeader, "policy-compliance", globals.AZ_COMPLIANCE_DASHBOARD_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-tenant policy compliance: %v", err), globals.AZ_COMPLIANCE_DASHBOARD_MODULE_NAME)
+			}
+		}
+		if len(m.RegulatoryComplianceRows) > 0 {
+			if err := m.FilterAndWritePerTenantAuto(ctx, logger, m.Tenants, m.RegulatoryComplianceRows,
+				regulatoryComplianceHeader, "regulatory-compliance", globals.AZ_COMPLIANCE_DASHBOARD_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-tenant regulatory compliance: %v", err), globals.AZ_COMPLIANCE_DASHBOARD_MODULE_NAME)
+			}
+		}
+		if len(m.InitiativeComplianceRows) > 0 {
+			if err := m.FilterAndWritePerTenantAuto(ctx, logger, m.Tenants, m.InitiativeComplianceRows,
+				initiativeComplianceHeader, "initiative-compliance", globals.AZ_COMPLIANCE_DASHBOARD_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-tenant initiative compliance: %v", err), globals.AZ_COMPLIANCE_DASHBOARD_MODULE_NAME)
+			}
+		}
+		if len(m.NonCompliantResourceRows) > 0 {
+			if err := m.FilterAndWritePerTenantAuto(ctx, logger, m.Tenants, m.NonCompliantResourceRows,
+				nonCompliantResourceHeader, "noncompliant-resources-sample", globals.AZ_COMPLIANCE_DASHBOARD_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-tenant noncompliant resources: %v", err), globals.AZ_COMPLIANCE_DASHBOARD_MODULE_NAME)
+			}
+		}
+
+		totalRows := len(m.PolicyComplianceRows) + len(m.RegulatoryComplianceRows) + len(m.InitiativeComplianceRows) + len(m.NonCompliantResourceRows)
+		logger.SuccessM(fmt.Sprintf("Found %d compliance items (split by tenant)", totalRows), globals.AZ_COMPLIANCE_DASHBOARD_MODULE_NAME)
+		return
+	}
+
+	// -------------------- Check for multi-subscription splitting SECOND --------------------
+	if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
+		// Split all tables by subscription
+		if len(m.PolicyComplianceRows) > 0 {
+			if err := m.FilterAndWritePerSubscriptionAuto(ctx, logger, m.Subscriptions, m.PolicyComplianceRows,
+				policyComplianceHeader, "policy-compliance", globals.AZ_COMPLIANCE_DASHBOARD_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-subscription policy compliance: %v", err), globals.AZ_COMPLIANCE_DASHBOARD_MODULE_NAME)
+			}
+		}
+		if len(m.RegulatoryComplianceRows) > 0 {
+			if err := m.FilterAndWritePerSubscriptionAuto(ctx, logger, m.Subscriptions, m.RegulatoryComplianceRows,
+				regulatoryComplianceHeader, "regulatory-compliance", globals.AZ_COMPLIANCE_DASHBOARD_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-subscription regulatory compliance: %v", err), globals.AZ_COMPLIANCE_DASHBOARD_MODULE_NAME)
+			}
+		}
+		if len(m.InitiativeComplianceRows) > 0 {
+			if err := m.FilterAndWritePerSubscriptionAuto(ctx, logger, m.Subscriptions, m.InitiativeComplianceRows,
+				initiativeComplianceHeader, "initiative-compliance", globals.AZ_COMPLIANCE_DASHBOARD_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-subscription initiative compliance: %v", err), globals.AZ_COMPLIANCE_DASHBOARD_MODULE_NAME)
+			}
+		}
+		if len(m.NonCompliantResourceRows) > 0 {
+			if err := m.FilterAndWritePerSubscriptionAuto(ctx, logger, m.Subscriptions, m.NonCompliantResourceRows,
+				nonCompliantResourceHeader, "noncompliant-resources-sample", globals.AZ_COMPLIANCE_DASHBOARD_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-subscription noncompliant resources: %v", err), globals.AZ_COMPLIANCE_DASHBOARD_MODULE_NAME)
+			}
+		}
+
+		totalRows := len(m.PolicyComplianceRows) + len(m.RegulatoryComplianceRows) + len(m.InitiativeComplianceRows) + len(m.NonCompliantResourceRows)
+		logger.SuccessM(fmt.Sprintf("Found %d compliance items (split by subscription)", totalRows), globals.AZ_COMPLIANCE_DASHBOARD_MODULE_NAME)
+		return
+	}
+
 	// Build tables
 	tables := []internal.TableFile{}
 

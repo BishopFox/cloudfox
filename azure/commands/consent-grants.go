@@ -223,58 +223,14 @@ func (m *ConsentGrantsModule) writeOutput(logger internal.Logger) {
 
 	// Define headers
 	headers := []string{
-		"Tenant Name",
-		"Tenant ID",
-		"Grant ID",
-		"Consent Type",
-		"Client Application",
-		"Client ID",
-		"Resource (API)",
-		"Resource ID",
-		"Permissions/Scopes",
-		"Risk Level",
-		"Risky Permissions",
-		"External App",
-		"Granted By (User)",
-		"Principal ID",
-		"Start Time",
-		"Expiry Time",
+		"Tenant Name", "Tenant ID", "Grant ID", "Consent Type", "Client Application",
+		"Client ID", "Resource (API)", "Resource ID", "Permissions/Scopes", "Risk Level",
+		"Risky Permissions", "External App", "Granted By (User)", "Principal ID",
+		"Start Time", "Expiry Time",
 	}
 
 	// Generate loot files
 	lootFiles := m.generateConsentGrantsLootFiles()
-
-	// Build output
-	output := ConsentGrantsOutput{
-		Table: []internal.TableFile{
-			{
-				Header:    headers,
-				Body:      m.GrantRows,
-				TableCols: headers,
-				Name:      "consent-grants",
-			},
-		},
-		Loot: lootFiles,
-	}
-
-	// Write table
-	// TODO: Implement proper output writing
-	/*
-	if err := internal.WriteFullOutput(
-		output,
-		m.OutputDirectory,
-		m.Verbosity,
-		globals.AZ_CONSENT_GRANTS_MODULE_NAME,
-		m.AWSProfile,
-		m.TenantID,
-		m.UserUPN,
-		output,
-	); err != nil {
-		logger.ErrorM(fmt.Sprintf("Error writing output: %v", err), globals.AZ_CONSENT_GRANTS_MODULE_NAME)
-		m.CommandCounter.Error++
-	}
-	*/
-	_ = output // Use variable to avoid unused warning
 
 	// Count stats for summary
 	adminConsentCount := 0
@@ -288,14 +244,80 @@ func (m *ConsentGrantsModule) writeOutput(logger internal.Logger) {
 		} else if strings.Contains(row[3], "User") {
 			userConsentCount++
 		}
-
 		if strings.Contains(row[9], "RISKY") {
 			riskyCount++
 		}
-
 		if strings.Contains(row[11], "External") {
 			externalCount++
 		}
+	}
+
+	// -------------------- Check for split by tenant (FIRST) --------------------
+	if azinternal.ShouldSplitByTenant(m.IsMultiTenant, m.Tenants) {
+		if len(m.GrantRows) > 0 {
+			// Split grants by tenant
+			ctx := context.Background()
+			if err := m.FilterAndWritePerTenantAuto(
+				ctx, logger, m.Tenants, m.GrantRows, headers,
+				"consent-grants", globals.AZ_CONSENT_GRANTS_MODULE_NAME,
+			); err != nil {
+				logger.ErrorM("Failed to write per-tenant consent grants", globals.AZ_CONSENT_GRANTS_MODULE_NAME)
+			}
+		}
+		// Write loot files separately for multi-tenant (not split)
+		if len(lootFiles) > 0 {
+			output := ConsentGrantsOutput{
+				Table: []internal.TableFile{},
+				Loot:  lootFiles,
+			}
+			scopeType := "tenant"
+			scopeIDs := []string{m.TenantID}
+			scopeNames := []string{m.TenantName}
+			if err := internal.HandleOutputSmart(
+				"Azure", m.Format, m.OutputDirectory, m.Verbosity, m.WrapTable,
+				scopeType, scopeIDs, scopeNames, m.UserUPN, output,
+			); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing loot output: %v", err), globals.AZ_CONSENT_GRANTS_MODULE_NAME)
+			}
+		}
+		logger.SuccessM(fmt.Sprintf("Found %d OAuth2 Consent Grants (Admin: %d, User: %d, Risky: %d, External: %d)",
+			len(m.GrantRows), adminConsentCount, userConsentCount, riskyCount, externalCount), globals.AZ_CONSENT_GRANTS_MODULE_NAME)
+		return
+	}
+
+	// -------------------- Non-split case --------------------
+	output := ConsentGrantsOutput{
+		Table: []internal.TableFile{
+			{
+				Header: headers,
+				Body:   m.GrantRows,
+				Name:   "consent-grants",
+			},
+		},
+		Loot: lootFiles,
+	}
+
+	// Determine scope for output (tenant-level for Graph API)
+	scopeType := "tenant"
+	scopeIDs := []string{m.TenantID}
+	scopeNames := []string{m.TenantName}
+
+	// Write output using HandleOutputSmart
+	if err := internal.HandleOutputSmart(
+		"Azure",
+		m.Format,
+		m.OutputDirectory,
+		m.Verbosity,
+		m.WrapTable,
+		scopeType,
+		scopeIDs,
+		scopeNames,
+		m.UserUPN,
+		output,
+	); err != nil {
+		logger.ErrorM(fmt.Sprintf("Error writing output: %v", err), globals.AZ_CONSENT_GRANTS_MODULE_NAME)
+		m.CommandCounter.Error++
+		return
 	}
 
 	logger.SuccessM(fmt.Sprintf("Found %d OAuth2 Consent Grants for tenant: %s (Admin: %d, User: %d, Risky: %d, External: %d)",

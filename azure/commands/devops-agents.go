@@ -103,9 +103,29 @@ type DevOpsAgentsModule struct {
 	Organization string
 	PAT          string
 
+	// Configuration
+	Verbosity       int
+	WrapTable       bool
+	OutputDirectory string
+	Format          string
+	DisplayName     string
+	Email           string
+
+	// Data collection
 	LootMap map[string]*internal.LootFile
 	mu      sync.Mutex
 }
+
+// ------------------------------
+// Output struct
+// ------------------------------
+type AgentsOutput struct {
+	Table []internal.TableFile
+	Loot  []internal.LootFile
+}
+
+func (o AgentsOutput) TableFiles() []internal.TableFile { return o.Table }
+func (o AgentsOutput) LootFiles() []internal.LootFile   { return o.Loot }
 
 // PrintHelp displays help information for the devops-agents command
 func (m *DevOpsAgentsModule) PrintHelp() {
@@ -139,17 +159,19 @@ func (m *DevOpsAgentsModule) PrintHelp() {
 
 // RunDevOpsAgentsCommand executes the devops-agents command
 func RunDevOpsAgentsCommand(organization, pat string, verbosity int, outputDirectory string) {
-	var header []string
-	var body [][]string
-
 	// Initialize module
 	logger := internal.NewLogger()
 	module := &DevOpsAgentsModule{
-		Organization: organization,
-		PAT:          pat,
-		LootMap:      make(map[string]*internal.LootFile),
+		Organization:    organization,
+		PAT:             pat,
+		Verbosity:       verbosity,
+		WrapTable:       false, // DevOps tables typically not wrapped
+		OutputDirectory: outputDirectory,
+		Format:          "all", // Default format
+		DisplayName:     organization,
+		Email:           "", // DevOps doesn't use email typically
+		LootMap:         make(map[string]*internal.LootFile),
 	}
-	_ = verbosity // TODO: Use verbosity if needed
 
 	// Validate inputs
 	if organization == "" || pat == "" {
@@ -164,24 +186,8 @@ func RunDevOpsAgentsCommand(organization, pat string, verbosity int, outputDirec
 	logger.InfoM("Enumerating Azure DevOps Agents across all agent pools...", globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
 	module.enumerateAgentPools()
 
-	// Generate table output
-	header, body = module.generateTableOutput()
-
-	// Save loot files
-	timestamp := time.Now().Format("2006-01-02-15-04-05")
-	lootDir := fmt.Sprintf("%s/loot", outputDirectory)
-	// TODO: Implement SaveDevOpsLootFiles
-	_ = timestamp
-	_ = lootDir
-	logger.InfoM(fmt.Sprintf("Loot files would be saved to: %s", lootDir), globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
-
-	// Print table
-	fmt.Println()
-	internal.PrintTableToScreen(header, body, false)
-	fmt.Println()
-
-	// Print summary
-	module.printSummary(len(body))
+	// Write output using unified output handler
+	module.writeOutput(logger)
 }
 
 // initializeLootFiles creates the loot file structure
@@ -743,6 +749,69 @@ func (m *DevOpsAgentsModule) generateTableOutput() ([]string, [][]string) {
 	}
 
 	return header, body
+}
+
+// ------------------------------
+// Write output using HandleOutputSmart
+// ------------------------------
+func (m *DevOpsAgentsModule) writeOutput(logger internal.Logger) {
+	// Generate table output
+	header, body := m.generateTableOutput()
+
+	if len(body) == 0 {
+		logger.InfoM("No DevOps Agents found", globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
+		return
+	}
+
+	// Convert loot map to slice (exclude special _tableData entry)
+	var loot []internal.LootFile
+	for name, lf := range m.LootMap {
+		// Skip internal table data storage
+		if name == "_tableData" {
+			continue
+		}
+		// Only include loot files with content
+		if lf.Contents != "" {
+			loot = append(loot, *lf)
+		}
+	}
+
+	// Create output struct
+	output := AgentsOutput{
+		Table: []internal.TableFile{
+			{
+				Name:   "agents",
+				Header: header,
+				Body:   body,
+			},
+		},
+		Loot: loot,
+	}
+
+	// Determine scope for output (organization-level for DevOps)
+	scopeType := "organization"
+	scopeIDs := []string{m.Organization}
+	scopeNames := []string{m.Organization}
+
+	// Write output using HandleOutputSmart
+	if err := internal.HandleOutputSmart(
+		"AzureDevOps",
+		m.Format,
+		m.OutputDirectory,
+		m.Verbosity,
+		m.WrapTable,
+		scopeType,
+		scopeIDs,
+		scopeNames,
+		m.Email,
+		output,
+	); err != nil {
+		logger.ErrorM(fmt.Sprintf("Error writing output: %v", err), globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
+		return
+	}
+
+	// Print console summary
+	m.printSummary(len(body))
 }
 
 // printSummary prints a summary of findings

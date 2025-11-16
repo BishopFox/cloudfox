@@ -46,11 +46,12 @@ type WhoamiModule struct {
 	azinternal.BaseAzureModule // Embed common fields (15 fields)
 
 	// Module-specific fields
-	UserType string
-	ListRGs  bool
-	RoleRows [][]string
-	RGRows   [][]string
-	LootMap  map[string]*internal.LootFile
+	Subscriptions []string
+	UserType      string
+	ListRGs       bool
+	RoleRows      [][]string
+	RGRows        [][]string
+	LootMap       map[string]*internal.LootFile
 }
 
 // ------------------------------
@@ -88,6 +89,7 @@ func ListWhoami(cmd *cobra.Command, args []string) {
 	// -------------------- Initialize module --------------------
 	module := &WhoamiModule{
 		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		Subscriptions:   cmdCtx.Subscriptions,
 		UserType:        userType,
 		ListRGs:         listRGs,
 		RoleRows:        [][]string{},
@@ -125,10 +127,7 @@ func (m *WhoamiModule) PrintWhoami(ctx context.Context, logger internal.Logger, 
 			}
 
 			// Process subscriptions for this tenant
-			for _, subID := range tenantCtx.Subscriptions {
-				m.CommandCounter.Total++
-				m.processSubscription(ctx, subID, logger)
-			}
+			m.RunSubscriptionEnumeration(ctx, logger, tenantCtx.Subscriptions, globals.AZ_WHOAMI_MODULE_NAME, m.processSubscription)
 
 			// Restore tenant context
 			m.TenantID = savedTenantID
@@ -138,10 +137,7 @@ func (m *WhoamiModule) PrintWhoami(ctx context.Context, logger internal.Logger, 
 	} else {
 		// Single tenant processing (existing logic)
 		logger.InfoM(fmt.Sprintf("Enumerating whoami for %d subscription(s)", len(subscriptions)), globals.AZ_WHOAMI_MODULE_NAME)
-		for _, subID := range subscriptions {
-			m.CommandCounter.Total++
-			m.processSubscription(ctx, subID, logger)
-		}
+		m.RunSubscriptionEnumeration(ctx, logger, subscriptions, globals.AZ_WHOAMI_MODULE_NAME, m.processSubscription)
 	}
 
 	// -------------------- Write output --------------------
@@ -557,6 +553,54 @@ func (m *WhoamiModule) processSubscription(ctx context.Context, subscriptionID s
 // Write output (AWS-style writeLoot pattern)
 // ------------------------------
 func (m *WhoamiModule) writeOutput(ctx context.Context, logger internal.Logger) {
+	// Define headers for split operations
+	roleHeader := []string{"Tenant Name", "Tenant ID", "Email / UPN", "Display Name", "User Type", "Subscription ID", "Subscription Name", "Role", "Scope", "Assigned Via"}
+	rgHeader := []string{"Tenant Name", "Tenant ID", "Email / UPN", "Display Name", "User Type", "Subscription ID", "Subscription Name", "Resource Group", "Region"}
+
+	// -------------------- Check for multi-tenant splitting FIRST --------------------
+	if azinternal.ShouldSplitByTenant(m.IsMultiTenant, m.Tenants) {
+		// Split role assignments by tenant
+		if len(m.RoleRows) > 0 {
+			if err := m.FilterAndWritePerTenantAuto(ctx, logger, m.Tenants, m.RoleRows,
+				roleHeader, "whoami-roles", globals.AZ_WHOAMI_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-tenant whoami roles: %v", err), globals.AZ_WHOAMI_MODULE_NAME)
+			}
+		}
+
+		// Split resource groups by tenant (if enabled)
+		if m.ListRGs && len(m.RGRows) > 0 {
+			if err := m.FilterAndWritePerTenantAuto(ctx, logger, m.Tenants, m.RGRows,
+				rgHeader, "whoami-rgs", globals.AZ_WHOAMI_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-tenant whoami resource groups: %v", err), globals.AZ_WHOAMI_MODULE_NAME)
+			}
+		}
+
+		logger.SuccessM(fmt.Sprintf("Whoami enumeration complete: %d role assignments (split by tenant)", len(m.RoleRows)), globals.AZ_WHOAMI_MODULE_NAME)
+		return
+	}
+
+	// -------------------- Check for multi-subscription splitting SECOND --------------------
+	if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
+		// Split role assignments by subscription
+		if len(m.RoleRows) > 0 {
+			if err := m.FilterAndWritePerSubscriptionAuto(ctx, logger, m.Subscriptions, m.RoleRows,
+				roleHeader, "whoami-roles", globals.AZ_WHOAMI_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-subscription whoami roles: %v", err), globals.AZ_WHOAMI_MODULE_NAME)
+			}
+		}
+
+		// Split resource groups by subscription (if enabled)
+		if m.ListRGs && len(m.RGRows) > 0 {
+			if err := m.FilterAndWritePerSubscriptionAuto(ctx, logger, m.Subscriptions, m.RGRows,
+				rgHeader, "whoami-rgs", globals.AZ_WHOAMI_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-subscription whoami resource groups: %v", err), globals.AZ_WHOAMI_MODULE_NAME)
+			}
+		}
+
+		logger.SuccessM(fmt.Sprintf("Whoami enumeration complete: %d role assignments (split by subscription)", len(m.RoleRows)), globals.AZ_WHOAMI_MODULE_NAME)
+		return
+	}
+
 	// Build loot array
 	loot := []internal.LootFile{}
 	for _, lf := range m.LootMap {
@@ -568,7 +612,7 @@ func (m *WhoamiModule) writeOutput(ctx context.Context, logger internal.Logger) 
 	// Always include role assignments table
 	roleTable := internal.TableFile{
 		Name:   "whoami-roles",
-		Header: []string{"Tenant Name", "Tenant ID", "Email / UPN", "Display Name", "User Type", "Subscription ID", "Subscription Name", "Role", "Scope", "Assigned Via"},
+		Header: roleHeader,
 		Body:   m.RoleRows,
 	}
 
@@ -578,7 +622,7 @@ func (m *WhoamiModule) writeOutput(ctx context.Context, logger internal.Logger) 
 	if m.ListRGs {
 		rgTable := internal.TableFile{
 			Name:   "whoami-rgs",
-			Header: []string{"Tenant Name", "Tenant ID", "Email / UPN", "Display Name", "User Type", "Subscription ID", "Subscription Name", "Resource Group", "Region"},
+			Header: rgHeader,
 			Body:   m.RGRows,
 		}
 		tables = append(tables, rgTable)

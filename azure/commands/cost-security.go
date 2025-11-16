@@ -468,6 +468,109 @@ func (m *CostSecurityModule) writeOutput(ctx context.Context, logger internal.Lo
 		return
 	}
 
+	// Define headers for all tables (for split operations)
+	costAnomalyHeader := []string{
+		"Tenant Name", "Tenant ID", "Subscription ID", "Subscription Name",
+		"Detection Date", "Resource Type", "Impact %", "Actual Cost",
+		"Expected Cost", "Anomaly Type", "Risk",
+	}
+	budgetStatusHeader := []string{
+		"Tenant Name", "Tenant ID", "Subscription ID", "Subscription Name",
+		"Budget Name", "Budget Amount", "Current Spend", "Alert Status", "Risk",
+	}
+	expensiveResourceHeader := []string{
+		"Tenant Name", "Tenant ID", "Subscription ID", "Subscription Name",
+		"Resource Name", "Resource Type", "Location", "Monthly Cost",
+		"Security Risk", "Security Issues", "Overall Risk",
+	}
+	orphanedResourceHeader := []string{
+		"Tenant Name", "Tenant ID", "Subscription ID", "Subscription Name",
+		"Resource Name", "Resource Type", "Location", "Orphan Reason",
+		"Monthly Cost", "Days Orphaned", "Risk",
+	}
+	costByTypeHeader := []string{
+		"Tenant Name", "Tenant ID", "Subscription ID", "Subscription Name",
+		"Resource Type", "Count", "Monthly Cost", "% of Total", "Top Consumers",
+	}
+
+	// -------------------- Check for multi-tenant splitting FIRST --------------------
+	if azinternal.ShouldSplitByTenant(m.IsMultiTenant, m.Tenants) {
+		// Split all tables by tenant
+		if len(m.CostAnomalyRows) > 0 {
+			if err := m.FilterAndWritePerTenantAuto(ctx, logger, m.Tenants, m.CostAnomalyRows,
+				costAnomalyHeader, "cost-anomalies", globals.AZ_COST_SECURITY_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-tenant cost anomalies: %v", err), globals.AZ_COST_SECURITY_MODULE_NAME)
+			}
+		}
+		if len(m.BudgetStatusRows) > 0 {
+			if err := m.FilterAndWritePerTenantAuto(ctx, logger, m.Tenants, m.BudgetStatusRows,
+				budgetStatusHeader, "budget-status", globals.AZ_COST_SECURITY_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-tenant budget status: %v", err), globals.AZ_COST_SECURITY_MODULE_NAME)
+			}
+		}
+		if len(m.ExpensiveResourceRows) > 0 {
+			if err := m.FilterAndWritePerTenantAuto(ctx, logger, m.Tenants, m.ExpensiveResourceRows,
+				expensiveResourceHeader, "expensive-resources", globals.AZ_COST_SECURITY_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-tenant expensive resources: %v", err), globals.AZ_COST_SECURITY_MODULE_NAME)
+			}
+		}
+		if len(m.OrphanedResourceRows) > 0 {
+			if err := m.FilterAndWritePerTenantAuto(ctx, logger, m.Tenants, m.OrphanedResourceRows,
+				orphanedResourceHeader, "orphaned-resources", globals.AZ_COST_SECURITY_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-tenant orphaned resources: %v", err), globals.AZ_COST_SECURITY_MODULE_NAME)
+			}
+		}
+		if len(m.CostByTypeRows) > 0 {
+			if err := m.FilterAndWritePerTenantAuto(ctx, logger, m.Tenants, m.CostByTypeRows,
+				costByTypeHeader, "cost-by-type", globals.AZ_COST_SECURITY_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-tenant cost by type: %v", err), globals.AZ_COST_SECURITY_MODULE_NAME)
+			}
+		}
+
+		totalRows := len(m.CostAnomalyRows) + len(m.BudgetStatusRows) + len(m.ExpensiveResourceRows) + len(m.OrphanedResourceRows) + len(m.CostByTypeRows)
+		logger.SuccessM(fmt.Sprintf("Found %d cost security items (split by tenant)", totalRows), globals.AZ_COST_SECURITY_MODULE_NAME)
+		return
+	}
+
+	// -------------------- Check for multi-subscription splitting SECOND --------------------
+	if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
+		// Split all tables by subscription
+		if len(m.CostAnomalyRows) > 0 {
+			if err := m.FilterAndWritePerSubscriptionAuto(ctx, logger, m.Subscriptions, m.CostAnomalyRows,
+				costAnomalyHeader, "cost-anomalies", globals.AZ_COST_SECURITY_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-subscription cost anomalies: %v", err), globals.AZ_COST_SECURITY_MODULE_NAME)
+			}
+		}
+		if len(m.BudgetStatusRows) > 0 {
+			if err := m.FilterAndWritePerSubscriptionAuto(ctx, logger, m.Subscriptions, m.BudgetStatusRows,
+				budgetStatusHeader, "budget-status", globals.AZ_COST_SECURITY_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-subscription budget status: %v", err), globals.AZ_COST_SECURITY_MODULE_NAME)
+			}
+		}
+		if len(m.ExpensiveResourceRows) > 0 {
+			if err := m.FilterAndWritePerSubscriptionAuto(ctx, logger, m.Subscriptions, m.ExpensiveResourceRows,
+				expensiveResourceHeader, "expensive-resources", globals.AZ_COST_SECURITY_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-subscription expensive resources: %v", err), globals.AZ_COST_SECURITY_MODULE_NAME)
+			}
+		}
+		if len(m.OrphanedResourceRows) > 0 {
+			if err := m.FilterAndWritePerSubscriptionAuto(ctx, logger, m.Subscriptions, m.OrphanedResourceRows,
+				orphanedResourceHeader, "orphaned-resources", globals.AZ_COST_SECURITY_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-subscription orphaned resources: %v", err), globals.AZ_COST_SECURITY_MODULE_NAME)
+			}
+		}
+		if len(m.CostByTypeRows) > 0 {
+			if err := m.FilterAndWritePerSubscriptionAuto(ctx, logger, m.Subscriptions, m.CostByTypeRows,
+				costByTypeHeader, "cost-by-type", globals.AZ_COST_SECURITY_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-subscription cost by type: %v", err), globals.AZ_COST_SECURITY_MODULE_NAME)
+			}
+		}
+
+		totalRows := len(m.CostAnomalyRows) + len(m.BudgetStatusRows) + len(m.ExpensiveResourceRows) + len(m.OrphanedResourceRows) + len(m.CostByTypeRows)
+		logger.SuccessM(fmt.Sprintf("Found %d cost security items (split by subscription)", totalRows), globals.AZ_COST_SECURITY_MODULE_NAME)
+		return
+	}
+
 	// Build tables
 	tables := []internal.TableFile{}
 

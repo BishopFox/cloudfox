@@ -604,6 +604,143 @@ func (m *ResourceGraphModule) writeOutput(ctx context.Context, logger internal.L
 		return
 	}
 
+	// Define headers for all tables (for split operations)
+	internetFacingHeader := []string{
+		"Tenant Name", "Tenant ID", "Subscription ID", "Resource Group",
+		"Resource Name", "Resource Type", "Location", "Public IP",
+		"Associated Resource", "Risk",
+	}
+	unencryptedHeader := []string{
+		"Tenant Name", "Tenant ID", "Subscription ID", "Resource Group",
+		"Resource Name", "Resource Type", "Location", "Encryption Status", "Risk",
+	}
+	untaggedHeader := []string{
+		"Tenant Name", "Tenant ID", "Subscription ID", "Resource Group",
+		"Resource Name", "Resource Type", "Location", "Tag Status", "Risk",
+	}
+	certificateExpiryHeader := []string{
+		"Tenant Name", "Tenant ID", "Subscription ID", "Resource Group",
+		"Resource Name", "Resource Type", "Location", "Certificate Expiry",
+		"Days Until Expiry", "Risk",
+	}
+	regionalComplianceHeader := []string{
+		"Tenant Name", "Tenant ID", "Subscription ID", "Resource Group",
+		"Resource Name", "Resource Type", "Location", "Compliance Status", "Risk",
+	}
+	resourceRelationshipsHeader := []string{
+		"Tenant Name", "Tenant ID", "Subscription ID", "Resource Group",
+		"Resource Name", "Resource Type", "Related Resource 1",
+		"Related Resource 2", "Relationship Type",
+	}
+	resourceInventoryHeader := []string{
+		"Tenant Name", "Tenant ID", "Subscription ID", "Resource Group",
+		"Resource Name", "Resource Type", "Location", "Tags", "Provisioning State",
+	}
+
+	// -------------------- Check for multi-tenant splitting FIRST --------------------
+	if azinternal.ShouldSplitByTenant(m.IsMultiTenant, m.Tenants) {
+		// Split all tables by tenant
+		if len(m.InternetFacingRows) > 0 {
+			if err := m.FilterAndWritePerTenantAuto(ctx, logger, m.Tenants, m.InternetFacingRows,
+				internetFacingHeader, "internet-facing-resources", globals.AZ_RESOURCE_GRAPH_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-tenant internet-facing resources: %v", err), globals.AZ_RESOURCE_GRAPH_MODULE_NAME)
+			}
+		}
+		if len(m.UnencryptedRows) > 0 {
+			if err := m.FilterAndWritePerTenantAuto(ctx, logger, m.Tenants, m.UnencryptedRows,
+				unencryptedHeader, "unencrypted-resources", globals.AZ_RESOURCE_GRAPH_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-tenant unencrypted resources: %v", err), globals.AZ_RESOURCE_GRAPH_MODULE_NAME)
+			}
+		}
+		if len(m.UntaggedRows) > 0 {
+			if err := m.FilterAndWritePerTenantAuto(ctx, logger, m.Tenants, m.UntaggedRows,
+				untaggedHeader, "untagged-resources", globals.AZ_RESOURCE_GRAPH_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-tenant untagged resources: %v", err), globals.AZ_RESOURCE_GRAPH_MODULE_NAME)
+			}
+		}
+		if len(m.CertificateExpiryRows) > 0 {
+			if err := m.FilterAndWritePerTenantAuto(ctx, logger, m.Tenants, m.CertificateExpiryRows,
+				certificateExpiryHeader, "expiring-certificates", globals.AZ_RESOURCE_GRAPH_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-tenant expiring certificates: %v", err), globals.AZ_RESOURCE_GRAPH_MODULE_NAME)
+			}
+		}
+		if len(m.RegionalComplianceRows) > 0 {
+			if err := m.FilterAndWritePerTenantAuto(ctx, logger, m.Tenants, m.RegionalComplianceRows,
+				regionalComplianceHeader, "regional-compliance", globals.AZ_RESOURCE_GRAPH_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-tenant regional compliance: %v", err), globals.AZ_RESOURCE_GRAPH_MODULE_NAME)
+			}
+		}
+		if len(m.ResourceRelationshipsRows) > 0 {
+			if err := m.FilterAndWritePerTenantAuto(ctx, logger, m.Tenants, m.ResourceRelationshipsRows,
+				resourceRelationshipsHeader, "resource-relationships", globals.AZ_RESOURCE_GRAPH_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-tenant resource relationships: %v", err), globals.AZ_RESOURCE_GRAPH_MODULE_NAME)
+			}
+		}
+		if len(m.ResourceInventoryRows) > 0 {
+			if err := m.FilterAndWritePerTenantAuto(ctx, logger, m.Tenants, m.ResourceInventoryRows,
+				resourceInventoryHeader, "resource-inventory-sample", globals.AZ_RESOURCE_GRAPH_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-tenant resource inventory: %v", err), globals.AZ_RESOURCE_GRAPH_MODULE_NAME)
+			}
+		}
+
+		totalRows := len(m.InternetFacingRows) + len(m.UnencryptedRows) + len(m.UntaggedRows) +
+			len(m.CertificateExpiryRows) + len(m.RegionalComplianceRows) + len(m.ResourceRelationshipsRows) + len(m.ResourceInventoryRows)
+		logger.SuccessM(fmt.Sprintf("Found %d Resource Graph query results (split by tenant)", totalRows), globals.AZ_RESOURCE_GRAPH_MODULE_NAME)
+		return
+	}
+
+	// -------------------- Check for multi-subscription splitting SECOND --------------------
+	if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
+		// Split all tables by subscription
+		if len(m.InternetFacingRows) > 0 {
+			if err := m.FilterAndWritePerSubscriptionAuto(ctx, logger, m.Subscriptions, m.InternetFacingRows,
+				internetFacingHeader, "internet-facing-resources", globals.AZ_RESOURCE_GRAPH_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-subscription internet-facing resources: %v", err), globals.AZ_RESOURCE_GRAPH_MODULE_NAME)
+			}
+		}
+		if len(m.UnencryptedRows) > 0 {
+			if err := m.FilterAndWritePerSubscriptionAuto(ctx, logger, m.Subscriptions, m.UnencryptedRows,
+				unencryptedHeader, "unencrypted-resources", globals.AZ_RESOURCE_GRAPH_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-subscription unencrypted resources: %v", err), globals.AZ_RESOURCE_GRAPH_MODULE_NAME)
+			}
+		}
+		if len(m.UntaggedRows) > 0 {
+			if err := m.FilterAndWritePerSubscriptionAuto(ctx, logger, m.Subscriptions, m.UntaggedRows,
+				untaggedHeader, "untagged-resources", globals.AZ_RESOURCE_GRAPH_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-subscription untagged resources: %v", err), globals.AZ_RESOURCE_GRAPH_MODULE_NAME)
+			}
+		}
+		if len(m.CertificateExpiryRows) > 0 {
+			if err := m.FilterAndWritePerSubscriptionAuto(ctx, logger, m.Subscriptions, m.CertificateExpiryRows,
+				certificateExpiryHeader, "expiring-certificates", globals.AZ_RESOURCE_GRAPH_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-subscription expiring certificates: %v", err), globals.AZ_RESOURCE_GRAPH_MODULE_NAME)
+			}
+		}
+		if len(m.RegionalComplianceRows) > 0 {
+			if err := m.FilterAndWritePerSubscriptionAuto(ctx, logger, m.Subscriptions, m.RegionalComplianceRows,
+				regionalComplianceHeader, "regional-compliance", globals.AZ_RESOURCE_GRAPH_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-subscription regional compliance: %v", err), globals.AZ_RESOURCE_GRAPH_MODULE_NAME)
+			}
+		}
+		if len(m.ResourceRelationshipsRows) > 0 {
+			if err := m.FilterAndWritePerSubscriptionAuto(ctx, logger, m.Subscriptions, m.ResourceRelationshipsRows,
+				resourceRelationshipsHeader, "resource-relationships", globals.AZ_RESOURCE_GRAPH_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-subscription resource relationships: %v", err), globals.AZ_RESOURCE_GRAPH_MODULE_NAME)
+			}
+		}
+		if len(m.ResourceInventoryRows) > 0 {
+			if err := m.FilterAndWritePerSubscriptionAuto(ctx, logger, m.Subscriptions, m.ResourceInventoryRows,
+				resourceInventoryHeader, "resource-inventory-sample", globals.AZ_RESOURCE_GRAPH_MODULE_NAME); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing per-subscription resource inventory: %v", err), globals.AZ_RESOURCE_GRAPH_MODULE_NAME)
+			}
+		}
+
+		totalRows := len(m.InternetFacingRows) + len(m.UnencryptedRows) + len(m.UntaggedRows) +
+			len(m.CertificateExpiryRows) + len(m.RegionalComplianceRows) + len(m.ResourceRelationshipsRows) + len(m.ResourceInventoryRows)
+		logger.SuccessM(fmt.Sprintf("Found %d Resource Graph query results (split by subscription)", totalRows), globals.AZ_RESOURCE_GRAPH_MODULE_NAME)
+		return
+	}
+
 	// Build tables
 	tables := []internal.TableFile{}
 

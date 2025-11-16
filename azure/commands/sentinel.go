@@ -45,37 +45,7 @@ type workspaceInfo struct {
 func (m *SentinelModule) PrintSentinelCommand(ctx context.Context, logger internal.Logger) {
 	m.modLog = logger
 
-	// Tables
-	m.TableFiles = &internal.TableFiles{
-		Directory:   m.Caller,
-		TableCols:   sentinelTableCols,
-		ResultsFile: "table/sentinel.txt",
-		LootFile:    "",
-	}
-	analyticsRulesTableFiles := &internal.TableFiles{
-		Directory:   m.Caller,
-		TableCols:   analyticsRulesTableCols,
-		ResultsFile: "table/sentinel-analytics-rules.txt",
-		LootFile:    "",
-	}
-	automationRulesTableFiles := &internal.TableFiles{
-		Directory:   m.Caller,
-		TableCols:   automationRulesTableCols,
-		ResultsFile: "table/sentinel-automation-rules.txt",
-		LootFile:    "",
-	}
-	dataConnectorsTableFiles := &internal.TableFiles{
-		Directory:   m.Caller,
-		TableCols:   dataConnectorsTableCols,
-		ResultsFile: "table/sentinel-data-connectors.txt",
-		LootFile:    "",
-	}
-	incidentsTableFiles := &internal.TableFiles{
-		Directory:   m.Caller,
-		TableCols:   incidentsTableCols,
-		ResultsFile: "table/sentinel-incidents.txt",
-		LootFile:    "",
-	}
+	// Tables (TableFiles not needed with new writeOutput approach)
 
 	// Initialize loot file contents (LootMap already initialized in Run function)
 	m.LootMap["sentinel-disabled-rules"].Contents += "# Disabled Analytics Rules\n" +
@@ -90,34 +60,47 @@ func (m *SentinelModule) PrintSentinelCommand(ctx context.Context, logger intern
 	m.modLog.Info("Enumerating Microsoft Sentinel (SIEM) instances and configuration...")
 	fmt.Printf("[azure] Enumerating Microsoft Sentinel workspaces and rules.\n")
 
-	// Use subscriptions from context (already fetched during initialization)
-	var wg sync.WaitGroup
-	semaphore := make(chan struct{}, 10)
+	// Multi-tenant processing
+	if m.IsMultiTenant {
+		logger.InfoM(fmt.Sprintf("Multi-tenant mode: Processing %d tenants", len(m.Tenants)), globals.AZ_SENTINEL_MODULE_NAME)
 
-	// Process each subscription
-	for _, subID := range m.Subscriptions {
-		wg.Add(1)
-		semaphore <- struct{}{}
+		for _, tenantCtx := range m.Tenants {
+			// Save tenant context
+			savedTenantID := m.TenantID
+			savedTenantName := m.TenantName
+			savedTenantInfo := m.TenantInfo
 
-		go func(subID string) {
-			defer wg.Done()
-			defer func() { <-semaphore }()
+			// Set current tenant
+			m.TenantID = tenantCtx.TenantID
+			m.TenantName = tenantCtx.TenantName
+			m.TenantInfo = tenantCtx.TenantInfo
 
-			subName := azinternal.GetSubscriptionNameFromID(ctx, m.Session, subID)
+			if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
+				logger.InfoM(fmt.Sprintf("Processing tenant: %s (%s)", m.TenantName, m.TenantID), globals.AZ_SENTINEL_MODULE_NAME)
+			}
 
-			// Process Sentinel workspaces (Sentinel is enabled on Log Analytics workspaces)
-			m.processSentinelWorkspaces(ctx, subID, subName, logger)
+			// Process subscriptions for this tenant
+			m.RunSubscriptionEnumeration(ctx, logger, tenantCtx.Subscriptions, globals.AZ_SENTINEL_MODULE_NAME, m.processSubscription)
 
-		}(subID)
+			// Restore tenant context
+			m.TenantID = savedTenantID
+			m.TenantName = savedTenantName
+			m.TenantInfo = savedTenantInfo
+		}
+	} else {
+		// Single tenant processing
+		logger.InfoM(fmt.Sprintf("Enumerating for %d subscription(s)", len(m.Subscriptions)), globals.AZ_SENTINEL_MODULE_NAME)
+		m.RunSubscriptionEnumeration(ctx, logger, m.Subscriptions, globals.AZ_SENTINEL_MODULE_NAME, m.processSubscription)
 	}
 
-	wg.Wait()
+	// Generate and write output
+	m.writeOutput(ctx, logger)
+}
 
-	// Generate summary output
-	m.generateSummary()
-
-	// Write tables and loot files
-	m.writeTables(analyticsRulesTableFiles, automationRulesTableFiles, dataConnectorsTableFiles, incidentsTableFiles)
+// processSubscription processes a single subscription (callback for RunSubscriptionEnumeration)
+func (m *SentinelModule) processSubscription(ctx context.Context, subID string, logger internal.Logger) {
+	subName := azinternal.GetSubscriptionNameFromID(ctx, m.Session, subID)
+	m.processSentinelWorkspaces(ctx, subID, subName, logger)
 }
 
 func (m *SentinelModule) processSentinelWorkspaces(ctx context.Context, subID, subName string, logger internal.Logger) {
@@ -176,6 +159,10 @@ func (m *SentinelModule) processSentinelWorkspaces(ctx context.Context, subID, s
 			}
 
 			row := []string{
+			m.TenantName,
+			m.TenantID,
+				m.TenantName,
+				m.TenantID,
 				subName,
 				subID,
 				wsRG,
@@ -195,6 +182,8 @@ func (m *SentinelModule) processSentinelWorkspaces(ctx context.Context, subID, s
 		} else {
 			// Workspace exists but Sentinel is not enabled
 			row := []string{
+			m.TenantName,
+			m.TenantID,
 				subName,
 				subID,
 				wsRG,
@@ -365,6 +354,8 @@ func (m *SentinelModule) processAnalyticsRules(ctx context.Context, subID, subNa
 			}
 
 			row := []string{
+			m.TenantName,
+			m.TenantID,
 				subName,
 				subID,
 				rgName,
@@ -469,6 +460,8 @@ func (m *SentinelModule) processAutomationRules(ctx context.Context, subID, subN
 			}
 
 			row := []string{
+			m.TenantName,
+			m.TenantID,
 				subName,
 				subID,
 				rgName,
@@ -667,6 +660,8 @@ func (m *SentinelModule) processDataConnectors(ctx context.Context, subID, subNa
 			}
 
 			row := []string{
+			m.TenantName,
+			m.TenantID,
 				subName,
 				subID,
 				rgName,
@@ -774,6 +769,8 @@ func (m *SentinelModule) processIncidents(ctx context.Context, subID, subName, r
 			}
 
 			row := []string{
+			m.TenantName,
+			m.TenantID,
 				subName,
 				subID,
 				rgName,
@@ -849,62 +846,159 @@ func (m *SentinelModule) generateSummary() {
 	fmt.Printf("  Active Incidents: %d total (%d high severity)\n", totalIncidents, highSeverityIncidents)
 }
 
-func (m *SentinelModule) writeTables(analyticsRulesTableFiles, automationRulesTableFiles, dataConnectorsTableFiles, incidentsTableFiles *internal.TableFiles) {
-	// TODO: Implement full WriteTableAndLootFiles functionality
+// writeOutput generates and writes output files using HandleOutputSmart
+func (m *SentinelModule) writeOutput(ctx context.Context, logger internal.Logger) {
+	// Generate summary first
+	m.generateSummary()
 
-	// Print main Sentinel workspaces table
-	if len(m.WorkspaceRows) > 0 {
-		fmt.Println("\n=== Sentinel Workspaces ===")
-		var headerStrings []string
-		for _, col := range m.TableFiles.TableCols {
-			headerStrings = append(headerStrings, col.Name)
-		}
-		internal.PrintTableToScreen(headerStrings, m.WorkspaceRows, false)
+	// Early return if no data
+	if len(m.WorkspaceRows) == 0 {
+		logger.InfoM("No Sentinel workspaces found", globals.AZ_SENTINEL_MODULE_NAME)
+		return
 	}
 
-	// Print analytics rules table
+	// Build headers for main table
+	var workspaceHeaders []string
+	for _, col := range sentinelTableCols {
+		workspaceHeaders = append(workspaceHeaders, col.Name)
+	}
+
+	// Check multi-tenant splitting FIRST
+	if azinternal.ShouldSplitByTenant(m.IsMultiTenant, m.Tenants) {
+		if err := m.FilterAndWritePerTenantAuto(
+			ctx, logger, m.Tenants, m.WorkspaceRows, workspaceHeaders,
+			"sentinel", globals.AZ_SENTINEL_MODULE_NAME,
+		); err != nil {
+			return
+		}
+		return
+	}
+
+	// Check multi-subscription splitting SECOND
+	if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
+		if err := m.FilterAndWritePerSubscriptionAuto(
+			ctx, logger, m.Subscriptions, m.WorkspaceRows, workspaceHeaders,
+			"sentinel", globals.AZ_SENTINEL_MODULE_NAME,
+		); err != nil {
+			return
+		}
+		return
+	}
+
+	// Build loot (only non-empty)
+	loot := []internal.LootFile{}
+	for _, lf := range m.LootMap {
+		if lf.Contents != "" {
+			loot = append(loot, *lf)
+		}
+	}
+
+	// Create tables for multiple outputs
+	tables := []internal.TableFile{
+		{
+			Name:   "sentinel",
+			Header: workspaceHeaders,
+			Body:   m.WorkspaceRows,
+		},
+	}
+
+	// Add analytics rules table if we have data
 	if len(m.AnalyticsRuleRows) > 0 {
-		fmt.Println("\n=== Analytics Rules ===")
-		var headerStrings []string
-		for _, col := range analyticsRulesTableFiles.TableCols {
-			headerStrings = append(headerStrings, col.Name)
+		var analyticsHeaders []string
+		for _, col := range analyticsRulesTableCols {
+			analyticsHeaders = append(analyticsHeaders, col.Name)
 		}
-		internal.PrintTableToScreen(headerStrings, m.AnalyticsRuleRows, false)
+		tables = append(tables, internal.TableFile{
+			Name:   "sentinel-analytics-rules",
+			Header: analyticsHeaders,
+			Body:   m.AnalyticsRuleRows,
+		})
 	}
 
-	// Print automation rules table
+	// Add automation rules table if we have data
 	if len(m.AutomationRuleRows) > 0 {
-		fmt.Println("\n=== Automation Rules ===")
-		var headerStrings []string
-		for _, col := range automationRulesTableFiles.TableCols {
-			headerStrings = append(headerStrings, col.Name)
+		var automationHeaders []string
+		for _, col := range automationRulesTableCols {
+			automationHeaders = append(automationHeaders, col.Name)
 		}
-		internal.PrintTableToScreen(headerStrings, m.AutomationRuleRows, false)
+		tables = append(tables, internal.TableFile{
+			Name:   "sentinel-automation-rules",
+			Header: automationHeaders,
+			Body:   m.AutomationRuleRows,
+		})
 	}
 
-	// Print data connectors table
+	// Add data connectors table if we have data
 	if len(m.DataConnectorRows) > 0 {
-		fmt.Println("\n=== Data Connectors ===")
-		var headerStrings []string
-		for _, col := range dataConnectorsTableFiles.TableCols {
-			headerStrings = append(headerStrings, col.Name)
+		var connectorHeaders []string
+		for _, col := range dataConnectorsTableCols {
+			connectorHeaders = append(connectorHeaders, col.Name)
 		}
-		internal.PrintTableToScreen(headerStrings, m.DataConnectorRows, false)
+		tables = append(tables, internal.TableFile{
+			Name:   "sentinel-data-connectors",
+			Header: connectorHeaders,
+			Body:   m.DataConnectorRows,
+		})
 	}
 
-	// Print incidents table
+	// Add incidents table if we have data
 	if len(m.IncidentRows) > 0 {
-		fmt.Println("\n=== Incidents ===")
-		var headerStrings []string
-		for _, col := range incidentsTableFiles.TableCols {
-			headerStrings = append(headerStrings, col.Name)
+		var incidentHeaders []string
+		for _, col := range incidentsTableCols {
+			incidentHeaders = append(incidentHeaders, col.Name)
 		}
-		internal.PrintTableToScreen(headerStrings, m.IncidentRows, false)
+		tables = append(tables, internal.TableFile{
+			Name:   "sentinel-incidents",
+			Header: incidentHeaders,
+			Body:   m.IncidentRows,
+		})
 	}
+
+	// Create output struct
+	output := SentinelOutput{
+		Table: tables,
+		Loot:  loot,
+	}
+
+	// Determine scope
+	scopeType, scopeIDs, scopeNames := azinternal.DetermineScopeForOutput(
+		m.Subscriptions, m.TenantID, m.TenantName, m.TenantFlagPresent)
+	scopeNames = azinternal.GetSubscriptionNamesForOutput(ctx, m.Session, scopeType, scopeIDs)
+
+	// Write output using HandleOutputSmart
+	if err := internal.HandleOutputSmart(
+		"Azure",
+		m.Format,
+		m.OutputDirectory,
+		m.Verbosity,
+		m.WrapTable,
+		scopeType,
+		scopeIDs,
+		scopeNames,
+		m.UserUPN,
+		output,
+	); err != nil {
+		logger.ErrorM(fmt.Sprintf("Error writing output: %v", err), globals.AZ_SENTINEL_MODULE_NAME)
+		m.CommandCounter.Error++
+	}
+
+	logger.SuccessM(fmt.Sprintf("Found %d Sentinel workspace(s) across %d subscription(s)",
+		len(m.WorkspaceRows), len(m.Subscriptions)), globals.AZ_SENTINEL_MODULE_NAME)
 }
+
+// SentinelOutput implements the output interface
+type SentinelOutput struct {
+	Table []internal.TableFile
+	Loot  []internal.LootFile
+}
+
+func (o SentinelOutput) TableFiles() []internal.TableFile { return o.Table }
+func (o SentinelOutput) LootFiles() []internal.LootFile   { return o.Loot }
 
 // Table column definitions
 var sentinelTableCols = []internal.TableCol{
+	{Name: "Tenant Name", Width: 25},
+	{Name: "Tenant ID", Width: 36},
 	{Name: "Subscription", Width: 25},
 	{Name: "SubscriptionID", Width: 36},
 	{Name: "ResourceGroup", Width: 30},
@@ -918,6 +1012,8 @@ var sentinelTableCols = []internal.TableCol{
 }
 
 var analyticsRulesTableCols = []internal.TableCol{
+	{Name: "Tenant Name", Width: 25},
+	{Name: "Tenant ID", Width: 36},
 	{Name: "Subscription", Width: 25},
 	{Name: "SubscriptionID", Width: 36},
 	{Name: "ResourceGroup", Width: 30},
@@ -934,6 +1030,8 @@ var analyticsRulesTableCols = []internal.TableCol{
 }
 
 var automationRulesTableCols = []internal.TableCol{
+	{Name: "Tenant Name", Width: 25},
+	{Name: "Tenant ID", Width: 36},
 	{Name: "Subscription", Width: 25},
 	{Name: "SubscriptionID", Width: 36},
 	{Name: "ResourceGroup", Width: 30},
@@ -949,6 +1047,8 @@ var automationRulesTableCols = []internal.TableCol{
 }
 
 var dataConnectorsTableCols = []internal.TableCol{
+	{Name: "Tenant Name", Width: 25},
+	{Name: "Tenant ID", Width: 36},
 	{Name: "Subscription", Width: 25},
 	{Name: "SubscriptionID", Width: 36},
 	{Name: "ResourceGroup", Width: 30},
@@ -963,6 +1063,8 @@ var dataConnectorsTableCols = []internal.TableCol{
 }
 
 var incidentsTableCols = []internal.TableCol{
+	{Name: "Tenant Name", Width: 25},
+	{Name: "Tenant ID", Width: 36},
 	{Name: "Subscription", Width: 25},
 	{Name: "SubscriptionID", Width: 36},
 	{Name: "ResourceGroup", Width: 30},

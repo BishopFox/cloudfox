@@ -555,140 +555,163 @@ func (m *NetworkTopologyModule) writeOutput(ctx context.Context, logger internal
 		return
 	}
 
-	// -------------------- TABLE 1: Topology Summary --------------------
-	if len(m.TopologyRows) > 0 {
-		summaryHeaders := []string{
-			"Tenant Name",
-			"Tenant ID",
-			"Total VNets",
-			"Hub VNets",
-			"Spoke VNets",
-			"Isolated VNets",
-			"Architecture Pattern",
-			"Segmentation Score",
-			"Notes",
-		}
-		_ = summaryHeaders // Avoid unused warning
-
-		// TODO: Implement WriteFullOutput
-		logger.InfoM("Topology summary enumeration complete", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
+	// -------------------- Define all headers at top --------------------
+	summaryHeaders := []string{
+		"Tenant Name", "Tenant ID", "Total VNets", "Hub VNets", "Spoke VNets",
+		"Isolated VNets", "Architecture Pattern", "Segmentation Score", "Notes",
 	}
 
-	// -------------------- TABLE 2: Hub VNets --------------------
-	if len(m.HubRows) > 0 {
-		hubHeaders := []string{
-			"Tenant Name",
-			"Tenant ID",
-			"Subscription ID",
-			"Subscription Name",
-			"Resource Group",
-			"VNet Name",
-			"Address Space",
-			"Peering Count",
-			"Subnet Count",
-			"Gateway Transit",
-			"Has VPN Gateway",
-			"Has ER Gateway",
-			"Trust Zone",
-			"Risk",
-			"Risk Note",
-		}
+	hubHeaders := []string{
+		"Tenant Name", "Tenant ID", "Subscription ID", "Subscription Name",
+		"Resource Group", "VNet Name", "Address Space", "Peering Count",
+		"Subnet Count", "Gateway Transit", "Has VPN Gateway", "Has ER Gateway",
+		"Trust Zone", "Risk", "Risk Note",
+	}
 
-		if azinternal.ShouldSplitByTenant(m.IsMultiTenant, m.Tenants) {
+	spokeHeaders := []string{
+		"Tenant Name", "Tenant ID", "Subscription ID", "Subscription Name",
+		"Resource Group", "VNet Name", "Address Space", "Peering Count",
+		"Subnet Count", "Use Remote Gateway", "Trust Zone", "Risk", "Risk Note",
+	}
+
+	isolatedHeaders := []string{
+		"Tenant Name", "Tenant ID", "Subscription ID", "Subscription Name",
+		"Resource Group", "VNet Name", "Address Space", "Subnet Count",
+		"Trust Zone", "Risk", "Risk Note",
+	}
+
+	// -------------------- Check for split by tenant (FIRST) --------------------
+	if azinternal.ShouldSplitByTenant(m.IsMultiTenant, m.Tenants) {
+		// Summary table is tenant-level, no need to split
+		if len(m.HubRows) > 0 {
 			if err := m.FilterAndWritePerTenantAuto(
 				ctx, logger, m.Tenants, m.HubRows, hubHeaders,
 				"topology-hubs", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME,
 			); err != nil {
 				logger.ErrorM("Failed to write per-tenant hub VNets", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
 			}
-		} else if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
-			if err := m.FilterAndWritePerSubscriptionAuto(
-				ctx, logger, m.Subscriptions, m.HubRows, hubHeaders,
-				"topology-hubs", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME,
-			); err != nil {
-				logger.ErrorM("Failed to write per-subscription hub VNets", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
-			}
-		} else {
-			// TODO: Implement WriteFullOutput
-			logger.InfoM("Hub VNets enumeration complete", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
 		}
-	}
-
-	// -------------------- TABLE 3: Spoke VNets --------------------
-	if len(m.SpokeRows) > 0 {
-		spokeHeaders := []string{
-			"Tenant Name",
-			"Tenant ID",
-			"Subscription ID",
-			"Subscription Name",
-			"Resource Group",
-			"VNet Name",
-			"Address Space",
-			"Peering Count",
-			"Subnet Count",
-			"Use Remote Gateway",
-			"Trust Zone",
-			"Risk",
-			"Risk Note",
-		}
-
-		if azinternal.ShouldSplitByTenant(m.IsMultiTenant, m.Tenants) {
+		if len(m.SpokeRows) > 0 {
 			if err := m.FilterAndWritePerTenantAuto(
 				ctx, logger, m.Tenants, m.SpokeRows, spokeHeaders,
 				"topology-spokes", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME,
 			); err != nil {
 				logger.ErrorM("Failed to write per-tenant spoke VNets", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
 			}
-		} else if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
-			if err := m.FilterAndWritePerSubscriptionAuto(
-				ctx, logger, m.Subscriptions, m.SpokeRows, spokeHeaders,
-				"topology-spokes", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME,
-			); err != nil {
-				logger.ErrorM("Failed to write per-subscription spoke VNets", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
-			}
-		} else {
-			// TODO: Implement WriteFullOutput
-			logger.InfoM("Spoke VNets enumeration complete", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
 		}
-	}
-
-	// -------------------- TABLE 4: Isolated VNets --------------------
-	if len(m.IsolatedRows) > 0 {
-		isolatedHeaders := []string{
-			"Tenant Name",
-			"Tenant ID",
-			"Subscription ID",
-			"Subscription Name",
-			"Resource Group",
-			"VNet Name",
-			"Address Space",
-			"Subnet Count",
-			"Trust Zone",
-			"Risk",
-			"Risk Note",
-		}
-
-		if azinternal.ShouldSplitByTenant(m.IsMultiTenant, m.Tenants) {
+		if len(m.IsolatedRows) > 0 {
 			if err := m.FilterAndWritePerTenantAuto(
 				ctx, logger, m.Tenants, m.IsolatedRows, isolatedHeaders,
 				"topology-isolated", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME,
 			); err != nil {
 				logger.ErrorM("Failed to write per-tenant isolated VNets", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
 			}
-		} else if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
+		}
+		return
+	}
+
+	// -------------------- Check for split by subscription (SECOND) --------------------
+	if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
+		if len(m.HubRows) > 0 {
+			if err := m.FilterAndWritePerSubscriptionAuto(
+				ctx, logger, m.Subscriptions, m.HubRows, hubHeaders,
+				"topology-hubs", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME,
+			); err != nil {
+				logger.ErrorM("Failed to write per-subscription hub VNets", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
+			}
+		}
+		if len(m.SpokeRows) > 0 {
+			if err := m.FilterAndWritePerSubscriptionAuto(
+				ctx, logger, m.Subscriptions, m.SpokeRows, spokeHeaders,
+				"topology-spokes", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME,
+			); err != nil {
+				logger.ErrorM("Failed to write per-subscription spoke VNets", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
+			}
+		}
+		if len(m.IsolatedRows) > 0 {
 			if err := m.FilterAndWritePerSubscriptionAuto(
 				ctx, logger, m.Subscriptions, m.IsolatedRows, isolatedHeaders,
 				"topology-isolated", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME,
 			); err != nil {
 				logger.ErrorM("Failed to write per-subscription isolated VNets", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
 			}
-		} else {
-			// TODO: Implement WriteFullOutput
-			logger.InfoM("Isolated VNets enumeration complete", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
+		}
+		return
+	}
+
+	// -------------------- Build tables for non-split case --------------------
+	tables := []internal.TableFile{}
+
+	if len(m.TopologyRows) > 0 {
+		tables = append(tables, internal.TableFile{
+			Name:   "topology-summary",
+			Header: summaryHeaders,
+			Body:   m.TopologyRows,
+		})
+	}
+
+	if len(m.HubRows) > 0 {
+		tables = append(tables, internal.TableFile{
+			Name:   "topology-hubs",
+			Header: hubHeaders,
+			Body:   m.HubRows,
+		})
+	}
+
+	if len(m.SpokeRows) > 0 {
+		tables = append(tables, internal.TableFile{
+			Name:   "topology-spokes",
+			Header: spokeHeaders,
+			Body:   m.SpokeRows,
+		})
+	}
+
+	if len(m.IsolatedRows) > 0 {
+		tables = append(tables, internal.TableFile{
+			Name:   "topology-isolated",
+			Header: isolatedHeaders,
+			Body:   m.IsolatedRows,
+		})
+	}
+
+	// -------------------- Convert loot map to slice --------------------
+	var loot []internal.LootFile
+	for _, lf := range m.LootMap {
+		if lf.Contents != "" {
+			loot = append(loot, *lf)
 		}
 	}
 
-	// -------------------- LOOT FILES --------------------
-	// TODO: Implement WriteLoot
-	logger.InfoM("Network topology enumeration complete", globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
+	// -------------------- Generate output --------------------
+	output := NetworkTopologyOutput{
+		Table: tables,
+		Loot:  loot,
+	}
+
+	// -------------------- Determine scope for output --------------------
+	scopeType, scopeIDs, scopeNames := azinternal.DetermineScopeForOutput(
+		m.Subscriptions, m.TenantID, m.TenantName, m.TenantFlagPresent)
+	scopeNames = azinternal.GetSubscriptionNamesForOutput(ctx, m.Session, scopeType, scopeIDs)
+
+	// -------------------- Write output using HandleOutputSmart --------------------
+	if err := internal.HandleOutputSmart(
+		"Azure",
+		m.Format,
+		m.OutputDirectory,
+		m.Verbosity,
+		m.WrapTable,
+		scopeType,
+		scopeIDs,
+		scopeNames,
+		m.UserUPN,
+		output,
+	); err != nil {
+		logger.ErrorM(fmt.Sprintf("Error writing output: %v", err), globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
+		m.CommandCounter.Error++
+		return
+	}
+
+	// -------------------- Success summary --------------------
+	logger.SuccessM(fmt.Sprintf("Network topology enumeration complete: %d VNets (%d hubs, %d spokes, %d isolated)",
+		totalVNets, len(m.HubRows), len(m.SpokeRows), len(m.IsolatedRows)), globals.AZ_NETWORK_TOPOLOGY_MODULE_NAME)
 }

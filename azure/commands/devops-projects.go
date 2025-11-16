@@ -362,20 +362,27 @@ func (m *DevOpsProjectsModule) writeOutput(logger internal.Logger) {
 		Loot: loot,
 	}
 
-	// Write output
-	if err := internal.HandleOutput(
+	// Determine scope for output (organization-level for DevOps)
+	scopeType := "organization"
+	scopeIDs := []string{m.Organization}
+	scopeNames := []string{m.Organization}
+
+	// Write output using HandleOutputSmart
+	if err := internal.HandleOutputSmart(
 		"AzureDevOps",
 		m.Format,
 		m.OutputDirectory,
 		m.Verbosity,
 		m.WrapTable,
-		m.Organization,
+		scopeType,
+		scopeIDs,
+		scopeNames,
 		m.Email,
-		m.Organization,
 		output,
 	); err != nil {
 		logger.ErrorM(fmt.Sprintf("Error writing output: %v", err), globals.AZ_DEVOPS_PROJECTS_MODULE_NAME)
 		m.CommandCounter.Error++
+		return
 	}
 
 	logger.SuccessM(fmt.Sprintf("Found %d DevOps Project/Repo(s) for organization: %s", len(m.ProjectRows), m.Organization), globals.AZ_DEVOPS_PROJECTS_MODULE_NAME)

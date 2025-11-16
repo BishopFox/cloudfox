@@ -85,8 +85,8 @@ func ListFederatedCredentials(cmd *cobra.Command, args []string) {
 	// Execute module
 	module.execute(cmdCtx.Ctx)
 
-	// Generate and print output
-	module.printResults()
+	// Generate and write output
+	module.writeOutput(cmdCtx.Logger)
 }
 
 // FederatedCredentialsModule handles enumeration
@@ -98,6 +98,17 @@ type FederatedCredentialsModule struct {
 	LootMap       map[string]*internal.LootFile
 	mu            sync.Mutex
 }
+
+// ------------------------------
+// Output struct
+// ------------------------------
+type FederatedCredentialsOutput struct {
+	Table []internal.TableFile
+	Loot  []internal.LootFile
+}
+
+func (o FederatedCredentialsOutput) TableFiles() []internal.TableFile { return o.Table }
+func (o FederatedCredentialsOutput) LootFiles() []internal.LootFile   { return o.Loot }
 
 // ServicePrincipalData holds service principal information
 type ServicePrincipalData struct {
@@ -947,24 +958,29 @@ func (m *FederatedCredentialsModule) buildTableData(servicePrincipals map[string
 	})
 }
 
-// printResults prints the results
-func (m *FederatedCredentialsModule) printResults() {
-	// Generate table
-	header := []string{
-		"Service Principal",
-		"App ID",
-		"Auth Method",
-		"Issuer Type",
-		"Subject Scope",
-		"RBAC Roles",
-		"Subscriptions",
-		"DevOps Usage",
-		"Security Risks",
+// writeOutput writes the results using HandleOutputSmart
+func (m *FederatedCredentialsModule) writeOutput(logger internal.Logger) {
+	if len(m.TableData) == 0 {
+		logger.InfoM("No federated credentials found", globals.AZ_FEDERATED_CREDENTIALS_MODULE_NAME)
+		return
 	}
 
-	var body [][]string
+	// Define headers (add TenantName and TenantID as first two columns)
+	headers := []string{
+		"Tenant Name", "Tenant ID", "Service Principal", "App ID", "Auth Method",
+		"Issuer Type", "Subject Scope", "RBAC Roles", "Subscriptions",
+		"DevOps Usage", "Security Risks",
+	}
+
+	// Convert TableData to standard [][]string rows
+	var rows [][]string
+	secretCount := 0
+	fedCredCount := 0
+
 	for _, row := range m.TableData {
-		body = append(body, []string{
+		rows = append(rows, []string{
+			m.TenantName,
+			m.TenantID,
 			row["displayName"].(string),
 			row["appID"].(string),
 			row["authMethod"].(string),
@@ -975,17 +991,8 @@ func (m *FederatedCredentialsModule) printResults() {
 			row["devOpsUsage"].(string),
 			row["securityRisks"].(string),
 		})
-	}
 
-	// Print table
-	fmt.Println()
-	internal.PrintTableToScreen(header, body, false)
-	fmt.Println()
-
-	// Print summary
-	secretCount := 0
-	fedCredCount := 0
-	for _, row := range m.TableData {
+		// Count stats for summary
 		if row["hasSecrets"].(bool) {
 			secretCount++
 		}
@@ -994,26 +1001,89 @@ func (m *FederatedCredentialsModule) printResults() {
 		}
 	}
 
-	fmt.Println("=== Federated Credentials Enumeration Summary ===")
-	fmt.Printf("Total Service Principals: %d\n", len(m.TableData))
-	fmt.Printf("Using Federated Identity (OIDC): %d\n", fedCredCount)
-	fmt.Printf("Using Client Secrets (LEGACY): %d\n", secretCount)
-
-	if secretCount > 0 {
-		fmt.Println()
-		fmt.Println("⚠ WARNING: Service principals using client secrets detected")
-		fmt.Println("  Recommendation: Migrate to Workload Identity Federation (OIDC)")
-		fmt.Println("  Benefits: No secrets to manage, reduced credential leakage risk, better audit trail")
+	// Convert loot map to slice
+	var lootFiles []internal.LootFile
+	for _, lf := range m.LootMap {
+		if lf.Contents != "" {
+			lootFiles = append(lootFiles, *lf)
+		}
 	}
 
-	fmt.Println()
-	fmt.Println("Loot files generated in: cloudfox-output/azure-{tenant}/loot/")
-	fmt.Println("  - fedcreds-secrets.txt (service principals using client secrets)")
-	fmt.Println("  - fedcreds-devops.txt (Azure DevOps federated credentials)")
-	fmt.Println("  - fedcreds-github.txt (GitHub Actions federated credentials)")
-	fmt.Println("  - fedcreds-attack-paths.txt (complete attack path mappings)")
-	fmt.Println("  - fedcreds-overpermissive.txt (broad subject scopes)")
-	fmt.Println("  - fedcreds-service-connections.txt (DevOps service connection mappings)")
-	fmt.Println("  - fedcreds-summary.txt (security analysis)")
+	// -------------------- Check for split by tenant (FIRST) --------------------
+	if azinternal.ShouldSplitByTenant(m.IsMultiTenant, m.Tenants) {
+		if len(rows) > 0 {
+			// Split by tenant
+			ctx := context.Background()
+			if err := m.FilterAndWritePerTenantAuto(
+				ctx, logger, m.Tenants, rows, headers,
+				"federated-credentials", globals.AZ_FEDERATED_CREDENTIALS_MODULE_NAME,
+			); err != nil {
+				logger.ErrorM("Failed to write per-tenant federated credentials", globals.AZ_FEDERATED_CREDENTIALS_MODULE_NAME)
+			}
+		}
+		// Write loot files separately (not split)
+		if len(lootFiles) > 0 {
+			output := FederatedCredentialsOutput{
+				Table: []internal.TableFile{},
+				Loot:  lootFiles,
+			}
+			scopeType := "tenant"
+			scopeIDs := []string{m.TenantID}
+			scopeNames := []string{m.TenantName}
+			if err := internal.HandleOutputSmart(
+				"Azure", m.Format, m.OutputDirectory, m.Verbosity, m.WrapTable,
+				scopeType, scopeIDs, scopeNames, m.UserUPN, output,
+			); err != nil {
+				logger.ErrorM(fmt.Sprintf("Error writing loot output: %v", err), globals.AZ_FEDERATED_CREDENTIALS_MODULE_NAME)
+			}
+		}
+		logger.SuccessM(fmt.Sprintf("Found %d Service Principals (OIDC: %d, Secrets: %d)",
+			len(m.TableData), fedCredCount, secretCount), globals.AZ_FEDERATED_CREDENTIALS_MODULE_NAME)
+		if secretCount > 0 {
+			logger.InfoM("WARNING: Service principals using client secrets detected - Migrate to Workload Identity Federation (OIDC)", globals.AZ_FEDERATED_CREDENTIALS_MODULE_NAME)
+		}
+		return
+	}
+
+	// -------------------- Non-split case --------------------
+	output := FederatedCredentialsOutput{
+		Table: []internal.TableFile{
+			{
+				Header: headers,
+				Body:   rows,
+				Name:   "federated-credentials",
+			},
+		},
+		Loot: lootFiles,
+	}
+
+	// Determine scope for output (tenant-level for Graph API)
+	scopeType := "tenant"
+	scopeIDs := []string{m.TenantID}
+	scopeNames := []string{m.TenantName}
+
+	// Write output using HandleOutputSmart
+	if err := internal.HandleOutputSmart(
+		"Azure",
+		m.Format,
+		m.OutputDirectory,
+		m.Verbosity,
+		m.WrapTable,
+		scopeType,
+		scopeIDs,
+		scopeNames,
+		m.UserUPN,
+		output,
+	); err != nil {
+		logger.ErrorM(fmt.Sprintf("Error writing output: %v", err), globals.AZ_FEDERATED_CREDENTIALS_MODULE_NAME)
+		m.CommandCounter.Error++
+		return
+	}
+
+	logger.SuccessM(fmt.Sprintf("Found %d Service Principals (OIDC: %d, Secrets: %d)",
+		len(m.TableData), fedCredCount, secretCount), globals.AZ_FEDERATED_CREDENTIALS_MODULE_NAME)
+	if secretCount > 0 {
+		logger.InfoM("WARNING: Service principals using client secrets detected - Migrate to Workload Identity Federation (OIDC)", globals.AZ_FEDERATED_CREDENTIALS_MODULE_NAME)
+	}
 }
 
