@@ -3,7 +3,6 @@ package commands
 import (
 	"context"
 	"fmt"
-	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -40,6 +39,8 @@ type DaemonSetFinding struct {
 	Namespace              string
 	Name                   string
 	RiskLevel              string
+	RiskScore              int
+	SecurityIssues         []string
 	BackdoorPatterns       []string
 	ReverseShells          []string
 	CryptoMiners           []string
@@ -548,6 +549,12 @@ func analyzeDaemonSetSecurity(
 	// Calculate risk level
 	finding.RiskLevel = calculateDaemonSetRiskLevel(finding)
 
+	// Calculate risk score (0-100)
+	finding.RiskScore = calculateDaemonSetRiskScore(finding)
+
+	// Generate security issues
+	finding.SecurityIssues = generateDaemonSetSecurityIssues(finding)
+
 	return finding
 }
 
@@ -952,4 +959,191 @@ func generateDaemonSetLoot(findings []DaemonSetFinding, kubeContext string) []in
 	})
 
 	return lootFiles
+}
+
+// calculateDaemonSetRiskScore calculates a numeric risk score (0-100)
+func calculateDaemonSetRiskScore(finding DaemonSetFinding) int {
+	score := 0
+
+	// Backdoors and malicious activity (50 points max)
+	if len(finding.ReverseShells) > 0 {
+		score += 50
+	}
+	if len(finding.CryptoMiners) > 0 {
+		score += 50
+	}
+	if len(finding.DataExfiltration) > 0 {
+		score += 30
+	}
+	if len(finding.ContainerEscape) > 0 {
+		score += 40
+	}
+	if len(finding.NodeCompromise) > 0 {
+		score += 35
+	}
+
+	// Privileged access (30 points max)
+	if finding.Privileged {
+		score += 25
+	}
+	if finding.HostPID {
+		score += 15
+	}
+	if finding.HostIPC {
+		score += 10
+	}
+	if finding.HostNetwork {
+		score += 15
+	}
+
+	// Dangerous hostPaths (20 points max)
+	for _, hp := range finding.HostPaths {
+		if strings.Contains(hp, "docker.sock") || strings.Contains(hp, "containerd.sock") {
+			score += 20
+			break
+		} else if hp == "/" || hp == "/:" {
+			score += 15
+			break
+		} else {
+			score += 5
+		}
+	}
+
+	// Dangerous capabilities (15 points max)
+	dangerousCaps := []string{"SYS_ADMIN", "SYS_MODULE", "SYS_RAWIO", "SYS_PTRACE", "DAC_READ_SEARCH", "NET_ADMIN"}
+	for _, cap := range finding.Capabilities {
+		for _, dangerousCap := range dangerousCaps {
+			if strings.Contains(cap, dangerousCap) {
+				score += 5
+				break
+			}
+		}
+	}
+
+	// Wide deployment (10 points max)
+	if finding.DesiredNodes > 50 {
+		score += 10
+	} else if finding.DesiredNodes > 20 {
+		score += 7
+	} else if finding.DesiredNodes > 10 {
+		score += 5
+	}
+
+	// Run as root (10 points)
+	if finding.RunAsUser == "0" || finding.RunAsUser == "" {
+		score += 10
+	}
+
+	// Cloud role with high privileges (10 points)
+	if finding.CloudRole != "" && (strings.Contains(strings.ToLower(finding.CloudRole), "admin") ||
+		strings.Contains(strings.ToLower(finding.CloudRole), "cluster")) {
+		score += 10
+	}
+
+	// Cap at 100
+	if score > 100 {
+		score = 100
+	}
+
+	return score
+}
+
+// generateDaemonSetSecurityIssues creates a list of specific security issues and recommendations
+func generateDaemonSetSecurityIssues(finding DaemonSetFinding) []string {
+	var issues []string
+
+	// Critical malicious activity
+	if len(finding.ReverseShells) > 0 {
+		issues = append(issues, fmt.Sprintf("CRITICAL: Reverse shell patterns detected: %s - immediate investigation required", strings.Join(finding.ReverseShells, ", ")))
+	}
+	if len(finding.CryptoMiners) > 0 {
+		issues = append(issues, fmt.Sprintf("CRITICAL: Crypto mining patterns detected: %s - resource abuse on all nodes", strings.Join(finding.CryptoMiners, ", ")))
+	}
+	if len(finding.DataExfiltration) > 0 {
+		issues = append(issues, fmt.Sprintf("CRITICAL: Data exfiltration patterns: %s - audit network traffic", strings.Join(finding.DataExfiltration, ", ")))
+	}
+	if len(finding.ContainerEscape) > 0 {
+		issues = append(issues, fmt.Sprintf("CRITICAL: Container escape techniques detected: %s - cluster-wide compromise risk", strings.Join(finding.ContainerEscape, ", ")))
+	}
+	if len(finding.NodeCompromise) > 0 {
+		issues = append(issues, fmt.Sprintf("CRITICAL: Node compromise patterns: %s - all %d nodes at risk", strings.Join(finding.NodeCompromise, ", "), finding.DesiredNodes))
+	}
+
+	// Privileged access
+	if finding.Privileged {
+		issues = append(issues, fmt.Sprintf("HIGH: Privileged DaemonSet running on %d nodes - kernel access on all nodes", finding.DesiredNodes))
+	}
+	if finding.HostPID {
+		issues = append(issues, "HIGH: hostPID enabled - can view/kill all node processes")
+	}
+	if finding.HostIPC {
+		issues = append(issues, "MEDIUM: hostIPC enabled - can access inter-process communication on nodes")
+	}
+	if finding.HostNetwork {
+		issues = append(issues, "MEDIUM: hostNetwork enabled - can sniff network traffic on all nodes")
+	}
+
+	// Dangerous hostPath mounts
+	for _, hp := range finding.HostPaths {
+		if strings.Contains(hp, "docker.sock") || strings.Contains(hp, "containerd.sock") {
+			issues = append(issues, fmt.Sprintf("CRITICAL: Container runtime socket mounted (%s) - cluster admin access", hp))
+		} else if hp == "/" || hp == "/:" {
+			issues = append(issues, "CRITICAL: Root filesystem mounted - complete node compromise")
+		} else if strings.Contains(hp, "/var/run") {
+			issues = append(issues, fmt.Sprintf("HIGH: Sensitive path mounted: %s", hp))
+		} else {
+			issues = append(issues, fmt.Sprintf("MEDIUM: HostPath volume: %s", hp))
+		}
+	}
+
+	// Dangerous capabilities
+	dangerousCaps := map[string]string{
+		"SYS_ADMIN":        "full system administration",
+		"SYS_MODULE":       "kernel module loading",
+		"SYS_RAWIO":        "direct hardware access",
+		"SYS_PTRACE":       "process debugging/injection",
+		"DAC_READ_SEARCH":  "bypass file read permissions",
+		"NET_ADMIN":        "network configuration control",
+		"SYS_BOOT":         "system reboot capability",
+		"SYS_TIME":         "system time manipulation",
+	}
+
+	for _, cap := range finding.Capabilities {
+		for dangerousCap, desc := range dangerousCaps {
+			if strings.Contains(cap, dangerousCap) {
+				issues = append(issues, fmt.Sprintf("HIGH: Dangerous capability %s - enables %s", dangerousCap, desc))
+			}
+		}
+	}
+
+	// RunAsUser check
+	if finding.RunAsUser == "0" || finding.RunAsUser == "" {
+		issues = append(issues, "MEDIUM: Running as root (UID 0) - should use non-root user")
+	}
+
+	// Wide deployment
+	if finding.DesiredNodes > 50 {
+		issues = append(issues, fmt.Sprintf("MEDIUM: DaemonSet on %d nodes - large attack surface", finding.DesiredNodes))
+	}
+
+	// Cloud IAM role
+	if finding.CloudRole != "" {
+		if strings.Contains(strings.ToLower(finding.CloudRole), "admin") {
+			issues = append(issues, fmt.Sprintf("HIGH: Cloud admin role assigned: %s - review IAM permissions", finding.CloudRole))
+		} else {
+			issues = append(issues, fmt.Sprintf("LOW: Cloud IAM role: %s - verify least privilege", finding.CloudRole))
+		}
+	}
+
+	// Service account
+	if finding.ServiceAccount == "default" {
+		issues = append(issues, "LOW: Using default service account - should use dedicated ServiceAccount with minimal RBAC")
+	}
+
+	// No issues found
+	if len(issues) == 0 {
+		issues = append(issues, "LOW: Standard DaemonSet configuration - no obvious security issues")
+	}
+
+	return issues
 }

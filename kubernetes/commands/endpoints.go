@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 )
 
 var EndpointsCmd = &cobra.Command{
@@ -315,7 +316,7 @@ func ListEndpoints(cmd *cobra.Command, args []string) {
 
 func processEndpointAddress(
 	ctx context.Context,
-	clientset *config.Clientset,
+	clientset *kubernetes.Clientset,
 	findings *[]EndpointFinding,
 	outputRows *[][]string,
 	riskCounts *map[string]int,

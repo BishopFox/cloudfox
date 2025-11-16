@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -42,6 +41,8 @@ type CronJobFinding struct {
 	Name                   string
 	Schedule               string
 	RiskLevel              string
+	RiskScore              int
+	SecurityIssues         []string
 	Suspend                bool
 	ConcurrencyPolicy      string
 	BackdoorPatterns       []string
@@ -565,6 +566,12 @@ func analyzeCronJobSecurity(
 	// Calculate risk level
 	finding.RiskLevel = calculateCronJobRiskLevel(finding, scheduleRisk)
 
+	// Calculate risk score (0-100)
+	finding.RiskScore = calculateCronJobRiskScore(finding, scheduleRisk)
+
+	// Generate security issues
+	finding.SecurityIssues = generateCronJobSecurityIssues(finding, scheduleRisk)
+
 	return finding
 }
 
@@ -919,4 +926,178 @@ func generateCronJobLoot(findings []CronJobFinding, kubeContext string) []intern
 	})
 
 	return lootFiles
+}
+
+// calculateCronJobRiskScore calculates a numeric risk score (0-100)
+func calculateCronJobRiskScore(finding CronJobFinding, scheduleRisk string) int {
+	score := 0
+
+	// Backdoors and malicious activity (50 points max)
+	if len(finding.ReverseShells) > 0 {
+		score += 50
+	}
+	if len(finding.CryptoMiners) > 0 {
+		score += 50
+	}
+	if len(finding.DataExfiltration) > 0 {
+		score += 30
+	}
+	if len(finding.ContainerEscape) > 0 {
+		score += 40
+	}
+
+	// Privileged access (25 points max)
+	if finding.Privileged {
+		score += 20
+	}
+	if finding.HostPID {
+		score += 15
+	}
+	if finding.HostIPC {
+		score += 10
+	}
+	if finding.HostNetwork {
+		score += 15
+	}
+
+	// Dangerous hostPaths (20 points max)
+	for _, hp := range finding.HostPaths {
+		if strings.Contains(hp, "docker.sock") || strings.Contains(hp, "containerd.sock") {
+			score += 20
+			break
+		} else if hp == "/" || hp == "/:" {
+			score += 15
+			break
+		} else {
+			score += 5
+		}
+	}
+
+	// Schedule-based risk (20 points max)
+	switch scheduleRisk {
+	case "CRITICAL":
+		score += 20
+	case "HIGH":
+		score += 15
+	case "MEDIUM":
+		score += 10
+	case "LOW":
+		score += 5
+	}
+
+	// Concurrency policy risk (10 points)
+	if finding.ConcurrencyPolicy == "Allow" {
+		score += 10
+	}
+
+	// Cloud role with high privileges (10 points)
+	if finding.CloudRole != "" && (strings.Contains(strings.ToLower(finding.CloudRole), "admin") ||
+		strings.Contains(strings.ToLower(finding.CloudRole), "cluster")) {
+		score += 10
+	}
+
+	// Not suspended but has issues (5 points)
+	if !finding.Suspend && (len(finding.BackdoorPatterns) > 0 || finding.Privileged) {
+		score += 5
+	}
+
+	// Cap at 100
+	if score > 100 {
+		score = 100
+	}
+
+	return score
+}
+
+// generateCronJobSecurityIssues creates a list of specific security issues and recommendations
+func generateCronJobSecurityIssues(finding CronJobFinding, scheduleRisk string) []string {
+	var issues []string
+
+	// Critical malicious activity
+	if len(finding.ReverseShells) > 0 {
+		issues = append(issues, fmt.Sprintf("CRITICAL: Reverse shell patterns detected: %s - scheduled backdoor execution", strings.Join(finding.ReverseShells, ", ")))
+	}
+	if len(finding.CryptoMiners) > 0 {
+		issues = append(issues, fmt.Sprintf("CRITICAL: Crypto mining patterns detected: %s - scheduled resource abuse", strings.Join(finding.CryptoMiners, ", ")))
+	}
+	if len(finding.DataExfiltration) > 0 {
+		issues = append(issues, fmt.Sprintf("CRITICAL: Data exfiltration patterns: %s - scheduled data theft", strings.Join(finding.DataExfiltration, ", ")))
+	}
+	if len(finding.ContainerEscape) > 0 {
+		issues = append(issues, fmt.Sprintf("CRITICAL: Container escape techniques: %s - scheduled node compromise", strings.Join(finding.ContainerEscape, ", ")))
+	}
+
+	// Schedule-based risks
+	if scheduleRisk == "CRITICAL" {
+		issues = append(issues, fmt.Sprintf("CRITICAL: Very frequent schedule (%s) - %s - potential DoS or aggressive attack", finding.Schedule, finding.ScheduleAnalysis))
+	} else if scheduleRisk == "HIGH" {
+		issues = append(issues, fmt.Sprintf("HIGH: Frequent schedule (%s) - %s - review necessity", finding.Schedule, finding.ScheduleAnalysis))
+	} else if scheduleRisk == "MEDIUM" {
+		issues = append(issues, fmt.Sprintf("MEDIUM: Moderate schedule (%s) - %s", finding.Schedule, finding.ScheduleAnalysis))
+	}
+
+	// Privileged access
+	if finding.Privileged {
+		issues = append(issues, "HIGH: Privileged CronJob - scheduled jobs have kernel access")
+	}
+	if finding.HostPID {
+		issues = append(issues, "HIGH: hostPID enabled - scheduled jobs can view/kill host processes")
+	}
+	if finding.HostIPC {
+		issues = append(issues, "MEDIUM: hostIPC enabled - scheduled jobs can access host IPC")
+	}
+	if finding.HostNetwork {
+		issues = append(issues, "MEDIUM: hostNetwork enabled - scheduled jobs on host network")
+	}
+
+	// Dangerous hostPath mounts
+	for _, hp := range finding.HostPaths {
+		if strings.Contains(hp, "docker.sock") || strings.Contains(hp, "containerd.sock") {
+			issues = append(issues, fmt.Sprintf("CRITICAL: Container runtime socket mounted (%s) - scheduled cluster admin access", hp))
+		} else if hp == "/" || hp == "/:" {
+			issues = append(issues, "CRITICAL: Root filesystem mounted - scheduled complete node access")
+		} else if strings.Contains(hp, "/var/run") {
+			issues = append(issues, fmt.Sprintf("HIGH: Sensitive path mounted: %s - review necessity", hp))
+		} else {
+			issues = append(issues, fmt.Sprintf("MEDIUM: HostPath volume: %s", hp))
+		}
+	}
+
+	// Concurrency policy
+	if finding.ConcurrencyPolicy == "Allow" {
+		issues = append(issues, "MEDIUM: Concurrency policy 'Allow' - multiple jobs can run simultaneously (resource exhaustion risk)")
+	}
+
+	// Suspension status
+	if finding.Suspend {
+		issues = append(issues, "INFO: CronJob is suspended - not currently running")
+	} else if len(finding.BackdoorPatterns) > 0 {
+		issues = append(issues, "CRITICAL: Malicious CronJob is ACTIVE - executing on schedule")
+	}
+
+	// Cloud IAM role
+	if finding.CloudRole != "" {
+		if strings.Contains(strings.ToLower(finding.CloudRole), "admin") {
+			issues = append(issues, fmt.Sprintf("HIGH: Cloud admin role assigned: %s - scheduled jobs have elevated cloud permissions", finding.CloudRole))
+		} else {
+			issues = append(issues, fmt.Sprintf("LOW: Cloud IAM role: %s - verify least privilege for scheduled tasks", finding.CloudRole))
+		}
+	}
+
+	// Service account
+	if finding.ServiceAccount == "default" {
+		issues = append(issues, "LOW: Using default service account - should use dedicated ServiceAccount for scheduled jobs")
+	}
+
+	// Job history
+	if finding.FailedJobsHistory > 5 {
+		issues = append(issues, fmt.Sprintf("MEDIUM: High failed job count (%d) - investigate failures", finding.FailedJobsHistory))
+	}
+
+	// No issues found
+	if len(issues) == 0 {
+		issues = append(issues, "LOW: Standard CronJob configuration - no obvious security issues")
+	}
+
+	return issues
 }

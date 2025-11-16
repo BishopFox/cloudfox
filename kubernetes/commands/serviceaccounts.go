@@ -12,11 +12,10 @@ import (
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/spf13/cobra"
-	appsv1 "k8s.io/api/apps/v1"
-	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 )
 
 var ServiceAccountsCmd = &cobra.Command{
@@ -143,7 +142,7 @@ type SAFinding struct {
 	SecurityIssues []string
 }
 
-type EscalationPath struct {
+type ServiceAccountEscalationPath struct {
 	Vector      string
 	Description string
 	Severity    string
@@ -672,7 +671,7 @@ func ListServiceAccounts(cmd *cobra.Command, args []string) {
 			finding.RiskLevel = riskLevel
 			finding.RiskScore = riskScore
 			finding.BlastRadius = calculateBlastRadius(&finding)
-			finding.ImpactSummary = generateImpactSummary(&finding)
+			finding.ImpactSummary = serviceAccountGenerateImpactSummary(&finding)
 
 			riskCounts[finding.RiskLevel]++
 			findings = append(findings, finding)
@@ -718,7 +717,7 @@ func ListServiceAccounts(cmd *cobra.Command, args []string) {
 			})
 
 			// Generate loot content
-			generateLootContent(&finding, &lootEnum, &lootTokens, &lootImpersonate, &lootExploit,
+			serviceAccountGenerateLootContent(&finding, &lootEnum, &lootTokens, &lootImpersonate, &lootExploit,
 				&lootPermissions, &lootDefaultSA, &lootCrossNS, &lootNodeAccess,
 				&lootEscalationPaths, &lootBlastRadius, &lootTokenLifecycle,
 				&lootUnused, &lootWorkloadMapping, &lootRemediation)
@@ -923,7 +922,7 @@ func analyzePermissionsEnhanced(namespace string, roles, clusterRoles []string,
 
 				for _, perm := range perms {
 					if dangerousPatterns[perm] {
-						if !contains(result.DangerousPerms, perm) {
+						if !serviceAccountsContains(result.DangerousPerms, perm) {
 							result.DangerousPerms = append(result.DangerousPerms, perm)
 						}
 					}
@@ -949,7 +948,7 @@ func analyzePermissionsEnhanced(namespace string, roles, clusterRoles []string,
 
 					for _, perm := range perms {
 						if dangerousPatterns[perm] {
-							if !contains(result.DangerousPerms, perm) {
+							if !serviceAccountsContains(result.DangerousPerms, perm) {
 								result.DangerousPerms = append(result.DangerousPerms, perm)
 							}
 						}
@@ -1026,7 +1025,7 @@ func formatRulePermissions(rule rbacv1.PolicyRule) []string {
 	return perms
 }
 
-func analyzeWorkloadTypes(ctx context.Context, clientset *k8sinternal.Clientset, namespace string, pods []corev1.Pod) WorkloadAnalysis {
+func analyzeWorkloadTypes(ctx context.Context, clientset *kubernetes.Clientset, namespace string, pods []corev1.Pod) WorkloadAnalysis {
 	analysis := WorkloadAnalysis{
 		Types:        make(map[string]int),
 		Capabilities: make(map[string]int),
@@ -1449,7 +1448,7 @@ func calculateBlastRadius(finding *SAFinding) int {
 	return radius
 }
 
-func generateImpactSummary(finding *SAFinding) string {
+func serviceAccountGenerateImpactSummary(finding *SAFinding) string {
 	if finding.BlastRadius > 500 {
 		return fmt.Sprintf("CRITICAL: %d blast radius (pods×risk×multipliers)",
 			finding.BlastRadius)
@@ -1509,7 +1508,7 @@ func labelsMatch(selector, labels map[string]string) bool {
 	return true
 }
 
-func generateLootContent(finding *SAFinding,
+func serviceAccountGenerateLootContent(finding *SAFinding,
 	lootEnum, lootTokens, lootImpersonate, lootExploit,
 	lootPermissions, lootDefaultSA, lootCrossNS, lootNodeAccess,
 	lootEscalationPaths, lootBlastRadius, lootTokenLifecycle,
@@ -1708,7 +1707,7 @@ func generateLootContent(finding *SAFinding,
 	}
 }
 
-func contains(slice []string, item string) bool {
+func serviceAccountsContains(slice []string, item string) bool {
 	for _, s := range slice {
 		if s == item {
 			return true

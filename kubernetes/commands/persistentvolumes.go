@@ -3,7 +3,6 @@ package commands
 import (
 	"context"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -16,6 +15,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 )
 
 var PersistentVolumesCmd = &cobra.Command{
@@ -239,15 +239,6 @@ type VolumeSnapshotFinding struct {
 	ExfiltrationRisk string
 	SecurityIssues   []string
 	AttackScenarios  []string
-}
-
-// EscalationPath represents a privilege escalation chain via storage
-type EscalationPath struct {
-	Type      string
-	Subject   string
-	Steps     []string
-	EndResult string
-	RiskLevel string
 }
 
 func ListPersistentVolumes(cmd *cobra.Command, args []string) {
@@ -532,7 +523,7 @@ func ListPersistentVolumes(cmd *cobra.Command, args []string) {
 
 		// Age
 		age := time.Since(pv.CreationTimestamp.Time)
-		finding.Age = formatDuration(age)
+		finding.Age = persistentVolumesFormatDuration(age)
 		finding.CreationTimestamp = pv.CreationTimestamp.Format(time.RFC3339)
 
 		// Detect volume type and cloud provider volume ID
@@ -1655,7 +1646,7 @@ EOF`, inspectorName, finding.PVCNamespace, finding.PVCName))
 }
 
 // generateSnapshotLoot enumerates volume snapshots
-func generateSnapshotLoot(ctx context.Context, clientset *config.K8sClientset, lootSnapshots *[]string) {
+func generateSnapshotLoot(ctx context.Context, clientset *kubernetes.Clientset, lootSnapshots *[]string) {
 	*lootSnapshots = append(*lootSnapshots, "\n# Enumerating VolumeSnapshots...")
 	*lootSnapshots = append(*lootSnapshots, "# Note: VolumeSnapshot is a CRD and may not be available in all clusters")
 	*lootSnapshots = append(*lootSnapshots, "")
@@ -1821,7 +1812,7 @@ func generateCloudVolumeLoot(volumeType, volumeID, pvName string) []string {
 }
 
 // formatDuration formats a duration into human-readable string
-func formatDuration(d time.Duration) string {
+func persistentVolumesFormatDuration(d time.Duration) string {
 	if d.Hours() > 24*365 {
 		years := int(d.Hours() / 24 / 365)
 		return fmt.Sprintf("%dy", years)

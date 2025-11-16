@@ -46,8 +46,10 @@ type ConfigMapFinding struct {
 	Namespace            string
 	Name                 string
 	RiskLevel            string
+	RiskScore            int
 	SensitiveKeys        []string
 	DangerousPatterns    []string
+	SecurityIssues       []string
 	AWSCredentials       []string
 	GCPCredentials       []string
 	GitHubTokens         []string
@@ -61,6 +63,8 @@ type ConfigMapFinding struct {
 	DataSize             int
 	DataKeys             []string
 	CreationTimestamp    string
+	IsImmutable          bool
+	Annotations          map[string]string
 }
 
 type CredentialFinding struct {
@@ -120,7 +124,11 @@ func ListConfigMaps(cmd *cobra.Command, args []string) {
 			finding.MountedByPods = findPodsMountingConfigMap(ctx, clientset, cm.Namespace, cm.Name)
 			finding.UsageCount = len(finding.MountedByPods)
 
-			// Calculate risk level
+			// Generate security issues and recommendations
+			finding.SecurityIssues = generateConfigMapSecurityIssues(finding)
+
+			// Calculate risk score and level
+			finding.RiskScore = calculateConfigMapRiskScore(finding)
 			finding.RiskLevel = calculateConfigMapRiskLevel(finding)
 
 			// Update risk counters
@@ -437,6 +445,12 @@ func analyzeConfigMapSecurity(cm *corev1.ConfigMap) ConfigMapFinding {
 		Name:              cm.Name,
 		CreationTimestamp: cm.CreationTimestamp.String(),
 		DataKeys:          []string{},
+		Annotations:       cm.Annotations,
+	}
+
+	// Check immutability
+	if cm.Immutable != nil && *cm.Immutable {
+		finding.IsImmutable = true
 	}
 
 	// Collect data keys
@@ -522,6 +536,127 @@ func calculateConfigMapRiskLevel(finding ConfigMapFinding) string {
 
 	// LOW: Standard configuration
 	return "LOW"
+}
+
+// calculateConfigMapRiskScore calculates a numeric risk score (0-100)
+func calculateConfigMapRiskScore(finding ConfigMapFinding) int {
+	score := 0
+
+	// Credentials (40 points max)
+	if len(finding.AWSCredentials) > 0 {
+		score += 20
+	}
+	if len(finding.GCPCredentials) > 0 {
+		score += 20
+	}
+	if len(finding.GitHubTokens) > 0 {
+		score += 15
+	}
+	if len(finding.PrivateKeys) > 0 {
+		score += 25
+	}
+	if len(finding.DockerCredentials) > 0 {
+		score += 15
+	}
+	if len(finding.ConnectionStrings) > 0 {
+		score += 20
+	}
+	if finding.KubeconfigFound {
+		score += 30
+	}
+
+	// Base64 secrets (15 points)
+	if len(finding.Base64Secrets) > 0 {
+		score += 15
+	}
+
+	// Sensitive keywords (10 points)
+	if len(finding.SensitiveKeys) > 0 {
+		score += 10
+	}
+
+	// Usage/exposure (15 points max)
+	if finding.UsageCount >= 10 {
+		score += 15
+	} else if finding.UsageCount >= 5 {
+		score += 10
+	} else if finding.UsageCount >= 2 {
+		score += 5
+	}
+
+	// Not immutable with sensitive data (10 points)
+	if !finding.IsImmutable && (len(finding.DangerousPatterns) > 0 || len(finding.SensitiveKeys) > 0) {
+		score += 10
+	}
+
+	// Large data size with sensitive content (5 points)
+	if finding.DataSize > 100000 && len(finding.SensitiveKeys) > 0 {
+		score += 5
+	}
+
+	// Cap at 100
+	if score > 100 {
+		score = 100
+	}
+
+	return score
+}
+
+// generateConfigMapSecurityIssues creates a list of specific security issues and recommendations
+func generateConfigMapSecurityIssues(finding ConfigMapFinding) []string {
+	var issues []string
+
+	// Credential-specific issues
+	if len(finding.AWSCredentials) > 0 {
+		issues = append(issues, "CRITICAL: AWS credentials stored in ConfigMap - migrate to AWS Secrets Manager or Kubernetes Secrets with encryption")
+	}
+	if len(finding.GCPCredentials) > 0 {
+		issues = append(issues, "CRITICAL: GCP service account keys in ConfigMap - use Workload Identity instead")
+	}
+	if len(finding.GitHubTokens) > 0 {
+		issues = append(issues, "CRITICAL: GitHub tokens in ConfigMap - revoke and use GitHub Actions secrets or sealed secrets")
+	}
+	if len(finding.PrivateKeys) > 0 {
+		issues = append(issues, "CRITICAL: Private keys in ConfigMap - migrate to cert-manager or sealed secrets")
+	}
+	if len(finding.ConnectionStrings) > 0 {
+		issues = append(issues, "CRITICAL: Database connection strings with credentials - use Secrets or external secret managers")
+	}
+	if len(finding.DockerCredentials) > 0 {
+		issues = append(issues, "CRITICAL: Docker registry credentials - use imagePullSecrets instead")
+	}
+	if finding.KubeconfigFound {
+		issues = append(issues, "CRITICAL: Kubeconfig in ConfigMap - immediate security risk, remove and use RBAC")
+	}
+
+	// Base64 secrets
+	if len(finding.Base64Secrets) > 0 {
+		issues = append(issues, "HIGH: Base64-encoded secrets detected - base64 is encoding not encryption, migrate to Secrets")
+	}
+
+	// Immutability
+	if !finding.IsImmutable && len(finding.DangerousPatterns) > 0 {
+		issues = append(issues, "MEDIUM: ConfigMap with sensitive data is mutable - set immutable: true to prevent tampering")
+	}
+
+	// High exposure
+	if finding.UsageCount >= 10 {
+		issues = append(issues, fmt.Sprintf("MEDIUM: ConfigMap mounted by %d pods - high exposure, audit access", finding.UsageCount))
+	} else if finding.UsageCount >= 5 {
+		issues = append(issues, fmt.Sprintf("LOW: ConfigMap mounted by %d pods - moderate exposure", finding.UsageCount))
+	}
+
+	// Sensitive keywords without specific pattern match
+	if len(finding.SensitiveKeys) > 0 && len(finding.DangerousPatterns) == 0 {
+		issues = append(issues, "MEDIUM: Contains sensitive keywords - verify no actual secrets present")
+	}
+
+	// No issues found
+	if len(issues) == 0 && len(finding.DataKeys) > 0 {
+		issues = append(issues, "LOW: Standard configuration data - no obvious security issues")
+	}
+
+	return issues
 }
 
 // generateConfigMapLoot creates loot files with exploitation techniques

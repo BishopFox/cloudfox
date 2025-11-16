@@ -3,9 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
-	"os"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/BishopFox/cloudfox/globals"
@@ -16,6 +14,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/client-go/kubernetes"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
 )
@@ -343,8 +342,8 @@ func ListNodes(cmd *cobra.Command, args []string) {
 	}
 
 	// Generate all outputs
-	tableFile := generateTable(findings)
-	lootFiles := generateLootFiles(findings)
+	tableFile := generateNodesTable(findings)
+	lootFiles := generateNodesLootFiles(findings)
 
 	// Handle output
 	err = internal.HandleOutput(
@@ -387,7 +386,7 @@ func ListNodes(cmd *cobra.Command, args []string) {
 }
 
 // analyzeNode performs comprehensive security analysis on a node
-func analyzeNode(ctx context.Context, clientset *config.K8sClientset, node corev1.Node, allPods []corev1.Pod, networkPolicies []netv1.NetworkPolicy) NodeFinding {
+func analyzeNode(ctx context.Context, clientset *kubernetes.Clientset, node corev1.Node, allPods []corev1.Pod, networkPolicies []netv1.NetworkPolicy) NodeFinding {
 	finding := NodeFinding{
 		Name:        node.Name,
 		Labels:      node.Labels,
@@ -674,7 +673,7 @@ func analyzePrivilegedWorkloads(node corev1.Node, pods []corev1.Pod) PrivilegedW
 				container.SecurityContext.Privileged != nil &&
 				*container.SecurityContext.Privileged {
 				analysis.PrivilegedPods++
-				if !contains(analysis.PrivilegedPodNames, podFullName) {
+				if !nodesContains(analysis.PrivilegedPodNames, podFullName) {
 					analysis.PrivilegedPodNames = append(analysis.PrivilegedPodNames, podFullName)
 				}
 				analysis.ContainerEscapeRisk = true
@@ -684,7 +683,7 @@ func analyzePrivilegedWorkloads(node corev1.Node, pods []corev1.Pod) PrivilegedW
 		// Check for hostNetwork
 		if pod.Spec.HostNetwork {
 			analysis.HostNetworkPods++
-			if !contains(analysis.HostNetworkPodNames, podFullName) {
+			if !nodesContains(analysis.HostNetworkPodNames, podFullName) {
 				analysis.HostNetworkPodNames = append(analysis.HostNetworkPodNames, podFullName)
 			}
 		}
@@ -692,7 +691,7 @@ func analyzePrivilegedWorkloads(node corev1.Node, pods []corev1.Pod) PrivilegedW
 		// Check for hostPID
 		if pod.Spec.HostPID {
 			analysis.HostPIDPods++
-			if !contains(analysis.HostPIDPodNames, podFullName) {
+			if !nodesContains(analysis.HostPIDPodNames, podFullName) {
 				analysis.HostPIDPodNames = append(analysis.HostPIDPodNames, podFullName)
 			}
 		}
@@ -700,7 +699,7 @@ func analyzePrivilegedWorkloads(node corev1.Node, pods []corev1.Pod) PrivilegedW
 		// Check for hostIPC
 		if pod.Spec.HostIPC {
 			analysis.HostIPCPods++
-			if !contains(analysis.HostIPCPodNames, podFullName) {
+			if !nodesContains(analysis.HostIPCPodNames, podFullName) {
 				analysis.HostIPCPodNames = append(analysis.HostIPCPodNames, podFullName)
 			}
 		}
@@ -712,7 +711,7 @@ func analyzePrivilegedWorkloads(node corev1.Node, pods []corev1.Pod) PrivilegedW
 				if isDangerousHostPath(path) {
 					analysis.HostPathPods++
 					dangerousPath := fmt.Sprintf("%s: %s", podFullName, path)
-					if !contains(analysis.DangerousHostPaths, dangerousPath) {
+					if !nodesContains(analysis.DangerousHostPaths, dangerousPath) {
 						analysis.DangerousHostPaths = append(analysis.DangerousHostPaths, dangerousPath)
 					}
 					analysis.ContainerEscapeRisk = true
@@ -1050,7 +1049,7 @@ func calculateNodeRiskLevel(
 }
 
 // generateTable creates the table output
-func generateTable(findings []NodeFinding) internal.TableFile {
+func generateNodesTable(findings []NodeFinding) internal.TableFile {
 	headers := []string{
 		"Risk Level",
 		"Name",
@@ -1149,7 +1148,7 @@ func generateTable(findings []NodeFinding) internal.TableFile {
 	// Sort by risk level, then name
 	sort.SliceStable(rows, func(i, j int) bool {
 		if rows[i][0] != rows[j][0] {
-			return riskLevelValue(rows[i][0]) > riskLevelValue(rows[j][0])
+			return nodesRiskLevelValue(rows[i][0]) > nodesRiskLevelValue(rows[j][0])
 		}
 		return rows[i][1] < rows[j][1]
 	})
@@ -1162,14 +1161,14 @@ func generateTable(findings []NodeFinding) internal.TableFile {
 }
 
 // generateLootFiles creates all loot files
-func generateLootFiles(findings []NodeFinding) []internal.LootFile {
+func generateNodesLootFiles(findings []NodeFinding) []internal.LootFile {
 	var lootFiles []internal.LootFile
 
 	// 1. Node-Enum.txt (enhanced)
 	lootFiles = append(lootFiles, generateNodeEnumLoot(findings))
 
 	// 2. Pod-YAMLs.txt (enhanced with privileged pods)
-	lootFiles = append(lootFiles, generatePodYAMLsLoot(findings))
+	lootFiles = append(lootFiles, generateNodesPodYAMLsLoot(findings))
 
 	// 3. Node-Security-Dashboard.txt (NEW)
 	lootFiles = append(lootFiles, generateSecurityDashboardLoot(findings))
@@ -1193,7 +1192,7 @@ func generateLootFiles(findings []NodeFinding) []internal.LootFile {
 	lootFiles = append(lootFiles, generateKernelVulnerabilitiesLoot(findings))
 
 	// 10. Node-Attack-Paths.txt (NEW)
-	lootFiles = append(lootFiles, generateAttackPathsLoot(findings))
+	lootFiles = append(lootFiles, generateNodesAttackPathsLoot(findings))
 
 	// 11. NMAP-Nodes.txt (NEW)
 	lootFiles = append(lootFiles, generateNMAPLoot(findings))
@@ -1236,7 +1235,7 @@ func generateNodeEnumLoot(findings []NodeFinding) internal.LootFile {
 	}
 }
 
-func generatePodYAMLsLoot(findings []NodeFinding) internal.LootFile {
+func generateNodesPodYAMLsLoot(findings []NodeFinding) internal.LootFile {
 	var content []string
 
 	content = append(content, "#####################################")
@@ -1835,7 +1834,7 @@ func generateKernelVulnerabilitiesLoot(findings []NodeFinding) internal.LootFile
 	}
 }
 
-func generateAttackPathsLoot(findings []NodeFinding) internal.LootFile {
+func generateNodesAttackPathsLoot(findings []NodeFinding) internal.LootFile {
 	var content []string
 
 	content = append(content, "═══════════════════════════════════════════════════════════════")
@@ -1945,7 +1944,7 @@ func limitString(s string, maxLen int) string {
 	return s[:maxLen-3] + "..."
 }
 
-func riskLevelValue(level string) int {
+func nodesRiskLevelValue(level string) int {
 	switch level {
 	case "CRITICAL":
 		return 4
@@ -1960,7 +1959,7 @@ func riskLevelValue(level string) int {
 	}
 }
 
-func contains(slice []string, item string) bool {
+func nodesContains(slice []string, item string) bool {
 	for _, s := range slice {
 		if s == item {
 			return true

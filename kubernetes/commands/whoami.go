@@ -14,9 +14,8 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/spf13/cobra"
-	v1 "k8s.io/api/authorization/v1"
-	corev1 "k8s.io/api/core/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
+	authenticationv1 "k8s.io/api/authentication/v1"
+	authorizationv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -137,8 +136,8 @@ func TrySelfSubjectReview(clientset *kubernetes.Clientset) (string, []string, er
 	ctx := context.Background()
 
 	// Try to create a SelfSubjectReview
-	ssr := &v1.SelfSubjectReview{}
-	result, err := clientset.AuthorizationV1().SelfSubjectReviews().Create(ctx, ssr, metav1.CreateOptions{})
+	ssr := &authenticationv1.SelfSubjectReview{}
+	result, err := clientset.AuthenticationV1().SelfSubjectReviews().Create(ctx, ssr, metav1.CreateOptions{})
 	if err != nil {
 		return "", nil, err
 	}
@@ -191,8 +190,8 @@ func EnumeratePermissions(clientset *kubernetes.Clientset, namespaces []string) 
 	allDangerousPerms := []string{}
 
 	for _, ns := range namespaces {
-		ssrr := &v1.SelfSubjectRulesReview{
-			Spec: v1.SelfSubjectRulesReviewSpec{
+		ssrr := &authorizationv1.SelfSubjectRulesReview{
+			Spec: authorizationv1.SelfSubjectRulesReviewSpec{
 				Namespace: ns,
 			},
 		}
@@ -794,9 +793,9 @@ func Whoami(cmd *cobra.Command, args []string) {
 	}
 
 	// Method 4: Use SelfSubjectAccessReview to get role binding info
-	ssar := &v1.SelfSubjectAccessReview{
-		Spec: v1.SelfSubjectAccessReviewSpec{
-			ResourceAttributes: &v1.ResourceAttributes{
+	ssar := &authorizationv1.SelfSubjectAccessReview{
+		Spec: authorizationv1.SelfSubjectAccessReviewSpec{
+			ResourceAttributes: &authorizationv1.ResourceAttributes{
 				Verb:     "get",
 				Resource: "pods",
 			},

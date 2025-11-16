@@ -182,7 +182,7 @@ type PolicyServiceCorrelation struct {
 }
 
 // Dangerous ports database (reused from network-exposure)
-var dangerousPorts = map[int32]string{
+var networkPolicyDangerousPorts = map[int32]string{
 	22:    "SSH",
 	23:    "Telnet",
 	3389:  "RDP",
@@ -277,7 +277,7 @@ var policyWeaknessPatterns = []WeaknessPattern{
 			for _, rule := range np.Spec.Ingress {
 				for _, port := range rule.Ports {
 					if port.Port != nil {
-						if _, isDangerous := dangerousPorts[port.Port.IntVal]; isDangerous {
+						if _, isDangerous := networkPolicyDangerousPorts[port.Port.IntVal]; isDangerous {
 							return true
 						}
 					}
@@ -429,7 +429,6 @@ func ListNetworkPolicies(cmd *cobra.Command, args []string) {
 	namespaceMap := make(map[string][]string)
 	namespacePolicies := make(map[string][]PolicyFinding)      // Track policies per namespace
 	namespaceDefaultDeny := make(map[string]DefaultDenyStatus) // Track default-deny per namespace
-	namespaceServiceCorrelations := make(map[string][]PolicyServiceCorrelation)
 
 	// Loot sections
 	var lootWeaknesses []string
@@ -857,7 +856,7 @@ func analyzeNetworkPolicy(ctx context.Context, clientset *kubernetes.Clientset, 
 	finding.SecurityIssues = append(finding.SecurityIssues, egressRisk.SecurityIssues...)
 
 	// Check for default-deny pattern
-	finding.IsDefaultDeny = isDefaultDenyPolicy(np)
+	finding.IsDefaultDeny = isNetworkPolicyDefaultDeny(np)
 	if finding.IsDefaultDeny {
 		for _, pt := range np.Spec.PolicyTypes {
 			if pt == netv1.PolicyTypeIngress && len(np.Spec.Ingress) == 0 {
@@ -914,7 +913,7 @@ func analyzeIngressRules(np *netv1.NetworkPolicy, finding PolicyFinding) PolicyF
 		// Check for dangerous ports
 		for _, port := range rule.Ports {
 			if port.Port != nil {
-				if _, isDangerous := dangerousPorts[port.Port.IntVal]; isDangerous {
+				if _, isDangerous := networkPolicyDangerousPorts[port.Port.IntVal]; isDangerous {
 					finding.IngressDangerousPorts = append(finding.IngressDangerousPorts, port.Port.IntVal)
 				}
 			}
@@ -1284,7 +1283,7 @@ func checkKubeAPIAccess(np *netv1.NetworkPolicy) bool {
 	return false
 }
 
-func isDefaultDenyPolicy(np *netv1.NetworkPolicy) bool {
+func isNetworkPolicyDefaultDeny(np *netv1.NetworkPolicy) bool {
 	if !isEmptySelector(&np.Spec.PodSelector) {
 		return false
 	}
@@ -1360,7 +1359,7 @@ func generateLootEntries(finding *PolicyFinding, weaknesses, dataExfil, metadata
 		*dangerousPorts = append(*dangerousPorts, fmt.Sprintf("\n### [HIGH] %s/%s", finding.Namespace, finding.Name))
 		*dangerousPorts = append(*dangerousPorts, "# Exposes dangerous ports:")
 		for _, port := range finding.IngressDangerousPorts {
-			portName := dangerousPorts[port]
+			portName := networkPolicyDangerousPorts[port]
 			*dangerousPorts = append(*dangerousPorts, fmt.Sprintf("#   - Port %d (%s)", port, portName))
 		}
 		*dangerousPorts = append(*dangerousPorts, "")

@@ -9,7 +9,6 @@ import (
 
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
-	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -44,8 +43,8 @@ type PodSecurityOutput struct {
 func (t PodSecurityOutput) TableFiles() []internal.TableFile { return t.Table }
 func (t PodSecurityOutput) LootFiles() []internal.LootFile   { return t.Loot }
 
-// PolicyFinding represents comprehensive policy security analysis for a namespace
-type PolicyFinding struct {
+// PodSecurityFinding represents comprehensive policy security analysis for a namespace
+type PodSecurityFinding struct {
 	// Basic Info
 	Namespace string
 	Age       string
@@ -208,17 +207,17 @@ func ListPodSecurity(cmd *cobra.Command, args []string) {
 	kyvernoPolicies := analyzeDynamicPolicies(ctx, dynClient, "kyverno")
 
 	// Process each namespace
-	var findings []PolicyFinding
+	var findings []PodSecurityFinding
 
 	for _, ns := range namespaces.Items {
-		finding := PolicyFinding{
+		finding := PodSecurityFinding{
 			Namespace:     ns.Name,
 			ClusterHasPSP: clusterHasPSP,
 		}
 
 		// Calculate age
 		age := time.Since(ns.CreationTimestamp.Time)
-		finding.Age = formatDuration(age)
+		finding.Age = podSecurityFormatDuration(age)
 
 		// PSS Analysis
 		pssAnalysis := analyzePodSecurityStandards(ns)
@@ -969,7 +968,7 @@ func analyzeDynamicPolicies(ctx context.Context, dynClient dynamic.Interface, po
 }
 
 // detectPolicyGaps detects missing or incomplete policy enforcement
-func detectPolicyGaps(finding PolicyFinding) []string {
+func detectPolicyGaps(finding PodSecurityFinding) []string {
 	var gaps []string
 
 	if finding.NoEnforcement {
@@ -996,7 +995,7 @@ func detectPolicyGaps(finding PolicyFinding) []string {
 }
 
 // detectPolicyConflicts detects conflicting policy configurations
-func detectPolicyConflicts(finding PolicyFinding) []string {
+func detectPolicyConflicts(finding PodSecurityFinding) []string {
 	var conflicts []string
 
 	// PSS + PSP conflict
@@ -1018,7 +1017,7 @@ func detectPolicyConflicts(finding PolicyFinding) []string {
 }
 
 // detectPolicyBypass detects policy bypass techniques
-func detectPolicyBypass(finding PolicyFinding) []string {
+func detectPolicyBypass(finding PodSecurityFinding) []string {
 	var bypasses []string
 
 	if finding.NoEnforcement {
@@ -1041,7 +1040,7 @@ func detectPolicyBypass(finding PolicyFinding) []string {
 }
 
 // detectPolicyEscalationPaths detects privilege escalation via policy misconfig
-func detectPolicyEscalationPaths(finding PolicyFinding, pspAnalyses []PSPAnalysis) []string {
+func detectPolicyEscalationPaths(finding PodSecurityFinding, pspAnalyses []PSPAnalysis) []string {
 	var paths []string
 
 	if finding.NoEnforcement {
@@ -1068,7 +1067,7 @@ func detectPolicyEscalationPaths(finding PolicyFinding, pspAnalyses []PSPAnalysi
 }
 
 // calculatePolicyRiskScore calculates policy configuration risk score
-func calculatePolicyRiskScore(finding PolicyFinding) (string, int) {
+func calculatePolicyRiskScore(finding PodSecurityFinding) (string, int) {
 	score := 0
 
 	// No enforcement = CRITICAL
@@ -1132,7 +1131,7 @@ func calculatePolicyRiskScore(finding PolicyFinding) (string, int) {
 }
 
 // generatePolicyRecommendations generates policy security recommendations
-func generatePolicyRecommendations(finding PolicyFinding) []string {
+func generatePolicyRecommendations(finding PodSecurityFinding) []string {
 	var recommendations []string
 
 	if finding.NoEnforcement {
@@ -1177,7 +1176,7 @@ func generatePolicyRecommendations(finding PolicyFinding) []string {
 }
 
 // generatePolicyLoot generates loot content for all policy categories
-func generatePolicyLoot(finding *PolicyFinding, lootEnum, lootNoEnforcement, lootWeakPolicies,
+func generatePolicyLoot(finding *PodSecurityFinding, lootEnum, lootNoEnforcement, lootWeakPolicies,
 	lootPSS, lootBypasses, lootEscalation, lootConflicts, lootGaps, lootAttackPaths,
 	lootRemediation *[]string) {
 
@@ -1309,7 +1308,7 @@ EOF`)
 }
 
 // formatDuration formats a duration into human-readable string
-func formatDuration(d time.Duration) string {
+func podSecurityFormatDuration(d time.Duration) string {
 	if d.Hours() > 24*365 {
 		years := int(d.Hours() / 24 / 365)
 		return fmt.Sprintf("%dy", years)

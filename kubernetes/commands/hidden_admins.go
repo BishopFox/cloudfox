@@ -3,7 +3,6 @@ package commands
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/BishopFox/cloudfox/globals"

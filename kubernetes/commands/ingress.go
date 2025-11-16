@@ -2,11 +2,10 @@ package commands
 
 import (
 	"context"
+	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
-	"os"
-	"sort"
 	"strings"
 	"time"
 
@@ -15,7 +14,6 @@ import (
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/spf13/cobra"
-	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -93,19 +91,6 @@ type CertificateInfo struct {
 	Issues          []string
 	Subject         string
 	Issuer          string
-}
-
-// BackendSecurityInfo contains backend service security analysis
-type BackendSecurityInfo struct {
-	ServiceName      string
-	Namespace        string
-	SecurityLevel    string // "Secure", "Vulnerable", "Unknown"
-	PodCount         int
-	ServiceAccount   string
-	HasNetworkPolicy bool
-	Privileged       bool
-	HostNetwork      bool
-	SecurityIssues   []string
 }
 
 func ListIngress(cmd *cobra.Command, args []string) {
@@ -342,7 +327,7 @@ func ListIngress(cmd *cobra.Command, args []string) {
 					if rule.HTTP != nil && len(rule.HTTP.Paths) > 0 {
 						for _, path := range rule.HTTP.Paths {
 							if path.Backend.Service != nil {
-								backendInfo := analyzeBackendSecurity(ctx, clientset, ns.Name, path.Backend.Service.Name)
+								backendInfo := analyzeIngressBackendSecurity(ctx, clientset, ns.Name, path.Backend.Service.Name)
 								finding.BackendSecurity = backendInfo.SecurityLevel
 								finding.BackendPods = backendInfo.PodCount
 								finding.BackendServiceAccount = backendInfo.ServiceAccount
@@ -918,11 +903,17 @@ func analyzeCertificate(ctx context.Context, clientset *kubernetes.Clientset, na
 
 	// Check key strength
 	if cert.PublicKeyAlgorithm == x509.RSA {
-		if pubKey, ok := cert.PublicKey.(*x509.PublicKey); ok {
-			_ = pubKey // Placeholder for actual RSA key size check
+		if pubKey, ok := cert.PublicKey.(*rsa.PublicKey); ok {
+			keySize := pubKey.N.BitLen()
+			if keySize >= 2048 {
+				certInfo.KeyStrength = fmt.Sprintf("RSA-%d (Strong)", keySize)
+			} else {
+				certInfo.KeyStrength = fmt.Sprintf("RSA-%d (Weak)", keySize)
+				certInfo.Issues = append(certInfo.Issues, fmt.Sprintf("Weak RSA key (%d bits, recommend >= 2048)", keySize))
+			}
+		} else {
+			certInfo.KeyStrength = "RSA (Unknown)"
 		}
-		// Simplified key strength check
-		certInfo.KeyStrength = "RSA"
 	} else if cert.PublicKeyAlgorithm == x509.ECDSA {
 		certInfo.KeyStrength = "ECDSA (Strong)"
 	}
@@ -940,7 +931,7 @@ func analyzeCertificate(ctx context.Context, clientset *kubernetes.Clientset, na
 }
 
 // analyzeBackendSecurity analyzes backend service security
-func analyzeBackendSecurity(ctx context.Context, clientset *kubernetes.Clientset, namespace string, serviceName string) BackendSecurityInfo {
+func analyzeIngressBackendSecurity(ctx context.Context, clientset *kubernetes.Clientset, namespace string, serviceName string) BackendSecurityInfo {
 	backendInfo := BackendSecurityInfo{
 		ServiceName:   serviceName,
 		Namespace:     namespace,

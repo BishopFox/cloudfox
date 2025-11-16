@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 
@@ -282,7 +281,7 @@ func ListJobs(cmd *cobra.Command, args []string) {
 	}
 
 	// Build Risk Dashboard loot file
-	lootRiskDashboard = buildRiskDashboard(findings, riskCounts)
+	lootRiskDashboard = buildJobRiskDashboard(findings, riskCounts)
 
 	// Build Failures loot file
 	lootFailures = buildFailuresLoot(findings)
@@ -461,10 +460,10 @@ func analyzeJobStatus(job *batchv1.Job) (string, string) {
 
 	if job.Status.CompletionTime != nil && job.Status.StartTime != nil {
 		d := job.Status.CompletionTime.Sub(job.Status.StartTime.Time)
-		duration = formatDuration(d)
+		duration = jobsFormatDuration(d)
 	} else if job.Status.StartTime != nil {
 		d := time.Since(job.Status.StartTime.Time)
-		duration = formatDuration(d) + " (running)"
+		duration = jobsFormatDuration(d) + " (running)"
 	}
 
 	if job.Status.Succeeded > 0 {
@@ -485,7 +484,7 @@ func analyzeJobStatus(job *batchv1.Job) (string, string) {
 	return "Pending", duration
 }
 
-func formatDuration(d time.Duration) string {
+func jobsFormatDuration(d time.Duration) string {
 	if d < time.Minute {
 		return fmt.Sprintf("%ds", int(d.Seconds()))
 	} else if d < time.Hour {
@@ -903,7 +902,7 @@ func calculateJobRiskLevel(finding JobFinding) string {
 // Loot File Builders
 // ====================
 
-func buildRiskDashboard(findings []JobFinding, riskCounts map[string]int) []string {
+func buildJobRiskDashboard(findings []JobFinding, riskCounts map[string]int) []string {
 	var lines []string
 	lines = append(lines, `#####################################
 ##### Job Risk Statistics Dashboard
@@ -1195,7 +1194,7 @@ func buildLongRunningLoot(findings []JobFinding) []string {
 					hasLongRunning = true
 					lines = append(lines, fmt.Sprintf("\n## [%s] %s/%s", f.RiskLevel, f.Namespace, f.Name))
 					lines = append(lines, fmt.Sprintf("Status: %s", f.Status))
-					lines = append(lines, fmt.Sprintf("Running Duration: %s", formatDuration(duration)))
+					lines = append(lines, fmt.Sprintf("Running Duration: %s", jobsFormatDuration(duration)))
 					lines = append(lines, fmt.Sprintf("Start Time: %s", f.StartTime))
 
 					if f.ActiveDeadline > 0 {

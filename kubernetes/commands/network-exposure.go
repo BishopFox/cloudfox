@@ -3,10 +3,8 @@ package commands
 import (
 	"context"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
@@ -119,7 +117,7 @@ type BackendSecurityInfo struct {
 }
 
 // Dangerous port database
-var dangerousPorts = map[int32]PortInfo{
+var networkExposureDangerousPorts = map[int32]PortInfo{
 	// Remote access (CRITICAL)
 	22:   {Category: "SSH", Risk: "CRITICAL", Description: "SSH remote access"},
 	23:   {Category: "Telnet", Risk: "CRITICAL", Description: "Unencrypted remote access (Telnet)"},
@@ -211,7 +209,7 @@ func (n NetworkExposureOutput) LootFiles() []internal.LootFile {
 
 // analyzePort determines if a port is dangerous and returns its characteristics
 func analyzePort(port int32) (bool, string, string, string) {
-	if info, found := dangerousPorts[port]; found {
+	if info, found := networkExposureDangerousPorts[port]; found {
 		return true, info.Category, info.Risk, info.Description
 	}
 	return false, "Custom", "LOW", "Custom service"
@@ -310,7 +308,7 @@ func detectCloudProvider(svc *corev1.Service) string {
 }
 
 // analyzeBackendSecurity analyzes security posture of backend workloads
-func analyzeBackendSecurity(ctx context.Context, clientset *kubernetes.Clientset, svc *corev1.Service) BackendSecurityInfo {
+func analyzeNetworkExposureBackendSecurity(ctx context.Context, clientset *kubernetes.Clientset, svc *corev1.Service) BackendSecurityInfo {
 	backendInfo := BackendSecurityInfo{
 		ServiceName:   svc.Name,
 		Namespace:     svc.Namespace,
@@ -345,7 +343,7 @@ func analyzeBackendSecurity(ctx context.Context, clientset *kubernetes.Clientset
 	for _, pod := range pods.Items {
 		// Collect workload information
 		if ownerRef := getOwnerReference(&pod); ownerRef != "" {
-			if !contains(backendInfo.Workloads, ownerRef) {
+			if !networkExposureContains(backendInfo.Workloads, ownerRef) {
 				backendInfo.Workloads = append(backendInfo.Workloads, ownerRef)
 				if backendInfo.Deployment == "" {
 					backendInfo.Deployment = ownerRef
@@ -428,7 +426,7 @@ func isDangerousCapability(cap string) bool {
 }
 
 // contains checks if a string slice contains a value
-func contains(slice []string, val string) bool {
+func networkExposureContains(slice []string, val string) bool {
 	for _, item := range slice {
 		if item == val {
 			return true
@@ -747,7 +745,7 @@ func NetworkExposure(cmd *cobra.Command, args []string) {
 			isInternetFacing, cloudProvider := detectInternetFacing(&svc)
 
 			// Analyze backend security
-			backendSecurity := analyzeBackendSecurity(ctx, clientset, &svc)
+			backendSecurity := analyzeNetworkExposureBackendSecurity(ctx, clientset, &svc)
 
 			// Analyze annotations
 			annotationIssues, dangerousAnnotations := analyzeServiceAnnotations(&svc)
@@ -1085,7 +1083,7 @@ func NetworkExposure(cmd *cobra.Command, args []string) {
 	// ---- Build Loot Files
 
 	// 1. Risk Dashboard
-	riskDashboard := buildRiskDashboard(findings)
+	riskDashboard := buildNetworkExposureRiskDashboard(findings)
 
 	// 2. Internet-Facing Exposures
 	internetFacingLoot := buildInternetFacingLoot(findings)
@@ -1189,8 +1187,8 @@ func NetworkExposure(cmd *cobra.Command, args []string) {
 	logger.InfoM(fmt.Sprintf("For context and next steps: https://github.com/BishopFox/cloudfox/wiki/Kubernetes-Commands#%s", globals.K8S_NETWORK_PORTS_MODULE_NAME), globals.K8S_NETWORK_PORTS_MODULE_NAME)
 }
 
-// buildRiskDashboard creates a risk-sorted exposure summary
-func buildRiskDashboard(findings []NetworkExposureFinding) string {
+// buildNetworkExposureRiskDashboard creates a risk-sorted exposure summary
+func buildNetworkExposureRiskDashboard(findings []NetworkExposureFinding) string {
 	var sb strings.Builder
 	sb.WriteString(`#####################################
 ##### Network Exposure Risk Dashboard

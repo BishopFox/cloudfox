@@ -888,9 +888,7 @@ func ClassifyServiceByPort(port int32) ServiceClassification {
 		8888: {Type: "API", Description: "Generic API", IsSensitive: false},
 
 		// CI/CD
-		8080: {Type: "CICD", Description: "Jenkins", IsSensitive: true},
 		50000: {Type: "CICD", Description: "Jenkins agent", IsSensitive: true},
-		9000: {Type: "CICD", Description: "SonarQube", IsSensitive: true},
 	}
 
 	if classification, exists := serviceMap[port]; exists {

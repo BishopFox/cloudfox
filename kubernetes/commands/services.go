@@ -3,14 +3,13 @@ package commands
 import (
 	"context"
 	"fmt"
+	"net"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
-	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -38,6 +37,51 @@ Enumerate all services in the cluster with enterprise-grade security analysis in
 
   cloudfox kubernetes services`,
 	Run: ListServices,
+}
+
+// Package-level maps for port categorization (performance optimization)
+var dangerousPortMap = map[int32]DangerousPort{
+	// Administrative
+	22:    {22, "SSH", "TCP", "SSH administrative access", "admin"},
+	23:    {23, "Telnet", "TCP", "Telnet unencrypted admin", "admin"},
+	3389:  {3389, "RDP", "TCP", "Remote Desktop", "admin"},
+	5900:  {5900, "VNC", "TCP", "VNC remote desktop", "admin"},
+	5984:  {5984, "CouchDB", "TCP", "CouchDB admin", "admin"},
+	8080:  {8080, "HTTP-Alt", "TCP", "HTTP alternative (often admin)", "admin"},
+	9090:  {9090, "Prometheus", "TCP", "Prometheus metrics", "admin"},
+	10250: {10250, "Kubelet", "TCP", "Kubelet API (node compromise)", "admin"},
+
+	// Databases (unencrypted)
+	1433:  {1433, "MSSQL", "TCP", "Microsoft SQL Server", "database"},
+	3306:  {3306, "MySQL", "TCP", "MySQL unencrypted", "database"},
+	5432:  {5432, "PostgreSQL", "TCP", "PostgreSQL", "database"},
+	6379:  {6379, "Redis", "TCP", "Redis no auth default", "database"},
+	7000:  {7000, "Cassandra", "TCP", "Cassandra", "database"},
+	8529:  {8529, "ArangoDB", "TCP", "ArangoDB", "database"},
+	9042:  {9042, "Cassandra", "TCP", "Cassandra CQL", "database"},
+	9200:  {9200, "Elasticsearch", "TCP", "Elasticsearch", "database"},
+	27017: {27017, "MongoDB", "TCP", "MongoDB", "database"},
+	28015: {28015, "RethinkDB", "TCP", "RethinkDB", "database"},
+
+	// Unencrypted Protocols
+	21:   {21, "FTP", "TCP", "FTP unencrypted", "unencrypted"},
+	80:   {80, "HTTP", "TCP", "HTTP unencrypted", "unencrypted"},
+	8000: {8000, "HTTP-Alt", "TCP", "HTTP alternative", "unencrypted"},
+	8888: {8888, "HTTP-Alt", "TCP", "HTTP alternative", "unencrypted"},
+
+	// Development/Debug
+	2375: {2375, "Docker", "TCP", "Docker API unencrypted", "development"},
+	4444: {4444, "Metasploit", "TCP", "Metasploit default", "development"},
+	5000: {5000, "Flask", "TCP", "Flask dev server", "development"},
+	8081: {8081, "Debug", "TCP", "Common debug port", "development"},
+}
+
+var tlsPortMap = map[int32]bool{
+	443:   true, // HTTPS
+	8443:  true, // HTTPS alternative
+	6443:  true, // Kubernetes API
+	9443:  true, // Alternative HTTPS
+	10250: false, // Kubelet (can be TLS but often not verified)
 }
 
 type ServicesOutput struct {
@@ -444,11 +488,13 @@ func ListServices(cmd *cobra.Command, args []string) {
 		}
 
 		// Endpoints and backend pod analysis
-		ep, err := endpointsClient.Get(ctx, svc.Name, metav1.GetOptions{Namespace: svc.Namespace})
+		ep, err := endpointsClient.Get(ctx, svc.Name, metav1.GetOptions{})
 		if err == nil {
 			for _, subset := range ep.Subsets {
 				finding.EndpointCount += len(subset.Addresses)
 			}
+		} else {
+			logger.ErrorM(fmt.Sprintf("Warning: Could not get endpoints for service %s/%s: %v", svc.Namespace, svc.Name, err), globals.K8S_SERVICES_MODULE_NAME)
 		}
 
 		// Backend pod security analysis
@@ -457,14 +503,33 @@ func ListServices(cmd *cobra.Command, args []string) {
 		for _, pod := range backendPods {
 			finding.BackendPods = append(finding.BackendPods, pod.Name)
 
-			// Check for privileged containers
-			for _, container := range pod.Spec.Containers {
+			// Check for privileged containers (both init and regular containers)
+			podHasPrivileged := false
+
+			// Check init containers
+			for _, container := range pod.Spec.InitContainers {
 				if container.SecurityContext != nil &&
 					container.SecurityContext.Privileged != nil &&
 					*container.SecurityContext.Privileged {
-					finding.PrivilegedBackends++
+					podHasPrivileged = true
 					break
 				}
+			}
+
+			// Check regular containers if not already found in init containers
+			if !podHasPrivileged {
+				for _, container := range pod.Spec.Containers {
+					if container.SecurityContext != nil &&
+						container.SecurityContext.Privileged != nil &&
+						*container.SecurityContext.Privileged {
+						podHasPrivileged = true
+						break
+					}
+				}
+			}
+
+			if podHasPrivileged {
+				finding.PrivilegedBackends++
 			}
 
 			if pod.Spec.HostNetwork {
@@ -486,7 +551,7 @@ func ListServices(cmd *cobra.Command, args []string) {
 
 		// Network Policy analysis
 		if len(svc.Spec.Selector) > 0 {
-			netpolInfo := analyzeNetworkPolicies(allNetworkPolicies.Items, svc.Namespace, svc.Spec.Selector)
+			netpolInfo := servicesAnalyzeNetworkPolicies(allNetworkPolicies.Items, svc.Namespace, svc.Spec.Selector)
 			finding.NetworkPolicyProtected = len(netpolInfo) > 0
 			for _, np := range netpolInfo {
 				finding.NetworkPolicyNames = append(finding.NetworkPolicyNames, np.Name)
@@ -693,89 +758,45 @@ func ListServices(cmd *cobra.Command, args []string) {
 // ====================
 
 func getDangerousPort(port int32) *DangerousPort {
-	dangerousPorts := map[int32]DangerousPort{
-		// Administrative
-		22:    {22, "SSH", "TCP", "SSH administrative access", "admin"},
-		23:    {23, "Telnet", "TCP", "Telnet unencrypted admin", "admin"},
-		3389:  {3389, "RDP", "TCP", "Remote Desktop", "admin"},
-		5900:  {5900, "VNC", "TCP", "VNC remote desktop", "admin"},
-		5984:  {5984, "CouchDB", "TCP", "CouchDB admin", "admin"},
-		8080:  {8080, "HTTP-Alt", "TCP", "HTTP alternative (often admin)", "admin"},
-		9090:  {9090, "Prometheus", "TCP", "Prometheus metrics", "admin"},
-		10250: {10250, "Kubelet", "TCP", "Kubelet API (node compromise)", "admin"},
-
-		// Databases (unencrypted)
-		1433:  {1433, "MSSQL", "TCP", "Microsoft SQL Server", "database"},
-		3306:  {3306, "MySQL", "TCP", "MySQL unencrypted", "database"},
-		5432:  {5432, "PostgreSQL", "TCP", "PostgreSQL", "database"},
-		6379:  {6379, "Redis", "TCP", "Redis no auth default", "database"},
-		7000:  {7000, "Cassandra", "TCP", "Cassandra", "database"},
-		8529:  {8529, "ArangoDB", "TCP", "ArangoDB", "database"},
-		9042:  {9042, "Cassandra", "TCP", "Cassandra CQL", "database"},
-		9200:  {9200, "Elasticsearch", "TCP", "Elasticsearch", "database"},
-		27017: {27017, "MongoDB", "TCP", "MongoDB", "database"},
-		28015: {28015, "RethinkDB", "TCP", "RethinkDB", "database"},
-
-		// Unencrypted Protocols
-		21:   {21, "FTP", "TCP", "FTP unencrypted", "unencrypted"},
-		80:   {80, "HTTP", "TCP", "HTTP unencrypted", "unencrypted"},
-		8000: {8000, "HTTP-Alt", "TCP", "HTTP alternative", "unencrypted"},
-		8888: {8888, "HTTP-Alt", "TCP", "HTTP alternative", "unencrypted"},
-
-		// Development/Debug
-		2375: {2375, "Docker", "TCP", "Docker API unencrypted", "development"},
-		4444: {4444, "Metasploit", "TCP", "Metasploit default", "development"},
-		5000: {5000, "Flask", "TCP", "Flask dev server", "development"},
-		8081: {8081, "Debug", "TCP", "Common debug port", "development"},
-	}
-
-	if dp, exists := dangerousPorts[port]; exists {
+	if dp, exists := dangerousPortMap[port]; exists {
 		return &dp
 	}
 	return nil
 }
 
 func isTLSPort(port int32) bool {
-	tlsPorts := map[int32]bool{
-		443:   true,  // HTTPS
-		8443:  true,  // HTTPS alternative
-		6443:  true,  // Kubernetes API
-		9443:  true,  // Alternative HTTPS
-		10250: false, // Kubelet (can be TLS but often not verified)
-	}
-
-	return tlsPorts[port]
+	return tlsPortMap[port]
 }
 
-func isPublicIP(ip string) bool {
-	// Simple check - could be enhanced with actual IP parsing
-	// This is a simplified version
-	if strings.HasPrefix(ip, "10.") ||
-		strings.HasPrefix(ip, "192.168.") ||
-		strings.HasPrefix(ip, "172.16.") ||
-		strings.HasPrefix(ip, "172.17.") ||
-		strings.HasPrefix(ip, "172.18.") ||
-		strings.HasPrefix(ip, "172.19.") ||
-		strings.HasPrefix(ip, "172.20.") ||
-		strings.HasPrefix(ip, "172.21.") ||
-		strings.HasPrefix(ip, "172.22.") ||
-		strings.HasPrefix(ip, "172.23.") ||
-		strings.HasPrefix(ip, "172.24.") ||
-		strings.HasPrefix(ip, "172.25.") ||
-		strings.HasPrefix(ip, "172.26.") ||
-		strings.HasPrefix(ip, "172.27.") ||
-		strings.HasPrefix(ip, "172.28.") ||
-		strings.HasPrefix(ip, "172.29.") ||
-		strings.HasPrefix(ip, "172.30.") ||
-		strings.HasPrefix(ip, "172.31.") ||
-		strings.HasPrefix(ip, "127.") {
-		return false
+func isPublicIP(ipStr string) bool {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false // Invalid IP, treat as non-public
+	}
+
+	// Check private IP ranges
+	privateRanges := []string{
+		"10.0.0.0/8",
+		"172.16.0.0/12",
+		"192.168.0.0/16",
+		"127.0.0.0/8",     // Loopback
+		"169.254.0.0/16",  // Link-local
+		"::1/128",         // IPv6 loopback
+		"fc00::/7",        // IPv6 private
+		"fe80::/10",       // IPv6 link-local
+	}
+
+	for _, cidr := range privateRanges {
+		_, network, _ := net.ParseCIDR(cidr)
+		if network != nil && network.Contains(ip) {
+			return false
+		}
 	}
 	return true
 }
 
 func findIngressesForService(ingresses *networkingv1.IngressList, namespace, serviceName string) []IngressInfo {
-	var result []IngressInfo
+	ingressMap := make(map[string]*IngressInfo) // Deduplicate by ingress name
 
 	for _, ing := range ingresses.Items {
 		if ing.Namespace != namespace {
@@ -783,26 +804,35 @@ func findIngressesForService(ingresses *networkingv1.IngressList, namespace, ser
 		}
 
 		hasTLS := len(ing.Spec.TLS) > 0
-		var hosts []string
+		var matchingHosts []string
 
 		for _, rule := range ing.Spec.Rules {
 			if rule.HTTP != nil {
 				for _, path := range rule.HTTP.Paths {
 					if path.Backend.Service != nil && path.Backend.Service.Name == serviceName {
-						hosts = append(hosts, rule.Host)
-						result = append(result, IngressInfo{
-							Name:      ing.Name,
-							Namespace: ing.Namespace,
-							Hosts:     []string{rule.Host},
-							TLS:       hasTLS,
-							Rules:     len(ing.Spec.Rules),
-						})
+						if rule.Host != "" && !servicesContains(matchingHosts, rule.Host) {
+							matchingHosts = append(matchingHosts, rule.Host)
+						}
 					}
 				}
 			}
 		}
+
+		if len(matchingHosts) > 0 {
+			ingressMap[ing.Name] = &IngressInfo{
+				Name:      ing.Name,
+				Namespace: ing.Namespace,
+				Hosts:     matchingHosts,
+				TLS:       hasTLS,
+				Rules:     len(ing.Spec.Rules),
+			}
+		}
 	}
 
+	result := make([]IngressInfo, 0, len(ingressMap))
+	for _, info := range ingressMap {
+		result = append(result, *info)
+	}
 	return result
 }
 
@@ -839,7 +869,7 @@ func findBackendPods(pods []corev1.Pod, namespace string, selector map[string]st
 	return result
 }
 
-func analyzeNetworkPolicies(policies []networkingv1.NetworkPolicy, namespace string, selector map[string]string) []NetworkPolicyInfo {
+func servicesAnalyzeNetworkPolicies(policies []networkingv1.NetworkPolicy, namespace string, selector map[string]string) []NetworkPolicyInfo {
 	var result []NetworkPolicyInfo
 
 	if len(selector) == 0 {
@@ -851,7 +881,19 @@ func analyzeNetworkPolicies(policies []networkingv1.NetworkPolicy, namespace str
 			continue
 		}
 
-		// Check if NetworkPolicy applies to this service's pods
+		// Empty PodSelector matches all pods in namespace
+		if len(np.Spec.PodSelector.MatchLabels) == 0 && len(np.Spec.PodSelector.MatchExpressions) == 0 {
+			info := NetworkPolicyInfo{
+				Name:            np.Name,
+				ProtectsService: true,
+			}
+			extractAllowedCIDRs(&info, &np)
+			result = append(result, info)
+			continue
+		}
+
+		// Check if all NetworkPolicy selector labels match the service selector
+		// The NetworkPolicy applies if all its selector labels exist in the service selector with matching values
 		matches := true
 		for key, value := range np.Spec.PodSelector.MatchLabels {
 			if selector[key] != value {
@@ -865,21 +907,32 @@ func analyzeNetworkPolicies(policies []networkingv1.NetworkPolicy, namespace str
 				Name:            np.Name,
 				ProtectsService: true,
 			}
-
-			// Extract allowed CIDRs
-			for _, ingress := range np.Spec.Ingress {
-				for _, from := range ingress.From {
-					if from.IPBlock != nil {
-						info.AllowedCIDRs = append(info.AllowedCIDRs, from.IPBlock.CIDR)
-					}
-				}
-			}
-
+			extractAllowedCIDRs(&info, &np)
 			result = append(result, info)
 		}
 	}
 
 	return result
+}
+
+func extractAllowedCIDRs(info *NetworkPolicyInfo, np *networkingv1.NetworkPolicy) {
+	// Extract allowed CIDRs from ingress rules
+	for _, ingress := range np.Spec.Ingress {
+		for _, from := range ingress.From {
+			if from.IPBlock != nil {
+				info.AllowedCIDRs = append(info.AllowedCIDRs, from.IPBlock.CIDR)
+			}
+		}
+	}
+
+	// Also extract from egress rules
+	for _, egress := range np.Spec.Egress {
+		for _, to := range egress.To {
+			if to.IPBlock != nil {
+				info.AllowedCIDRs = append(info.AllowedCIDRs, to.IPBlock.CIDR)
+			}
+		}
+	}
 }
 
 func detectSuspiciousAnnotations(annotations map[string]string) []string {
@@ -925,13 +978,13 @@ func calculateServiceRiskScore(finding *ServiceFinding) (string, int) {
 		}
 
 		// Exposure method scoring
-		if contains(finding.ExposureMethods, "LoadBalancer") {
+		if servicesContains(finding.ExposureMethods, "LoadBalancer") {
 			score += 30
 		}
-		if contains(finding.ExposureMethods, "NodePort") {
+		if servicesContains(finding.ExposureMethods, "NodePort") {
 			score += 25 // NodePort on ALL nodes
 		}
-		if contains(finding.ExposureMethods, "ExternalIPs") {
+		if servicesContains(finding.ExposureMethods, "ExternalIPs") {
 			score += 20
 		}
 	}
@@ -989,7 +1042,7 @@ func calculateServiceRiskScore(finding *ServiceFinding) (string, int) {
 
 	// Determine risk level
 	if score >= 85 {
-		return "CRITICAL", min(score, 100)
+		return "CRITICAL", servicesMin(score, 100)
 	} else if score >= 60 {
 		return "HIGH", score
 	} else if score >= 30 {
@@ -1002,24 +1055,48 @@ func calculateAttackSurface(finding *ServiceFinding) int {
 	// Base: number of ports × number of backend pods
 	surface := finding.TotalPorts * finding.BackendPodCount
 
-	// Multipliers
+	// Cap at max int to prevent overflow
+	const maxAttackSurface = 1000000
+
+	// Multipliers with overflow protection
 	if finding.ExternallyExposed {
-		surface = surface * 3
+		surface = servicesSafeMul(surface, 3, maxAttackSurface)
 	}
 
 	if len(finding.DangerousPorts) > 0 {
-		surface = surface * 2
+		surface = servicesSafeMul(surface, 2, maxAttackSurface)
 	}
 
 	if finding.PrivilegedBackends > 0 {
 		surface = int(float64(surface) * 1.5)
+		if surface > maxAttackSurface {
+			surface = maxAttackSurface
+		}
 	}
 
 	if !finding.NetworkPolicyProtected && finding.ExternallyExposed {
 		surface = int(float64(surface) * 1.3)
+		if surface > maxAttackSurface {
+			surface = maxAttackSurface
+		}
 	}
 
 	return surface
+}
+
+func servicesSafeMul(a, b, max int) int {
+	// Check for overflow before multiplication
+	if a == 0 || b == 0 {
+		return 0
+	}
+	if a > max/b {
+		return max
+	}
+	result := a * b
+	if result > max {
+		return max
+	}
+	return result
 }
 
 func generateServiceImpactSummary(finding *ServiceFinding) string {
@@ -1198,7 +1275,7 @@ func generateServiceLootContent(finding *ServiceFinding,
 	}
 }
 
-func contains(slice []string, item string) bool {
+func servicesContains(slice []string, item string) bool {
 	for _, s := range slice {
 		if s == item {
 			return true
@@ -1207,14 +1284,9 @@ func contains(slice []string, item string) bool {
 	return false
 }
 
-func min(a, b int) int {
+func servicesMin(a, b int) int {
 	if a < b {
 		return a
 	}
 	return b
-}
-
-func parseInt32(s string) int32 {
-	i, _ := strconv.ParseInt(s, 10, 32)
-	return int32(i)
 }

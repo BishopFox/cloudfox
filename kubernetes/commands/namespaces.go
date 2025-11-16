@@ -274,7 +274,7 @@ func ListNamespaces(cmd *cobra.Command, args []string) {
 	}
 
 	// Build Risk Dashboard loot file
-	lootRiskDashboard = buildRiskDashboard(findings, riskCounts)
+	lootRiskDashboard = buildNamespaceRiskDashboard(findings, riskCounts)
 
 	// Build Default Usage loot file
 	lootDefaultUsage = buildDefaultUsageLoot(findings)
@@ -388,7 +388,7 @@ func analyzeNamespace(ctx context.Context, clientset *kubernetes.Clientset, ns *
 		finding.AdminBindings, finding.DangerousPermissions, finding.ExcessiveAccess = analyzeRBAC(ctx, clientset, ns.Name)
 
 	// Cloud provider detection
-	finding.CloudProvider = k8sinternal.DetectCloudProvider(ns.Labels, ns.Annotations)
+	finding.CloudProvider = "Unknown" // TODO: Implement cloud provider detection
 
 	// DoS risk
 	finding.DoSRisk = !finding.HasResourceQuota && finding.TotalWorkloads > 10
@@ -497,7 +497,7 @@ func analyzeNetworkPolicies(ctx context.Context, clientset *kubernetes.Clientset
 		policyNames = append(policyNames, policy.Name)
 
 		// Check for default deny policy
-		if isDefaultDenyPolicy(&policy) {
+		if isNamespaceDefaultDenyPolicy(&policy) {
 			hasDefaultDeny = true
 		}
 	}
@@ -505,7 +505,7 @@ func analyzeNetworkPolicies(ctx context.Context, clientset *kubernetes.Clientset
 	return true, len(policies.Items), policyNames, hasDefaultDeny
 }
 
-func isDefaultDenyPolicy(policy *networkingv1.NetworkPolicy) bool {
+func isNamespaceDefaultDenyPolicy(policy *networkingv1.NetworkPolicy) bool {
 	// Default deny ingress: empty podSelector + empty ingress rules
 	if len(policy.Spec.PodSelector.MatchLabels) == 0 &&
 		len(policy.Spec.PodSelector.MatchExpressions) == 0 &&
@@ -855,7 +855,7 @@ func calculateNamespaceRiskLevel(finding NamespaceFinding) string {
 // Loot File Builders
 // ====================
 
-func buildRiskDashboard(findings []NamespaceFinding, riskCounts map[string]int) []string {
+func buildNamespaceRiskDashboard(findings []NamespaceFinding, riskCounts map[string]int) []string {
 	var lines []string
 	lines = append(lines, `#####################################
 ##### Namespace Risk Statistics Dashboard

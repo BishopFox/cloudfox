@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 
 	"github.com/BishopFox/cloudfox/globals"
@@ -186,7 +185,7 @@ type ImageAnalysis struct {
 }
 
 // ResourceAnalysis holds resource limit/request info
-type ResourceAnalysis struct {
+type PodResourceAnalysis struct {
 	HasLimits   bool
 	HasRequests bool
 	Limits      map[string]string
@@ -461,7 +460,7 @@ func ListPods(cmd *cobra.Command, args []string) {
 			}
 
 			// Aggregate security context analysis
-			secCtx := analyzeSecurityContext(&pod.Spec, allContainers)
+			secCtx := podAnalyzeSecurityContext(&pod.Spec, allContainers)
 			finding.Privileged = secCtx.Privileged != nil && *secCtx.Privileged
 			finding.AllowPrivEsc = secCtx.AllowPrivilegeEscalation == nil || *secCtx.AllowPrivilegeEscalation
 			finding.ReadOnlyRootFilesystem = secCtx.ReadOnlyRootFilesystem
@@ -547,7 +546,7 @@ func ListPods(cmd *cobra.Command, args []string) {
 			}
 
 			// Volume analysis
-			analyzeVolumes(&pod.Spec, &finding, allContainers)
+			podAnalyzeVolumes(&pod.Spec, &finding, allContainers)
 
 			// Service Account token analysis
 			finding.AutomountSAToken = true // Default
@@ -597,7 +596,7 @@ func ListPods(cmd *cobra.Command, args []string) {
 			outputRows = append(outputRows, row)
 
 			// Generate loot content
-			generateLootContent(&finding, &pod,
+			podGenerateLootContent(&finding, &pod,
 				&lootExec, &lootEnum, &lootPrivEsc, &lootContainerEscape,
 				&lootHostCompromise, &lootPSSViolations, &lootSecretExposure,
 				&lootImageVulns, &lootResourceAbuse, &lootWeakIsolation,
@@ -680,7 +679,7 @@ func ListPods(cmd *cobra.Command, args []string) {
 }
 
 // analyzeSecurityContext aggregates security context from pod and containers
-func analyzeSecurityContext(podSpec *corev1.PodSpec, containers []corev1.Container) SecurityContextAnalysis {
+func podAnalyzeSecurityContext(podSpec *corev1.PodSpec, containers []corev1.Container) SecurityContextAnalysis {
 	analysis := SecurityContextAnalysis{}
 
 	// Pod-level security context
@@ -877,8 +876,8 @@ func analyzeImages(containers []corev1.Container) []ImageAnalysis {
 }
 
 // analyzeResources analyzes resource limits and requests
-func analyzeResources(containers []corev1.Container) ResourceAnalysis {
-	analysis := ResourceAnalysis{
+func analyzeResources(containers []corev1.Container) PodResourceAnalysis {
+	analysis := PodResourceAnalysis{
 		Limits:   make(map[string]string),
 		Requests: make(map[string]string),
 	}
@@ -902,7 +901,7 @@ func analyzeResources(containers []corev1.Container) ResourceAnalysis {
 }
 
 // analyzeVolumes analyzes all volume types
-func analyzeVolumes(podSpec *corev1.PodSpec, finding *PodFinding, containers []corev1.Container) {
+func podAnalyzeVolumes(podSpec *corev1.PodSpec, finding *PodFinding, containers []corev1.Container) {
 	for _, volume := range podSpec.Volumes {
 		// Secret volumes
 		if volume.Secret != nil {
@@ -1459,7 +1458,7 @@ func stringListOrNone(list []string) string {
 }
 
 // generateLootContent generates loot file content for a pod
-func generateLootContent(finding *PodFinding, pod *corev1.Pod,
+func podGenerateLootContent(finding *PodFinding, pod *corev1.Pod,
 	lootExec, lootEnum, lootPrivEsc, lootContainerEscape,
 	lootHostCompromise, lootPSSViolations, lootSecretExposure,
 	lootImageVulns, lootResourceAbuse, lootWeakIsolation,

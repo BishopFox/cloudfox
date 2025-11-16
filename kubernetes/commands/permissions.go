@@ -14,6 +14,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/yaml"
 )
 
@@ -496,8 +497,8 @@ func RunEnumPermissions(cmd *cobra.Command, args []string) {
 	misconfigurations := detectRBACMisconfigurations(ctx, clientset, findings, clusterRoles.Items, clusterRoleBindings.Items)
 
 	// Generate outputs
-	tableFile := generateTable(findings)
-	lootFiles := generateLootFiles(findings, escalationPaths, saAnalyses, misconfigurations)
+	tableFile := generatePermissionsTable(findings)
+	lootFiles := generatePermissionsLootFiles(findings, escalationPaths, saAnalyses, misconfigurations)
 
 	err = internal.HandleOutput(
 		"Kubernetes",
@@ -854,7 +855,7 @@ func detectPrivilegeEscalationPaths(permissions []PermissionFinding) []Escalatio
 }
 
 // analyzeServiceAccounts performs service account security analysis
-func analyzeServiceAccounts(ctx context.Context, clientset *config.K8sClientset, permissions []PermissionFinding) []ServiceAccountAnalysis {
+func analyzeServiceAccounts(ctx context.Context, clientset *kubernetes.Clientset, permissions []PermissionFinding) []ServiceAccountAnalysis {
 	var analyses []ServiceAccountAnalysis
 
 	namespaces, _ := clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
@@ -962,7 +963,7 @@ func analyzeServiceAccounts(ctx context.Context, clientset *config.K8sClientset,
 }
 
 // detectRBACMisconfigurations identifies RBAC configuration issues
-func detectRBACMisconfigurations(ctx context.Context, clientset *config.K8sClientset,
+func detectRBACMisconfigurations(ctx context.Context, clientset *kubernetes.Clientset,
 	permissions []PermissionFinding, clusterRoles []v1.ClusterRole, clusterRoleBindings []v1.ClusterRoleBinding) []string {
 	var misconfigurations []string
 
@@ -1018,7 +1019,7 @@ func detectRBACMisconfigurations(ctx context.Context, clientset *config.K8sClien
 }
 
 // generateTable creates the table output
-func generateTable(findings []PermissionFinding) internal.TableFile {
+func generatePermissionsTable(findings []PermissionFinding) internal.TableFile {
 	headers := []string{
 		"Risk Level",
 		"Subject",
@@ -1135,7 +1136,7 @@ func generateTable(findings []PermissionFinding) internal.TableFile {
 	// Sort by risk level, then subject
 	sort.SliceStable(rows, func(i, j int) bool {
 		if rows[i][0] != rows[j][0] {
-			return riskLevelValue(rows[i][0]) > riskLevelValue(rows[j][0])
+			return permissionsRiskLevelValue(rows[i][0]) > permissionsRiskLevelValue(rows[j][0])
 		}
 		return rows[i][1] < rows[j][1]
 	})
@@ -1148,7 +1149,7 @@ func generateTable(findings []PermissionFinding) internal.TableFile {
 }
 
 // generateLootFiles creates all loot files
-func generateLootFiles(findings []PermissionFinding, escalationPaths []EscalationPath,
+func generatePermissionsLootFiles(findings []PermissionFinding, escalationPaths []EscalationPath,
 	saAnalyses []ServiceAccountAnalysis, misconfigurations []string) []internal.LootFile {
 	var lootFiles []internal.LootFile
 
@@ -1180,10 +1181,10 @@ func generateLootFiles(findings []PermissionFinding, escalationPaths []Escalatio
 	lootFiles = append(lootFiles, generateImpersonateLoot(findings))
 
 	// 10. Permissions-Attack-Paths.txt (NEW)
-	lootFiles = append(lootFiles, generateAttackPathsLoot(findings))
+	lootFiles = append(lootFiles, generatePermissionsAttackPathsLoot(findings))
 
 	// 11. Permissions-ExamplePodYAML.txt (enhanced)
-	lootFiles = append(lootFiles, generatePodYAMLsLoot(findings))
+	lootFiles = append(lootFiles, generatePermissionsPodYAMLsLoot(findings))
 
 	// 12. Permissions-Remediation.txt (NEW)
 	lootFiles = append(lootFiles, generateRemediationLoot(findings))
@@ -1417,7 +1418,7 @@ func generateClusterAdminLoot(findings []PermissionFinding) internal.LootFile {
 			if !seen[key] {
 				seen[key] = true
 				content = append(content, fmt.Sprintf("• %s/%s (namespace: %s)", f.SubjectKind, f.SubjectName, f.Namespace))
-				content = append(content, fmt.Sprintf("  Via: %s", k8sinternal.NonEmpty(f.ClusterRole, f.Role)))
+				content = append(content, fmt.Sprintf("  Via: %s", func() string { if f.ClusterRole != "" { return f.ClusterRole }; return f.Role }()))
 				content = append(content, "  Impact: Full cluster control - can read/modify/delete any resource")
 				content = append(content, "")
 			}
@@ -1657,7 +1658,7 @@ func generateImpersonateLoot(findings []PermissionFinding) internal.LootFile {
 	}
 }
 
-func generateAttackPathsLoot(findings []PermissionFinding) internal.LootFile {
+func generatePermissionsAttackPathsLoot(findings []PermissionFinding) internal.LootFile {
 	var content []string
 
 	content = append(content, "═══════════════════════════════════════════════════════════════")
@@ -1695,7 +1696,7 @@ func generateAttackPathsLoot(findings []PermissionFinding) internal.LootFile {
 	}
 }
 
-func generatePodYAMLsLoot(findings []PermissionFinding) internal.LootFile {
+func generatePermissionsPodYAMLsLoot(findings []PermissionFinding) internal.LootFile {
 	var content []string
 
 	content = append(content, "═══════════════════════════════════════════════════════════════")
@@ -1895,7 +1896,7 @@ func hasPermission(perms []PermissionFinding, verb, resource string) bool {
 	return false
 }
 
-func riskLevelValue(level string) int {
+func permissionsRiskLevelValue(level string) int {
 	switch level {
 	case "CRITICAL":
 		return 4

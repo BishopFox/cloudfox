@@ -3,8 +3,6 @@ package commands
 import (
 	"context"
 	"crypto/x509"
-	"encoding/base64"
-	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"sort"
@@ -19,6 +17,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 )
 
 var SecretsCmd = &cobra.Command{
@@ -124,7 +123,7 @@ type RBACBinding struct {
 }
 
 // CertificateInfo holds parsed certificate information
-type CertificateInfo struct {
+type SecretCertificateInfo struct {
 	Subject         string
 	Issuer          string
 	NotBefore       time.Time
@@ -546,7 +545,7 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 	}
 
 	// Generate secret sprawl report
-	for hash, refs := range secretDataHashes {
+	for _, refs := range secretDataHashes {
 		if len(refs) > 1 {
 			lootSecretSprawl = append(lootSecretSprawl, fmt.Sprintf("\n### Duplicate secret data found in %d locations:", len(refs)))
 			for _, ref := range refs {
@@ -652,7 +651,7 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 }
 
 // analyzeSecretRBAC analyzes RBAC permissions for secret access
-func analyzeSecretRBAC(ctx context.Context, clientset *k8sinternal.Clientset) []RBACBinding {
+func analyzeSecretRBAC(ctx context.Context, clientset *kubernetes.Clientset) []RBACBinding {
 	var bindings []RBACBinding
 
 	// Get all RoleBindings
@@ -701,7 +700,7 @@ func analyzeSecretRBAC(ctx context.Context, clientset *k8sinternal.Clientset) []
 }
 
 // grantSecretAccess checks if a Role grants secret access
-func grantSecretAccess(ctx context.Context, clientset *k8sinternal.Clientset, roleRef rbacv1.RoleRef, namespace string) bool {
+func grantSecretAccess(ctx context.Context, clientset *kubernetes.Clientset, roleRef rbacv1.RoleRef, namespace string) bool {
 	if roleRef.Kind != "Role" {
 		return false
 	}
@@ -727,7 +726,7 @@ func grantSecretAccess(ctx context.Context, clientset *k8sinternal.Clientset, ro
 }
 
 // grantSecretAccessCluster checks if a ClusterRole grants secret access
-func grantSecretAccessCluster(ctx context.Context, clientset *k8sinternal.Clientset, roleRef rbacv1.RoleRef) bool {
+func grantSecretAccessCluster(ctx context.Context, clientset *kubernetes.Clientset, roleRef rbacv1.RoleRef) bool {
 	if roleRef.Kind != "ClusterRole" {
 		return false
 	}
@@ -790,7 +789,7 @@ func hasPublicAccess(bindings []RBACBinding, namespace string) bool {
 }
 
 // parseCertificate parses TLS certificate data
-func parseCertificate(certData []byte) *CertificateInfo {
+func parseCertificate(certData []byte) *SecretCertificateInfo {
 	block, _ := pem.Decode(certData)
 	if block == nil {
 		return nil
@@ -806,7 +805,7 @@ func parseCertificate(certData []byte) *CertificateInfo {
 
 	isSelfSigned := cert.Issuer.String() == cert.Subject.String()
 
-	return &CertificateInfo{
+	return &SecretCertificateInfo{
 		Subject:         cert.Subject.String(),
 		Issuer:          cert.Issuer.String(),
 		NotBefore:       cert.NotBefore,
@@ -1072,7 +1071,7 @@ func generateSecretLootContent(finding *SecretFinding, secret *v1.Secret, dataKe
 	}
 
 	// Cloud credential patterns
-	if finding.Type == v1.SecretTypeDockerConfigJson {
+	if string(finding.Type) == string(v1.SecretTypeDockerConfigJson) {
 		*lootPatterns = append(*lootPatterns, fmt.Sprintf("\n# [%s] DOCKER REGISTRY CREDENTIALS: %s", finding.RiskLevel, secretID))
 		*lootPatterns = append(*lootPatterns, fmt.Sprintf("kubectl get secret %s -n %s -o jsonpath='{.data.\\.dockerconfigjson}' | base64 -d | jq .", finding.Name, finding.Namespace))
 		*lootPatterns = append(*lootPatterns, "")
@@ -1162,10 +1161,10 @@ kubectl --token=$SA_TOKEN get secrets --all-namespaces
 ##############################################
 # Extract TLS private keys:
 kubectl get secret <tls-secret> -n <namespace> -o jsonpath='{.data.tls\.key}' | base64 -d > private.key
-kubectl get secret <tls-secret> -n <namespace> -o jsonpath='{.data.tls\.crt}' | base64 -d > cert.crt
+kubectl get secret <tls-secret> -n <namespace> -o jsonpath='{.data.tls\.crt}' | base64 -d > certInfo.crt
 
 # Use stolen certificate:
-curl --key private.key --cert cert.crt https://secure-service.example.com
+curl --key private.key --cert certInfo.crt https://secure-service.example.com
 `}
 }
 
