@@ -293,7 +293,7 @@ func detectDSDataExfiltration(commands []string, args []string) []string {
 		{regexp.MustCompile(`curl.*-X\s+POST.*--data`), "HTTP POST with data (exfiltration)"},
 		{regexp.MustCompile(`base64.*\|.*curl`), "Base64 encode and curl (data exfiltration)"},
 		{regexp.MustCompile(`tar.*\|.*curl.*-T`), "Tar and upload via curl"},
-		{regexp.MustCompile(`aws\s+s3\s+cp.*s3://(?!internal)`), "AWS S3 copy to external bucket"},
+		{regexp.MustCompile(`aws\s+s3\s+cp.*s3://`), "AWS S3 copy to external bucket"},
 		{regexp.MustCompile(`gsutil\s+cp.*gs://`), "GCP Cloud Storage upload"},
 		{regexp.MustCompile(`kubectl\s+cp.*:.*\.`), "kubectl cp from pod (data extraction)"},
 		{regexp.MustCompile(`scp.*@.*:`), "SCP file transfer"},
@@ -308,6 +308,10 @@ func detectDSDataExfiltration(commands []string, args []string) []string {
 	allText := strings.Join(append(commands, args...), " ")
 	for _, p := range patterns {
 		if p.regex.MatchString(allText) {
+			// Special handling for AWS S3: exclude "internal" buckets
+			if strings.Contains(p.desc, "AWS S3") && strings.Contains(allText, "s3://internal") {
+				continue
+			}
 			findings = append(findings, p.desc)
 		}
 	}
