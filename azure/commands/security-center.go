@@ -192,7 +192,7 @@ func (m *SecurityCenterModule) processDefenderPlans(ctx context.Context, subID, 
 	cred := azinternal.NewStaticTokenCredential(token)
 
 	// Create Security client
-	client, err := armsecurity.NewPricingsClient(subID, cred, nil)
+	client, err := armsecurity.NewPricingsClient(cred, nil)
 	if err != nil {
 		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
 			logger.ErrorM(fmt.Sprintf("Failed to create Security client for subscription %s: %v", subID, err), globals.AZ_SECURITY_CENTER_MODULE_NAME)
@@ -201,17 +201,17 @@ func (m *SecurityCenterModule) processDefenderPlans(ctx context.Context, subID, 
 	}
 
 	// List all Defender plans
-	pager := client.NewListPager(nil)
-	for pager.More() {
-		page, err := pager.NextPage(ctx)
-		if err != nil {
-			if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
-				logger.ErrorM(fmt.Sprintf("Error listing Defender plans for subscription %s: %v", subID, err), globals.AZ_SECURITY_CENTER_MODULE_NAME)
-			}
-			return
+	scope := fmt.Sprintf("subscriptions/%s", subID)
+	response, err := client.List(ctx, scope, nil)
+	if err != nil {
+		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
+			logger.ErrorM(fmt.Sprintf("Error listing Defender plans for subscription %s: %v", subID, err), globals.AZ_SECURITY_CENTER_MODULE_NAME)
 		}
+		return
+	}
 
-		for _, pricing := range page.Value {
+	if response.Value != nil {
+		for _, pricing := range response.Value {
 			if pricing == nil || pricing.Name == nil {
 				continue
 			}
@@ -236,8 +236,8 @@ func (m *SecurityCenterModule) processDefenderPlans(ctx context.Context, subID, 
 				if pricing.Properties.Deprecated != nil && *pricing.Properties.Deprecated {
 					deprecated = "Yes"
 				}
-				if len(pricing.Properties.ReplacedBy) > 0 {
-					replacedBy = strings.Join(pricing.Properties.ReplacedBy, ", ")
+				if pricing.Properties.ReplacedBy != nil && len(pricing.Properties.ReplacedBy) > 0 {
+					replacedBy = strings.Join(azinternal.SafeStringSlice(pricing.Properties.ReplacedBy), ", ")
 				}
 			}
 
@@ -296,7 +296,7 @@ func (m *SecurityCenterModule) processSecurityRecommendations(ctx context.Contex
 	cred := azinternal.NewStaticTokenCredential(token)
 
 	// Create Assessments client
-	client, err := armsecurity.NewAssessmentsClient(subID, cred, nil)
+	client, err := armsecurity.NewAssessmentsClient(cred, nil)
 	if err != nil {
 		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
 			logger.ErrorM(fmt.Sprintf("Failed to create Assessments client for subscription %s: %v", subID, err), globals.AZ_SECURITY_CENTER_MODULE_NAME)
@@ -305,7 +305,7 @@ func (m *SecurityCenterModule) processSecurityRecommendations(ctx context.Contex
 	}
 
 	// List all security assessments for the subscription scope
-	scope := fmt.Sprintf("/subscriptions/%s", subID)
+	scope := fmt.Sprintf("subscriptions/%s", subID)
 	pager := client.NewListPager(scope, nil)
 
 	for pager.More() {
@@ -327,7 +327,6 @@ func (m *SecurityCenterModule) processSecurityRecommendations(ctx context.Contex
 			description := ""
 			severity := "Unknown"
 			status := "Unknown"
-			resourceID := ""
 			category := ""
 			unhealthyResources := "0"
 			healthyResources := "0"
@@ -356,12 +355,6 @@ func (m *SecurityCenterModule) processSecurityRecommendations(ctx context.Contex
 					category = strings.Join(categories, ", ")
 				}
 			}
-			if props.ResourceDetails != nil && props.ResourceDetails.GetSecurityAssessmentMetadataPropertiesResponsePublishDates() != nil {
-				// Try to extract resource ID from the assessment
-				if assessment.ID != nil {
-					resourceID = *assessment.ID
-				}
-			}
 
 			// Extract resource counts from status
 			if props.Status != nil {
@@ -372,15 +365,8 @@ func (m *SecurityCenterModule) processSecurityRecommendations(ctx context.Contex
 
 			// For subscription-level assessments, try to get resource counts
 			if props.AdditionalData != nil {
-				// Check for resource count data
-				if data := props.AdditionalData; data != nil {
-					// Additional data may contain unhealthy resource counts
-					if val, ok := data["assessedResourceCount"]; ok {
-						if count, ok := val.(float64); ok {
-							unhealthyResources = fmt.Sprintf("%.0f", count)
-						}
-					}
-				}
+				// Additional data may contain unhealthy resource counts
+				// Note: AdditionalData type varies by SDK version - may need parsing
 			}
 
 			// Determine risk level based on severity and status
@@ -468,7 +454,7 @@ func (m *SecurityCenterModule) processSecureScore(ctx context.Context, subID, su
 		return
 	}
 
-	// List secure scores
+	// List secure scores for subscription
 	pager := client.NewListPager(nil)
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
@@ -495,10 +481,10 @@ func (m *SecurityCenterModule) processSecureScore(ctx context.Context, subID, su
 					currentScore = fmt.Sprintf("%.2f", *score.Properties.Score.Current)
 				}
 				if score.Properties.Score.Max != nil {
-					maxScore = fmt.Sprintf("%.0f", *score.Properties.Score.Max)
+					maxScore = fmt.Sprintf("%d", *score.Properties.Score.Max)
 					// Calculate percentage
 					if *score.Properties.Score.Max > 0 && score.Properties.Score.Current != nil {
-						pct := (*score.Properties.Score.Current / *score.Properties.Score.Max) * 100
+						pct := (*score.Properties.Score.Current / float64(*score.Properties.Score.Max)) * 100
 						percentage = fmt.Sprintf("%.1f%%", pct)
 					}
 				}
@@ -510,7 +496,7 @@ func (m *SecurityCenterModule) processSecureScore(ctx context.Context, subID, su
 			// Determine risk level based on percentage
 			riskLevel := "INFO"
 			if score.Properties.Score != nil && score.Properties.Score.Current != nil && score.Properties.Score.Max != nil {
-				pct := (*score.Properties.Score.Current / *score.Properties.Score.Max) * 100
+				pct := (*score.Properties.Score.Current / float64(*score.Properties.Score.Max)) * 100
 				if pct < 50 {
 					riskLevel = "HIGH"
 				} else if pct < 75 {
@@ -762,20 +748,30 @@ func (m *SecurityCenterModule) writeOutput(ctx context.Context, logger internal.
 		Loot:  loot,
 	}
 
-	// -------------------- Write files using helper --------------------
-	summary := fmt.Sprintf("%d subscriptions, %d Defender plans, %d recommendations, %d secure scores",
-		len(m.Subscriptions),
+	// -------------------- Determine output scope --------------------
+	scopeType, scopeIDs, scopeNames := azinternal.DetermineScopeForOutput(m.Subscriptions, m.TenantID, m.TenantName, m.TenantFlagPresent)
+	scopeNames = azinternal.GetSubscriptionNamesForOutput(ctx, m.Session, scopeType, scopeIDs)
+
+	// -------------------- Write output --------------------
+	if err := internal.HandleOutputSmart(
+		"Azure",
+		m.Format,
+		m.OutputDirectory,
+		m.Verbosity,
+		m.WrapTable,
+		scopeType,
+		scopeIDs,
+		scopeNames,
+		m.UserUPN,
+		output,
+	); err != nil {
+		logger.ErrorM(fmt.Sprintf("Failed to write output: %v", err), globals.AZ_SECURITY_CENTER_MODULE_NAME)
+		return
+	}
+
+	logger.SuccessM(fmt.Sprintf("Found %d Defender plans, %d recommendations, %d secure scores across %d subscriptions",
 		len(m.DefenderPlanRows),
 		len(m.RecommendationRows),
-		len(m.SecurityRows))
-
-	m.WriteTableAndLootFiles(
-		ctx,
-		logger,
-		output,
-		globals.AZ_SECURITY_CENTER_MODULE_NAME,
-		summary,
-		true, // support CSV
-		true, // support JSON
-	)
+		len(m.SecurityRows),
+		len(m.Subscriptions)), globals.AZ_SECURITY_CENTER_MODULE_NAME)
 }

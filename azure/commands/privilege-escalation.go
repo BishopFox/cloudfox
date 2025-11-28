@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	armauthorizationv2 "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v2"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	azinternal "github.com/BishopFox/cloudfox/internal/azure"
@@ -240,12 +241,31 @@ func (m *PrivilegeEscalationModule) processSubscription(ctx context.Context, sub
 // ------------------------------
 // Analyze role assignment
 // ------------------------------
-func (m *PrivilegeEscalationModule) analyzeRoleAssignment(ctx context.Context, subID, subName string, assignment azinternal.RoleAssignment, logger internal.Logger) {
-	roleName := assignment.RoleName
-	principalName := assignment.PrincipalName
-	principalID := assignment.PrincipalID
-	principalType := assignment.PrincipalType
-	scope := assignment.Scope
+func (m *PrivilegeEscalationModule) analyzeRoleAssignment(ctx context.Context, subID, subName string, assignment *armauthorizationv2.RoleAssignment, logger internal.Logger) {
+	if assignment == nil || assignment.Properties == nil {
+		return
+	}
+
+	// Extract role name from role definition ID
+	roleName := "Unknown"
+	if assignment.Properties.RoleDefinitionID != nil {
+		roleDefID := *assignment.Properties.RoleDefinitionID
+		// Extract role name from ID (last segment)
+		parts := strings.Split(roleDefID, "/")
+		if len(parts) > 0 {
+			roleDefID = parts[len(parts)-1]
+		}
+		// TODO: Resolve role definition ID to role name via API call
+		roleName = roleDefID
+	}
+
+	principalID := azinternal.SafeStringPtr(assignment.Properties.PrincipalID)
+	principalType := "Unknown"
+	if assignment.Properties.PrincipalType != nil {
+		principalType = string(*assignment.Properties.PrincipalType)
+	}
+	scope := azinternal.SafeStringPtr(assignment.Properties.Scope)
+	principalName := principalID // Default to ID, resolve later if needed
 
 	// Determine if this is a dangerous role
 	techniques, isDangerous := m.DangerousRoleMap[roleName]

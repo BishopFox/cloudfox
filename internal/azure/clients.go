@@ -27,6 +27,7 @@ import (
 	"github.com/Azure/go-autorest/autorest/azure/auth"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
+	msgraphsdk "github.com/microsoftgraph/msgraph-sdk-go"
 )
 
 func getAuthorizer(endpoint string) (autorest.Authorizer, error) {
@@ -573,6 +574,29 @@ func GetServiceFabricClient(session *SafeSession, subscriptionID string) (*armse
 	client, err := armservicefabric.NewClustersClient(subscriptionID, cred, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Service Fabric client: %v", err)
+	}
+
+	return client, nil
+}
+
+// GetGraphServiceClient returns a Microsoft Graph SDK client for accessing Graph API
+// This is used for accessing Azure AD Identity Protection and other Graph endpoints
+func GetGraphServiceClient(session *SafeSession) (*msgraphsdk.GraphServiceClient, error) {
+	// Get token for Microsoft Graph scope
+	token, err := session.GetTokenForResource(globals.CommonScopes[1]) // Microsoft Graph scope
+	if err != nil {
+		return nil, fmt.Errorf("failed to get Microsoft Graph token: %v", err)
+	}
+
+	// Create a custom authentication provider that uses our static token
+	cred := NewStaticTokenCredential(token)
+
+	// Create Graph client using the credential
+	// Note: This is a simplified approach - for production use, consider implementing
+	// a full Graph authentication adapter
+	client, err := msgraphsdk.NewGraphServiceClientWithCredentials(cred, []string{globals.CommonScopes[1]})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Graph client: %v", err)
 	}
 
 	return client, nil

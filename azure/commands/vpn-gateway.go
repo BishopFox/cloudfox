@@ -180,22 +180,18 @@ func (m *VPNGatewayModule) processVPNGateway(ctx context.Context, subID, subName
 
 	// Active-Active mode
 	activeActive := "No"
-	if vpn.Properties.ActiveActive != nil && *vpn.Properties.ActiveActive {
+	if vpn.Properties.Active != nil && *vpn.Properties.Active {
 		activeActive = "✓ Yes"
 	}
 
 	// BGP enabled
 	bgpEnabled := "No"
 	bgpASN := "N/A"
-	bgpPeeringAddress := "N/A"
 	if vpn.Properties.EnableBgp != nil && *vpn.Properties.EnableBgp {
 		bgpEnabled = "✓ Yes"
 		if vpn.Properties.BgpSettings != nil {
 			if vpn.Properties.BgpSettings.Asn != nil {
 				bgpASN = fmt.Sprintf("%d", *vpn.Properties.BgpSettings.Asn)
-			}
-			if vpn.Properties.BgpSettings.BgpPeeringAddress != nil {
-				bgpPeeringAddress = *vpn.Properties.BgpSettings.BgpPeeringAddress
 			}
 		}
 	}
@@ -221,7 +217,6 @@ func (m *VPNGatewayModule) processVPNGateway(ctx context.Context, subID, subName
 	p2sProtocols := "N/A"
 	p2sAuthMethods := "N/A"
 	p2sAddressPool := "N/A"
-	p2sClientCount := "0"
 
 	if vpn.Properties.VPNClientConfiguration != nil {
 		p2sConfig := vpn.Properties.VPNClientConfiguration
@@ -361,7 +356,7 @@ func (m *VPNGatewayModule) getVPNConnections(ctx context.Context, subID, rgName 
 		return nil, err
 	}
 
-	cred := &azinternal.StaticTokenCredential{Token: token}
+	cred := azinternal.NewStaticTokenCredential(token)
 	connClient, err := armnetwork.NewVirtualNetworkGatewayConnectionsClient(subID, cred, nil)
 	if err != nil {
 		return nil, err

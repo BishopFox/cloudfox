@@ -535,3 +535,37 @@ func (o *RBACOutput) TableFiles() []internal.TableFile {
 func (o *RBACOutput) LootFiles() []internal.LootFile {
 	return o.Loot
 }
+
+// GetRoleAssignmentsForSubscription retrieves all role assignments for a given subscription
+// Returns role assignments using the modern Azure SDK
+func GetRoleAssignmentsForSubscription(ctx context.Context, session *SafeSession, subscriptionID string) ([]*armauthorizationv2.RoleAssignment, error) {
+	// Get ARM token
+	token, err := session.GetTokenForResource(globals.CommonScopes[0])
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ARM token for subscription %s: %v", subscriptionID, err)
+	}
+
+	// Create credential
+	cred := NewStaticTokenCredential(token)
+
+	// Create role assignments client
+	client, err := armauthorizationv2.NewRoleAssignmentsClient(subscriptionID, cred, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create role assignments client: %v", err)
+	}
+
+	// List all role assignments for the subscription scope
+	scope := fmt.Sprintf("/subscriptions/%s", subscriptionID)
+	pager := client.NewListForScopePager(scope, nil)
+
+	var roleAssignments []*armauthorizationv2.RoleAssignment
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list role assignments: %v", err)
+		}
+		roleAssignments = append(roleAssignments, page.Value...)
+	}
+
+	return roleAssignments, nil
+}

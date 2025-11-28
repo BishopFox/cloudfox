@@ -162,7 +162,7 @@ func init() {
 		commands.AzFrontDoorCommand,
 		commands.AzFunctionsCommand,
 		commands.AzHDInsightCommand,
-		// commands.AzIdentityProtectionCommand, // Disabled - compilation issues
+		commands.AzIdentityProtectionCommand, // Disabled - compilation issues
 		commands.AzInventoryCommand,
 		commands.AzIoTHubCommand,
 		commands.AzKeyVaultCommand,
@@ -180,14 +180,14 @@ func init() {
 		commands.AzNSGCommand,
 		commands.AzPolicyCommand,
 		commands.AzPrincipalsCommand,
-		// commands.AzPrivilegeEscalationCommand, // Disabled - compilation issues
+		commands.AzPrivilegeEscalationCommand, // Disabled - compilation issues
 		commands.AzPermissionsCommand,
 		commands.AzPrivateLinkCommand,
 		commands.AzRBACCommand,
 		commands.AzRedisCommand,
 		commands.AzResourceGraphCommand,
 		commands.AzRoutesCommand,
-		// commands.AzSecurityCenterCommand, // Disabled - compilation issues
+		commands.AzSecurityCenterCommand, // Disabled - compilation issues
 		commands.AzSentinelCommand,
 		commands.AzServiceFabricCommand,
 		commands.AzSignalRCommand,
@@ -195,10 +195,10 @@ func init() {
 		commands.AzSpringAppsCommand,
 		commands.AzStreamAnalyticsCommand,
 		commands.AzSynapseCommand,
-		// commands.AzTrafficManagerCommand, // Disabled - compilation issues
+		commands.AzTrafficManagerCommand, // Disabled - compilation issues
 		commands.AzVmsCommand,
 		commands.AzVNetsCommand,
-		// commands.AzVPNGatewayCommand, // Disabled - compilation issues
+		commands.AzVPNGatewayCommand, // Disabled - compilation issues
 		commands.AzWebAppsCommand,
 		commands.AzWhoamiCommand,
 

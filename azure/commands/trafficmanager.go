@@ -165,7 +165,7 @@ func (m *TrafficManagerModule) processResourceGroup(ctx context.Context, subID, 
 		return
 	}
 
-	cred := &azinternal.StaticTokenCredential{Token: token}
+	cred := azinternal.NewStaticTokenCredential(token)
 	profileClient, err := armtrafficmanager.NewProfilesClient(subID, cred, nil)
 	if err != nil {
 		return
@@ -453,10 +453,11 @@ func (m *TrafficManagerModule) processTrafficManagerEndpoint(subID, subName, rgN
 			weight = fmt.Sprintf("%d", *ep.Weight)
 		}
 		if ep.GeoMapping != nil && len(ep.GeoMapping) > 0 {
-			if len(ep.GeoMapping) <= 3 {
-				geoMapping = strings.Join(ep.GeoMapping, ", ")
+			geoMappingSlice := azinternal.SafeStringSlice(ep.GeoMapping)
+			if len(geoMappingSlice) <= 3 {
+				geoMapping = strings.Join(geoMappingSlice, ", ")
 			} else {
-				geoMapping = fmt.Sprintf("%s... (%d regions)", strings.Join(ep.GeoMapping[:3], ", "), len(ep.GeoMapping))
+				geoMapping = fmt.Sprintf("%s... (%d regions)", strings.Join(geoMappingSlice[:3], ", "), len(geoMappingSlice))
 			}
 		}
 		if ep.MinChildEndpoints != nil {
@@ -542,35 +543,58 @@ func (m *TrafficManagerModule) writeOutput(ctx context.Context, logger internal.
 		return
 	}
 
+	// -------------------- Define headers --------------------
+	profileHeaders := []string{
+		"Tenant Name",
+		"Tenant ID",
+		"Subscription ID",
+		"Subscription Name",
+		"Resource Group",
+		"Region",
+		"Profile Name",
+		"DNS Name",
+		"Profile Status",
+		"Routing Method",
+		"DNS TTL",
+		"Monitor Protocol",
+		"Monitor Port",
+		"Monitor Path",
+		"Monitor Interval",
+		"Monitor Timeout",
+		"Failure Tolerance",
+		"Expected Status Codes",
+		"Endpoint Count",
+		"Online Endpoints",
+		"Degraded Endpoints",
+		"Disabled Endpoints",
+		"Risk",
+		"Risk Note",
+	}
+
+	endpointHeaders := []string{
+		"Tenant Name",
+		"Tenant ID",
+		"Subscription ID",
+		"Subscription Name",
+		"Resource Group",
+		"Profile Name",
+		"Endpoint Name",
+		"Endpoint Type",
+		"Target",
+		"Endpoint Status",
+		"Monitor Status",
+		"Priority",
+		"Weight",
+		"Geo Mapping",
+		"Endpoint Location",
+		"Min Child Endpoints",
+		"Target Resource ID",
+		"Risk",
+		"Risk Note",
+	}
+
 	// -------------------- TABLE 1: Traffic Manager Profiles --------------------
 	if len(m.ProfileRows) > 0 {
-		profileHeaders := []string{
-			"Tenant Name",
-			"Tenant ID",
-			"Subscription ID",
-			"Subscription Name",
-			"Resource Group",
-			"Region",
-			"Profile Name",
-			"DNS Name",
-			"Profile Status",
-			"Routing Method",
-			"DNS TTL",
-			"Monitor Protocol",
-			"Monitor Port",
-			"Monitor Path",
-			"Monitor Interval",
-			"Monitor Timeout",
-			"Failure Tolerance",
-			"Expected Status Codes",
-			"Endpoint Count",
-			"Online Endpoints",
-			"Degraded Endpoints",
-			"Disabled Endpoints",
-			"Risk",
-			"Risk Note",
-		}
-
 		if azinternal.ShouldSplitByTenant(m.IsMultiTenant, m.Tenants) {
 			if err := m.FilterAndWritePerTenantAuto(
 				ctx, logger, m.Tenants, m.ProfileRows, profileHeaders,
@@ -578,42 +602,19 @@ func (m *TrafficManagerModule) writeOutput(ctx context.Context, logger internal.
 			); err != nil {
 				logger.ErrorM("Failed to write per-tenant Traffic Manager profiles", globals.AZ_TRAFFIC_MANAGER_MODULE_NAME)
 			}
-		} else if azinternal.ShouldSplitBySubscription(m.IsCrossSubscription) {
+		} else if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
 			if err := m.FilterAndWritePerSubscriptionAuto(
 				ctx, logger, m.Subscriptions, m.ProfileRows, profileHeaders,
 				"traffic-manager-profiles", globals.AZ_TRAFFIC_MANAGER_MODULE_NAME,
 			); err != nil {
 				logger.ErrorM("Failed to write per-subscription Traffic Manager profiles", globals.AZ_TRAFFIC_MANAGER_MODULE_NAME)
 			}
-		} else {
-			m.WriteFullOutput(logger, m.ProfileRows, profileHeaders, "traffic-manager-profiles", globals.AZ_TRAFFIC_MANAGER_MODULE_NAME)
+			return
 		}
 	}
 
 	// -------------------- TABLE 2: Traffic Manager Endpoints --------------------
 	if len(m.EndpointRows) > 0 {
-		endpointHeaders := []string{
-			"Tenant Name",
-			"Tenant ID",
-			"Subscription ID",
-			"Subscription Name",
-			"Resource Group",
-			"Profile Name",
-			"Endpoint Name",
-			"Endpoint Type",
-			"Target",
-			"Endpoint Status",
-			"Monitor Status",
-			"Priority",
-			"Weight",
-			"Geo Mapping",
-			"Endpoint Location",
-			"Min Child Endpoints",
-			"Target Resource ID",
-			"Risk",
-			"Risk Note",
-		}
-
 		if azinternal.ShouldSplitByTenant(m.IsMultiTenant, m.Tenants) {
 			if err := m.FilterAndWritePerTenantAuto(
 				ctx, logger, m.Tenants, m.EndpointRows, endpointHeaders,
@@ -621,18 +622,66 @@ func (m *TrafficManagerModule) writeOutput(ctx context.Context, logger internal.
 			); err != nil {
 				logger.ErrorM("Failed to write per-tenant endpoints", globals.AZ_TRAFFIC_MANAGER_MODULE_NAME)
 			}
-		} else if azinternal.ShouldSplitBySubscription(m.IsCrossSubscription) {
+		} else if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
 			if err := m.FilterAndWritePerSubscriptionAuto(
 				ctx, logger, m.Subscriptions, m.EndpointRows, endpointHeaders,
 				"traffic-manager-endpoints", globals.AZ_TRAFFIC_MANAGER_MODULE_NAME,
 			); err != nil {
 				logger.ErrorM("Failed to write per-subscription endpoints", globals.AZ_TRAFFIC_MANAGER_MODULE_NAME)
 			}
-		} else {
-			m.WriteFullOutput(logger, m.EndpointRows, endpointHeaders, "traffic-manager-endpoints", globals.AZ_TRAFFIC_MANAGER_MODULE_NAME)
+			return
 		}
 	}
 
-	// -------------------- LOOT FILES --------------------
-	m.WriteLoot(logger, m.LootMap, globals.AZ_TRAFFIC_MANAGER_MODULE_NAME)
+	// -------------------- Build combined output --------------------
+	tables := []internal.TableFile{}
+	if len(m.ProfileRows) > 0 {
+		tables = append(tables, internal.TableFile{
+			Name:   "traffic-manager-profiles",
+			Header: profileHeaders,
+			Body:   m.ProfileRows,
+		})
+	}
+	if len(m.EndpointRows) > 0 {
+		tables = append(tables, internal.TableFile{
+			Name:   "traffic-manager-endpoints",
+			Header: endpointHeaders,
+			Body:   m.EndpointRows,
+		})
+	}
+
+	// Build loot array
+	loot := []internal.LootFile{}
+	for _, lf := range m.LootMap {
+		if lf.Contents != "" {
+			loot = append(loot, *lf)
+		}
+	}
+
+	output := TrafficManagerOutput{
+		Table: tables,
+		Loot:  loot,
+	}
+
+	scopeType, scopeIDs, scopeNames := azinternal.DetermineScopeForOutput(m.Subscriptions, m.TenantID, m.TenantName, m.TenantFlagPresent)
+	scopeNames = azinternal.GetSubscriptionNamesForOutput(ctx, m.Session, scopeType, scopeIDs)
+
+	if err := internal.HandleOutputSmart(
+		"Azure",
+		m.Format,
+		m.OutputDirectory,
+		m.Verbosity,
+		m.WrapTable,
+		scopeType,
+		scopeIDs,
+		scopeNames,
+		m.UserUPN,
+		output,
+	); err != nil {
+		logger.ErrorM(fmt.Sprintf("Failed to write output: %v", err), globals.AZ_TRAFFIC_MANAGER_MODULE_NAME)
+		return
+	}
+
+	logger.SuccessM(fmt.Sprintf("Found %d Traffic Manager profiles, %d endpoints across %d subscriptions",
+		len(m.ProfileRows), len(m.EndpointRows), len(m.Subscriptions)), globals.AZ_TRAFFIC_MANAGER_MODULE_NAME)
 }

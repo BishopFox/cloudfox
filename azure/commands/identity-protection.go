@@ -307,8 +307,8 @@ func (m *IdentityProtectionModule) enumerateRiskDetections(ctx context.Context, 
 		userPrincipalName := azinternal.SafeStringPtr(detection.GetUserPrincipalName())
 		userDisplayName := azinternal.SafeStringPtr(detection.GetUserDisplayName())
 		riskType := "Unknown"
-		if detection.GetRiskType() != nil {
-			riskType = string(*detection.GetRiskType())
+		if detection.GetRiskEventType() != nil {
+			riskType = *detection.GetRiskEventType()
 		}
 		riskLevel := "Unknown"
 		if detection.GetRiskLevel() != nil {
