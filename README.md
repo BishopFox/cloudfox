@@ -48,8 +48,8 @@ For the full documentation please refer to our [wiki](https://github.com/BishopF
 
 | Provider| CloudFox Commands |
 | - | - |
-| AWS | 34 | 
-| Azure | 4 | 
+| AWS | 34 |
+| Azure | 77 |
 | GCP | 8 |
 | Kubernetes | Support Planned | 
 
@@ -145,13 +145,123 @@ Additional policy notes (as of 09/2022):
 
 
 # Azure Commands
-| Provider | Command Name | Description 
-| - | - | - | 
-| Azure | [whoami](https://github.com/BishopFox/cloudfox/wiki/Azure-Commands#whoami) | Displays information on the tenant, subscriptions and resource groups available to your current Azure CLI session. This is useful to provide situation awareness on what tenant and subscription IDs to use with the other sub commands. | 
-| Azure | [inventory](https://github.com/BishopFox/cloudfox/wiki/Azure-Commands#inventory) | Display an inventory table of all resources per location. | 
-| Azure | [rbac](https://github.com/BishopFox/cloudfox/wiki/Azure-Commands#rbac) | Lists Azure RBAC role assignments at subscription or tenant level |
-| Azure | [storage](https://github.com/BishopFox/cloudfox/wiki/Azure-Commands#storage) | The storage command is still under development. Currently it only displays limited data about the storage accounts | 
-| Azure | [vms](https://github.com/BishopFox/cloudfox/wiki/Azure-Commands#vms) | Enumerates useful information for Compute instances in all available resource groups and subscriptions | 
+
+## Core Enumeration & Analysis
+| Provider | Command Name | Description
+| - | - | - |
+| Azure | whoami | Displays information on the tenant, subscriptions and resource groups available to your current Azure CLI session |
+| Azure | inventory | Display an inventory table of all resources per location |
+| Azure | resource-graph | Query Azure Resource Graph for advanced resource enumeration |
+| Azure | deployments | Enumerate ARM template deployments (often contain secrets in parameters) |
+| Azure | endpoints | Enumerate endpoints from various Azure services |
+| Azure | network-topology | Analyze network topology and connectivity paths |
+
+## Identity & Access Management
+| Provider | Command Name | Description
+| - | - | - |
+| Azure | rbac | Lists Azure RBAC role assignments at subscription or tenant level |
+| Azure | principals | Enumerate users, service principals, and managed identities |
+| Azure | permissions | Enumerate IAM permissions for principals |
+| Azure | privilege-escalation | Identify privilege escalation paths via RBAC |
+| Azure | identity-protection | Enumerate Azure AD Identity Protection risky users, sign-ins, and detections |
+| Azure | consent-grants | Enumerate OAuth consent grants and risky application permissions |
+| Azure | conditional-access | Enumerate conditional access policies |
+| Azure | enterprise-apps | Enumerate enterprise applications and service principals |
+| Azure | federated-credentials | Enumerate workload identity federation configurations |
+
+## Security & Compliance
+| Provider | Command Name | Description
+| - | - | - |
+| Azure | security-center | Enumerate Microsoft Defender for Cloud configuration and security assessments |
+| Azure | sentinel | Enumerate Microsoft Sentinel SIEM configuration and analytics rules |
+| Azure | policy | Enumerate Azure Policy assignments and compliance state |
+| Azure | compliance-dashboard | Display compliance status across regulatory frameworks |
+| Azure | monitor | Enumerate Azure Monitor diagnostic settings and alerts |
+
+## Compute Resources
+| Provider | Command Name | Description
+| - | - | - |
+| Azure | vms | Enumerate Virtual Machines with configuration details |
+| Azure | aks | Enumerate Azure Kubernetes Service clusters |
+| Azure | functions | Enumerate Azure Functions with environment variables |
+| Azure | webapps | Enumerate App Service web applications |
+| Azure | container-apps | Enumerate Azure Container Apps |
+| Azure | batch | Enumerate Azure Batch accounts and pools |
+| Azure | servicefabric | Enumerate Service Fabric clusters |
+| Azure | springapps | Enumerate Azure Spring Apps instances |
+
+## Storage & Data
+| Provider | Command Name | Description
+| - | - | - |
+| Azure | storage | Enumerate storage accounts, containers, and access keys |
+| Azure | filesystems | Enumerate Azure Files and Data Lake Storage |
+| Azure | databases | Enumerate SQL, MySQL, PostgreSQL, CosmosDB databases |
+| Azure | redis | Enumerate Azure Cache for Redis instances |
+| Azure | synapse | Enumerate Azure Synapse Analytics workspaces |
+| Azure | kusto | Enumerate Azure Data Explorer (Kusto) clusters |
+| Azure | datafactory | Enumerate Azure Data Factory pipelines |
+| Azure | databricks | Enumerate Azure Databricks workspaces |
+| Azure | disks | Enumerate virtual machine disks and snapshots |
+| Azure | backup-inventory | Enumerate backup vaults and recovery points |
+
+## Networking
+| Provider | Command Name | Description
+| - | - | - |
+| Azure | vnets | Enumerate Virtual Networks and subnets |
+| Azure | nsg | Enumerate Network Security Groups and rules |
+| Azure | network-interfaces | Enumerate network interfaces and IP configurations |
+| Azure | network-exposure | Analyze internet-facing resources and attack surface |
+| Azure | lateral-movement | Identify lateral movement paths via network connectivity |
+| Azure | privatelink | Enumerate Private Link and Private Endpoints |
+| Azure | vpn-gateway | Enumerate VPN Gateway configurations |
+| Azure | expressroute | Enumerate ExpressRoute circuits |
+| Azure | firewall | Enumerate Azure Firewall rules and policies |
+| Azure | appgw | Enumerate Application Gateway configurations |
+| Azure | load-balancers | Enumerate Load Balancers |
+| Azure | trafficmanager | Enumerate Traffic Manager profiles |
+| Azure | frontdoor | Enumerate Azure Front Door configurations |
+| Azure | cdn | Enumerate Azure CDN profiles and endpoints |
+| Azure | bastion | Enumerate Azure Bastion hosts |
+| Azure | routes | Enumerate route tables and user-defined routes |
+
+## Secrets & Credentials
+| Provider | Command Name | Description
+| - | - | - |
+| Azure | accesskeys | Enumerate and extract access keys from various services |
+| Azure | keyvaults | Enumerate Key Vaults and secrets (if accessible) |
+
+## DevOps & CI/CD
+| Provider | Command Name | Description
+| - | - | - |
+| Azure | devops-agents | Enumerate Azure DevOps pipeline agents |
+| Azure | devops-repos | Enumerate Azure DevOps repositories |
+| Azure | devops-projects | Enumerate Azure DevOps projects |
+| Azure | devops-pipelines | Enumerate Azure DevOps pipelines |
+| Azure | devops-artifacts | Enumerate Azure DevOps artifact feeds |
+| Azure | devops-security | Analyze Azure DevOps security configurations |
+| Azure | acr | Enumerate Azure Container Registry images |
+
+## Specialized Services
+| Provider | Command Name | Description
+| - | - | - |
+| Azure | api-management | Enumerate API Management services and APIs |
+| Azure | app-configuration | Enumerate App Configuration stores |
+| Azure | automation | Enumerate Azure Automation accounts and runbooks |
+| Azure | iothub | Enumerate IoT Hub instances |
+| Azure | signalr | Enumerate Azure SignalR Service instances |
+| Azure | streamanalytics | Enumerate Stream Analytics jobs |
+| Azure | machine-learning | Enumerate Azure Machine Learning workspaces |
+| Azure | load-testing | Enumerate Azure Load Testing resources |
+| Azure | logicapps | Enumerate Logic Apps workflows |
+| Azure | hdinsight | Enumerate HDInsight clusters |
+
+## Security Analysis & Attack Paths
+| Provider | Command Name | Description
+| - | - | - |
+| Azure | data-exfiltration | Identify data exfiltration paths and risks |
+| Azure | cost-security | Analyze cost anomalies indicating potential compromise |
+| Azure | lighthouse | Enumerate Azure Lighthouse delegations |
+| Azure | arc | Enumerate Azure Arc-enabled resources |
 
 
 # GCP Commands
@@ -171,6 +281,7 @@ Additional policy notes (as of 09/2022):
 # Authors
 * [Carlos Vendramini](https://github.com/carlosvendramini-bf)
 * [Seth Art (@sethsec](https://twitter.com/sethsec))
+* Joseph Barcia
 
 # Contributing
 [Wiki - How to Contribute](https://github.com/BishopFox/cloudfox/wiki#how-to-contribute)
