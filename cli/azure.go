@@ -180,14 +180,14 @@ func init() {
 		commands.AzNSGCommand,
 		commands.AzPolicyCommand,
 		commands.AzPrincipalsCommand,
-		commands.AzPrivilegeEscalationCommand, // Disabled - compilation issues
+		commands.AzPrivilegeEscalationCommand,
 		commands.AzPermissionsCommand,
 		commands.AzPrivateLinkCommand,
 		commands.AzRBACCommand,
 		commands.AzRedisCommand,
 		commands.AzResourceGraphCommand,
 		commands.AzRoutesCommand,
-		commands.AzSecurityCenterCommand, // Disabled - compilation issues
+		commands.AzSecurityCenterCommand,
 		commands.AzSentinelCommand,
 		commands.AzServiceFabricCommand,
 		commands.AzSignalRCommand,
@@ -195,10 +195,10 @@ func init() {
 		commands.AzSpringAppsCommand,
 		commands.AzStreamAnalyticsCommand,
 		commands.AzSynapseCommand,
-		commands.AzTrafficManagerCommand, // Disabled - compilation issues
+		commands.AzTrafficManagerCommand,
 		commands.AzVmsCommand,
 		commands.AzVNetsCommand,
-		commands.AzVPNGatewayCommand, // Disabled - compilation issues
+		commands.AzVPNGatewayCommand,
 		commands.AzWebAppsCommand,
 		commands.AzWhoamiCommand,
 
