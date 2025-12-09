@@ -228,7 +228,7 @@ func ListPods(cmd *cobra.Command, args []string) {
 		"Capabilities", "Dangerous Caps", "HostPaths", "Sensitive HostPaths",
 		"Secret Volumes", "Secret EnvVars", "ConfigMap Volumes", "Image Tags",
 		"Image Pull Policy", "Resource Limits", "Resource Requests", "QoS Class",
-		"PSS Compliance", "PSS Violations", "Security Issues",
+		"PSS Compliance", "PSS Violations", "Cloud Provider", "Cloud Role", "Security Issues",
 	}
 
 	var outputRows [][]string
@@ -1445,6 +1445,8 @@ func generateTableRow(finding *PodFinding) []string {
 		k8sinternal.NonEmpty(finding.QoSClass),
 		finding.PSSCompliance,
 		fmt.Sprintf("%d violations", len(finding.PSSViolations)),
+		k8sinternal.NonEmpty(finding.CloudProvider),
+		k8sinternal.NonEmpty(finding.CloudRole),
 		stringListOrNone(finding.SecurityIssues),
 	}
 }
@@ -1480,6 +1482,9 @@ func podGenerateLootContent(finding *PodFinding, pod *corev1.Pod,
 	if finding.RiskLevel == "CRITICAL" || finding.RiskLevel == "HIGH" {
 		*lootPrivEsc = append(*lootPrivEsc, fmt.Sprintf("\n### [%s] %s (Score: %d)", finding.RiskLevel, podID, finding.RiskScore))
 		*lootPrivEsc = append(*lootPrivEsc, fmt.Sprintf("# Security Issues: %s", strings.Join(finding.SecurityIssues, ", ")))
+		if finding.CloudProvider != "" && finding.CloudRole != "" {
+			*lootPrivEsc = append(*lootPrivEsc, fmt.Sprintf("# Cloud Role: %s (%s) - Pod can assume this cloud role for lateral movement", finding.CloudRole, finding.CloudProvider))
+		}
 		*lootPrivEsc = append(*lootPrivEsc, fmt.Sprintf("kubectl exec -it -n %s %s -- sh\n", finding.Namespace, finding.Name))
 	}
 
@@ -1614,6 +1619,10 @@ func podGenerateLootContent(finding *PodFinding, pod *corev1.Pod,
 	// Service account token exploitation
 	if finding.AutomountSAToken {
 		*lootTokenExploit = append(*lootTokenExploit, fmt.Sprintf("\n### %s (SA: %s)", podID, finding.ServiceAccount))
+		if finding.CloudProvider != "" && finding.CloudRole != "" {
+			*lootTokenExploit = append(*lootTokenExploit, fmt.Sprintf("# Cloud Role: %s (%s)", finding.CloudRole, finding.CloudProvider))
+			*lootTokenExploit = append(*lootTokenExploit, "# This pod can assume a cloud IAM role for lateral movement to cloud resources")
+		}
 		*lootTokenExploit = append(*lootTokenExploit, fmt.Sprintf("kubectl exec -n %s %s -- cat %s", finding.Namespace, finding.Name, finding.SATokenPath))
 		*lootTokenExploit = append(*lootTokenExploit, "# Test permissions:")
 		*lootTokenExploit = append(*lootTokenExploit, fmt.Sprintf("kubectl exec -n %s %s -- sh -c 'TOKEN=$(cat %s); kubectl --token=$TOKEN auth can-i --list'", finding.Namespace, finding.Name, finding.SATokenPath))
