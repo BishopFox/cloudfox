@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2Types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type AWSEC2ClientInterface interface {
@@ -37,8 +38,20 @@ func CachedEC2DescribeInstances(client AWSEC2ClientInterface, accountID string, 
 	cacheKey := fmt.Sprintf("%s-ec2-DescribeInstances-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "ec2:DescribeInstances",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]ec2Types.Instance), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "ec2:DescribeInstances",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		DescribeInstances, err := client.DescribeInstances(
 			context.TODO(),
@@ -73,8 +86,22 @@ func CachedEC2DescribeInstanceAttributeUserData(client AWSEC2ClientInterface, ac
 	cacheKey := fmt.Sprintf("%s-ec2-DescribeInstanceAttributeUserData-%s-%s", accountID, region, instanceID)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":      "ec2:DescribeInstanceAttribute",
+			"account":  accountID,
+			"region":   region,
+			"instance": instanceID,
+			"cache":    "hit",
+		}).Info("AWS API call")
 		return cached.(string), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":      "ec2:DescribeInstanceAttribute",
+		"account":  accountID,
+		"region":   region,
+		"instance": instanceID,
+		"cache":    "miss",
+	}).Info("AWS API call")
 	DescribeInstanceAttribute, err := client.DescribeInstanceAttribute(
 		context.TODO(),
 		&ec2.DescribeInstanceAttributeInput{
@@ -99,8 +126,20 @@ func CachedEC2DescribeNetworkInterfaces(client AWSEC2ClientInterface, accountID 
 	cacheKey := fmt.Sprintf("%s-ec2-DescribeNetworkInterfaces-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "ec2:DescribeNetworkInterfaces",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]ec2Types.NetworkInterface), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "ec2:DescribeNetworkInterfaces",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		DescribeNetworkInterfaces, err := client.DescribeNetworkInterfaces(
 			context.TODO(),
@@ -132,8 +171,20 @@ func CachedEC2DescribeSnapshots(client AWSEC2ClientInterface, accountID string, 
 	cacheKey := fmt.Sprintf("%s-ec2-DescribeSnapshots-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "ec2:DescribeSnapshots",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]ec2Types.Snapshot), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "ec2:DescribeSnapshots",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		DescribeSnapshots, err := client.DescribeSnapshots(
 			context.TODO(),
@@ -166,8 +217,20 @@ func CachedEC2DescribeVolumes(client AWSEC2ClientInterface, accountID string, re
 	cacheKey := fmt.Sprintf("%s-ec2-DescribeVolumes-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "ec2:DescribeVolumes",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]ec2Types.Volume), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "ec2:DescribeVolumes",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		DescribeVolumes, err := client.DescribeVolumes(
 			context.TODO(),
@@ -199,8 +262,20 @@ func CachedEC2DescribeImages(client AWSEC2ClientInterface, accountID string, reg
 	cacheKey := fmt.Sprintf("%s-ec2-DescribeImages-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "ec2:DescribeImages",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]ec2Types.Image), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "ec2:DescribeImages",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		DescribeImages, err := client.DescribeImages(
 			context.TODO(),
@@ -233,8 +308,20 @@ func CachedEC2DescribeVpcEndpoints(client AWSEC2ClientInterface, accountID strin
 	cacheKey := fmt.Sprintf("%s-ec2-DescribeVpcEndpoints-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "ec2:DescribeVpcEndpoints",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]ec2Types.VpcEndpoint), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "ec2:DescribeVpcEndpoints",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		DescribeVpcEndpoints, err := client.DescribeVpcEndpoints(
 			context.TODO(),

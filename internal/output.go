@@ -4,7 +4,6 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path"
 	"path/filepath"
@@ -185,15 +184,15 @@ func createOutputFile(outputDirectory *string, fileName *string, outputType stri
 	if _, err := fileSystem.Stat(ptr.ToString(outputDirectory)); os.IsNotExist(err) {
 		err = fileSystem.MkdirAll(ptr.ToString(outputDirectory), 0700)
 		if err != nil {
-			log.Fatal(err)
+			TxtLog.Fatal(err)
 		}
 	}
 	if fileName == nil {
-		log.Fatalf("Error creating output file because no file name was specified")
+		TxtLog.Fatalf("Error creating output file because no file name was specified")
 	}
 	outputFile, err := fileSystem.OpenFile(path.Join(ptr.ToString(outputDirectory), ptr.ToString(fileName)), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
-		log.Fatalf("error creating output file: %s", err)
+		TxtLog.Fatalf("error creating output file: %s", err)
 	}
 	//fmt.Printf("[%s] Creating output file: %s\n", cyan(callingModule), outputFile.Name())
 	return outputFile

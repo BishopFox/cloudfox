@@ -5,7 +5,6 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path"
 	"path/filepath"
@@ -651,18 +650,18 @@ func (l *LootClient) createLootFiles(lootFiles []LootFile) {
 		if _, err := fileSystem.Stat(lootDirectory); os.IsNotExist(err) {
 			err = fileSystem.MkdirAll(lootDirectory, 0700)
 			if err != nil {
-				log.Fatal(err)
+				TxtLog.Fatal(err)
 			}
 		}
 		if file.Name == "" {
-			log.Fatalf("error creating loot file: no file name was specified")
+			TxtLog.Fatalf("error creating loot file: no file name was specified")
 		}
 
 		l.LootFiles[i].Name = fmt.Sprintf("%s.txt", file.Name)
 
 		filePointer, err := fileSystem.OpenFile(path.Join(lootDirectory, l.LootFiles[i].Name), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 		if err != nil {
-			log.Fatalf("error creating output file: %s", err)
+			TxtLog.Fatalf("error creating output file: %s", err)
 		}
 
 		l.LootFiles[i].FilePointer = filePointer
@@ -677,7 +676,7 @@ func (l *LootClient) writeLootFiles() []string {
 		err := afero.WriteFile(fileSystem, fullPath, contents, 0644) // Use Afero's WriteFile
 		//err := os.WriteFile(fullPath, contents, 0644)
 		if err != nil {
-			log.Fatalf("error writing loot file %s: %s", file.Name, err)
+			TxtLog.Fatalf("error writing loot file %s: %s", file.Name, err)
 		}
 		fullFilePaths = append(fullFilePaths, fullPath)
 	}
@@ -722,19 +721,19 @@ func (b *TableClient) createTableFiles(files []TableFile) {
 		if _, err := fileSystem.Stat(tableDirectory); os.IsNotExist(err) {
 			err = fileSystem.MkdirAll(tableDirectory, 0700)
 			if err != nil {
-				log.Fatal(err)
+				TxtLog.Fatal(err)
 			}
 		}
 
 		if file.Name == "" {
-			log.Fatalf("error creating table file: no file name was specified")
+			TxtLog.Fatalf("error creating table file: no file name was specified")
 		}
 
 		fileNameWithExt := fmt.Sprintf("%s.txt", file.Name)
 
 		filePointer, err := fileSystem.OpenFile(path.Join(tableDirectory, fileNameWithExt), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 		if err != nil {
-			log.Fatalf("error creating table file: %s", err)
+			TxtLog.Fatalf("error creating table file: %s", err)
 		}
 
 		b.TableFiles[i].TableFilePointer = filePointer
@@ -779,19 +778,19 @@ func (b *TableClient) createCSVFiles() {
 		if _, err := fileSystem.Stat(csvDirectory); os.IsNotExist(err) {
 			err = fileSystem.MkdirAll(csvDirectory, 0700)
 			if err != nil {
-				log.Fatal(err)
+				TxtLog.Fatal(err)
 			}
 		}
 
 		if file.Name == "" {
-			log.Fatalf("error creating csv file: no file name was specified")
+			TxtLog.Fatalf("error creating csv file: no file name was specified")
 		}
 
 		fileNameWithExt := fmt.Sprintf("%s.csv", file.Name)
 
 		filePointer, err := fileSystem.OpenFile(path.Join(csvDirectory, fileNameWithExt), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 		if err != nil {
-			log.Fatalf("error creating csv file: %s", err)
+			TxtLog.Fatalf("error creating csv file: %s", err)
 		}
 
 		b.TableFiles[i].CSVFilePointer = filePointer
@@ -863,19 +862,19 @@ func (b *TableClient) createJSONFiles() {
 		if _, err := fileSystem.Stat(jsonDirectory); os.IsNotExist(err) {
 			err = fileSystem.MkdirAll(jsonDirectory, 0700)
 			if err != nil {
-				log.Fatal(err)
+				TxtLog.Fatal(err)
 			}
 		}
 
 		if file.Name == "" {
-			log.Fatalf("error creating json file: no file name was specified")
+			TxtLog.Fatalf("error creating json file: no file name was specified")
 		}
 
 		fileNameWithExt := fmt.Sprintf("%s.json", file.Name)
 
 		filePointer, err := fileSystem.OpenFile(path.Join(jsonDirectory, fileNameWithExt), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 		if err != nil {
-			log.Fatalf("error creating json file: %s", err)
+			TxtLog.Fatalf("error creating json file: %s", err)
 		}
 
 		b.TableFiles[i].JSONFilePointer = filePointer
@@ -924,7 +923,7 @@ func (b *TableClient) writeJSONFiles() []string {
 
 		_, err = file.JSONFilePointer.Write(jsonBytes)
 		if err != nil {
-			log.Fatalf("error writing json: %s", err)
+			TxtLog.Fatalf("error writing json: %s", err)
 		}
 
 		fullPath := path.Join(b.DirectoryName, "json", fmt.Sprintf("%s.json", file.Name))

@@ -10,10 +10,16 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go/ptr"
+	"github.com/bishopfox/awsservicemap"
 	"github.com/spf13/afero"
 )
 
 func TestApiGw(t *testing.T) {
+
+	// Create a service map that downloads from AWS
+	serviceMap := &awsservicemap.AwsServiceMap{
+		JsonFileSource: "DOWNLOAD_FROM_AWS",
+	}
 
 	m := ApiGwModule{
 		AWSProfile: "unittesting",
@@ -26,6 +32,7 @@ func TestApiGw(t *testing.T) {
 		WrapTable:          false,
 		APIGatewayClient:   &sdk.MockedAWSAPIGatewayClient{},
 		APIGatewayv2Client: &sdk.MockedAWSAPIGatewayv2Client{},
+		ServiceMap:         serviceMap,
 	}
 
 	fs := internal.MockFileSystem(true)

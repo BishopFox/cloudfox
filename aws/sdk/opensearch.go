@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/opensearch"
 	openSearchTypes "github.com/aws/aws-sdk-go-v2/service/opensearch/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type OpenSearchClientInterface interface {
@@ -29,8 +30,20 @@ func CachedOpenSearchListDomainNames(client OpenSearchClientInterface, accountID
 	cacheKey := fmt.Sprintf("%s-opensearch-ListDomainNames-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "opensearch:ListDomainNames",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]openSearchTypes.DomainInfo), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "opensearch:ListDomainNames",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	ListDomainNames, err := client.ListDomainNames(
 		context.TODO(),
@@ -59,8 +72,22 @@ func CachedOpenSearchDescribeDomainConfig(client OpenSearchClientInterface, acco
 	cacheKey := fmt.Sprintf("%s-opensearch-DescribeDomainConfig-%s-%s", accountID, region, domainName)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "opensearch:DescribeDomainConfig",
+			"account": accountID,
+			"region":  region,
+			"domain":  domainName,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.(openSearchTypes.DomainConfig), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "opensearch:DescribeDomainConfig",
+		"account": accountID,
+		"region":  region,
+		"domain":  domainName,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	DescribeDomainConfig, err := client.DescribeDomainConfig(
 		context.TODO(),
 		&opensearch.DescribeDomainConfigInput{
@@ -87,8 +114,22 @@ func CachedOpenSearchDescribeDomain(client OpenSearchClientInterface, accountID 
 	cacheKey := fmt.Sprintf("%s-opensearch-DescribeDomain-%s-%s", accountID, region, domainName)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "opensearch:DescribeDomain",
+			"account": accountID,
+			"region":  region,
+			"domain":  domainName,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.(openSearchTypes.DomainStatus), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "opensearch:DescribeDomain",
+		"account": accountID,
+		"region":  region,
+		"domain":  domainName,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	DescribeDomain, err := client.DescribeDomain(
 		context.TODO(),
 		&opensearch.DescribeDomainInput{

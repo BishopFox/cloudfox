@@ -27,6 +27,7 @@ type ElasticNetworkInterfacesModule struct {
 
 	AWSProfile string
 	WrapTable  bool
+	ServiceMap *awsservicemap.AwsServiceMap // Shared service map to avoid repeated HTTP requests
 
 	MappedENIs     []MappedENI
 	CommandCounter internal.CommandCounter
@@ -233,8 +234,12 @@ func (m *ElasticNetworkInterfacesModule) writeLoot(outputDirectory string) {
 
 func (m *ElasticNetworkInterfacesModule) executeChecks(r string, wg *sync.WaitGroup, dataReceiver chan MappedENI) {
 	defer wg.Done()
-	servicemap := &awsservicemap.AwsServiceMap{
-		JsonFileSource: "DOWNLOAD_FROM_AWS",
+	// Use shared ServiceMap instance if provided, otherwise create a new one
+	servicemap := m.ServiceMap
+	if servicemap == nil {
+		servicemap = &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 	}
 	res, err := servicemap.IsServiceInRegion("ec2", r)
 	if err != nil {

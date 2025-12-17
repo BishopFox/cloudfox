@@ -8,6 +8,7 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
 	rdsTypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
+	"github.com/sirupsen/logrus"
 
 	"github.com/patrickmn/go-cache"
 )
@@ -29,8 +30,20 @@ func CachedRDSDescribeDBInstances(client RDSClientInterface, accountID string, r
 	cacheKey := fmt.Sprintf("%s-rds-DescribeDBInstances-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "rds:DescribeDBInstances",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]rdsTypes.DBInstance), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "rds:DescribeDBInstances",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		DescribeDBInstances, err := client.DescribeDBInstances(
 			context.TODO(),
@@ -65,8 +78,20 @@ func CachedRDSDescribeDBClusters(client RDSClientInterface, accountID string, re
 	cacheKey := fmt.Sprintf("%s-rds-DescribeDBClusters-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "rds:DescribeDBClusters",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]rdsTypes.DBCluster), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "rds:DescribeDBClusters",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		DescribeDBClusters, err := client.DescribeDBClusters(
 			context.TODO(),

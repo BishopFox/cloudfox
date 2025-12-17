@@ -10,6 +10,7 @@ import (
 	apiGatwayV2Types "github.com/aws/aws-sdk-go-v2/service/apigatewayv2/types"
 
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type APIGatewayv2ClientInterface interface {
@@ -38,8 +39,20 @@ func CachedAPIGatewayv2GetAPIs(client APIGatewayv2ClientInterface, accountID str
 	cacheKey := fmt.Sprintf("%s-apigatewayv2-GetApis-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "apigatewayv2:GetApis",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]apiGatwayV2Types.Api), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "apigatewayv2:GetApis",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		GetApis, err := client.GetApis(
 			context.TODO(),
@@ -74,8 +87,20 @@ func CachedAPIGatewayv2GetDomainNames(client APIGatewayv2ClientInterface, accoun
 	cacheKey := fmt.Sprintf("%s-apigatewayv2-GetDomainNames-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "apigatewayv2:GetDomainNames",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]domainName), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "apigatewayv2:GetDomainNames",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		GetDomainNames, err := client.GetDomainNames(
 			context.TODO(),
@@ -114,8 +139,20 @@ func CachedAPIGatewayv2GetApiMappings(client APIGatewayv2ClientInterface, accoun
 	cacheKey := fmt.Sprintf("%s-apigatewayv2-GetApiMappings-%s-%s", accountID, region, domain)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "apigatewayv2:GetApiMappings",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]apiGatwayV2Types.ApiMapping), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "apigatewayv2:GetApiMappings",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		GetApiMappings, err := client.GetApiMappings(
 			context.TODO(),
@@ -151,8 +188,20 @@ func CachedAPIGatewayv2GetStages(client APIGatewayv2ClientInterface, accountID s
 	cacheKey := fmt.Sprintf("%s-apigatewayv2-GetStages-%s-%s", accountID, region, apiID)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "apigatewayv2:GetStages",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]apiGatwayV2Types.Stage), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "apigatewayv2:GetStages",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		GetStages, err := client.GetStages(
 			context.TODO(),
@@ -188,8 +237,20 @@ func CachedAPIGatewayv2GetRoutes(client APIGatewayv2ClientInterface, accountID s
 	cacheKey := fmt.Sprintf("%s-apigatewayv2-GetRoutes-%s-%s", accountID, region, apiID)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "apigatewayv2:GetRoutes",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]apiGatwayV2Types.Route), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "apigatewayv2:GetRoutes",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		GetRoutes, err := client.GetRoutes(
 			context.TODO(),

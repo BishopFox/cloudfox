@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	codeBuildTypes "github.com/aws/aws-sdk-go-v2/service/codebuild/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type CodeBuildClientInterface interface {
@@ -31,8 +32,20 @@ func CachedCodeBuildListProjects(CodeBuildClient CodeBuildClientInterface, accou
 	cacheKey := fmt.Sprintf("%s-codebuild-ListProjects", accountID)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "codebuild:ListProjects",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]string), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "codebuild:ListProjects",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	for {
 		ListProjects, err := CodeBuildClient.ListProjects(
@@ -71,8 +84,20 @@ func CachedCodeBuildBatchGetProjects(CodeBuildClient CodeBuildClientInterface, a
 	cacheKey := fmt.Sprintf("%s-codebuild-BatchGetProjects-%s-%s", accountID, region, projectID)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "codebuild:BatchGetProjects",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.(codeBuildTypes.Project), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "codebuild:BatchGetProjects",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	BatchGetProjects, err := CodeBuildClient.BatchGetProjects(
 		context.TODO(),
@@ -97,8 +122,20 @@ func CachedCodeBuildGetResourcePolicy(CodeBuildClient CodeBuildClientInterface, 
 	cacheKey := fmt.Sprintf("%s-codebuild-GetResourcePolicy-%s-%s", accountID, region, projectID)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "codebuild:GetResourcePolicy",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.(string), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "codebuild:GetResourcePolicy",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	GetResourcePolicy, err := CodeBuildClient.GetResourcePolicy(
 		context.TODO(),

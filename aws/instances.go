@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -36,6 +35,7 @@ type InstancesModule struct {
 	UserDataAttributesOnly    bool
 	AWSProfile                string
 	WrapTable                 bool
+	ServiceMap                *awsservicemap.AwsServiceMap // Shared service map to avoid repeated HTTP requests
 	InstanceProfileToRolesMap map[string][]iamTypes.Role
 	SkipAdminCheck            bool
 	pmapperMod                PmapperModule
@@ -435,13 +435,21 @@ func (m *InstancesModule) writeLoot(outputDirectory string, verbosity int) {
 
 func (m *InstancesModule) executeChecks(instancesToSearch []string, r string, wg *sync.WaitGroup, dataReceiver chan MappedInstance) {
 	defer wg.Done()
-	servicemap := &awsservicemap.AwsServiceMap{
-		JsonFileSource: "DOWNLOAD_FROM_AWS",
+	// Use shared ServiceMap instance if provided, otherwise create a new one
+	servicemap := m.ServiceMap
+	if servicemap == nil {
+		m.modLog.Warn("ServiceMap is nil, creating new instance (this should not happen)")
+		servicemap = &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 	}
 	res, err := servicemap.IsServiceInRegion("ec2", r)
 	if err != nil {
-		m.modLog.Error(err)
+		m.modLog.Errorf("Error checking if EC2 is available in region %s: %v", r, err)
+		m.CommandCounter.Error++
+		return
 	}
+	m.modLog.Debugf("ServiceMap check for EC2 in region %s: result=%v, error=%v", r, res, err)
 	if res {
 		m.CommandCounter.Total++
 		m.CommandCounter.Pending--
@@ -449,6 +457,8 @@ func (m *InstancesModule) executeChecks(instancesToSearch []string, r string, wg
 		m.getDescribeInstances(instancesToSearch, r, dataReceiver)
 		m.CommandCounter.Executing--
 		m.CommandCounter.Complete++
+	} else {
+		m.modLog.Infof("Skipping region %s: EC2 not available or check failed", r)
 	}
 }
 
@@ -537,7 +547,7 @@ func (m *InstancesModule) loadInstanceData(instance types.Instance, region strin
 		// Describe the IAM instance profile
 		profileOutput, err := sdk.CachedIamGetInstanceProfile(m.IAMClient, aws.ToString(m.Caller.Account), profileName)
 		if err != nil {
-			log.Printf("failed to get instance profile for %s, %v", profileArn, err)
+			m.modLog.Errorf("failed to get instance profile for %s, %v", profileArn, err)
 		}
 
 		for _, role := range profileOutput.Roles {

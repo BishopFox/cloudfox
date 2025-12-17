@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/glue"
 	glueTypes "github.com/aws/aws-sdk-go-v2/service/glue/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type AWSGlueClientInterface interface {
@@ -36,9 +37,20 @@ func CachedGlueListDevEndpoints(GlueClient AWSGlueClientInterface, accountID str
 	cacheKey := "glue-ListDevEndpoints-" + accountID + "-" + region
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
-		sharedLogger.Debug("Using cached Glue dev endpoints data")
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "glue:ListDevEndpoints",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]string), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "glue:ListDevEndpoints",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	for {
 		ListDevEndpoints, err := GlueClient.ListDevEndpoints(
@@ -77,9 +89,20 @@ func CachedGlueListJobs(GlueClient AWSGlueClientInterface, accountID string, reg
 	cacheKey := "glue-ListJobs-" + accountID + "-" + region
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
-		sharedLogger.Debug("Using cached Glue jobs data")
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "glue:ListJobs",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]string), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "glue:ListJobs",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	for {
 		ListJobs, err := GlueClient.ListJobs(
@@ -118,9 +141,22 @@ func CachedGlueGetTables(GlueClient AWSGlueClientInterface, accountID string, re
 	cacheKey := "glue-GetTables-" + accountID + "-" + region
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
-		sharedLogger.Debug("Using cached Glue tables data")
+		sharedLogger.WithFields(logrus.Fields{
+			"api":      "glue:GetTables",
+			"account":  accountID,
+			"region":   region,
+			"database": dbName,
+			"cache":    "hit",
+		}).Info("AWS API call")
 		return cached.([]glueTypes.Table), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":      "glue:GetTables",
+		"account":  accountID,
+		"region":   region,
+		"database": dbName,
+		"cache":    "miss",
+	}).Info("AWS API call")
 
 	for {
 		GetTables, err := GlueClient.GetTables(
@@ -160,9 +196,20 @@ func CachedGlueGetDatabases(GlueClient AWSGlueClientInterface, accountID string,
 	cacheKey := "glue-GetDatabases-" + accountID + "-" + region
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
-		sharedLogger.Debug("Using cached Glue databases data")
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "glue:GetDatabases",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]glueTypes.Database), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "glue:GetDatabases",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	for {
 		GetDatabases, err := GlueClient.GetDatabases(
@@ -203,9 +250,20 @@ func CachedGlueGetResourcePolicies(GlueClient AWSGlueClientInterface, accountID 
 	cacheKey := "glue-GetResourcePolicies-" + accountID + "-" + region
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
-		sharedLogger.Debug("Using cached Glue resource policies data")
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "glue:GetResourcePolicies",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]policy.Policy), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "glue:GetResourcePolicies",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	for {
 		GetResourcePolicies, err := GlueClient.GetResourcePolicies(

@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/apprunner"
 	apprunnerTypes "github.com/aws/aws-sdk-go-v2/service/apprunner/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type AppRunnerClientInterface interface {
@@ -26,8 +27,20 @@ func CachedAppRunnerListServices(client AppRunnerClientInterface, accountID stri
 	cacheKey := fmt.Sprintf("%s-apprunner-ListServices-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "apprunner:ListServices",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]apprunnerTypes.ServiceSummary), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "apprunner:ListServices",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		ListServices, err := client.ListServices(
 			context.TODO(),

@@ -90,6 +90,7 @@ type Inventory2Module struct {
 	Goroutines int
 	AWSProfile string
 	WrapTable  bool
+	ServiceMap *awsservicemap.AwsServiceMap // Shared service map to avoid repeated HTTP requests
 
 	// Main module data
 	RegionResourceCount  int
@@ -423,8 +424,12 @@ func (m *Inventory2Module) Receiver(receiver chan GlobalResourceCount2, receiver
 func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan GlobalResourceCount2) {
 	defer wg.Done()
 
-	servicemap := &awsservicemap.AwsServiceMap{
-		JsonFileSource: "DOWNLOAD_FROM_AWS",
+	// Use shared ServiceMap instance if provided, otherwise create a new one
+	servicemap := m.ServiceMap
+	if servicemap == nil {
+		servicemap = &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 	}
 
 	// AppRunner is not supported in the aws service region catalog so we have to run it in all regions
@@ -432,7 +437,7 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 	wg.Add(1)
 	go m.getAppRunnerServicesPerRegion(r, wg, semaphore)
 
-	res, err := servicemap.IsServiceInRegion("apigateway", r)
+	res, err := servicemap.IsServiceInRegion("api-gateway", r)
 	if err != nil {
 		m.modLog.Error(err)
 	}
@@ -791,16 +796,7 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 }
 
 func (m *Inventory2Module) PrintTotalResources(AWSOutputType string) {
-	var totalResources int
-	for _, r := range m.AWSRegions {
-		if m.totalRegionCounts[r] != 0 {
-			totalResources = totalResources + m.totalRegionCounts[r]
-		}
-	}
-
-	for i := range m.GlobalResourceCounts {
-		totalResources = totalResources + m.GlobalResourceCounts[i].count
-	}
+	totalResources := len(m.resources)
 	fmt.Printf("[%s][%s] %d resources found in the services we looked at. This is NOT the total number of resources in the account.\n", cyan(m.output.CallingModule), cyan(m.AWSProfile), totalResources)
 }
 

@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/codedeploy"
 	codeDeployTypes "github.com/aws/aws-sdk-go-v2/service/codedeploy/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type AWSCodeDeployClientInterface interface {
@@ -34,8 +35,20 @@ func CachedCodeDeployListApplications(client AWSCodeDeployClientInterface, accou
 	cacheKey := fmt.Sprintf("%s-codedeploy-ListApplications-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "codedeploy:ListApplications",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]string), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "codedeploy:ListApplications",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		ListApplications, err := client.ListApplications(
 			context.TODO(),
@@ -70,8 +83,20 @@ func CachedCodeDeployListDeploymentConfigs(client AWSCodeDeployClientInterface, 
 	cacheKey := fmt.Sprintf("%s-codedeploy-ListDeploymentConfigs-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "codedeploy:ListDeploymentConfigs",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]string), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "codedeploy:ListDeploymentConfigs",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		ListDeploymentConfigs, err := client.ListDeploymentConfigs(
 			context.TODO(),
@@ -106,8 +131,20 @@ func CachedCodeDeployListDeployments(client AWSCodeDeployClientInterface, accoun
 	cacheKey := fmt.Sprintf("%s-codedeploy-ListDeployments-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "codedeploy:ListDeployments",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]string), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "codedeploy:ListDeployments",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		ListDeployments, err := client.ListDeployments(
 			context.TODO(),
@@ -140,8 +177,22 @@ func CachedCodeDeployGetApplication(client AWSCodeDeployClientInterface, account
 	cacheKey := fmt.Sprintf("%s-codedeploy-GetApplication-%s-%s", accountID, region, applicationName)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":         "codedeploy:GetApplication",
+			"account":     accountID,
+			"region":      region,
+			"application": applicationName,
+			"cache":       "hit",
+		}).Info("AWS API call")
 		return cached.(codeDeployTypes.ApplicationInfo), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":         "codedeploy:GetApplication",
+		"account":     accountID,
+		"region":      region,
+		"application": applicationName,
+		"cache":       "miss",
+	}).Info("AWS API call")
 	GetApplication, err := client.GetApplication(
 		context.TODO(),
 		&codedeploy.GetApplicationInput{
@@ -165,8 +216,22 @@ func CachedCodeDeployGetDeploymentConfig(client AWSCodeDeployClientInterface, ac
 	cacheKey := fmt.Sprintf("%s-codedeploy-GetDeploymentConfig-%s-%s", accountID, region, deploymentConfigName)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":            "codedeploy:GetDeploymentConfig",
+			"account":        accountID,
+			"region":         region,
+			"deploymentConfig": deploymentConfigName,
+			"cache":          "hit",
+		}).Info("AWS API call")
 		return cached.(codeDeployTypes.DeploymentConfigInfo), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":            "codedeploy:GetDeploymentConfig",
+		"account":        accountID,
+		"region":         region,
+		"deploymentConfig": deploymentConfigName,
+		"cache":          "miss",
+	}).Info("AWS API call")
 	GetDeploymentConfig, err := client.GetDeploymentConfig(
 		context.TODO(),
 		&codedeploy.GetDeploymentConfigInput{
@@ -190,8 +255,22 @@ func CachedCodeDeployGetDeployment(client AWSCodeDeployClientInterface, accountI
 	cacheKey := fmt.Sprintf("%s-codedeploy-GetDeployment-%s-%s", accountID, region, deploymentID)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":        "codedeploy:GetDeployment",
+			"account":    accountID,
+			"region":     region,
+			"deployment": deploymentID,
+			"cache":      "hit",
+		}).Info("AWS API call")
 		return cached.(codeDeployTypes.DeploymentInfo), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":        "codedeploy:GetDeployment",
+		"account":    accountID,
+		"region":     region,
+		"deployment": deploymentID,
+		"cache":      "miss",
+	}).Info("AWS API call")
 	GetDeployment, err := client.GetDeployment(
 		context.TODO(),
 		&codedeploy.GetDeploymentInput{

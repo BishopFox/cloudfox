@@ -48,7 +48,7 @@ release: clean
 
 	GOOS=linux GOARCH=arm64 go build -o ./cloudfox/cloudfox .
 	sha1sum ./cloudfox/cloudfox > ./cloudfox/sha1sum.txt
-  zip ./cloudfox/cloudfox-linux-arm64.zip ./cloudfox/cloudfox ./cloudfox/sha1sum.txt
+	zip ./cloudfox/cloudfox-linux-arm64.zip ./cloudfox/cloudfox ./cloudfox/sha1sum.txt
 	rm -rf ./cloudfox/cloudfox ./cloudfox/sha1sum.txt
 
 	GOOS=darwin GOARCH=amd64 go build -o ./cloudfox/cloudfox .

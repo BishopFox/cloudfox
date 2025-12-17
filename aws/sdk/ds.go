@@ -9,6 +9,7 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/service/directoryservice"
 	dsTypes "github.com/aws/aws-sdk-go-v2/service/directoryservice/types"
+	"github.com/sirupsen/logrus"
 )
 
 type AWSDSClientInterface interface {
@@ -28,8 +29,20 @@ func CachedDSDescribeDirectories(client AWSDSClientInterface, accountID string, 
 	cacheKey := fmt.Sprintf("%s-ds-DescribeDirectories-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "ds:DescribeDirectories",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]dsTypes.DirectoryDescription), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "ds:DescribeDirectories",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		DescribeDirectories, err := client.DescribeDirectories(
 			context.TODO(),
@@ -64,8 +77,22 @@ func CachedDSDescribeTrusts(client AWSDSClientInterface, accountID string, regio
 	cacheKey := fmt.Sprintf("%s-ds-DescribeTrusts-%s-%s", accountID, region, directoryId)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":        "ds:DescribeTrusts",
+			"account":    accountID,
+			"region":     region,
+			"directoryId": directoryId,
+			"cache":      "hit",
+		}).Info("AWS API call")
 		return cached.([]dsTypes.Trust), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":        "ds:DescribeTrusts",
+		"account":    accountID,
+		"region":     region,
+		"directoryId": directoryId,
+		"cache":      "miss",
+	}).Info("AWS API call")
 	for {
 		DescribeDirectoryTrusts, err := client.DescribeTrusts(
 			context.TODO(),

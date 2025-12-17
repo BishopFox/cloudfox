@@ -196,7 +196,7 @@ func (m *IamPermissionsModule) PrintIamPermissions(outputDirectory string, verbo
 func (m *IamPermissionsModule) GetGAAD() {
 	GAAD, err := sdk.CachedIAMGetAccountAuthorizationDetails(m.IAMClient, aws.ToString(m.Caller.Account))
 	if err != nil {
-		TxtLogger.Error(err.Error())
+		m.modLog.Error(err)
 		m.CommandCounter.Error++
 		return
 	}

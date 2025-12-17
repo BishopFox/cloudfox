@@ -36,6 +36,7 @@ type FilesystemsModule struct {
 	Goroutines int
 	AWSProfile string
 	WrapTable  bool
+	ServiceMap *awsservicemap.AwsServiceMap // Shared service map to avoid repeated HTTP requests
 
 	// Main module data
 	Filesystems []FilesystemObject
@@ -218,8 +219,12 @@ func (m *FilesystemsModule) Receiver(receiver chan FilesystemObject, receiverDon
 
 func (m *FilesystemsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan FilesystemObject) {
 	defer wg.Done()
-	servicemap := &awsservicemap.AwsServiceMap{
-		JsonFileSource: "DOWNLOAD_FROM_AWS",
+	// Use shared ServiceMap instance if provided, otherwise create a new one
+	servicemap := m.ServiceMap
+	if servicemap == nil {
+		servicemap = &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 	}
 	res, err := servicemap.IsServiceInRegion("efs", r)
 	if err != nil {

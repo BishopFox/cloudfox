@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/codeartifact"
 	codeArtifactTypes "github.com/aws/aws-sdk-go-v2/service/codeartifact/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type AWSCodeArtifactClientInterface interface {
@@ -27,8 +28,20 @@ func CachedCodeArtifactListDomains(client AWSCodeArtifactClientInterface, accoun
 	cacheKey := fmt.Sprintf("%s-codeartifact-ListDomains-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "codeartifact:ListDomains",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]codeArtifactTypes.DomainSummary), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "codeartifact:ListDomains",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		ListDomains, err := client.ListDomains(
 			context.TODO(),
@@ -63,8 +76,20 @@ func CachedCodeArtifactListRepositories(client AWSCodeArtifactClientInterface, a
 	cacheKey := fmt.Sprintf("%s-codeartifact-ListRepositories-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "codeartifact:ListRepositories",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]codeArtifactTypes.RepositorySummary), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "codeartifact:ListRepositories",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		ListRepositories, err := client.ListRepositories(
 			context.TODO(),

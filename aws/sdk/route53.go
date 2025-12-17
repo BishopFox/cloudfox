@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/route53"
 	route53types "github.com/aws/aws-sdk-go-v2/service/route53/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type AWSRoute53ClientInterface interface {
@@ -28,8 +29,18 @@ func CachedRoute53ListHostedZones(client AWSRoute53ClientInterface, accountID st
 	cacheKey := fmt.Sprintf("%s-route53-ListHostedZones", accountID)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "route53:ListHostedZones",
+			"account": accountID,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]route53types.HostedZone), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "route53:ListHostedZones",
+		"account": accountID,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	for {
 		ListHostedZones, err := client.ListHostedZones(
@@ -63,8 +74,20 @@ func CachedRoute53ListResourceRecordSets(client AWSRoute53ClientInterface, accou
 	cacheKey := fmt.Sprintf("%s-route53-ListResourceRecordSets-%s", accountID, hostedZoneID)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":         "route53:ListResourceRecordSets",
+			"account":     accountID,
+			"hostedZoneId": hostedZoneID,
+			"cache":       "hit",
+		}).Info("AWS API call")
 		return cached.([]route53types.ResourceRecordSet), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":         "route53:ListResourceRecordSets",
+		"account":     accountID,
+		"hostedZoneId": hostedZoneID,
+		"cache":       "miss",
+	}).Info("AWS API call")
 
 	for {
 		ListResourceRecordSets, err := client.ListResourceRecordSets(

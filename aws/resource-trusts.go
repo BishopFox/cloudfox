@@ -36,6 +36,7 @@ type ResourceTrustsModule struct {
 	AWSProfileProvided string
 	AWSProfileStub     string
 	CloudFoxVersion    string
+	ServiceMap         *awsservicemap.AwsServiceMap // Shared service map to avoid repeated HTTP requests
 
 	Resources2     []Resource2
 	CommandCounter internal.CommandCounter
@@ -204,8 +205,12 @@ func (m *ResourceTrustsModule) PrintResources(outputDirectory string, verbosity 
 func (m *ResourceTrustsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Resource2, includeKms bool) {
 	defer wg.Done()
 
-	servicemap := &awsservicemap.AwsServiceMap{
-		JsonFileSource: "DOWNLOAD_FROM_AWS",
+	// Use shared ServiceMap instance if provided, otherwise create a new one
+	servicemap := m.ServiceMap
+	if servicemap == nil {
+		servicemap = &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 	}
 	res, err := servicemap.IsServiceInRegion("sns", r)
 	if err != nil {
@@ -300,7 +305,7 @@ func (m *ResourceTrustsModule) executeChecks(r string, wg *sync.WaitGroup, semap
 	}
 
 	if m.APIGatewayClient != nil {
-		res, err = servicemap.IsServiceInRegion("apigateway", r)
+		res, err = servicemap.IsServiceInRegion("api-gateway", r)
 		if err != nil {
 			m.modLog.Error(err)
 		}

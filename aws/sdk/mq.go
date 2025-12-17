@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/mq"
 	mqTypes "github.com/aws/aws-sdk-go-v2/service/mq/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type MQClientInterface interface {
@@ -26,8 +27,20 @@ func CachedMQListBrokers(client MQClientInterface, accountID string, region stri
 	cacheKey := fmt.Sprintf("%s-mq-ListBrokers-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "mq:ListBrokers",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]mqTypes.BrokerSummary), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "mq:ListBrokers",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	for {
 		ListBrokers, err := client.ListBrokers(

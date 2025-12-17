@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sns"
 	snsTypes "github.com/aws/aws-sdk-go-v2/service/sns/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type AWSSNSClientInterface interface {
@@ -29,9 +30,21 @@ func CachedSNSListTopics(SNSClient AWSSNSClientInterface, accountID string, regi
 	cacheKey := "sns-ListTopics-" + accountID + "-" + region
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
-		sharedLogger.Debug("Using cached SNS topics data")
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "sns:ListTopics",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]string), nil
 	}
+
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "sns:ListTopics",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	for {
 		ListTopics, err := SNSClient.ListTopics(
@@ -72,9 +85,21 @@ func CachedSNSListSubscriptions(SNSClient AWSSNSClientInterface, accountID strin
 	cacheKey := "sns-ListSubscriptions-" + accountID + "-" + region
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
-		sharedLogger.Debug("Using cached SNS subscriptions data")
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "sns:ListSubscriptions",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]string), nil
 	}
+
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "sns:ListSubscriptions",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	for {
 		ListSubscriptions, err := SNSClient.ListSubscriptions(
@@ -115,9 +140,23 @@ func CachedSNSListSubscriptionsByTopic(SNSClient AWSSNSClientInterface, accountI
 	cacheKey := "sns-ListSubscriptionsByTopic-" + accountID + "-" + region + "-" + topicArn
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
-		sharedLogger.Debug("Using cached SNS subscriptions data")
+		sharedLogger.WithFields(logrus.Fields{
+			"api":      "sns:ListSubscriptionsByTopic",
+			"account":  accountID,
+			"region":   region,
+			"topicArn": topicArn,
+			"cache":    "hit",
+		}).Info("AWS API call")
 		return cached.([]string), nil
 	}
+
+	sharedLogger.WithFields(logrus.Fields{
+		"api":      "sns:ListSubscriptionsByTopic",
+		"account":  accountID,
+		"region":   region,
+		"topicArn": topicArn,
+		"cache":    "miss",
+	}).Info("AWS API call")
 
 	for {
 		ListSubscriptionsByTopic, err := SNSClient.ListSubscriptionsByTopic(
@@ -157,9 +196,23 @@ func CachedSNSGetTopicAttributes(SNSClient AWSSNSClientInterface, accountID stri
 	cacheKey := "sns-GetTopicAttributes-" + accountID + "-" + region + "-" + topicArn
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
-		sharedLogger.Debug("Using cached SNS topic attributes data")
+		sharedLogger.WithFields(logrus.Fields{
+			"api":      "sns:GetTopicAttributes",
+			"account":  accountID,
+			"region":   region,
+			"topicArn": topicArn,
+			"cache":    "hit",
+		}).Info("AWS API call")
 		return cached.(map[string]string), nil
 	}
+
+	sharedLogger.WithFields(logrus.Fields{
+		"api":      "sns:GetTopicAttributes",
+		"account":  accountID,
+		"region":   region,
+		"topicArn": topicArn,
+		"cache":    "miss",
+	}).Info("AWS API call")
 
 	GetTopicAttributes, err := SNSClient.GetTopicAttributes(
 		context.TODO(),

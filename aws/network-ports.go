@@ -74,6 +74,7 @@ type NetworkPortsModule struct {
 	AWSProfile string
 	WrapTable  bool
 	Verbosity  int
+	ServiceMap *awsservicemap.AwsServiceMap // Shared service map to avoid repeated HTTP requests
 
 	// Main module data
 	IPv4_Private   []NetworkService
@@ -273,8 +274,12 @@ func (m *NetworkPortsModule) PrintNetworkPorts(outputDirectory string) {
 
 func (m *NetworkPortsModule) executeChecks(r string, wg *sync.WaitGroup, dataReceiver chan NetworkServices) {
 	defer wg.Done()
-	servicemap := &awsservicemap.AwsServiceMap{
-		JsonFileSource: "DOWNLOAD_FROM_AWS",
+	// Use shared ServiceMap instance if provided, otherwise create a new one
+	servicemap := m.ServiceMap
+	if servicemap == nil {
+		servicemap = &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 	}
 
 	res, err := servicemap.IsServiceInRegion("ec2", r)

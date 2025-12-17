@@ -28,6 +28,7 @@ type CloudformationModule struct {
 	WrapTable     bool
 	AWSOutputType string
 	AWSTableCols  string
+	ServiceMap    *awsservicemap.AwsServiceMap // Shared service map to avoid repeated HTTP requests
 
 	// Main module data
 	CFStacks       []CFStack
@@ -192,8 +193,12 @@ func (m *CloudformationModule) PrintCloudformationStacks(outputDirectory string,
 
 func (m *CloudformationModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan CFStack) {
 	defer wg.Done()
-	servicemap := &awsservicemap.AwsServiceMap{
-		JsonFileSource: "DOWNLOAD_FROM_AWS",
+	// Use shared ServiceMap instance if provided, otherwise create a new one
+	servicemap := m.ServiceMap
+	if servicemap == nil {
+		servicemap = &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 	}
 	serviceRegions, err := servicemap.GetRegionsForService("cloudformation")
 	if err != nil {

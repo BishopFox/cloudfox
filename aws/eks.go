@@ -32,6 +32,7 @@ type EKSModule struct {
 	AWSProfile     string
 	SkipAdminCheck bool
 	WrapTable      bool
+	ServiceMap     *awsservicemap.AwsServiceMap // Shared service map to avoid repeated HTTP requests
 	pmapperMod     PmapperModule
 	pmapperError   error
 	iamSimClient   IamSimulatorModule
@@ -242,8 +243,12 @@ func (m *EKSModule) EKS(outputDirectory string, verbosity int) {
 func (m *EKSModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Cluster) {
 	defer wg.Done()
 
-	servicemap := &awsservicemap.AwsServiceMap{
-		JsonFileSource: "DOWNLOAD_FROM_AWS",
+	// Use shared ServiceMap instance if provided, otherwise create a new one
+	servicemap := m.ServiceMap
+	if servicemap == nil {
+		servicemap = &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 	}
 	res, err := servicemap.IsServiceInRegion("eks", r)
 	if err != nil {

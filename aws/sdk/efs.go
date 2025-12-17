@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/efs"
 	efsTypes "github.com/aws/aws-sdk-go-v2/service/efs/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type AWSEFSClientInterface interface {
@@ -34,8 +35,20 @@ func CachedDescribeFileSystems(EFSClient AWSEFSClientInterface, accountID string
 	cacheKey := fmt.Sprintf("%s-efs-DescribeFileSystems-%s", accountID, r)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "efs:DescribeFileSystems",
+			"account": accountID,
+			"region":  r,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]efsTypes.FileSystemDescription), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "efs:DescribeFileSystems",
+		"account": accountID,
+		"region":  r,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	for {
 		DescribeFileSystems, err := EFSClient.DescribeFileSystems(
@@ -73,8 +86,20 @@ func CachedDescribeMountTargets(EFSClient AWSEFSClientInterface, accountID strin
 	cacheKey := fmt.Sprintf("%s-efs-DescribeMountTargets-%s-%s", accountID, r, filesystemId)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "efs:DescribeMountTargets",
+			"account": accountID,
+			"region":  r,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]efsTypes.MountTargetDescription), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "efs:DescribeMountTargets",
+		"account": accountID,
+		"region":  r,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	for {
 		DescribeMountTargets, err := EFSClient.DescribeMountTargets(
@@ -113,8 +138,20 @@ func CachedDescribeAccessPoints(EFSClient AWSEFSClientInterface, accountID strin
 	cacheKey := fmt.Sprintf("%s-efs-DescribeAccessPoints-%s-%s", accountID, r, filesystemId)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "efs:DescribeAccessPoints",
+			"account": accountID,
+			"region":  r,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]efsTypes.AccessPointDescription), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "efs:DescribeAccessPoints",
+		"account": accountID,
+		"region":  r,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		DescribeAccessPoints, err := EFSClient.DescribeAccessPoints(
 			context.TODO(),
@@ -151,8 +188,20 @@ func CachedDescribeFileSystemPolicy(EFSClient AWSEFSClientInterface, filesystemI
 	cacheKey := fmt.Sprintf("efs-%s-DescribeFileSystemPolicy-%s-%s", accountID, r, filesystemId)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "efs:DescribeFileSystemPolicy",
+			"account": accountID,
+			"region":  r,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.(policy.Policy), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "efs:DescribeFileSystemPolicy",
+		"account": accountID,
+		"region":  r,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	Policy, err := EFSClient.DescribeFileSystemPolicy(
 		context.TODO(),
