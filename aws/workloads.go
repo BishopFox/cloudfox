@@ -3,7 +3,6 @@ package aws
 import (
 	"context"
 	"fmt"
-	"log"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -46,6 +45,7 @@ type WorkloadsModule struct {
 
 	iamSimClient              IamSimulatorModule
 	InstanceProfileToRolesMap map[string][]iamTypes.Role
+	ServiceMap                *awsservicemap.AwsServiceMap // Shared service map to avoid repeated HTTP requests
 
 	// Main module data
 	Workloads      []Workload
@@ -271,8 +271,12 @@ func (m *WorkloadsModule) Receiver(receiver chan Workload, receiverDone chan boo
 
 func (m *WorkloadsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Workload) {
 	defer wg.Done()
-	servicemap := &awsservicemap.AwsServiceMap{
-		JsonFileSource: "DOWNLOAD_FROM_AWS",
+	// Use shared ServiceMap instance if provided, otherwise create a new one
+	servicemap := m.ServiceMap
+	if servicemap == nil {
+		servicemap = &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 	}
 
 	res, _ := servicemap.IsServiceInRegion("ec2", r)
@@ -345,7 +349,7 @@ func (m *WorkloadsModule) getEC2WorkloadsPerRegion(r string, wg *sync.WaitGroup,
 			// Describe the IAM instance profile
 			profileOutput, err := sdk.CachedIamGetInstanceProfile(m.IAMClient, aws.ToString(m.Caller.Account), profileName)
 			if err != nil {
-				log.Printf("failed to get instance profile for %s, %v", profileArn, err)
+				m.modLog.Errorf("failed to get instance profile for %s, %v", profileArn, err)
 				continue
 			}
 

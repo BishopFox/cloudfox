@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iamTypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type AWSIAMClientInterface interface {
@@ -44,8 +45,18 @@ func CachedIamListUsers(IAMClient AWSIAMClientInterface, accountID string) ([]ia
 	cacheKey := fmt.Sprintf("%s-iam-ListUsers", accountID)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "iam:ListUsers",
+			"account": accountID,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]iamTypes.User), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "iam:ListUsers",
+		"account": accountID,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	for {
 		ListUsers, err := IAMClient.ListUsers(
@@ -81,8 +92,18 @@ func CachedIamListRoles(IAMClient AWSIAMClientInterface, accountID string) ([]ia
 	cacheKey := fmt.Sprintf("%s-iam-ListRoles", accountID)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "iam:ListRoles",
+			"account": accountID,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]iamTypes.Role), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "iam:ListRoles",
+		"account": accountID,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	for {
 		ListRoles, err := IAMClient.ListRoles(
@@ -118,8 +139,20 @@ func CachedIamListAccessKeys(IAMClient AWSIAMClientInterface, accountID string, 
 	cacheKey := fmt.Sprintf("%s-iam-ListAccessKeys-%s", accountID, userName)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":      "iam:ListAccessKeys",
+			"account":  accountID,
+			"userName": userName,
+			"cache":    "hit",
+		}).Info("AWS API call")
 		return cached.([]iamTypes.AccessKeyMetadata), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":      "iam:ListAccessKeys",
+		"account":  accountID,
+		"userName": userName,
+		"cache":    "miss",
+	}).Info("AWS API call")
 
 	for {
 		ListAccessKeys, err := IAMClient.ListAccessKeys(
@@ -172,8 +205,18 @@ func CachedIAMGetAccountAuthorizationDetails(IAMClient AWSIAMClientInterface, ac
 	cacheKey := fmt.Sprintf("%s-iam-GetAccountAuthorizationDetails", accountID)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "iam:GetAccountAuthorizationDetails",
+			"account": accountID,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.(customGAADOutput), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "iam:GetAccountAuthorizationDetails",
+		"account": accountID,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	for {
 		GetAccountAuthorizationDetails, err := IAMClient.GetAccountAuthorizationDetails(
@@ -224,8 +267,20 @@ func CachedIamSimulatePrincipalPolicy(IAMClient AWSIAMClientInterface, accountID
 	cacheKey := fmt.Sprintf("%s-iamSimulator-%s-%s-%s", accountID, name, hex.EncodeToString(md5hashedActionNames[:truncatedHashLength]), hex.EncodeToString(md5hashedResourceArns[:truncatedHashLength]))
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":       "iam:SimulatePrincipalPolicy",
+			"account":   accountID,
+			"principal": name,
+			"cache":     "hit",
+		}).Info("AWS API call")
 		return cached.([]iamTypes.EvaluationResult), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":       "iam:SimulatePrincipalPolicy",
+		"account":   accountID,
+		"principal": name,
+		"cache":     "miss",
+	}).Info("AWS API call")
 
 	for {
 		SimulatePrincipalPolicy, err := IAMClient.SimulatePrincipalPolicy(
@@ -261,8 +316,18 @@ func CachedIamListGroups(IAMClient AWSIAMClientInterface, accountID string) ([]i
 	cacheKey := fmt.Sprintf("%s-iam-ListGroups", accountID)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "iam:ListGroups",
+			"account": accountID,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]iamTypes.Group), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "iam:ListGroups",
+		"account": accountID,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	for {
 		ListGroups, err := IAMClient.ListGroups(
@@ -296,9 +361,21 @@ func CachedIamGetInstanceProfile(IAMClient AWSIAMClientInterface, accountID stri
 	cacheKey := fmt.Sprintf("%s-iam-GetInstanceProfile-%s", accountID, instanceProfileName)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "iam:GetInstanceProfile",
+			"account": accountID,
+			"profile": instanceProfileName,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.(iamTypes.InstanceProfile), nil
 	}
 
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "iam:GetInstanceProfile",
+		"account": accountID,
+		"profile": instanceProfileName,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	GetInstanceProfile, err := IAMClient.GetInstanceProfile(
 		context.TODO(),
 		&iam.GetInstanceProfileInput{

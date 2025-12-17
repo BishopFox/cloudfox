@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	kmsTypes "github.com/aws/aws-sdk-go-v2/service/kms/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 // KMSClientInterface is an interface for the AWS SDK KMS client.
@@ -29,8 +30,20 @@ func CachedKMSListKeys(client KMSClientInterface, accountID string, region strin
 	cacheKey := fmt.Sprintf("%s-kms-ListKeys-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "kms:ListKeys",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]kmsTypes.KeyListEntry), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "kms:ListKeys",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	keyPaginator := kms.NewListKeysPaginator(client.(kms.ListKeysAPIClient), &kms.ListKeysInput{}, func(options *kms.ListKeysPaginatorOptions) {})
 
@@ -57,8 +70,22 @@ func CachedKMSGetKeyPolicy(client KMSClientInterface, accountID string, region s
 	cacheKey := fmt.Sprintf("%s-kms-GetKeyPolicy-%s-%s", accountID, region, keyID)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "kms:GetKeyPolicy",
+			"account": accountID,
+			"region":  region,
+			"keyId":   keyID,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.(policy.Policy), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "kms:GetKeyPolicy",
+		"account": accountID,
+		"region":  region,
+		"keyId":   keyID,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	getKeyPolicy, err := client.GetKeyPolicy(
 		context.TODO(),

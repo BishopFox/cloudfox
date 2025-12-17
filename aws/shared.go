@@ -100,19 +100,19 @@ func generatePmapperDataBasePaths(accountId *string) (string, string) {
 		if err != nil {
 			log.Fatal("Could not get homedir")
 		}
-		edgesPath = fmt.Sprintf(dir + "/Library/Application Support/com.nccgroup.principalmapper/" + aws.ToString(accountId) + "/graph/edges.json")
-		nodesPath = fmt.Sprintf(dir + "/Library/Application Support/com.nccgroup.principalmapper/" + aws.ToString(accountId) + "/graph/nodes.json")
+		edgesPath = fmt.Sprintf("%s/Library/Application Support/com.nccgroup.principalmapper/%s/graph/edges.json", dir, aws.ToString(accountId))
+		nodesPath = fmt.Sprintf("%s/Library/Application Support/com.nccgroup.principalmapper/%s/graph/nodes.json", dir, aws.ToString(accountId))
 
 	} else if runtime.GOOS == "linux" || runtime.GOOS == "freebsd" || runtime.GOOS == "openbsd" {
 		xdg, ok := os.LookupEnv("XDG_DATA_HOME")
 		if ok {
-			edgesPath = fmt.Sprintf(xdg + aws.ToString(accountId) + "/graph/edges.json")
-			nodesPath = fmt.Sprintf(xdg + aws.ToString(accountId) + "/graph/nodes.json")
+			edgesPath = fmt.Sprintf("%s%s/graph/edges.json", xdg, aws.ToString(accountId))
+			nodesPath = fmt.Sprintf("%s%s/graph/nodes.json", xdg, aws.ToString(accountId))
 		} else {
 			dir, err := os.UserHomeDir()
 			if err == nil {
-				edgesPath = fmt.Sprintf(dir + "/.local/share/principalmapper/" + aws.ToString(accountId) + "/graph/edges.json")
-				nodesPath = fmt.Sprintf(dir + "/.local/share/principalmapper/" + aws.ToString(accountId) + "/graph/nodes.json")
+				edgesPath = fmt.Sprintf("%s/.local/share/principalmapper/%s/graph/edges.json", dir, aws.ToString(accountId))
+				nodesPath = fmt.Sprintf("%s/.local/share/principalmapper/%s/graph/nodes.json", dir, aws.ToString(accountId))
 			} else {
 				log.Fatal("Could not homedir.")
 			}
@@ -123,8 +123,8 @@ func generatePmapperDataBasePaths(accountId *string) (string, string) {
 		if err != nil {
 			log.Fatal("Could not get userconfigdir")
 		}
-		edgesPath = fmt.Sprintf(dir + "\\principalmapper" + aws.ToString(accountId) + "\\graph\\edges.json")
-		nodesPath = fmt.Sprintf(dir + "\\principalmapper" + aws.ToString(accountId) + "\\graph\\nodes.json")
+		edgesPath = fmt.Sprintf("%s\\principalmapper%s\\graph\\edges.json", dir, aws.ToString(accountId))
+		nodesPath = fmt.Sprintf("%s\\principalmapper%s\\graph\\nodes.json", dir, aws.ToString(accountId))
 
 	}
 

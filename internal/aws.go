@@ -6,6 +6,7 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -243,19 +244,105 @@ func GetEnabledRegions(awsProfile string, version string, AwsMfaToken string) []
 
 }
 
+// ModuleFirstFormatter formats logs with module field before the message
+type ModuleFirstFormatter struct {
+	logrus.TextFormatter
+}
+
+func (f *ModuleFirstFormatter) Format(entry *logrus.Entry) ([]byte, error) {
+	// Use the standard text formatter to get the base format
+	formatted, err := f.TextFormatter.Format(entry)
+	if err != nil {
+		return nil, err
+	}
+
+	// If there's a module field, reformat to put it before msg
+	if module, ok := entry.Data["module"]; ok {
+		// Parse the formatted output and rebuild with module first
+		str := string(formatted)
+
+		// Find and extract the module field
+		moduleStr := fmt.Sprintf("module=%v", module)
+
+		// If the formatted string contains the module field, move it before msg=
+		if idx := strings.Index(str, moduleStr); idx > 0 {
+			// Remove module from its current position
+			before := str[:idx]
+			after := str[idx+len(moduleStr):]
+			// Trim any extra space that might be left
+			after = strings.TrimPrefix(after, " ")
+
+			// Find where msg= starts
+			if msgIdx := strings.Index(before, "msg="); msgIdx > 0 {
+				// Rebuild: everything before msg, then module, then msg and after
+				newStr := before[:msgIdx] + moduleStr + " " + before[msgIdx:] + after
+				return []byte(newStr), nil
+			}
+		}
+	}
+
+	return formatted, nil
+}
+
+// SplitLevelHook is a custom logrus hook that splits logs by level
+// Error and Fatal messages go to errorWriter, everything else goes to infoWriter
+type SplitLevelHook struct {
+	errorWriter io.Writer
+	infoWriter  io.Writer
+	formatter   logrus.Formatter
+}
+
+func (h *SplitLevelHook) Levels() []logrus.Level {
+	return logrus.AllLevels
+}
+
+func (h *SplitLevelHook) Fire(entry *logrus.Entry) error {
+	line, err := h.formatter.Format(entry)
+	if err != nil {
+		return err
+	}
+
+	switch entry.Level {
+	case logrus.ErrorLevel, logrus.FatalLevel, logrus.PanicLevel:
+		_, err = h.errorWriter.Write(line)
+	default:
+		_, err = h.infoWriter.Write(line)
+	}
+	return err
+}
+
 // txtLogger - Returns the txt logger
 func TxtLogger() *logrus.Logger {
-	var txtFile *os.File
-	var err error
 	txtLogger := logrus.New()
-	txtFile, err = os.OpenFile(fmt.Sprintf("%s/cloudfox-error.log", ptr.ToString(GetLogDirPath())), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+
+	// Open error log file (only errors and fatal messages)
+	errorFile, err := os.OpenFile(fmt.Sprintf("%s/cloudfox-error.log", ptr.ToString(GetLogDirPath())), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		txtFile, err = os.OpenFile(fmt.Sprintf("./cloudfox-error.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		errorFile, err = os.OpenFile(fmt.Sprintf("./cloudfox-error.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	}
 	if err != nil {
-		panic(fmt.Sprintf("Failed to open log file %v", err))
+		panic(fmt.Sprintf("Failed to open error log file %v", err))
 	}
-	txtLogger.Out = txtFile
+
+	// Open info log file (all non-error messages)
+	infoFile, err := os.OpenFile(fmt.Sprintf("%s/cloudfox-info.log", ptr.ToString(GetLogDirPath())), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		infoFile, err = os.OpenFile(fmt.Sprintf("./cloudfox-info.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	}
+	if err != nil {
+		panic(fmt.Sprintf("Failed to open info log file %v", err))
+	}
+
+	// Discard default output since we're using hooks
+	txtLogger.SetOutput(io.Discard)
+
+	// Add custom hook to split logs by level
+	txtLogger.AddHook(&SplitLevelHook{
+		errorWriter: errorFile,
+		infoWriter:  infoFile,
+		formatter:   &ModuleFirstFormatter{},
+	})
+
 	txtLogger.SetLevel(logrus.InfoLevel)
 	//txtLogger.SetReportCaller(true)
 

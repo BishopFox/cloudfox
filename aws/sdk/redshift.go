@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/redshift"
 	redshiftTypes "github.com/aws/aws-sdk-go-v2/service/redshift/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type AWSRedShiftClientInterface interface {
@@ -26,8 +27,20 @@ func CachedRedShiftDescribeClusters(client AWSRedShiftClientInterface, accountID
 	cacheKey := fmt.Sprintf("%s-redshift-DescribeClusters-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "redshift:DescribeClusters",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]redshiftTypes.Cluster), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "redshift:DescribeClusters",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		DescribeClusters, err := client.DescribeClusters(
 			context.TODO(),

@@ -35,6 +35,7 @@ type ECSTasksModule struct {
 	Goroutines     int
 	SkipAdminCheck bool
 	WrapTable      bool
+	ServiceMap     *awsservicemap.AwsServiceMap // Shared service map to avoid repeated HTTP requests
 	pmapperMod     PmapperModule
 	pmapperError   error
 	iamSimClient   IamSimulatorModule
@@ -307,8 +308,12 @@ func (m *ECSTasksModule) writeLoot(outputDirectory string) {
 func (m *ECSTasksModule) executeChecks(r string, wg *sync.WaitGroup, dataReceiver chan MappedECSTask) {
 	defer wg.Done()
 
-	servicemap := &awsservicemap.AwsServiceMap{
-		JsonFileSource: "DOWNLOAD_FROM_AWS",
+	// Use shared ServiceMap instance if provided, otherwise create a new one
+	servicemap := m.ServiceMap
+	if servicemap == nil {
+		servicemap = &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 	}
 	res, err := servicemap.IsServiceInRegion("ecs", r)
 	if err != nil {

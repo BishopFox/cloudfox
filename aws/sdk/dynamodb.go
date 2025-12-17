@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	dynamoDBTypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type DynamoDBClientInterface interface {
@@ -27,8 +28,21 @@ func CachedDynamoDBListTables(client DynamoDBClientInterface, accountID string, 
 	cacheKey := fmt.Sprintf("%s-dynamodb-ListTables-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "dynamodb:ListTables",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]string), nil
 	}
+
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "dynamodb:ListTables",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		ListTables, err := client.ListTables(
 			context.TODO(),
@@ -62,8 +76,21 @@ func CachedDynamoDBDescribeTable(client DynamoDBClientInterface, accountID strin
 	cacheKey := fmt.Sprintf("%s-dynamodb-DescribeTable-%s-%s", accountID, region, tableName)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "dynamodb:DescribeTable",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.(dynamoDBTypes.TableDescription), nil
 	}
+
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "dynamodb:DescribeTable",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	DescribeTable, err := client.DescribeTable(
 		context.TODO(),

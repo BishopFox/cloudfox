@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	ecrTypes "github.com/aws/aws-sdk-go-v2/service/ecr/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type AWSECRClientInterface interface {
@@ -33,9 +34,20 @@ func CachedECRDescribeRepositories(ECRClient AWSECRClientInterface, accountID st
 	cacheKey := fmt.Sprintf("%s-ecr-DescribeRepositories-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
-		sharedLogger.Debug("Using cached ECR repositories data")
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "ecr:DescribeRepositories",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]ecrTypes.Repository), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "ecr:DescribeRepositories",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	for {
 		DescribeRepositories, err := ECRClient.DescribeRepositories(
@@ -73,9 +85,22 @@ func CachedECRDescribeImages(ECRClient AWSECRClientInterface, accountID string, 
 	cacheKey := fmt.Sprintf("%s-ecr-DescribeImages-%s-%s", accountID, region, strings.ReplaceAll(repositoryName, "/", "-"))
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
-		sharedLogger.Debug("Using cached Images data")
+		sharedLogger.WithFields(logrus.Fields{
+			"api":        "ecr:DescribeImages",
+			"account":    accountID,
+			"region":     region,
+			"repository": repositoryName,
+			"cache":      "hit",
+		}).Info("AWS API call")
 		return cached.([]ecrTypes.ImageDetail), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":        "ecr:DescribeImages",
+		"account":    accountID,
+		"region":     region,
+		"repository": repositoryName,
+		"cache":      "miss",
+	}).Info("AWS API call")
 
 	for {
 		DescribeImages, err := ECRClient.DescribeImages(
@@ -113,9 +138,22 @@ func CachedECRGetRepositoryPolicy(ECRClient AWSECRClientInterface, accountID str
 	cacheKey := fmt.Sprintf("%s-ecr-GetRepositoryPolicy-%s-%s", accountID, region, strings.ReplaceAll(repositoryName, "/", "-"))
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
-		sharedLogger.Debug("Using cached ECR repository policy data")
+		sharedLogger.WithFields(logrus.Fields{
+			"api":        "ecr:GetRepositoryPolicy",
+			"account":    accountID,
+			"region":     region,
+			"repository": repositoryName,
+			"cache":      "hit",
+		}).Info("AWS API call")
 		return cached.(string), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":        "ecr:GetRepositoryPolicy",
+		"account":    accountID,
+		"region":     region,
+		"repository": repositoryName,
+		"cache":      "miss",
+	}).Info("AWS API call")
 
 	GetRepositoryPolicy, err := ECRClient.GetRepositoryPolicy(
 		context.TODO(),

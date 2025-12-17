@@ -48,26 +48,23 @@ type SimulatorResult struct {
 	Decision   string
 }
 
-var (
-	defaultActionNames = []string{
-		"sts:AssumeRole",
-		"iam:PassRole",
-		"secretsmanager:GetSecretValue",
-		"ssm:GetParameter",
-		"s3:ListBucket",
-		"s3:GetObject",
-		"ssm:SendCommand",
-		"ssm:StartSession",
-		"ecr:BatchGetImage",
-		"ecr:GetAuthorizationToken",
-		"eks:UpdateClusterConfig",
-		"lambda:ListFunctions",
-		"ec2:DescribeInstanceAttributeInput",
-		"sns:Subscribe",
-		"sqs:SendMessage",
-	}
-	TxtLogger = internal.TxtLogger()
-)
+var defaultActionNames = []string{
+	"sts:AssumeRole",
+	"iam:PassRole",
+	"secretsmanager:GetSecretValue",
+	"ssm:GetParameter",
+	"s3:ListBucket",
+	"s3:GetObject",
+	"ssm:SendCommand",
+	"ssm:StartSession",
+	"ecr:BatchGetImage",
+	"ecr:GetAuthorizationToken",
+	"eks:UpdateClusterConfig",
+	"lambda:ListFunctions",
+	"ec2:DescribeInstanceAttributeInput",
+	"sns:Subscribe",
+	"sqs:SendMessage",
+}
 
 func (m *IamSimulatorModule) PrintIamSimulator(principal string, action string, resource string, outputDirectory string, verbosity int) {
 
@@ -466,11 +463,9 @@ func (m *IamSimulatorModule) isPrincipalAnAdmin(principal *string) bool {
 			},
 		)
 		if err != nil {
-			//m.modLog.Error(err.Error())
-			TxtLogger.Println(err.Error())
+			m.modLog.Error(err)
 			m.CommandCounter.Error++
-			//m.modLog.Error(fmt.Sprintf("Failed admin check on %s\n\n", aws.ToString(principal)))
-			TxtLogger.Printf("Failed admin check on %s\n\n", aws.ToString(principal))
+			m.modLog.Errorf("Failed admin check on %s", aws.ToString(principal))
 			return false
 		}
 

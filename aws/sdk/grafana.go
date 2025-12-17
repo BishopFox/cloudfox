@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/grafana"
 	grafanaTypes "github.com/aws/aws-sdk-go-v2/service/grafana/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type GrafanaClientInterface interface {
@@ -25,8 +26,20 @@ func CachedGrafanaListWorkspaces(client GrafanaClientInterface, accountID string
 	cacheKey := fmt.Sprintf("%s-grafana-ListWorkspaces-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "grafana:ListWorkspaces",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]grafanaTypes.WorkspaceSummary), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "grafana:ListWorkspaces",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	for {
 

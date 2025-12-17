@@ -30,6 +30,7 @@ type DatabasesModule struct {
 	Goroutines int
 	AWSProfile string
 	WrapTable  bool
+	ServiceMap *awsservicemap.AwsServiceMap // Shared service map to avoid repeated HTTP requests
 
 	Databases      []Database
 	CommandCounter internal.CommandCounter
@@ -231,8 +232,12 @@ func (m *DatabasesModule) Receiver(receiver chan Database, receiverDone chan boo
 func (m *DatabasesModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Database) {
 	defer wg.Done()
 
-	serviceMap := &awsservicemap.AwsServiceMap{
-		JsonFileSource: "DOWNLOAD_FROM_AWS",
+	// Use shared ServiceMap instance if provided, otherwise create a new one
+	serviceMap := m.ServiceMap
+	if serviceMap == nil {
+		serviceMap = &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 	}
 	m.executeRdsCheck(r, wg, semaphore, dataReceiver, serviceMap) // Also returns Neptune and DocDB
 	m.executeRedshiftCheck(r, wg, semaphore, dataReceiver, serviceMap)

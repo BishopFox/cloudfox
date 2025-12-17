@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/codecommit"
 	codeCommitTypes "github.com/aws/aws-sdk-go-v2/service/codecommit/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type AWSCodeCommitClientInterface interface {
@@ -25,8 +26,20 @@ func CachedCodeCommitListRepositories(client AWSCodeCommitClientInterface, accou
 	cacheKey := fmt.Sprintf("%s-codecommit-ListRepositories-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "codecommit:ListRepositories",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]codeCommitTypes.RepositoryNameIdPair), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "codecommit:ListRepositories",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		ListRepositories, err := client.ListRepositories(
 			context.TODO(),

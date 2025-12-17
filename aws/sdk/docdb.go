@@ -9,8 +9,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/docdb"
 	docdbTypes "github.com/aws/aws-sdk-go-v2/service/docdb/types"
-
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type DocDBClientInterface interface {
@@ -32,8 +32,20 @@ func CachedDocDBDescribeGlobalClusters(client DocDBClientInterface, accountID st
 	cacheKey := fmt.Sprintf("%s-docdb-DescribeGlobalClusters-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "docdb:DescribeGlobalClusters",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]docdbTypes.GlobalCluster), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "docdb:DescribeGlobalClusters",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		DescribeGlobalClusters, err := client.DescribeGlobalClusters(
 			context.TODO(),
@@ -68,8 +80,20 @@ func CachedDocDBDescribeDBClusters(client DocDBClientInterface, accountID string
 	cacheKey := fmt.Sprintf("%s-docdb-DescribeDBClusters-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "docdb:DescribeDBClusters",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]docdbTypes.DBCluster), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "docdb:DescribeDBClusters",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		DescribeDBClusters, err := client.DescribeDBClusters(
 			context.TODO(),
@@ -110,8 +134,20 @@ func CachedDocDBDescribeDBInstances(client DocDBClientInterface, accountID strin
 	cacheKey := fmt.Sprintf("%s-docdb-DescribeDBInstances-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "docdb:DescribeDBInstances",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]docdbTypes.DBInstance), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "docdb:DescribeDBInstances",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		DescribeDBInstances, err := client.DescribeDBInstances(
 			context.TODO(),

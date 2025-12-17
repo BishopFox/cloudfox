@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/organizations"
 	orgTypes "github.com/aws/aws-sdk-go-v2/service/organizations/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type OrganizationsClientInterface interface {
@@ -28,8 +29,18 @@ func CachedOrganizationsListAccounts(client OrganizationsClientInterface, accoun
 	cacheKey := fmt.Sprintf("%s-organizations-ListAccounts", accountID)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "organizations:ListAccounts",
+			"account": accountID,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]orgTypes.Account), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "organizations:ListAccounts",
+		"account": accountID,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	for {
 		ListAccounts, err := client.ListAccounts(
@@ -62,8 +73,18 @@ func CachedOrganizationsDescribeOrganization(client OrganizationsClientInterface
 	cacheKey := fmt.Sprintf("%s-organizations-DescribeOrganization", accountID)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "organizations:DescribeOrganization",
+			"account": accountID,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.(*orgTypes.Organization), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "organizations:DescribeOrganization",
+		"account": accountID,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	DescribeOrganization, err := client.DescribeOrganization(
 		context.TODO(),

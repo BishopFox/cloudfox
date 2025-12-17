@@ -30,6 +30,7 @@ type SecretsModule struct {
 	WrapTable     bool
 	AWSOutputType string
 	AWSTableCols  string
+	ServiceMap    *awsservicemap.AwsServiceMap // Shared service map to avoid repeated HTTP requests
 
 	// Main module data
 	Secrets []Secret
@@ -192,8 +193,12 @@ func (m *SecretsModule) Receiver(receiver chan Secret, receiverDone chan bool) {
 func (m *SecretsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan Secret) {
 	defer wg.Done()
 
-	servicemap := &awsservicemap.AwsServiceMap{
-		JsonFileSource: "DOWNLOAD_FROM_AWS",
+	// Use shared ServiceMap instance if provided, otherwise create a new one
+	servicemap := m.ServiceMap
+	if servicemap == nil {
+		servicemap = &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 	}
 	res, err := servicemap.IsServiceInRegion("secretsmanager", r)
 	if err != nil {

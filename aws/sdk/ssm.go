@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type AWSSSMClientInterface interface {
@@ -26,9 +27,20 @@ func CachedSSMDescribeParameters(SSMClient AWSSSMClientInterface, accountID stri
 	cacheKey := fmt.Sprintf("%s-ssm-DescribeParameters-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
-		sharedLogger.Debug("Using cached SSM parameters data")
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "ssm:DescribeParameters",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]types.ParameterMetadata), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "ssm:DescribeParameters",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	for {
 		DescribeParameters, err := SSMClient.DescribeParameters(

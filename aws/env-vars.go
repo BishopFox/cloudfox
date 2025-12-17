@@ -43,6 +43,7 @@ type EnvsModule struct {
 
 	Goroutines int
 	WrapTable  bool
+	ServiceMap *awsservicemap.AwsServiceMap // Shared service map to avoid repeated HTTP requests
 
 	// Service Clients
 	ECSClient       *ecs.Client
@@ -280,8 +281,12 @@ func (m *EnvsModule) Receiver(receiver chan EnvironmentVariable, receiverDone ch
 
 func (m *EnvsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan EnvironmentVariable) {
 	defer wg.Done()
-	servicemap := &awsservicemap.AwsServiceMap{
-		JsonFileSource: "DOWNLOAD_FROM_AWS",
+	// Use shared ServiceMap instance if provided, otherwise create a new one
+	servicemap := m.ServiceMap
+	if servicemap == nil {
+		servicemap = &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 	}
 	res, _ := servicemap.IsServiceInRegion("ecs", r)
 	if res {

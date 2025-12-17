@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
 	cloudfrontTypes "github.com/aws/aws-sdk-go-v2/service/cloudfront/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type AWSCloudFrontClientInterface interface {
@@ -25,9 +26,18 @@ func CachedCloudFrontListDistributions(CloudFrontClient AWSCloudFrontClientInter
 	cacheKey := "cloudfront-ListDistributions-" + accountID
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
-		sharedLogger.Debug("Using cached CloudFront distributions data")
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "cloudfront:ListDistributions",
+			"account": accountID,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]cloudfrontTypes.DistributionSummary), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "cloudfront:ListDistributions",
+		"account": accountID,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	for {
 		ListDistributions, err := CloudFrontClient.ListDistributions(

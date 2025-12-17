@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloud9"
 	cloud9Types "github.com/aws/aws-sdk-go-v2/service/cloud9/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type AWSCloud9ClientInterface interface {
@@ -25,8 +26,20 @@ func CachedCloud9ListEnvironments(client AWSCloud9ClientInterface, accountID str
 	cacheKey := "cloud9-ListEnvironments-" + accountID + "-" + region
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "cloud9:ListEnvironments",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]string), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "cloud9:ListEnvironments",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		ListEnvironments, err := client.ListEnvironments(
 			context.TODO(),
@@ -60,8 +73,20 @@ func CachedCloud9DescribeEnvironments(client AWSCloud9ClientInterface, accountID
 	cacheKey := "cloud9-DescribeEnvironments-" + accountID + "-" + region
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "cloud9:DescribeEnvironments",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]cloud9Types.Environment), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "cloud9:DescribeEnvironments",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for _, environmentID := range environmentIDs {
 		DescribeEnvironments, err := client.DescribeEnvironments(
 			context.TODO(),

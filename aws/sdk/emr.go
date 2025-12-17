@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/emr"
 	emrTypes "github.com/aws/aws-sdk-go-v2/service/emr/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type AWSEMRClientInterface interface {
@@ -30,8 +31,20 @@ func CachedEMRListClusters(client AWSEMRClientInterface, accountID string, regio
 	cacheKey := fmt.Sprintf("%s-emr-ListClusters-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "emr:ListClusters",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]emrTypes.ClusterSummary), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "emr:ListClusters",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		ListClusters, err := client.ListClusters(
 			context.TODO(),
@@ -66,8 +79,22 @@ func CachedEMRListInstances(client AWSEMRClientInterface, accountID string, regi
 	cacheKey := fmt.Sprintf("%s-emr-ListInstances-%s-%s", accountID, region, clusterID)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":       "emr:ListInstances",
+			"account":   accountID,
+			"region":    region,
+			"clusterId": clusterID,
+			"cache":     "hit",
+		}).Info("AWS API call")
 		return cached.([]emrTypes.Instance), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":       "emr:ListInstances",
+		"account":   accountID,
+		"region":    region,
+		"clusterId": clusterID,
+		"cache":     "miss",
+	}).Info("AWS API call")
 	for {
 		ListInstances, err := client.ListInstances(
 			context.TODO(),

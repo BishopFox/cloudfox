@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	lambdaTypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type LambdaClientInterface interface {
@@ -29,8 +30,20 @@ func CachedLambdaListFunctions(client LambdaClientInterface, accountID string, r
 	cacheKey := fmt.Sprintf("%s-lambda-ListFunctions-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "lambda:ListFunctions",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]lambdaTypes.FunctionConfiguration), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "lambda:ListFunctions",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	for {
 		ListFunctions, err := client.ListFunctions(
@@ -114,8 +127,22 @@ func CachedLambdaGetFunctionUrlConfig(client LambdaClientInterface, accountID st
 	cacheKey := fmt.Sprintf("%s-lambda-GetFunctionUrlConfig-%s-%s", accountID, region, functionName)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":      "lambda:GetFunctionUrlConfig",
+			"account":  accountID,
+			"region":   region,
+			"function": functionName,
+			"cache":    "hit",
+		}).Info("AWS API call")
 		return cached.(customGetFuntionURLOutput), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":      "lambda:GetFunctionUrlConfig",
+		"account":  accountID,
+		"region":   region,
+		"function": functionName,
+		"cache":    "miss",
+	}).Info("AWS API call")
 
 	GetFunctionUrlConfig, err := client.GetFunctionUrlConfig(
 		context.TODO(),

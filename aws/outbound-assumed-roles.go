@@ -31,6 +31,7 @@ type OutboundAssumedRolesModule struct {
 	Goroutines int
 	AWSProfile string
 	WrapTable  bool
+	ServiceMap *awsservicemap.AwsServiceMap // Shared service map to avoid repeated HTTP requests
 
 	// Main module data
 	OutboundAssumeRoleEntries []OutboundAssumeRoleEntry
@@ -294,8 +295,12 @@ func (m *OutboundAssumedRolesModule) Receiver(receiver chan OutboundAssumeRoleEn
 
 func (m *OutboundAssumedRolesModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan struct{}, dataReceiver chan OutboundAssumeRoleEntry) {
 	defer wg.Done()
-	servicemap := &awsservicemap.AwsServiceMap{
-		JsonFileSource: "DOWNLOAD_FROM_AWS",
+	// Use shared ServiceMap instance if provided, otherwise create a new one
+	servicemap := m.ServiceMap
+	if servicemap == nil {
+		servicemap = &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 	}
 	res, err := servicemap.IsServiceInRegion("cloudtrail", r)
 	if err != nil {

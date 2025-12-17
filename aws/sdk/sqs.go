@@ -7,6 +7,7 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type AWSSQSClientInterface interface {
@@ -23,9 +24,20 @@ func CachedSQSListQueues(SQSClient AWSSQSClientInterface, accountID string, regi
 	cacheKey := "sqs-ListQueues-" + accountID + "-" + region
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
-		sharedLogger.Debug("Using cached SQS queues data")
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "sqs:ListQueues",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]string), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "sqs:ListQueues",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	for {
 		ListQueues, err := SQSClient.ListQueues(

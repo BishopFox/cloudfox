@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	cloudFormationTypes "github.com/aws/aws-sdk-go-v2/service/cloudformation/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type CloudFormationClientInterface interface {
@@ -29,8 +30,20 @@ func CachedCloudFormationDescribeStacks(client CloudFormationClientInterface, ac
 	cacheKey := fmt.Sprintf("%s-cloudformation-DescribeStacks-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "cloudformation:DescribeStacks",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]cloudFormationTypes.Stack), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "cloudformation:DescribeStacks",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		DescribeStacks, err := client.DescribeStacks(
 			context.TODO(),
@@ -63,8 +76,20 @@ func CachedCloudFormationGetTemplate(client CloudFormationClientInterface, accou
 	cacheKey := fmt.Sprintf("%s-cloudformation-GetTemplate-%s-%s", accountID, region, stackName)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "cloudformation:GetTemplate",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.(string), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "cloudformation:GetTemplate",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	GetTemplate, err := client.GetTemplate(
 		context.TODO(),
@@ -89,8 +114,20 @@ func CachedCloudFormationListStacks(client CloudFormationClientInterface, accoun
 	cacheKey := fmt.Sprintf("%s-cloudformation-ListStacks-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "cloudformation:ListStacks",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]cloudFormationTypes.StackSummary), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "cloudformation:ListStacks",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		ListStacks, err := client.ListStacks(
 			context.TODO(),

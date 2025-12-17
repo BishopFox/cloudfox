@@ -8,6 +8,7 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/aws-sdk-go-v2/service/kinesis"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type AWSKinesisClientInterface interface {
@@ -24,8 +25,20 @@ func CachedKinesisListStreams(client AWSKinesisClientInterface, accountID string
 	cacheKey := fmt.Sprintf("%s-kinesis-ListStreams-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "kinesis:ListStreams",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]string), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "kinesis:ListStreams",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		ListStreams, err := client.ListStreams(
 			context.TODO(),

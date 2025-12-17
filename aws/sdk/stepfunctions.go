@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sfn"
 	sfnTypes "github.com/aws/aws-sdk-go-v2/service/sfn/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type StepFunctionsClientInterface interface {
@@ -25,8 +26,20 @@ func CachedStepFunctionsListStateMachines(client StepFunctionsClientInterface, a
 	cacheKey := fmt.Sprintf("%s-stepfunctions-ListStateMachines-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "states:ListStateMachines",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]sfnTypes.StateMachineListItem), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "states:ListStateMachines",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		ListStateMachines, err := client.ListStateMachines(
 			context.TODO(),

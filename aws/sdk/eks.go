@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	eksTypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type EKSClientInterface interface {
@@ -30,8 +31,22 @@ func CachedEKSDescribeCluster(client EKSClientInterface, accountID string, clust
 	cacheKey := fmt.Sprintf("%s-eks-DescribeCluster-%s-%s", accountID, region, clusterName)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "eks:DescribeCluster",
+			"account": accountID,
+			"region":  region,
+			"cluster": clusterName,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.(eksTypes.Cluster), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "eks:DescribeCluster",
+		"account": accountID,
+		"region":  region,
+		"cluster": clusterName,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	clusterOutput, err := client.DescribeCluster(
 		context.TODO(),
 		&eks.DescribeClusterInput{
@@ -57,8 +72,20 @@ func CachedEKSListClusters(client EKSClientInterface, accountID string, region s
 	cacheKey := fmt.Sprintf("%s-eks-ListClusters-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "eks:ListClusters",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]string), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "eks:ListClusters",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		ListClusters, err := client.ListClusters(
 			context.TODO(),
@@ -93,8 +120,22 @@ func CachedEKSListNodeGroups(client EKSClientInterface, accountID string, region
 	cacheKey := fmt.Sprintf("%s-eks-ListNodeGroups-%s-%s", accountID, region, clusterName)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "eks:ListNodegroups",
+			"account": accountID,
+			"region":  region,
+			"cluster": clusterName,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]string), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "eks:ListNodegroups",
+		"account": accountID,
+		"region":  region,
+		"cluster": clusterName,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		ListNodeGroups, err := client.ListNodegroups(
 			context.TODO(),
@@ -129,8 +170,24 @@ func CachedEKSDescribeNodeGroup(client EKSClientInterface, accountID string, reg
 	cacheKey := fmt.Sprintf("%s-eks-DescribeNodeGroup-%s-%s-%s", accountID, region, clusterName, nodeGroupName)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":       "eks:DescribeNodegroup",
+			"account":   accountID,
+			"region":    region,
+			"cluster":   clusterName,
+			"nodeGroup": nodeGroupName,
+			"cache":     "hit",
+		}).Info("AWS API call")
 		return cached.(eksTypes.Nodegroup), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":       "eks:DescribeNodegroup",
+		"account":   accountID,
+		"region":    region,
+		"cluster":   clusterName,
+		"nodeGroup": nodeGroupName,
+		"cache":     "miss",
+	}).Info("AWS API call")
 	nodeGroupOutput, err := client.DescribeNodegroup(
 		context.TODO(),
 		&eks.DescribeNodegroupInput{

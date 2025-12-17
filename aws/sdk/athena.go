@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/athena"
 	athenaTypes "github.com/aws/aws-sdk-go-v2/service/athena/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type AWSAthenaClientInterface interface {
@@ -26,8 +27,20 @@ func CachedAthenaListDataCatalogs(client AWSAthenaClientInterface, accountID str
 	cacheKey := fmt.Sprintf("%s-athena-ListDataCatalogs-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "athena:ListDataCatalogs",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]athenaTypes.DataCatalogSummary), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "athena:ListDataCatalogs",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		ListDataCatalogs, err := client.ListDataCatalogs(
 			context.TODO(),
@@ -62,8 +75,22 @@ func CachedAthenaListDatabases(client AWSAthenaClientInterface, accountID string
 	cacheKey := fmt.Sprintf("%s-athena-ListDatabases-%s-%s", accountID, region, catalogName)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":         "athena:ListDatabases",
+			"account":     accountID,
+			"region":      region,
+			"catalogName": catalogName,
+			"cache":       "hit",
+		}).Info("AWS API call")
 		return cached.([]string), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":         "athena:ListDatabases",
+		"account":     accountID,
+		"region":      region,
+		"catalogName": catalogName,
+		"cache":       "miss",
+	}).Info("AWS API call")
 	for {
 		ListDatabases, err := client.ListDatabases(
 			context.TODO(),

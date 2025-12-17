@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	elbV2Types "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type ELBv2ClientInterface interface {
@@ -25,8 +26,20 @@ func CachedELBv2DescribeLoadBalancers(client ELBv2ClientInterface, accountID str
 	cacheKey := fmt.Sprintf("%s-elbv2-DescribeLoadBalancers-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "elbv2:DescribeLoadBalancers",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]elbV2Types.LoadBalancer), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "elbv2:DescribeLoadBalancers",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		DescribeLoadBalancers, err := client.DescribeLoadBalancers(
 			context.TODO(),

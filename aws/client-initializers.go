@@ -17,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/sirupsen/logrus"
 )
 
 func InitIamCommandClient(iamSimPPClient sdk.AWSIAMClientInterface, caller sts.GetCallerIdentityOutput, AWSProfile string, Goroutines int) IamSimulatorModule {
@@ -26,6 +27,7 @@ func InitIamCommandClient(iamSimPPClient sdk.AWSIAMClientInterface, caller sts.G
 		Caller:             caller,
 		AWSProfileProvided: AWSProfile,
 		Goroutines:         Goroutines,
+		modLog:             internal.TxtLog.WithFields(logrus.Fields{"module": "iam-simulator"}),
 	}
 
 	return iamSimMod

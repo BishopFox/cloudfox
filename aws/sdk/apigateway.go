@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/apigateway"
 	apiGatewayTypes "github.com/aws/aws-sdk-go-v2/service/apigateway/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type APIGatewayClientInterface interface {
@@ -70,8 +71,20 @@ func CachedApiGatewayGetRestAPIs(client APIGatewayClientInterface, accountID str
 	cacheKey := fmt.Sprintf("%s-apigateway-GetRestApis-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "apigateway:GetRestApis",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]apiGatewayTypes.RestApi), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "apigateway:GetRestApis",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	for {
 		GetRestApis, err := client.GetRestApis(
@@ -105,10 +118,24 @@ func CachedApiGatewayGetStages(client APIGatewayClientInterface, accountID strin
 	cacheKey := fmt.Sprintf("%s-apigateway-GetStages-%s-%s", accountID, region, restAPIID)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":       "apigateway:GetStages",
+			"account":   accountID,
+			"region":    region,
+			"restApiId": restAPIID,
+			"cache":     "hit",
+		}).Info("AWS API call")
 		// Convert cached data back to GetStagesOutput before returning
 		cachedOutput := cached.(*CachedGetStagesOutput) // Ensure this type assertion matches your caching logic
 		return fromCachedGetStagesOutput(cachedOutput), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":       "apigateway:GetStages",
+		"account":   accountID,
+		"region":    region,
+		"restApiId": restAPIID,
+		"cache":     "miss",
+	}).Info("AWS API call")
 
 	GetStages, err := client.GetStages(
 		context.TODO(),
@@ -152,8 +179,22 @@ func CachedApiGatewayGetResources(client APIGatewayClientInterface, accountID st
 	cacheKey := fmt.Sprintf("%s-apigateway-GetResources-%s-%s", accountID, region, restAPIID)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":       "apigateway:GetResources",
+			"account":   accountID,
+			"region":    region,
+			"restApiId": restAPIID,
+			"cache":     "hit",
+		}).Info("AWS API call")
 		return cached.([]apiGatewayTypes.Resource), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":       "apigateway:GetResources",
+		"account":   accountID,
+		"region":    region,
+		"restApiId": restAPIID,
+		"cache":     "miss",
+	}).Info("AWS API call")
 
 	for {
 		GetResources, err := client.GetResources(
@@ -190,8 +231,20 @@ func CachedApiGatewayGetDomainNames(client APIGatewayClientInterface, accountID 
 	cacheKey := fmt.Sprintf("%s-apigateway-GetDomainNames-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "apigateway:GetDomainNames",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]apiGatewayTypes.DomainName), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "apigateway:GetDomainNames",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	for {
 		GetDomainNames, err := client.GetDomainNames(
@@ -227,8 +280,22 @@ func CachedApiGatewayGetBasePathMappings(client APIGatewayClientInterface, accou
 	cacheKey := fmt.Sprintf("%s-apigateway-GetBasePathMappings-%s-%s", accountID, region, aws.ToString(domain))
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":        "apigateway:GetBasePathMappings",
+			"account":    accountID,
+			"region":     region,
+			"domainName": aws.ToString(domain),
+			"cache":      "hit",
+		}).Info("AWS API call")
 		return cached.([]apiGatewayTypes.BasePathMapping), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":        "apigateway:GetBasePathMappings",
+		"account":    accountID,
+		"region":     region,
+		"domainName": aws.ToString(domain),
+		"cache":      "miss",
+	}).Info("AWS API call")
 
 	for {
 		GetBasePathMappings, err := client.GetBasePathMappings(
@@ -264,10 +331,28 @@ func CachedApiGatewayGetMethod(client APIGatewayClientInterface, accountID strin
 	cacheKey := fmt.Sprintf("%s-apigateway-GetMethod-%s-%s-%s-%s", accountID, region, restAPIID, resourceID, method)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":        "apigateway:GetMethod",
+			"account":    accountID,
+			"region":     region,
+			"restApiId":  restAPIID,
+			"resourceId": resourceID,
+			"httpMethod": method,
+			"cache":      "hit",
+		}).Info("AWS API call")
 		// Convert cached data back to GetMethodOutput before returning
 		cachedOutput := cached.(*CachedGetMethodOutput) // Ensure this type assertion matches your caching logic
 		return fromCachedGetMethodOutput(cachedOutput), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":        "apigateway:GetMethod",
+		"account":    accountID,
+		"region":     region,
+		"restApiId":  restAPIID,
+		"resourceId": resourceID,
+		"httpMethod": method,
+		"cache":      "miss",
+	}).Info("AWS API call")
 
 	GetMethod, err := client.GetMethod(
 		context.TODO(),
@@ -334,8 +419,20 @@ func CachedApiGatewayGetUsagePlans(client APIGatewayClientInterface, accountID s
 	cacheKey := fmt.Sprintf("%s-apigateway-GetUsagePlans-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "apigateway:GetUsagePlans",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]apiGatewayTypes.UsagePlan), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "apigateway:GetUsagePlans",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	for {
 		GetUsagePlans, err := client.GetUsagePlans(
@@ -372,8 +469,22 @@ func CachedApiGatewayGetUsagePlanKeys(client APIGatewayClientInterface, accountI
 	cacheKey := fmt.Sprintf("%s-apigateway-GetUsagePlanKeys-%s-%s", accountID, region, usagePlanID)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":         "apigateway:GetUsagePlanKeys",
+			"account":     accountID,
+			"region":      region,
+			"usagePlanId": usagePlanID,
+			"cache":       "hit",
+		}).Info("AWS API call")
 		return cached.([]apiGatewayTypes.UsagePlanKey), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":         "apigateway:GetUsagePlanKeys",
+		"account":     accountID,
+		"region":      region,
+		"usagePlanId": usagePlanID,
+		"cache":       "miss",
+	}).Info("AWS API call")
 
 	for {
 		GetUsagePlanKeys, err := client.GetUsagePlanKeys(

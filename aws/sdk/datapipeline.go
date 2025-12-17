@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/datapipeline"
 	dataPipelineTypes "github.com/aws/aws-sdk-go-v2/service/datapipeline/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type AWSDataPipelineClientInterface interface {
@@ -25,8 +26,20 @@ func CachedDataPipelineListPipelines(client AWSDataPipelineClientInterface, acco
 	cacheKey := fmt.Sprintf("%s-datapipeline-ListPipelines-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "datapipeline:ListPipelines",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]dataPipelineTypes.PipelineIdName), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "datapipeline:ListPipelines",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		ListPipelines, err := client.ListPipelines(
 			context.TODO(),

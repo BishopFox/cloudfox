@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3Types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type AWSS3ClientInterface interface {
@@ -30,10 +31,19 @@ func CachedListBuckets(S3Client AWSS3ClientInterface, accountID string) ([]s3Typ
 	cacheKey := fmt.Sprintf("%s-s3-ListBuckets", accountID)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
-		sharedLogger.Debug("Using cached data for ListBuckets data")
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "s3:ListBuckets",
+			"account": accountID,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]s3Types.Bucket), nil
 
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "s3:ListBuckets",
+		"account": accountID,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	ListBuckets, err := S3Client.ListBuckets(
 		context.TODO(),
 		&s3.ListBucketsInput{},
@@ -52,9 +62,20 @@ func CachedGetBucketLocation(S3Client AWSS3ClientInterface, accountID string, bu
 	cacheKey := fmt.Sprintf("%s-s3-GetBucketLocation-%s", accountID, bucketName)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
-		sharedLogger.Debug("Using cached data for GetBucketLocation data")
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "s3:GetBucketLocation",
+			"account": accountID,
+			"bucket":  bucketName,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.(string), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "s3:GetBucketLocation",
+		"account": accountID,
+		"bucket":  bucketName,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	GetBucketRegion, err := S3Client.GetBucketLocation(
 		context.TODO(),
 		&s3.GetBucketLocationInput{
@@ -76,9 +97,22 @@ func CachedGetBucketPolicy(S3Client AWSS3ClientInterface, accountID string, r st
 	cacheKey := fmt.Sprintf("%s-s3-GetBucketPolicy-%s-%s", accountID, r, bucketName)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
-		sharedLogger.Debug("Using cached data for GetBucketPolicy data")
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "s3:GetBucketPolicy",
+			"account": accountID,
+			"region":  r,
+			"bucket":  bucketName,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.(string), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "s3:GetBucketPolicy",
+		"account": accountID,
+		"region":  r,
+		"bucket":  bucketName,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	BucketPolicyObject, err := S3Client.GetBucketPolicy(
 		context.TODO(),
@@ -103,9 +137,22 @@ func CachedGetPublicAccessBlock(S3Client AWSS3ClientInterface, accountID string,
 	cacheKey := fmt.Sprintf("%s-s3-GetPublicAccessBlock-%s-%s", accountID, r, bucketName)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
-		sharedLogger.Debug("Using cached data for GetPublicAccessBlock data")
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "s3:GetPublicAccessBlock",
+			"account": accountID,
+			"region":  r,
+			"bucket":  bucketName,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.(*s3Types.PublicAccessBlockConfiguration), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "s3:GetPublicAccessBlock",
+		"account": accountID,
+		"region":  r,
+		"bucket":  bucketName,
+		"cache":   "miss",
+	}).Info("AWS API call")
 
 	PublicAccessBlock, err := S3Client.GetPublicAccessBlock(
 		context.TODO(),

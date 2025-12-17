@@ -63,6 +63,7 @@ type EndpointsModule struct {
 	Goroutines int
 	AWSProfile string
 	WrapTable  bool
+	ServiceMap *awsservicemap.AwsServiceMap // Shared service map to avoid repeated HTTP requests
 
 	// Main module data
 	Endpoints      []Endpoint
@@ -267,8 +268,12 @@ func (m *EndpointsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore 
 	// 	<-semaphore
 	// }()
 
-	servicemap := &awsservicemap.AwsServiceMap{
-		JsonFileSource: "DOWNLOAD_FROM_AWS",
+	// Use shared ServiceMap instance if provided, otherwise create a new one
+	servicemap := m.ServiceMap
+	if servicemap == nil {
+		servicemap = &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 	}
 	res, err := servicemap.IsServiceInRegion("lambda", r)
 	if err != nil {
@@ -328,7 +333,7 @@ func (m *EndpointsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore 
 		wg.Add(1)
 		go m.getELBListenersPerRegion(r, wg, semaphore, dataReceiver)
 	}
-	res, err = servicemap.IsServiceInRegion("apigateway", r)
+	res, err = servicemap.IsServiceInRegion("api-gateway", r)
 	if err != nil {
 		m.modLog.Error(err)
 	}

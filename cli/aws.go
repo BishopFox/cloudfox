@@ -4,7 +4,6 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 
@@ -63,6 +62,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/smithy-go/ptr"
+	"github.com/bishopfox/awsservicemap"
 	"github.com/bishopfox/knownawsaccountslookup"
 	"github.com/dominikbraun/graph"
 	"github.com/fatih/color"
@@ -525,7 +525,7 @@ var (
 func initAWSProfiles() {
 	// Ensure only one profile setting is chosen
 	if AWSProfile != "" && AWSProfilesList != "" || AWSProfile != "" && AWSAllProfiles || AWSProfilesList != "" && AWSAllProfiles {
-		log.Fatalf("[-] Error specifying AWS profiles. Choose only one of -p/--profile, -a/--all-profiles, -l/--profiles-list")
+		internal.TxtLog.Fatalf("[-] Error specifying AWS profiles. Choose only one of -p/--profile, -a/--all-profiles, -l/--profiles-list")
 	} else if AWSProfile != "" {
 		AWSProfiles = append(AWSProfiles, AWSProfile)
 	} else if AWSProfilesList != "" {
@@ -612,11 +612,11 @@ func awsPostRun(cmd *cobra.Command, args []string) {
 		outputDirectory := filepath.Join(AWSOutputDirectory, "cached-data", "aws", ptr.ToString(caller.Account))
 		err = internal.SaveCacheToGobFiles(outputDirectory, *caller.Account)
 		if err != nil {
-			log.Fatalf("failed to save cache: %v", err)
+			internal.TxtLog.Fatalf("failed to save cache: %v", err)
 		}
 		err = internal.SaveCacheToFiles(outputDirectory, *caller.Account)
 		if err != nil {
-			log.Fatalf("failed to save cache: %v", err)
+			internal.TxtLog.Fatalf("failed to save cache: %v", err)
 		}
 
 		fmt.Printf("[%s][%s] Cached AWS data written to %s\n", cyan(emoji.Sprintf(":fox:cloudfox v%s :fox:", cmd.Root().Version)), cyan(profile), outputDirectory)
@@ -688,6 +688,9 @@ func runAccessKeysCommand(cmd *cobra.Command, args []string) {
 
 func runApiGwCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
+		sharedServiceMap := &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
 		if err != nil {
 			continue
@@ -701,6 +704,7 @@ func runApiGwCommand(cmd *cobra.Command, args []string) {
 			AWSProfile: profile,
 			Goroutines: Goroutines,
 			WrapTable:  AWSWrapTable,
+			ServiceMap: sharedServiceMap,
 		}
 		m.PrintApiGws(AWSOutputDirectory, Verbosity)
 	}
@@ -731,6 +735,9 @@ func runBucketsCommand(cmd *cobra.Command, args []string) {
 
 func runCloudformationCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
+		sharedServiceMap := &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
 		if err != nil {
@@ -745,6 +752,7 @@ func runCloudformationCommand(cmd *cobra.Command, args []string) {
 			WrapTable:            AWSWrapTable,
 			AWSOutputType:        AWSOutputType,
 			AWSTableCols:         AWSTableCols,
+			ServiceMap:           sharedServiceMap,
 		}
 		m.PrintCloudformationStacks(AWSOutputDirectory, Verbosity)
 	}
@@ -752,6 +760,9 @@ func runCloudformationCommand(cmd *cobra.Command, args []string) {
 
 func runCodeBuildCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
+		sharedServiceMap := &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
 		if err != nil {
@@ -768,6 +779,7 @@ func runCodeBuildCommand(cmd *cobra.Command, args []string) {
 			AWSOutputType:       AWSOutputType,
 			AWSTableCols:        AWSTableCols,
 			PmapperDataBasePath: PmapperDataBasePath,
+			ServiceMap:          sharedServiceMap,
 		}
 		m.PrintCodeBuildProjects(AWSOutputDirectory, Verbosity)
 	}
@@ -775,6 +787,9 @@ func runCodeBuildCommand(cmd *cobra.Command, args []string) {
 
 func runDatabasesCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
+		sharedServiceMap := &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
 		if err != nil {
@@ -792,6 +807,7 @@ func runDatabasesCommand(cmd *cobra.Command, args []string) {
 			WrapTable:      AWSWrapTable,
 			AWSOutputType:  AWSOutputType,
 			AWSTableCols:   AWSTableCols,
+			ServiceMap:     sharedServiceMap,
 		}
 		m.PrintDatabases(AWSOutputDirectory, Verbosity)
 	}
@@ -799,6 +815,9 @@ func runDatabasesCommand(cmd *cobra.Command, args []string) {
 
 func runECRCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
+		sharedServiceMap := &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
 		if err != nil {
@@ -813,6 +832,7 @@ func runECRCommand(cmd *cobra.Command, args []string) {
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
 			AWSTableCols:  AWSTableCols,
+			ServiceMap:    sharedServiceMap,
 		}
 		m.PrintECR(AWSOutputDirectory, Verbosity)
 	}
@@ -820,6 +840,9 @@ func runECRCommand(cmd *cobra.Command, args []string) {
 
 func runSQSCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
+		sharedServiceMap := &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
 		if err != nil {
@@ -837,6 +860,7 @@ func runSQSCommand(cmd *cobra.Command, args []string) {
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
 			AWSTableCols:  AWSTableCols,
+			ServiceMap:    sharedServiceMap,
 		}
 		m.PrintSQS(AWSOutputDirectory, Verbosity)
 	}
@@ -844,17 +868,32 @@ func runSQSCommand(cmd *cobra.Command, args []string) {
 
 func runSNSCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
+		sharedServiceMap := &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
 		if err != nil {
 			continue
 		}
-		cloudFoxSNSClient := aws.InitCloudFoxSNSClient(*caller, profile, cmd.Root().Version, Goroutines, AWSWrapTable, AWSMFAToken)
-		cloudFoxSNSClient.PrintSNS(AWSOutputDirectory, Verbosity)
+		m := aws.SNSModule{
+			SNSClient:  sns.NewFromConfig(AWSConfig),
+			Caller:     *caller,
+			AWSProfile: profile,
+			AWSRegions: internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
+			Goroutines: Goroutines,
+			WrapTable:  AWSWrapTable,
+			ServiceMap: sharedServiceMap,
+		}
+		m.PrintSNS(AWSOutputDirectory, Verbosity)
 	}
 }
 
 func runEKSCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
+		sharedServiceMap := &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
 		if err != nil {
@@ -873,6 +912,7 @@ func runEKSCommand(cmd *cobra.Command, args []string) {
 			AWSOutputType:       AWSOutputType,
 			AWSTableCols:        AWSTableCols,
 			PmapperDataBasePath: PmapperDataBasePath,
+			ServiceMap:          sharedServiceMap,
 		}
 		m.EKS(AWSOutputDirectory, Verbosity)
 	}
@@ -880,6 +920,9 @@ func runEKSCommand(cmd *cobra.Command, args []string) {
 
 func runEndpointsCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
+		sharedServiceMap := &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
 		if err != nil {
@@ -909,6 +952,7 @@ func runEndpointsCommand(cmd *cobra.Command, args []string) {
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
 			AWSTableCols:  AWSTableCols,
+			ServiceMap:    sharedServiceMap,
 		}
 		m.PrintEndpoints(AWSOutputDirectory, Verbosity)
 	}
@@ -916,6 +960,9 @@ func runEndpointsCommand(cmd *cobra.Command, args []string) {
 
 func runEnvsCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
+		sharedServiceMap := &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
 		if err != nil {
@@ -935,6 +982,7 @@ func runEnvsCommand(cmd *cobra.Command, args []string) {
 			LambdaClient:    lambda.NewFromConfig(AWSConfig),
 			LightsailClient: lightsail.NewFromConfig(AWSConfig),
 			SagemakerClient: sagemaker.NewFromConfig(AWSConfig),
+			ServiceMap:      sharedServiceMap,
 		}
 		m.PrintEnvs(AWSOutputDirectory, Verbosity)
 	}
@@ -942,6 +990,9 @@ func runEnvsCommand(cmd *cobra.Command, args []string) {
 
 func runFilesystemsCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
+		sharedServiceMap := &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
 		if err != nil {
@@ -958,6 +1009,7 @@ func runFilesystemsCommand(cmd *cobra.Command, args []string) {
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
 			AWSTableCols:  AWSTableCols,
+			ServiceMap:    sharedServiceMap,
 		}
 		filesystems.PrintFilesystems(AWSOutputDirectory, Verbosity)
 	}
@@ -1382,6 +1434,9 @@ func runIamSimulatorCommand(cmd *cobra.Command, args []string) {
 
 func runInstancesCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
+		sharedServiceMap := &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
 		if err != nil {
@@ -1400,6 +1455,7 @@ func runInstancesCommand(cmd *cobra.Command, args []string) {
 			AWSOutputType:          AWSOutputType,
 			AWSTableCols:           AWSTableCols,
 			PmapperDataBasePath:    PmapperDataBasePath,
+			ServiceMap:             sharedServiceMap,
 		}
 		m.Instances(InstancesFilter, AWSOutputDirectory, Verbosity)
 	}
@@ -1407,6 +1463,9 @@ func runInstancesCommand(cmd *cobra.Command, args []string) {
 
 func runInventoryCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
+		sharedServiceMap := &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
 		if err != nil {
@@ -1460,6 +1519,7 @@ func runInventoryCommand(cmd *cobra.Command, args []string) {
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
 			AWSTableCols:  AWSTableCols,
+			ServiceMap:    sharedServiceMap,
 		}
 		m.PrintInventoryPerRegion(AWSOutputDirectory, Verbosity)
 	}
@@ -1467,6 +1527,9 @@ func runInventoryCommand(cmd *cobra.Command, args []string) {
 
 func runLambdasCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
+		sharedServiceMap := &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
 		if err != nil {
@@ -1484,6 +1547,7 @@ func runLambdasCommand(cmd *cobra.Command, args []string) {
 			AWSOutputType:       AWSOutputType,
 			AWSTableCols:        AWSTableCols,
 			PmapperDataBasePath: PmapperDataBasePath,
+			ServiceMap:          sharedServiceMap,
 		}
 		m.PrintLambdas(AWSOutputDirectory, Verbosity)
 	}
@@ -1491,6 +1555,9 @@ func runLambdasCommand(cmd *cobra.Command, args []string) {
 
 func runOutboundAssumedRolesCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
+		sharedServiceMap := &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
 		if err != nil {
@@ -1506,6 +1573,7 @@ func runOutboundAssumedRolesCommand(cmd *cobra.Command, args []string) {
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
 			AWSTableCols:  AWSTableCols,
+			ServiceMap:    sharedServiceMap,
 		}
 		m.PrintOutboundRoleTrusts(OutboundAssumedRolesDays, AWSOutputDirectory, Verbosity)
 	}
@@ -1593,6 +1661,9 @@ func runPrincipalsCommand(cmd *cobra.Command, args []string) {
 
 func runRAMCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
+		sharedServiceMap := &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
 		if err != nil {
@@ -1607,6 +1678,7 @@ func runRAMCommand(cmd *cobra.Command, args []string) {
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
 			AWSTableCols:  AWSTableCols,
+			ServiceMap:    sharedServiceMap,
 		}
 		ram.PrintRAM(AWSOutputDirectory, Verbosity)
 
@@ -1620,6 +1692,9 @@ func runResourceTrustsCommand(cmd *cobra.Command, args []string) {
 }
 
 func runResourceTrustsCommandWithProfile(cmd *cobra.Command, args []string, profile string) {
+	sharedServiceMap := &awsservicemap.AwsServiceMap{
+		JsonFileSource: "DOWNLOAD_FROM_AWS",
+	}
 	var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
 	caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
 	var KMSClient sdk.KMSClientInterface = kms.NewFromConfig(AWSConfig)
@@ -1645,6 +1720,7 @@ func runResourceTrustsCommandWithProfile(cmd *cobra.Command, args []string, prof
 		AWSOutputType:      AWSOutputType,
 		AWSTableCols:       AWSTableCols,
 		AWSConfig:          AWSConfig,
+		ServiceMap:         sharedServiceMap,
 	}
 	m.PrintResources(AWSOutputDirectory, Verbosity, ResourceTrustsIncludeKms)
 }
@@ -1695,6 +1771,9 @@ func runRoute53Command(cmd *cobra.Command, args []string) {
 
 func runSecretsCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
+		sharedServiceMap := &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
 		if err != nil {
@@ -1711,6 +1790,7 @@ func runSecretsCommand(cmd *cobra.Command, args []string) {
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
 			AWSTableCols:  AWSTableCols,
+			ServiceMap:    sharedServiceMap,
 		}
 		m.PrintSecrets(AWSOutputDirectory, Verbosity)
 	}
@@ -1740,6 +1820,9 @@ func runTagsCommand(cmd *cobra.Command, args []string) {
 
 func runWorkloadsCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
+		sharedServiceMap := &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
 		if err != nil {
@@ -1760,6 +1843,7 @@ func runWorkloadsCommand(cmd *cobra.Command, args []string) {
 			AWSOutputType:       AWSOutputType,
 			AWSTableCols:        AWSTableCols,
 			PmapperDataBasePath: PmapperDataBasePath,
+			ServiceMap:          sharedServiceMap,
 		}
 		m.PrintWorkloads(AWSOutputDirectory, Verbosity)
 	}
@@ -1767,6 +1851,9 @@ func runWorkloadsCommand(cmd *cobra.Command, args []string) {
 
 func runDirectoryServicesCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
+		sharedServiceMap := &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
 		if err != nil {
@@ -1781,6 +1868,7 @@ func runDirectoryServicesCommand(cmd *cobra.Command, args []string) {
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
 			AWSTableCols:  AWSTableCols,
+			ServiceMap:    sharedServiceMap,
 		}
 		m.PrintDirectories(AWSOutputDirectory, Verbosity)
 	}
@@ -1788,6 +1876,9 @@ func runDirectoryServicesCommand(cmd *cobra.Command, args []string) {
 
 func runECSTasksCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
+		sharedServiceMap := &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
 		if err != nil {
 			continue
@@ -1806,6 +1897,7 @@ func runECSTasksCommand(cmd *cobra.Command, args []string) {
 			AWSOutputType:       AWSOutputType,
 			AWSTableCols:        AWSTableCols,
 			PmapperDataBasePath: PmapperDataBasePath,
+			ServiceMap:          sharedServiceMap,
 		}
 		m.ECSTasks(AWSOutputDirectory, Verbosity)
 	}
@@ -1813,6 +1905,9 @@ func runECSTasksCommand(cmd *cobra.Command, args []string) {
 
 func runENICommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
+		sharedServiceMap := &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
 		if err != nil {
 			continue
@@ -1827,6 +1922,7 @@ func runENICommand(cmd *cobra.Command, args []string) {
 			WrapTable:     AWSWrapTable,
 			AWSOutputType: AWSOutputType,
 			AWSTableCols:  AWSTableCols,
+			ServiceMap:    sharedServiceMap,
 		}
 		m.ElasticNetworkInterfaces(AWSOutputDirectory, Verbosity)
 	}
@@ -1834,6 +1930,9 @@ func runENICommand(cmd *cobra.Command, args []string) {
 
 func runNetworkPortsCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
+		sharedServiceMap := &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
 		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
 		if err != nil {
 			continue
@@ -1854,6 +1953,7 @@ func runNetworkPortsCommand(cmd *cobra.Command, args []string) {
 			Verbosity:         Verbosity,
 			AWSOutputType:     AWSOutputType,
 			AWSTableCols:      AWSTableCols,
+			ServiceMap:        sharedServiceMap,
 		}
 		m.PrintNetworkPorts(AWSOutputDirectory)
 	}

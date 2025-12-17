@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	secretsmanagerTypes "github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
 	"github.com/patrickmn/go-cache"
+	"github.com/sirupsen/logrus"
 )
 
 type SecretsManagerClientInterface interface {
@@ -30,8 +31,20 @@ func CachedSecretsManagerListSecrets(client SecretsManagerClientInterface, accou
 	cacheKey := fmt.Sprintf("%s-secretsmanager-ListSecrets-%s", accountID, region)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":     "secretsmanager:ListSecrets",
+			"account": accountID,
+			"region":  region,
+			"cache":   "hit",
+		}).Info("AWS API call")
 		return cached.([]secretsmanagerTypes.SecretListEntry), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":     "secretsmanager:ListSecrets",
+		"account": accountID,
+		"region":  region,
+		"cache":   "miss",
+	}).Info("AWS API call")
 	for {
 		ListSecrets, err := client.ListSecrets(
 			context.TODO(),
@@ -66,8 +79,22 @@ func CachedSecretsManagerGetResourcePolicy(client SecretsManagerClientInterface,
 	cacheKey := fmt.Sprintf("%s-secretsmanager-GetResourcePolicy-%s-%s", accountID, region, secretId)
 	cached, found := internal.Cache.Get(cacheKey)
 	if found {
+		sharedLogger.WithFields(logrus.Fields{
+			"api":      "secretsmanager:GetResourcePolicy",
+			"account":  accountID,
+			"region":   region,
+			"secretId": secretId,
+			"cache":    "hit",
+		}).Info("AWS API call")
 		return cached.(policy.Policy), nil
 	}
+	sharedLogger.WithFields(logrus.Fields{
+		"api":      "secretsmanager:GetResourcePolicy",
+		"account":  accountID,
+		"region":   region,
+		"secretId": secretId,
+		"cache":    "miss",
+	}).Info("AWS API call")
 	GetResourcePolicy, err := client.GetResourcePolicy(
 		context.TODO(),
 		&secretsmanager.GetResourcePolicyInput{
