@@ -12,7 +12,7 @@ import (
 )
 
 var GCPBigQueryCommand = &cobra.Command{
-	Use:     "bigquery",
+	Use:     globals.GCP_BIGQUERY_MODULE_NAME,
 	Aliases: []string{},
 	Short:   "Display Bigquery datasets and tables information",
 	Args:    cobra.MinimumNArgs(0),

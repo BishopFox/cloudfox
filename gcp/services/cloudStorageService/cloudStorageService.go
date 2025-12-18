@@ -9,11 +9,20 @@ import (
 )
 
 type CloudStorageService struct {
-	// DataStoreService datastoreservice.DataStoreService
+	ctx    context.Context
+	client *storage.Client
 }
 
 func New() *CloudStorageService {
-	return &CloudStorageService{}
+	ctx := context.Background()
+	client, err := storage.NewClient(ctx)
+	if err != nil {
+		panic(fmt.Sprintf("failed to create client: %v", err))
+	}
+	return &CloudStorageService{
+		ctx:    ctx,
+		client: client,
+	}
 }
 
 // type ObjectInfo struct {
@@ -23,21 +32,16 @@ func New() *CloudStorageService {
 // }
 
 type BucketInfo struct {
-	Name      string `json:"name"`
-	Location  string `json:"location"`
-	ProjectID string `json:"projectID"`
+	Name      string
+	Location  string
+	ProjectID string
+	IsPublic  string
 }
 
+// Buckets retrieves all buckets in the specified project.
 func (cs *CloudStorageService) Buckets(projectID string) ([]BucketInfo, error) {
-	ctx := context.Background()
-	client, err := storage.NewClient(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("Failed to create client: %v", err)
-	}
-	defer client.Close()
-
 	var buckets []BucketInfo
-	bucketIterator := client.Buckets(ctx, projectID)
+	bucketIterator := cs.client.Buckets(cs.ctx, projectID)
 	for {
 		battrs, err := bucketIterator.Next()
 		if err == iterator.Done {
@@ -46,10 +50,59 @@ func (cs *CloudStorageService) Buckets(projectID string) ([]BucketInfo, error) {
 		if err != nil {
 			return nil, err
 		}
-		bucket := BucketInfo{Name: battrs.Name, Location: battrs.Location, ProjectID: projectID}
+		bucket := BucketInfo{
+			Name:      battrs.Name,
+			Location:  battrs.Location,
+			ProjectID: projectID,
+			IsPublic:  cs.isBucketPublic(battrs),
+		}
 		buckets = append(buckets, bucket)
 	}
 	return buckets, nil
+}
+
+// Close closes the Cloud Storage client.
+func (cs *CloudStorageService) Close() error {
+	return cs.client.Close()
+}
+
+// isBucketPublic checks if a bucket is publicly accessible.
+func (cs *CloudStorageService) isBucketPublic(bucketAttrs *storage.BucketAttrs) string {
+	if bucketAttrs.PublicAccessPrevention == storage.PublicAccessPreventionEnforced {
+		return "No"
+	}
+
+	if bucketAttrs.UniformBucketLevelAccess.Enabled {
+		// With Uniform Bucket-Level Access enabled, ACLs are disabled.
+		policy, err := cs.client.Bucket(bucketAttrs.Name).IAM().V3().Policy(cs.ctx)
+		if err != nil {
+			panic(err)
+		}
+
+		for _, binding := range policy.Bindings {
+			for _, member := range binding.Members {
+				if member == "allUsers" || member == "allAuthenticatedUsers" {
+					return fmt.Sprintf("Yes - IAM (%v)", member)
+				}
+			}
+		}
+	} else {
+		acls := bucketAttrs.ACL
+		for _, acl := range acls {
+			if acl.Entity == storage.AllUsers || acl.Entity == storage.AllAuthenticatedUsers {
+				return fmt.Sprintf("Yes - ACL (%v)", acl.Entity)
+			}
+		}
+
+		defaultAcls := bucketAttrs.DefaultObjectACL
+		for _, acl := range defaultAcls {
+			if acl.Entity == storage.AllUsers || acl.Entity == storage.AllAuthenticatedUsers {
+				return fmt.Sprintf("Yes - Default ACL (%v)", acl.Entity)
+			}
+		}
+	}
+
+	return "No"
 }
 
 // func (cs *CloudStorageService) BucketsWithMetaData(projectID string) (map[string][]BucketInfo, error) {

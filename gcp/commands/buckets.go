@@ -35,6 +35,7 @@ func (g GCPBucketsResults) TableFiles() []internal.TableFile {
 		"Name",
 		"Location",
 		"ProjectID",
+		"IsPublic?",
 	}
 
 	var body [][]string
@@ -46,6 +47,7 @@ func (g GCPBucketsResults) TableFiles() []internal.TableFile {
 				value.Name,
 				value.Location,
 				value.ProjectID,
+				value.IsPublic,
 			},
 		)
 	}
@@ -87,6 +89,8 @@ func runGCPBucketsCommand(cmd *cobra.Command, args []string) {
 
 	// Get the bucket info using the projectIDs and CloudStorageService
 	cs := CloudStorageService.New()
+	defer cs.Close()
+
 	var results []CloudStorageService.BucketInfo
 
 	// Set output params leveraging parent (gcp) pflag values
