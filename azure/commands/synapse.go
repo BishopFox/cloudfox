@@ -227,6 +227,11 @@ func (m *SynapseModule) processWorkspace(ctx context.Context, workspace *armsyna
 	sqlOnDemandEndpoint := "N/A"
 	devEndpoint := "N/A"
 	publicPrivate := "Unknown"
+	managedVNet := "Disabled"
+	dataExfilProtection := "Disabled"
+	sqlAdminLogin := "N/A"
+	trustedServiceBypass := "Disabled"
+	encryptionCMK := "Platform-managed"
 
 	if workspace.Properties != nil {
 		if workspace.Properties.ConnectivityEndpoints != nil {
@@ -250,6 +255,38 @@ func (m *SynapseModule) processWorkspace(ctx context.Context, workspace *armsyna
 				publicPrivate = "Public"
 			} else {
 				publicPrivate = "Private"
+			}
+		}
+
+		// Check Managed Virtual Network
+		if workspace.Properties.ManagedVirtualNetwork != nil && *workspace.Properties.ManagedVirtualNetwork != "" {
+			managedVNet = "Enabled"
+		}
+
+		// Check Data Exfiltration Protection
+		if workspace.Properties.ManagedVirtualNetworkSettings != nil {
+			if workspace.Properties.ManagedVirtualNetworkSettings.PreventDataExfiltration != nil && *workspace.Properties.ManagedVirtualNetworkSettings.PreventDataExfiltration {
+				dataExfilProtection = "Enabled"
+			}
+			if workspace.Properties.ManagedVirtualNetworkSettings.AllowedAADTenantIDsForLinking != nil && len(workspace.Properties.ManagedVirtualNetworkSettings.AllowedAADTenantIDsForLinking) > 0 {
+				dataExfilProtection += " (Tenant Restricted)"
+			}
+		}
+
+		// SQL Admin login
+		if workspace.Properties.SQLAdministratorLogin != nil {
+			sqlAdminLogin = *workspace.Properties.SQLAdministratorLogin
+		}
+
+		// Trusted Service Bypass
+		if workspace.Properties.TrustedServiceBypassEnabled != nil && *workspace.Properties.TrustedServiceBypassEnabled {
+			trustedServiceBypass = "Enabled"
+		}
+
+		// CMK Encryption
+		if workspace.Properties.Encryption != nil && workspace.Properties.Encryption.Cmk != nil {
+			if workspace.Properties.Encryption.Cmk.Key != nil && workspace.Properties.Encryption.Cmk.Key.Name != nil {
+				encryptionCMK = *workspace.Properties.Encryption.Cmk.Key.Name
 			}
 		}
 	}
@@ -302,7 +339,12 @@ func (m *SynapseModule) processWorkspace(ctx context.Context, workspace *armsyna
 		workspaceName,
 		workspaceEndpoint,
 		publicPrivate,
+		managedVNet,
+		dataExfilProtection,
 		entraIDAuth,
+		sqlAdminLogin,
+		trustedServiceBypass,
+		encryptionCMK,
 		sysID,
 		userIDs,
 	}
@@ -336,7 +378,7 @@ func (m *SynapseModule) enumerateSQLPools(ctx context.Context, subID, subName, r
 		for _, pool := range page.Value {
 			poolName := azinternal.SafeStringPtr(pool.Name)
 			endpoint := fmt.Sprintf("%s.sql.azuresynapse.net", workspaceName)
-			publicPrivate := "Public" // SQL pools use workspace network settings
+			publicPrivate := "Inherited" // SQL pools use workspace network settings
 
 			row := []string{
 				m.TenantName,
@@ -350,8 +392,13 @@ func (m *SynapseModule) enumerateSQLPools(ctx context.Context, subID, subName, r
 				poolName,
 				endpoint,
 				publicPrivate,
-				entraIDAuth, // SQL pools inherit workspace auth settings
-				"N/A",       // SQL pools inherit workspace identity
+				"Inherited",       // Managed VNet - inherited from workspace
+				"Inherited",       // Data Exfil Protection - inherited from workspace
+				entraIDAuth,       // SQL pools inherit workspace auth settings
+				"Inherited",       // SQL Admin Login - inherited from workspace
+				"Inherited",       // Trusted Service Bypass - inherited
+				"Inherited",       // CMK - inherited from workspace
+				"N/A",             // SQL pools inherit workspace identity
 				"N/A",
 			}
 
@@ -380,7 +427,7 @@ func (m *SynapseModule) enumerateSparkPools(ctx context.Context, subID, subName,
 		for _, pool := range page.Value {
 			poolName := azinternal.SafeStringPtr(pool.Name)
 			endpoint := fmt.Sprintf("%s.dev.azuresynapse.net", workspaceName)
-			publicPrivate := "Public" // Spark pools use workspace network settings
+			publicPrivate := "Inherited" // Spark pools use workspace network settings
 
 			row := []string{
 				m.TenantName,
@@ -394,8 +441,13 @@ func (m *SynapseModule) enumerateSparkPools(ctx context.Context, subID, subName,
 				poolName,
 				endpoint,
 				publicPrivate,
-				entraIDAuth, // Spark pools inherit workspace auth settings
-				"N/A",       // Spark pools inherit workspace identity
+				"Inherited",       // Managed VNet - inherited from workspace
+				"Inherited",       // Data Exfil Protection - inherited from workspace
+				entraIDAuth,       // Spark pools inherit workspace auth settings
+				"Inherited",       // SQL Admin Login - inherited from workspace
+				"Inherited",       // Trusted Service Bypass - inherited
+				"Inherited",       // CMK - inherited from workspace
+				"N/A",             // Spark pools inherit workspace identity
 				"N/A",
 			}
 
@@ -812,9 +864,14 @@ func (m *SynapseModule) writeOutput(ctx context.Context, logger internal.Logger)
 		"Resource Name",
 		"Endpoint",
 		"Public/Private",
-		"EntraID Centralized Auth",
-		"System Assigned Identity ID",
-		"User Assigned Identity ID",
+		"Managed VNet",
+		"Data Exfil Protection",
+		"EntraID Auth Only",
+		"SQL Admin Login",
+		"Trusted Svc Bypass",
+		"CMK Encryption",
+		"System Assigned ID",
+		"User Assigned ID",
 	}
 
 	// Check if we should split output by tenant

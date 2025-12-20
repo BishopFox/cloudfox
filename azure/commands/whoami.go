@@ -288,6 +288,8 @@ func (m *WhoamiModule) processSubscription(ctx context.Context, subscriptionID s
 					//	assignedVia, azinternal.SafeString(roleName), scope, *ra.Properties.PrincipalID), globals.AZ_WHOAMI_MODULE_NAME)
 
 					m.RoleRows = append(m.RoleRows, []string{
+						m.TenantName,
+						m.TenantID,
 						m.UserUPN,
 						m.UserDisplayName,
 						m.UserType,
@@ -420,6 +422,8 @@ func (m *WhoamiModule) processSubscription(ctx context.Context, subscriptionID s
 				//	assignedVia, roleName, scope, status, principalID), globals.AZ_WHOAMI_MODULE_NAME)
 
 				m.RoleRows = append(m.RoleRows, []string{
+					m.TenantName,
+					m.TenantID,
 					m.UserUPN,
 					m.UserDisplayName,
 					m.UserType,
@@ -489,6 +493,8 @@ func (m *WhoamiModule) processSubscription(ctx context.Context, subscriptionID s
 				//	assignedVia, roleName, scope, principalID), globals.AZ_WHOAMI_MODULE_NAME)
 
 				m.RoleRows = append(m.RoleRows, []string{
+					m.TenantName,
+					m.TenantID,
 					m.UserUPN,
 					m.UserDisplayName,
 					m.UserType,

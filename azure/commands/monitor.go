@@ -232,7 +232,10 @@ func (m *MonitorModule) processLogAnalyticsWorkspaces(ctx context.Context, subID
 			retentionDays := int32(0)
 			dailyQuotaGB := "Unlimited"
 			provisioningState := "Unknown"
-			publicNetworkAccess := "Enabled"
+			publicNetworkAccessIngestion := "Enabled"
+			publicNetworkAccessQuery := "Enabled"
+			immediatePurgeEnabled := "No"
+			disableLocalAuth := "No"
 
 			if workspace.ID != nil {
 				workspaceID = *workspace.ID
@@ -251,10 +254,22 @@ func (m *MonitorModule) processLogAnalyticsWorkspaces(ctx context.Context, subID
 					provisioningState = string(*workspace.Properties.ProvisioningState)
 				}
 				if workspace.Properties.PublicNetworkAccessForIngestion != nil {
-					publicNetworkAccess = string(*workspace.Properties.PublicNetworkAccessForIngestion)
+					publicNetworkAccessIngestion = string(*workspace.Properties.PublicNetworkAccessForIngestion)
+				}
+				if workspace.Properties.PublicNetworkAccessForQuery != nil {
+					publicNetworkAccessQuery = string(*workspace.Properties.PublicNetworkAccessForQuery)
 				}
 				if workspace.Properties.WorkspaceCapping != nil && workspace.Properties.WorkspaceCapping.DailyQuotaGb != nil {
 					dailyQuotaGB = fmt.Sprintf("%.2f GB", *workspace.Properties.WorkspaceCapping.DailyQuotaGb)
+				}
+				// Features property contains access control settings
+				if workspace.Properties.Features != nil {
+					if workspace.Properties.Features.ImmediatePurgeDataOn30Days != nil && *workspace.Properties.Features.ImmediatePurgeDataOn30Days {
+						immediatePurgeEnabled = "Yes"
+					}
+					if workspace.Properties.Features.DisableLocalAuth != nil && *workspace.Properties.Features.DisableLocalAuth {
+						disableLocalAuth = "Yes"
+					}
 				}
 			}
 			if workspace.Properties != nil && workspace.Properties.SKU != nil && workspace.Properties.SKU.Name != nil {
@@ -271,9 +286,24 @@ func (m *MonitorModule) processLogAnalyticsWorkspaces(ctx context.Context, subID
 				securityIssues = append(securityIssues, fmt.Sprintf("Low retention: %d days", retentionDays))
 			}
 
-			// Check public network access
-			if publicNetworkAccess == "Enabled" {
-				securityIssues = append(securityIssues, "Public network access enabled")
+			// Check public network access for ingestion
+			if publicNetworkAccessIngestion == "Enabled" {
+				securityIssues = append(securityIssues, "Public ingestion enabled")
+			}
+
+			// Check public network access for query
+			if publicNetworkAccessQuery == "Enabled" {
+				securityIssues = append(securityIssues, "Public query enabled")
+			}
+
+			// Check if local auth is enabled (less secure)
+			if disableLocalAuth == "No" {
+				securityIssues = append(securityIssues, "Local auth enabled")
+			}
+
+			// Check immediate purge (data loss risk)
+			if immediatePurgeEnabled == "Yes" {
+				securityIssues = append(securityIssues, "Immediate purge enabled")
 			}
 
 			// Check provisioning state
@@ -285,6 +315,9 @@ func (m *MonitorModule) processLogAnalyticsWorkspaces(ctx context.Context, subID
 			securityIssuesStr := "None"
 			if len(securityIssues) > 0 {
 				securityIssuesStr = strings.Join(securityIssues, "; ")
+				if riskLevel == "INFO" {
+					riskLevel = "LOW"
+				}
 			}
 
 			// Build row
@@ -298,7 +331,10 @@ func (m *MonitorModule) processLogAnalyticsWorkspaces(ctx context.Context, subID
 				fmt.Sprintf("%d", retentionDays),
 				dailyQuotaGB,
 				provisioningState,
-				publicNetworkAccess,
+				publicNetworkAccessIngestion,
+				publicNetworkAccessQuery,
+				disableLocalAuth,
+				immediatePurgeEnabled,
 				securityIssuesStr,
 				riskLevel,
 			}
@@ -788,7 +824,10 @@ func (m *MonitorModule) writeOutput(ctx context.Context, logger internal.Logger)
 		"Retention Days",
 		"Daily Quota",
 		"Provisioning State",
-		"Public Network Access",
+		"Public Ingestion",
+		"Public Query",
+		"Local Auth Disabled",
+		"Immediate Purge",
 		"Security Issues",
 		"Risk Level",
 	}

@@ -35,10 +35,11 @@ type MachineLearningModule struct {
 	azinternal.BaseAzureModule // Embed common fields
 
 	// Module-specific fields
-	Subscriptions []string
-	MLRows        [][]string
-	LootMap       map[string]*internal.LootFile
-	mu            sync.Mutex
+	Subscriptions   []string
+	MLRows          [][]string
+	WorkspaceRows   [][]string // Workspace-level security config
+	LootMap         map[string]*internal.LootFile
+	mu              sync.Mutex
 }
 
 // ------------------------------
@@ -68,6 +69,7 @@ func ListMachineLearning(cmd *cobra.Command, args []string) {
 		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
 		Subscriptions:   cmdCtx.Subscriptions,
 		MLRows:          [][]string{},
+		WorkspaceRows:   [][]string{},
 		LootMap: map[string]*internal.LootFile{
 			"ml-credentials": {Name: "ml-credentials", Contents: ""},
 			"ml-computes":    {Name: "ml-computes", Contents: ""},
@@ -164,6 +166,54 @@ func (m *MachineLearningModule) processWorkspace(ctx context.Context, subID, sub
 		return
 	}
 
+	// Extract workspace-level security properties
+	publicNetworkAccess := "Enabled"
+	hbiWorkspace := "No"
+	allowPublicAccessBehindVnet := "Yes"
+	imageBuildCompute := "N/A"
+	encryptionKeyVaultID := "N/A"
+	encryptionKeyID := "N/A"
+	sku := "N/A"
+
+	if ws.Properties != nil {
+		// Public Network Access
+		if ws.Properties.PublicNetworkAccess != nil {
+			publicNetworkAccess = string(*ws.Properties.PublicNetworkAccess)
+		}
+
+		// High Business Impact workspace
+		if ws.Properties.HbiWorkspace != nil && *ws.Properties.HbiWorkspace {
+			hbiWorkspace = "Yes"
+		}
+
+		// Allow public access when behind VNet
+		if ws.Properties.AllowPublicAccessWhenBehindVnet != nil && !*ws.Properties.AllowPublicAccessWhenBehindVnet {
+			allowPublicAccessBehindVnet = "No"
+		}
+
+		// Image build compute target
+		if ws.Properties.ImageBuildCompute != nil && *ws.Properties.ImageBuildCompute != "" {
+			imageBuildCompute = *ws.Properties.ImageBuildCompute
+		}
+
+		// Encryption settings (CMK)
+		if ws.Properties.Encryption != nil {
+			if ws.Properties.Encryption.KeyVaultProperties != nil {
+				if ws.Properties.Encryption.KeyVaultProperties.KeyVaultArmID != nil {
+					encryptionKeyVaultID = *ws.Properties.Encryption.KeyVaultProperties.KeyVaultArmID
+				}
+				if ws.Properties.Encryption.KeyVaultProperties.KeyIdentifier != nil {
+					encryptionKeyID = *ws.Properties.Encryption.KeyVaultProperties.KeyIdentifier
+				}
+			}
+		}
+	}
+
+	// Get SKU
+	if ws.SKU != nil && ws.SKU.Name != nil {
+		sku = *ws.SKU.Name
+	}
+
 	// Extract managed identity information for the workspace
 	var systemAssignedIDs []string
 	var userAssignedIDs []string
@@ -205,6 +255,28 @@ func (m *MachineLearningModule) processWorkspace(ctx context.Context, subID, sub
 			userIDsStr += id
 		}
 	}
+
+	// Add workspace security row
+	m.mu.Lock()
+	m.WorkspaceRows = append(m.WorkspaceRows, []string{
+		m.TenantName,
+		m.TenantID,
+		subID,
+		subName,
+		rgName,
+		region,
+		workspaceName,
+		sku,
+		publicNetworkAccess,
+		hbiWorkspace,
+		allowPublicAccessBehindVnet,
+		imageBuildCompute,
+		encryptionKeyVaultID,
+		encryptionKeyID,
+		systemIDsStr,
+		userIDsStr,
+	})
+	m.mu.Unlock()
 
 	// Extract datastore credentials
 	datastoreCreds := azinternal.GetMLDatastoreCredentials(m.Session, subID, rgName, workspaceName, region)
@@ -351,13 +423,13 @@ func (m *MachineLearningModule) addConnectionRow(subID, subName string, conn azi
 // Write output (AWS-style writeLoot pattern)
 // ------------------------------
 func (m *MachineLearningModule) writeOutput(ctx context.Context, logger internal.Logger) {
-	if len(m.MLRows) == 0 {
-		logger.InfoM("No Machine Learning credentials found", globals.AZ_MACHINE_LEARNING_MODULE_NAME)
+	if len(m.MLRows) == 0 && len(m.WorkspaceRows) == 0 {
+		logger.InfoM("No Machine Learning resources found", globals.AZ_MACHINE_LEARNING_MODULE_NAME)
 		return
 	}
 
-	// Build headers
-	headers := []string{
+	// Credentials table headers
+	credentialsHeaders := []string{
 		"Tenant Name",
 		"Tenant ID",
 		"Subscription ID",
@@ -374,24 +446,68 @@ func (m *MachineLearningModule) writeOutput(ctx context.Context, logger internal
 		"User Assigned Identity ID",
 	}
 
+	// Workspace security config table headers
+	workspaceHeaders := []string{
+		"Tenant Name",
+		"Tenant ID",
+		"Subscription ID",
+		"Subscription Name",
+		"Resource Group",
+		"Region",
+		"Workspace Name",
+		"SKU",
+		"Public Network Access",
+		"High Business Impact",
+		"Public Access Behind VNet",
+		"Image Build Compute",
+		"Encryption Key Vault",
+		"Encryption Key ID",
+		"System Assigned ID",
+		"User Assigned ID",
+	}
+
 	// Check if we should split output by tenant
 	if m.IsMultiTenant {
-		if err := m.FilterAndWritePerTenantAuto(
-			ctx, logger, m.Tenants, m.MLRows, headers,
-			"machine-learning", globals.AZ_MACHINE_LEARNING_MODULE_NAME,
-		); err != nil {
-			return
+		// Write credentials table
+		if len(m.MLRows) > 0 {
+			if err := m.FilterAndWritePerTenantAuto(
+				ctx, logger, m.Tenants, m.MLRows, credentialsHeaders,
+				"machine-learning", globals.AZ_MACHINE_LEARNING_MODULE_NAME,
+			); err != nil {
+				return
+			}
+		}
+		// Write workspace security table
+		if len(m.WorkspaceRows) > 0 {
+			if err := m.FilterAndWritePerTenantAuto(
+				ctx, logger, m.Tenants, m.WorkspaceRows, workspaceHeaders,
+				"machine-learning-workspaces", globals.AZ_MACHINE_LEARNING_MODULE_NAME,
+			); err != nil {
+				return
+			}
 		}
 		return
 	}
 
 	// Check if we should split output by subscription
 	if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
-		if err := m.FilterAndWritePerSubscriptionAuto(
-			ctx, logger, m.Subscriptions, m.MLRows, headers,
-			"machine-learning", globals.AZ_MACHINE_LEARNING_MODULE_NAME,
-		); err != nil {
-			return
+		// Write credentials table
+		if len(m.MLRows) > 0 {
+			if err := m.FilterAndWritePerSubscriptionAuto(
+				ctx, logger, m.Subscriptions, m.MLRows, credentialsHeaders,
+				"machine-learning", globals.AZ_MACHINE_LEARNING_MODULE_NAME,
+			); err != nil {
+				return
+			}
+		}
+		// Write workspace security table
+		if len(m.WorkspaceRows) > 0 {
+			if err := m.FilterAndWritePerSubscriptionAuto(
+				ctx, logger, m.Subscriptions, m.WorkspaceRows, workspaceHeaders,
+				"machine-learning-workspaces", globals.AZ_MACHINE_LEARNING_MODULE_NAME,
+			); err != nil {
+				return
+			}
 		}
 		return
 	}
@@ -404,16 +520,27 @@ func (m *MachineLearningModule) writeOutput(ctx context.Context, logger internal
 		}
 	}
 
+	// Build tables array
+	tables := []internal.TableFile{}
+	if len(m.MLRows) > 0 {
+		tables = append(tables, internal.TableFile{
+			Name:   "machine-learning",
+			Header: credentialsHeaders,
+			Body:   m.MLRows,
+		})
+	}
+	if len(m.WorkspaceRows) > 0 {
+		tables = append(tables, internal.TableFile{
+			Name:   "machine-learning-workspaces",
+			Header: workspaceHeaders,
+			Body:   m.WorkspaceRows,
+		})
+	}
+
 	// Create output
 	output := MachineLearningOutput{
-		Table: []internal.TableFile{
-			{
-				Name:   "machine-learning",
-				Header: headers,
-				Body:   m.MLRows,
-			},
-		},
-		Loot: loot,
+		Table: tables,
+		Loot:  loot,
 	}
 
 	// Determine output scope (single subscription vs tenant-wide consolidation)
@@ -437,5 +564,5 @@ func (m *MachineLearningModule) writeOutput(ctx context.Context, logger internal
 		m.CommandCounter.Error++
 	}
 
-	logger.SuccessM(fmt.Sprintf("Found %d ML credentials across %d subscription(s)", len(m.MLRows), len(m.Subscriptions)), globals.AZ_MACHINE_LEARNING_MODULE_NAME)
+	logger.SuccessM(fmt.Sprintf("Found %d ML workspaces and %d credentials across %d subscription(s)", len(m.WorkspaceRows), len(m.MLRows), len(m.Subscriptions)), globals.AZ_MACHINE_LEARNING_MODULE_NAME)
 }

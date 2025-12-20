@@ -2,6 +2,7 @@ package azure
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -98,6 +99,310 @@ func NewStaticTokenCredential(token string) *StaticTokenCredential {
 	return &StaticTokenCredential{Token: token}
 }
 
+// TokenInfo contains decoded information from an Azure JWT token
+type TokenInfo struct {
+	// Token metadata
+	TokenType string `json:"typ,omitempty"`
+	Algorithm string `json:"alg,omitempty"`
+
+	// Identity claims
+	Subject           string   `json:"sub,omitempty"`            // Subject (usually object ID)
+	ObjectID          string   `json:"oid,omitempty"`            // Object ID of the principal
+	UserPrincipalName string   `json:"upn,omitempty"`            // UPN for users
+	Name              string   `json:"name,omitempty"`           // Display name
+	Email             string   `json:"email,omitempty"`          // Email (alternative to UPN)
+	PreferredUsername string   `json:"preferred_username,omitempty"`
+	UniqueName        string   `json:"unique_name,omitempty"`    // Legacy UPN claim
+	AppID             string   `json:"appid,omitempty"`          // Application (client) ID
+	AppIDACR          string   `json:"appidacr,omitempty"`       // App authentication context class reference
+	Roles             []string `json:"roles,omitempty"`          // App roles assigned
+	Groups            []string `json:"groups,omitempty"`         // Group memberships (if included)
+	WIDs              []string `json:"wids,omitempty"`           // Azure AD built-in role IDs
+
+	// Audience and issuer
+	Audience string `json:"aud,omitempty"` // Audience (resource the token is for)
+	Issuer   string `json:"iss,omitempty"` // Issuer (Azure AD endpoint)
+	TenantID string `json:"tid,omitempty"` // Tenant ID
+
+	// Scopes
+	Scopes string `json:"scp,omitempty"` // Delegated permission scopes (space-separated)
+
+	// Timestamps
+	IssuedAt   int64 `json:"iat,omitempty"` // Issued at (Unix timestamp)
+	NotBefore  int64 `json:"nbf,omitempty"` // Not before (Unix timestamp)
+	Expiration int64 `json:"exp,omitempty"` // Expiration (Unix timestamp)
+
+	// Additional claims
+	Version         string `json:"ver,omitempty"`          // Token version (1.0 or 2.0)
+	AuthTime        int64  `json:"auth_time,omitempty"`    // Authentication time
+	AMR             []string `json:"amr,omitempty"`        // Authentication methods
+	IPAddress       string `json:"ipaddr,omitempty"`       // Client IP address
+	DeviceID        string `json:"deviceid,omitempty"`     // Device ID
+	IdentityProvider string `json:"idp,omitempty"`         // Identity provider
+
+	// Raw claims for anything we missed
+	RawClaims map[string]interface{} `json:"-"`
+}
+
+// DecodeJWTToken decodes an Azure JWT token and returns the claims
+// Note: This does NOT verify the signature - it only decodes the payload
+func DecodeJWTToken(token string) (*TokenInfo, error) {
+	// JWT format: header.payload.signature
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("invalid JWT format: expected 3 parts, got %d", len(parts))
+	}
+
+	// Decode the payload (second part)
+	payload := parts[1]
+
+	// Add padding if necessary (base64url encoding may omit padding)
+	switch len(payload) % 4 {
+	case 2:
+		payload += "=="
+	case 3:
+		payload += "="
+	}
+
+	// Decode base64url (replace URL-safe characters)
+	payload = strings.ReplaceAll(payload, "-", "+")
+	payload = strings.ReplaceAll(payload, "_", "/")
+
+	decoded, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode JWT payload: %v", err)
+	}
+
+	// Parse JSON into TokenInfo
+	var info TokenInfo
+	if err := json.Unmarshal(decoded, &info); err != nil {
+		return nil, fmt.Errorf("failed to parse JWT claims: %v", err)
+	}
+
+	// Also store raw claims for any additional fields
+	var rawClaims map[string]interface{}
+	if err := json.Unmarshal(decoded, &rawClaims); err == nil {
+		info.RawClaims = rawClaims
+	}
+
+	// Also decode the header for token type info
+	header := parts[0]
+	switch len(header) % 4 {
+	case 2:
+		header += "=="
+	case 3:
+		header += "="
+	}
+	header = strings.ReplaceAll(header, "-", "+")
+	header = strings.ReplaceAll(header, "_", "/")
+
+	if headerDecoded, err := base64.StdEncoding.DecodeString(header); err == nil {
+		var headerInfo struct {
+			Typ string `json:"typ"`
+			Alg string `json:"alg"`
+		}
+		if json.Unmarshal(headerDecoded, &headerInfo) == nil {
+			info.TokenType = headerInfo.Typ
+			info.Algorithm = headerInfo.Alg
+		}
+	}
+
+	return &info, nil
+}
+
+// GetAudienceDescription returns a human-readable description of the token audience
+func (t *TokenInfo) GetAudienceDescription() string {
+	switch {
+	case strings.Contains(t.Audience, "management.azure.com") || strings.Contains(t.Audience, "management.core.windows.net"):
+		return "Azure Resource Manager (ARM)"
+	case strings.Contains(t.Audience, "graph.microsoft.com"):
+		return "Microsoft Graph"
+	case strings.Contains(t.Audience, "vault.azure.net"):
+		return "Azure Key Vault"
+	case strings.Contains(t.Audience, "storage.azure.com"):
+		return "Azure Storage"
+	case strings.Contains(t.Audience, "database.windows.net"):
+		return "Azure SQL Database"
+	case strings.Contains(t.Audience, "cosmos.azure.com"):
+		return "Azure Cosmos DB"
+	case strings.Contains(t.Audience, "servicebus.azure.net"):
+		return "Azure Service Bus"
+	case strings.Contains(t.Audience, "eventhub.azure.net"):
+		return "Azure Event Hubs"
+	case strings.Contains(t.Audience, "azuresynapse.net"):
+		return "Azure Synapse Analytics"
+	case strings.Contains(t.Audience, "azuredatabricks.net") || t.Audience == "2ff814a6-3304-4ab8-85cb-cd0e6f879c1d":
+		return "Azure Databricks"
+	case strings.Contains(t.Audience, "dev.azure.com") || t.Audience == "499b84ac-1321-427f-b974-133d113dbe4b":
+		return "Azure DevOps"
+	case strings.Contains(t.Audience, "batch.core.windows.net"):
+		return "Azure Batch"
+	case strings.Contains(t.Audience, "datafactory.azure.net"):
+		return "Azure Data Factory"
+	case strings.Contains(t.Audience, "loadtesting.azure.com"):
+		return "Azure Load Testing"
+	default:
+		return t.Audience
+	}
+}
+
+// GetExpirationTime returns the expiration time as a time.Time
+func (t *TokenInfo) GetExpirationTime() time.Time {
+	return time.Unix(t.Expiration, 0)
+}
+
+// GetIssuedAtTime returns the issued at time as a time.Time
+func (t *TokenInfo) GetIssuedAtTime() time.Time {
+	return time.Unix(t.IssuedAt, 0)
+}
+
+// IsExpired returns true if the token has expired
+func (t *TokenInfo) IsExpired() bool {
+	return time.Now().After(t.GetExpirationTime())
+}
+
+// TimeUntilExpiry returns the duration until the token expires
+func (t *TokenInfo) TimeUntilExpiry() time.Duration {
+	return time.Until(t.GetExpirationTime())
+}
+
+// GetPrincipalType returns the type of principal (User, ServicePrincipal, ManagedIdentity)
+func (t *TokenInfo) GetPrincipalType() string {
+	// If there's an AppID but no UPN, it's likely a service principal or managed identity
+	if t.AppID != "" && t.UserPrincipalName == "" && t.UniqueName == "" {
+		// Check for managed identity indicators
+		if strings.Contains(t.Issuer, "sts.windows.net") && t.IdentityProvider == "" {
+			return "ServicePrincipal/ManagedIdentity"
+		}
+		return "ServicePrincipal"
+	}
+	if t.UserPrincipalName != "" || t.UniqueName != "" {
+		return "User"
+	}
+	return "Unknown"
+}
+
+// GetIdentity returns the best identifier for the principal
+func (t *TokenInfo) GetIdentity() string {
+	if t.UserPrincipalName != "" {
+		return t.UserPrincipalName
+	}
+	if t.UniqueName != "" {
+		return t.UniqueName
+	}
+	if t.PreferredUsername != "" {
+		return t.PreferredUsername
+	}
+	if t.Email != "" {
+		return t.Email
+	}
+	if t.AppID != "" {
+		return fmt.Sprintf("AppID: %s", t.AppID)
+	}
+	if t.ObjectID != "" {
+		return fmt.Sprintf("ObjectID: %s", t.ObjectID)
+	}
+	return "Unknown"
+}
+
+// GetScopesList returns the scopes as a slice
+func (t *TokenInfo) GetScopesList() []string {
+	if t.Scopes == "" {
+		return nil
+	}
+	return strings.Split(t.Scopes, " ")
+}
+
+// PrintTokenInfo prints a formatted summary of the token information
+func (t *TokenInfo) PrintTokenInfo(logger internal.Logger) {
+	logger.InfoM("╔════════════════════════════════════════════════════════════╗", globals.AZ_UTILS_MODULE_NAME)
+	logger.InfoM("║                    TOKEN INFORMATION                       ║", globals.AZ_UTILS_MODULE_NAME)
+	logger.InfoM("╠════════════════════════════════════════════════════════════╣", globals.AZ_UTILS_MODULE_NAME)
+
+	// Principal info
+	logger.InfoM(fmt.Sprintf("║ Principal Type: %-43s║", t.GetPrincipalType()), globals.AZ_UTILS_MODULE_NAME)
+	logger.InfoM(fmt.Sprintf("║ Identity:       %-43s║", truncateString(t.GetIdentity(), 43)), globals.AZ_UTILS_MODULE_NAME)
+	if t.Name != "" {
+		logger.InfoM(fmt.Sprintf("║ Display Name:   %-43s║", truncateString(t.Name, 43)), globals.AZ_UTILS_MODULE_NAME)
+	}
+	if t.ObjectID != "" {
+		logger.InfoM(fmt.Sprintf("║ Object ID:      %-43s║", t.ObjectID), globals.AZ_UTILS_MODULE_NAME)
+	}
+	if t.AppID != "" {
+		logger.InfoM(fmt.Sprintf("║ App ID:         %-43s║", t.AppID), globals.AZ_UTILS_MODULE_NAME)
+	}
+
+	logger.InfoM("╠════════════════════════════════════════════════════════════╣", globals.AZ_UTILS_MODULE_NAME)
+
+	// Tenant info
+	if t.TenantID != "" {
+		logger.InfoM(fmt.Sprintf("║ Tenant ID:      %-43s║", t.TenantID), globals.AZ_UTILS_MODULE_NAME)
+	}
+
+	// Audience (scope)
+	logger.InfoM(fmt.Sprintf("║ Audience:       %-43s║", truncateString(t.GetAudienceDescription(), 43)), globals.AZ_UTILS_MODULE_NAME)
+	if t.Audience != t.GetAudienceDescription() {
+		logger.InfoM(fmt.Sprintf("║   └─ Raw:       %-43s║", truncateString(t.Audience, 43)), globals.AZ_UTILS_MODULE_NAME)
+	}
+
+	// Scopes (delegated permissions)
+	if t.Scopes != "" {
+		logger.InfoM(fmt.Sprintf("║ Scopes:         %-43s║", truncateString(t.Scopes, 43)), globals.AZ_UTILS_MODULE_NAME)
+	}
+
+	// Roles (app roles)
+	if len(t.Roles) > 0 {
+		logger.InfoM(fmt.Sprintf("║ App Roles:      %-43s║", truncateString(strings.Join(t.Roles, ", "), 43)), globals.AZ_UTILS_MODULE_NAME)
+	}
+
+	logger.InfoM("╠════════════════════════════════════════════════════════════╣", globals.AZ_UTILS_MODULE_NAME)
+
+	// Timestamps
+	logger.InfoM(fmt.Sprintf("║ Issued At:      %-43s║", t.GetIssuedAtTime().Format("2006-01-02 15:04:05 MST")), globals.AZ_UTILS_MODULE_NAME)
+	logger.InfoM(fmt.Sprintf("║ Expires At:     %-43s║", t.GetExpirationTime().Format("2006-01-02 15:04:05 MST")), globals.AZ_UTILS_MODULE_NAME)
+
+	// Expiry status
+	if t.IsExpired() {
+		logger.InfoM("║ Status:         ⚠️  EXPIRED                                 ║", globals.AZ_UTILS_MODULE_NAME)
+	} else {
+		remaining := t.TimeUntilExpiry()
+		logger.InfoM(fmt.Sprintf("║ Status:         ✓ Valid (expires in %s)%s║",
+			formatDuration(remaining),
+			strings.Repeat(" ", max(0, 25-len(formatDuration(remaining))))), globals.AZ_UTILS_MODULE_NAME)
+	}
+
+	logger.InfoM("╚════════════════════════════════════════════════════════════╝", globals.AZ_UTILS_MODULE_NAME)
+}
+
+// Helper function to truncate strings for display
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-3] + "..."
+}
+
+// Helper function to format duration
+func formatDuration(d time.Duration) string {
+	if d < 0 {
+		return "expired"
+	}
+	hours := int(d.Hours())
+	minutes := int(d.Minutes()) % 60
+	if hours > 0 {
+		return fmt.Sprintf("%dh %dm", hours, minutes)
+	}
+	return fmt.Sprintf("%dm", minutes)
+}
+
+// max returns the larger of two integers
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 func (c *StaticTokenCredential) GetToken(ctx context.Context, opts policy.TokenRequestOptions) (azcore.AccessToken, error) {
 	return azcore.AccessToken{
 		Token:     c.Token,
@@ -116,7 +421,19 @@ func (s *StaticTokenProvider) AuthenticateRequest(ctx context.Context, request *
 }
 
 // NewSafeSession initializes a session and prefetches all common tokens
+// If bearer tokens are provided via globals.AZ_ARM_TOKEN or globals.AZ_GRAPH_TOKEN,
+// it will use those instead of the Azure CLI session.
 func NewSafeSession(ctx context.Context) (*SafeSession, error) {
+	// Check if we have dual tokens (ARM and/or Graph)
+	if globals.AZ_ARM_TOKEN != "" || globals.AZ_GRAPH_TOKEN != "" {
+		return NewSafeSessionWithDualTokens(globals.AZ_ARM_TOKEN, globals.AZ_GRAPH_TOKEN)
+	}
+
+	// Legacy single token support
+	if globals.AZ_BEARER_TOKEN != "" {
+		return NewSafeSessionWithToken(globals.AZ_BEARER_TOKEN)
+	}
+
 	if !IsSessionValid() {
 		return nil, fmt.Errorf("Azure CLI session invalid; run 'az login'")
 	}
@@ -143,6 +460,92 @@ func NewSafeSession(ctx context.Context) (*SafeSession, error) {
 	return ss, nil
 }
 
+// NewSafeSessionWithToken creates a SafeSession using a static bearer token
+// instead of Azure CLI authentication. The same token is used for all scopes.
+// This is useful when you have a pre-obtained access token (e.g., from az account get-access-token).
+func NewSafeSessionWithToken(token string) (*SafeSession, error) {
+	if token == "" {
+		return nil, fmt.Errorf("bearer token cannot be empty")
+	}
+
+	ss := &SafeSession{
+		Cred:          &StaticTokenCredential{Token: token},
+		tokens:        make(map[string]azcore.AccessToken),
+		refreshBuffer: 5 * time.Minute,
+		stopMonitor:   make(chan struct{}),
+	}
+
+	// Pre-populate all common scopes with the static token
+	// Note: A single token may not work for all scopes, but we try anyway
+	for _, r := range globals.CommonScopes {
+		scope := ResourceToScope(r)
+		ss.tokens[scope] = azcore.AccessToken{
+			Token:     token,
+			ExpiresOn: time.Now().Add(60 * time.Minute), // Assume 1 hour validity
+		}
+	}
+
+	return ss, nil
+}
+
+// NewSafeSessionWithDualTokens creates a SafeSession using separate ARM and Graph tokens.
+// This allows proper scoping - ARM token for resource enumeration, Graph token for user info.
+func NewSafeSessionWithDualTokens(armToken, graphToken string) (*SafeSession, error) {
+	if armToken == "" && graphToken == "" {
+		return nil, fmt.Errorf("at least one token (ARM or Graph) must be provided")
+	}
+
+	// Use ARM token as the default credential (most SDK calls use ARM)
+	defaultToken := armToken
+	if defaultToken == "" {
+		defaultToken = graphToken
+	}
+
+	ss := &SafeSession{
+		Cred:          &StaticTokenCredential{Token: defaultToken},
+		tokens:        make(map[string]azcore.AccessToken),
+		refreshBuffer: 5 * time.Minute,
+		stopMonitor:   make(chan struct{}),
+	}
+
+	// Pre-populate tokens for each scope with the appropriate token
+	for _, r := range globals.CommonScopes {
+		scope := ResourceToScope(r)
+		var token string
+
+		// Select the appropriate token based on the scope
+		if strings.Contains(scope, "graph.microsoft.com") {
+			if graphToken != "" {
+				token = graphToken
+			} else {
+				continue // Skip if no Graph token provided
+			}
+		} else if strings.Contains(scope, "management.azure.com") || strings.Contains(scope, "management.core.windows.net") {
+			if armToken != "" {
+				token = armToken
+			} else {
+				continue // Skip if no ARM token provided
+			}
+		} else {
+			// For other scopes (Key Vault, Storage, etc.), use ARM token if available
+			if armToken != "" {
+				token = armToken
+			} else if graphToken != "" {
+				token = graphToken
+			} else {
+				continue
+			}
+		}
+
+		ss.tokens[scope] = azcore.AccessToken{
+			Token:     token,
+			ExpiresOn: time.Now().Add(60 * time.Minute), // Assume 1 hour validity
+		}
+	}
+
+	return ss, nil
+}
+
 // NewSmartSession creates a session with automatic monitoring and refresh
 func NewSmartSession(ctx context.Context) (*SafeSession, error) {
 	ss, err := NewSafeSession(ctx)
@@ -150,8 +553,10 @@ func NewSmartSession(ctx context.Context) (*SafeSession, error) {
 		return nil, err
 	}
 
-	// Start background monitoring
-	ss.StartMonitoring(ctx)
+	// Only start background monitoring for CLI-based sessions (not static tokens)
+	if globals.AZ_BEARER_TOKEN == "" {
+		ss.StartMonitoring(ctx)
+	}
 
 	return ss, nil
 }
@@ -398,6 +803,11 @@ func ResourceToScope(resource string) string {
 
 // GetCredentialSafe returns a credential capable of providing tokens for any requested scope
 func GetCredentialSafe(ctx context.Context) (azcore.TokenCredential, error) {
+	// If using token-based auth, return a static credential
+	if globals.AZ_BEARER_TOKEN != "" {
+		return &StaticTokenCredential{Token: globals.AZ_BEARER_TOKEN}, nil
+	}
+
 	cred := &azureCLICredential{}
 	_, err := cred.GetToken(ctx, policy.TokenRequestOptions{Scopes: []string{"https://management.azure.com/.default"}})
 	if err != nil {
@@ -525,6 +935,11 @@ func (s *SafeSession) CurrentUser(ctx context.Context) (objectID, upn, display s
 
 // GetCurrentUserSafe returns the current identity's object ID, UPN, and display name.
 func GetCurrentUserSafe(ctx context.Context, session *SafeSession) (objectID, upn, displayName string, err error) {
+	// If using token-based auth, skip CLI check and go straight to Graph API
+	if globals.AZ_BEARER_TOKEN != "" {
+		return getCurrentUserFromToken(ctx, session)
+	}
+
 	// First, check if session is valid
 	if !IsSessionValid() {
 		return "UNKNOWN", "UNKNOWN", "UNKNOWN", fmt.Errorf("session expired; please run 'az logout' and 'az login'")
@@ -544,9 +959,14 @@ func GetCurrentUserSafe(ctx context.Context, session *SafeSession) (objectID, up
 	}
 
 	// Fallback: Microsoft Graph
+	return getCurrentUserFromToken(ctx, session)
+}
+
+// getCurrentUserFromToken retrieves user info using the Graph API with the session token
+func getCurrentUserFromToken(ctx context.Context, session *SafeSession) (objectID, upn, displayName string, err error) {
 	token, err := session.GetTokenForResource(globals.CommonScopes[1]) // Graph scope
 	if err != nil {
-		return "UNKNOWN", "UNKNOWN", "UNKNOWN", fmt.Errorf("failed to get ARM token for object %s: %v", objectID, err)
+		return "UNKNOWN", "UNKNOWN", "UNKNOWN", fmt.Errorf("failed to get Graph token: %v", err)
 	}
 
 	body, err := GraphAPIRequestWithRetry(ctx, "GET", "https://graph.microsoft.com/v1.0/me", token)
@@ -607,21 +1027,143 @@ func getEnv(key string) string {
 
 // --------
 
+// SessionValidationResult contains the result of session validation
+type SessionValidationResult struct {
+	Valid           bool
+	FullAccess      bool   // true if Graph API also works
+	WarningMessage  string // warning to display if limited access
+}
+
+// ValidateSession checks if the Azure CLI session is valid and what level of access is available
+func ValidateSession() SessionValidationResult {
+	// If using token-based auth, assume valid (will fail on API call if not)
+	if globals.AZ_BEARER_TOKEN != "" {
+		return SessionValidationResult{Valid: true, FullAccess: true}
+	}
+
+	// First, try the strict check - Graph API access (az ad signed-in-user show)
+	// This gives us full access including user details, principals, etc.
+	graphCmd := exec.Command("az", "ad", "signed-in-user", "show", "-o", "json")
+	out, err := graphCmd.Output()
+	if err == nil {
+		var data struct {
+			ID                string `json:"id"`
+			UserPrincipalName string `json:"userPrincipalName"`
+		}
+		if json.Unmarshal(out, &data) == nil && data.ID != "" {
+			// Full access - Graph API works
+			return SessionValidationResult{Valid: true, FullAccess: true}
+		}
+	}
+
+	// Graph failed - try lenient check (ARM access)
+	// This happens when copying .azure directory or when Graph permissions are limited
+
+	// First try az account get-access-token (explicit token request)
+	armCmd := exec.Command("az", "account", "get-access-token",
+		"--resource", "https://management.azure.com/",
+		"--query", "accessToken",
+		"-o", "tsv")
+	armOut, armErr := armCmd.Output()
+
+	if armErr == nil && len(strings.TrimSpace(string(armOut))) > 0 {
+		// ARM token works - limited access mode
+		return SessionValidationResult{
+			Valid:      true,
+			FullAccess: false,
+			WarningMessage: "Microsoft Graph API access unavailable. Some features will be limited:\n" +
+				"  - User identity details (UPN, display name) may show as 'UNKNOWN'\n" +
+				"  - Modules requiring Graph (principals, enterprise-apps, consent-grants) may fail\n" +
+				"  \n" +
+				"  Options:\n" +
+				"  1. Run 'az login --use-device-code' for full access\n" +
+				"  2. Or provide tokens manually:\n" +
+				"     ARM:   az account get-access-token --resource https://management.azure.com/ -o tsv --query accessToken\n" +
+				"     Graph: az account get-access-token --resource https://graph.microsoft.com/ -o tsv --query accessToken",
+		}
+	}
+
+	// az account get-access-token failed - but az group list might still work
+	// Try a lightweight ARM call to verify actual API access
+	// This handles the case where MSAL cache is invalid but az CLI can still make API calls
+	// Use CombinedOutput to capture any warnings that might be in stderr
+	groupCmd := exec.Command("az", "group", "list", "--query", "[0].name", "-o", "tsv")
+	groupOut, groupErr := groupCmd.CombinedOutput()
+	groupOutStr := strings.TrimSpace(string(groupOut))
+
+	// Check if the output contains a valid resource group name (not an error message)
+	// Error messages typically contain "error", "failed", "login", etc.
+	isError := strings.Contains(strings.ToLower(groupOutStr), "error") ||
+		strings.Contains(strings.ToLower(groupOutStr), "please run") ||
+		strings.Contains(strings.ToLower(groupOutStr), "az login") ||
+		strings.Contains(strings.ToLower(groupOutStr), "msal")
+
+	if (groupErr == nil || len(groupOutStr) > 0) && !isError && groupOutStr != "" {
+		// ARM API works even though get-access-token failed!
+		// This is a quirk of Azure CLI - proceed in limited mode
+		return SessionValidationResult{
+			Valid:      true,
+			FullAccess: false,
+			WarningMessage: "Azure CLI token cache issue detected, but API calls work.\n" +
+				"  Microsoft Graph API access unavailable. Some features will be limited:\n" +
+				"  - User identity details (UPN, display name) may show as 'UNKNOWN'\n" +
+				"  - Modules requiring Graph (principals, enterprise-apps, consent-grants) may fail\n" +
+				"  \n" +
+				"  Options:\n" +
+				"  1. Run 'az login --use-device-code' for full access\n" +
+				"  2. Or provide tokens manually:\n" +
+				"     ARM:   az account get-access-token --resource https://management.azure.com/ -o tsv --query accessToken\n" +
+				"     Graph: az account get-access-token --resource https://graph.microsoft.com/ -o tsv --query accessToken",
+		}
+	}
+
+	// Neither method works - session is truly invalid
+	// Debug: check if az CLI is available at all
+	if _, pathErr := exec.LookPath("az"); pathErr != nil {
+		return SessionValidationResult{
+			Valid:          false,
+			FullAccess:     false,
+			WarningMessage: "Azure CLI (az) not found in PATH",
+		}
+	}
+
+	// Check if there's an active account configured
+	accountCmd := exec.Command("az", "account", "show", "-o", "json")
+	accountOut, accountErr := accountCmd.Output()
+	if accountErr != nil {
+		return SessionValidationResult{
+			Valid:          false,
+			FullAccess:     false,
+			WarningMessage: "No Azure account configured. Run 'az login' first.",
+		}
+	}
+
+	// Account exists but token refresh failed - likely needs re-auth
+	var accountData struct {
+		Name string `json:"name"`
+		ID   string `json:"id"`
+	}
+	if json.Unmarshal(accountOut, &accountData) == nil && accountData.ID != "" {
+		return SessionValidationResult{
+			Valid:          false,
+			FullAccess:     false,
+			WarningMessage: fmt.Sprintf("Account '%s' configured but MSAL token cache expired/unavailable.\n"+
+				"        This often happens when copying .azure directory to another machine.\n"+
+				"        \n"+
+				"        Options:\n"+
+				"        1. Re-authenticate with: az login --use-device-code\n"+
+				"        2. Or provide tokens manually:\n"+
+				"           ARM:   az account get-access-token --resource https://management.azure.com/ -o tsv --query accessToken\n"+
+				"           Graph: az account get-access-token --resource https://graph.microsoft.com/ -o tsv --query accessToken", accountData.Name),
+		}
+	}
+
+	return SessionValidationResult{Valid: false, FullAccess: false}
+}
+
+// IsSessionValid returns true if the session is valid (for backward compatibility)
 func IsSessionValid() bool {
-	out, err := exec.Command("az", "ad", "signed-in-user", "show").Output()
-	if err != nil {
-		return false
-	}
-
-	var data struct {
-		ID                string `json:"id"`
-		UserPrincipalName string `json:"userPrincipalName"`
-	}
-	if err := json.Unmarshal(out, &data); err != nil {
-		return false
-	}
-
-	return data.ID != "" && data.UserPrincipalName != ""
+	return ValidateSession().Valid
 }
 
 // GetClientID returns the clientId of the signed-in principal (user or service principal).

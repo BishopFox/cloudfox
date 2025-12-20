@@ -66,6 +66,7 @@ untracked/*
 tmp/*
 output/*
 *cloudfox-output*
+cloudfox-*
 cloudfox
 *.log
 *.bak

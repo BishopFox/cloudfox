@@ -17,6 +17,14 @@ var (
 	AAD_USERS_TEST_FILE        string
 	ACR_REGISTRIES_TEST_FILE   string
 	AZ_VERBOSITY               int
+
+	// Token-based authentication
+	// Separate tokens for ARM and Graph APIs
+	AZ_ARM_TOKEN   string // Token for Azure Resource Manager (https://management.azure.com/)
+	AZ_GRAPH_TOKEN string // Token for Microsoft Graph (https://graph.microsoft.com/)
+
+	// Legacy single token support (deprecated, use ARM/Graph tokens instead)
+	AZ_BEARER_TOKEN string
 )
 
 var CommonScopes = []string{

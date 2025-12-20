@@ -214,6 +214,12 @@ func (m *DatabricksModule) processWorkspace(ctx context.Context, workspace *armd
 	managedResourceGroup := "N/A"
 	publicPrivate := "Unknown"
 	sku := "N/A"
+	requireInfraEncryption := "Disabled"
+	noPublicIP := "Disabled"
+	vnetInjection := "Disabled"
+	privateEndpointRules := "N/A"
+	encryptionKeySource := "Microsoft-managed"
+	secureClusterConnectivity := "Disabled"
 
 	if workspace.Properties != nil {
 		// Get workspace URL
@@ -242,6 +248,45 @@ func (m *DatabricksModule) processWorkspace(ctx context.Context, workspace *armd
 			// Default to Public if not specified
 			publicPrivate = "Public"
 		}
+
+		// Check Required NSG Rules (private endpoint rules)
+		if workspace.Properties.RequiredNsgRules != nil {
+			privateEndpointRules = string(*workspace.Properties.RequiredNsgRules)
+		}
+
+		// Check parameters for security settings
+		if workspace.Properties.Parameters != nil {
+			// Infrastructure Encryption (double encryption)
+			if workspace.Properties.Parameters.RequireInfrastructureEncryption != nil {
+				if workspace.Properties.Parameters.RequireInfrastructureEncryption.Value != nil && *workspace.Properties.Parameters.RequireInfrastructureEncryption.Value {
+					requireInfraEncryption = "Enabled"
+				}
+			}
+
+			// No Public IP (enhanced security)
+			if workspace.Properties.Parameters.EnableNoPublicIP != nil {
+				if workspace.Properties.Parameters.EnableNoPublicIP.Value != nil && *workspace.Properties.Parameters.EnableNoPublicIP.Value {
+					noPublicIP = "Enabled"
+				}
+			}
+
+			// VNet injection (custom VNet)
+			if workspace.Properties.Parameters.CustomVirtualNetworkID != nil && workspace.Properties.Parameters.CustomVirtualNetworkID.Value != nil && *workspace.Properties.Parameters.CustomVirtualNetworkID.Value != "" {
+				vnetInjection = "Enabled"
+			}
+
+			// CMK encryption
+			if workspace.Properties.Parameters.Encryption != nil && workspace.Properties.Parameters.Encryption.Value != nil {
+				if workspace.Properties.Parameters.Encryption.Value.KeySource != nil {
+					encryptionKeySource = string(*workspace.Properties.Parameters.Encryption.Value.KeySource)
+				}
+			}
+		}
+
+		// Check for Secure Cluster Connectivity (No Public IP + Private Link)
+		if publicPrivate == "Private" && noPublicIP == "Enabled" {
+			secureClusterConnectivity = "Enabled"
+		}
 	}
 
 	// Get SKU
@@ -263,10 +308,6 @@ func (m *DatabricksModule) processWorkspace(ctx context.Context, workspace *armd
 		}
 	}
 
-	// Standard managed identity columns (Databricks doesn't support these, only specialized identities above)
-	systemAssignedID := "N/A"
-	userAssignedID := "N/A"
-
 	// Add workspace row
 	workspaceRow := []string{
 		m.TenantName,
@@ -281,10 +322,14 @@ func (m *DatabricksModule) processWorkspace(ctx context.Context, workspace *armd
 		managedResourceGroup,
 		publicPrivate,
 		sku,
+		noPublicIP,
+		vnetInjection,
+		secureClusterConnectivity,
+		requireInfraEncryption,
+		encryptionKeySource,
+		privateEndpointRules,
 		diskEncryptionIdentity,
 		storageAccountIdentity,
-		systemAssignedID,
-		userAssignedID,
 	}
 
 	m.mu.Lock()
@@ -608,10 +653,14 @@ func (m *DatabricksModule) writeOutput(ctx context.Context, logger internal.Logg
 		"Managed Resource Group",
 		"Public/Private",
 		"SKU",
+		"No Public IP",
+		"VNet Injection",
+		"Secure Cluster Conn",
+		"Infra Encryption",
+		"Encryption Key Source",
+		"Private Endpoint Rules",
 		"Disk Encryption Identity",
 		"Storage Account Identity",
-		"System Assigned Identity ID",
-		"User Assigned Identity ID",
 	}
 
 	// Check if we should split output by tenant
