@@ -1,6 +1,10 @@
 # :fox_face: CloudFox :fox_face:
 CloudFox helps you gain situational awareness in unfamiliar cloud environments. It’s an open source command line tool created to help penetration testers and other offensive security professionals find exploitable attack paths in cloud infrastructure. 
 
+> **CLOUDFOX UPDATE REQUIRED: (12/2025):** If you are using `cloudfox`, you need to use v1.17.0 or greater. All earlier versions [stopped working after a format change in AWS's public service mapping file](https://github.com/BishopFox/cloudfox/pull/109). 
+
+**Overview** 
+
 #### CloudFox helps you answer the following common questions (and many more): 
 
 * What regions is this AWS account using and roughly how many resources are in the account?
