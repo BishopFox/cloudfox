@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -9,6 +8,7 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -82,7 +82,8 @@ var gpuTaintPatterns = []string{
 }
 
 func ListTaints(cmd *cobra.Command, args []string) {
-	ctx := context.Background()
+	ctx, cancel := shared.ContextWithTimeout()
+	defer cancel()
 	logger := internal.NewLogger()
 
 	// Extract global flags
@@ -96,18 +97,17 @@ func ListTaints(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	var lootEnum []string
-	lootEnum = append(lootEnum, `#####################################
+	loot := shared.NewLootBuilder()
+	loot.Section("Taint-Enum").SetHeader(`#####################################
 ##### Enumerate Taint Information
 #####################################
 
 `)
 	if globals.KubeContext != "" {
-		lootEnum = append(lootEnum, fmt.Sprintf("kubectl config use-context %s\n", globals.KubeContext))
+		loot.Section("Taint-Enum").Addf("kubectl config use-context %s\n", globals.KubeContext)
 	}
 
-	var lootPodYAMLs []string
-	lootPodYAMLs = append(lootPodYAMLs, `#####################################
+	loot.Section("Pod-YAMLs").SetHeader(`#####################################
 ##### Pod YAMLs for Tolerations
 #####################################
 # Example pods that tolerate specific taints
@@ -115,8 +115,7 @@ func ListTaints(cmd *cobra.Command, args []string) {
 
 `)
 
-	var lootWildcardYAMLs []string
-	lootWildcardYAMLs = append(lootWildcardYAMLs, `#####################################
+	loot.Section("Wildcard-Bypass-YAMLs").SetHeader(`#####################################
 ##### Wildcard Toleration Examples
 #####################################
 # WARNING: These pods can bypass ALL taints
@@ -124,8 +123,7 @@ func ListTaints(cmd *cobra.Command, args []string) {
 
 `)
 
-	var lootCriticalTaints []string
-	lootCriticalTaints = append(lootCriticalTaints, `#####################################
+	loot.Section("Critical-Taints").SetHeader(`#####################################
 ##### Critical/Sensitive Node Taints
 #####################################
 # Taints on security-sensitive nodes
@@ -133,8 +131,7 @@ func ListTaints(cmd *cobra.Command, args []string) {
 
 `)
 
-	var lootByEffect []string
-	lootByEffect = append(lootByEffect, `#####################################
+	loot.Section("Taints-By-Effect").SetHeader(`#####################################
 ##### Taints Grouped by Effect
 #####################################
 
@@ -142,7 +139,7 @@ func ListTaints(cmd *cobra.Command, args []string) {
 
 	nodes, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Error listing nodes: %v", err), globals.K8S_TAINTS_MODULE_NAME)
+		shared.LogListError(&logger, "nodes", "", err, globals.K8S_TAINTS_MODULE_NAME, true)
 		return
 	}
 
@@ -154,12 +151,7 @@ func ListTaints(cmd *cobra.Command, args []string) {
 		"PreferNoSchedule": {},
 	}
 
-	riskCounts := map[string]int{
-		"CRITICAL": 0,
-		"HIGH":     0,
-		"MEDIUM":   0,
-		"LOW":      0,
-	}
+	riskCounts := shared.NewRiskCounts()
 
 	for _, node := range nodes.Items {
 		nodeInfo := NodeTaintInfo{
@@ -179,7 +171,7 @@ func ListTaints(cmd *cobra.Command, args []string) {
 		nodeInfo.RiskLevel, nodeInfo.RiskScore = calculateTaintRiskScore(&nodeInfo)
 		nodeInfo.SecurityIssues = generateTaintSecurityIssues(&nodeInfo)
 
-		riskCounts[nodeInfo.RiskLevel]++
+		riskCounts.Add(nodeInfo.RiskLevel)
 		nodeInfos = append(nodeInfos, nodeInfo)
 
 		// Table rows
@@ -191,8 +183,6 @@ func ListTaints(cmd *cobra.Command, args []string) {
 				"<NONE>",
 				"<NONE>",
 				"<NONE>",
-				"LOW",
-				"0",
 			})
 			continue
 		}
@@ -204,11 +194,6 @@ func ListTaints(cmd *cobra.Command, args []string) {
 				timeAdded = taint.TimeAdded.String()
 			}
 
-			criticalMarker := ""
-			if isCriticalTaint(taint) {
-				criticalMarker = "[CRITICAL]"
-			}
-
 			tableRows = append(tableRows, []string{
 				nodeInfo.NodeName,
 				nodeInfo.NodeRole,
@@ -216,8 +201,6 @@ func ListTaints(cmd *cobra.Command, args []string) {
 				k8sinternal.NonEmpty(taint.Value),
 				k8sinternal.NonEmpty(string(taint.Effect)),
 				timeAdded,
-				nodeInfo.RiskLevel,
-				fmt.Sprintf("%d %s", nodeInfo.RiskScore, criticalMarker),
 			})
 
 			tolerations = append(tolerations, corev1.Toleration{
@@ -239,7 +222,7 @@ func ListTaints(cmd *cobra.Command, args []string) {
 			nodeInfo.NodeName,
 			nodeInfo.NodeName,
 		)
-		lootEnum = append(lootEnum, lootCmd)
+		loot.Section("Taint-Enum").Add(lootCmd)
 
 		// Loot file 2: example Pod YAML with exact tolerations
 		pod := corev1.Pod{
@@ -265,11 +248,9 @@ func ListTaints(cmd *cobra.Command, args []string) {
 
 		yamlData, err := yaml.Marshal(pod)
 		if err == nil {
-			lootPodYAMLs = append(lootPodYAMLs,
-				fmt.Sprintf("# --- POD YAML for node: %s (Role: %s, Risk: %s) ---\n%s",
-					nodeInfo.NodeName, nodeInfo.NodeRole, nodeInfo.RiskLevel, string(yamlData)),
-				fmt.Sprintf("# Apply with: kubectl create -f <filename>.yaml\n"),
-			)
+			loot.Section("Pod-YAMLs").Addf("# --- POD YAML for node: %s (Role: %s, Risk: %s) ---\n%s",
+				nodeInfo.NodeName, nodeInfo.NodeRole, nodeInfo.RiskLevel, string(yamlData))
+			loot.Section("Pod-YAMLs").Add("# Apply with: kubectl create -f <filename>.yaml\n")
 		} else {
 			logger.ErrorM(fmt.Sprintf("Error marshaling YAML for node %s: %v", nodeInfo.NodeName, err), globals.K8S_TAINTS_MODULE_NAME)
 		}
@@ -305,43 +286,39 @@ func ListTaints(cmd *cobra.Command, args []string) {
 
 			wildcardYAML, err := yaml.Marshal(wildcardPod)
 			if err == nil {
-				lootWildcardYAMLs = append(lootWildcardYAMLs,
-					fmt.Sprintf("# --- WILDCARD BYPASS for node: %s (Role: %s) ---", nodeInfo.NodeName, nodeInfo.NodeRole),
-					fmt.Sprintf("# WARNING: Tolerates ALL taints with operator: Exists\n%s", string(wildcardYAML)),
-					fmt.Sprintf("# Apply with: kubectl create -f <filename>.yaml\n"),
-				)
+				loot.Section("Wildcard-Bypass-YAMLs").Addf("# --- WILDCARD BYPASS for node: %s (Role: %s) ---", nodeInfo.NodeName, nodeInfo.NodeRole)
+				loot.Section("Wildcard-Bypass-YAMLs").Addf("# WARNING: Tolerates ALL taints with operator: Exists\n%s", string(wildcardYAML))
+				loot.Section("Wildcard-Bypass-YAMLs").Add("# Apply with: kubectl create -f <filename>.yaml\n")
 			}
 		}
 
 		// Loot file 4: Critical taints
 		if len(nodeInfo.CriticalTaints) > 0 {
-			lootCriticalTaints = append(lootCriticalTaints,
-				fmt.Sprintf("\n### Node: %s (Role: %s, Risk: %s)", nodeInfo.NodeName, nodeInfo.NodeRole, nodeInfo.RiskLevel),
-			)
+			loot.Section("Critical-Taints").Addf("\n### Node: %s (Role: %s, Risk: %s)", nodeInfo.NodeName, nodeInfo.NodeRole, nodeInfo.RiskLevel)
 			for _, ct := range nodeInfo.CriticalTaints {
-				lootCriticalTaints = append(lootCriticalTaints, fmt.Sprintf("# - %s", ct))
+				loot.Section("Critical-Taints").Addf("# - %s", ct)
 			}
 			if len(nodeInfo.SecurityIssues) > 0 {
-				lootCriticalTaints = append(lootCriticalTaints, "# Security Issues:")
+				loot.Section("Critical-Taints").Add("# Security Issues:")
 				for _, issue := range nodeInfo.SecurityIssues {
-					lootCriticalTaints = append(lootCriticalTaints, fmt.Sprintf("#   - %s", issue))
+					loot.Section("Critical-Taints").Addf("#   - %s", issue)
 				}
 			}
 			if nodeInfo.ComplianceZone != "" {
-				lootCriticalTaints = append(lootCriticalTaints, fmt.Sprintf("# Compliance Zone: %s", nodeInfo.ComplianceZone))
+				loot.Section("Critical-Taints").Addf("# Compliance Zone: %s", nodeInfo.ComplianceZone)
 			}
-			lootCriticalTaints = append(lootCriticalTaints, "")
+			loot.Section("Critical-Taints").Add("")
 		}
 	}
 
 	// Loot file 5: Taints grouped by effect
 	for effect, taints := range taintsByEffect {
 		if len(taints) > 0 {
-			lootByEffect = append(lootByEffect, fmt.Sprintf("\n### %s (Count: %d)", effect, len(taints)))
+			loot.Section("Taints-By-Effect").Addf("\n### %s (Count: %d)", effect, len(taints))
 			for _, t := range taints {
-				lootByEffect = append(lootByEffect, fmt.Sprintf("# %s", t))
+				loot.Section("Taints-By-Effect").Addf("# %s", t)
 			}
-			lootByEffect = append(lootByEffect, "")
+			loot.Section("Taints-By-Effect").Add("")
 		}
 	}
 
@@ -357,8 +334,6 @@ func ListTaints(cmd *cobra.Command, args []string) {
 		"Taint Value",
 		"Taint Effect",
 		"Time Added",
-		"Risk",
-		"Score",
 	}
 	table := internal.TableFile{
 		Name:   "Taints",
@@ -366,12 +341,8 @@ func ListTaints(cmd *cobra.Command, args []string) {
 		Body:   tableRows,
 	}
 
-	// Deduplicate and sort
-	lootEnum = k8sinternal.Unique(lootEnum)
-	sort.Strings(lootEnum)
-
 	// Add summary to critical taints
-	if riskCounts["CRITICAL"] > 0 || riskCounts["HIGH"] > 0 {
+	if riskCounts.Critical > 0 || riskCounts.High > 0 {
 		summary := fmt.Sprintf(`
 # SUMMARY: Risk Distribution
 # CRITICAL: %d nodes with critical taints
@@ -380,33 +351,12 @@ func ListTaints(cmd *cobra.Command, args []string) {
 # LOW: %d nodes with low/no taints
 #
 # Focus on CRITICAL and HIGH risk nodes for security review.
-`, riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"])
-		lootCriticalTaints = append([]string{summary}, lootCriticalTaints...)
+`, riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low)
+		loot.Section("Critical-Taints").SetSummary(summary)
 	}
 
 	// Create loot files
-	lootFiles := []internal.LootFile{
-		{
-			Name:     "Taint-Enum",
-			Contents: strings.Join(lootEnum, "\n"),
-		},
-		{
-			Name:     "Pod-YAMLs",
-			Contents: strings.Join(lootPodYAMLs, "\n"),
-		},
-		{
-			Name:     "Wildcard-Bypass-YAMLs",
-			Contents: strings.Join(lootWildcardYAMLs, "\n"),
-		},
-		{
-			Name:     "Critical-Taints",
-			Contents: strings.Join(lootCriticalTaints, "\n"),
-		},
-		{
-			Name:     "Taints-By-Effect",
-			Contents: strings.Join(lootByEffect, "\n"),
-		},
-	}
+	lootFiles := loot.Build()
 
 	// Pass loot files in the output
 	err = internal.HandleOutput(
@@ -431,7 +381,7 @@ func ListTaints(cmd *cobra.Command, args []string) {
 	if len(tableRows) > 0 {
 		logger.InfoM(fmt.Sprintf("%d node taints found | Risk: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
 			len(tableRows),
-			riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"]),
+			riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low),
 			globals.K8S_TAINTS_MODULE_NAME)
 	} else {
 		logger.InfoM("No node taints found, skipping output file creation", globals.K8S_TAINTS_MODULE_NAME)
@@ -602,13 +552,13 @@ func calculateTaintRiskScore(nodeInfo *NodeTaintInfo) (string, int) {
 
 	// Determine risk level
 	if score >= 70 {
-		return "CRITICAL", taintsMin(score, 100)
+		return shared.RiskCritical, taintsMin(score, 100)
 	} else if score >= 40 {
-		return "HIGH", score
+		return shared.RiskHigh, score
 	} else if score >= 20 {
-		return "MEDIUM", score
+		return shared.RiskMedium, score
 	}
-	return "LOW", score
+	return shared.RiskLow, score
 }
 
 func generateTaintSecurityIssues(nodeInfo *NodeTaintInfo) []string {

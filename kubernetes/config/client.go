@@ -79,6 +79,11 @@ func InitConfig(kubeconfigPath, kubeContext, kubeToken, kubeAPIServer string) {
 		}
 	}
 
+	// Suppress Kubernetes API deprecation warnings
+	// We intentionally use some deprecated APIs (e.g., v1 Endpoints) for broader compatibility
+	// Set to NoWarnings to keep output clean; these are expected deprecations we're aware of
+	cfg.WarningHandler = rest.NoWarnings{}
+
 	// Standard Kubernetes client
 	clientset, err := kubernetes.NewForConfig(cfg)
 	if err != nil {

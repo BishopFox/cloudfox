@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -9,6 +8,7 @@ import (
 
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -34,8 +34,32 @@ Analyze Kubernetes events with security-focused categorization including:
   - Event frequency analysis (potential attacks)
   - Timeline-based security analysis
 
-  cloudfox kubernetes events`,
+Examples:
+  # Show all events
+  cloudfox kubernetes events
+
+  # Search for events related to a service account
+  cloudfox kubernetes events --search "my-service-account"
+
+  # Search for permission/authorization issues
+  cloudfox kubernetes events --search "forbidden"
+  cloudfox kubernetes events --search "unauthorized"
+
+  # Search for specific pod or deployment events
+  cloudfox kubernetes events --search "nginx-deployment"
+
+  # Search for OOM or memory issues
+  cloudfox kubernetes events --search "oomkilled"
+
+  # Combine with limit
+  cloudfox kubernetes events --search "failed" --limit 100`,
 	Run: ListEvents,
+}
+
+func init() {
+	EventsCmd.Flags().BoolP("all", "a", false, "Show all events (no limit)")
+	EventsCmd.Flags().IntP("limit", "l", 500, "Maximum number of events to display")
+	EventsCmd.Flags().StringP("search", "s", "", "Filter events by keyword (searches name, namespace, reason, message)")
 }
 
 type EventsOutput struct {
@@ -87,15 +111,11 @@ type EventSummary struct {
 	TopIssues         []string
 }
 
-const (
-	EventRiskCritical = "CRITICAL"
-	EventRiskHigh     = "HIGH"
-	EventRiskMedium   = "MEDIUM"
-	EventRiskLow      = "LOW"
-)
+// Using shared.RiskCritical, shared.RiskHigh, shared.RiskMedium, shared.RiskLow constants
 
 func ListEvents(cmd *cobra.Command, args []string) {
-	ctx := context.Background()
+	ctx, cancel := shared.ContextWithTimeout()
+	defer cancel()
 	logger := internal.NewLogger()
 
 	parentCmd := cmd.Parent()
@@ -104,30 +124,40 @@ func ListEvents(cmd *cobra.Command, args []string) {
 	outputDirectory, _ := parentCmd.PersistentFlags().GetString("outdir")
 	format, _ := parentCmd.PersistentFlags().GetString("output")
 
-	logger.InfoM(fmt.Sprintf("Analyzing events for %s", globals.ClusterName), globals.K8S_EVENTS_MODULE_NAME)
+	// Event-specific flags
+	showAll, _ := cmd.Flags().GetBool("all")
+	limit, _ := cmd.Flags().GetInt("limit")
+	searchQuery, _ := cmd.Flags().GetString("search")
+
+	if searchQuery != "" {
+		logger.InfoM(fmt.Sprintf("Analyzing events for %s (filtering by: %q)", globals.ClusterName, searchQuery), globals.K8S_EVENTS_MODULE_NAME)
+	} else {
+		logger.InfoM(fmt.Sprintf("Analyzing events for %s", globals.ClusterName), globals.K8S_EVENTS_MODULE_NAME)
+	}
 
 	clientset := config.GetClientOrExit()
 
-	// Fetch events from all namespaces
-	events, err := clientset.CoreV1().Events(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
+	// Fetch events from target namespaces
+	events, err := clientset.CoreV1().Events(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Error fetching Events: %v", err), globals.K8S_EVENTS_MODULE_NAME)
 		return
 	}
 
+	// Filter events by search query if provided
+	filteredEvents := events.Items
+	if searchQuery != "" {
+		filteredEvents = filterEventsBySearch(events.Items, searchQuery)
+		logger.InfoM(fmt.Sprintf("Found %d events matching %q (out of %d total)", len(filteredEvents), searchQuery, len(events.Items)), globals.K8S_EVENTS_MODULE_NAME)
+	}
+
 	var eventAnalyses []EventAnalysis
-	var securityEvents []string
-	var failedScheduling []string
-	var imagePullFailures []string
-	var oomKilled []string
-	var volumeFailures []string
-	var admissionDenials []string
-	var authFailures []string
+	loot := shared.NewLootBuilder()
 
 	namespaceStats := make(map[string]*EventSummary)
 
 	// Analyze each event
-	for _, event := range events.Items {
+	for _, event := range filteredEvents {
 		analysis := EventAnalysis{
 			Namespace:      event.Namespace,
 			Kind:           event.InvolvedObject.Kind,
@@ -158,40 +188,27 @@ func ListEvents(cmd *cobra.Command, args []string) {
 			stats.WarningEvents++
 		}
 
-		// Categorize for loot files
+		// Track category counts for summary
 		if analysis.Category == "Security" {
 			stats.SecurityEvents++
-			securityEvents = append(securityEvents, formatSecurityEvent(&analysis))
 		}
-
 		if strings.Contains(analysis.Reason, "FailedScheduling") {
 			stats.FailedScheduling++
-			failedScheduling = append(failedScheduling, formatFailedScheduling(&analysis))
 		}
-
 		if strings.Contains(analysis.Reason, "Failed") && strings.Contains(strings.ToLower(analysis.Message), "image") {
 			stats.ImagePullFailures++
-			imagePullFailures = append(imagePullFailures, formatImagePullFailure(&analysis))
 		}
-
 		if strings.Contains(analysis.Reason, "OOMKilled") {
 			stats.OOMKilled++
-			oomKilled = append(oomKilled, formatOOMKilled(&analysis))
 		}
-
 		if strings.Contains(analysis.Reason, "FailedMount") || strings.Contains(analysis.Reason, "FailedAttachVolume") {
 			stats.VolumeMountFails++
-			volumeFailures = append(volumeFailures, formatVolumeFailure(&analysis))
 		}
-
 		if strings.Contains(strings.ToLower(analysis.Message), "admission") && strings.Contains(strings.ToLower(analysis.Message), "denied") {
 			stats.AdmissionDenials++
-			admissionDenials = append(admissionDenials, formatAdmissionDenial(&analysis))
 		}
-
 		if strings.Contains(strings.ToLower(analysis.Reason), "unauthorized") || strings.Contains(strings.ToLower(analysis.Reason), "forbidden") {
 			stats.AuthFailures++
-			authFailures = append(authFailures, formatAuthFailure(&analysis))
 		}
 
 		eventAnalyses = append(eventAnalyses, analysis)
@@ -206,48 +223,14 @@ func ListEvents(cmd *cobra.Command, args []string) {
 		summaries = append(summaries, *stats)
 	}
 
+	// Add Event-Commands section with kubectl commands
+	loot.Section("Event-Commands").Add(generateEventCommands(summaries))
+
 	// Generate loot files
-	lootFiles := []internal.LootFile{
-		{
-			Name:     "Event-Enum",
-			Contents: formatEventEnum(eventAnalyses),
-		},
-		{
-			Name:     "Security-Events",
-			Contents: strings.Join(securityEvents, "\n"),
-		},
-		{
-			Name:     "Failed-Scheduling",
-			Contents: strings.Join(failedScheduling, "\n"),
-		},
-		{
-			Name:     "ImagePull-Failures",
-			Contents: strings.Join(imagePullFailures, "\n"),
-		},
-		{
-			Name:     "OOM-Killed",
-			Contents: strings.Join(oomKilled, "\n"),
-		},
-		{
-			Name:     "Volume-Failures",
-			Contents: strings.Join(volumeFailures, "\n"),
-		},
-		{
-			Name:     "Admission-Denials",
-			Contents: strings.Join(admissionDenials, "\n"),
-		},
-		{
-			Name:     "Auth-Failures",
-			Contents: strings.Join(authFailures, "\n"),
-		},
-		{
-			Name:     "Remediation-Guide",
-			Contents: generateEventRemediationGuide(summaries),
-		},
-	}
+	lootFiles := loot.Build()
 
 	// Generate tables
-	eventTable := generateEventTable(eventAnalyses)
+	eventTable := generateEventTable(eventAnalyses, limit, showAll)
 	summaryTable := generateSummaryTable(summaries)
 
 	err = internal.HandleOutput(
@@ -270,19 +253,29 @@ func ListEvents(cmd *cobra.Command, args []string) {
 	}
 
 	// Summary logging
-	if len(events.Items) > 0 {
-		securityCount := len(securityEvents)
+	if len(filteredEvents) > 0 {
+		securityCount := 0
+		oomCount := 0
 		warningCount := 0
-		for _, event := range events.Items {
+		for _, event := range filteredEvents {
 			if event.Type == "Warning" {
 				warningCount++
 			}
 		}
+		// Count from stats
+		for _, stats := range namespaceStats {
+			securityCount += stats.SecurityEvents
+			oomCount += stats.OOMKilled
+		}
 		logger.InfoM(fmt.Sprintf("%d events analyzed | Warnings: %d | Security: %d | OOMKilled: %d | Namespaces: %d",
-			len(events.Items), warningCount, securityCount, len(oomKilled), len(summaries)),
+			len(filteredEvents), warningCount, securityCount, oomCount, len(summaries)),
 			globals.K8S_EVENTS_MODULE_NAME)
 	} else {
-		logger.InfoM("No events found", globals.K8S_EVENTS_MODULE_NAME)
+		if searchQuery != "" {
+			logger.InfoM(fmt.Sprintf("No events found matching %q", searchQuery), globals.K8S_EVENTS_MODULE_NAME)
+		} else {
+			logger.InfoM("No events found", globals.K8S_EVENTS_MODULE_NAME)
+		}
 	}
 }
 
@@ -292,63 +285,63 @@ func categorizeEvent(event *corev1.Event) (category string, severity string, sec
 
 	// Security-related events
 	if strings.Contains(reason, "unauthorized") || strings.Contains(reason, "forbidden") {
-		return "Security", EventRiskCritical, "Authentication/Authorization failure"
+		return "Security", shared.RiskCritical, "Authentication/Authorization failure"
 	}
 	if strings.Contains(message, "admission") && strings.Contains(message, "denied") {
-		return "Security", EventRiskHigh, "Admission policy violation"
+		return "Security", shared.RiskHigh, "Admission policy violation"
 	}
 	if strings.Contains(reason, "failedcreate") && strings.Contains(message, "forbidden") {
-		return "Security", EventRiskHigh, "RBAC permission denied"
+		return "Security", shared.RiskHigh, "RBAC permission denied"
 	}
 	if strings.Contains(message, "securitycontext") || strings.Contains(message, "podsecuritypolicy") {
-		return "Security", EventRiskHigh, "Pod security policy violation"
+		return "Security", shared.RiskHigh, "Pod security policy violation"
 	}
 
 	// Resource exhaustion (DoS indicators)
 	if strings.Contains(reason, "oomkilled") {
-		return "Resource", EventRiskHigh, "Out of memory (potential DoS)"
+		return "Resource", shared.RiskHigh, "Out of memory (potential DoS)"
 	}
 	if strings.Contains(reason, "evicted") {
-		return "Resource", EventRiskMedium, "Pod evicted due to resource pressure"
+		return "Resource", shared.RiskMedium, "Pod evicted due to resource pressure"
 	}
 	if strings.Contains(reason, "failedscheduling") {
 		if strings.Contains(message, "insufficient") {
-			return "Resource", EventRiskMedium, "Insufficient cluster resources"
+			return "Resource", shared.RiskMedium, "Insufficient cluster resources"
 		}
-		return "Scheduling", EventRiskMedium, "Pod scheduling failure"
+		return "Scheduling", shared.RiskMedium, "Pod scheduling failure"
 	}
 
 	// Image and registry issues
 	if strings.Contains(reason, "failed") && strings.Contains(message, "image") {
 		if strings.Contains(message, "unauthorized") || strings.Contains(message, "authentication") {
-			return "Security", EventRiskHigh, "Image registry authentication failure"
+			return "Security", shared.RiskHigh, "Image registry authentication failure"
 		}
-		return "Image", EventRiskMedium, "Image pull failure"
+		return "Image", shared.RiskMedium, "Image pull failure"
 	}
 
 	// Volume and storage issues
 	if strings.Contains(reason, "failedmount") || strings.Contains(reason, "failedattachvolume") {
 		if strings.Contains(message, "permission") || strings.Contains(message, "denied") {
-			return "Security", EventRiskHigh, "Volume mount permission denied"
+			return "Security", shared.RiskHigh, "Volume mount permission denied"
 		}
-		return "Volume", EventRiskMedium, "Volume mount failure"
+		return "Volume", shared.RiskMedium, "Volume mount failure"
 	}
 
 	// Probe failures
 	if strings.Contains(reason, "unhealthy") {
-		return "Health", EventRiskLow, "Liveness/readiness probe failure"
+		return "Health", shared.RiskLow, "Liveness/readiness probe failure"
 	}
 
 	// Node issues
 	if strings.Contains(reason, "nodenotready") {
-		return "Node", EventRiskHigh, "Node not ready"
+		return "Node", shared.RiskHigh, "Node not ready"
 	}
 
 	// Default
 	if event.Type == "Warning" {
-		return "General", EventRiskLow, "Warning event"
+		return "General", shared.RiskLow, "Warning event"
 	}
-	return "Info", EventRiskLow, "Informational"
+	return "Info", shared.RiskLow, "Informational"
 }
 
 func calculateEventRiskScore(analysis *EventAnalysis, event *corev1.Event) int {
@@ -356,13 +349,13 @@ func calculateEventRiskScore(analysis *EventAnalysis, event *corev1.Event) int {
 
 	// Base score by severity
 	switch analysis.Severity {
-	case EventRiskCritical:
+	case shared.RiskCritical:
 		score += 40
-	case EventRiskHigh:
+	case shared.RiskHigh:
 		score += 30
-	case EventRiskMedium:
+	case shared.RiskMedium:
 		score += 20
-	case EventRiskLow:
+	case shared.RiskLow:
 		score += 10
 	}
 
@@ -441,13 +434,13 @@ func calculateNamespaceEventRiskScore(stats *EventSummary) int {
 
 func eventRiskScoreToLevel(score int) string {
 	if score >= 80 {
-		return EventRiskCritical
+		return shared.RiskCritical
 	} else if score >= 60 {
-		return EventRiskHigh
+		return shared.RiskHigh
 	} else if score >= 30 {
-		return EventRiskMedium
+		return shared.RiskMedium
 	}
-	return EventRiskLow
+	return shared.RiskLow
 }
 
 func identifyTopIssues(stats *EventSummary) []string {
@@ -472,114 +465,79 @@ func identifyTopIssues(stats *EventSummary) []string {
 	return issues
 }
 
-// Formatting functions
-func formatSecurityEvent(analysis *EventAnalysis) string {
-	return fmt.Sprintf("[%s] %s | %s/%s | Reason: %s | Issue: %s | Count: %d | Last: %s",
-		analysis.Severity, analysis.Namespace, analysis.Kind, analysis.Name,
-		analysis.Reason, analysis.SecurityIssue, analysis.Count, analysis.LastSeen.Format(time.RFC3339))
-}
-
-func formatFailedScheduling(analysis *EventAnalysis) string {
-	return fmt.Sprintf("[SCHEDULING] %s/%s/%s | Reason: %s | Count: %d | Message: %s",
-		analysis.Namespace, analysis.Kind, analysis.Name, analysis.Reason, analysis.Count,
-		truncateString(analysis.Message, 100))
-}
-
-func formatImagePullFailure(analysis *EventAnalysis) string {
-	return fmt.Sprintf("[IMAGE] %s/%s | Count: %d | Message: %s | Last: %s",
-		analysis.Namespace, analysis.Name, analysis.Count,
-		truncateString(analysis.Message, 120), analysis.LastSeen.Format(time.RFC3339))
-}
-
-func formatOOMKilled(analysis *EventAnalysis) string {
-	return fmt.Sprintf("[OOM] %s/%s/%s | Count: %d | First: %s | Last: %s | Message: %s",
-		analysis.Namespace, analysis.Kind, analysis.Name, analysis.Count,
-		analysis.FirstSeen.Format(time.RFC3339), analysis.LastSeen.Format(time.RFC3339),
-		truncateString(analysis.Message, 80))
-}
-
-func formatVolumeFailure(analysis *EventAnalysis) string {
-	return fmt.Sprintf("[VOLUME] %s/%s | Reason: %s | Count: %d | Message: %s",
-		analysis.Namespace, analysis.Name, analysis.Reason, analysis.Count,
-		truncateString(analysis.Message, 100))
-}
-
-func formatAdmissionDenial(analysis *EventAnalysis) string {
-	return fmt.Sprintf("[ADMISSION] %s/%s/%s | Count: %d | Message: %s | Last: %s",
-		analysis.Namespace, analysis.Kind, analysis.Name, analysis.Count,
-		truncateString(analysis.Message, 120), analysis.LastSeen.Format(time.RFC3339))
-}
-
-func formatAuthFailure(analysis *EventAnalysis) string {
-	return fmt.Sprintf("[AUTH] %s/%s/%s | Reason: %s | Count: %d | Message: %s",
-		analysis.Namespace, analysis.Kind, analysis.Name, analysis.Reason, analysis.Count,
-		truncateString(analysis.Message, 100))
-}
-
-func formatEventEnum(analyses []EventAnalysis) string {
+func generateEventCommands(summaries []EventSummary) string {
 	var lines []string
-	lines = append(lines, "=== Kubernetes Events Security Analysis ===\n")
 
-	// Group by category
-	categories := make(map[string][]EventAnalysis)
-	for _, analysis := range analyses {
-		categories[analysis.Category] = append(categories[analysis.Category], analysis)
-	}
-
-	for category, events := range categories {
-		lines = append(lines, fmt.Sprintf("\n## %s Events (%d)\n", category, len(events)))
-		for _, ev := range events {
-			lines = append(lines, fmt.Sprintf("  [%s] %s/%s/%s", ev.Severity, ev.Namespace, ev.Kind, ev.Name))
-			lines = append(lines, fmt.Sprintf("    Reason: %s (Count: %d)", ev.Reason, ev.Count))
-			lines = append(lines, fmt.Sprintf("    Message: %s", truncateString(ev.Message, 120)))
-			if ev.SecurityIssue != "" {
-				lines = append(lines, fmt.Sprintf("    Security Issue: %s", ev.SecurityIssue))
-			}
-			lines = append(lines, fmt.Sprintf("    Last Seen: %s", ev.LastSeen.Format(time.RFC3339)))
-			lines = append(lines, "")
-		}
-	}
-
-	return strings.Join(lines, "\n")
-}
-
-func generateEventRemediationGuide(summaries []EventSummary) string {
-	var lines []string
-	lines = append(lines, "=== Events Security Remediation Guide ===\n")
-
-	lines = append(lines, "# View recent events in a namespace:")
-	lines = append(lines, "kubectl get events -n <namespace> --sort-by='.lastTimestamp'")
+	lines = append(lines, "# ===========================================")
+	lines = append(lines, "# Event Enumeration Commands")
+	lines = append(lines, "# ===========================================")
 	lines = append(lines, "")
 
-	lines = append(lines, "# Filter warning events:")
-	lines = append(lines, "kubectl get events -n <namespace> --field-selector type=Warning")
+	lines = append(lines, "# List all events cluster-wide:")
+	lines = append(lines, "kubectl get events -A --sort-by='.lastTimestamp'")
+	lines = append(lines, "")
+
+	lines = append(lines, "# View events in a specific namespace:")
+	for _, s := range summaries {
+		lines = append(lines, fmt.Sprintf("kubectl get events -n %s --sort-by='.lastTimestamp'", s.Namespace))
+	}
+	lines = append(lines, "")
+
+	lines = append(lines, "# Filter warning events only:")
+	lines = append(lines, "kubectl get events -A --field-selector type=Warning")
 	lines = append(lines, "")
 
 	lines = append(lines, "# Watch events in real-time:")
-	lines = append(lines, "kubectl get events -n <namespace> --watch")
+	lines = append(lines, "kubectl get events -A --watch")
 	lines = append(lines, "")
 
-	lines = append(lines, "# Fix OOMKilled pods - increase memory limits:")
-	lines = append(lines, "kubectl set resources deployment/<name> -n <namespace> --limits=memory=512Mi --requests=memory=256Mi")
+	lines = append(lines, "# Get detailed event output:")
+	lines = append(lines, "kubectl get events -A -o wide")
 	lines = append(lines, "")
 
-	lines = append(lines, "# Fix ImagePullBackOff - create image pull secret:")
-	lines = append(lines, "kubectl create secret docker-registry <secret-name> \\")
-	lines = append(lines, "  --docker-server=<registry> \\")
-	lines = append(lines, "  --docker-username=<username> \\")
-	lines = append(lines, "  --docker-password=<password> -n <namespace>")
+	lines = append(lines, "# Filter events by reason:")
+	lines = append(lines, "kubectl get events -A --field-selector reason=FailedScheduling")
+	lines = append(lines, "kubectl get events -A --field-selector reason=OOMKilled")
+	lines = append(lines, "kubectl get events -A --field-selector reason=FailedMount")
+	lines = append(lines, "kubectl get events -A --field-selector reason=BackOff")
 	lines = append(lines, "")
 
-	lines = append(lines, "# Fix FailedScheduling - add node resources or adjust pod requests:")
-	lines = append(lines, "kubectl describe pod <pod-name> -n <namespace>  # Check scheduling issues")
+	lines = append(lines, "# Get events for a specific pod:")
+	lines = append(lines, "kubectl get events -n <namespace> --field-selector involvedObject.name=<pod-name>")
 	lines = append(lines, "")
 
-	for _, summary := range summaries {
-		if summary.RiskScore >= 60 {
-			lines = append(lines, fmt.Sprintf("# High-risk namespace: %s (Score: %d)", summary.Namespace, summary.RiskScore))
-			for _, issue := range summary.TopIssues {
-				lines = append(lines, fmt.Sprintf("#   - %s", issue))
-			}
+	lines = append(lines, "# JSON output for parsing:")
+	lines = append(lines, "kubectl get events -A -o json | jq '.items[] | select(.type==\"Warning\")'")
+	lines = append(lines, "")
+
+	lines = append(lines, "# ===========================================")
+	lines = append(lines, "# Investigation Commands")
+	lines = append(lines, "# ===========================================")
+	lines = append(lines, "")
+
+	lines = append(lines, "# Describe pod to see events and status:")
+	lines = append(lines, "kubectl describe pod <pod-name> -n <namespace>")
+	lines = append(lines, "")
+
+	lines = append(lines, "# Check pod logs for OOMKilled containers:")
+	lines = append(lines, "kubectl logs <pod-name> -n <namespace> --previous")
+	lines = append(lines, "")
+
+	lines = append(lines, "# Check node conditions:")
+	lines = append(lines, "kubectl describe node <node-name> | grep -A 10 Conditions")
+	lines = append(lines, "")
+
+	lines = append(lines, "# Check resource usage:")
+	lines = append(lines, "kubectl top pods -A")
+	lines = append(lines, "kubectl top nodes")
+	lines = append(lines, "")
+
+	// Add namespace-specific commands for high-risk namespaces
+	for _, s := range summaries {
+		if s.RiskScore >= 60 {
+			lines = append(lines, fmt.Sprintf("# High-risk namespace: %s (issues: %v)", s.Namespace, s.TopIssues))
+			lines = append(lines, fmt.Sprintf("kubectl get events -n %s --field-selector type=Warning", s.Namespace))
+			lines = append(lines, fmt.Sprintf("kubectl get pods -n %s -o wide", s.Namespace))
 			lines = append(lines, "")
 		}
 	}
@@ -587,8 +545,8 @@ func generateEventRemediationGuide(summaries []EventSummary) string {
 	return strings.Join(lines, "\n")
 }
 
-func generateEventTable(analyses []EventAnalysis) internal.TableFile {
-	header := []string{"Namespace", "Kind", "Name", "Reason", "Type", "Count", "Category", "Severity", "Last Seen", "Score"}
+func generateEventTable(analyses []EventAnalysis, limit int, showAll bool) internal.TableFile {
+	header := []string{"Namespace", "Kind", "Name", "Reason", "Type", "Count", "Category", "Last Seen", "Message"}
 	var rows [][]string
 
 	// Sort by risk score
@@ -596,25 +554,24 @@ func generateEventTable(analyses []EventAnalysis) internal.TableFile {
 		return analyses[i].RiskScore > analyses[j].RiskScore
 	})
 
-	// Limit to top 500 events
-	limit := 500
-	if len(analyses) < limit {
-		limit = len(analyses)
+	// Determine how many events to show
+	count := len(analyses)
+	if !showAll && limit > 0 && limit < count {
+		count = limit
 	}
 
-	for i := 0; i < limit; i++ {
+	for i := 0; i < count; i++ {
 		ev := analyses[i]
 		rows = append(rows, []string{
 			ev.Namespace,
 			ev.Kind,
-			truncateString(ev.Name, 40),
+			ev.Name,
 			ev.Reason,
 			ev.Type,
 			fmt.Sprintf("%d", ev.Count),
 			ev.Category,
-			ev.Severity,
 			ev.LastSeen.Format("2006-01-02 15:04"),
-			fmt.Sprintf("%d", ev.RiskScore),
+			ev.Message,
 		})
 	}
 
@@ -626,7 +583,7 @@ func generateEventTable(analyses []EventAnalysis) internal.TableFile {
 }
 
 func generateSummaryTable(summaries []EventSummary) internal.TableFile {
-	header := []string{"Namespace", "Total", "Warnings", "Security", "OOM", "Scheduling", "ImagePull", "Admission", "Auth", "Risk", "Score"}
+	header := []string{"Namespace", "Total", "Warnings", "Security", "OOM", "Scheduling", "ImagePull", "Admission", "Auth"}
 	var rows [][]string
 
 	// Sort by risk score
@@ -645,8 +602,6 @@ func generateSummaryTable(summaries []EventSummary) internal.TableFile {
 			fmt.Sprintf("%d", s.ImagePullFailures),
 			fmt.Sprintf("%d", s.AdmissionDenials),
 			fmt.Sprintf("%d", s.AuthFailures),
-			s.RiskLevel,
-			fmt.Sprintf("%d", s.RiskScore),
 		})
 	}
 
@@ -657,9 +612,30 @@ func generateSummaryTable(summaries []EventSummary) internal.TableFile {
 	}
 }
 
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
+// filterEventsBySearch filters events by a search query (case-insensitive)
+// Searches across: namespace, object name, reason, message, involved object kind
+func filterEventsBySearch(events []corev1.Event, query string) []corev1.Event {
+	if query == "" {
+		return events
 	}
-	return s[:maxLen-3] + "..."
+
+	query = strings.ToLower(query)
+	var filtered []corev1.Event
+
+	for _, event := range events {
+		// Check multiple fields for the search query
+		if strings.Contains(strings.ToLower(event.Namespace), query) ||
+			strings.Contains(strings.ToLower(event.InvolvedObject.Name), query) ||
+			strings.Contains(strings.ToLower(event.InvolvedObject.Kind), query) ||
+			strings.Contains(strings.ToLower(event.Reason), query) ||
+			strings.Contains(strings.ToLower(event.Message), query) ||
+			strings.Contains(strings.ToLower(event.Source.Component), query) ||
+			strings.Contains(strings.ToLower(event.Source.Host), query) ||
+			strings.Contains(strings.ToLower(event.Type), query) {
+			filtered = append(filtered, event)
+		}
+	}
+
+	return filtered
 }
+

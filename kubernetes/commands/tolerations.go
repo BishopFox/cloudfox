@@ -1,13 +1,13 @@
 package commands
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -66,7 +66,8 @@ type PodTolerationInfo struct {
 }
 
 func ListTolerations(cmd *cobra.Command, args []string) {
-	ctx := context.Background()
+	ctx, cancel := shared.ContextWithTimeout()
+	defer cancel()
 	logger := internal.NewLogger()
 
 	// Extract global flags
@@ -80,25 +81,23 @@ func ListTolerations(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	var lootEnum []string
-	lootEnum = append(lootEnum, `#####################################
+	loot := shared.NewLootBuilder()
+	loot.Section("Tolerations-Enum").SetHeader(`#####################################
 ##### Enumerate Toleration Information
 #####################################
 
 `)
 	if globals.KubeContext != "" {
-		lootEnum = append(lootEnum, fmt.Sprintf("kubectl config use-context %s\n", globals.KubeContext))
+		loot.Section("Tolerations-Enum").Addf("kubectl config use-context %s\n", globals.KubeContext)
 	}
 
-	var lootPodYAMLs []string
-	lootPodYAMLs = append(lootPodYAMLs, `#####################################
+	loot.Section("Pod-YAMLs").SetHeader(`#####################################
 ##### Pod YAMLs for Tolerations
 #####################################
 
 `)
 
-	var lootWildcardTolerations []string
-	lootWildcardTolerations = append(lootWildcardTolerations, `#####################################
+	loot.Section("Wildcard-Tolerations").SetHeader(`#####################################
 ##### Wildcard Tolerations (Security Risk)
 #####################################
 # Pods with wildcard tolerations can schedule ANYWHERE
@@ -106,8 +105,7 @@ func ListTolerations(cmd *cobra.Command, args []string) {
 
 `)
 
-	var lootPrivilegeEscalation []string
-	lootPrivilegeEscalation = append(lootPrivilegeEscalation, `#####################################
+	loot.Section("Privilege-Escalation").SetHeader(`#####################################
 ##### Privilege Escalation Risks
 #####################################
 # Pods with dangerous tolerations + privileged security context
@@ -115,8 +113,7 @@ func ListTolerations(cmd *cobra.Command, args []string) {
 
 `)
 
-	var lootComplianceBypass []string
-	lootComplianceBypass = append(lootComplianceBypass, `#####################################
+	loot.Section("Compliance-Bypass").SetHeader(`#####################################
 ##### Compliance Zone Bypass
 #####################################
 # Pods that can bypass compliance zone isolation
@@ -124,8 +121,7 @@ func ListTolerations(cmd *cobra.Command, args []string) {
 
 `)
 
-	var lootMasterAccess []string
-	lootMasterAccess = append(lootMasterAccess, `#####################################
+	loot.Section("Master-Access").SetHeader(`#####################################
 ##### Master/Control-Plane Access
 #####################################
 # Pods tolerating master node taints
@@ -133,15 +129,9 @@ func ListTolerations(cmd *cobra.Command, args []string) {
 
 `)
 
-	namespaces, err := clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Error listing namespaces: %v", err), globals.K8S_TOLERATIONS_MODULE_NAME)
-		return
-	}
+	namespaces := shared.GetTargetNamespaces(ctx, clientset, &logger, globals.K8S_TOLERATIONS_MODULE_NAME)
 
 	headers := []string{
-		"Risk",
-		"Score",
 		"Namespace",
 		"Pod Name",
 		"Toleration Key",
@@ -156,17 +146,12 @@ func ListTolerations(cmd *cobra.Command, args []string) {
 	var outputRows [][]string
 	var podInfos []PodTolerationInfo
 
-	riskCounts := map[string]int{
-		"CRITICAL": 0,
-		"HIGH":     0,
-		"MEDIUM":   0,
-		"LOW":      0,
-	}
+	riskCounts := shared.NewRiskCounts()
 
-	for _, ns := range namespaces.Items {
-		pods, err := clientset.CoreV1().Pods(ns.Name).List(ctx, metav1.ListOptions{})
+	for _, ns := range namespaces {
+		pods, err := clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
 		if err != nil {
-			logger.ErrorM(fmt.Sprintf("Error listing pods in namespace: %v", err), globals.K8S_TOLERATIONS_MODULE_NAME)
+			shared.LogListError(&logger, "pods", ns, err, globals.K8S_TOLERATIONS_MODULE_NAME, false)
 			continue
 		}
 
@@ -219,20 +204,16 @@ func ListTolerations(cmd *cobra.Command, args []string) {
 			podInfo.RiskLevel, podInfo.RiskScore = calculateTolerationRiskScore(&podInfo)
 			podInfo.SecurityIssues = generateTolerationSecurityIssues(&podInfo)
 
-			riskCounts[podInfo.RiskLevel]++
+			riskCounts.Add(podInfo.RiskLevel)
 			podInfos = append(podInfos, podInfo)
 
 			// Add kubectl/jq command for this pod
-			lootEnum = append(lootEnum,
-				fmt.Sprintf("kubectl get pod %s -n %s -o json | jq '.spec.tolerations[] | {Key:.key, Operator:.operator, Value:.value, Effect:.effect, TolerationSeconds:.tolerationSeconds}' \n",
-					pod.Name, pod.Namespace),
-			)
+			loot.Section("Tolerations-Enum").Addf("kubectl get pod %s -n %s -o json | jq '.spec.tolerations[] | {Key:.key, Operator:.operator, Value:.value, Effect:.effect, TolerationSeconds:.tolerationSeconds}' \n",
+				pod.Name, pod.Namespace)
 
 			if len(pod.Spec.Tolerations) == 0 {
 				hostAccess := formatHostAccess(&podInfo)
 				row := []string{
-					podInfo.RiskLevel,
-					fmt.Sprintf("%d", podInfo.RiskScore),
 					k8sinternal.NonEmpty(pod.Namespace),
 					k8sinternal.NonEmpty(pod.Name),
 					"<NONE>",
@@ -257,8 +238,6 @@ func ListTolerations(cmd *cobra.Command, args []string) {
 
 					hostAccess := formatHostAccess(&podInfo)
 					row := []string{
-						podInfo.RiskLevel,
-						fmt.Sprintf("%d", podInfo.RiskScore),
 						k8sinternal.NonEmpty(pod.Namespace),
 						k8sinternal.NonEmpty(pod.Name),
 						k8sinternal.NonEmpty(tol.Key),
@@ -310,77 +289,66 @@ func ListTolerations(cmd *cobra.Command, args []string) {
 				if len(podInfo.SecurityIssues) > 0 {
 					commentLines = append(commentLines, fmt.Sprintf("# Security Issues: %d", len(podInfo.SecurityIssues)))
 				}
-				lootPodYAMLs = append(lootPodYAMLs,
-					fmt.Sprintf("%s\n# --- Pod YAML for %s/%s\n%s", strings.Join(commentLines, "\n"), pod.Namespace, pod.Name, string(yamlData)),
-					fmt.Sprintf("# Apply with: kubectl create -f <filename>.yaml\n"),
-				)
+				loot.Section("Pod-YAMLs").Add(fmt.Sprintf("%s\n# --- Pod YAML for %s/%s\n%s", strings.Join(commentLines, "\n"), pod.Namespace, pod.Name, string(yamlData)))
+				loot.Section("Pod-YAMLs").Add("# Apply with: kubectl create -f <filename>.yaml\n")
 			} else {
 				logger.ErrorM(fmt.Sprintf("Error marshaling pod YAML for %s/%s: %v", pod.Namespace, pod.Name, err), globals.K8S_TOLERATIONS_MODULE_NAME)
 			}
 
 			// Loot: Wildcard tolerations
 			if len(podInfo.WildcardTolerations) > 0 {
-				lootWildcardTolerations = append(lootWildcardTolerations,
-					fmt.Sprintf("\n### [%s] %s/%s (Score: %d)", podInfo.RiskLevel, pod.Namespace, pod.Name, podInfo.RiskScore),
-					fmt.Sprintf("# Wildcard Tolerations: %s", strings.Join(podInfo.WildcardTolerations, ", ")),
-				)
+				loot.Section("Wildcard-Tolerations").Addf("\n### [%s] %s/%s (Score: %d)", podInfo.RiskLevel, pod.Namespace, pod.Name, podInfo.RiskScore)
+				loot.Section("Wildcard-Tolerations").Addf("# Wildcard Tolerations: %s", strings.Join(podInfo.WildcardTolerations, ", "))
 				if podInfo.IsPrivileged {
-					lootWildcardTolerations = append(lootWildcardTolerations, "# WARNING: Privileged pod with wildcard tolerations")
+					loot.Section("Wildcard-Tolerations").Add("# WARNING: Privileged pod with wildcard tolerations")
 				}
 				if len(podInfo.SecurityIssues) > 0 {
-					lootWildcardTolerations = append(lootWildcardTolerations, "# Security Issues:")
+					loot.Section("Wildcard-Tolerations").Add("# Security Issues:")
 					for _, issue := range podInfo.SecurityIssues {
-						lootWildcardTolerations = append(lootWildcardTolerations, fmt.Sprintf("#   - %s", issue))
+						loot.Section("Wildcard-Tolerations").Addf("#   - %s", issue)
 					}
 				}
-				lootWildcardTolerations = append(lootWildcardTolerations, "")
+				loot.Section("Wildcard-Tolerations").Add("")
 			}
 
 			// Loot: Privilege escalation
 			if podInfo.PrivilegeEscalation {
-				lootPrivilegeEscalation = append(lootPrivilegeEscalation,
-					fmt.Sprintf("\n### [CRITICAL] %s/%s", pod.Namespace, pod.Name),
-					fmt.Sprintf("# Privileged: %v | HostNetwork: %v | HostPID: %v | HostIPC: %v",
-						podInfo.IsPrivileged, podInfo.HostNetwork, podInfo.HostPID, podInfo.HostIPC),
-					fmt.Sprintf("# Master Access: %v | Wildcard Tolerations: %d",
-						podInfo.MasterNodeAccess, len(podInfo.WildcardTolerations)),
-				)
+				loot.Section("Privilege-Escalation").Addf("\n### [CRITICAL] %s/%s", pod.Namespace, pod.Name)
+				loot.Section("Privilege-Escalation").Addf("# Privileged: %v | HostNetwork: %v | HostPID: %v | HostIPC: %v",
+					podInfo.IsPrivileged, podInfo.HostNetwork, podInfo.HostPID, podInfo.HostIPC)
+				loot.Section("Privilege-Escalation").Addf("# Master Access: %v | Wildcard Tolerations: %d",
+					podInfo.MasterNodeAccess, len(podInfo.WildcardTolerations))
 				if len(podInfo.SecurityIssues) > 0 {
-					lootPrivilegeEscalation = append(lootPrivilegeEscalation, "# Security Issues:")
+					loot.Section("Privilege-Escalation").Add("# Security Issues:")
 					for _, issue := range podInfo.SecurityIssues {
-						lootPrivilegeEscalation = append(lootPrivilegeEscalation, fmt.Sprintf("#   - %s", issue))
+						loot.Section("Privilege-Escalation").Addf("#   - %s", issue)
 					}
 				}
-				lootPrivilegeEscalation = append(lootPrivilegeEscalation,
-					fmt.Sprintf("kubectl get pod %s -n %s -o yaml", pod.Name, pod.Namespace),
-					"")
+				loot.Section("Privilege-Escalation").Addf("kubectl get pod %s -n %s -o yaml", pod.Name, pod.Namespace)
+				loot.Section("Privilege-Escalation").Add("")
 			}
 
 			// Loot: Compliance bypass
 			if podInfo.ComplianceBypass != "" {
-				lootComplianceBypass = append(lootComplianceBypass,
-					fmt.Sprintf("\n### [%s] %s/%s - %s Bypass", podInfo.RiskLevel, pod.Namespace, pod.Name, podInfo.ComplianceBypass),
-					fmt.Sprintf("# Can access %s compliance zone", podInfo.ComplianceBypass),
-					fmt.Sprintf("kubectl get pod %s -n %s -o yaml", pod.Name, pod.Namespace),
-					"")
+				loot.Section("Compliance-Bypass").Addf("\n### [%s] %s/%s - %s Bypass", podInfo.RiskLevel, pod.Namespace, pod.Name, podInfo.ComplianceBypass)
+				loot.Section("Compliance-Bypass").Addf("# Can access %s compliance zone", podInfo.ComplianceBypass)
+				loot.Section("Compliance-Bypass").Addf("kubectl get pod %s -n %s -o yaml", pod.Name, pod.Namespace)
+				loot.Section("Compliance-Bypass").Add("")
 			}
 
 			// Loot: Master access
 			if podInfo.MasterNodeAccess {
-				lootMasterAccess = append(lootMasterAccess,
-					fmt.Sprintf("\n### [%s] %s/%s (Score: %d)", podInfo.RiskLevel, pod.Namespace, pod.Name, podInfo.RiskScore),
-					fmt.Sprintf("# Tolerates master/control-plane taints"),
-					fmt.Sprintf("# Privileged: %v | ServiceAccount: %s", podInfo.IsPrivileged, podInfo.ServiceAccount),
-				)
+				loot.Section("Master-Access").Addf("\n### [%s] %s/%s (Score: %d)", podInfo.RiskLevel, pod.Namespace, pod.Name, podInfo.RiskScore)
+				loot.Section("Master-Access").Add("# Tolerates master/control-plane taints")
+				loot.Section("Master-Access").Addf("# Privileged: %v | ServiceAccount: %s", podInfo.IsPrivileged, podInfo.ServiceAccount)
 				if len(podInfo.SecurityIssues) > 0 {
-					lootMasterAccess = append(lootMasterAccess, "# Security Issues:")
+					loot.Section("Master-Access").Add("# Security Issues:")
 					for _, issue := range podInfo.SecurityIssues {
-						lootMasterAccess = append(lootMasterAccess, fmt.Sprintf("#   - %s", issue))
+						loot.Section("Master-Access").Addf("#   - %s", issue)
 					}
 				}
-				lootMasterAccess = append(lootMasterAccess,
-					fmt.Sprintf("kubectl get pod %s -n %s -o yaml", pod.Name, pod.Namespace),
-					"")
+				loot.Section("Master-Access").Addf("kubectl get pod %s -n %s -o yaml", pod.Name, pod.Namespace)
+				loot.Section("Master-Access").Add("")
 			}
 		}
 	}
@@ -392,7 +360,7 @@ func ListTolerations(cmd *cobra.Command, args []string) {
 	}
 
 	// Add summary
-	if riskCounts["CRITICAL"] > 0 || riskCounts["HIGH"] > 0 {
+	if riskCounts.Critical > 0 || riskCounts.High > 0 {
 		summary := fmt.Sprintf(`
 # SUMMARY: Risk Distribution
 # CRITICAL: %d pods with critical toleration risks
@@ -401,41 +369,13 @@ func ListTolerations(cmd *cobra.Command, args []string) {
 # LOW: %d pods with low/no risk tolerations
 #
 # Focus on CRITICAL and HIGH risk pods for security review.
-`, riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"])
-		lootWildcardTolerations = append([]string{summary}, lootWildcardTolerations...)
+`, riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low)
+		loot.Section("Wildcard-Tolerations").SetSummary(summary)
 	}
 
-	loot1 := internal.LootFile{
-		Name:     "Tolerations-Enum",
-		Contents: strings.Join(k8sinternal.Unique(lootEnum), "\n"),
-	}
+	lootFiles := loot.Build()
 
-	loot2 := internal.LootFile{
-		Name:     "Pod-YAMLs",
-		Contents: strings.Join(lootPodYAMLs, "\n"),
-	}
-
-	loot3 := internal.LootFile{
-		Name:     "Wildcard-Tolerations",
-		Contents: strings.Join(lootWildcardTolerations, "\n"),
-	}
-
-	loot4 := internal.LootFile{
-		Name:     "Privilege-Escalation",
-		Contents: strings.Join(lootPrivilegeEscalation, "\n"),
-	}
-
-	loot5 := internal.LootFile{
-		Name:     "Compliance-Bypass",
-		Contents: strings.Join(lootComplianceBypass, "\n"),
-	}
-
-	loot6 := internal.LootFile{
-		Name:     "Master-Access",
-		Contents: strings.Join(lootMasterAccess, "\n"),
-	}
-
-	err = internal.HandleOutput(
+	err := internal.HandleOutput(
 		"Kubernetes",
 		format,
 		outputDirectory,
@@ -446,7 +386,7 @@ func ListTolerations(cmd *cobra.Command, args []string) {
 		"results",
 		TolerationsOutput{
 			Table: []internal.TableFile{table},
-			Loot:  []internal.LootFile{loot1, loot2, loot3, loot4, loot5, loot6},
+			Loot:  lootFiles,
 		},
 	)
 	if err != nil {
@@ -457,7 +397,7 @@ func ListTolerations(cmd *cobra.Command, args []string) {
 	if len(outputRows) > 0 {
 		logger.InfoM(fmt.Sprintf("%d pod tolerations found | Risk: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
 			len(outputRows),
-			riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"]),
+			riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low),
 			globals.K8S_TOLERATIONS_MODULE_NAME)
 	} else {
 		logger.InfoM("No pod tolerations found, skipping output file creation", globals.K8S_TOLERATIONS_MODULE_NAME)
@@ -591,13 +531,13 @@ func calculateTolerationRiskScore(podInfo *PodTolerationInfo) (string, int) {
 
 	// Determine risk level
 	if score >= 70 {
-		return "CRITICAL", tolerationsMin(score, 100)
+		return shared.RiskCritical, tolerationsMin(score, 100)
 	} else if score >= 40 {
-		return "HIGH", score
+		return shared.RiskHigh, score
 	} else if score >= 20 {
-		return "MEDIUM", score
+		return shared.RiskMedium, score
 	}
-	return "LOW", score
+	return shared.RiskLow, score
 }
 
 func generateTolerationSecurityIssues(podInfo *PodTolerationInfo) []string {

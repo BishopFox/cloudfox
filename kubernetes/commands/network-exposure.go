@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -10,11 +11,25 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
+
+	// Cloud SDK imports for optional correlation
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/subscription/armsubscription"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
+	"google.golang.org/api/cloudresourcemanager/v1"
+	"google.golang.org/api/compute/v1"
+	"google.golang.org/api/option"
 )
 
 var NetworkExposureCmd = &cobra.Command{
@@ -92,6 +107,9 @@ type NetworkExposureFinding struct {
 	// Annotations
 	DangerousAnnotations []string
 	AnnotationIssues     []string
+
+	// Cloud network correlation (optional)
+	CloudNetwork *CloudNetworkInfo
 }
 
 // PortInfo describes security characteristics of a port
@@ -116,59 +134,86 @@ type BackendSecurityInfo struct {
 	Workloads        []string
 }
 
+// CloudNetworkInfo contains network information from cloud providers
+type CloudNetworkInfo struct {
+	Provider  string // AWS, GCP, Azure
+	VPCID     string // VPC ID (AWS/GCP) or VNet ID (Azure)
+	Subnets   []string
+	PublicIPs []string
+	Region    string
+	LBType    string // NLB, ALB, Classic, Internal, etc.
+	LBName    string // Cloud load balancer name
+	LBArn     string // Load balancer ARN (AWS)
+}
+
+// CloudClients holds optional cloud provider clients for correlation
+type CloudClients struct {
+	// AWS
+	AWSELBv2Client *elasticloadbalancingv2.Client
+	AWSRegion      string
+
+	// GCP
+	GCPCompute  *compute.Service
+	GCPProjects []string // List of projects to check
+
+	// Azure
+	AzureCredential    azcore.TokenCredential
+	AzureSubscriptions []string // List of subscriptions to check
+}
+
 // Dangerous port database
 var networkExposureDangerousPorts = map[int32]PortInfo{
 	// Remote access (CRITICAL)
-	22:   {Category: "SSH", Risk: "CRITICAL", Description: "SSH remote access"},
-	23:   {Category: "Telnet", Risk: "CRITICAL", Description: "Unencrypted remote access (Telnet)"},
-	3389: {Category: "RDP", Risk: "CRITICAL", Description: "Windows Remote Desktop (RDP)"},
-	5900: {Category: "VNC", Risk: "CRITICAL", Description: "VNC remote desktop"},
-	5901: {Category: "VNC", Risk: "CRITICAL", Description: "VNC remote desktop (alt)"},
+	22:   {Category: "SSH", Risk: shared.RiskCritical, Description: "SSH remote access"},
+	23:   {Category: "Telnet", Risk: shared.RiskCritical, Description: "Unencrypted remote access (Telnet)"},
+	3389: {Category: "RDP", Risk: shared.RiskCritical, Description: "Windows Remote Desktop (RDP)"},
+	5900: {Category: "VNC", Risk: shared.RiskCritical, Description: "VNC remote desktop"},
+	5901: {Category: "VNC", Risk: shared.RiskCritical, Description: "VNC remote desktop (alt)"},
 
 	// Kubernetes components (CRITICAL)
-	6443:  {Category: "Kubernetes", Risk: "CRITICAL", Description: "Kubernetes API server"},
-	10250: {Category: "Kubernetes", Risk: "CRITICAL", Description: "Kubelet API (unauthenticated RCE risk)"},
-	10255: {Category: "Kubernetes", Risk: "HIGH", Description: "Kubelet read-only port"},
-	2379:  {Category: "Kubernetes", Risk: "CRITICAL", Description: "etcd client API (cluster secrets)"},
-	2380:  {Category: "Kubernetes", Risk: "CRITICAL", Description: "etcd peer API"},
+	6443:  {Category: "Kubernetes", Risk: shared.RiskCritical, Description: "Kubernetes API server"},
+	10250: {Category: "Kubernetes", Risk: shared.RiskCritical, Description: "Kubelet API (unauthenticated RCE risk)"},
+	10255: {Category: "Kubernetes", Risk: shared.RiskHigh, Description: "Kubelet read-only port"},
+	2379:  {Category: "Kubernetes", Risk: shared.RiskCritical, Description: "etcd client API (cluster secrets)"},
+	2380:  {Category: "Kubernetes", Risk: shared.RiskCritical, Description: "etcd peer API"},
 
 	// Databases (HIGH)
-	3306:  {Category: "Database", Risk: "HIGH", Description: "MySQL/MariaDB database"},
-	5432:  {Category: "Database", Risk: "HIGH", Description: "PostgreSQL database"},
-	1433:  {Category: "Database", Risk: "HIGH", Description: "Microsoft SQL Server"},
-	1521:  {Category: "Database", Risk: "HIGH", Description: "Oracle database"},
-	27017: {Category: "Database", Risk: "HIGH", Description: "MongoDB database"},
-	27018: {Category: "Database", Risk: "HIGH", Description: "MongoDB shard server"},
-	6379:  {Category: "Database", Risk: "HIGH", Description: "Redis key-value store"},
-	9200:  {Category: "Database", Risk: "HIGH", Description: "Elasticsearch"},
-	9300:  {Category: "Database", Risk: "HIGH", Description: "Elasticsearch cluster"},
-	5984:  {Category: "Database", Risk: "HIGH", Description: "CouchDB"},
-	8086:  {Category: "Database", Risk: "HIGH", Description: "InfluxDB"},
-	7000:  {Category: "Database", Risk: "HIGH", Description: "Cassandra"},
-	7001:  {Category: "Database", Risk: "HIGH", Description: "Cassandra SSL"},
+	3306:  {Category: "Database", Risk: shared.RiskHigh, Description: "MySQL/MariaDB database"},
+	5432:  {Category: "Database", Risk: shared.RiskHigh, Description: "PostgreSQL database"},
+	1433:  {Category: "Database", Risk: shared.RiskHigh, Description: "Microsoft SQL Server"},
+	1521:  {Category: "Database", Risk: shared.RiskHigh, Description: "Oracle database"},
+	27017: {Category: "Database", Risk: shared.RiskHigh, Description: "MongoDB database"},
+	27018: {Category: "Database", Risk: shared.RiskHigh, Description: "MongoDB shard server"},
+	6379:  {Category: "Database", Risk: shared.RiskHigh, Description: "Redis key-value store"},
+	9200:  {Category: "Database", Risk: shared.RiskHigh, Description: "Elasticsearch"},
+	9300:  {Category: "Database", Risk: shared.RiskHigh, Description: "Elasticsearch cluster"},
+	5984:  {Category: "Database", Risk: shared.RiskHigh, Description: "CouchDB"},
+	8086:  {Category: "Database", Risk: shared.RiskHigh, Description: "InfluxDB"},
+	7000:  {Category: "Database", Risk: shared.RiskHigh, Description: "Cassandra"},
+	7001:  {Category: "Database", Risk: shared.RiskHigh, Description: "Cassandra SSL"},
 
 	// Admin/Management (HIGH)
-	8080: {Category: "Admin", Risk: "HIGH", Description: "Common admin panel/management"},
-	8443: {Category: "Admin", Risk: "HIGH", Description: "Admin panel (HTTPS)"},
-	9090: {Category: "Admin", Risk: "MEDIUM", Description: "Prometheus metrics"},
-	9093: {Category: "Admin", Risk: "MEDIUM", Description: "Prometheus Alertmanager"},
-	3000: {Category: "Admin", Risk: "MEDIUM", Description: "Grafana dashboards"},
-	9000: {Category: "Admin", Risk: "MEDIUM", Description: "SonarQube/Portainer"},
-	8081: {Category: "Admin", Risk: "MEDIUM", Description: "Common admin panel (alt)"},
-	8888: {Category: "Admin", Risk: "MEDIUM", Description: "Jupyter/admin panel"},
-	5000: {Category: "Admin", Risk: "MEDIUM", Description: "Docker Registry/Flask"},
-	5001: {Category: "Admin", Risk: "MEDIUM", Description: "Docker Registry (alt)"},
+	8080: {Category: "Admin", Risk: shared.RiskHigh, Description: "Common admin panel/management"},
+	8443: {Category: "Admin", Risk: shared.RiskHigh, Description: "Admin panel (HTTPS)"},
+	9090: {Category: "Admin", Risk: shared.RiskMedium, Description: "Prometheus metrics"},
+	9093: {Category: "Admin", Risk: shared.RiskMedium, Description: "Prometheus Alertmanager"},
+	3000: {Category: "Admin", Risk: shared.RiskMedium, Description: "Grafana dashboards"},
+	9000: {Category: "Admin", Risk: shared.RiskMedium, Description: "SonarQube/Portainer"},
+	8081: {Category: "Admin", Risk: shared.RiskMedium, Description: "Common admin panel (alt)"},
+	8888: {Category: "Admin", Risk: shared.RiskMedium, Description: "Jupyter/admin panel"},
+	5000: {Category: "Admin", Risk: shared.RiskMedium, Description: "Docker Registry/Flask"},
+	5001: {Category: "Admin", Risk: shared.RiskMedium, Description: "Docker Registry (alt)"},
 
 	// Message queues (MEDIUM)
-	5672:  {Category: "MessageQueue", Risk: "MEDIUM", Description: "RabbitMQ"},
-	15672: {Category: "MessageQueue", Risk: "MEDIUM", Description: "RabbitMQ Management"},
-	9092:  {Category: "MessageQueue", Risk: "MEDIUM", Description: "Kafka"},
-	4222:  {Category: "MessageQueue", Risk: "MEDIUM", Description: "NATS"},
+	5672:  {Category: "MessageQueue", Risk: shared.RiskMedium, Description: "RabbitMQ"},
+	15672: {Category: "MessageQueue", Risk: shared.RiskMedium, Description: "RabbitMQ Management"},
+	9092:  {Category: "MessageQueue", Risk: shared.RiskMedium, Description: "Kafka"},
+	4222:  {Category: "MessageQueue", Risk: shared.RiskMedium, Description: "NATS"},
 
 	// Web services
-	80:   {Category: "Web", Risk: "MEDIUM", Description: "HTTP web service"},
-	443:  {Category: "Web", Risk: "LOW", Description: "HTTPS web service"},
-	8000: {Category: "Web", Risk: "MEDIUM", Description: "HTTP web service (alt)"},
+	80:   {Category: "Web", Risk: shared.RiskMedium, Description: "HTTP web service"},
+	443:  {Category: "Web", Risk: shared.RiskLow, Description: "HTTPS web service"},
+	8000: {Category: "Web", Risk: shared.RiskMedium, Description: "HTTP web service (alt)"},
 }
 
 // Dangerous service annotations by cloud provider
@@ -212,7 +257,7 @@ func analyzePort(port int32) (bool, string, string, string) {
 	if info, found := networkExposureDangerousPorts[port]; found {
 		return true, info.Category, info.Risk, info.Description
 	}
-	return false, "Custom", "LOW", "Custom service"
+	return false, "Custom", shared.RiskLow, "Custom service"
 }
 
 // detectInternetFacing determines if a service is internet-facing
@@ -317,7 +362,49 @@ func analyzeNetworkExposureBackendSecurity(ctx context.Context, clientset *kuber
 
 	// Check if service has selector
 	if len(svc.Spec.Selector) == 0 {
-		backendInfo.SecurityIssues = append(backendInfo.SecurityIssues, "No selector - cannot determine backend pods")
+		// For ExternalName services, show the external target
+		if svc.Spec.Type == corev1.ServiceTypeExternalName && svc.Spec.ExternalName != "" {
+			backendInfo.Workloads = append(backendInfo.Workloads, fmt.Sprintf("External/%s", svc.Spec.ExternalName))
+		} else {
+			// Check Endpoints for services without selectors (manually created endpoints)
+			endpoints, err := clientset.CoreV1().Endpoints(svc.Namespace).Get(ctx, svc.Name, metav1.GetOptions{})
+			if err == nil && len(endpoints.Subsets) > 0 {
+				for _, subset := range endpoints.Subsets {
+					for _, addr := range subset.Addresses {
+						if addr.TargetRef != nil && addr.TargetRef.Kind == "Pod" {
+							// Look up the pod to get its owner
+							pod, err := clientset.CoreV1().Pods(svc.Namespace).Get(ctx, addr.TargetRef.Name, metav1.GetOptions{})
+							if err == nil {
+								backendInfo.PodCount++
+								if backendInfo.ServiceAccount == "" {
+									backendInfo.ServiceAccount = pod.Spec.ServiceAccountName
+								}
+								ownerRef := getOwnerReference(pod)
+								if ownerRef != "" {
+									if !networkExposureContains(backendInfo.Workloads, ownerRef) {
+										backendInfo.Workloads = append(backendInfo.Workloads, ownerRef)
+									}
+								} else {
+									podRef := fmt.Sprintf("Pod/%s", pod.Name)
+									if !networkExposureContains(backendInfo.Workloads, podRef) {
+										backendInfo.Workloads = append(backendInfo.Workloads, podRef)
+									}
+								}
+							}
+						} else if addr.IP != "" {
+							// External IP endpoint
+							ipRef := fmt.Sprintf("IP/%s", addr.IP)
+							if !networkExposureContains(backendInfo.Workloads, ipRef) {
+								backendInfo.Workloads = append(backendInfo.Workloads, ipRef)
+							}
+						}
+					}
+				}
+			}
+			if len(backendInfo.Workloads) == 0 {
+				backendInfo.SecurityIssues = append(backendInfo.SecurityIssues, "No selector or endpoints - cannot determine backend")
+			}
+		}
 		return backendInfo
 	}
 
@@ -342,12 +429,19 @@ func analyzeNetworkExposureBackendSecurity(ctx context.Context, clientset *kuber
 	// Analyze each pod
 	for _, pod := range pods.Items {
 		// Collect workload information
-		if ownerRef := getOwnerReference(&pod); ownerRef != "" {
+		ownerRef := getOwnerReference(&pod)
+		if ownerRef != "" {
 			if !networkExposureContains(backendInfo.Workloads, ownerRef) {
 				backendInfo.Workloads = append(backendInfo.Workloads, ownerRef)
 				if backendInfo.Deployment == "" {
 					backendInfo.Deployment = ownerRef
 				}
+			}
+		} else {
+			// Standalone pod (no owner) - use pod name
+			podRef := fmt.Sprintf("Pod/%s", pod.Name)
+			if !networkExposureContains(backendInfo.Workloads, podRef) {
+				backendInfo.Workloads = append(backendInfo.Workloads, podRef)
 			}
 		}
 
@@ -435,6 +529,26 @@ func networkExposureContains(slice []string, val string) bool {
 	return false
 }
 
+// extractPrivilegedContainers extracts container names from security issues
+func extractPrivilegedContainers(issues []string) string {
+	var containers []string
+	for _, issue := range issues {
+		// Look for "Pod X runs privileged container 'Y'"
+		if strings.Contains(issue, "privileged container") {
+			// Extract container name between quotes
+			start := strings.Index(issue, "'")
+			end := strings.LastIndex(issue, "'")
+			if start != -1 && end != -1 && end > start {
+				containers = append(containers, issue[start+1:end])
+			}
+		}
+	}
+	if len(containers) > 0 {
+		return strings.Join(containers, ", ")
+	}
+	return ""
+}
+
 // analyzeServiceAnnotations checks for dangerous or interesting service annotations
 func analyzeServiceAnnotations(svc *corev1.Service) ([]string, []string) {
 	var issues []string
@@ -445,7 +559,7 @@ func analyzeServiceAnnotations(svc *corev1.Service) ([]string, []string) {
 			msg := fmt.Sprintf("[%s] %s = %s: %s", anno.risk, anno.key, val, anno.description)
 			issues = append(issues, msg)
 
-			if anno.risk == "HIGH" || anno.risk == "CRITICAL" {
+			if anno.risk == shared.RiskHigh || anno.risk == shared.RiskCritical {
 				dangerous = append(dangerous, anno.key)
 			}
 		}
@@ -653,13 +767,13 @@ func calculateNetworkExposureRisk(finding NetworkExposureFinding) string {
 
 	// Classify
 	if riskScore >= 50 {
-		return "CRITICAL"
+		return shared.RiskCritical
 	} else if riskScore >= 25 {
-		return "HIGH"
+		return shared.RiskHigh
 	} else if riskScore >= 10 {
-		return "MEDIUM"
+		return shared.RiskMedium
 	}
-	return "LOW"
+	return shared.RiskLow
 }
 
 // determineDataExposureRisk identifies what kind of sensitive data might be exposed
@@ -684,6 +798,822 @@ func determineDataExposureRisk(finding NetworkExposureFinding) string {
 	}
 
 	return "None"
+}
+
+// containsProvider checks if a provider is in the list
+func containsProvider(providers []string, provider string) bool {
+	for _, p := range providers {
+		if p == provider {
+			return true
+		}
+	}
+	return false
+}
+
+// initCloudClients attempts to initialize cloud provider clients for correlation
+// All errors are suppressed since cloud correlation is optional
+// Uses flags from globals if set, otherwise falls back to default credential chains
+// Will enumerate all accessible projects/subscriptions if not specified
+// Only initializes clients for providers specified in globals.K8sCloudProviders
+func initCloudClients(logger *internal.Logger) *CloudClients {
+	// If no cloud providers specified, skip cloud correlation entirely
+	if len(globals.K8sCloudProviders) == 0 {
+		logger.InfoM("Cloud correlation disabled (use --cloud-provider to enable)", globals.K8S_NETWORK_PORTS_MODULE_NAME)
+		return nil
+	}
+
+	clients := &CloudClients{}
+	cloudEnabled := false
+
+	// Try AWS - only if "aws" is in the provider list
+	if containsProvider(globals.K8sCloudProviders, "aws") {
+		var awsCfg aws.Config
+		var err error
+		if globals.K8sAWSProfile != "" {
+			awsCfg, err = awsconfig.LoadDefaultConfig(context.Background(),
+				awsconfig.WithSharedConfigProfile(globals.K8sAWSProfile))
+			if err == nil {
+				clients.AWSELBv2Client = elasticloadbalancingv2.NewFromConfig(awsCfg)
+				clients.AWSRegion = awsCfg.Region
+				logger.InfoM(fmt.Sprintf("AWS cloud correlation enabled (profile: %s, region: %s)", globals.K8sAWSProfile, awsCfg.Region), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+				cloudEnabled = true
+			} else {
+				logger.InfoM(fmt.Sprintf("AWS cloud correlation failed (profile: %s): %v", globals.K8sAWSProfile, err), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+			}
+		} else {
+			awsCfg, err = awsconfig.LoadDefaultConfig(context.Background())
+			if err == nil {
+				clients.AWSELBv2Client = elasticloadbalancingv2.NewFromConfig(awsCfg)
+				clients.AWSRegion = awsCfg.Region
+				// Only log if we have a region configured (indicates valid credentials)
+				if awsCfg.Region != "" {
+					logger.InfoM(fmt.Sprintf("AWS cloud correlation enabled (default credentials, region: %s)", awsCfg.Region), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+					cloudEnabled = true
+				} else {
+					logger.InfoM("AWS cloud correlation failed (no region configured)", globals.K8S_NETWORK_PORTS_MODULE_NAME)
+				}
+			} else {
+				logger.InfoM(fmt.Sprintf("AWS cloud correlation failed: %v", err), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+			}
+		}
+	}
+
+	// Try GCP - only if "gcp" is in the provider list
+	if containsProvider(globals.K8sCloudProviders, "gcp") {
+		gcpSvc, err := compute.NewService(context.Background(), option.WithScopes(compute.ComputeReadonlyScope))
+		if err == nil {
+			clients.GCPCompute = gcpSvc
+
+			// Use projects from flag if provided (supports CSV)
+			if len(globals.K8sGCPProjects) > 0 {
+				clients.GCPProjects = globals.K8sGCPProjects
+				logger.InfoM(fmt.Sprintf("GCP cloud correlation enabled (%d projects: %s)", len(globals.K8sGCPProjects), strings.Join(globals.K8sGCPProjects, ", ")), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+				cloudEnabled = true
+			} else {
+				// Try environment variables
+				gcpProject := getGCPProject()
+				if gcpProject != "" {
+					clients.GCPProjects = []string{gcpProject}
+					logger.InfoM(fmt.Sprintf("GCP cloud correlation enabled (project from env: %s)", gcpProject), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+					cloudEnabled = true
+				} else {
+					// Try to list all accessible projects
+					projects := listGCPProjects()
+					if len(projects) > 0 {
+						clients.GCPProjects = projects
+						logger.InfoM(fmt.Sprintf("GCP cloud correlation enabled (discovered %d projects)", len(projects)), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+						cloudEnabled = true
+					} else {
+						logger.InfoM("GCP cloud correlation failed (no projects found)", globals.K8S_NETWORK_PORTS_MODULE_NAME)
+					}
+				}
+			}
+		} else {
+			logger.InfoM(fmt.Sprintf("GCP cloud correlation failed: %v", err), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+		}
+	}
+
+	// Try Azure - only if "azure" is in the provider list
+	if containsProvider(globals.K8sCloudProviders, "azure") {
+		azCred, err := azidentity.NewDefaultAzureCredential(nil)
+		if err == nil {
+			clients.AzureCredential = azCred
+
+			// Use subscriptions from flag if provided (supports CSV)
+			if len(globals.K8sAzureSubscriptions) > 0 {
+				clients.AzureSubscriptions = globals.K8sAzureSubscriptions
+				logger.InfoM(fmt.Sprintf("Azure cloud correlation enabled (%d subscriptions: %s)", len(globals.K8sAzureSubscriptions), strings.Join(globals.K8sAzureSubscriptions, ", ")), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+				cloudEnabled = true
+			} else {
+				// Try environment variable
+				azSub := getAzureSubscriptionFromEnv()
+				if azSub != "" {
+					clients.AzureSubscriptions = []string{azSub}
+					logger.InfoM(fmt.Sprintf("Azure cloud correlation enabled (subscription from env: %s)", azSub), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+					cloudEnabled = true
+				} else {
+					// Try to list all accessible subscriptions
+					subs := listAzureSubscriptions(azCred)
+					if len(subs) > 0 {
+						clients.AzureSubscriptions = subs
+						logger.InfoM(fmt.Sprintf("Azure cloud correlation enabled (discovered %d subscriptions)", len(subs)), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+						cloudEnabled = true
+					} else {
+						logger.InfoM("Azure cloud correlation failed (no subscriptions found)", globals.K8S_NETWORK_PORTS_MODULE_NAME)
+					}
+				}
+			}
+		} else {
+			logger.InfoM(fmt.Sprintf("Azure cloud correlation failed: %v", err), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+		}
+	}
+
+	if !cloudEnabled {
+		logger.InfoM("Cloud correlation failed for all specified providers", globals.K8S_NETWORK_PORTS_MODULE_NAME)
+		return nil
+	}
+
+	return clients
+}
+
+// getGCPProject tries to get the GCP project from environment variables
+func getGCPProject() string {
+	envVars := []string{"GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "CLOUDSDK_CORE_PROJECT", "GCP_PROJECT"}
+	for _, v := range envVars {
+		if val := os.Getenv(v); val != "" {
+			return val
+		}
+	}
+	return ""
+}
+
+// listGCPProjects lists all GCP projects accessible to the current credentials
+func listGCPProjects() []string {
+	var projects []string
+
+	crmSvc, err := cloudresourcemanager.NewService(context.Background(), option.WithScopes(cloudresourcemanager.CloudPlatformReadOnlyScope))
+	if err != nil {
+		return projects
+	}
+
+	// List projects (with a reasonable limit)
+	resp, err := crmSvc.Projects.List().PageSize(100).Do()
+	if err != nil {
+		return projects
+	}
+
+	for _, proj := range resp.Projects {
+		if proj.LifecycleState == "ACTIVE" {
+			projects = append(projects, proj.ProjectId)
+		}
+	}
+
+	return projects
+}
+
+// getAzureSubscriptionFromEnv tries to get the Azure subscription ID from environment
+func getAzureSubscriptionFromEnv() string {
+	envVars := []string{"AZURE_SUBSCRIPTION_ID", "ARM_SUBSCRIPTION_ID"}
+	for _, v := range envVars {
+		if val := os.Getenv(v); val != "" {
+			return val
+		}
+	}
+	return ""
+}
+
+// listAzureSubscriptions lists all Azure subscriptions accessible to the current credentials
+func listAzureSubscriptions(cred azcore.TokenCredential) []string {
+	var subscriptions []string
+
+	client, err := armsubscription.NewSubscriptionsClient(cred, nil)
+	if err != nil {
+		return subscriptions
+	}
+
+	pager := client.NewListPager(nil)
+	for pager.More() {
+		page, err := pager.NextPage(context.Background())
+		if err != nil {
+			break
+		}
+		for _, sub := range page.Value {
+			if sub.SubscriptionID != nil && sub.State != nil && *sub.State == armsubscription.SubscriptionStateEnabled {
+				subscriptions = append(subscriptions, *sub.SubscriptionID)
+			}
+		}
+	}
+
+	return subscriptions
+}
+
+// lookupAWSLoadBalancer looks up AWS ELB/NLB details by hostname
+// Returns nil on any error (suppressed)
+func lookupAWSLoadBalancer(ctx context.Context, clients *CloudClients, hostname string) *CloudNetworkInfo {
+	if clients == nil || clients.AWSELBv2Client == nil || hostname == "" {
+		return nil
+	}
+
+	// AWS ELB hostnames follow pattern: name-hash.region.elb.amazonaws.com
+	if !strings.Contains(hostname, ".elb.amazonaws.com") && !strings.Contains(hostname, ".elb.") {
+		return nil
+	}
+
+	// Try to describe load balancers and find matching one
+	result, err := clients.AWSELBv2Client.DescribeLoadBalancers(ctx, &elasticloadbalancingv2.DescribeLoadBalancersInput{})
+	if err != nil {
+		return nil // Suppress error
+	}
+
+	for _, lb := range result.LoadBalancers {
+		if lb.DNSName != nil && *lb.DNSName == hostname {
+			info := &CloudNetworkInfo{
+				Provider: "AWS",
+				LBName:   safeString(lb.LoadBalancerName),
+				LBArn:    safeString(lb.LoadBalancerArn),
+				LBType:   string(lb.Type),
+			}
+
+			if lb.VpcId != nil {
+				info.VPCID = *lb.VpcId
+			}
+
+			// Extract subnets and IPs from availability zones
+			for _, az := range lb.AvailabilityZones {
+				if az.SubnetId != nil {
+					info.Subnets = append(info.Subnets, *az.SubnetId)
+				}
+				for _, lba := range az.LoadBalancerAddresses {
+					if lba.IpAddress != nil {
+						info.PublicIPs = append(info.PublicIPs, *lba.IpAddress)
+					}
+				}
+			}
+
+			// Extract region from ARN if available
+			if lb.LoadBalancerArn != nil {
+				parts := strings.Split(*lb.LoadBalancerArn, ":")
+				if len(parts) >= 4 {
+					info.Region = parts[3]
+				}
+			}
+
+			return info
+		}
+	}
+
+	return nil
+}
+
+// lookupGCPForwardingRule looks up GCP forwarding rule details by IP across all configured projects
+// Returns nil on any error (suppressed)
+func lookupGCPForwardingRule(ctx context.Context, clients *CloudClients, ipAddress string, logger *internal.Logger) *CloudNetworkInfo {
+	if clients == nil || clients.GCPCompute == nil || ipAddress == "" || len(clients.GCPProjects) == 0 {
+		return nil
+	}
+
+	// Try each project
+	for _, project := range clients.GCPProjects {
+		// List all global forwarding rules
+		globalRules, err := clients.GCPCompute.GlobalForwardingRules.List(project).Context(ctx).Do()
+		if err != nil {
+			if logger != nil {
+				logger.InfoM(fmt.Sprintf("GCP: failed to list global forwarding rules in %s: %v", project, err), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+			}
+		} else if globalRules != nil {
+			if logger != nil && len(globalRules.Items) > 0 {
+				var ips []string
+				for _, r := range globalRules.Items {
+					ips = append(ips, fmt.Sprintf("%s=%s", r.Name, r.IPAddress))
+				}
+				logger.InfoM(fmt.Sprintf("GCP: found %d global forwarding rules in %s: %s", len(globalRules.Items), project, strings.Join(ips, ", ")), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+			}
+			for _, rule := range globalRules.Items {
+				if rule.IPAddress == ipAddress {
+					info := &CloudNetworkInfo{
+						Provider: "GCP",
+						LBName:   rule.Name,
+						LBType:   rule.LoadBalancingScheme,
+						Region:   "global",
+					}
+					info.PublicIPs = append(info.PublicIPs, rule.IPAddress)
+
+					// Extract network from target if available
+					if rule.Network != "" {
+						parts := strings.Split(rule.Network, "/")
+						if len(parts) > 0 {
+							info.VPCID = parts[len(parts)-1]
+						}
+					}
+					return info
+				}
+			}
+		}
+
+		// Also check regional forwarding rules by aggregating across regions
+		aggregatedList, err := clients.GCPCompute.ForwardingRules.AggregatedList(project).Context(ctx).Do()
+		if err != nil {
+			if logger != nil {
+				logger.InfoM(fmt.Sprintf("GCP: failed to list regional forwarding rules in %s: %v", project, err), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+			}
+		} else if aggregatedList != nil {
+			// Count and log regional forwarding rules
+			if logger != nil {
+				var regionalIPs []string
+				for _, scopedList := range aggregatedList.Items {
+					if scopedList.ForwardingRules == nil {
+						continue
+					}
+					for _, r := range scopedList.ForwardingRules {
+						regionalIPs = append(regionalIPs, fmt.Sprintf("%s=%s", r.Name, r.IPAddress))
+					}
+				}
+				if len(regionalIPs) > 0 {
+					logger.InfoM(fmt.Sprintf("GCP: found %d regional forwarding rules in %s: %s", len(regionalIPs), project, strings.Join(regionalIPs, ", ")), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+				}
+			}
+
+			for region, scopedList := range aggregatedList.Items {
+				if scopedList.ForwardingRules == nil {
+					continue
+				}
+				for _, rule := range scopedList.ForwardingRules {
+					if rule.IPAddress == ipAddress {
+						info := &CloudNetworkInfo{
+							Provider: "GCP",
+							LBName:   rule.Name,
+							LBType:   rule.LoadBalancingScheme,
+						}
+						// Extract region name from the key (format: regions/us-central1)
+						if strings.HasPrefix(region, "regions/") {
+							info.Region = strings.TrimPrefix(region, "regions/")
+						} else {
+							info.Region = region
+						}
+						info.PublicIPs = append(info.PublicIPs, rule.IPAddress)
+
+						if rule.Network != "" {
+							parts := strings.Split(rule.Network, "/")
+							if len(parts) > 0 {
+								info.VPCID = parts[len(parts)-1]
+							}
+						}
+						return info
+					}
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// lookupGCPNEG looks up GCP Network Endpoint Groups that might be associated with a K8s service
+// NEG names follow pattern: k8s1-{cluster-uid}-{namespace}-{service}-{port}-{hash}
+// Returns nil on any error (suppressed)
+func lookupGCPNEG(ctx context.Context, clients *CloudClients, namespace, serviceName string, logger *internal.Logger) *CloudNetworkInfo {
+	if clients == nil || clients.GCPCompute == nil || len(clients.GCPProjects) == 0 {
+		return nil
+	}
+
+	// Build search pattern - NEG names contain namespace and service name
+	searchPattern := fmt.Sprintf("%s-%s", namespace, serviceName)
+
+	for _, project := range clients.GCPProjects {
+		// List NEGs across all zones (aggregated)
+		aggregatedList, err := clients.GCPCompute.NetworkEndpointGroups.AggregatedList(project).Context(ctx).Do()
+		if err != nil {
+			if logger != nil {
+				logger.InfoM(fmt.Sprintf("GCP: failed to list NEGs in %s: %v", project, err), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+			}
+			continue
+		}
+
+		if aggregatedList == nil {
+			continue
+		}
+
+		var matchingNEGs []string
+		for zone, scopedList := range aggregatedList.Items {
+			if scopedList.NetworkEndpointGroups == nil {
+				continue
+			}
+			for _, neg := range scopedList.NetworkEndpointGroups {
+				// Check if NEG name contains our service pattern
+				if strings.Contains(neg.Name, searchPattern) {
+					matchingNEGs = append(matchingNEGs, neg.Name)
+
+					info := &CloudNetworkInfo{
+						Provider: "GCP",
+						LBName:   fmt.Sprintf("NEG:%s", neg.Name),
+						LBType:   neg.NetworkEndpointType,
+					}
+
+					// Extract zone/region
+					if strings.HasPrefix(zone, "zones/") {
+						info.Region = strings.TrimPrefix(zone, "zones/")
+					} else {
+						info.Region = zone
+					}
+
+					// Extract network
+					if neg.Network != "" {
+						parts := strings.Split(neg.Network, "/")
+						if len(parts) > 0 {
+							info.VPCID = parts[len(parts)-1]
+						}
+					}
+
+					// Extract subnetwork
+					if neg.Subnetwork != "" {
+						parts := strings.Split(neg.Subnetwork, "/")
+						if len(parts) > 0 {
+							info.Subnets = append(info.Subnets, parts[len(parts)-1])
+						}
+					}
+
+					if logger != nil {
+						logger.InfoM(fmt.Sprintf("GCP: found NEG %s matching %s/%s", neg.Name, namespace, serviceName), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+					}
+
+					return info
+				}
+			}
+		}
+
+		// Log all NEGs found for debugging
+		if logger != nil && len(matchingNEGs) == 0 {
+			var allNEGs []string
+			for _, scopedList := range aggregatedList.Items {
+				if scopedList.NetworkEndpointGroups == nil {
+					continue
+				}
+				for _, neg := range scopedList.NetworkEndpointGroups {
+					allNEGs = append(allNEGs, neg.Name)
+				}
+			}
+			if len(allNEGs) > 0 {
+				logger.InfoM(fmt.Sprintf("GCP: %d NEGs in %s (none matched %s): %s", len(allNEGs), project, searchPattern, strings.Join(allNEGs, ", ")), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+			}
+		}
+	}
+
+	return nil
+}
+
+// lookupGCPBackendService looks up GCP Backend Services that might be associated with a K8s service
+// Backend service names often contain the namespace and service name
+func lookupGCPBackendService(ctx context.Context, clients *CloudClients, namespace, serviceName string, logger *internal.Logger) *CloudNetworkInfo {
+	if clients == nil || clients.GCPCompute == nil || len(clients.GCPProjects) == 0 {
+		return nil
+	}
+
+	searchPattern := fmt.Sprintf("%s-%s", namespace, serviceName)
+
+	for _, project := range clients.GCPProjects {
+		// Check global backend services (for HTTP(S) LBs)
+		globalBackends, err := clients.GCPCompute.BackendServices.List(project).Context(ctx).Do()
+		if err == nil && globalBackends != nil {
+			for _, backend := range globalBackends.Items {
+				if strings.Contains(backend.Name, searchPattern) || strings.Contains(backend.Name, serviceName) {
+					info := &CloudNetworkInfo{
+						Provider: "GCP",
+						LBName:   fmt.Sprintf("Backend:%s", backend.Name),
+						LBType:   backend.LoadBalancingScheme,
+						Region:   "global",
+					}
+
+					if logger != nil {
+						logger.InfoM(fmt.Sprintf("GCP: found backend service %s matching %s/%s", backend.Name, namespace, serviceName), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+					}
+
+					return info
+				}
+			}
+		}
+
+		// Note: Regional backend services don't have an aggregated list API
+		// They would need to be queried per-region, which is expensive
+		// The global backend services check above should cover most cases
+	}
+
+	return nil
+}
+
+// lookupGCPAddress looks up GCP Address (static IP) by name pattern
+// Address names might contain cluster/service info
+func lookupGCPAddress(ctx context.Context, clients *CloudClients, ipAddress string, logger *internal.Logger) *CloudNetworkInfo {
+	if clients == nil || clients.GCPCompute == nil || len(clients.GCPProjects) == 0 || ipAddress == "" {
+		return nil
+	}
+
+	for _, project := range clients.GCPProjects {
+		// Check global addresses
+		globalAddresses, err := clients.GCPCompute.GlobalAddresses.List(project).Context(ctx).Do()
+		if err == nil && globalAddresses != nil {
+			for _, addr := range globalAddresses.Items {
+				if addr.Address == ipAddress {
+					info := &CloudNetworkInfo{
+						Provider:  "GCP",
+						LBName:    fmt.Sprintf("Address:%s", addr.Name),
+						LBType:    addr.AddressType,
+						Region:    "global",
+						PublicIPs: []string{addr.Address},
+					}
+
+					if logger != nil {
+						logger.InfoM(fmt.Sprintf("GCP: found global address %s with IP %s", addr.Name, ipAddress), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+					}
+
+					return info
+				}
+			}
+		}
+
+		// Check regional addresses
+		regionalAddresses, err := clients.GCPCompute.Addresses.AggregatedList(project).Context(ctx).Do()
+		if err == nil && regionalAddresses != nil {
+			for region, scopedList := range regionalAddresses.Items {
+				if scopedList.Addresses == nil {
+					continue
+				}
+				for _, addr := range scopedList.Addresses {
+					if addr.Address == ipAddress {
+						info := &CloudNetworkInfo{
+							Provider:  "GCP",
+							LBName:    fmt.Sprintf("Address:%s", addr.Name),
+							LBType:    addr.AddressType,
+							PublicIPs: []string{addr.Address},
+						}
+						if strings.HasPrefix(region, "regions/") {
+							info.Region = strings.TrimPrefix(region, "regions/")
+						} else {
+							info.Region = region
+						}
+
+						// Get network info
+						if addr.Network != "" {
+							parts := strings.Split(addr.Network, "/")
+							if len(parts) > 0 {
+								info.VPCID = parts[len(parts)-1]
+							}
+						}
+						if addr.Subnetwork != "" {
+							parts := strings.Split(addr.Subnetwork, "/")
+							if len(parts) > 0 {
+								info.Subnets = append(info.Subnets, parts[len(parts)-1])
+							}
+						}
+
+						if logger != nil {
+							logger.InfoM(fmt.Sprintf("GCP: found regional address %s with IP %s", addr.Name, ipAddress), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+						}
+
+						return info
+					}
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// lookupAzureLoadBalancer looks up Azure Load Balancer details by IP across all configured subscriptions
+// Returns nil on any error (suppressed)
+func lookupAzureLoadBalancer(ctx context.Context, clients *CloudClients, ipAddress string) *CloudNetworkInfo {
+	if clients == nil || clients.AzureCredential == nil || ipAddress == "" || len(clients.AzureSubscriptions) == 0 {
+		return nil
+	}
+
+	// Try each subscription
+	for _, subscription := range clients.AzureSubscriptions {
+		// Create clients for this subscription
+		publicIPClient, err := armnetwork.NewPublicIPAddressesClient(subscription, clients.AzureCredential, nil)
+		if err != nil {
+			continue
+		}
+
+		lbClient, err := armnetwork.NewLoadBalancersClient(subscription, clients.AzureCredential, nil)
+		if err != nil {
+			continue
+		}
+
+		// First, find the public IP that matches our IP address
+		publicIPPager := publicIPClient.NewListAllPager(nil)
+		var matchingPublicIP *armnetwork.PublicIPAddress
+
+		for publicIPPager.More() {
+			page, err := publicIPPager.NextPage(ctx)
+			if err != nil {
+				break // Try next subscription
+			}
+			for _, pip := range page.Value {
+				if pip.Properties != nil && pip.Properties.IPAddress != nil && *pip.Properties.IPAddress == ipAddress {
+					matchingPublicIP = pip
+					break
+				}
+			}
+			if matchingPublicIP != nil {
+				break
+			}
+		}
+
+		if matchingPublicIP == nil {
+			continue // Try next subscription
+		}
+
+		// Now list all load balancers and find one that references this public IP
+		lbPager := lbClient.NewListAllPager(nil)
+		for lbPager.More() {
+			page, err := lbPager.NextPage(ctx)
+			if err != nil {
+				break // Try next subscription
+			}
+
+			for _, lb := range page.Value {
+				if lb.Properties == nil || lb.Properties.FrontendIPConfigurations == nil {
+					continue
+				}
+
+				for _, feIP := range lb.Properties.FrontendIPConfigurations {
+					if feIP.Properties != nil && feIP.Properties.PublicIPAddress != nil && feIP.Properties.PublicIPAddress.ID != nil {
+						if matchingPublicIP.ID != nil && *feIP.Properties.PublicIPAddress.ID == *matchingPublicIP.ID {
+							// Found matching load balancer
+							info := &CloudNetworkInfo{
+								Provider:  "Azure",
+								LBName:    safeString(lb.Name),
+								PublicIPs: []string{ipAddress},
+							}
+
+							// Extract location as region
+							if lb.Location != nil {
+								info.Region = *lb.Location
+							}
+
+							// Get SKU as LB type
+							if lb.SKU != nil && lb.SKU.Name != nil {
+								info.LBType = string(*lb.SKU.Name)
+							}
+
+							// Extract VNet/Subnet from frontend IP configuration
+							if feIP.Properties.Subnet != nil && feIP.Properties.Subnet.ID != nil {
+								// Subnet ID format: /subscriptions/.../resourceGroups/.../providers/Microsoft.Network/virtualNetworks/{vnet}/subnets/{subnet}
+								subnetID := *feIP.Properties.Subnet.ID
+								parts := strings.Split(subnetID, "/")
+								for i, part := range parts {
+									if part == "virtualNetworks" && i+1 < len(parts) {
+										info.VPCID = parts[i+1] // VNet name
+									}
+									if part == "subnets" && i+1 < len(parts) {
+										info.Subnets = append(info.Subnets, parts[i+1])
+									}
+								}
+							}
+
+							return info
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// correlateCloudNetwork attempts to correlate K8s network exposure with cloud network
+func correlateCloudNetwork(ctx context.Context, clients *CloudClients, finding *NetworkExposureFinding, logger *internal.Logger) {
+	if clients == nil {
+		return
+	}
+
+	// Correlate LoadBalancer services and Ingress resources
+	if finding.ExposureType != "LoadBalancer" && finding.ExposureType != "Ingress" {
+		return
+	}
+
+	logger.InfoM(fmt.Sprintf("Cloud correlation: looking up %s/%s (IP: %s, Hostname: %s, Provider hint: %s)",
+		finding.Namespace, finding.ResourceName, finding.IPAddress, finding.Hostname, finding.CloudProvider), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+
+	// Try AWS lookup (matches by hostname)
+	if finding.CloudProvider == "AWS" || finding.CloudProvider == "Unknown" {
+		hostname := finding.Hostname
+		if hostname == "" && finding.IPAddress != "" {
+			hostname = finding.IPAddress
+		}
+		if info := lookupAWSLoadBalancer(ctx, clients, hostname); info != nil {
+			finding.CloudNetwork = info
+			if finding.CloudProvider == "Unknown" {
+				finding.CloudProvider = "AWS"
+			}
+			return
+		}
+	}
+
+	// Try GCP lookups (multiple methods)
+	if finding.CloudProvider == "GCP" || finding.CloudProvider == "Unknown" {
+		// Method 1: Forwarding Rule by IP
+		if info := lookupGCPForwardingRule(ctx, clients, finding.IPAddress, logger); info != nil {
+			finding.CloudNetwork = info
+			if finding.CloudProvider == "Unknown" {
+				finding.CloudProvider = "GCP"
+			}
+			return
+		}
+
+		// Method 2: Address by IP (static external IPs)
+		if info := lookupGCPAddress(ctx, clients, finding.IPAddress, logger); info != nil {
+			finding.CloudNetwork = info
+			if finding.CloudProvider == "Unknown" {
+				finding.CloudProvider = "GCP"
+			}
+			return
+		}
+
+		// Method 3: NEG by namespace/service name pattern
+		if info := lookupGCPNEG(ctx, clients, finding.Namespace, finding.ResourceName, logger); info != nil {
+			finding.CloudNetwork = info
+			if finding.CloudProvider == "Unknown" {
+				finding.CloudProvider = "GCP"
+			}
+			return
+		}
+
+		// Method 4: Backend Service by namespace/service name pattern
+		if info := lookupGCPBackendService(ctx, clients, finding.Namespace, finding.ResourceName, logger); info != nil {
+			finding.CloudNetwork = info
+			if finding.CloudProvider == "Unknown" {
+				finding.CloudProvider = "GCP"
+			}
+			return
+		}
+	}
+
+	// Try Azure lookup (matches by IP)
+	if finding.CloudProvider == "Azure" || finding.CloudProvider == "Unknown" {
+		if info := lookupAzureLoadBalancer(ctx, clients, finding.IPAddress); info != nil {
+			finding.CloudNetwork = info
+			if finding.CloudProvider == "Unknown" {
+				finding.CloudProvider = "Azure"
+			}
+			return
+		}
+	}
+}
+
+// safeString safely dereferences a string pointer
+func safeString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// formatCloudNetwork formats cloud network info for display (IPs shown in separate column)
+func formatCloudNetwork(info *CloudNetworkInfo) string {
+	if info == nil {
+		return ""
+	}
+
+	parts := []string{}
+
+	// VPC/Network
+	if info.VPCID != "" {
+		parts = append(parts, fmt.Sprintf("VPC:%s", info.VPCID))
+	}
+
+	// Region
+	if info.Region != "" {
+		parts = append(parts, fmt.Sprintf("Region:%s", info.Region))
+	}
+
+	// LB Type
+	if info.LBType != "" {
+		parts = append(parts, info.LBType)
+	}
+
+	// LB Name
+	if info.LBName != "" {
+		parts = append(parts, fmt.Sprintf("LB:%s", info.LBName))
+	}
+
+	// Subnets (show first 2)
+	if len(info.Subnets) > 0 {
+		subnets := info.Subnets
+		if len(subnets) > 2 {
+			subnets = subnets[:2]
+			parts = append(parts, fmt.Sprintf("Subnets:%s...", strings.Join(subnets, ",")))
+		} else {
+			parts = append(parts, fmt.Sprintf("Subnets:%s", strings.Join(subnets, ",")))
+		}
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	return strings.Join(parts, " | ")
 }
 
 func appendNmapCommands(commands *[]string, target string, ports []corev1.ServicePort) {
@@ -714,7 +1644,8 @@ func appendNmapCommands(commands *[]string, target string, ports []corev1.Servic
 }
 
 func NetworkExposure(cmd *cobra.Command, args []string) {
-	ctx := context.Background()
+	ctx, cancel := shared.ContextWithTimeout()
+	defer cancel()
 	logger := internal.NewLogger()
 	parentCmd := cmd.Parent()
 
@@ -727,13 +1658,19 @@ func NetworkExposure(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
+	// Initialize cloud clients for optional correlation (errors suppressed)
+	cloudClients := initCloudClients(&logger)
+
 	var findings []NetworkExposureFinding
 	var lootNmapCommands []string
 
+	// Suppress stderr to hide noisy auth plugin errors (gke-gcloud-auth-plugin, aws-iam-authenticator, etc.)
+	restoreStderr := sdk.SuppressStderr()
+
 	// ---- Services Analysis
-	services, err := clientset.CoreV1().Services("").List(ctx, metav1.ListOptions{})
+	services, err := clientset.CoreV1().Services(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Error listing Services: %v", err), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+		shared.LogListError(&logger, "services", shared.GetNamespaceOrAll(), err, globals.K8S_NETWORK_PORTS_MODULE_NAME, false)
 	} else {
 		for _, svc := range services.Items {
 			// Skip headless services
@@ -900,6 +1837,9 @@ func NetworkExposure(cmd *cobra.Command, args []string) {
 					// Calculate risk
 					finding.RiskLevel = calculateNetworkExposureRisk(finding)
 
+					// Correlate with cloud network (optional, errors suppressed)
+					correlateCloudNetwork(ctx, cloudClients, &finding, &logger)
+
 					findings = append(findings, finding)
 
 					// Add nmap command
@@ -910,24 +1850,35 @@ func NetworkExposure(cmd *cobra.Command, args []string) {
 	}
 
 	// ---- HostPort Detection (Pods)
-	pods, err := clientset.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	pods, err := clientset.CoreV1().Pods(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Error listing Pods for HostPort detection: %v", err), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+		shared.LogListError(&logger, "pods", shared.GetNamespaceOrAll(), err, globals.K8S_NETWORK_PORTS_MODULE_NAME, false)
 	} else {
 		for _, pod := range pods.Items {
 			for _, container := range append(pod.Spec.Containers, pod.Spec.InitContainers...) {
 				for _, port := range container.Ports {
 					if port.HostPort != 0 {
+						// Get workload owner or use pod name
+						var workloads []string
+						if ownerRef := getOwnerReference(&pod); ownerRef != "" {
+							workloads = append(workloads, ownerRef)
+						} else {
+							workloads = append(workloads, fmt.Sprintf("Pod/%s", pod.Name))
+						}
+
 						finding := NetworkExposureFinding{
-							Namespace:          pod.Namespace,
-							ResourceType:       "Pod",
-							ResourceName:       pod.Name,
-							ExposureType:       "HostPort",
-							Port:               port.HostPort,
-							TargetPort:         fmt.Sprintf("%d", port.ContainerPort),
-							Protocol:           string(port.Protocol),
-							IsInternetFacing:   pod.Spec.HostNetwork, // HostPort + HostNetwork = very exposed
-							BackendHostNetwork: pod.Spec.HostNetwork,
+							Namespace:            pod.Namespace,
+							ResourceType:         "Pod",
+							ResourceName:         pod.Name,
+							ExposureType:         "HostPort",
+							Port:                 port.HostPort,
+							TargetPort:           fmt.Sprintf("%d", port.ContainerPort),
+							Protocol:             string(port.Protocol),
+							IsInternetFacing:     pod.Spec.HostNetwork, // HostPort + HostNetwork = very exposed
+							BackendHostNetwork:   pod.Spec.HostNetwork,
+							BackendServiceAccount: pod.Spec.ServiceAccountName,
+							BackendPods:          1,
+							ExposedWorkloads:     workloads,
 							SecurityIssues: []string{
 								fmt.Sprintf("Container '%s' uses HostPort %d", container.Name, port.HostPort),
 								"HostPort bypasses NetworkPolicy",
@@ -939,6 +1890,8 @@ func NetworkExposure(cmd *cobra.Command, args []string) {
 						if container.SecurityContext != nil && container.SecurityContext.Privileged != nil && *container.SecurityContext.Privileged {
 							finding.BackendPrivileged = true
 							finding.SecurityIssues = append(finding.SecurityIssues, "Container is privileged")
+							finding.BackendSecurityIssues = append(finding.BackendSecurityIssues,
+								fmt.Sprintf("Pod %s runs privileged container '%s'", pod.Name, container.Name))
 						}
 
 						// Port analysis
@@ -962,9 +1915,9 @@ func NetworkExposure(cmd *cobra.Command, args []string) {
 	}
 
 	// ---- Ingresses (simplified - detailed analysis in ingress.go)
-	ingresses, err := clientset.NetworkingV1().Ingresses("").List(ctx, metav1.ListOptions{})
+	ingresses, err := clientset.NetworkingV1().Ingresses(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Error listing Ingresses: %v", err), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+		shared.LogListError(&logger, "ingresses", shared.GetNamespaceOrAll(), err, globals.K8S_NETWORK_PORTS_MODULE_NAME, false)
 	} else {
 		for _, ing := range ingresses.Items {
 			for _, rule := range ing.Spec.Rules {
@@ -987,18 +1940,62 @@ func NetworkExposure(cmd *cobra.Command, args []string) {
 						protocol = "HTTPS"
 					}
 
+					// Trace backend services to find workloads
+					var backendWorkloads []string
+					var backendSA string
+					var backendPodCount int
+					for _, path := range rule.HTTP.Paths {
+						if path.Backend.Service != nil {
+							svcName := path.Backend.Service.Name
+							// Look up the service and trace to pods
+							svc, err := clientset.CoreV1().Services(ing.Namespace).Get(ctx, svcName, metav1.GetOptions{})
+							if err == nil && len(svc.Spec.Selector) > 0 {
+								labelSelector := labels.Set(svc.Spec.Selector).String()
+								pods, err := clientset.CoreV1().Pods(ing.Namespace).List(ctx, metav1.ListOptions{
+									LabelSelector: labelSelector,
+								})
+								if err == nil {
+									backendPodCount += len(pods.Items)
+									for _, pod := range pods.Items {
+										if backendSA == "" {
+											backendSA = pod.Spec.ServiceAccountName
+										}
+										ownerRef := getOwnerReference(&pod)
+										if ownerRef != "" {
+											if !networkExposureContains(backendWorkloads, ownerRef) {
+												backendWorkloads = append(backendWorkloads, ownerRef)
+											}
+										} else {
+											podRef := fmt.Sprintf("Pod/%s", pod.Name)
+											if !networkExposureContains(backendWorkloads, podRef) {
+												backendWorkloads = append(backendWorkloads, podRef)
+											}
+										}
+									}
+								}
+							}
+							// If no pods found, at least show the service
+							if len(backendWorkloads) == 0 {
+								backendWorkloads = append(backendWorkloads, fmt.Sprintf("Service/%s", svcName))
+							}
+						}
+					}
+
 					finding := NetworkExposureFinding{
-						Namespace:        ing.Namespace,
-						ResourceType:     "Ingress",
-						ResourceName:     ing.Name,
-						ExposureType:     "Ingress",
-						Hostname:         rule.Host,
-						Port:             port,
-						Protocol:         protocol,
-						IsInternetFacing: true, // Ingresses are typically internet-facing
-						PortCategory:     "Web",
-						PortDescription:  fmt.Sprintf("%s web service", protocol),
-						DataExposureRisk: "Web Application",
+						Namespace:             ing.Namespace,
+						ResourceType:          "Ingress",
+						ResourceName:          ing.Name,
+						ExposureType:          "Ingress",
+						Hostname:              rule.Host,
+						Port:                  port,
+						Protocol:              protocol,
+						IsInternetFacing:      true, // Ingresses are typically internet-facing
+						PortCategory:          "Web",
+						PortDescription:       fmt.Sprintf("%s web service", protocol),
+						DataExposureRisk:      "Web Application",
+						ExposedWorkloads:      backendWorkloads,
+						BackendServiceAccount: backendSA,
+						BackendPods:           backendPodCount,
 					}
 
 					// Security issues
@@ -1012,6 +2009,9 @@ func NetworkExposure(cmd *cobra.Command, args []string) {
 					// Risk
 					finding.RiskLevel = calculateNetworkExposureRisk(finding)
 
+					// Correlate with cloud network for Ingress
+					correlateCloudNetwork(ctx, cloudClients, &finding, &logger)
+
 					findings = append(findings, finding)
 
 					// Nmap
@@ -1020,111 +2020,213 @@ func NetworkExposure(cmd *cobra.Command, args []string) {
 					}
 				}
 			}
+
+			// Check for default backend (ingress without host rules or as fallback)
+			if ing.Spec.DefaultBackend != nil && ing.Spec.DefaultBackend.Service != nil {
+				svcName := ing.Spec.DefaultBackend.Service.Name
+
+				// Trace backend to workloads
+				var backendWorkloads []string
+				var backendSA string
+				var backendPodCount int
+
+				svc, err := clientset.CoreV1().Services(ing.Namespace).Get(ctx, svcName, metav1.GetOptions{})
+				if err == nil && len(svc.Spec.Selector) > 0 {
+					labelSelector := labels.Set(svc.Spec.Selector).String()
+					pods, err := clientset.CoreV1().Pods(ing.Namespace).List(ctx, metav1.ListOptions{
+						LabelSelector: labelSelector,
+					})
+					if err == nil {
+						backendPodCount = len(pods.Items)
+						for _, pod := range pods.Items {
+							if backendSA == "" {
+								backendSA = pod.Spec.ServiceAccountName
+							}
+							ownerRef := getOwnerReference(&pod)
+							if ownerRef != "" {
+								if !networkExposureContains(backendWorkloads, ownerRef) {
+									backendWorkloads = append(backendWorkloads, ownerRef)
+								}
+							} else {
+								podRef := fmt.Sprintf("Pod/%s", pod.Name)
+								if !networkExposureContains(backendWorkloads, podRef) {
+									backendWorkloads = append(backendWorkloads, podRef)
+								}
+							}
+						}
+					}
+				}
+				if len(backendWorkloads) == 0 {
+					backendWorkloads = append(backendWorkloads, fmt.Sprintf("Service/%s", svcName))
+				}
+
+				// Determine TLS from any TLS config
+				hasTLS := len(ing.Spec.TLS) > 0
+				port := int32(80)
+				protocol := "HTTP"
+				if hasTLS {
+					port = 443
+					protocol = "HTTPS"
+				}
+
+				finding := NetworkExposureFinding{
+					Namespace:             ing.Namespace,
+					ResourceType:          "Ingress",
+					ResourceName:          ing.Name,
+					ExposureType:          "Ingress",
+					Hostname:              "(default)",
+					Port:                  port,
+					Protocol:              protocol,
+					IsInternetFacing:      true,
+					PortCategory:          "Web",
+					PortDescription:       fmt.Sprintf("%s default backend", protocol),
+					DataExposureRisk:      "Web Application",
+					ExposedWorkloads:      backendWorkloads,
+					BackendServiceAccount: backendSA,
+					BackendPods:           backendPodCount,
+				}
+
+				if !hasTLS {
+					finding.SecurityIssues = append(finding.SecurityIssues, "No TLS configured")
+				}
+
+				finding.AttackVector = buildAttackPath(finding)
+				finding.RiskLevel = calculateNetworkExposureRisk(finding)
+
+				// Correlate with cloud network for Ingress default backend
+				correlateCloudNetwork(ctx, cloudClients, &finding, &logger)
+
+				findings = append(findings, finding)
+			}
 		}
 	}
 
+	// Restore stderr now that K8s API calls are done
+	restoreStderr()
+
 	// ---- Build Table
+	// Column order: Identity -> Exposure -> Target -> Security -> Backend -> Cloud
 	headers := []string{
-		"Risk Level",
 		"Namespace",
-		"Resource Type",
-		"Resource Name",
-		"Exposure Type",
+		"Name",
+		"Type",
+		"Exposure",
+		"Internet",
 		"IP Address",
 		"Hostname",
 		"Port",
-		"Port Category",
 		"Protocol",
-		"Internet-Facing",
-		"Backend Security",
-		"Has NetworkPolicy",
-		"Backend Pods",
-		"Cloud Provider",
-		"Security Issues",
+		"TLS",
+		"Net Policy",
+		"Backend SA",
+		"Backend Workloads",
+		"Privileged",
+		"Host Network",
+		"Cloud IPs",
+		"Cloud Network",
 	}
 
 	var rows [][]string
 	for _, f := range findings {
 		ipAddr := k8sinternal.NonEmpty(f.IPAddress)
 		hostname := k8sinternal.NonEmpty(f.Hostname)
-		internetFacing := "No"
+
+		// Internet-Facing
+		internetFacing := ""
 		if f.IsInternetFacing {
 			internetFacing = "Yes"
 		}
-		hasNetPol := "No"
-		if f.HasNetworkPolicy {
-			hasNetPol = "Yes"
-		}
-		securityIssuesCount := fmt.Sprintf("%d issues", len(f.SecurityIssues))
-		if len(f.SecurityIssues) == 0 {
-			securityIssuesCount = "None"
+
+		// TLS
+		tlsStr := ""
+		if f.ResourceType == "Ingress" || f.ExposureType == "Ingress" {
+			if f.Protocol == "HTTPS" {
+				tlsStr = "Enabled"
+			} else {
+				tlsStr = "Disabled"
+			}
 		}
 
+		// Net Policy - show policy names or None
+		netPolicyStr := "None"
+		if f.HasNetworkPolicy && len(f.NetworkPolicies) > 0 {
+			netPolicyStr = strings.Join(f.NetworkPolicies, ", ")
+		} else if f.HasNetworkPolicy {
+			netPolicyStr = "Yes"
+		}
+
+		// Backend SA with cloud provider prefix (K for Kubernetes/unknown)
+		backendSA := ""
+		if f.BackendServiceAccount != "" {
+			prefix := "(K) "
+			switch f.CloudProvider {
+			case "AWS":
+				prefix = "(AWS) "
+			case "Azure":
+				prefix = "(AZ) "
+			case "GCP":
+				prefix = "(GCP) "
+			}
+			backendSA = prefix + f.BackendServiceAccount
+		}
+
+		// Backend Workloads - show workload names
+		backendWorkloadsStr := ""
+		if len(f.ExposedWorkloads) > 0 {
+			backendWorkloadsStr = strings.Join(f.ExposedWorkloads, ", ")
+		} else if f.BackendPods > 0 {
+			backendWorkloadsStr = fmt.Sprintf("%d pods", f.BackendPods)
+		}
+
+		// Privileged - show container names or empty
+		privilegedStr := ""
+		if f.BackendPrivileged {
+			// Extract container names from security issues
+			privilegedStr = extractPrivilegedContainers(f.BackendSecurityIssues)
+			if privilegedStr == "" {
+				privilegedStr = "Yes"
+			}
+		}
+
+		// Host Network
+		hostNetworkStr := ""
+		if f.BackendHostNetwork {
+			hostNetworkStr = "Yes"
+		}
+
+		// Cloud IPs - show public IPs from cloud correlation
+		cloudIPsStr := ""
+		if f.CloudNetwork != nil && len(f.CloudNetwork.PublicIPs) > 0 {
+			cloudIPsStr = strings.Join(f.CloudNetwork.PublicIPs, ", ")
+		}
+
+		// Cloud Network
+		cloudNetworkStr := formatCloudNetwork(f.CloudNetwork)
+
 		rows = append(rows, []string{
-			f.RiskLevel,
 			k8sinternal.NonEmpty(f.Namespace),
-			k8sinternal.NonEmpty(f.ResourceType),
 			k8sinternal.NonEmpty(f.ResourceName),
+			k8sinternal.NonEmpty(f.ResourceType),
 			k8sinternal.NonEmpty(f.ExposureType),
+			internetFacing,
 			ipAddr,
 			hostname,
 			fmt.Sprintf("%d", f.Port),
-			k8sinternal.NonEmpty(f.PortCategory),
 			k8sinternal.NonEmpty(f.Protocol),
-			internetFacing,
-			k8sinternal.NonEmpty(f.BackendSecurityLevel),
-			hasNetPol,
-			fmt.Sprintf("%d", f.BackendPods),
-			k8sinternal.NonEmpty(f.CloudProvider),
-			securityIssuesCount,
+			tlsStr,
+			netPolicyStr,
+			backendSA,
+			backendWorkloadsStr,
+			privilegedStr,
+			hostNetworkStr,
+			cloudIPsStr,
+			cloudNetworkStr,
 		})
 	}
 
-	// ---- Build Loot Files
-
-	// 1. Risk Dashboard
-	riskDashboard := buildNetworkExposureRiskDashboard(findings)
-
-	// 2. Internet-Facing Exposures
-	internetFacingLoot := buildInternetFacingLoot(findings)
-
-	// 3. Dangerous Ports
-	dangerousPortsLoot := buildDangerousPortsLoot(findings)
-
-	// 4. NodePort Exposures
-	nodePortLoot := buildNodePortLoot(findings)
-
-	// 5. HostPort Exposures
-	hostPortLoot := buildHostPortLoot(findings)
-
-	// 6. Privileged Backend
-	privilegedBackendLoot := buildPrivilegedBackendLoot(findings)
-
-	// 7. Attack Paths
-	attackPathsLoot := buildAttackPathsLoot(findings)
-
-	// 8. NMAP Commands (deduplicated)
-	lootSet := map[string]struct{}{}
-	var lootNmapCommandsUniq []string
-	lootNmapCommandsUniq = append(lootNmapCommandsUniq, `#####################################
-##### NMAP Network Exposure Commands
-#####################################
-
-# Use these nmap commands to scan exposed network endpoints
-
-`)
-	for _, c := range lootNmapCommands {
-		c = strings.TrimSpace(c)
-		if c == "" {
-			continue
-		}
-		if _, ok := lootSet[c]; ok {
-			continue
-		}
-		lootSet[c] = struct{}{}
-		lootNmapCommandsUniq = append(lootNmapCommandsUniq, c)
-	}
-	nmapLoot := strings.Join(lootNmapCommandsUniq, "\n")
+	// ---- Build Loot Files (consolidated)
+	loot := shared.NewLootBuilder()
+	buildNetworkExposureCommandsLoot(loot, findings, lootNmapCommands)
 
 	table := internal.TableFile{
 		Name:   "Network-Exposure",
@@ -1132,16 +2234,7 @@ func NetworkExposure(cmd *cobra.Command, args []string) {
 		Body:   rows,
 	}
 
-	lootFiles := []internal.LootFile{
-		{Name: "Network-Exposure-Risk-Dashboard", Contents: riskDashboard},
-		{Name: "Network-Exposure-Internet-Facing", Contents: internetFacingLoot},
-		{Name: "Network-Exposure-Dangerous-Ports", Contents: dangerousPortsLoot},
-		{Name: "Network-Exposure-NodePort", Contents: nodePortLoot},
-		{Name: "Network-Exposure-HostPort", Contents: hostPortLoot},
-		{Name: "Network-Exposure-Privileged-Backend", Contents: privilegedBackendLoot},
-		{Name: "Network-Exposure-Attack-Paths", Contents: attackPathsLoot},
-		{Name: "NMAP-Network", Contents: nmapLoot},
-	}
+	lootFiles := loot.Build()
 
 	err = internal.HandleOutput(
 		"Kubernetes",
@@ -1163,15 +2256,10 @@ func NetworkExposure(cmd *cobra.Command, args []string) {
 	}
 
 	// Summary stats
-	criticalCount := 0
-	highCount := 0
+	riskCounts := shared.NewRiskCounts()
 	internetFacingCount := 0
 	for _, f := range findings {
-		if f.RiskLevel == "CRITICAL" {
-			criticalCount++
-		} else if f.RiskLevel == "HIGH" {
-			highCount++
-		}
+		riskCounts.Add(f.RiskLevel)
 		if f.IsInternetFacing {
 			internetFacingCount++
 		}
@@ -1179,7 +2267,7 @@ func NetworkExposure(cmd *cobra.Command, args []string) {
 
 	if len(rows) > 0 {
 		logger.InfoM(fmt.Sprintf("%d network exposures found (%d CRITICAL, %d HIGH, %d internet-facing)",
-			len(rows), criticalCount, highCount, internetFacingCount), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+			len(rows), riskCounts.Critical, riskCounts.High, internetFacingCount), globals.K8S_NETWORK_PORTS_MODULE_NAME)
 	} else {
 		logger.InfoM("No network exposures found, skipping output file creation", globals.K8S_NETWORK_PORTS_MODULE_NAME)
 	}
@@ -1187,304 +2275,146 @@ func NetworkExposure(cmd *cobra.Command, args []string) {
 	logger.InfoM(fmt.Sprintf("For context and next steps: https://github.com/BishopFox/cloudfox/wiki/Kubernetes-Commands#%s", globals.K8S_NETWORK_PORTS_MODULE_NAME), globals.K8S_NETWORK_PORTS_MODULE_NAME)
 }
 
-// buildNetworkExposureRiskDashboard creates a risk-sorted exposure summary
-func buildNetworkExposureRiskDashboard(findings []NetworkExposureFinding) string {
-	var sb strings.Builder
-	sb.WriteString(`#####################################
-##### Network Exposure Risk Dashboard
-#####################################
+// buildNetworkExposureCommandsLoot creates a consolidated loot file
+func buildNetworkExposureCommandsLoot(loot *shared.LootBuilder, findings []NetworkExposureFinding, nmapCommands []string) {
+	section := loot.Section("NetworkExposure-Commands")
+	section.SetHeader(`# ===========================================
+# Network Exposure Enumeration Commands
+# ===========================================`)
 
-This file contains all network exposures sorted by risk level.
-Focus on CRITICAL and HIGH risk exposures first.
-
-`)
-
-	// Sort by risk: CRITICAL > HIGH > MEDIUM > LOW
-	riskOrder := map[string]int{"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
-	sort.Slice(findings, func(i, j int) bool {
-		return riskOrder[findings[i].RiskLevel] < riskOrder[findings[j].RiskLevel]
-	})
-
-	currentRisk := ""
-	for _, f := range findings {
-		if f.RiskLevel != currentRisk {
-			currentRisk = f.RiskLevel
-			sb.WriteString(fmt.Sprintf("\n========== %s RISK ==========\n\n", currentRisk))
-		}
-
-		sb.WriteString(fmt.Sprintf("[%s] %s/%s\n", f.RiskLevel, f.Namespace, f.ResourceName))
-		sb.WriteString(fmt.Sprintf("  Type: %s (%s)\n", f.ResourceType, f.ExposureType))
-		if f.IPAddress != "" {
-			sb.WriteString(fmt.Sprintf("  IP: %s\n", f.IPAddress))
-		}
-		if f.Hostname != "" {
-			sb.WriteString(fmt.Sprintf("  Hostname: %s\n", f.Hostname))
-		}
-		sb.WriteString(fmt.Sprintf("  Port: %d (%s - %s)\n", f.Port, f.PortCategory, f.PortDescription))
-		sb.WriteString(fmt.Sprintf("  Internet-Facing: %v\n", f.IsInternetFacing))
-		if f.BackendDeployment != "" {
-			sb.WriteString(fmt.Sprintf("  Backend: %s (%d pods, %s)\n", f.BackendDeployment, f.BackendPods, f.BackendSecurityLevel))
-		}
-		sb.WriteString(fmt.Sprintf("  Attack Path: %s\n", f.AttackVector))
-		if len(f.SecurityIssues) > 0 {
-			sb.WriteString("  Security Issues:\n")
-			for _, issue := range f.SecurityIssues {
-				sb.WriteString(fmt.Sprintf("    - %s\n", issue))
-			}
-		}
-		sb.WriteString("\n")
+	if globals.KubeContext != "" {
+		section.AddBlank().Addf("kubectl config use-context %s", globals.KubeContext)
 	}
 
-	return sb.String()
-}
+	// Basic enumeration commands
+	section.AddBlank().
+		Add("# List all services with external exposure:").
+		Add("kubectl get svc -A -o wide | grep -E 'LoadBalancer|NodePort'").
+		AddBlank().
+		Add("# List LoadBalancer services:").
+		Add("kubectl get svc -A --field-selector spec.type=LoadBalancer").
+		AddBlank().
+		Add("# List NodePort services:").
+		Add("kubectl get svc -A --field-selector spec.type=NodePort").
+		AddBlank().
+		Add("# Find pods using HostPort:").
+		Add("kubectl get pods -A -o json | jq -r '.items[] | select(.spec.containers[].ports[]?.hostPort != null) | \"\\(.metadata.namespace)/\\(.metadata.name)\"'").
+		AddBlank().
+		Add("# List ingresses:").
+		Add("kubectl get ingress -A")
 
-// buildInternetFacingLoot creates loot file for internet-facing exposures
-func buildInternetFacingLoot(findings []NetworkExposureFinding) string {
-	var sb strings.Builder
-	sb.WriteString(`#####################################
-##### Internet-Facing Network Exposures
-#####################################
-
-These services are exposed to the internet and represent your external attack surface.
-
-`)
-
-	count := 0
+	// Internet-facing exposures
+	var internetFacing []NetworkExposureFinding
 	for _, f := range findings {
-		if !f.IsInternetFacing {
-			continue
+		if f.IsInternetFacing {
+			internetFacing = append(internetFacing, f)
 		}
-		count++
-
-		sb.WriteString(fmt.Sprintf("[%s] %s/%s\n", f.RiskLevel, f.Namespace, f.ResourceName))
-		sb.WriteString(fmt.Sprintf("  Exposure: %s", f.ExposureType))
-		if f.CloudProvider != "Unknown" {
-			sb.WriteString(fmt.Sprintf(" (%s)", f.CloudProvider))
-		}
-		sb.WriteString("\n")
-		if f.Hostname != "" {
-			sb.WriteString(fmt.Sprintf("  Target: %s:%d\n", f.Hostname, f.Port))
-		} else if f.IPAddress != "" {
-			sb.WriteString(fmt.Sprintf("  Target: %s:%d\n", f.IPAddress, f.Port))
-		}
-		sb.WriteString(fmt.Sprintf("  Service: %s (%s)\n", f.PortCategory, f.PortDescription))
-		if f.DataExposureRisk != "None" {
-			sb.WriteString(fmt.Sprintf("  Data Risk: %s\n", f.DataExposureRisk))
-		}
-		sb.WriteString("\n")
 	}
 
-	if count == 0 {
-		sb.WriteString("No internet-facing exposures found.\n")
-	}
+	if len(internetFacing) > 0 {
+		section.AddBlank().
+			Add("# -------------------------------------------").
+			Add("# Internet-Facing Exposures").
+			Add("# -------------------------------------------")
 
-	return sb.String()
-}
-
-// buildDangerousPortsLoot creates loot file for dangerous port exposures
-func buildDangerousPortsLoot(findings []NetworkExposureFinding) string {
-	var sb strings.Builder
-	sb.WriteString(`#####################################
-##### Dangerous Port Exposures
-#####################################
-
-These exposures involve dangerous ports (SSH, RDP, databases, Kubernetes APIs, etc.)
-
-`)
-
-	count := 0
-	for _, f := range findings {
-		if !f.IsDangerousPort {
-			continue
-		}
-		count++
-
-		sb.WriteString(fmt.Sprintf("[%s] Port %d - %s\n", f.RiskLevel, f.Port, f.PortDescription))
-		sb.WriteString(fmt.Sprintf("  Resource: %s/%s (%s)\n", f.Namespace, f.ResourceName, f.ResourceType))
-		sb.WriteString(fmt.Sprintf("  Category: %s\n", f.PortCategory))
-		sb.WriteString(fmt.Sprintf("  Internet-Facing: %v\n", f.IsInternetFacing))
-		if f.IPAddress != "" || f.Hostname != "" {
-			target := f.IPAddress
+		for _, f := range internetFacing {
+			section.AddBlank()
+			target := f.Hostname
 			if target == "" {
-				target = f.Hostname
+				target = f.IPAddress
 			}
-			sb.WriteString(fmt.Sprintf("  Target: %s:%d\n", target, f.Port))
-		}
-		if f.BackendSecurityLevel == "Vulnerable" {
-			sb.WriteString(fmt.Sprintf("  WARNING: Backend is vulnerable (privileged=%v, hostNetwork=%v)\n",
-				f.BackendPrivileged, f.BackendHostNetwork))
-		}
-		sb.WriteString("\n")
-	}
-
-	if count == 0 {
-		sb.WriteString("No dangerous port exposures found.\n")
-	}
-
-	return sb.String()
-}
-
-// buildNodePortLoot creates loot file for NodePort services
-func buildNodePortLoot(findings []NetworkExposureFinding) string {
-	var sb strings.Builder
-	sb.WriteString(`#####################################
-##### NodePort Exposures
-#####################################
-
-NodePort services are exposed on ALL cluster nodes.
-If nodes have external IPs, these services are internet-accessible.
-
-`)
-
-	count := 0
-	for _, f := range findings {
-		if f.ExposureType != "NodePort" {
-			continue
-		}
-		count++
-
-		sb.WriteString(fmt.Sprintf("[%s] %s/%s\n", f.RiskLevel, f.Namespace, f.ResourceName))
-		sb.WriteString(fmt.Sprintf("  NodePort: %d (Service Port: %d)\n", f.NodePort, f.Port))
-		sb.WriteString(fmt.Sprintf("  Port Category: %s - %s\n", f.PortCategory, f.PortDescription))
-		sb.WriteString(fmt.Sprintf("  Exposed on: ALL cluster nodes\n"))
-		if f.BackendDeployment != "" {
-			sb.WriteString(fmt.Sprintf("  Backend: %s (%d pods)\n", f.BackendDeployment, f.BackendPods))
-		}
-		sb.WriteString("\n")
-	}
-
-	if count == 0 {
-		sb.WriteString("No NodePort services found.\n")
-	}
-
-	return sb.String()
-}
-
-// buildHostPortLoot creates loot file for HostPort pods
-func buildHostPortLoot(findings []NetworkExposureFinding) string {
-	var sb strings.Builder
-	sb.WriteString(`#####################################
-##### HostPort Exposures
-#####################################
-
-Pods using HostPort bypass NetworkPolicy and expose directly on the node IP.
-This is a high-risk configuration.
-
-`)
-
-	count := 0
-	for _, f := range findings {
-		if f.ExposureType != "HostPort" {
-			continue
-		}
-		count++
-
-		sb.WriteString(fmt.Sprintf("[%s] %s/%s\n", f.RiskLevel, f.Namespace, f.ResourceName))
-		sb.WriteString(fmt.Sprintf("  HostPort: %d (Container Port: %s)\n", f.Port, f.TargetPort))
-		sb.WriteString(fmt.Sprintf("  Protocol: %s\n", f.Protocol))
-		sb.WriteString(fmt.Sprintf("  Port Category: %s - %s\n", f.PortCategory, f.PortDescription))
-		sb.WriteString("  WARNING: HostPort bypasses NetworkPolicy!\n")
-		if f.BackendPrivileged {
-			sb.WriteString("  CRITICAL: Container is privileged!\n")
-		}
-		if f.BackendHostNetwork {
-			sb.WriteString("  CRITICAL: Pod uses hostNetwork!\n")
-		}
-		sb.WriteString("\n")
-	}
-
-	if count == 0 {
-		sb.WriteString("No HostPort pods found.\n")
-	}
-
-	return sb.String()
-}
-
-// buildPrivilegedBackendLoot creates loot file for exposures with privileged backends
-func buildPrivilegedBackendLoot(findings []NetworkExposureFinding) string {
-	var sb strings.Builder
-	sb.WriteString(`#####################################
-##### Exposures with Privileged Backends
-#####################################
-
-These network exposures have backend pods running with dangerous privileges.
-Compromise of these services can lead to container escape and node compromise.
-
-`)
-
-	count := 0
-	for _, f := range findings {
-		if !f.BackendPrivileged && !f.BackendHostNetwork {
-			continue
-		}
-		count++
-
-		sb.WriteString(fmt.Sprintf("[%s] %s/%s\n", f.RiskLevel, f.Namespace, f.ResourceName))
-		sb.WriteString(fmt.Sprintf("  Port: %d (%s)\n", f.Port, f.PortCategory))
-		sb.WriteString(fmt.Sprintf("  Internet-Facing: %v\n", f.IsInternetFacing))
-		sb.WriteString(fmt.Sprintf("  Backend: %s (%d pods)\n", f.BackendDeployment, f.BackendPods))
-		if f.BackendPrivileged {
-			sb.WriteString("  CRITICAL: Privileged containers\n")
-		}
-		if f.BackendHostNetwork {
-			sb.WriteString("  CRITICAL: Host network access\n")
-		}
-		sb.WriteString(fmt.Sprintf("  Attack Path: %s\n", f.AttackVector))
-		if len(f.BackendSecurityIssues) > 0 {
-			sb.WriteString("  Backend Security Issues:\n")
-			for _, issue := range f.BackendSecurityIssues {
-				sb.WriteString(fmt.Sprintf("    - %s\n", issue))
-			}
-		}
-		sb.WriteString("\n")
-	}
-
-	if count == 0 {
-		sb.WriteString("No privileged backend exposures found.\n")
-	}
-
-	return sb.String()
-}
-
-// buildAttackPathsLoot creates loot file with attack path visualizations
-func buildAttackPathsLoot(findings []NetworkExposureFinding) string {
-	var sb strings.Builder
-	sb.WriteString(`#####################################
-##### Network Exposure Attack Paths
-#####################################
-
-Complete attack paths from entry point to potential compromise.
-Focus on paths that lead to "Node Compromise" or expose "Cluster Secrets".
-
-`)
-
-	// Sort by risk for attack path analysis
-	riskOrder := map[string]int{"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
-	sortedFindings := make([]NetworkExposureFinding, len(findings))
-	copy(sortedFindings, findings)
-	sort.Slice(sortedFindings, func(i, j int) bool {
-		return riskOrder[sortedFindings[i].RiskLevel] < riskOrder[sortedFindings[j].RiskLevel]
-	})
-
-	for _, f := range sortedFindings {
-		if f.RiskLevel == "LOW" {
-			continue // Skip low risk for attack paths
-		}
-
-		sb.WriteString(fmt.Sprintf("\n[%s] %s/%s (Port %d)\n", f.RiskLevel, f.Namespace, f.ResourceName, f.Port))
-		sb.WriteString(fmt.Sprintf("Attack Path: %s\n", f.AttackVector))
-
-		if f.DataExposureRisk != "None" {
-			sb.WriteString(fmt.Sprintf("Data at Risk: %s\n", f.DataExposureRisk))
-		}
-
-		if len(f.SecurityIssues) > 0 {
-			sb.WriteString("Exploitable Issues:\n")
-			for _, issue := range f.SecurityIssues {
-				sb.WriteString(fmt.Sprintf("  - %s\n", issue))
+			section.Addf("# %s/%s - %s:%d (%s)", f.Namespace, f.ResourceName, target, f.Port, f.ExposureType)
+			if f.ResourceType == "Service" {
+				section.Addf("kubectl describe svc %s -n %s", f.ResourceName, f.Namespace)
+			} else if f.ResourceType == "Ingress" {
+				section.Addf("kubectl describe ingress %s -n %s", f.ResourceName, f.Namespace)
 			}
 		}
 	}
 
-	return sb.String()
+	// Dangerous ports
+	var dangerousPorts []NetworkExposureFinding
+	for _, f := range findings {
+		if f.IsDangerousPort {
+			dangerousPorts = append(dangerousPorts, f)
+		}
+	}
+
+	if len(dangerousPorts) > 0 {
+		section.AddBlank().
+			Add("# -------------------------------------------").
+			Add("# Dangerous Port Exposures").
+			Add("# -------------------------------------------")
+
+		for _, f := range dangerousPorts {
+			section.AddBlank().
+				Addf("# %s/%s - Port %d (%s)", f.Namespace, f.ResourceName, f.Port, f.PortDescription)
+		}
+	}
+
+	// HostPort exposures
+	var hostPorts []NetworkExposureFinding
+	for _, f := range findings {
+		if f.ExposureType == "HostPort" {
+			hostPorts = append(hostPorts, f)
+		}
+	}
+
+	if len(hostPorts) > 0 {
+		section.AddBlank().
+			Add("# -------------------------------------------").
+			Add("# HostPort Exposures (bypass NetworkPolicy)").
+			Add("# -------------------------------------------")
+
+		for _, f := range hostPorts {
+			section.AddBlank().
+				Addf("# %s/%s - HostPort %d", f.Namespace, f.ResourceName, f.Port).
+				Addf("kubectl describe pod %s -n %s", f.ResourceName, f.Namespace)
+		}
+	}
+
+	// Privileged backends
+	var privilegedBackends []NetworkExposureFinding
+	for _, f := range findings {
+		if f.BackendPrivileged || f.BackendHostNetwork {
+			privilegedBackends = append(privilegedBackends, f)
+		}
+	}
+
+	if len(privilegedBackends) > 0 {
+		section.AddBlank().
+			Add("# -------------------------------------------").
+			Add("# Exposures with Privileged Backends").
+			Add("# -------------------------------------------")
+
+		for _, f := range privilegedBackends {
+			section.AddBlank().
+				Addf("# %s/%s - Port %d", f.Namespace, f.ResourceName, f.Port)
+			if f.BackendPrivileged {
+				section.Add("# WARNING: Privileged containers")
+			}
+			if f.BackendHostNetwork {
+				section.Add("# WARNING: Host network access")
+			}
+			section.Addf("# Attack Path: %s", f.AttackVector)
+		}
+	}
+
+	// NMAP commands
+	if len(nmapCommands) > 0 {
+		section.AddBlank().
+			Add("# -------------------------------------------").
+			Add("# NMAP Scanning Commands").
+			Add("# -------------------------------------------")
+
+		seen := make(map[string]bool)
+		for _, cmd := range nmapCommands {
+			cmd = strings.TrimSpace(cmd)
+			if cmd == "" || seen[cmd] {
+				continue
+			}
+			seen[cmd] = true
+			section.AddBlank().Add(cmd)
+		}
+	}
 }

@@ -1,13 +1,13 @@
 package commands
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -72,32 +72,33 @@ type SCSecurityAnalysis struct {
 }
 
 type PVStorageAnalysis struct {
-	Namespace       string
-	PVCName         string
-	PVName          string
-	StorageClass    string
-	Capacity        string
-	AccessModes     []string
-	ReclaimPolicy   string
-	Status          string
-	VolumeMode      string
-	IsEncrypted     bool
-	RiskLevel       string
-	RiskScore       int
-	SecurityIssues  []string
-	MountedPods     []string
-	SensitiveData   bool
+	Namespace      string
+	PVCName        string
+	PVName         string
+	StorageClass   string
+	Capacity       string
+	AccessModes    []string
+	ReclaimPolicy  string
+	Status         string
+	VolumeMode     string
+	IsEncrypted    bool
+	RiskLevel      string
+	RiskScore      int
+	SecurityIssues []string
+	MountedPods    []string
+	SensitiveData  bool
 }
 
 const (
-	StorageRiskCritical = "CRITICAL"
-	StorageRiskHigh     = "HIGH"
-	StorageRiskMedium   = "MEDIUM"
-	StorageRiskLow      = "LOW"
+	StorageRiskCritical = shared.RiskCritical
+	StorageRiskHigh     = shared.RiskHigh
+	StorageRiskMedium   = shared.RiskMedium
+	StorageRiskLow      = shared.RiskLow
 )
 
 func ListStorageClasses(cmd *cobra.Command, args []string) {
-	ctx := context.Background()
+	ctx, cancel := shared.ContextWithTimeout()
+	defer cancel()
 	logger := internal.NewLogger()
 
 	parentCmd := cmd.Parent()
@@ -125,7 +126,7 @@ func ListStorageClasses(cmd *cobra.Command, args []string) {
 	}
 
 	// Fetch pods for PVC usage
-	pods, err := clientset.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
+	pods, err := clientset.CoreV1().Pods(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		fmt.Printf("[!] Error fetching Pods: %v\n", err)
 		return
@@ -133,11 +134,9 @@ func ListStorageClasses(cmd *cobra.Command, args []string) {
 
 	var storageAnalyses []SCSecurityAnalysis
 	var pvAnalyses []PVStorageAnalysis
-	var unencryptedSCs []string
-	var volumeExpansionRisks []string
-	var dataRetentionRisks []string
-	var highRiskStorage []string
-	var costOptimization []string
+
+	// Initialize loot builder
+	loot := shared.NewLootBuilder()
 
 	// Build PVC to Pod mapping
 	pvcToPods := buildPVCPodMapping(pods.Items)
@@ -172,19 +171,19 @@ func ListStorageClasses(cmd *cobra.Command, args []string) {
 
 		// Categorize for loot files
 		if !analysis.IsEncrypted {
-			unencryptedSCs = append(unencryptedSCs, formatUnencryptedSC(&analysis))
+			loot.Section("Unencrypted-Storage").Add(formatUnencryptedSC(&analysis))
 		}
 		if analysis.AllowVolumeExpansion {
-			volumeExpansionRisks = append(volumeExpansionRisks, formatVolumeExpansionRisk(&analysis))
+			loot.Section("Volume-Expansion-Risks").Add(formatVolumeExpansionRisk(&analysis))
 		}
 		if analysis.DataRetentionRisk {
-			dataRetentionRisks = append(dataRetentionRisks, formatDataRetentionRisk(&analysis))
+			loot.Section("Data-Retention-Risks").Add(formatDataRetentionRisk(&analysis))
 		}
 		if analysis.RiskScore >= 70 {
-			highRiskStorage = append(highRiskStorage, formatHighRiskStorage(&analysis))
+			loot.Section("High-Risk-Storage").Add(formatHighRiskStorage(&analysis))
 		}
-		if analysis.CostRisk == "HIGH" || analysis.CostRisk == "CRITICAL" {
-			costOptimization = append(costOptimization, formatCostOptimization(&analysis))
+		if analysis.CostRisk == shared.RiskHigh || analysis.CostRisk == shared.RiskCritical {
+			loot.Section("Cost-Optimization").Add(formatCostOptimization(&analysis))
 		}
 
 		storageAnalyses = append(storageAnalyses, analysis)
@@ -228,37 +227,14 @@ func ListStorageClasses(cmd *cobra.Command, args []string) {
 		pvAnalyses = append(pvAnalyses, pvAnalysis)
 	}
 
+	// Add StorageClass-Enum section
+	loot.Section("StorageClass-Enum").Add(formatStorageClassEnum(storageAnalyses))
+
+	// Add Remediation-Guide section
+	loot.Section("Remediation-Guide").Add(generateStorageRemediationGuide(storageAnalyses))
+
 	// Generate loot files
-	lootFiles := []internal.LootFile{
-		{
-			Name:     "StorageClass-Enum",
-			Contents: formatStorageClassEnum(storageAnalyses),
-		},
-		{
-			Name:     "Unencrypted-Storage",
-			Contents: strings.Join(unencryptedSCs, "\n"),
-		},
-		{
-			Name:     "Volume-Expansion-Risks",
-			Contents: strings.Join(volumeExpansionRisks, "\n"),
-		},
-		{
-			Name:     "Data-Retention-Risks",
-			Contents: strings.Join(dataRetentionRisks, "\n"),
-		},
-		{
-			Name:     "High-Risk-Storage",
-			Contents: strings.Join(highRiskStorage, "\n"),
-		},
-		{
-			Name:     "Cost-Optimization",
-			Contents: strings.Join(costOptimization, "\n"),
-		},
-		{
-			Name:     "Remediation-Guide",
-			Contents: generateStorageRemediationGuide(storageAnalyses),
-		},
-	}
+	lootFiles := loot.Build()
 
 	// Generate tables
 	storageClassTable := generateStorageClassTable(storageAnalyses)
@@ -333,10 +309,10 @@ func analyzeSCSecurityIssues(analysis *SCSecurityAnalysis) []string {
 		strings.Contains(strings.ToLower(analysis.Name), "premium") ||
 		strings.Contains(strings.ToLower(analysis.Name), "ssd") {
 		if analysis.TotalStorageGB > 100 {
-			analysis.CostRisk = "HIGH"
+			analysis.CostRisk = shared.RiskHigh
 			issues = append(issues, fmt.Sprintf("HIGH: Expensive storage (%.1fGB on premium/SSD)", analysis.TotalStorageGB))
 		} else {
-			analysis.CostRisk = "MEDIUM"
+			analysis.CostRisk = shared.RiskMedium
 		}
 	}
 
@@ -475,9 +451,9 @@ func calculateStorageRiskScore(analysis *SCSecurityAnalysis) int {
 	}
 
 	// Cost risk
-	if analysis.CostRisk == "CRITICAL" {
+	if analysis.CostRisk == shared.RiskCritical {
 		score += 15
-	} else if analysis.CostRisk == "HIGH" {
+	} else if analysis.CostRisk == shared.RiskHigh {
 		score += 10
 	}
 
@@ -595,9 +571,9 @@ func formatStorageClassEnum(analyses []SCSecurityAnalysis) string {
 		lines = append(lines, fmt.Sprintf("  Cloud Provider: %s", sc.CloudProvider))
 		lines = append(lines, fmt.Sprintf("  Reclaim Policy: %s", sc.ReclaimPolicy))
 		lines = append(lines, fmt.Sprintf("  Volume Binding: %s", sc.VolumeBindingMode))
-		lines = append(lines, fmt.Sprintf("  Volume Expansion: %t", sc.AllowVolumeExpansion))
-		lines = append(lines, fmt.Sprintf("  Default: %t", sc.IsDefault))
-		lines = append(lines, fmt.Sprintf("  Encrypted: %t (%s)", sc.IsEncrypted, sc.EncryptionType))
+		lines = append(lines, fmt.Sprintf("  Volume Expansion: %s", shared.FormatBool(sc.AllowVolumeExpansion)))
+		lines = append(lines, fmt.Sprintf("  Default: %s", shared.FormatBool(sc.IsDefault)))
+		lines = append(lines, fmt.Sprintf("  Encrypted: %s (%s)", shared.FormatBool(sc.IsEncrypted), sc.EncryptionType))
 		lines = append(lines, fmt.Sprintf("  PVs Using: %d (%.1fGB)", sc.PVsUsingClass, sc.TotalStorageGB))
 		lines = append(lines, fmt.Sprintf("  Risk Level: %s (Score: %d/100)", sc.RiskLevel, sc.RiskScore))
 		if len(sc.SecurityIssues) > 0 {
@@ -642,7 +618,7 @@ func generateStorageRemediationGuide(analyses []SCSecurityAnalysis) string {
 }
 
 func generateStorageClassTable(analyses []SCSecurityAnalysis) internal.TableFile {
-	header := []string{"StorageClass", "Provisioner", "Encrypted", "Reclaim", "Expansion", "Default", "PVs", "Storage(GB)", "Risk", "Score", "Issues"}
+	header := []string{"StorageClass", "Provisioner", "Encrypted", "Reclaim", "Expansion", "Default", "PVs", "Storage(GB)", "Issues"}
 	var rows [][]string
 
 	// Sort by risk score (highest first)
@@ -654,14 +630,12 @@ func generateStorageClassTable(analyses []SCSecurityAnalysis) internal.TableFile
 		rows = append(rows, []string{
 			sc.Name,
 			sc.Provisioner,
-			fmt.Sprintf("%t", sc.IsEncrypted),
+			shared.FormatBool(sc.IsEncrypted),
 			sc.ReclaimPolicy,
-			fmt.Sprintf("%t", sc.AllowVolumeExpansion),
-			fmt.Sprintf("%t", sc.IsDefault),
+			shared.FormatBool(sc.AllowVolumeExpansion),
+			shared.FormatBool(sc.IsDefault),
 			fmt.Sprintf("%d", sc.PVsUsingClass),
 			fmt.Sprintf("%.1f", sc.TotalStorageGB),
-			sc.RiskLevel,
-			fmt.Sprintf("%d", sc.RiskScore),
 			fmt.Sprintf("%d", len(sc.SecurityIssues)),
 		})
 	}
@@ -674,7 +648,7 @@ func generateStorageClassTable(analyses []SCSecurityAnalysis) internal.TableFile
 }
 
 func generatePVTable(analyses []PVStorageAnalysis) internal.TableFile {
-	header := []string{"Namespace", "PVC", "PV", "StorageClass", "Capacity", "Encrypted", "AccessModes", "Status", "Pods", "Risk", "Score"}
+	header := []string{"Namespace", "PVC", "PV", "StorageClass", "Capacity", "Encrypted", "AccessModes", "Status", "Pods"}
 	var rows [][]string
 
 	// Sort by risk score
@@ -689,12 +663,10 @@ func generatePVTable(analyses []PVStorageAnalysis) internal.TableFile {
 			pv.PVName,
 			pv.StorageClass,
 			pv.Capacity,
-			fmt.Sprintf("%t", pv.IsEncrypted),
+			shared.FormatBool(pv.IsEncrypted),
 			strings.Join(pv.AccessModes, ","),
 			pv.Status,
 			fmt.Sprintf("%d", len(pv.MountedPods)),
-			pv.RiskLevel,
-			fmt.Sprintf("%d", pv.RiskScore),
 		})
 	}
 

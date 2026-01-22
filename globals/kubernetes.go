@@ -15,11 +15,13 @@ const (
 	K8S_JOBS_MODULE_NAME               string = "jobs"
 	K8S_PERSISTENT_VOLUMES_MODULE_NAME string = "persistent_volumes"
 	K8S_NAMESPACES_MODULE_NAME         string = "namespaces"
-	K8S_NETWORK_POLICY_MODULE_NAME     string = "network_policy"
+	K8S_NETWORK_POLICY_MODULE_NAME     string = "network_policy" // Alias for backwards compatibility
+	K8S_NETWORK_ADMISSION_MODULE_NAME  string = "network_admission"
 	K8S_NETWORK_PORTS_MODULE_NAME      string = "network_ports"
 	K8S_NODES_MODULE_NAME              string = "nodes"
 	K8S_PERMISSIONS_MODULE_NAME        string = "permissions"
-	K8S_POD_SECURITY_MODULE_NAME       string = "pod_security"
+	K8S_POD_ADMISSION_MODULE_NAME      string = "pod_admission"
+	K8S_POD_SECURITY_MODULE_NAME       string = "pod_admission" // Alias for backwards compatibility
 	K8S_PODDISRUPTIONBUDGETS_MODULE_NAME string = "poddisruptionbudgets"
 	K8S_PODS_MODULE_NAME               string = "pods"
 	K8S_PRIORITYCLASSES_MODULE_NAME    string = "priorityclasses"
@@ -36,6 +38,10 @@ const (
 	K8S_WEBHOOKS_MODULE_NAME           string = "webhooks"
 	K8S_WHOAMI_MODULE_NAME             string = "whoami"
 	K8S_AUTH_MODULE_NAME               string = "auth"
+	K8S_PRIVESC_MODULE_NAME            string = "privesc"
+	K8S_LATERAL_MOVEMENT_MODULE_NAME   string = "lateral_movement"
+	K8S_DATA_EXFIL_MODULE_NAME         string = "data_exfiltration"
+	K8S_ROLEBINDINGS_MODULE_NAME       string = "rolebindings"
 )
 
 var (
@@ -45,4 +51,18 @@ var (
 	KubeAPIServer  string = ""
 	RawKubeconfig  []byte
 	ClusterName    string = ""
+
+	// Namespace filtering
+	K8sNamespace      string   // Single namespace filter
+	K8sNamespaces     []string // List of namespaces to target
+	K8sAllNamespaces  bool     // Target all namespaces (default)
+
+	// API timeout
+	K8sTimeout        int      // API timeout in seconds
+
+	// Cloud provider configuration for network exposure correlation
+	K8sCloudProviders      []string // List of cloud providers to use (aws, gcp, azure)
+	K8sAWSProfile          string   // AWS profile name for cloud correlation
+	K8sAzureSubscriptions  []string // Azure subscription IDs for cloud correlation (CSV supported)
+	K8sGCPProjects         []string // GCP project IDs for cloud correlation (CSV supported)
 )

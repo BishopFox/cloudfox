@@ -11,6 +11,7 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -47,6 +48,31 @@ type StatefulSetsOutput struct {
 func (t StatefulSetsOutput) TableFiles() []internal.TableFile { return t.Table }
 func (t StatefulSetsOutput) LootFiles() []internal.LootFile   { return t.Loot }
 
+// StatefulSetContainer stores container-level details
+type StatefulSetContainer struct {
+	Name           string
+	Image          string
+	Tag            string
+	Registry       string
+	Command        string
+	Args           string
+	Privileged     bool
+	Capabilities   []string
+	RunAsUser      string
+	AllowPrivEsc   string
+	ReadOnlyRootFS string
+	ResourceLimits string
+}
+
+// StatefulSetVolume stores volume details
+type StatefulSetVolume struct {
+	Name       string
+	VolumeType string
+	Source     string
+	MountPath  string
+	ReadOnly   bool
+}
+
 type StatefulSetFinding struct {
 	// Basic Info
 	Namespace string
@@ -74,6 +100,17 @@ type StatefulSetFinding struct {
 	PVCStorageSize       string
 	StorageClasses       []string
 	DangerousAccessModes []string // ReadWriteMany can be risky
+
+	// Containers and Volumes (for multi-table output)
+	ContainerDetails []StatefulSetContainer
+	VolumeDetails    []StatefulSetVolume
+
+	// Suspicious pattern detection
+	BackdoorPatterns []string
+	ReverseShells    []string
+	CryptoMiners     []string
+	DataExfiltration []string
+	ContainerEscapeP []string
 
 	// Volume Security
 	HostPathVolumes  []string
@@ -112,8 +149,12 @@ type StatefulSetFinding struct {
 	ImpactSummary string
 
 	// Labels and Selectors
-	Labels    map[string]string
-	Selectors map[string]string
+	Labels           map[string]string
+	Selectors        map[string]string
+	ImagePullSecrets []string
+	Affinity         string
+	Tolerations      []string
+	InitContainers   int
 }
 
 type VolumeClaimInfo struct {
@@ -124,7 +165,8 @@ type VolumeClaimInfo struct {
 }
 
 func ListStatefulSets(cmd *cobra.Command, args []string) {
-	ctx := context.Background()
+	ctx, cancel := shared.ContextWithTimeout()
+	defer cancel()
 	logger := internal.NewLogger()
 
 	parentCmd := cmd.Parent()
@@ -137,216 +179,175 @@ func ListStatefulSets(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	statefulSets, err := clientset.AppsV1().StatefulSets("").List(ctx, metav1.ListOptions{})
-	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Error listing StatefulSets: %v", err), globals.K8S_STATEFULSETS_MODULE_NAME)
-		return
+	namespaces := shared.GetTargetNamespaces(ctx, clientset, &logger, globals.K8S_STATEFULSETS_MODULE_NAME)
+
+	// Table 1: StatefulSets Summary
+	summaryHeaders := []string{
+		"Namespace", "Name", "Labels", "Replicas", "Update Strategy",
+		"Service Account", "Init Containers", "Image Pull Secrets",
+		"Secrets", "ConfigMaps",
+		"Security Context", "Suspicious Patterns", "Cloud IAM",
+		"Affinity", "Tolerations",
 	}
 
-	// Get all PVCs for correlation
-	allPVCs, err := clientset.CoreV1().PersistentVolumeClaims("").List(ctx, metav1.ListOptions{})
-	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Warning: Could not list PVCs: %v", err), globals.K8S_STATEFULSETS_MODULE_NAME)
-		allPVCs = &corev1.PersistentVolumeClaimList{}
+	// Table 2: StatefulSet-Containers Detail
+	containerHeaders := []string{
+		"Namespace", "StatefulSet", "Container", "Privileged", "Capabilities",
+		"RunAsUser", "AllowPrivEsc", "ReadOnlyRootFS", "Resource Limits",
+		"Image", "Tag", "Registry",
 	}
 
-	// Get all services for headless service detection
-	allServices, err := clientset.CoreV1().Services("").List(ctx, metav1.ListOptions{})
-	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Warning: Could not list services: %v", err), globals.K8S_STATEFULSETS_MODULE_NAME)
-		allServices = &corev1.ServiceList{}
+	// Table 3: StatefulSet-Volumes Detail
+	volumeHeaders := []string{
+		"Namespace", "StatefulSet", "Volume Name", "Type", "Source Path/Name", "Container Mount Path", "Read Only",
 	}
 
-	headers := []string{
-		"Risk",
-		"Score",
-		"Namespace",
-		"Name",
-		"Replicas",
-		"PVCs",
-		"Storage",
-		"Privileged",
-		"HostAccess",
-		"RunAsRoot",
-		"UpdateStrategy",
-		"ResourceLimits",
-		"CloudRole",
-		"Issues",
-	}
-
-	var outputRows [][]string
+	var summaryRows [][]string
+	var containerRows [][]string
+	var volumeRows [][]string
 	var findings []StatefulSetFinding
 
 	// Risk counters
-	riskCounts := map[string]int{
-		"CRITICAL": 0,
-		"HIGH":     0,
-		"MEDIUM":   0,
-		"LOW":      0,
-	}
+	riskCounts := shared.NewRiskCounts()
 
-	var lootEnum []string
-	var lootPVCs []string
-	var lootPrivileged []string
-	var lootDataPersistence []string
-	var lootRiskyUpdates []string
-	var lootRemediation []string
+	// Loot content will be generated after processing all statefulsets
+	// We'll use findings to generate consolidated loot
 
-	lootEnum = append(lootEnum, `#####################################
-##### StatefulSet Enumeration
-#####################################
-#
-# StatefulSets manage stateful applications with persistent storage
-# Often run critical infrastructure: databases, queues, caches
-#
-`)
+	for _, ns := range namespaces {
+		statefulSets, err := clientset.AppsV1().StatefulSets(ns).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			shared.LogListError(&logger, "statefulsets", ns, err, globals.K8S_STATEFULSETS_MODULE_NAME, false)
+			continue
+		}
 
-	lootPVCs = append(lootPVCs, `#####################################
-##### StatefulSet Persistent Volume Claims
-#####################################
-#
-# PVCs provide persistent storage for stateful applications
-# CRITICAL: Review storage classes, backup policies, and access modes
-#
-`)
+		// Get all PVCs for correlation in this namespace
+		allPVCs, err := clientset.CoreV1().PersistentVolumeClaims(ns).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			logger.ErrorM(fmt.Sprintf("Warning: Could not list PVCs in namespace %s: %v", ns, err), globals.K8S_STATEFULSETS_MODULE_NAME)
+			allPVCs = &corev1.PersistentVolumeClaimList{}
+		}
 
-	lootPrivileged = append(lootPrivileged, `#####################################
-##### Privileged StatefulSets
-#####################################
-#
-# Privileged StatefulSets can compromise node security
-# HIGH RISK: Review necessity of privileged access
-#
-`)
+		// Get all services for headless service detection in this namespace
+		allServices, err := clientset.CoreV1().Services(ns).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			logger.ErrorM(fmt.Sprintf("Warning: Could not list services in namespace %s: %v", ns, err), globals.K8S_STATEFULSETS_MODULE_NAME)
+			allServices = &corev1.ServiceList{}
+		}
 
-	lootDataPersistence = append(lootDataPersistence, `#####################################
-##### Data Persistence Analysis
-#####################################
-#
-# StatefulSets with persistent data require backup and DR planning
-# Review retention policies, encryption, and access controls
-#
-`)
-
-	lootRiskyUpdates = append(lootRiskyUpdates, `#####################################
-##### Risky Update Strategies
-#####################################
-#
-# Update strategy can cause downtime or leave pods in inconsistent states
-# Review partition values and PodManagementPolicy
-#
-`)
-
-	lootRemediation = append(lootRemediation, `#####################################
-##### Security Remediation Recommendations
-#####################################
-#
-# Step-by-step fixes for identified security issues
-#
-`)
-
-	if globals.KubeContext != "" {
-		lootEnum = append(lootEnum, fmt.Sprintf("kubectl config use-context %s\n", globals.KubeContext))
-		lootPVCs = append(lootPVCs, fmt.Sprintf("kubectl config use-context %s\n", globals.KubeContext))
-	}
-
-	for _, ss := range statefulSets.Items {
+		for _, ss := range statefulSets.Items {
 		finding := analyzeStatefulSet(&ss, allPVCs.Items, allServices.Items, clientset, ctx)
 		findings = append(findings, finding)
-		riskCounts[finding.RiskLevel]++
+		riskCounts.Add(finding.RiskLevel)
 
-		// Build output row
-		hostAccess := "None"
-		hostAccessParts := []string{}
+		// Build Security Context column (pod-level only)
+		var secContextParts []string
 		if finding.HostPID {
-			hostAccessParts = append(hostAccessParts, "PID")
+			secContextParts = append(secContextParts, "HostPID")
 		}
 		if finding.HostIPC {
-			hostAccessParts = append(hostAccessParts, "IPC")
+			secContextParts = append(secContextParts, "HostIPC")
 		}
 		if finding.HostNetwork {
-			hostAccessParts = append(hostAccessParts, "Network")
+			secContextParts = append(secContextParts, "HostNetwork")
 		}
-		if len(hostAccessParts) > 0 {
-			hostAccess = strings.Join(hostAccessParts, ",")
+		for _, hp := range finding.HostPathVolumes {
+			secContextParts = append(secContextParts, fmt.Sprintf("HostPath:%s", hp))
+		}
+		secContextStr := strings.Join(secContextParts, ", ")
+
+		// Build Suspicious Patterns column
+		suspiciousPatternsStr := strings.Join(finding.BackdoorPatterns, "; ")
+
+		// Build Cloud IAM column
+		var cloudIAMStr string
+		if finding.CloudProvider != "" && finding.CloudRole != "" {
+			cloudIAMStr = fmt.Sprintf("%s: %s", finding.CloudProvider, finding.CloudRole)
 		}
 
-		resourceLimits := "No"
-		if finding.HasResourceLimits {
-			resourceLimits = "Yes"
-		}
+		// Build replicas string
+		replicasStr := fmt.Sprintf("%d/%d", finding.ReadyReplicas, finding.Replicas)
 
-		pvcInfo := fmt.Sprintf("%d", finding.TotalPVCCount)
-		if finding.TotalPVCCount > 0 {
-			pvcInfo = fmt.Sprintf("%d (%s)", finding.TotalPVCCount, finding.PVCStorageSize)
-		}
+		// Build Labels column
+		labelsStr := strings.Join(k8sinternal.MapToStringList(finding.Labels), ", ")
 
-		storageClassStr := "None"
-		if len(finding.StorageClasses) > 0 {
-			storageClassStr = strings.Join(finding.StorageClasses, ",")
-		}
+		// Build Init Containers count
+		initContainersStr := fmt.Sprintf("%d", finding.InitContainers)
 
-		row := []string{
-			finding.RiskLevel,
-			fmt.Sprintf("%d", finding.RiskScore),
-			ss.Namespace,
-			ss.Name,
-			fmt.Sprintf("%d/%d", finding.ReadyReplicas, finding.Replicas),
-			pvcInfo,
-			storageClassStr,
-			fmt.Sprintf("%d", finding.PrivilegedContainers),
-			hostAccess,
-			fmt.Sprintf("%d", finding.RunAsRoot),
+		// Build Image Pull Secrets column
+		imagePullSecretsStr := strings.Join(finding.ImagePullSecrets, ", ")
+
+		// Build Secrets column
+		secretsStr := strings.Join(finding.SecretVolumes, ", ")
+
+		// Build ConfigMaps column
+		configMapsStr := strings.Join(finding.ConfigMapVolumes, ", ")
+
+		// Build Tolerations column
+		tolerationsStr := strings.Join(finding.Tolerations, "; ")
+
+		// Table 1: Summary row
+		summaryRow := []string{
+			finding.Namespace,
+			finding.Name,
+			k8sinternal.NonEmpty(labelsStr),
+			replicasStr,
 			finding.UpdateStrategy,
-			resourceLimits,
-			k8sinternal.NonEmpty(finding.CloudRole),
-			fmt.Sprintf("%d", len(finding.SecurityIssues)),
+			k8sinternal.NonEmpty(finding.ServiceAccount),
+			initContainersStr,
+			k8sinternal.NonEmpty(imagePullSecretsStr),
+			k8sinternal.NonEmpty(secretsStr),
+			k8sinternal.NonEmpty(configMapsStr),
+			k8sinternal.NonEmpty(secContextStr),
+			k8sinternal.NonEmpty(suspiciousPatternsStr),
+			k8sinternal.NonEmpty(cloudIAMStr),
+			k8sinternal.NonEmpty(finding.Affinity),
+			k8sinternal.NonEmpty(tolerationsStr),
+		}
+		summaryRows = append(summaryRows, summaryRow)
+
+		// Table 2: Container rows (one per container)
+		for _, container := range finding.ContainerDetails {
+			capsStr := strings.Join(container.Capabilities, ", ")
+			containerRow := []string{
+				finding.Namespace,
+				finding.Name,
+				container.Name,
+				fmt.Sprintf("%v", container.Privileged),
+				k8sinternal.NonEmpty(capsStr),
+				k8sinternal.NonEmpty(container.RunAsUser),
+				k8sinternal.NonEmpty(container.AllowPrivEsc),
+				k8sinternal.NonEmpty(container.ReadOnlyRootFS),
+				k8sinternal.NonEmpty(container.ResourceLimits),
+				container.Image,
+				container.Tag,
+				container.Registry,
+			}
+			containerRows = append(containerRows, containerRow)
 		}
 
-		outputRows = append(outputRows, row)
-
-		// Generate loot content
-		generateStatefulSetLoot(&finding, &lootEnum, &lootPVCs, &lootPrivileged,
-			&lootDataPersistence, &lootRiskyUpdates, &lootRemediation)
+		// Table 3: Volume rows (one per volume)
+		for _, volume := range finding.VolumeDetails {
+			volumeRow := []string{
+				finding.Namespace,
+				finding.Name,
+				volume.Name,
+				volume.VolumeType,
+				volume.Source,
+				volume.MountPath,
+				fmt.Sprintf("%v", volume.ReadOnly),
+			}
+			volumeRows = append(volumeRows, volumeRow)
+		}
+		}
 	}
 
-	// Sort by risk score descending
-	sort.Slice(findings, func(i, j int) bool {
-		return findings[i].RiskScore > findings[j].RiskScore
-	})
+	// Create all three tables
+	summaryTable := internal.TableFile{Name: "StatefulSets", Header: summaryHeaders, Body: summaryRows}
+	containerTable := internal.TableFile{Name: "StatefulSet-Containers", Header: containerHeaders, Body: containerRows}
+	volumeTable := internal.TableFile{Name: "StatefulSet-Volumes", Header: volumeHeaders, Body: volumeRows}
 
-	table := internal.TableFile{
-		Name:   "StatefulSets",
-		Header: headers,
-		Body:   outputRows,
-	}
-
-	lootFiles := []internal.LootFile{
-		{
-			Name:     "StatefulSets-Enum",
-			Contents: strings.Join(lootEnum, "\n"),
-		},
-		{
-			Name:     "StatefulSets-PVCs",
-			Contents: strings.Join(lootPVCs, "\n"),
-		},
-		{
-			Name:     "StatefulSets-Privileged",
-			Contents: strings.Join(lootPrivileged, "\n"),
-		},
-		{
-			Name:     "StatefulSets-Data-Persistence",
-			Contents: strings.Join(lootDataPersistence, "\n"),
-		},
-		{
-			Name:     "StatefulSets-Risky-Updates",
-			Contents: strings.Join(lootRiskyUpdates, "\n"),
-		},
-		{
-			Name:     "StatefulSets-Remediation",
-			Contents: strings.Join(lootRemediation, "\n"),
-		},
-	}
+	// Generate consolidated loot files
+	lootFiles := generateStatefulSetConsolidatedLoot(findings, riskCounts)
 
 	if err := internal.HandleOutput(
 		"Kubernetes",
@@ -358,7 +359,7 @@ func ListStatefulSets(cmd *cobra.Command, args []string) {
 		globals.ClusterName,
 		"results",
 		StatefulSetsOutput{
-			Table: []internal.TableFile{table},
+			Table: []internal.TableFile{summaryTable, containerTable, volumeTable},
 			Loot:  lootFiles,
 		},
 	); err != nil {
@@ -366,11 +367,16 @@ func ListStatefulSets(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	if len(outputRows) > 0 {
-		logger.InfoM(fmt.Sprintf("%d statefulsets found | Risk: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
-			len(outputRows),
-			riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"]),
-			globals.K8S_STATEFULSETS_MODULE_NAME)
+	if len(summaryRows) > 0 {
+		logger.InfoM(fmt.Sprintf("%d statefulsets found", len(summaryRows)), globals.K8S_STATEFULSETS_MODULE_NAME)
+		logger.InfoM(fmt.Sprintf("Risk Summary: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
+			riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low), globals.K8S_STATEFULSETS_MODULE_NAME)
+		if riskCounts.Critical > 0 {
+			logger.InfoM(fmt.Sprintf("⚠️  %d CRITICAL risk statefulsets detected!", riskCounts.Critical), globals.K8S_STATEFULSETS_MODULE_NAME)
+		}
+		if riskCounts.High > 0 {
+			logger.InfoM(fmt.Sprintf("⚠️  %d HIGH risk statefulsets detected!", riskCounts.High), globals.K8S_STATEFULSETS_MODULE_NAME)
+		}
 	} else {
 		logger.InfoM("No statefulsets found, skipping output file creation", globals.K8S_STATEFULSETS_MODULE_NAME)
 	}
@@ -418,6 +424,40 @@ func analyzeStatefulSet(ss *appsv1.StatefulSet, allPVCs []corev1.PersistentVolum
 	// Ordinals (if using ordinal indexing)
 	if ss.Spec.Ordinals != nil {
 		finding.Ordinals = fmt.Sprintf("start:%d", ss.Spec.Ordinals.Start)
+	}
+
+	// Init Containers count
+	finding.InitContainers = len(ss.Spec.Template.Spec.InitContainers)
+
+	// Extract Image Pull Secrets
+	for _, ips := range ss.Spec.Template.Spec.ImagePullSecrets {
+		finding.ImagePullSecrets = append(finding.ImagePullSecrets, ips.Name)
+	}
+
+	// Extract Affinity
+	finding.Affinity = k8sinternal.PrettyPrintAffinity(ss.Spec.Template.Spec.Affinity)
+
+	// Extract Tolerations with full details
+	for _, t := range ss.Spec.Template.Spec.Tolerations {
+		var tolParts []string
+		if t.Key != "" {
+			tolParts = append(tolParts, t.Key)
+		}
+		if t.Value != "" {
+			tolParts = append(tolParts, fmt.Sprintf("=%s", t.Value))
+		}
+		if t.Effect != "" {
+			tolParts = append(tolParts, fmt.Sprintf(":%s", t.Effect))
+		}
+		if t.Operator != "" {
+			tolParts = append(tolParts, fmt.Sprintf(" (%s)", t.Operator))
+		}
+		if t.TolerationSeconds != nil {
+			tolParts = append(tolParts, fmt.Sprintf(" [%ds]", *t.TolerationSeconds))
+		}
+		if len(tolParts) > 0 {
+			finding.Tolerations = append(finding.Tolerations, strings.Join(tolParts, ""))
+		}
 	}
 
 	// Analyze VolumeClaimTemplates
@@ -546,6 +586,152 @@ func analyzeStatefulSet(ss *appsv1.StatefulSet, allPVCs []corev1.PersistentVolum
 			}
 		}
 	}
+
+	// Container detail extraction for container table
+	var allCommands []string
+	var allArgs []string
+	var allImages []string
+	for _, c := range allContainers {
+		containerPrivileged := false
+		var containerCaps []string
+		containerRunAsUser := "N/A"
+		containerAllowPrivEsc := "N/A"
+		containerReadOnlyRootFS := "N/A"
+
+		if c.SecurityContext != nil {
+			if c.SecurityContext.Privileged != nil && *c.SecurityContext.Privileged {
+				containerPrivileged = true
+			}
+			if c.SecurityContext.Capabilities != nil {
+				for _, cap := range c.SecurityContext.Capabilities.Add {
+					containerCaps = append(containerCaps, string(cap))
+				}
+			}
+			if c.SecurityContext.RunAsUser != nil {
+				uid := *c.SecurityContext.RunAsUser
+				if uid == 0 {
+					containerRunAsUser = "root"
+				} else {
+					containerRunAsUser = fmt.Sprintf("%d", uid)
+				}
+			}
+			if c.SecurityContext.AllowPrivilegeEscalation != nil {
+				containerAllowPrivEsc = fmt.Sprintf("%v", *c.SecurityContext.AllowPrivilegeEscalation)
+			}
+			if c.SecurityContext.ReadOnlyRootFilesystem != nil {
+				containerReadOnlyRootFS = fmt.Sprintf("%v", *c.SecurityContext.ReadOnlyRootFilesystem)
+			}
+		}
+
+		// Extract resource limits
+		var resourceParts []string
+		if c.Resources.Limits != nil {
+			if cpu := c.Resources.Limits.Cpu(); cpu != nil && !cpu.IsZero() {
+				resourceParts = append(resourceParts, fmt.Sprintf("cpu:%s", cpu.String()))
+			}
+			if mem := c.Resources.Limits.Memory(); mem != nil && !mem.IsZero() {
+				resourceParts = append(resourceParts, fmt.Sprintf("mem:%s", mem.String()))
+			}
+		}
+		resourceLimits := strings.Join(resourceParts, ", ")
+
+		// Parse image details
+		image := c.Image
+		tag := "latest"
+		registry := "docker.io"
+		if strings.Contains(image, ":") {
+			parts := strings.SplitN(image, ":", 2)
+			image = parts[0]
+			tag = parts[1]
+		}
+		if strings.Contains(image, "/") {
+			parts := strings.Split(image, "/")
+			if strings.Contains(parts[0], ".") || parts[0] == "localhost" {
+				registry = parts[0]
+			}
+		}
+
+		finding.ContainerDetails = append(finding.ContainerDetails, StatefulSetContainer{
+			Name:           c.Name,
+			Image:          c.Image,
+			Tag:            tag,
+			Registry:       registry,
+			Command:        strings.Join(c.Command, " "),
+			Args:           strings.Join(c.Args, " "),
+			Privileged:     containerPrivileged,
+			Capabilities:   containerCaps,
+			RunAsUser:      containerRunAsUser,
+			AllowPrivEsc:   containerAllowPrivEsc,
+			ReadOnlyRootFS: containerReadOnlyRootFS,
+			ResourceLimits: resourceLimits,
+		})
+		allCommands = append(allCommands, c.Command...)
+		allArgs = append(allArgs, c.Args...)
+		allImages = append(allImages, c.Image)
+	}
+
+	// Volume detail extraction for volume table
+	for _, v := range ss.Spec.Template.Spec.Volumes {
+		volume := StatefulSetVolume{
+			Name: v.Name,
+		}
+
+		// Determine volume type and source
+		if v.HostPath != nil {
+			volume.VolumeType = "HostPath"
+			volume.Source = v.HostPath.Path
+		} else if v.Secret != nil {
+			volume.VolumeType = "Secret"
+			volume.Source = v.Secret.SecretName
+		} else if v.ConfigMap != nil {
+			volume.VolumeType = "ConfigMap"
+			volume.Source = v.ConfigMap.Name
+		} else if v.EmptyDir != nil {
+			volume.VolumeType = "EmptyDir"
+			volume.Source = "-"
+		} else if v.PersistentVolumeClaim != nil {
+			volume.VolumeType = "PVC"
+			volume.Source = v.PersistentVolumeClaim.ClaimName
+		} else if v.Projected != nil {
+			volume.VolumeType = "Projected"
+			volume.Source = "-"
+		} else if v.DownwardAPI != nil {
+			volume.VolumeType = "DownwardAPI"
+			volume.Source = "-"
+		} else {
+			volume.VolumeType = "Other"
+			volume.Source = "-"
+		}
+
+		// Find mount path and read-only status
+		for _, container := range allContainers {
+			for _, vm := range container.VolumeMounts {
+				if vm.Name == v.Name {
+					volume.MountPath = vm.MountPath
+					volume.ReadOnly = vm.ReadOnly
+					break
+				}
+			}
+		}
+
+		finding.VolumeDetails = append(finding.VolumeDetails, volume)
+	}
+
+	// Suspicious pattern detection using shared functions
+	var hostPaths []string
+	for _, hp := range finding.HostPathVolumes {
+		hostPaths = append(hostPaths, hp)
+	}
+	finding.ReverseShells = shared.DetectReverseShells(allCommands, allArgs)
+	finding.CryptoMiners = shared.DetectCryptoMiners(allCommands, allArgs, allImages)
+	finding.DataExfiltration = shared.DetectDataExfiltration(allCommands, allArgs)
+	finding.ContainerEscapeP = shared.DetectContainerEscape(allCommands, allArgs, hostPaths)
+
+	// Combine all backdoor patterns
+	finding.BackdoorPatterns = append(finding.BackdoorPatterns, finding.ReverseShells...)
+	finding.BackdoorPatterns = append(finding.BackdoorPatterns, finding.CryptoMiners...)
+	finding.BackdoorPatterns = append(finding.BackdoorPatterns, finding.DataExfiltration...)
+	finding.BackdoorPatterns = append(finding.BackdoorPatterns, finding.ContainerEscapeP...)
 
 	// Host access
 	finding.HostPID = ss.Spec.Template.Spec.HostPID
@@ -690,88 +876,139 @@ func generateStatefulSetImpact(finding *StatefulSetFinding) string {
 	return fmt.Sprintf("%d replicas with %d security issues", finding.Replicas, len(finding.SecurityIssues))
 }
 
-func generateStatefulSetLoot(finding *StatefulSetFinding, lootEnum, lootPVCs, lootPrivileged,
-	lootDataPersistence, lootRiskyUpdates, lootRemediation *[]string) {
+// generateStatefulSetConsolidatedLoot generates consolidated loot files for statefulsets
+func generateStatefulSetConsolidatedLoot(findings []StatefulSetFinding, riskCounts *shared.RiskCounts) []internal.LootFile {
+	var lootContent []string
+	var entrypointsContent []string
 
-	ns := finding.Namespace
-	name := finding.Name
+	// Header for StatefulSet-Loot.txt
+	lootContent = append(lootContent, "#####################################")
+	lootContent = append(lootContent, "##### StatefulSet Loot - Actionable Commands")
+	lootContent = append(lootContent, "#####################################")
+	lootContent = append(lootContent, "#")
+	lootContent = append(lootContent, fmt.Sprintf("# Risk Summary: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
+		riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low))
+	lootContent = append(lootContent, "#")
+	lootContent = append(lootContent, "")
 
-	// Enumeration
-	*lootEnum = append(*lootEnum, fmt.Sprintf("\n# [%s] StatefulSet: %s/%s", finding.RiskLevel, ns, name))
-	*lootEnum = append(*lootEnum, fmt.Sprintf("# Replicas: %d | PVCs: %d | Risk Score: %d",
-		finding.Replicas, finding.TotalPVCCount, finding.RiskScore))
-	*lootEnum = append(*lootEnum, fmt.Sprintf("kubectl get statefulset %s -n %s -o yaml", name, ns))
-	*lootEnum = append(*lootEnum, fmt.Sprintf("kubectl describe statefulset %s -n %s", name, ns))
-	*lootEnum = append(*lootEnum, "")
+	// Header for StatefulSet-Entrypoints.txt
+	entrypointsContent = append(entrypointsContent, "#####################################")
+	entrypointsContent = append(entrypointsContent, "##### StatefulSet Container Entrypoints")
+	entrypointsContent = append(entrypointsContent, "#####################################")
+	entrypointsContent = append(entrypointsContent, "#")
+	entrypointsContent = append(entrypointsContent, "# Container startup commands (entrypoint/cmd) and arguments")
+	entrypointsContent = append(entrypointsContent, "# Only containers with non-empty commands/args are listed")
+	entrypointsContent = append(entrypointsContent, "#")
+	entrypointsContent = append(entrypointsContent, "")
 
-	// PVCs
-	if finding.TotalPVCCount > 0 {
-		*lootPVCs = append(*lootPVCs, fmt.Sprintf("\n### %s/%s - %d PVCs", ns, name, finding.TotalPVCCount))
-		*lootPVCs = append(*lootPVCs, fmt.Sprintf("# Storage: %s | Classes: %s",
-			finding.PVCStorageSize, strings.Join(finding.StorageClasses, ",")))
-		*lootPVCs = append(*lootPVCs, fmt.Sprintf("kubectl get pvc -n %s -l app=%s", ns, name))
-		*lootPVCs = append(*lootPVCs, fmt.Sprintf("# Backup PVCs:"))
-		*lootPVCs = append(*lootPVCs, fmt.Sprintf("kubectl get pvc -n %s -o json | jq -r '.items[] | select(.metadata.labels.app==\"%s\")'", ns, name))
-		*lootPVCs = append(*lootPVCs, "")
+	// Sort findings by risk score (highest first)
+	sort.Slice(findings, func(i, j int) bool {
+		return findings[i].RiskScore > findings[j].RiskScore
+	})
+
+	// Section: ENUMERATION
+	lootContent = append(lootContent, "")
+	lootContent = append(lootContent, "### ENUMERATION - Describe and inspect statefulsets")
+	lootContent = append(lootContent, "")
+	for _, f := range findings {
+		lootContent = append(lootContent, fmt.Sprintf("# [%s] %s/%s (Replicas: %d/%d, PVCs: %d)", f.RiskLevel, f.Namespace, f.Name, f.ReadyReplicas, f.Replicas, f.TotalPVCCount))
+		lootContent = append(lootContent, fmt.Sprintf("kubectl describe statefulset -n %s %s", f.Namespace, f.Name))
+		lootContent = append(lootContent, fmt.Sprintf("kubectl get statefulset -n %s %s -o yaml", f.Namespace, f.Name))
+		lootContent = append(lootContent, "")
 	}
 
-	// Privileged
-	if finding.PrivilegedContainers > 0 || len(finding.HostPathVolumes) > 0 {
-		*lootPrivileged = append(*lootPrivileged, fmt.Sprintf("\n### [%s] %s/%s - Privileged Access",
-			finding.RiskLevel, ns, name))
-		*lootPrivileged = append(*lootPrivileged, fmt.Sprintf("# Privileged: %d | HostPath: %d",
-			finding.PrivilegedContainers, len(finding.HostPathVolumes)))
-		if len(finding.HostPathVolumes) > 0 {
-			*lootPrivileged = append(*lootPrivileged, fmt.Sprintf("# HostPath volumes: %s",
-				strings.Join(finding.DangerousVolumes, ", ")))
+	// Section: HIGH RISK - Critical and high risk statefulsets
+	lootContent = append(lootContent, "")
+	lootContent = append(lootContent, "### HIGH RISK - Critical and high risk statefulsets")
+	lootContent = append(lootContent, "")
+	for _, f := range findings {
+		if f.RiskLevel == "CRITICAL" || f.RiskLevel == "HIGH" {
+			lootContent = append(lootContent, fmt.Sprintf("# [%s] %s/%s - Score: %d", f.RiskLevel, f.Namespace, f.Name, f.RiskScore))
+			lootContent = append(lootContent, fmt.Sprintf("# Security Issues: %s", strings.Join(f.SecurityIssues, ", ")))
+			if f.CloudProvider != "" && f.CloudRole != "" {
+				lootContent = append(lootContent, fmt.Sprintf("# Cloud Role: %s (%s)", f.CloudRole, f.CloudProvider))
+			}
+			lootContent = append(lootContent, fmt.Sprintf("kubectl edit statefulset -n %s %s", f.Namespace, f.Name))
+			lootContent = append(lootContent, "")
 		}
-		*lootPrivileged = append(*lootPrivileged, "")
 	}
 
-	// Data persistence
-	if finding.TotalPVCCount > 0 {
-		*lootDataPersistence = append(*lootDataPersistence, fmt.Sprintf("\n### %s/%s - Data Persistence", ns, name))
-		*lootDataPersistence = append(*lootDataPersistence, fmt.Sprintf("# Total PVCs: %d (%d replicas × %d templates)",
-			finding.TotalPVCCount, finding.Replicas, len(finding.VolumeClaimTemplates)))
-		*lootDataPersistence = append(*lootDataPersistence, "# CRITICAL: Review backup and disaster recovery plans")
-		*lootDataPersistence = append(*lootDataPersistence, fmt.Sprintf("kubectl get pvc -n %s", ns))
-		*lootDataPersistence = append(*lootDataPersistence, "")
+	// Section: EXPLOITATION - Privileged statefulsets
+	lootContent = append(lootContent, "")
+	lootContent = append(lootContent, "### EXPLOITATION - Privileged statefulsets and host access")
+	lootContent = append(lootContent, "")
+	for _, f := range findings {
+		if f.PrivilegedContainers > 0 || len(f.HostPathVolumes) > 0 || f.HostPID || f.HostNetwork {
+			lootContent = append(lootContent, fmt.Sprintf("# [%s] %s/%s", f.RiskLevel, f.Namespace, f.Name))
+			if f.PrivilegedContainers > 0 {
+				lootContent = append(lootContent, fmt.Sprintf("# %d privileged containers - can escape to host", f.PrivilegedContainers))
+			}
+			if f.HostPID {
+				lootContent = append(lootContent, "# HostPID - can see all node processes")
+			}
+			if f.HostNetwork {
+				lootContent = append(lootContent, "# HostNetwork - bypasses network policies")
+			}
+			if len(f.HostPathVolumes) > 0 {
+				lootContent = append(lootContent, fmt.Sprintf("# HostPath volumes: %s", strings.Join(f.DangerousVolumes, ", ")))
+			}
+			lootContent = append(lootContent, fmt.Sprintf("# Get pods: kubectl get pods -n %s -l app=%s", f.Namespace, f.Name))
+			lootContent = append(lootContent, "")
+		}
 	}
 
-	// Risky updates
-	if finding.Partition > 0 || finding.PodManagementPolicy == "Parallel" {
-		*lootRiskyUpdates = append(*lootRiskyUpdates, fmt.Sprintf("\n### %s/%s - Update Strategy: %s",
-			ns, name, finding.UpdateStrategy))
-		if finding.Partition > 0 {
-			*lootRiskyUpdates = append(*lootRiskyUpdates, fmt.Sprintf("# Partition: %d (only pods >= %d will be updated)",
-				finding.Partition, finding.Partition))
+	// Section: PERSISTENCE - PVCs and data access
+	lootContent = append(lootContent, "")
+	lootContent = append(lootContent, "### PERSISTENCE - PVCs and persistent data access")
+	lootContent = append(lootContent, "")
+	for _, f := range findings {
+		if f.TotalPVCCount > 0 {
+			lootContent = append(lootContent, fmt.Sprintf("# [%s] %s/%s - %d PVCs (%s each)", f.RiskLevel, f.Namespace, f.Name, f.TotalPVCCount, f.PVCStorageSize))
+			if len(f.StorageClasses) > 0 {
+				lootContent = append(lootContent, fmt.Sprintf("# Storage classes: %s", strings.Join(f.StorageClasses, ", ")))
+			}
+			lootContent = append(lootContent, fmt.Sprintf("kubectl get pvc -n %s -l app=%s", f.Namespace, f.Name))
+			lootContent = append(lootContent, "")
 		}
-		*lootRiskyUpdates = append(*lootRiskyUpdates, fmt.Sprintf("# PodManagementPolicy: %s", finding.PodManagementPolicy))
-		*lootRiskyUpdates = append(*lootRiskyUpdates, "")
 	}
 
-	// Remediation
-	if len(finding.SecurityIssues) > 0 {
-		*lootRemediation = append(*lootRemediation, fmt.Sprintf("\n### %s/%s - %d Security Issues",
-			ns, name, len(finding.SecurityIssues)))
-		for _, issue := range finding.SecurityIssues {
-			*lootRemediation = append(*lootRemediation, fmt.Sprintf("# - %s", issue))
+	// Section: SECRETS ACCESS
+	lootContent = append(lootContent, "")
+	lootContent = append(lootContent, "### SECRETS ACCESS - Statefulsets exposing secrets")
+	lootContent = append(lootContent, "")
+	for _, f := range findings {
+		if len(f.SecretVolumes) > 0 {
+			lootContent = append(lootContent, fmt.Sprintf("# [%s] %s/%s (%d secret volumes)", f.RiskLevel, f.Namespace, f.Name, len(f.SecretVolumes)))
+			lootContent = append(lootContent, fmt.Sprintf("# Secrets: %s", strings.Join(f.SecretVolumes, ", ")))
+			lootContent = append(lootContent, "")
 		}
-		*lootRemediation = append(*lootRemediation, "# Remediation steps:")
+	}
 
-		if finding.PrivilegedContainers > 0 {
-			*lootRemediation = append(*lootRemediation, "# 1. Remove privileged: true from container securityContext")
+	// Build entrypoints content
+	for _, f := range findings {
+		var containerEntries []string
+		for _, c := range f.ContainerDetails {
+			if c.Command != "" || c.Args != "" {
+				containerEntries = append(containerEntries, fmt.Sprintf("  Container: %s", c.Name))
+				containerEntries = append(containerEntries, fmt.Sprintf("    Image: %s", c.Image))
+				if c.Command != "" {
+					containerEntries = append(containerEntries, fmt.Sprintf("    Command: %s", c.Command))
+				}
+				if c.Args != "" {
+					containerEntries = append(containerEntries, fmt.Sprintf("    Args: %s", c.Args))
+				}
+			}
 		}
-		if finding.RunAsRoot > 0 {
-			*lootRemediation = append(*lootRemediation, "# 2. Set runAsNonRoot: true and runAsUser: 1000")
+		if len(containerEntries) > 0 {
+			entrypointsContent = append(entrypointsContent, fmt.Sprintf("StatefulSet: %s/%s (Replicas: %d)", f.Namespace, f.Name, f.Replicas))
+			entrypointsContent = append(entrypointsContent, containerEntries...)
+			entrypointsContent = append(entrypointsContent, "")
 		}
-		if !finding.HasResourceLimits {
-			*lootRemediation = append(*lootRemediation, "# 3. Add resource limits to prevent resource exhaustion")
-		}
-		if len(finding.HostPathVolumes) > 0 {
-			*lootRemediation = append(*lootRemediation, "# 4. Replace HostPath volumes with PVCs")
-		}
-		*lootRemediation = append(*lootRemediation, "")
+	}
+
+	return []internal.LootFile{
+		{Name: "StatefulSet-Loot", Contents: strings.Join(lootContent, "\n")},
+		{Name: "StatefulSet-Entrypoints", Contents: strings.Join(entrypointsContent, "\n")},
 	}
 }
 

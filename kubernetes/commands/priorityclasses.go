@@ -1,13 +1,13 @@
 package commands
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -86,7 +86,8 @@ const (
 )
 
 func ListPriorityClasses(cmd *cobra.Command, args []string) {
-	ctx := context.Background()
+	ctx, cancel := shared.ContextWithTimeout()
+	defer cancel()
 	logger := internal.NewLogger()
 
 	parentCmd := cmd.Parent()
@@ -99,18 +100,17 @@ func ListPriorityClasses(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	var lootEnum []string
-	lootEnum = append(lootEnum, `#####################################
+	loot := shared.NewLootBuilder()
+	loot.Section("PriorityClass-Enum").SetHeader(`#####################################
 ##### PriorityClass Enumeration
 #####################################
 
 `)
 	if globals.KubeContext != "" {
-		lootEnum = append(lootEnum, fmt.Sprintf("kubectl config use-context %s\n", globals.KubeContext))
+		loot.Section("PriorityClass-Enum").Add(fmt.Sprintf("kubectl config use-context %s\n", globals.KubeContext))
 	}
 
-	var lootAbuse []string
-	lootAbuse = append(lootAbuse, `#####################################
+	loot.Section("Priority-Abuse").SetHeader(`#####################################
 ##### Priority Abuse Detection
 #####################################
 # User pods with system-level priorities
@@ -118,8 +118,7 @@ func ListPriorityClasses(cmd *cobra.Command, args []string) {
 
 `)
 
-	var lootPreemptionRisks []string
-	lootPreemptionRisks = append(lootPreemptionRisks, `#####################################
+	loot.Section("Preemption-Risks").SetHeader(`#####################################
 ##### Preemption Risk Analysis
 #####################################
 # Pods vulnerable to preemption
@@ -127,8 +126,7 @@ func ListPriorityClasses(cmd *cobra.Command, args []string) {
 
 `)
 
-	var lootPrivilegeEscalation []string
-	lootPrivilegeEscalation = append(lootPrivilegeEscalation, `#####################################
+	loot.Section("Privilege-Escalation").SetHeader(`#####################################
 ##### Privilege Escalation via Priority
 #####################################
 # High-priority privileged pods
@@ -136,16 +134,14 @@ func ListPriorityClasses(cmd *cobra.Command, args []string) {
 
 `)
 
-	var lootDefaultClass []string
-	lootDefaultClass = append(lootDefaultClass, `#####################################
+	loot.Section("Default-PriorityClass").SetHeader(`#####################################
 ##### Default PriorityClass Analysis
 #####################################
 # Global default priority class configuration
 
 `)
 
-	var lootRemediation []string
-	lootRemediation = append(lootRemediation, `#####################################
+	loot.Section("Remediation-Guide").SetHeader(`#####################################
 ##### Remediation Guidance
 #####################################
 
@@ -154,14 +150,14 @@ func ListPriorityClasses(cmd *cobra.Command, args []string) {
 	// Get all PriorityClasses
 	priorityClasses, err := clientset.SchedulingV1().PriorityClasses().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Error listing priority classes: %v", err), globals.K8S_PRIORITYCLASSES_MODULE_NAME)
+		shared.LogListError(&logger, "priority classes", "", err, globals.K8S_PRIORITYCLASSES_MODULE_NAME, true)
 		return
 	}
 
 	// Get all pods for usage analysis
 	allPods, err := clientset.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
 	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Warning: Could not list pods: %v", err), globals.K8S_PRIORITYCLASSES_MODULE_NAME)
+		shared.LogListError(&logger, "pods", "", err, globals.K8S_PRIORITYCLASSES_MODULE_NAME, false)
 		allPods = &corev1.PodList{}
 	}
 
@@ -178,8 +174,6 @@ func ListPriorityClasses(cmd *cobra.Command, args []string) {
 	}
 
 	headers := []string{
-		"Risk",
-		"Score",
 		"PriorityClass",
 		"Priority Value",
 		"Global Default",
@@ -193,12 +187,7 @@ func ListPriorityClasses(cmd *cobra.Command, args []string) {
 	var outputRows [][]string
 	var pcAnalyses []PriorityClassAnalysis
 
-	riskCounts := map[string]int{
-		"CRITICAL": 0,
-		"HIGH":     0,
-		"MEDIUM":   0,
-		"LOW":      0,
-	}
+	riskCounts := shared.NewRiskCounts()
 
 	var globalDefaultPC string
 
@@ -236,12 +225,10 @@ func ListPriorityClasses(cmd *cobra.Command, args []string) {
 		analysis.SecurityIssues = analyzePriorityClassSecurity(&analysis, pods)
 		analysis.RiskLevel, analysis.RiskScore = calculatePriorityClassRisk(&analysis)
 
-		riskCounts[analysis.RiskLevel]++
+		riskCounts.Add(analysis.RiskLevel)
 		pcAnalyses = append(pcAnalyses, analysis)
 
 		outputRows = append(outputRows, []string{
-			analysis.RiskLevel,
-			fmt.Sprintf("%d", analysis.RiskScore),
 			pc.Name,
 			fmt.Sprintf("%d", pc.Value),
 			fmt.Sprintf("%v", pc.GlobalDefault),
@@ -253,42 +240,40 @@ func ListPriorityClasses(cmd *cobra.Command, args []string) {
 		})
 
 		// Loot generation
-		lootEnum = append(lootEnum, fmt.Sprintf("\n# [%s] PriorityClass: %s", analysis.RiskLevel, pc.Name))
-		lootEnum = append(lootEnum, fmt.Sprintf("# Value: %d | Global Default: %v | Pods: %d", pc.Value, pc.GlobalDefault, analysis.PodsUsingClass))
-		lootEnum = append(lootEnum, fmt.Sprintf("kubectl get priorityclass %s -o yaml", pc.Name))
-		lootEnum = append(lootEnum, "")
+		loot.Section("PriorityClass-Enum").Add(fmt.Sprintf("\n# [%s] PriorityClass: %s", analysis.RiskLevel, pc.Name))
+		loot.Section("PriorityClass-Enum").Add(fmt.Sprintf("# Value: %d | Global Default: %v | Pods: %d", pc.Value, pc.GlobalDefault, analysis.PodsUsingClass))
+		loot.Section("PriorityClass-Enum").Add(fmt.Sprintf("kubectl get priorityclass %s -o yaml", pc.Name))
+		loot.Section("PriorityClass-Enum").Add("")
 
 		// Loot: Priority abuse
 		if analysis.UserPodsUsingIt > 0 && analysis.IsSystemClass {
-			lootAbuse = append(lootAbuse, fmt.Sprintf("\n### [CRITICAL] %s - User pods with system priority", pc.Name))
-			lootAbuse = append(lootAbuse, fmt.Sprintf("# Priority Value: %d (System-level)", pc.Value))
-			lootAbuse = append(lootAbuse, fmt.Sprintf("# User Pods: %d | Namespaces: %s", analysis.UserPodsUsingIt, strings.Join(analysis.NamespacesUsingIt, ", ")))
-			lootAbuse = append(lootAbuse, "# These pods can preempt system components!")
-			lootAbuse = append(lootAbuse, fmt.Sprintf("kubectl get pods --all-namespaces --field-selector spec.priorityClassName=%s", pc.Name))
-			lootAbuse = append(lootAbuse, "")
+			loot.Section("Priority-Abuse").Add(fmt.Sprintf("\n### [CRITICAL] %s - User pods with system priority", pc.Name))
+			loot.Section("Priority-Abuse").Add(fmt.Sprintf("# Priority Value: %d (System-level)", pc.Value))
+			loot.Section("Priority-Abuse").Add(fmt.Sprintf("# User Pods: %d | Namespaces: %s", analysis.UserPodsUsingIt, strings.Join(analysis.NamespacesUsingIt, ", ")))
+			loot.Section("Priority-Abuse").Add("# These pods can preempt system components!")
+			loot.Section("Priority-Abuse").Add(fmt.Sprintf("kubectl get pods --all-namespaces --field-selector spec.priorityClassName=%s", pc.Name))
+			loot.Section("Priority-Abuse").Add("")
 		}
 
 		// Loot: Privilege escalation
 		for _, pod := range pods {
 			if isPodPrivilegedPC(&pod) && !isSystemPod(pod.Namespace, pod.Name) {
-				if !strings.Contains(strings.Join(lootPrivilegeEscalation, "\n"), pod.Namespace+"/"+pod.Name) {
-					lootPrivilegeEscalation = append(lootPrivilegeEscalation, fmt.Sprintf("\n### [CRITICAL] %s/%s", pod.Namespace, pod.Name))
-					lootPrivilegeEscalation = append(lootPrivilegeEscalation, fmt.Sprintf("# PriorityClass: %s (Value: %d)", pc.Name, pc.Value))
-					lootPrivilegeEscalation = append(lootPrivilegeEscalation, fmt.Sprintf("# Privileged: %v | HostNetwork: %v", isPodPrivilegedPC(&pod), pod.Spec.HostNetwork))
-					lootPrivilegeEscalation = append(lootPrivilegeEscalation, "# Can preempt other workloads + has elevated host access")
-					lootPrivilegeEscalation = append(lootPrivilegeEscalation, "")
-				}
+				loot.Section("Privilege-Escalation").Add(fmt.Sprintf("\n### [CRITICAL] %s/%s", pod.Namespace, pod.Name))
+				loot.Section("Privilege-Escalation").Add(fmt.Sprintf("# PriorityClass: %s (Value: %d)", pc.Name, pc.Value))
+				loot.Section("Privilege-Escalation").Add(fmt.Sprintf("# Privileged: %v | HostNetwork: %v", isPodPrivilegedPC(&pod), pod.Spec.HostNetwork))
+				loot.Section("Privilege-Escalation").Add("# Can preempt other workloads + has elevated host access")
+				loot.Section("Privilege-Escalation").Add("")
 			}
 		}
 	}
 
 	// Analyze pods without explicit priority class (using default)
 	if len(defaultPriorityPods) > 0 {
-		lootDefaultClass = append(lootDefaultClass, fmt.Sprintf("\n# Global Default PriorityClass: %s", globalDefaultPC))
+		loot.Section("Default-PriorityClass").Add(fmt.Sprintf("\n# Global Default PriorityClass: %s", globalDefaultPC))
 		if globalDefaultPC == "" {
-			lootDefaultClass = append(lootDefaultClass, "# WARNING: No global default - pods get priority 0")
+			loot.Section("Default-PriorityClass").Add("# WARNING: No global default - pods get priority 0")
 		}
-		lootDefaultClass = append(lootDefaultClass, fmt.Sprintf("# Pods without explicit priority: %d", len(defaultPriorityPods)))
+		loot.Section("Default-PriorityClass").Add(fmt.Sprintf("# Pods without explicit priority: %d", len(defaultPriorityPods)))
 
 		systemCount := 0
 		userCount := 0
@@ -299,14 +284,12 @@ func ListPriorityClasses(cmd *cobra.Command, args []string) {
 				userCount++
 			}
 		}
-		lootDefaultClass = append(lootDefaultClass, fmt.Sprintf("# System pods: %d | User pods: %d", systemCount, userCount))
-		lootDefaultClass = append(lootDefaultClass, "")
+		loot.Section("Default-PriorityClass").Add(fmt.Sprintf("# System pods: %d | User pods: %d", systemCount, userCount))
+		loot.Section("Default-PriorityClass").Add("")
 	}
 
 	// Detailed pod priority analysis
 	podHeaders := []string{
-		"Risk",
-		"Score",
 		"Namespace",
 		"Pod",
 		"Priority Class",
@@ -356,12 +339,10 @@ func ListPriorityClasses(cmd *cobra.Command, args []string) {
 		podAnalysis.SecurityIssues = analyzePodPrioritySecurity(&podAnalysis)
 		podAnalysis.RiskLevel, podAnalysis.RiskScore = calculatePodPriorityRisk(&podAnalysis)
 
-		if podAnalysis.RiskLevel == "CRITICAL" || podAnalysis.RiskLevel == "HIGH" || len(podAnalysis.SecurityIssues) > 0 {
+		if podAnalysis.RiskLevel == shared.RiskCritical || podAnalysis.RiskLevel == shared.RiskHigh || len(podAnalysis.SecurityIssues) > 0 {
 			podAnalyses = append(podAnalyses, podAnalysis)
 
 			podRows = append(podRows, []string{
-				podAnalysis.RiskLevel,
-				fmt.Sprintf("%d", podAnalysis.RiskScore),
 				pod.Namespace,
 				pod.Name,
 				podAnalysis.PriorityClass,
@@ -374,11 +355,11 @@ func ListPriorityClasses(cmd *cobra.Command, args []string) {
 
 			// Loot: Preemption risks
 			if podAnalysis.VulnerableToPreempt && !podAnalysis.IsSystemPod {
-				lootPreemptionRisks = append(lootPreemptionRisks, fmt.Sprintf("\n### [%s] %s/%s", podAnalysis.RiskLevel, pod.Namespace, pod.Name))
-				lootPreemptionRisks = append(lootPreemptionRisks, fmt.Sprintf("# Priority: %d (< %d threshold)", podAnalysis.PriorityValue, HighPriorityThreshold))
-				lootPreemptionRisks = append(lootPreemptionRisks, "# Risk: Can be preempted by higher-priority pods")
-				lootPreemptionRisks = append(lootPreemptionRisks, "# Impact: Service disruption, downtime")
-				lootPreemptionRisks = append(lootPreemptionRisks, "")
+				loot.Section("Preemption-Risks").Add(fmt.Sprintf("\n### [%s] %s/%s", podAnalysis.RiskLevel, pod.Namespace, pod.Name))
+				loot.Section("Preemption-Risks").Add(fmt.Sprintf("# Priority: %d (< %d threshold)", podAnalysis.PriorityValue, HighPriorityThreshold))
+				loot.Section("Preemption-Risks").Add("# Risk: Can be preempted by higher-priority pods")
+				loot.Section("Preemption-Risks").Add("# Impact: Service disruption, downtime")
+				loot.Section("Preemption-Risks").Add("")
 			}
 		}
 	}
@@ -389,32 +370,32 @@ func ListPriorityClasses(cmd *cobra.Command, args []string) {
 	})
 
 	// Remediation guidance
-	if riskCounts["CRITICAL"] > 0 || riskCounts["HIGH"] > 0 {
-		lootRemediation = append(lootRemediation, "## Critical Issues")
-		lootRemediation = append(lootRemediation, "")
+	if riskCounts.Critical > 0 || riskCounts.High > 0 {
+		loot.Section("Remediation-Guide").Add("## Critical Issues")
+		loot.Section("Remediation-Guide").Add("")
 
 		for _, analysis := range pcAnalyses {
-			if analysis.RiskLevel == "CRITICAL" && len(analysis.SecurityIssues) > 0 {
-				lootRemediation = append(lootRemediation, fmt.Sprintf("### PriorityClass: %s", analysis.Name))
+			if analysis.RiskLevel == shared.RiskCritical && len(analysis.SecurityIssues) > 0 {
+				loot.Section("Remediation-Guide").Add(fmt.Sprintf("### PriorityClass: %s", analysis.Name))
 				for _, issue := range analysis.SecurityIssues {
-					lootRemediation = append(lootRemediation, fmt.Sprintf("# Issue: %s", issue))
+					loot.Section("Remediation-Guide").Add(fmt.Sprintf("# Issue: %s", issue))
 				}
 
 				if analysis.UserPodsUsingIt > 0 && analysis.IsSystemClass {
-					lootRemediation = append(lootRemediation, "# Remediation:")
-					lootRemediation = append(lootRemediation, "#   1. Identify user pods using system priority:")
-					lootRemediation = append(lootRemediation, fmt.Sprintf("#      kubectl get pods --all-namespaces --field-selector spec.priorityClassName=%s", analysis.Name))
-					lootRemediation = append(lootRemediation, "#   2. Create appropriate user-level PriorityClass (value < 1000000)")
-					lootRemediation = append(lootRemediation, "#   3. Update pod specs to use user-level priority")
-					lootRemediation = append(lootRemediation, "#   4. Consider PodSecurity admission to block system priorities")
+					loot.Section("Remediation-Guide").Add("# Remediation:")
+					loot.Section("Remediation-Guide").Add("#   1. Identify user pods using system priority:")
+					loot.Section("Remediation-Guide").Add(fmt.Sprintf("#      kubectl get pods --all-namespaces --field-selector spec.priorityClassName=%s", analysis.Name))
+					loot.Section("Remediation-Guide").Add("#   2. Create appropriate user-level PriorityClass (value < 1000000)")
+					loot.Section("Remediation-Guide").Add("#   3. Update pod specs to use user-level priority")
+					loot.Section("Remediation-Guide").Add("#   4. Consider PodSecurity admission to block system priorities")
 				}
-				lootRemediation = append(lootRemediation, "")
+				loot.Section("Remediation-Guide").Add("")
 			}
 		}
 	}
 
 	// Add summary
-	if riskCounts["CRITICAL"] > 0 || riskCounts["HIGH"] > 0 {
+	if riskCounts.Critical > 0 || riskCounts.High > 0 {
 		summary := fmt.Sprintf(`
 # SUMMARY: Risk Distribution
 # CRITICAL: %d priority classes with critical risks
@@ -426,8 +407,8 @@ func ListPriorityClasses(cmd *cobra.Command, args []string) {
 # Pods at risk of preemption: %d
 #
 # Focus on CRITICAL and HIGH risk priority classes for immediate remediation.
-`, riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"], len(allPods.Items), len(podAnalyses))
-		lootAbuse = append([]string{summary}, lootAbuse...)
+`, riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low, len(allPods.Items), len(podAnalyses))
+		loot.Section("Priority-Abuse").SetSummary(summary)
 	}
 
 	table1 := internal.TableFile{
@@ -442,32 +423,7 @@ func ListPriorityClasses(cmd *cobra.Command, args []string) {
 		Body:   podRows,
 	}
 
-	lootFiles := []internal.LootFile{
-		{
-			Name:     "PriorityClass-Enum",
-			Contents: strings.Join(lootEnum, "\n"),
-		},
-		{
-			Name:     "Priority-Abuse",
-			Contents: strings.Join(lootAbuse, "\n"),
-		},
-		{
-			Name:     "Preemption-Risks",
-			Contents: strings.Join(lootPreemptionRisks, "\n"),
-		},
-		{
-			Name:     "Privilege-Escalation",
-			Contents: strings.Join(lootPrivilegeEscalation, "\n"),
-		},
-		{
-			Name:     "Default-PriorityClass",
-			Contents: strings.Join(lootDefaultClass, "\n"),
-		},
-		{
-			Name:     "Remediation-Guide",
-			Contents: strings.Join(lootRemediation, "\n"),
-		},
-	}
+	lootFiles := loot.Build()
 
 	err = internal.HandleOutput(
 		"Kubernetes",
@@ -491,7 +447,7 @@ func ListPriorityClasses(cmd *cobra.Command, args []string) {
 	if len(outputRows) > 0 {
 		logger.InfoM(fmt.Sprintf("%d priority classes found | Risk: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
 			len(outputRows),
-			riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"]),
+			riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low),
 			globals.K8S_PRIORITYCLASSES_MODULE_NAME)
 	} else {
 		logger.InfoM("No priority classes found", globals.K8S_PRIORITYCLASSES_MODULE_NAME)
@@ -619,13 +575,13 @@ func calculatePriorityClassRisk(analysis *PriorityClassAnalysis) (string, int) {
 
 	// Determine risk level
 	if score >= 70 {
-		return "CRITICAL", pcMin(score, 100)
+		return shared.RiskCritical, pcMin(score, 100)
 	} else if score >= 40 {
-		return "HIGH", score
+		return shared.RiskHigh, score
 	} else if score >= 20 {
-		return "MEDIUM", score
+		return shared.RiskMedium, score
 	}
-	return "LOW", score
+	return shared.RiskLow, score
 }
 
 func analyzePodPrioritySecurity(analysis *PodPriorityAnalysis) []string {
@@ -679,13 +635,13 @@ func calculatePodPriorityRisk(analysis *PodPriorityAnalysis) (string, int) {
 
 	// Determine risk level
 	if score >= 70 {
-		return "CRITICAL", pcMin(score, 100)
+		return shared.RiskCritical, pcMin(score, 100)
 	} else if score >= 40 {
-		return "HIGH", score
+		return shared.RiskHigh, score
 	} else if score >= 20 {
-		return "MEDIUM", score
+		return shared.RiskMedium, score
 	}
-	return "LOW", score
+	return shared.RiskLow, score
 }
 
 func containsString(slice []string, item string) bool {

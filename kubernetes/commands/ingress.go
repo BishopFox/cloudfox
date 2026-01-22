@@ -12,6 +12,7 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/spf13/cobra"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -64,11 +65,17 @@ type IngressFinding struct {
 	DangerousAnnotations []string
 	Exposure             string
 
-	// New security analysis fields
+	// Security analysis fields
 	AuthEnabled           bool
 	AuthType              string
 	RateLimitEnabled      bool
+	RateLimitValue        string // Actual rate limit value (e.g., "100 rps")
 	WAFEnabled            bool
+	WAFType               string // "ModSecurity", "OWASP CRS", or "None"
+	SSLRedirect           string // "Enabled" or "Disabled"
+	IPWhitelist           string // CIDR range or "None"
+	WildcardHost          string // The wildcard host or "None"
+	CORSOrigin            string // CORS origin value or "None"
 	SensitivePaths        []string
 	BackendSecurity       string // "Secure", "Vulnerable", "Unknown"
 	CertExpiry            string // "Valid", "Expiring Soon (<30d)", "Expired", "N/A"
@@ -94,7 +101,8 @@ type CertificateInfo struct {
 }
 
 func ListIngress(cmd *cobra.Command, args []string) {
-	ctx := context.Background()
+	ctx, cancel := shared.ContextWithTimeout()
+	defer cancel()
 	logger := internal.NewLogger()
 
 	parentCmd := cmd.Parent()
@@ -107,109 +115,66 @@ func ListIngress(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	namespaces, err := clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Error listing namespaces: %v", err), globals.K8S_INGRESS_MODULE_NAME)
-		return
-	}
+	namespaces := shared.GetTargetNamespaces(ctx, clientset, &logger, globals.K8S_INGRESS_MODULE_NAME)
 
 	headers := []string{
-		"Risk",
 		"Namespace",
-		"Ingress Name",
-		"Exposure",
-		"Security Issues",
+		"Name",
+		"Ingress Class",
 		"Hosts",
-		"TLS Status",
+		"External IPs",
+		"Exposure",
+		"TLS",
+		"SSL Redirect",
 		"Cert Expiry",
-		"Authentication",
+		"Auth",
 		"Rate Limit",
 		"WAF",
+		"IP Whitelist",
+		"Dangerous Annot",
+		"Wildcard Host",
+		"CORS Origin",
 		"Sensitive Paths",
 		"Backend Security",
-		"Ingress Class",
-		"External IPs",
 	}
 
 	var outputRows [][]string
 	var findings []IngressFinding
 
 	// Risk level counters
-	riskCounts := map[string]int{
-		"CRITICAL": 0,
-		"HIGH":     0,
-		"MEDIUM":   0,
-		"LOW":      0,
-	}
+	riskCounts := shared.NewRiskCounts()
 
-	var lootCurl []string
-	var lootTLS []string
-	var lootEnum []string
-	var lootExploit []string
-	var lootSecurityIssues []string
-	var lootRiskDashboard []string
-	var lootBackendSecurity []string
-	var lootCertificateReport []string
-	var lootAuthBypass []string
-	var lootSensitivePaths []string
+	loot := shared.NewLootBuilder()
 
-	lootCurl = append(lootCurl, `#####################################
-##### HTTP/HTTPS Endpoint Testing
-#####################################
-#
-# Test exposed ingress endpoints
-# Replace <host> with actual hostname or use /etc/hosts entry
-#
-`)
-
-	lootTLS = append(lootTLS, `#####################################
-##### TLS Certificate Extraction
-#####################################
-#
-# Extract and analyze TLS certificates
-#
-`)
-
-	lootEnum = append(lootEnum, `#####################################
-##### Ingress Enumeration
-#####################################
-#
-# Deep enumeration of ingress configurations
-#
-`)
-
-	lootExploit = append(lootExploit, `#####################################
-##### Ingress Attack Vectors
-#####################################
-#
-# MANUAL EXECUTION REQUIRED
-# Common ingress exploitation techniques
-#
-`)
-
-	lootSecurityIssues = append(lootSecurityIssues, `#####################################
-##### Ingress Security Issues
-#####################################
-#
-# CRITICAL SECURITY ISSUES
-# Dangerous configurations and vulnerabilities in ingress resources
-#
-`)
+	loot.Section("Ingress-Commands").SetHeader(`# ===========================================
+# Ingress Enumeration & Testing Commands
+# ===========================================`)
 
 	if globals.KubeContext != "" {
-		lootEnum = append(lootEnum, fmt.Sprintf("kubectl config use-context %s\n", globals.KubeContext))
+		loot.Section("Ingress-Commands").AddBlank().Addf("kubectl config use-context %s", globals.KubeContext)
 	}
 
-	for _, ns := range namespaces.Items {
-		ingresses, err := clientset.NetworkingV1().Ingresses(ns.Name).List(ctx, metav1.ListOptions{})
+	loot.Section("Ingress-Commands").AddBlank().
+		Add("# List all ingresses:").
+		Add("kubectl get ingress -A").
+		Add("kubectl get ingress -A -o wide").
+		AddBlank().
+		Add("# Describe specific ingress:").
+		Add("kubectl describe ingress <name> -n <namespace>").
+		AddBlank().
+		Add("# Get ingress YAML:").
+		Add("kubectl get ingress <name> -n <namespace> -o yaml")
+
+	for _, ns := range namespaces {
+		ingresses, err := clientset.NetworkingV1().Ingresses(ns).List(ctx, metav1.ListOptions{})
 		if err != nil {
-			logger.ErrorM(fmt.Sprintf("Error listing ingresses in namespace %s: %v", ns.Name, err), globals.K8S_INGRESS_MODULE_NAME)
+			shared.LogListError(&logger, "ingresses", ns, err, globals.K8S_INGRESS_MODULE_NAME, false)
 			continue
 		}
 
 		for _, ing := range ingresses.Items {
 			finding := IngressFinding{
-				Namespace:   ns.Name,
+				Namespace:   ns,
 				Name:        ing.Name,
 				Annotations: ing.Annotations,
 			}
@@ -254,11 +219,11 @@ func ListIngress(cmd *cobra.Command, args []string) {
 
 					// Add TLS extraction commands
 					if tls.SecretName != "" {
-						lootTLS = append(lootTLS, fmt.Sprintf("\n# Ingress: %s/%s", ns.Name, ing.Name))
-						lootTLS = append(lootTLS, fmt.Sprintf("kubectl get secret %s -n %s -o jsonpath='{.data.tls\\.crt}' | base64 -d | openssl x509 -text -noout", tls.SecretName, ns.Name))
-						lootTLS = append(lootTLS, fmt.Sprintf("kubectl get secret %s -n %s -o jsonpath='{.data.tls\\.crt}' | base64 -d | openssl x509 -noout -dates", tls.SecretName, ns.Name))
-						lootTLS = append(lootTLS, fmt.Sprintf("kubectl get secret %s -n %s -o jsonpath='{.data.tls\\.crt}' | base64 -d | openssl x509 -noout -subject -issuer", tls.SecretName, ns.Name))
-						lootTLS = append(lootTLS, "")
+						loot.Section("Ingress-Commands").
+							AddBlank().
+							Addf("# TLS Certificate - %s/%s", ns, ing.Name).
+							Addf("kubectl get secret %s -n %s -o jsonpath='{.data.tls\\.crt}' | base64 -d | openssl x509 -text -noout", tls.SecretName, ns).
+							Addf("kubectl get secret %s -n %s -o jsonpath='{.data.tls\\.crt}' | base64 -d | openssl x509 -noout -dates", tls.SecretName, ns)
 					}
 				}
 			}
@@ -297,10 +262,22 @@ func ListIngress(cmd *cobra.Command, args []string) {
 			finding.AuthEnabled, finding.AuthType = detectAuthentication(&ing)
 
 			// Detect rate limiting
-			finding.RateLimitEnabled = detectRateLimiting(&ing)
+			finding.RateLimitEnabled, finding.RateLimitValue = detectRateLimiting(&ing)
 
 			// Detect WAF
-			finding.WAFEnabled = detectWAF(&ing)
+			finding.WAFEnabled, finding.WAFType = detectWAF(&ing)
+
+			// Detect SSL redirect
+			finding.SSLRedirect = detectSSLRedirect(&ing)
+
+			// Detect IP whitelist
+			finding.IPWhitelist = detectIPWhitelist(&ing)
+
+			// Detect wildcard host
+			finding.WildcardHost = detectWildcardHost(&ing)
+
+			// Detect CORS origin
+			finding.CORSOrigin = detectCORSOrigin(&ing)
 
 			// Analyze security headers
 			finding.SecurityHeaders, finding.MissingHeaders = analyzeSecurityHeaders(&ing)
@@ -310,7 +287,7 @@ func ListIngress(cmd *cobra.Command, args []string) {
 			if finding.TLSEnabled {
 				for _, tls := range ing.Spec.TLS {
 					if tls.SecretName != "" {
-						certInfo := analyzeCertificate(ctx, clientset, ns.Name, tls.SecretName)
+						certInfo := analyzeCertificate(ctx, clientset, ns, tls.SecretName)
 						finding.CertExpiry = certInfo.ExpiryStatus
 						finding.CertIssues = append(finding.CertIssues, certInfo.Issues...)
 						break // Use first certificate for status
@@ -327,7 +304,7 @@ func ListIngress(cmd *cobra.Command, args []string) {
 					if rule.HTTP != nil && len(rule.HTTP.Paths) > 0 {
 						for _, path := range rule.HTTP.Paths {
 							if path.Backend.Service != nil {
-								backendInfo := analyzeIngressBackendSecurity(ctx, clientset, ns.Name, path.Backend.Service.Name)
+								backendInfo := analyzeIngressBackendSecurity(ctx, clientset, ns, path.Backend.Service.Name)
 								finding.BackendSecurity = backendInfo.SecurityLevel
 								finding.BackendPods = backendInfo.PodCount
 								finding.BackendServiceAccount = backendInfo.ServiceAccount
@@ -351,20 +328,22 @@ func ListIngress(cmd *cobra.Command, args []string) {
 
 			// Calculate risk level with comprehensive security factors
 			finding.RiskLevel = calculateIngressRiskLevel(finding)
-			riskCounts[finding.RiskLevel]++
+			riskCounts.Add(finding.RiskLevel)
 			findings = append(findings, finding)
 
 			// Generate curl test commands
 			for _, host := range finding.Hosts {
-				lootCurl = append(lootCurl, fmt.Sprintf("\n# [%s] Ingress: %s/%s - Host: %s", finding.RiskLevel, ns.Name, ing.Name, host))
+				loot.Section("Ingress-Commands").
+					AddBlank().
+					Addf("# HTTP Test - %s/%s - Host: %s", ns, ing.Name, host)
 
 				// HTTP test
 				for _, rule := range ing.Spec.Rules {
 					if rule.HTTP != nil {
 						for _, p := range rule.HTTP.Paths {
-							lootCurl = append(lootCurl, fmt.Sprintf("curl -v http://%s%s", host, p.Path))
+							loot.Section("Ingress-Commands").Addf("curl -v http://%s%s", host, p.Path)
 							if len(finding.ExternalIPs) > 0 {
-								lootCurl = append(lootCurl, fmt.Sprintf("curl -v -H 'Host: %s' http://%s%s", host, finding.ExternalIPs[0], p.Path))
+								loot.Section("Ingress-Commands").Addf("curl -v -H 'Host: %s' http://%s%s", host, finding.ExternalIPs[0], p.Path)
 							}
 						}
 					}
@@ -375,340 +354,121 @@ func ListIngress(cmd *cobra.Command, args []string) {
 					for _, rule := range ing.Spec.Rules {
 						if rule.HTTP != nil {
 							for _, p := range rule.HTTP.Paths {
-								lootCurl = append(lootCurl, fmt.Sprintf("curl -v -k https://%s%s", host, p.Path))
+								loot.Section("Ingress-Commands").Addf("curl -v -k https://%s%s", host, p.Path)
 								if len(finding.ExternalIPs) > 0 {
-									lootCurl = append(lootCurl, fmt.Sprintf("curl -v -k -H 'Host: %s' https://%s%s", host, finding.ExternalIPs[0], p.Path))
+									loot.Section("Ingress-Commands").Addf("curl -v -k -H 'Host: %s' https://%s%s", host, finding.ExternalIPs[0], p.Path)
 								}
 							}
 						}
 					}
 				}
-				lootCurl = append(lootCurl, "")
 			}
 
-			// Generate enumeration commands
-			lootEnum = append(lootEnum, fmt.Sprintf("\n# [%s] %s/%s", finding.RiskLevel, ns.Name, ing.Name))
-			lootEnum = append(lootEnum, fmt.Sprintf("kubectl get ingress %s -n %s -o yaml", ing.Name, ns.Name))
-			lootEnum = append(lootEnum, fmt.Sprintf("kubectl describe ingress %s -n %s", ing.Name, ns.Name))
-			lootEnum = append(lootEnum, "")
+			// Generate enumeration commands for this ingress
+			loot.Section("Ingress-Commands").
+				AddBlank().
+				Addf("# Enumerate - %s/%s", ns, ing.Name).
+				Addf("kubectl get ingress %s -n %s -o yaml", ing.Name, ns).
+				Addf("kubectl describe ingress %s -n %s", ing.Name, ns)
 
-			// Generate security issue details
-			if len(finding.SecurityIssues) > 0 {
-				lootSecurityIssues = append(lootSecurityIssues, fmt.Sprintf("\n### [%s] %s/%s", finding.RiskLevel, ns.Name, ing.Name))
-				lootSecurityIssues = append(lootSecurityIssues, fmt.Sprintf("# Exposure: %s", finding.Exposure))
-				lootSecurityIssues = append(lootSecurityIssues, "# Security Issues:")
-				for _, issue := range finding.SecurityIssues {
-					lootSecurityIssues = append(lootSecurityIssues, fmt.Sprintf("#   - %s", issue))
-				}
-				lootSecurityIssues = append(lootSecurityIssues, "")
-			}
-
-			// Generate exploit/attack commands
+			// Generate attack/exploit commands for NGINX ingress
 			if finding.IngressClass == "nginx" || strings.Contains(strings.ToLower(finding.IngressClass), "nginx") {
-				if len(finding.DangerousAnnotations) > 0 || len(finding.SecurityIssues) > 0 {
-					lootExploit = append(lootExploit, fmt.Sprintf("\n### [%s] NGINX Ingress: %s/%s", finding.RiskLevel, ns.Name, ing.Name))
-				}
-
 				// Check for dangerous annotations
 				if snippetAnnotation, ok := ing.Annotations["nginx.ingress.kubernetes.io/configuration-snippet"]; ok {
-					lootExploit = append(lootExploit, fmt.Sprintf("# CRITICAL: configuration-snippet annotation (RCE risk):"))
-					lootExploit = append(lootExploit, fmt.Sprintf("# Value: %s", snippetAnnotation))
-					lootExploit = append(lootExploit, "# This annotation can be exploited for RCE if you can create/modify ingress resources")
-					lootExploit = append(lootExploit, "")
+					loot.Section("Ingress-Commands").
+						AddBlank().
+						Addf("# CRITICAL: configuration-snippet (RCE risk) - %s/%s", ns, ing.Name).
+						Addf("# Value: %s", snippetAnnotation)
 				}
 
 				if serverSnippet, ok := ing.Annotations["nginx.ingress.kubernetes.io/server-snippet"]; ok {
-					lootExploit = append(lootExploit, fmt.Sprintf("# CRITICAL: server-snippet annotation (RCE risk):"))
-					lootExploit = append(lootExploit, fmt.Sprintf("# Value: %s", serverSnippet))
-					lootExploit = append(lootExploit, "")
+					loot.Section("Ingress-Commands").
+						AddBlank().
+						Addf("# CRITICAL: server-snippet (RCE risk) - %s/%s", ns, ing.Name).
+						Addf("# Value: %s", serverSnippet)
 				}
 
 				if authURL, ok := ing.Annotations["nginx.ingress.kubernetes.io/auth-url"]; ok {
-					lootExploit = append(lootExploit, fmt.Sprintf("# External auth URL: %s", authURL))
-					lootExploit = append(lootExploit, "# Test authentication bypass:")
+					loot.Section("Ingress-Commands").
+						AddBlank().
+						Addf("# Auth Bypass Test - %s/%s (auth-url: %s)", ns, ing.Name, authURL)
 					for _, host := range finding.Hosts {
-						lootExploit = append(lootExploit, fmt.Sprintf("curl -v -H 'X-Original-URL: /admin' http://%s/public", host))
-						lootExploit = append(lootExploit, fmt.Sprintf("curl -v -H 'X-Original-Method: GET' http://%s/", host))
+						loot.Section("Ingress-Commands").
+							Addf("curl -v -H 'X-Original-URL: /admin' http://%s/public", host).
+							Addf("curl -v -H 'X-Forwarded-For: 127.0.0.1' http://%s/admin", host)
 					}
-					lootExploit = append(lootExploit, "")
 				}
 
 				// Path traversal tests
-				if len(finding.Hosts) > 0 {
-					lootExploit = append(lootExploit, "# Test for path traversal:")
+				if len(finding.Hosts) > 0 && len(finding.DangerousAnnotations) > 0 {
+					loot.Section("Ingress-Commands").
+						AddBlank().
+						Addf("# Path Traversal Test - %s/%s", ns, ing.Name)
 					for _, host := range finding.Hosts {
-						lootExploit = append(lootExploit, fmt.Sprintf("curl -v 'http://%s/..;/admin'", host))
-						lootExploit = append(lootExploit, fmt.Sprintf("curl -v 'http://%s/..%%2f..%%2f..%%2fetc/passwd'", host))
-						lootExploit = append(lootExploit, fmt.Sprintf("curl -v 'http://%s/%%2e%%2e/admin'", host))
+						loot.Section("Ingress-Commands").
+							Addf("curl -v 'http://%s/..;/admin'", host).
+							Addf("curl -v 'http://%s/%%2e%%2e/admin'", host)
 					}
-					lootExploit = append(lootExploit, "")
 				}
 			}
 
-			if finding.IngressClass == "traefik" || strings.Contains(strings.ToLower(finding.IngressClass), "traefik") {
-				lootExploit = append(lootExploit, fmt.Sprintf("\n### [%s] Traefik Ingress: %s/%s", finding.RiskLevel, ns.Name, ing.Name))
-				lootExploit = append(lootExploit, "# Check for exposed Traefik dashboard:")
+			// Traefik dashboard check
+			if (finding.IngressClass == "traefik" || strings.Contains(strings.ToLower(finding.IngressClass), "traefik")) && len(finding.ExternalIPs) > 0 {
+				loot.Section("Ingress-Commands").
+					AddBlank().
+					Addf("# Traefik Dashboard Check - %s/%s", ns, ing.Name)
 				for _, ip := range finding.ExternalIPs {
-					lootExploit = append(lootExploit, fmt.Sprintf("curl http://%s:8080/dashboard/", ip))
-					lootExploit = append(lootExploit, fmt.Sprintf("curl http://%s:8080/api/rawdata", ip))
-				}
-				lootExploit = append(lootExploit, "")
-			}
-
-			// No TLS warning
-			if !finding.TLSEnabled && finding.Exposure == "Internet-facing" {
-				lootExploit = append(lootExploit, fmt.Sprintf("\n### [%s] No TLS: %s/%s", finding.RiskLevel, ns.Name, ing.Name))
-				lootExploit = append(lootExploit, "# WARNING: Internet-facing ingress without TLS")
-				lootExploit = append(lootExploit, "# Traffic can be intercepted and credentials stolen")
-				for _, host := range finding.Hosts {
-					lootExploit = append(lootExploit, fmt.Sprintf("# http://%s (unencrypted)", host))
-				}
-				lootExploit = append(lootExploit, "")
-			}
-
-			// Format security issues for table
-			securityIssuesStr := "<none>"
-			if len(finding.SecurityIssues) > 0 {
-				if len(finding.SecurityIssues) > 2 {
-					securityIssuesStr = strings.Join(finding.SecurityIssues[:2], "; ") + fmt.Sprintf(" (+%d more)", len(finding.SecurityIssues)-2)
-				} else {
-					securityIssuesStr = strings.Join(finding.SecurityIssues, "; ")
+					loot.Section("Ingress-Commands").
+						Addf("curl http://%s:8080/dashboard/", ip).
+						Addf("curl http://%s:8080/api/rawdata", ip)
 				}
 			}
 
-			tlsStr := "No"
+			// Format TLS
+			tlsStr := "Disabled"
 			if finding.TLSEnabled {
-				tlsStr = "Yes"
+				tlsStr = "Enabled"
 			}
 
 			// Format authentication
-			authStr := "No"
+			authStr := "None"
 			if finding.AuthEnabled {
 				authStr = finding.AuthType
 			}
 
-			// Format rate limiting
-			rateLimitStr := "No"
-			if finding.RateLimitEnabled {
-				rateLimitStr = "Yes"
-			}
-
-			// Format WAF
-			wafStr := "No"
-			if finding.WAFEnabled {
-				wafStr = "Yes"
-			}
-
-			// Format sensitive paths
-			sensPathsStr := "<none>"
+			// Format sensitive paths (no truncation)
+			sensPathsStr := "None"
 			if len(finding.SensitivePaths) > 0 {
-				if len(finding.SensitivePaths) > 2 {
-					sensPathsStr = fmt.Sprintf("%d detected", len(finding.SensitivePaths))
-				} else {
-					sensPathsStr = strings.Join(finding.SensitivePaths, "; ")
-				}
+				sensPathsStr = strings.Join(finding.SensitivePaths, "; ")
 			}
 
-			// Build table row (15 columns)
+			// Format dangerous annotations
+			dangerousAnnotStr := "None"
+			if len(finding.DangerousAnnotations) > 0 {
+				dangerousAnnotStr = strings.Join(finding.DangerousAnnotations, ", ")
+			}
+
+			// Build table row (18 columns)
 			outputRows = append(outputRows, []string{
-				finding.RiskLevel,
-				ns.Name,
+				ns,
 				ing.Name,
-				finding.Exposure,
-				securityIssuesStr,
+				ingressClass,
 				strings.Join(k8sinternal.Unique(finding.Hosts), ", "),
+				strings.Join(finding.ExternalIPs, ", "),
+				finding.Exposure,
 				tlsStr,
+				finding.SSLRedirect,
 				finding.CertExpiry,
 				authStr,
-				rateLimitStr,
-				wafStr,
+				finding.RateLimitValue,
+				finding.WAFType,
+				finding.IPWhitelist,
+				dangerousAnnotStr,
+				finding.WildcardHost,
+				finding.CORSOrigin,
 				sensPathsStr,
 				finding.BackendSecurity,
-				ingressClass,
-				strings.Join(finding.ExternalIPs, ", "),
 			})
-		}
-	}
-
-	// Add summaries
-	if riskCounts["CRITICAL"] > 0 || riskCounts["HIGH"] > 0 {
-		summary := fmt.Sprintf(`
-# SUMMARY: Risk Distribution
-# CRITICAL: %d ingress resources
-# HIGH: %d ingress resources
-# MEDIUM: %d ingress resources
-# LOW: %d ingress resources
-#
-# Focus on CRITICAL and HIGH risk ingress resources for maximum impact.
-`, riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"])
-
-		lootSecurityIssues = append([]string{summary}, lootSecurityIssues...)
-		lootExploit = append([]string{summary}, lootExploit...)
-	}
-
-	// Build Risk Dashboard loot file
-	lootRiskDashboard = append(lootRiskDashboard, `#####################################
-##### Ingress Risk Statistics Dashboard
-#####################################
-#
-# Summary of ingress security posture
-#
-`)
-	totalIngresses := riskCounts["CRITICAL"] + riskCounts["HIGH"] + riskCounts["MEDIUM"] + riskCounts["LOW"]
-	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("\n## Overall Statistics"))
-	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("Total Ingress Resources: %d", totalIngresses))
-	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("CRITICAL Risk: %d", riskCounts["CRITICAL"]))
-	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("HIGH Risk:     %d", riskCounts["HIGH"]))
-	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("MEDIUM Risk:   %d", riskCounts["MEDIUM"]))
-	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("LOW Risk:      %d", riskCounts["LOW"]))
-
-	// Count various security metrics
-	internetFacingCount := 0
-	noAuthCount := 0
-	noTLSCount := 0
-	noRateLimitCount := 0
-	noWAFCount := 0
-	sensPathCount := 0
-	expiredCertCount := 0
-
-	for _, finding := range findings {
-		if finding.Exposure == "Internet-facing" {
-			internetFacingCount++
-		}
-		if !finding.AuthEnabled {
-			noAuthCount++
-		}
-		if !finding.TLSEnabled {
-			noTLSCount++
-		}
-		if !finding.RateLimitEnabled {
-			noRateLimitCount++
-		}
-		if !finding.WAFEnabled {
-			noWAFCount++
-		}
-		if len(finding.SensitivePaths) > 0 {
-			sensPathCount++
-		}
-		if finding.CertExpiry == "Expired" || finding.CertExpiry == "Expiring Soon (<30d)" {
-			expiredCertCount++
-		}
-	}
-
-	lootRiskDashboard = append(lootRiskDashboard, "\n## Security Posture")
-	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("Internet-Facing Ingresses: %d", internetFacingCount))
-	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("Missing Authentication: %d", noAuthCount))
-	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("Missing TLS: %d", noTLSCount))
-	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("Missing Rate Limiting: %d", noRateLimitCount))
-	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("Missing WAF: %d", noWAFCount))
-	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("Sensitive Paths Exposed: %d", sensPathCount))
-	lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("Certificate Issues: %d", expiredCertCount))
-
-	lootRiskDashboard = append(lootRiskDashboard, "\n## Recommendations")
-	if riskCounts["CRITICAL"] > 0 {
-		lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("⚠️  URGENT: %d CRITICAL ingresses require immediate remediation", riskCounts["CRITICAL"]))
-	}
-	if noAuthCount > 0 && internetFacingCount > 0 {
-		lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("⚠️  WARNING: %d ingresses lack authentication", noAuthCount))
-	}
-	if noTLSCount > 0 {
-		lootRiskDashboard = append(lootRiskDashboard, fmt.Sprintf("⚠️  WARNING: %d ingresses missing TLS encryption", noTLSCount))
-	}
-
-	// Build Backend Security loot file
-	lootBackendSecurity = append(lootBackendSecurity, `#####################################
-##### Backend Service Security Analysis
-#####################################
-#
-# Security assessment of services exposed by ingress
-#
-`)
-	for _, finding := range findings {
-		if finding.BackendSecurity != "Unknown" {
-			lootBackendSecurity = append(lootBackendSecurity, fmt.Sprintf("\n## [%s] Ingress: %s/%s", finding.RiskLevel, finding.Namespace, finding.Name))
-			lootBackendSecurity = append(lootBackendSecurity, fmt.Sprintf("Backend Security: %s", finding.BackendSecurity))
-			lootBackendSecurity = append(lootBackendSecurity, fmt.Sprintf("Backend Pods: %d", finding.BackendPods))
-			lootBackendSecurity = append(lootBackendSecurity, fmt.Sprintf("ServiceAccount: %s", finding.BackendServiceAccount))
-			if len(finding.Backends) > 0 {
-				lootBackendSecurity = append(lootBackendSecurity, fmt.Sprintf("Backends: %s", strings.Join(finding.Backends, ", ")))
-			}
-		}
-	}
-
-	// Build Certificate Report loot file
-	lootCertificateReport = append(lootCertificateReport, `#####################################
-##### TLS Certificate Report
-#####################################
-#
-# Certificate expiry and validation status
-#
-`)
-	for _, finding := range findings {
-		if finding.TLSEnabled {
-			lootCertificateReport = append(lootCertificateReport, fmt.Sprintf("\n## [%s] Ingress: %s/%s", finding.CertExpiry, finding.Namespace, finding.Name))
-			lootCertificateReport = append(lootCertificateReport, fmt.Sprintf("Certificate Status: %s", finding.CertExpiry))
-			if len(finding.CertIssues) > 0 {
-				lootCertificateReport = append(lootCertificateReport, "Certificate Issues:")
-				for _, issue := range finding.CertIssues {
-					lootCertificateReport = append(lootCertificateReport, fmt.Sprintf("  - %s", issue))
-				}
-			}
-			lootCertificateReport = append(lootCertificateReport, fmt.Sprintf("Hosts: %s", strings.Join(finding.Hosts, ", ")))
-		}
-	}
-
-	// Build Authentication Bypass loot file
-	lootAuthBypass = append(lootAuthBypass, `#####################################
-##### Authentication Bypass Techniques
-#####################################
-#
-# Test authentication bypass for ingresses
-#
-`)
-	for _, finding := range findings {
-		if !finding.AuthEnabled && finding.Exposure == "Internet-facing" {
-			lootAuthBypass = append(lootAuthBypass, fmt.Sprintf("\n### [%s] No Auth: %s/%s", finding.RiskLevel, finding.Namespace, finding.Name))
-			for _, host := range finding.Hosts {
-				lootAuthBypass = append(lootAuthBypass, fmt.Sprintf("# Direct access (no auth required):"))
-				lootAuthBypass = append(lootAuthBypass, fmt.Sprintf("curl -v http://%s/", host))
-			}
-		} else if finding.AuthEnabled && finding.AuthType == "external-auth" {
-			lootAuthBypass = append(lootAuthBypass, fmt.Sprintf("\n### [%s] External Auth: %s/%s", finding.RiskLevel, finding.Namespace, finding.Name))
-			lootAuthBypass = append(lootAuthBypass, "# Test header-based bypass:")
-			for _, host := range finding.Hosts {
-				lootAuthBypass = append(lootAuthBypass, fmt.Sprintf("curl -v -H 'X-Original-URL: /admin' http://%s/", host))
-				lootAuthBypass = append(lootAuthBypass, fmt.Sprintf("curl -v -H 'X-Forwarded-For: 127.0.0.1' http://%s/admin", host))
-			}
-		}
-	}
-
-	// Build Sensitive Paths loot file
-	lootSensitivePaths = append(lootSensitivePaths, `#####################################
-##### Sensitive Paths Exposed
-#####################################
-#
-# Admin panels, debug endpoints, and sensitive paths
-#
-`)
-	for _, finding := range findings {
-		if len(finding.SensitivePaths) > 0 {
-			lootSensitivePaths = append(lootSensitivePaths, fmt.Sprintf("\n### [%s] %s/%s", finding.RiskLevel, finding.Namespace, finding.Name))
-			lootSensitivePaths = append(lootSensitivePaths, fmt.Sprintf("Exposure: %s", finding.Exposure))
-			lootSensitivePaths = append(lootSensitivePaths, fmt.Sprintf("Authentication: %s", finding.AuthType))
-			lootSensitivePaths = append(lootSensitivePaths, "Sensitive Paths:")
-			for _, path := range finding.SensitivePaths {
-				lootSensitivePaths = append(lootSensitivePaths, fmt.Sprintf("  - %s", path))
-			}
-			if len(finding.Hosts) > 0 {
-				lootSensitivePaths = append(lootSensitivePaths, fmt.Sprintf("\n# Test access:"))
-				for _, host := range finding.Hosts {
-					for _, sensPath := range finding.SensitivePaths {
-						// Extract just the path from "path (description)" format
-						pathOnly := strings.Split(sensPath, " (")[0]
-						lootSensitivePaths = append(lootSensitivePaths, fmt.Sprintf("curl -v http://%s%s", host, pathOnly))
-					}
-				}
-			}
 		}
 	}
 
@@ -718,50 +478,9 @@ func ListIngress(cmd *cobra.Command, args []string) {
 		Body:   outputRows,
 	}
 
-	lootFiles := []internal.LootFile{
-		{
-			Name:     "Ingress-Risk-Dashboard",
-			Contents: strings.Join(lootRiskDashboard, "\n"),
-		},
-		{
-			Name:     "Ingress-Enum",
-			Contents: strings.Join(lootEnum, "\n"),
-		},
-		{
-			Name:     "Ingress-HTTP-Tests",
-			Contents: strings.Join(lootCurl, "\n"),
-		},
-		{
-			Name:     "Ingress-TLS-Extraction",
-			Contents: strings.Join(lootTLS, "\n"),
-		},
-		{
-			Name:     "Ingress-Certificate-Report",
-			Contents: strings.Join(lootCertificateReport, "\n"),
-		},
-		{
-			Name:     "Ingress-Security-Issues",
-			Contents: strings.Join(lootSecurityIssues, "\n"),
-		},
-		{
-			Name:     "Ingress-Backend-Security",
-			Contents: strings.Join(lootBackendSecurity, "\n"),
-		},
-		{
-			Name:     "Ingress-Authentication-Bypass",
-			Contents: strings.Join(lootAuthBypass, "\n"),
-		},
-		{
-			Name:     "Ingress-Sensitive-Paths",
-			Contents: strings.Join(lootSensitivePaths, "\n"),
-		},
-		{
-			Name:     "Ingress-Attack-Vectors",
-			Contents: strings.Join(lootExploit, "\n"),
-		},
-	}
+	lootFiles := loot.Build()
 
-	err = internal.HandleOutput(
+	err := internal.HandleOutput(
 		"Kubernetes",
 		format,
 		outputDirectory,
@@ -783,7 +502,7 @@ func ListIngress(cmd *cobra.Command, args []string) {
 	if len(outputRows) > 0 {
 		logger.InfoM(fmt.Sprintf("%d ingress resources found | Risk: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
 			len(outputRows),
-			riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"]),
+			riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low),
 			globals.K8S_INGRESS_MODULE_NAME)
 	} else {
 		logger.InfoM("No ingress resources found, skipping output file creation", globals.K8S_INGRESS_MODULE_NAME)
@@ -1031,50 +750,120 @@ func detectAuthentication(ing *networkingv1.Ingress) (bool, string) {
 	return false, "none"
 }
 
-// detectRateLimiting checks for rate limiting annotations
-func detectRateLimiting(ing *networkingv1.Ingress) bool {
+// detectRateLimiting checks for rate limiting annotations and returns the value
+func detectRateLimiting(ing *networkingv1.Ingress) (bool, string) {
 	annotations := ing.Annotations
 
 	// NGINX rate limiting
-	rateLimitKeys := []string{
-		"nginx.ingress.kubernetes.io/limit-rps",
-		"nginx.ingress.kubernetes.io/limit-rpm",
-		"nginx.ingress.kubernetes.io/limit-connections",
+	if rps, ok := annotations["nginx.ingress.kubernetes.io/limit-rps"]; ok {
+		return true, rps + " rps"
 	}
-
-	for _, key := range rateLimitKeys {
-		if _, ok := annotations[key]; ok {
-			return true
-		}
+	if rpm, ok := annotations["nginx.ingress.kubernetes.io/limit-rpm"]; ok {
+		return true, rpm + " rpm"
+	}
+	if conn, ok := annotations["nginx.ingress.kubernetes.io/limit-connections"]; ok {
+		return true, conn + " conn"
 	}
 
 	// Traefik rate limiting
-	if _, ok := annotations["traefik.ingress.kubernetes.io/ratelimit"]; ok {
-		return true
+	if val, ok := annotations["traefik.ingress.kubernetes.io/ratelimit"]; ok {
+		return true, val
 	}
 
-	return false
+	return false, "None"
 }
 
-// detectWAF checks for WAF/ModSecurity annotations
-func detectWAF(ing *networkingv1.Ingress) bool {
+// detectWAF checks for WAF/ModSecurity annotations and returns the type
+func detectWAF(ing *networkingv1.Ingress) (bool, string) {
 	annotations := ing.Annotations
+
+	// OWASP ModSecurity CRS (check first as it's more specific)
+	if owasp, ok := annotations["nginx.ingress.kubernetes.io/enable-owasp-modsecurity-crs"]; ok {
+		if owasp == "true" {
+			return true, "OWASP CRS"
+		}
+	}
 
 	// ModSecurity
 	if modsec, ok := annotations["nginx.ingress.kubernetes.io/enable-modsecurity"]; ok {
 		if modsec == "true" {
-			return true
+			return true, "ModSecurity"
 		}
 	}
 
-	// OWASP ModSecurity CRS
-	if owasp, ok := annotations["nginx.ingress.kubernetes.io/enable-owasp-modsecurity-crs"]; ok {
-		if owasp == "true" {
-			return true
+	return false, "None"
+}
+
+// detectSSLRedirect checks if SSL redirect is enabled
+func detectSSLRedirect(ing *networkingv1.Ingress) string {
+	annotations := ing.Annotations
+
+	// Check ssl-redirect annotation
+	if sslRedirect, ok := annotations["nginx.ingress.kubernetes.io/ssl-redirect"]; ok {
+		if sslRedirect == "false" {
+			return "Disabled"
+		}
+		return "Enabled"
+	}
+
+	// Check force-ssl-redirect annotation
+	if forceSSL, ok := annotations["nginx.ingress.kubernetes.io/force-ssl-redirect"]; ok {
+		if forceSSL == "true" {
+			return "Enabled"
 		}
 	}
 
-	return false
+	// Default behavior depends on TLS config - if TLS is configured, redirect is usually enabled by default
+	if len(ing.Spec.TLS) > 0 {
+		return "Enabled"
+	}
+
+	return "Disabled"
+}
+
+// detectIPWhitelist returns the IP whitelist range if configured
+func detectIPWhitelist(ing *networkingv1.Ingress) string {
+	annotations := ing.Annotations
+
+	// NGINX whitelist
+	if whitelist, ok := annotations["nginx.ingress.kubernetes.io/whitelist-source-range"]; ok {
+		return whitelist
+	}
+
+	// Traefik whitelist
+	if whitelist, ok := annotations["traefik.ingress.kubernetes.io/whitelist-source-range"]; ok {
+		return whitelist
+	}
+
+	return "None"
+}
+
+// detectWildcardHost returns the wildcard host if any
+func detectWildcardHost(ing *networkingv1.Ingress) string {
+	for _, rule := range ing.Spec.Rules {
+		if strings.HasPrefix(rule.Host, "*") {
+			return rule.Host
+		}
+	}
+	return "None"
+}
+
+// detectCORSOrigin returns the CORS origin configuration
+func detectCORSOrigin(ing *networkingv1.Ingress) string {
+	annotations := ing.Annotations
+
+	if corsOrigin, ok := annotations["nginx.ingress.kubernetes.io/cors-allow-origin"]; ok {
+		return corsOrigin
+	}
+
+	// Check if CORS is enabled but no origin specified
+	if corsEnabled, ok := annotations["nginx.ingress.kubernetes.io/enable-cors"]; ok {
+		if corsEnabled == "true" {
+			return "*" // Default when enabled without specific origin
+		}
+	}
+
+	return "None"
 }
 
 // analyzeSecurityHeaders checks for security headers
@@ -1197,12 +986,14 @@ func analyzeIngressSecurity(ing *networkingv1.Ingress) ([]string, []string) {
 	}
 
 	// Check for rate limiting
-	if !detectRateLimiting(ing) {
+	hasRateLimit, _ := detectRateLimiting(ing)
+	if !hasRateLimit {
 		securityIssues = append(securityIssues, "No rate limiting configured")
 	}
 
 	// Check for WAF
-	if !detectWAF(ing) {
+	hasWAF, _ := detectWAF(ing)
+	if !hasWAF {
 		securityIssues = append(securityIssues, "No WAF/ModSecurity enabled")
 	}
 
@@ -1349,12 +1140,12 @@ func calculateIngressRiskLevel(finding IngressFinding) string {
 
 	// Determine risk level based on score
 	if riskScore >= 50 {
-		return "CRITICAL"
+		return shared.RiskCritical
 	} else if riskScore >= 25 {
-		return "HIGH"
+		return shared.RiskHigh
 	} else if riskScore >= 10 {
-		return "MEDIUM"
+		return shared.RiskMedium
 	}
 
-	return "LOW"
+	return shared.RiskLow
 }

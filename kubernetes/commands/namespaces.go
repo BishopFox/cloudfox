@@ -3,13 +3,13 @@ package commands
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -116,13 +116,11 @@ type NamespaceFinding struct {
 	Labels      map[string]string
 	Annotations map[string]string
 	Finalizers  []string
-
-	// Cloud
-	CloudProvider string
 }
 
 func ListNamespaces(cmd *cobra.Command, args []string) {
-	ctx := context.Background()
+	ctx, cancel := shared.ContextWithTimeout()
+	defer cancel()
 	logger := internal.NewLogger()
 
 	parentCmd := cmd.Parent()
@@ -135,164 +133,143 @@ func ListNamespaces(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	namespaces, err := clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
+	allNamespaces, err := clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Error listing namespaces: %v", err), globals.K8S_NAMESPACES_MODULE_NAME)
+		shared.LogListError(&logger, "namespaces", "", err, globals.K8S_NAMESPACES_MODULE_NAME, true)
 		return
 	}
 
+	// Filter namespaces based on target namespace flags
+	var namespaces []corev1.Namespace
+	for _, ns := range allNamespaces.Items {
+		if shared.ShouldIncludeNamespace(ns.Name) {
+			namespaces = append(namespaces, ns)
+		}
+	}
+
 	headers := []string{
-		"Risk",
 		"Namespace",
 		"Environment",
 		"Age",
-		"Security Issues",
+		"Is Default",
 		"Workloads",
 		"Pods",
+		"Services",
+		"Ingresses",
 		"Secrets",
+		"ConfigMaps",
 		"PSS Enforce",
 		"Net Policies",
+		"Isolation",
 		"Resource Quota",
 		"Limit Range",
 		"RBAC Bindings",
 		"Dangerous Perms",
-		"Isolation",
-		"Is Default",
-		"Is Production",
-		"Cloud Provider",
+		"Admin Bindings",
 	}
 
 	var outputRows [][]string
 	var findings []NamespaceFinding
 
 	// Risk level counters
-	riskCounts := map[string]int{
-		"CRITICAL": 0,
-		"HIGH":     0,
-		"MEDIUM":   0,
-		"LOW":      0,
-	}
+	riskCounts := shared.NewRiskCounts()
 
-	// Loot file builders
-	var lootEnum []string
-	var lootRiskDashboard []string
-	var lootDefaultUsage []string
-	var lootResourceGov []string
-	var lootNetworkIsolation []string
-	var lootPSSEnforcement []string
-	var lootRBACAnalysis []string
-	var lootWorkloadDist []string
+	// Loot file builder
+	loot := shared.NewLootBuilder()
 
-	lootEnum = append(lootEnum, `#####################################
-##### Namespace Enumeration
-#####################################
-#
-# Basic namespace enumeration commands
-#
-`)
+	loot.Section("Namespace-Commands").SetHeader(`# ===========================================
+# Namespace Enumeration & Configuration Commands
+# ===========================================`)
 
 	if globals.KubeContext != "" {
-		lootEnum = append(lootEnum, fmt.Sprintf("kubectl config use-context %s\n", globals.KubeContext))
+		loot.Section("Namespace-Commands").AddBlank().Addf("kubectl config use-context %s", globals.KubeContext)
 	}
 
-	for _, ns := range namespaces.Items {
+	loot.Section("Namespace-Commands").AddBlank().
+		Add("# List all namespaces:").
+		Add("kubectl get namespaces").
+		Add("kubectl get namespaces -o wide").
+		AddBlank().
+		Add("# Describe namespace:").
+		Add("kubectl describe namespace <name>").
+		AddBlank().
+		Add("# Get namespace YAML:").
+		Add("kubectl get namespace <name> -o yaml")
+
+	for _, ns := range namespaces {
 		finding := analyzeNamespace(ctx, clientset, &ns)
 		findings = append(findings, finding)
-		riskCounts[finding.RiskLevel]++
+		riskCounts.Add(finding.RiskLevel)
 
-		// Build table row
-		securityIssuesStr := "<none>"
-		if len(finding.SecurityIssues) > 0 {
-			if len(finding.SecurityIssues) > 2 {
-				securityIssuesStr = strings.Join(finding.SecurityIssues[:2], "; ") + fmt.Sprintf(" (+%d more)", len(finding.SecurityIssues)-2)
-			} else {
-				securityIssuesStr = strings.Join(finding.SecurityIssues, "; ")
-			}
-		}
+		// Build table row with expanded data
 
-		netPoliciesStr := "0"
-		if finding.NetworkPolicyCount > 0 {
-			netPoliciesStr = fmt.Sprintf("%d", finding.NetworkPolicyCount)
-		}
-
-		resourceQuotaStr := "Missing"
-		if finding.HasResourceQuota {
-			resourceQuotaStr = fmt.Sprintf("Set (%d)", len(finding.ResourceQuotas))
-		}
-
-		limitRangeStr := "Missing"
-		if finding.HasLimitRange {
-			limitRangeStr = fmt.Sprintf("Set (%d)", len(finding.LimitRanges))
-		}
-
-		rbacBindingsStr := fmt.Sprintf("%d", finding.RoleBindingCount)
-		if finding.ClusterRoleBindingCount > 0 {
-			rbacBindingsStr = fmt.Sprintf("%d+%dCRB", finding.RoleBindingCount, finding.ClusterRoleBindingCount)
-		}
-
-		dangerousPermsStr := "No"
-		if len(finding.DangerousPermissions) > 0 {
-			dangerousPermsStr = fmt.Sprintf("Yes (%d)", len(finding.DangerousPermissions))
-		}
-
-		isDefaultStr := "No"
+		// Is Default
+		isDefaultStr := ""
 		if finding.IsDefault {
-			isDefaultStr = "Yes"
+			isDefaultStr = "Default"
 		}
 
-		isProdStr := "No"
-		if finding.IsProduction {
-			isProdStr = "Yes"
+		// Net Policies - show policy names
+		netPoliciesStr := "None"
+		if len(finding.NetworkPolicies) > 0 {
+			netPoliciesStr = strings.Join(finding.NetworkPolicies, ", ")
+		}
+
+		// Resource Quota - show quota names
+		resourceQuotaStr := "None"
+		if len(finding.ResourceQuotas) > 0 {
+			resourceQuotaStr = strings.Join(finding.ResourceQuotas, ", ")
+		}
+
+		// Limit Range - show range names
+		limitRangeStr := "None"
+		if len(finding.LimitRanges) > 0 {
+			limitRangeStr = strings.Join(finding.LimitRanges, ", ")
+		}
+
+		// RBAC Bindings - clearer format
+		rbacBindingsStr := fmt.Sprintf("%d RB", finding.RoleBindingCount)
+		if finding.ClusterRoleBindingCount > 0 {
+			rbacBindingsStr = fmt.Sprintf("%d RB, %d CRB", finding.RoleBindingCount, finding.ClusterRoleBindingCount)
+		}
+
+		// Dangerous Perms - show RoleBinding names (cross-reference with rolebindings/permissions)
+		dangerousPermsStr := "None"
+		if len(finding.DangerousPermissions) > 0 {
+			dangerousPermsStr = strings.Join(finding.DangerousPermissions, ", ")
+		}
+
+		// Admin Bindings - show RB/CRB names (cross-reference with rolebindings/permissions)
+		adminBindingsStr := "None"
+		if len(finding.AdminBindings) > 0 {
+			adminBindingsStr = strings.Join(finding.AdminBindings, ", ")
 		}
 
 		outputRows = append(outputRows, []string{
-			finding.RiskLevel,
 			finding.Name,
 			k8sinternal.NonEmpty(finding.Environment),
 			finding.Age,
-			securityIssuesStr,
+			isDefaultStr,
 			fmt.Sprintf("%d", finding.TotalWorkloads),
 			fmt.Sprintf("%d", finding.PodCount),
+			fmt.Sprintf("%d", finding.ServiceCount),
+			fmt.Sprintf("%d", finding.IngressCount),
 			fmt.Sprintf("%d", finding.SecretCount),
+			fmt.Sprintf("%d", finding.ConfigMapCount),
 			k8sinternal.NonEmpty(finding.PSSEnforce),
 			netPoliciesStr,
+			finding.IsolationLevel,
 			resourceQuotaStr,
 			limitRangeStr,
 			rbacBindingsStr,
 			dangerousPermsStr,
-			finding.IsolationLevel,
-			isDefaultStr,
-			isProdStr,
-			k8sinternal.NonEmpty(finding.CloudProvider),
+			adminBindingsStr,
 		})
 
-		// Generate enumeration commands
-		lootEnum = append(lootEnum, fmt.Sprintf("\n# [%s] %s (Environment: %s)", finding.RiskLevel, finding.Name, finding.Environment))
-		lootEnum = append(lootEnum, fmt.Sprintf("kubectl get namespace %s -o yaml", finding.Name))
-		lootEnum = append(lootEnum, fmt.Sprintf("kubectl describe namespace %s", finding.Name))
-		lootEnum = append(lootEnum, "")
 	}
 
-	// Build Risk Dashboard loot file
-	lootRiskDashboard = buildNamespaceRiskDashboard(findings, riskCounts)
-
-	// Build Default Usage loot file
-	lootDefaultUsage = buildDefaultUsageLoot(findings)
-
-	// Build Resource Governance loot file
-	lootResourceGov = buildResourceGovernanceLoot(findings)
-
-	// Build Network Isolation loot file
-	lootNetworkIsolation = buildNetworkIsolationLoot(findings)
-
-	// Build PSS Enforcement loot file
-	lootPSSEnforcement = buildPSSEnforcementLoot(findings)
-
-	// Build RBAC Analysis loot file
-	lootRBACAnalysis = buildRBACAnalysisLoot(findings)
-
-	// Build Workload Distribution loot file
-	lootWorkloadDist = buildWorkloadDistributionLoot(findings)
+	// Add templates and remediation commands
+	buildNamespaceCommandsLoot(loot, findings)
 
 	table := internal.TableFile{
 		Name:   "Namespaces",
@@ -300,16 +277,7 @@ func ListNamespaces(cmd *cobra.Command, args []string) {
 		Body:   outputRows,
 	}
 
-	lootFiles := []internal.LootFile{
-		{Name: "Namespace-Risk-Dashboard", Contents: strings.Join(lootRiskDashboard, "\n")},
-		{Name: "Namespace-Enum", Contents: strings.Join(lootEnum, "\n")},
-		{Name: "Namespace-Default-Usage", Contents: strings.Join(lootDefaultUsage, "\n")},
-		{Name: "Namespace-Resource-Governance", Contents: strings.Join(lootResourceGov, "\n")},
-		{Name: "Namespace-Network-Isolation", Contents: strings.Join(lootNetworkIsolation, "\n")},
-		{Name: "Namespace-PSS-Enforcement", Contents: strings.Join(lootPSSEnforcement, "\n")},
-		{Name: "Namespace-RBAC-Analysis", Contents: strings.Join(lootRBACAnalysis, "\n")},
-		{Name: "Namespace-Workload-Distribution", Contents: strings.Join(lootWorkloadDist, "\n")},
-	}
+	lootFiles := loot.Build()
 
 	err = internal.HandleOutput(
 		"Kubernetes",
@@ -333,7 +301,7 @@ func ListNamespaces(cmd *cobra.Command, args []string) {
 	if len(outputRows) > 0 {
 		logger.InfoM(fmt.Sprintf("%d namespaces found | Risk: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
 			len(outputRows),
-			riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"]),
+			riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low),
 			globals.K8S_NAMESPACES_MODULE_NAME)
 	} else {
 		logger.InfoM("No namespaces found, skipping output file creation", globals.K8S_NAMESPACES_MODULE_NAME)
@@ -386,9 +354,6 @@ func analyzeNamespace(ctx context.Context, clientset *kubernetes.Clientset, ns *
 	// RBAC analysis
 	finding.RoleBindingCount, finding.ClusterRoleBindingCount, finding.ServiceAccountCount,
 		finding.AdminBindings, finding.DangerousPermissions, finding.ExcessiveAccess = analyzeRBAC(ctx, clientset, ns.Name)
-
-	// Cloud provider detection
-	finding.CloudProvider = "Unknown" // TODO: Implement cloud provider detection
 
 	// DoS risk
 	finding.DoSRisk = !finding.HasResourceQuota && finding.TotalWorkloads > 10
@@ -640,10 +605,28 @@ func analyzeRBAC(ctx context.Context, clientset *kubernetes.Clientset, namespace
 	clusterRoleBindingCount := 0
 	serviceAccountCount := 0
 	var adminBindings []string
-	var dangerousPermissions []string
+	var dangerousBindings []string // RoleBinding/ClusterRoleBinding names with dangerous permissions
 	excessiveAccess := false
 
-	// Count RoleBindings
+	// Get Roles in namespace for permission analysis
+	roles, _ := clientset.RbacV1().Roles(namespace).List(ctx, metav1.ListOptions{})
+	roleMap := make(map[string]*rbacv1.Role)
+	if roles != nil {
+		for i := range roles.Items {
+			roleMap[roles.Items[i].Name] = &roles.Items[i]
+		}
+	}
+
+	// Get ClusterRoles for permission analysis
+	clusterRoles, _ := clientset.RbacV1().ClusterRoles().List(ctx, metav1.ListOptions{})
+	clusterRoleMap := make(map[string]*rbacv1.ClusterRole)
+	if clusterRoles != nil {
+		for i := range clusterRoles.Items {
+			clusterRoleMap[clusterRoles.Items[i].Name] = &clusterRoles.Items[i]
+		}
+	}
+
+	// Count RoleBindings and check for dangerous permissions
 	roleBindings, err := clientset.RbacV1().RoleBindings(namespace).List(ctx, metav1.ListOptions{})
 	if err == nil {
 		roleBindingCount = len(roleBindings.Items)
@@ -651,22 +634,47 @@ func analyzeRBAC(ctx context.Context, clientset *kubernetes.Clientset, namespace
 		for _, rb := range roleBindings.Items {
 			// Check for admin/cluster-admin roles
 			if rb.RoleRef.Name == "admin" || rb.RoleRef.Name == "cluster-admin" {
-				adminBindings = append(adminBindings, fmt.Sprintf("%s->%s", rb.Name, rb.RoleRef.Name))
+				adminBindings = append(adminBindings, rb.Name)
 				excessiveAccess = true
+			}
+
+			// Check if the referenced role has dangerous permissions
+			if rb.RoleRef.Kind == "Role" {
+				if role, exists := roleMap[rb.RoleRef.Name]; exists {
+					if hasDangerousPermissions(role.Rules) {
+						dangerousBindings = append(dangerousBindings, rb.Name)
+					}
+				}
+			} else if rb.RoleRef.Kind == "ClusterRole" {
+				// RoleBinding can reference a ClusterRole
+				if clusterRole, exists := clusterRoleMap[rb.RoleRef.Name]; exists {
+					if hasDangerousPermissions(clusterRole.Rules) {
+						dangerousBindings = append(dangerousBindings, rb.Name)
+					}
+				}
 			}
 		}
 	}
 
-	// Count ClusterRoleBindings targeting this namespace's ServiceAccounts
+	// Check ClusterRoleBindings targeting this namespace's ServiceAccounts
 	clusterRoleBindings, err := clientset.RbacV1().ClusterRoleBindings().List(ctx, metav1.ListOptions{})
 	if err == nil {
 		for _, crb := range clusterRoleBindings.Items {
 			for _, subject := range crb.Subjects {
 				if subject.Namespace == namespace && subject.Kind == "ServiceAccount" {
 					clusterRoleBindingCount++
-					if crb.RoleRef.Name == "cluster-admin" {
-						adminBindings = append(adminBindings, fmt.Sprintf("%s->%s", crb.Name, crb.RoleRef.Name))
+
+					// Check for admin/cluster-admin roles
+					if crb.RoleRef.Name == "cluster-admin" || crb.RoleRef.Name == "admin" {
+						adminBindings = append(adminBindings, crb.Name)
 						excessiveAccess = true
+					}
+
+					// Check if the referenced ClusterRole has dangerous permissions
+					if clusterRole, exists := clusterRoleMap[crb.RoleRef.Name]; exists {
+						if hasDangerousPermissions(clusterRole.Rules) {
+							dangerousBindings = append(dangerousBindings, crb.Name)
+						}
 					}
 					break
 				}
@@ -680,43 +688,26 @@ func analyzeRBAC(ctx context.Context, clientset *kubernetes.Clientset, namespace
 		serviceAccountCount = len(serviceAccounts.Items)
 	}
 
-	// Analyze roles for dangerous permissions
-	roles, err := clientset.RbacV1().Roles(namespace).List(ctx, metav1.ListOptions{})
-	if err == nil {
-		for _, role := range roles.Items {
-			dangerous := analyzeDangerousRolePermissions(&role)
-			dangerousPermissions = append(dangerousPermissions, dangerous...)
-		}
-	}
-
-	return roleBindingCount, clusterRoleBindingCount, serviceAccountCount, adminBindings, dangerousPermissions, excessiveAccess
+	return roleBindingCount, clusterRoleBindingCount, serviceAccountCount, adminBindings, dangerousBindings, excessiveAccess
 }
 
-func analyzeDangerousRolePermissions(role *rbacv1.Role) []string {
-	var dangerous []string
+func hasDangerousPermissions(rules []rbacv1.PolicyRule) bool {
 	dangerousVerbs := []string{"*", "create", "update", "patch", "delete"}
 	dangerousResources := []string{"*", "secrets", "pods/exec", "pods/portforward"}
 
-	for _, rule := range role.Rules {
-		// Check for wildcard permissions
+	for _, rule := range rules {
 		for _, resource := range rule.Resources {
 			for _, verb := range rule.Verbs {
+				// Wildcard on both
 				if resource == "*" && verb == "*" {
-					dangerous = append(dangerous, fmt.Sprintf("%s: wildcard (*/*)", role.Name))
-					break
+					return true
 				}
-			}
-		}
-
-		// Check for dangerous resource access
-		for _, resource := range rule.Resources {
-			for _, dangerousRes := range dangerousResources {
-				if resource == dangerousRes {
-					for _, verb := range rule.Verbs {
+				// Dangerous resource with dangerous verb
+				for _, dangerousRes := range dangerousResources {
+					if resource == dangerousRes {
 						for _, dangerousVerb := range dangerousVerbs {
 							if verb == dangerousVerb {
-								dangerous = append(dangerous, fmt.Sprintf("%s: %s on %s", role.Name, verb, resource))
-								break
+								return true
 							}
 						}
 					}
@@ -725,7 +716,7 @@ func analyzeDangerousRolePermissions(role *rbacv1.Role) []string {
 		}
 	}
 
-	return dangerous
+	return false
 }
 
 func analyzeNamespaceSecurity(finding NamespaceFinding) []string {
@@ -842,394 +833,126 @@ func calculateNamespaceRiskLevel(finding NamespaceFinding) string {
 
 	// Determine risk level
 	if riskScore >= 50 {
-		return "CRITICAL"
+		return shared.RiskCritical
 	} else if riskScore >= 25 {
-		return "HIGH"
+		return shared.RiskHigh
 	} else if riskScore >= 10 {
-		return "MEDIUM"
+		return shared.RiskMedium
 	}
-	return "LOW"
+	return shared.RiskLow
 }
 
 // ====================
-// Loot File Builders
+// Loot File Builder
 // ====================
 
-func buildNamespaceRiskDashboard(findings []NamespaceFinding, riskCounts map[string]int) []string {
-	var lines []string
-	lines = append(lines, `#####################################
-##### Namespace Risk Statistics Dashboard
-#####################################
-#
-# Summary of namespace security posture
-#
-`)
+func buildNamespaceCommandsLoot(loot *shared.LootBuilder, findings []NamespaceFinding) {
+	section := loot.Section("Namespace-Commands")
 
-	totalNamespaces := len(findings)
-	lines = append(lines, "\n## Overall Statistics")
-	lines = append(lines, fmt.Sprintf("Total Namespaces: %d", totalNamespaces))
-	lines = append(lines, fmt.Sprintf("CRITICAL Risk: %d", riskCounts["CRITICAL"]))
-	lines = append(lines, fmt.Sprintf("HIGH Risk:     %d", riskCounts["HIGH"]))
-	lines = append(lines, fmt.Sprintf("MEDIUM Risk:   %d", riskCounts["MEDIUM"]))
-	lines = append(lines, fmt.Sprintf("LOW Risk:      %d", riskCounts["LOW"]))
+	// ResourceQuota Template
+	section.AddBlank().
+		Add("# -------------------------------------------").
+		Add("# ResourceQuota Template").
+		Add("# -------------------------------------------").
+		Add("# Apply to namespaces missing resource quotas:").
+		AddBlank().
+		Add("kubectl apply -f - <<EOF").
+		Add("apiVersion: v1").
+		Add("kind: ResourceQuota").
+		Add("metadata:").
+		Add("  name: compute-quota").
+		Add("  namespace: <namespace-name>").
+		Add("spec:").
+		Add("  hard:").
+		Add("    requests.cpu: \"10\"").
+		Add("    requests.memory: 20Gi").
+		Add("    limits.cpu: \"20\"").
+		Add("    limits.memory: 40Gi").
+		Add("    pods: \"50\"").
+		Add("EOF")
 
-	// Count various security metrics
-	defaultNSWithWorkloads := 0
-	productionCount := 0
-	noNetPolicies := 0
-	noResourceQuotas := 0
-	noLimitRanges := 0
-	noPSSEnforcement := 0
-	excessiveAccess := 0
-	emptyNamespaces := 0
+	// LimitRange Template
+	section.AddBlank().
+		Add("# -------------------------------------------").
+		Add("# LimitRange Template").
+		Add("# -------------------------------------------").
+		Add("# Apply to namespaces missing limit ranges:").
+		AddBlank().
+		Add("kubectl apply -f - <<EOF").
+		Add("apiVersion: v1").
+		Add("kind: LimitRange").
+		Add("metadata:").
+		Add("  name: default-limits").
+		Add("  namespace: <namespace-name>").
+		Add("spec:").
+		Add("  limits:").
+		Add("  - default:").
+		Add("      cpu: \"500m\"").
+		Add("      memory: \"512Mi\"").
+		Add("    defaultRequest:").
+		Add("      cpu: \"100m\"").
+		Add("      memory: \"128Mi\"").
+		Add("    type: Container").
+		Add("EOF")
 
+	// NetworkPolicy Default-Deny Template
+	section.AddBlank().
+		Add("# -------------------------------------------").
+		Add("# NetworkPolicy Default-Deny Template").
+		Add("# -------------------------------------------").
+		Add("# Apply to namespaces missing network policies:").
+		AddBlank().
+		Add("kubectl apply -f - <<EOF").
+		Add("apiVersion: networking.k8s.io/v1").
+		Add("kind: NetworkPolicy").
+		Add("metadata:").
+		Add("  name: default-deny-ingress").
+		Add("  namespace: <namespace-name>").
+		Add("spec:").
+		Add("  podSelector: {}").
+		Add("  policyTypes:").
+		Add("  - Ingress").
+		Add("EOF")
+
+	// PSS Labeling Commands
+	section.AddBlank().
+		Add("# -------------------------------------------").
+		Add("# Pod Security Standards (PSS) Labeling").
+		Add("# -------------------------------------------").
+		AddBlank().
+		Add("# For production namespaces (restricted):").
+		Add("kubectl label namespace <namespace> \\").
+		Add("  pod-security.kubernetes.io/enforce=restricted \\").
+		Add("  pod-security.kubernetes.io/audit=restricted \\").
+		Add("  pod-security.kubernetes.io/warn=restricted").
+		AddBlank().
+		Add("# For non-production namespaces (baseline):").
+		Add("kubectl label namespace <namespace> \\").
+		Add("  pod-security.kubernetes.io/enforce=baseline \\").
+		Add("  pod-security.kubernetes.io/audit=baseline \\").
+		Add("  pod-security.kubernetes.io/warn=baseline")
+
+	// Namespace-specific remediation for default namespace
 	for _, f := range findings {
 		if f.IsDefault && f.TotalWorkloads > 0 {
-			defaultNSWithWorkloads++
-		}
-		if f.IsProduction {
-			productionCount++
-		}
-		if !f.HasNetworkPolicies && f.TotalWorkloads > 0 {
-			noNetPolicies++
-		}
-		if !f.HasResourceQuota {
-			noResourceQuotas++
-		}
-		if !f.HasLimitRange {
-			noLimitRanges++
-		}
-		if !f.HasPSSEnforcement {
-			noPSSEnforcement++
-		}
-		if f.ExcessiveAccess {
-			excessiveAccess++
-		}
-		if f.IsEmpty {
-			emptyNamespaces++
+			section.AddBlank().
+				Add("# -------------------------------------------").
+				Add("# Default Namespace Migration").
+				Add("# -------------------------------------------").
+				Addf("# WARNING: %d workloads running in default namespace", f.TotalWorkloads).
+				AddBlank().
+				Add("# 1. Create dedicated namespace:").
+				Add("kubectl create namespace <app-name>").
+				AddBlank().
+				Add("# 2. Move deployments:").
+				Add("kubectl get deployment -n default -o yaml | sed 's/namespace: default/namespace: <app-name>/' | kubectl apply -f -").
+				AddBlank().
+				Add("# 3. Move services:").
+				Add("kubectl get service -n default -o yaml | sed 's/namespace: default/namespace: <app-name>/' | kubectl apply -f -").
+				AddBlank().
+				Add("# 4. Delete from default after verification:").
+				Add("kubectl delete deployment <name> -n default")
+			break
 		}
 	}
-
-	lines = append(lines, "\n## Security Posture")
-	lines = append(lines, fmt.Sprintf("Production Namespaces: %d", productionCount))
-	lines = append(lines, fmt.Sprintf("Default NS with Workloads: %d", defaultNSWithWorkloads))
-	lines = append(lines, fmt.Sprintf("No Network Policies: %d", noNetPolicies))
-	lines = append(lines, fmt.Sprintf("No Resource Quotas: %d", noResourceQuotas))
-	lines = append(lines, fmt.Sprintf("No Limit Ranges: %d", noLimitRanges))
-	lines = append(lines, fmt.Sprintf("No PSS Enforcement: %d", noPSSEnforcement))
-	lines = append(lines, fmt.Sprintf("Excessive RBAC Access: %d", excessiveAccess))
-	lines = append(lines, fmt.Sprintf("Empty/Abandoned: %d", emptyNamespaces))
-
-	lines = append(lines, "\n## Recommendations")
-	if riskCounts["CRITICAL"] > 0 {
-		lines = append(lines, fmt.Sprintf("⚠️  URGENT: %d CRITICAL namespaces require immediate remediation", riskCounts["CRITICAL"]))
-	}
-	if defaultNSWithWorkloads > 0 {
-		lines = append(lines, "⚠️  WARNING: Workloads running in default namespace (migrate immediately)")
-	}
-	if noNetPolicies > 0 {
-		lines = append(lines, fmt.Sprintf("⚠️  WARNING: %d namespaces lack network isolation", noNetPolicies))
-	}
-	if noResourceQuotas > productionCount {
-		lines = append(lines, fmt.Sprintf("⚠️  WARNING: %d namespaces missing ResourceQuotas (DoS risk)", noResourceQuotas))
-	}
-
-	return lines
-}
-
-func buildDefaultUsageLoot(findings []NamespaceFinding) []string {
-	var lines []string
-	lines = append(lines, `#####################################
-##### Default Namespace Usage Analysis
-#####################################
-#
-# Workloads in default namespace (anti-pattern)
-#
-`)
-
-	hasDefaultUsage := false
-	for _, f := range findings {
-		if f.IsDefault && f.TotalWorkloads > 0 {
-			hasDefaultUsage = true
-			lines = append(lines, fmt.Sprintf("\n## Default Namespace: %d total workloads", f.TotalWorkloads))
-			lines = append(lines, fmt.Sprintf("Deployments: %d", f.DeploymentCount))
-			lines = append(lines, fmt.Sprintf("StatefulSets: %d", f.StatefulSetCount))
-			lines = append(lines, fmt.Sprintf("DaemonSets: %d", f.DaemonSetCount))
-			lines = append(lines, fmt.Sprintf("Jobs: %d", f.JobCount))
-			lines = append(lines, fmt.Sprintf("CronJobs: %d", f.CronJobCount))
-			lines = append(lines, fmt.Sprintf("Pods: %d", f.PodCount))
-
-			lines = append(lines, "\n### Migration Recommendation")
-			lines = append(lines, "# 1. Create dedicated namespaces per application/team:")
-			lines = append(lines, "kubectl create namespace app-name")
-			lines = append(lines, "")
-			lines = append(lines, "# 2. Update deployments to use new namespace:")
-			lines = append(lines, "kubectl get deployment -n default -o yaml | sed 's/namespace: default/namespace: app-name/' | kubectl apply -f -")
-			lines = append(lines, "")
-			lines = append(lines, "# 3. Move services:")
-			lines = append(lines, "kubectl get service -n default -o yaml | sed 's/namespace: default/namespace: app-name/' | kubectl apply -f -")
-			lines = append(lines, "")
-			lines = append(lines, "# 4. Delete from default after verification:")
-			lines = append(lines, "kubectl delete deployment <name> -n default")
-		}
-	}
-
-	if !hasDefaultUsage {
-		lines = append(lines, "\n✓ No workloads in default namespace (good practice)")
-	}
-
-	return lines
-}
-
-func buildResourceGovernanceLoot(findings []NamespaceFinding) []string {
-	var lines []string
-	lines = append(lines, `#####################################
-##### Resource Governance Analysis
-#####################################
-#
-# ResourceQuota and LimitRange status
-#
-`)
-
-	lines = append(lines, "\n## Namespaces Missing ResourceQuotas")
-	missingQuotas := 0
-	for _, f := range findings {
-		if !f.HasResourceQuota && f.TotalWorkloads > 0 {
-			missingQuotas++
-			lines = append(lines, fmt.Sprintf("- [%s] %s (Workloads: %d)", f.RiskLevel, f.Name, f.TotalWorkloads))
-		}
-	}
-	if missingQuotas == 0 {
-		lines = append(lines, "✓ All active namespaces have ResourceQuotas")
-	}
-
-	lines = append(lines, "\n## Namespaces Missing LimitRanges")
-	missingLimits := 0
-	for _, f := range findings {
-		if !f.HasLimitRange && f.TotalWorkloads > 0 {
-			missingLimits++
-			lines = append(lines, fmt.Sprintf("- [%s] %s (Workloads: %d)", f.RiskLevel, f.Name, f.TotalWorkloads))
-		}
-	}
-	if missingLimits == 0 {
-		lines = append(lines, "✓ All active namespaces have LimitRanges")
-	}
-
-	lines = append(lines, "\n## Sample ResourceQuota Configuration")
-	lines = append(lines, "# Apply this to each namespace:")
-	lines = append(lines, "kubectl apply -f - <<EOF")
-	lines = append(lines, "apiVersion: v1")
-	lines = append(lines, "kind: ResourceQuota")
-	lines = append(lines, "metadata:")
-	lines = append(lines, "  name: compute-quota")
-	lines = append(lines, "  namespace: <namespace-name>")
-	lines = append(lines, "spec:")
-	lines = append(lines, "  hard:")
-	lines = append(lines, "    requests.cpu: \"10\"")
-	lines = append(lines, "    requests.memory: 20Gi")
-	lines = append(lines, "    limits.cpu: \"20\"")
-	lines = append(lines, "    limits.memory: 40Gi")
-	lines = append(lines, "    pods: \"50\"")
-	lines = append(lines, "EOF")
-
-	return lines
-}
-
-func buildNetworkIsolationLoot(findings []NamespaceFinding) []string {
-	var lines []string
-	lines = append(lines, `#####################################
-##### Network Isolation Analysis
-#####################################
-#
-# NetworkPolicy enforcement status
-#
-`)
-
-	lines = append(lines, "\n## Namespaces Without Network Policies")
-	noIsolation := 0
-	for _, f := range findings {
-		if !f.HasNetworkPolicies && f.TotalWorkloads > 0 {
-			noIsolation++
-			lines = append(lines, fmt.Sprintf("- [%s] %s (Environment: %s, Workloads: %d)", f.RiskLevel, f.Name, f.Environment, f.TotalWorkloads))
-		}
-	}
-	if noIsolation == 0 {
-		lines = append(lines, "✓ All active namespaces have NetworkPolicies")
-	}
-
-	lines = append(lines, "\n## Namespaces Without Default-Deny Policy")
-	noDefaultDeny := 0
-	for _, f := range findings {
-		if f.HasNetworkPolicies && !f.DefaultDenyPolicy && f.TotalWorkloads > 0 {
-			noDefaultDeny++
-			lines = append(lines, fmt.Sprintf("- [%s] %s", f.RiskLevel, f.Name))
-		}
-	}
-	if noDefaultDeny == 0 {
-		lines = append(lines, "✓ All isolated namespaces have default-deny policies")
-	}
-
-	lines = append(lines, "\n## Default-Deny NetworkPolicy Template")
-	lines = append(lines, "# Apply to each namespace for default-deny ingress:")
-	lines = append(lines, "kubectl apply -f - <<EOF")
-	lines = append(lines, "apiVersion: networking.k8s.io/v1")
-	lines = append(lines, "kind: NetworkPolicy")
-	lines = append(lines, "metadata:")
-	lines = append(lines, "  name: default-deny-ingress")
-	lines = append(lines, "  namespace: <namespace-name>")
-	lines = append(lines, "spec:")
-	lines = append(lines, "  podSelector: {}")
-	lines = append(lines, "  policyTypes:")
-	lines = append(lines, "  - Ingress")
-	lines = append(lines, "EOF")
-
-	return lines
-}
-
-func buildPSSEnforcementLoot(findings []NamespaceFinding) []string {
-	var lines []string
-	lines = append(lines, `#####################################
-##### Pod Security Standards Enforcement
-#####################################
-#
-# PSS label analysis per namespace
-#
-`)
-
-	lines = append(lines, "\n## PSS Enforcement Status")
-	for _, f := range findings {
-		if f.TotalWorkloads > 0 {
-			lines = append(lines, fmt.Sprintf("\n### [%s] %s", f.RiskLevel, f.Name))
-			lines = append(lines, fmt.Sprintf("Enforce: %s", f.PSSEnforce))
-			lines = append(lines, fmt.Sprintf("Audit:   %s", f.PSSAudit))
-			lines = append(lines, fmt.Sprintf("Warn:    %s", f.PSSWarn))
-
-			if !f.HasPSSEnforcement {
-				lines = append(lines, "⚠️  No PSS enforcement configured")
-			} else if f.PSSEnforce == "privileged" && f.IsProduction {
-				lines = append(lines, "⚠️  Production namespace with permissive PSS (should be 'restricted')")
-			}
-		}
-	}
-
-	lines = append(lines, "\n## Recommended PSS Configuration")
-	lines = append(lines, "# For production namespaces (restrictive):")
-	lines = append(lines, "kubectl label namespace <namespace> \\")
-	lines = append(lines, "  pod-security.kubernetes.io/enforce=restricted \\")
-	lines = append(lines, "  pod-security.kubernetes.io/audit=restricted \\")
-	lines = append(lines, "  pod-security.kubernetes.io/warn=restricted")
-	lines = append(lines, "")
-	lines = append(lines, "# For non-production (baseline):")
-	lines = append(lines, "kubectl label namespace <namespace> \\")
-	lines = append(lines, "  pod-security.kubernetes.io/enforce=baseline \\")
-	lines = append(lines, "  pod-security.kubernetes.io/audit=baseline \\")
-	lines = append(lines, "  pod-security.kubernetes.io/warn=baseline")
-
-	return lines
-}
-
-func buildRBACAnalysisLoot(findings []NamespaceFinding) []string {
-	var lines []string
-	lines = append(lines, `#####################################
-##### RBAC Permissions Analysis
-#####################################
-#
-# RoleBinding and dangerous permissions
-#
-`)
-
-	lines = append(lines, "\n## Namespaces with Admin Bindings")
-	hasAdmin := false
-	for _, f := range findings {
-		if len(f.AdminBindings) > 0 {
-			hasAdmin = true
-			lines = append(lines, fmt.Sprintf("\n### [%s] %s", f.RiskLevel, f.Name))
-			lines = append(lines, fmt.Sprintf("Admin Bindings: %d", len(f.AdminBindings)))
-			for _, binding := range f.AdminBindings {
-				lines = append(lines, fmt.Sprintf("  - %s", binding))
-			}
-		}
-	}
-	if !hasAdmin {
-		lines = append(lines, "✓ No cluster-admin or admin role bindings found")
-	}
-
-	lines = append(lines, "\n## Dangerous Permissions Detected")
-	hasDangerous := false
-	for _, f := range findings {
-		if len(f.DangerousPermissions) > 0 {
-			hasDangerous = true
-			lines = append(lines, fmt.Sprintf("\n### [%s] %s", f.RiskLevel, f.Name))
-			for _, perm := range f.DangerousPermissions {
-				lines = append(lines, fmt.Sprintf("  - %s", perm))
-			}
-		}
-	}
-	if !hasDangerous {
-		lines = append(lines, "✓ No dangerous permissions detected")
-	}
-
-	lines = append(lines, "\n## RBAC Best Practices")
-	lines = append(lines, "1. Use least privilege principle")
-	lines = append(lines, "2. Avoid cluster-admin role bindings")
-	lines = append(lines, "3. Prefer Role/RoleBinding over ClusterRole/ClusterRoleBinding")
-	lines = append(lines, "4. Review permissions regularly")
-	lines = append(lines, "5. Use specific verbs instead of wildcards")
-
-	return lines
-}
-
-func buildWorkloadDistributionLoot(findings []NamespaceFinding) []string {
-	var lines []string
-	lines = append(lines, `#####################################
-##### Workload Distribution Analysis
-#####################################
-#
-# Resource counts per namespace
-#
-`)
-
-	// Sort findings by total workloads
-	sortedFindings := make([]NamespaceFinding, len(findings))
-	copy(sortedFindings, findings)
-	sort.Slice(sortedFindings, func(i, j int) bool {
-		return sortedFindings[i].TotalWorkloads > sortedFindings[j].TotalWorkloads
-	})
-
-	lines = append(lines, "\n## Workload Distribution")
-	lines = append(lines, fmt.Sprintf("%-30s %10s %8s %8s %8s", "Namespace", "Workloads", "Pods", "Secrets", "Services"))
-	lines = append(lines, strings.Repeat("-", 70))
-
-	for _, f := range sortedFindings {
-		if f.TotalWorkloads > 0 {
-			lines = append(lines, fmt.Sprintf("%-30s %10d %8d %8d %8d",
-				f.Name, f.TotalWorkloads, f.PodCount, f.SecretCount, f.ServiceCount))
-		}
-	}
-
-	lines = append(lines, "\n## Empty/Abandoned Namespaces")
-	emptyCount := 0
-	for _, f := range findings {
-		if f.IsEmpty {
-			emptyCount++
-			lines = append(lines, fmt.Sprintf("- %s (Age: %s)", f.Name, f.Age))
-		}
-	}
-	if emptyCount == 0 {
-		lines = append(lines, "✓ No empty namespaces found")
-	}
-
-	lines = append(lines, "\n## Overpopulated Namespaces (>50 workloads)")
-	overpopulated := false
-	for _, f := range sortedFindings {
-		if f.TotalWorkloads > 50 {
-			overpopulated = true
-			lines = append(lines, fmt.Sprintf("- [%s] %s (%d workloads) - Consider splitting", f.RiskLevel, f.Name, f.TotalWorkloads))
-		}
-	}
-	if !overpopulated {
-		lines = append(lines, "✓ No overpopulated namespaces")
-	}
-
-	return lines
 }

@@ -3,7 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
-	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -11,6 +11,7 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -45,6 +46,31 @@ type JobsOutput struct {
 func (t JobsOutput) TableFiles() []internal.TableFile { return t.Table }
 func (t JobsOutput) LootFiles() []internal.LootFile   { return t.Loot }
 
+// JobContainer stores container-level details
+type JobContainer struct {
+	Name           string
+	Image          string
+	Tag            string
+	Registry       string
+	Command        string
+	Args           string
+	Privileged     bool
+	Capabilities   []string
+	RunAsUser      string
+	AllowPrivEsc   string
+	ReadOnlyRootFS string
+	ResourceLimits string
+}
+
+// JobVolume stores volume details
+type JobVolume struct {
+	Name       string
+	VolumeType string
+	Source     string
+	MountPath  string
+	ReadOnly   bool
+}
+
 // JobFinding contains comprehensive job security analysis
 type JobFinding struct {
 	// Basic info
@@ -68,11 +94,21 @@ type JobFinding struct {
 	RiskLevel      string // CRITICAL/HIGH/MEDIUM/LOW
 	SecurityIssues []string
 
-	// Container security
-	Containers        []string
-	InitContainers    []string
-	Images            []string
-	ImageTagTypes     []string // "latest", "pinned", "sha256"
+	// Suspicious pattern detection
+	BackdoorPatterns []string
+	ReverseShells    []string
+	CryptoMiners     []string
+	DataExfiltration []string
+	ContainerEscape  []string
+
+	// Containers and Volumes
+	Containers     []JobContainer
+	InitContainers []JobContainer
+	Volumes        []JobVolume
+	Images         []string
+	ImageTagTypes  []string // "latest", "pinned", "sha256"
+
+	// Container security (aggregated)
 	Privileged        bool
 	RunAsUser         string // "root", "1000", "N/A"
 	RunAsNonRoot      bool
@@ -96,15 +132,16 @@ type JobFinding struct {
 	HostNetwork bool
 
 	// Job-specific
-	RestartPolicy      string
-	ActiveDeadline     int64
-	TTL                int32
-	FromCronJob        bool
-	CronJobName        string
-	ServiceAccount     string
-	AutomountSAToken   bool
-	DangerousCommands  []string
-	SuspiciousActivity bool
+	RestartPolicy    string
+	ActiveDeadline   int64
+	TTL              int32
+	FromCronJob      bool
+	CronJobName      string
+	ServiceAccount   string
+	AutomountSAToken bool
+	ImagePullSecrets []string
+	Affinity         string
+	Tolerations      []string
 
 	// Cloud
 	CloudProvider string
@@ -116,7 +153,8 @@ type JobFinding struct {
 }
 
 func ListJobs(cmd *cobra.Command, args []string) {
-	ctx := context.Background()
+	ctx, cancel := shared.ContextWithTimeout()
+	defer cancel()
 	logger := internal.NewLogger()
 
 	parentCmd := cmd.Parent()
@@ -129,190 +167,161 @@ func ListJobs(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	jobs, err := clientset.BatchV1().Jobs("").List(ctx, metav1.ListOptions{})
-	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Error listing Jobs: %v", err), globals.K8S_JOBS_MODULE_NAME)
-		return
+	// Get target namespaces
+	namespaces := shared.GetTargetNamespaces(ctx, clientset, &logger, globals.K8S_JOBS_MODULE_NAME)
+
+	// Collect all jobs from target namespaces
+	var allJobs []batchv1.Job
+	for _, ns := range namespaces {
+		jobs, err := clientset.BatchV1().Jobs(ns).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			shared.LogListError(&logger, "jobs", ns, err, globals.K8S_JOBS_MODULE_NAME, false)
+			continue
+		}
+		allJobs = append(allJobs, jobs.Items...)
 	}
 
-	headers := []string{
-		"Risk",
-		"Namespace",
-		"Job Name",
-		"Status",
-		"Duration",
-		"Security Issues",
-		"Privileged",
-		"Run As Root",
-		"Host Namespaces",
-		"Secrets",
-		"Image Tags",
-		"Resource Limits",
-		"Dangerous Commands",
-		"From CronJob",
-		"Cloud Role",
+	// Table 1: Jobs Summary
+	summaryHeaders := []string{
+		"Namespace", "Name", "Labels", "Status", "Duration", "Completions",
+		"Service Account", "Init Containers", "Image Pull Secrets",
+		"Secrets", "ConfigMaps",
+		"Security Context", "Suspicious Patterns", "Cloud IAM",
+		"Affinity", "Tolerations",
 	}
 
-	var outputRows [][]string
+	// Table 2: Job-Containers Detail
+	containerHeaders := []string{
+		"Namespace", "Job", "Container", "Privileged", "Capabilities",
+		"RunAsUser", "AllowPrivEsc", "ReadOnlyRootFS", "Resource Limits",
+		"Image", "Tag", "Registry",
+	}
+
+	// Table 3: Job-Volumes Detail
+	volumeHeaders := []string{
+		"Namespace", "Job", "Volume Name", "Type", "Source Path/Name", "Container Mount Path", "Read Only",
+	}
+
+	var summaryRows [][]string
+	var containerRows [][]string
+	var volumeRows [][]string
 	var findings []JobFinding
 
-	// Risk level counters
-	riskCounts := map[string]int{
-		"CRITICAL": 0,
-		"HIGH":     0,
-		"MEDIUM":   0,
-		"LOW":      0,
-	}
+	// Risk counters
+	riskCounts := shared.NewRiskCounts()
 
-	// Loot file builders
-	var lootEnum []string
-	var lootRiskDashboard []string
-	var lootFailures []string
-	var lootHighRisk []string
-	var lootSecrets []string
-	var lootCronJobs []string
-	var lootLongRunning []string
-
-	lootEnum = append(lootEnum, `#####################################
-##### Job Enumeration
-#####################################
-#
-# Basic job enumeration commands
-#
-`)
-
-	if globals.KubeContext != "" {
-		lootEnum = append(lootEnum, fmt.Sprintf("kubectl config use-context %s\n", globals.KubeContext))
-	}
-
-	for _, job := range jobs.Items {
+	for _, job := range allJobs {
 		finding := analyzeJob(ctx, clientset, &job)
 		findings = append(findings, finding)
-		riskCounts[finding.RiskLevel]++
+		riskCounts.Add(finding.RiskLevel)
 
-		// Build table row
-		securityIssuesStr := "<none>"
-		if len(finding.SecurityIssues) > 0 {
-			if len(finding.SecurityIssues) > 2 {
-				securityIssuesStr = strings.Join(finding.SecurityIssues[:2], "; ") + fmt.Sprintf(" (+%d more)", len(finding.SecurityIssues)-2)
-			} else {
-				securityIssuesStr = strings.Join(finding.SecurityIssues, "; ")
-			}
-		}
-
-		privilegedStr := "No"
-		if finding.Privileged {
-			privilegedStr = "Yes"
-		}
-
-		runAsRootStr := "No"
-		if finding.RunAsUser == "root" || finding.RunAsUser == "0" {
-			runAsRootStr = "Yes"
-		} else if finding.RunAsUser != "N/A" {
-			runAsRootStr = fmt.Sprintf("No (UID %s)", finding.RunAsUser)
-		}
-
-		hostNamespacesStr := "<none>"
-		hostNS := []string{}
+		// Build Security Context column (pod-level only)
+		var secContextParts []string
 		if finding.HostPID {
-			hostNS = append(hostNS, "PID")
+			secContextParts = append(secContextParts, "HostPID")
 		}
 		if finding.HostIPC {
-			hostNS = append(hostNS, "IPC")
+			secContextParts = append(secContextParts, "HostIPC")
 		}
 		if finding.HostNetwork {
-			hostNS = append(hostNS, "Network")
+			secContextParts = append(secContextParts, "HostNetwork")
 		}
-		if len(hostNS) > 0 {
-			hostNamespacesStr = strings.Join(hostNS, ", ")
+		for _, hp := range finding.HostPaths {
+			secContextParts = append(secContextParts, fmt.Sprintf("HostPath:%s", hp))
+		}
+		secContextStr := strings.Join(secContextParts, ", ")
+
+		// Build Suspicious Patterns column
+		suspiciousPatternsStr := strings.Join(finding.BackdoorPatterns, "; ")
+
+		// Build Cloud IAM column
+		var cloudIAMStr string
+		if finding.CloudProvider != "" && finding.CloudRole != "" {
+			cloudIAMStr = fmt.Sprintf("%s: %s", finding.CloudProvider, finding.CloudRole)
 		}
 
-		secretsStr := "<none>"
-		if len(finding.Secrets) > 0 {
-			secretsStr = fmt.Sprintf("%d secrets", len(finding.Secrets))
-		}
+		// Build completions info
+		completionsStr := fmt.Sprintf("%d/%d", finding.Succeeded, finding.Completions)
 
-		imageTagsStr := "<mixed>"
-		if len(finding.ImageTagTypes) > 0 {
-			tagCounts := make(map[string]int)
-			for _, tagType := range finding.ImageTagTypes {
-				tagCounts[tagType]++
-			}
-			var tagParts []string
-			for tagType, count := range tagCounts {
-				tagParts = append(tagParts, fmt.Sprintf("%s(%d)", tagType, count))
-			}
-			imageTagsStr = strings.Join(tagParts, ", ")
-		}
+		// Build Labels column
+		labelsStr := strings.Join(finding.Labels, ", ")
 
-		dangerousCmdsStr := "No"
-		if len(finding.DangerousCommands) > 0 {
-			dangerousCmdsStr = fmt.Sprintf("Yes (%d)", len(finding.DangerousCommands))
-		}
+		// Build Init Containers count
+		initContainersStr := fmt.Sprintf("%d", len(finding.InitContainers))
 
-		fromCronJobStr := "No"
-		if finding.FromCronJob {
-			fromCronJobStr = finding.CronJobName
-		}
+		// Build Image Pull Secrets column
+		imagePullSecretsStr := strings.Join(finding.ImagePullSecrets, ", ")
 
-		outputRows = append(outputRows, []string{
-			finding.RiskLevel,
+		// Build Secrets and ConfigMaps columns
+		secretsStr := strings.Join(finding.Secrets, ", ")
+		configMapsStr := strings.Join(finding.ConfigMaps, ", ")
+
+		// Build Tolerations column
+		tolerationsStr := strings.Join(finding.Tolerations, "; ")
+
+		// Table 1: Summary row
+		summaryRow := []string{
 			finding.Namespace,
 			finding.Name,
+			k8sinternal.NonEmpty(labelsStr),
 			finding.Status,
 			finding.Duration,
-			securityIssuesStr,
-			privilegedStr,
-			runAsRootStr,
-			hostNamespacesStr,
-			secretsStr,
-			imageTagsStr,
-			finding.ResourceLimits,
-			dangerousCmdsStr,
-			fromCronJobStr,
-			k8sinternal.NonEmpty(finding.CloudRole),
-		})
+			completionsStr,
+			k8sinternal.NonEmpty(finding.ServiceAccount),
+			initContainersStr,
+			k8sinternal.NonEmpty(imagePullSecretsStr),
+			k8sinternal.NonEmpty(secretsStr),
+			k8sinternal.NonEmpty(configMapsStr),
+			k8sinternal.NonEmpty(secContextStr),
+			k8sinternal.NonEmpty(suspiciousPatternsStr),
+			k8sinternal.NonEmpty(cloudIAMStr),
+			k8sinternal.NonEmpty(finding.Affinity),
+			k8sinternal.NonEmpty(tolerationsStr),
+		}
+		summaryRows = append(summaryRows, summaryRow)
 
-		// Generate enumeration commands
-		lootEnum = append(lootEnum, fmt.Sprintf("\n# [%s] %s/%s", finding.RiskLevel, finding.Namespace, finding.Name))
-		lootEnum = append(lootEnum, fmt.Sprintf("kubectl get job %s -n %s -o yaml", finding.Name, finding.Namespace))
-		lootEnum = append(lootEnum, fmt.Sprintf("kubectl describe job %s -n %s", finding.Name, finding.Namespace))
-		lootEnum = append(lootEnum, "")
+		// Table 2: Container rows (one per container)
+		for _, container := range finding.Containers {
+			capsStr := strings.Join(container.Capabilities, ", ")
+			containerRow := []string{
+				finding.Namespace,
+				finding.Name,
+				container.Name,
+				fmt.Sprintf("%v", container.Privileged),
+				k8sinternal.NonEmpty(capsStr),
+				k8sinternal.NonEmpty(container.RunAsUser),
+				k8sinternal.NonEmpty(container.AllowPrivEsc),
+				k8sinternal.NonEmpty(container.ReadOnlyRootFS),
+				k8sinternal.NonEmpty(container.ResourceLimits),
+				container.Image,
+				container.Tag,
+				container.Registry,
+			}
+			containerRows = append(containerRows, containerRow)
+		}
+
+		// Table 3: Volume rows (one per volume)
+		for _, volume := range finding.Volumes {
+			volumeRow := []string{
+				finding.Namespace,
+				finding.Name,
+				volume.Name,
+				volume.VolumeType,
+				volume.Source,
+				volume.MountPath,
+				fmt.Sprintf("%v", volume.ReadOnly),
+			}
+			volumeRows = append(volumeRows, volumeRow)
+		}
 	}
 
-	// Build Risk Dashboard loot file
-	lootRiskDashboard = buildJobRiskDashboard(findings, riskCounts)
+	// Generate loot files
+	lootFiles := generateJobLoot(findings, globals.KubeContext, riskCounts)
 
-	// Build Failures loot file
-	lootFailures = buildFailuresLoot(findings)
-
-	// Build High Risk loot file
-	lootHighRisk = buildHighRiskLoot(findings)
-
-	// Build Secrets Access loot file
-	lootSecrets = buildSecretsLoot(findings)
-
-	// Build CronJob Mapping loot file
-	lootCronJobs = buildCronJobsLoot(findings)
-
-	// Build Long Running loot file
-	lootLongRunning = buildLongRunningLoot(findings)
-
-	table := internal.TableFile{
-		Name:   "Jobs",
-		Header: headers,
-		Body:   outputRows,
-	}
-
-	lootFiles := []internal.LootFile{
-		{Name: "Job-Risk-Dashboard", Contents: strings.Join(lootRiskDashboard, "\n")},
-		{Name: "Job-Enum", Contents: strings.Join(lootEnum, "\n")},
-		{Name: "Job-Failures", Contents: strings.Join(lootFailures, "\n")},
-		{Name: "Job-High-Risk", Contents: strings.Join(lootHighRisk, "\n")},
-		{Name: "Job-Secrets-Access", Contents: strings.Join(lootSecrets, "\n")},
-		{Name: "Job-CronJob-Mapping", Contents: strings.Join(lootCronJobs, "\n")},
-		{Name: "Job-Long-Running", Contents: strings.Join(lootLongRunning, "\n")},
-	}
+	// Create all three tables
+	summaryTable := internal.TableFile{Name: "Jobs", Header: summaryHeaders, Body: summaryRows}
+	containerTable := internal.TableFile{Name: "Job-Containers", Header: containerHeaders, Body: containerRows}
+	volumeTable := internal.TableFile{Name: "Job-Volumes", Header: volumeHeaders, Body: volumeRows}
 
 	if err := internal.HandleOutput(
 		"Kubernetes",
@@ -324,7 +333,7 @@ func ListJobs(cmd *cobra.Command, args []string) {
 		globals.ClusterName,
 		"results",
 		JobsOutput{
-			Table: []internal.TableFile{table},
+			Table: []internal.TableFile{summaryTable, containerTable, volumeTable},
 			Loot:  lootFiles,
 		},
 	); err != nil {
@@ -332,11 +341,17 @@ func ListJobs(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	if len(outputRows) > 0 {
-		logger.InfoM(fmt.Sprintf("%d jobs found | Risk: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
-			len(outputRows),
-			riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"]),
-			globals.K8S_JOBS_MODULE_NAME)
+	if len(summaryRows) > 0 {
+		logger.InfoM(fmt.Sprintf("%d jobs found", len(summaryRows)), globals.K8S_JOBS_MODULE_NAME)
+		logger.InfoM(fmt.Sprintf("Risk Summary: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
+			riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low), globals.K8S_JOBS_MODULE_NAME)
+
+		if riskCounts.Critical > 0 {
+			logger.InfoM(fmt.Sprintf("⚠️  %d CRITICAL risk jobs detected!", riskCounts.Critical), globals.K8S_JOBS_MODULE_NAME)
+		}
+		if riskCounts.High > 0 {
+			logger.InfoM(fmt.Sprintf("⚠️  %d HIGH risk jobs detected!", riskCounts.High), globals.K8S_JOBS_MODULE_NAME)
+		}
 	} else {
 		logger.InfoM("No jobs found, skipping output file creation", globals.K8S_JOBS_MODULE_NAME)
 	}
@@ -370,7 +385,7 @@ func analyzeJob(ctx context.Context, clientset *kubernetes.Clientset, job *batch
 		finding.BackoffLimit = *job.Spec.BackoffLimit
 	}
 
-	podSpec := &job.Spec.Template.Spec
+	podSpec := job.Spec.Template.Spec
 
 	// Analyze status
 	finding.Status, finding.Duration = analyzeJobStatus(job)
@@ -384,23 +399,138 @@ func analyzeJob(ctx context.Context, clientset *kubernetes.Clientset, job *batch
 		finding.CompletionTime = job.Status.CompletionTime.Format(time.RFC3339)
 	}
 
-	// Container analysis
-	finding.Containers, finding.Images, finding.ImageTagTypes = analyzeContainers(podSpec.Containers)
-	finding.InitContainers, _, _ = analyzeContainers(podSpec.InitContainers)
-
-	// Security context analysis
-	finding.Privileged, finding.RunAsUser, finding.RunAsNonRoot, finding.Capabilities, finding.DangerousCaps, finding.AllowPrivEsc, finding.ReadOnlyRootFS = analyzeSecurityContext(podSpec)
-
-	// Volume analysis
-	finding.Secrets, finding.ConfigMaps, finding.HostPaths, finding.SensitiveHostPaths, finding.WritableHostPaths = analyzeVolumes(podSpec)
-
 	// Host namespaces
 	finding.HostPID = podSpec.HostPID
 	finding.HostIPC = podSpec.HostIPC
 	finding.HostNetwork = podSpec.HostNetwork
 
+	// ServiceAccount
+	finding.ServiceAccount = podSpec.ServiceAccountName
+	if finding.ServiceAccount == "" {
+		finding.ServiceAccount = "default"
+	}
+	if podSpec.AutomountServiceAccountToken != nil {
+		finding.AutomountSAToken = *podSpec.AutomountServiceAccountToken
+	} else {
+		finding.AutomountSAToken = true // default is true
+	}
+
+	// Extract containers, commands, args, images
+	var containers []JobContainer
+	var initContainers []JobContainer
+	var allCommands []string
+	var allArgs []string
+	var allImages []string
+	var capabilities []string
+	privileged := false
+	runAsUser := "N/A"
+
+	// Process main containers
+	for _, c := range podSpec.Containers {
+		container := parseJobContainer(c, &privileged, &runAsUser, &capabilities)
+		containers = append(containers, container)
+		allImages = append(allImages, c.Image)
+		allCommands = append(allCommands, c.Command...)
+		allArgs = append(allArgs, c.Args...)
+	}
+
+	// Process init containers
+	for _, c := range podSpec.InitContainers {
+		container := parseJobContainer(c, &privileged, &runAsUser, &capabilities)
+		initContainers = append(initContainers, container)
+		allImages = append(allImages, c.Image)
+		allCommands = append(allCommands, c.Command...)
+		allArgs = append(allArgs, c.Args...)
+	}
+
+	finding.Containers = containers
+	finding.InitContainers = initContainers
+	finding.Images = allImages
+	finding.Privileged = privileged
+	finding.RunAsUser = runAsUser
+	finding.Capabilities = capabilities
+
+	// Determine image tag types
+	for _, img := range allImages {
+		if strings.HasSuffix(img, ":latest") || !strings.Contains(img, ":") {
+			finding.ImageTagTypes = append(finding.ImageTagTypes, "latest")
+		} else if strings.Contains(img, "@sha256:") {
+			finding.ImageTagTypes = append(finding.ImageTagTypes, "sha256")
+		} else {
+			finding.ImageTagTypes = append(finding.ImageTagTypes, "pinned")
+		}
+	}
+
+	// Extract volumes and hostPaths
+	var volumes []JobVolume
+	var hostPaths []string
+	var secrets []string
+	var configMaps []string
+	for _, v := range podSpec.Volumes {
+		volume := JobVolume{
+			Name: v.Name,
+		}
+
+		// Determine volume type and source
+		if v.HostPath != nil {
+			volume.VolumeType = "HostPath"
+			volume.Source = v.HostPath.Path
+			hostPaths = append(hostPaths, v.HostPath.Path)
+		} else if v.Secret != nil {
+			volume.VolumeType = "Secret"
+			volume.Source = v.Secret.SecretName
+			secrets = append(secrets, v.Secret.SecretName)
+		} else if v.ConfigMap != nil {
+			volume.VolumeType = "ConfigMap"
+			volume.Source = v.ConfigMap.Name
+			configMaps = append(configMaps, v.ConfigMap.Name)
+		} else if v.EmptyDir != nil {
+			volume.VolumeType = "EmptyDir"
+			volume.Source = "-"
+		} else if v.PersistentVolumeClaim != nil {
+			volume.VolumeType = "PVC"
+			volume.Source = v.PersistentVolumeClaim.ClaimName
+		} else if v.Projected != nil {
+			volume.VolumeType = "Projected"
+			volume.Source = "-"
+		} else if v.DownwardAPI != nil {
+			volume.VolumeType = "DownwardAPI"
+			volume.Source = "-"
+		} else {
+			volume.VolumeType = "Other"
+			volume.Source = "-"
+		}
+
+		// Find mount path and read-only status
+		for _, container := range podSpec.Containers {
+			for _, vm := range container.VolumeMounts {
+				if vm.Name == v.Name {
+					volume.MountPath = vm.MountPath
+					volume.ReadOnly = vm.ReadOnly
+					break
+				}
+			}
+		}
+
+		volumes = append(volumes, volume)
+	}
+	finding.Volumes = volumes
+	finding.HostPaths = hostPaths
+	finding.Secrets = secrets
+	finding.ConfigMaps = configMaps
+
+	// Check for sensitive host paths
+	for _, hp := range hostPaths {
+		if isSensitiveHostPath(hp) {
+			finding.SensitiveHostPaths = append(finding.SensitiveHostPaths, hp)
+		}
+		if isWritableMount(hp, podSpec.Volumes, podSpec.Containers) {
+			finding.WritableHostPaths++
+		}
+	}
+
 	// Resource limits
-	finding.HasResourceLimits, finding.ResourceLimits = analyzeResourceLimits(podSpec)
+	finding.HasResourceLimits, finding.ResourceLimits = analyzeResourceLimits(&podSpec)
 
 	// Job-specific
 	finding.RestartPolicy = string(podSpec.RestartPolicy)
@@ -414,29 +544,55 @@ func analyzeJob(ctx context.Context, clientset *kubernetes.Clientset, job *batch
 	// CronJob detection
 	finding.FromCronJob, finding.CronJobName = detectCronJob(job)
 
-	// ServiceAccount
-	finding.ServiceAccount = podSpec.ServiceAccountName
-	if finding.ServiceAccount == "" {
-		finding.ServiceAccount = "default"
-	}
-	if podSpec.AutomountServiceAccountToken != nil {
-		finding.AutomountSAToken = *podSpec.AutomountServiceAccountToken
-	} else {
-		finding.AutomountSAToken = true // default is true
+	// Extract Image Pull Secrets
+	for _, ips := range podSpec.ImagePullSecrets {
+		finding.ImagePullSecrets = append(finding.ImagePullSecrets, ips.Name)
 	}
 
-	// Command analysis
-	finding.DangerousCommands = analyzeDangerousCommands(podSpec)
+	// Extract Affinity
+	finding.Affinity = k8sinternal.PrettyPrintAffinity(podSpec.Affinity)
+
+	// Extract Tolerations with full details
+	for _, t := range podSpec.Tolerations {
+		var tolParts []string
+		if t.Key != "" {
+			tolParts = append(tolParts, t.Key)
+		}
+		if t.Value != "" {
+			tolParts = append(tolParts, fmt.Sprintf("=%s", t.Value))
+		}
+		if t.Effect != "" {
+			tolParts = append(tolParts, fmt.Sprintf(":%s", t.Effect))
+		}
+		if t.Operator != "" {
+			tolParts = append(tolParts, fmt.Sprintf(" (%s)", t.Operator))
+		}
+		if t.TolerationSeconds != nil {
+			tolParts = append(tolParts, fmt.Sprintf(" [%ds]", *t.TolerationSeconds))
+		}
+		if len(tolParts) > 0 {
+			finding.Tolerations = append(finding.Tolerations, strings.Join(tolParts, ""))
+		}
+	}
 
 	// Cloud role detection
-	roleResults := k8sinternal.DetectCloudRole(ctx, clientset, job.Namespace, podSpec.ServiceAccountName, podSpec, job.Spec.Template.Annotations)
+	roleResults := k8sinternal.DetectCloudRole(ctx, clientset, job.Namespace, podSpec.ServiceAccountName, &podSpec, job.Spec.Template.Annotations)
 	if len(roleResults) > 0 {
 		finding.CloudProvider = roleResults[0].Provider
 		finding.CloudRole = roleResults[0].Role
-	} else {
-		finding.CloudProvider = "<NONE>"
-		finding.CloudRole = "<NONE>"
 	}
+
+	// Run suspicious pattern detection using shared functions
+	finding.ReverseShells = shared.DetectReverseShells(allCommands, allArgs)
+	finding.CryptoMiners = shared.DetectCryptoMiners(allCommands, allArgs, allImages)
+	finding.DataExfiltration = shared.DetectDataExfiltration(allCommands, allArgs)
+	finding.ContainerEscape = shared.DetectContainerEscape(allCommands, allArgs, hostPaths)
+
+	// Combine all backdoor patterns
+	finding.BackdoorPatterns = append(finding.BackdoorPatterns, finding.ReverseShells...)
+	finding.BackdoorPatterns = append(finding.BackdoorPatterns, finding.CryptoMiners...)
+	finding.BackdoorPatterns = append(finding.BackdoorPatterns, finding.DataExfiltration...)
+	finding.BackdoorPatterns = append(finding.BackdoorPatterns, finding.ContainerEscape...)
 
 	// Metadata
 	finding.Labels = k8sinternal.MapToStringList(job.Labels)
@@ -449,6 +605,89 @@ func analyzeJob(ctx context.Context, clientset *kubernetes.Clientset, job *batch
 	finding.RiskLevel = calculateJobRiskLevel(finding)
 
 	return finding
+}
+
+// parseJobContainer extracts container details including security context
+func parseJobContainer(c corev1.Container, privileged *bool, runAsUser *string, capabilities *[]string) JobContainer {
+	// Parse image into components
+	image := c.Image
+	tag := "latest"
+	registry := "docker.io"
+
+	if strings.Contains(image, ":") {
+		parts := strings.SplitN(image, ":", 2)
+		image = parts[0]
+		tag = parts[1]
+	}
+	if strings.Contains(image, "/") {
+		parts := strings.Split(image, "/")
+		if strings.Contains(parts[0], ".") || parts[0] == "localhost" {
+			registry = parts[0]
+		}
+	}
+
+	// Security context - per container
+	containerPrivileged := false
+	var containerCaps []string
+	containerRunAsUser := "N/A"
+	containerAllowPrivEsc := "N/A"
+	containerReadOnlyRootFS := "N/A"
+
+	if c.SecurityContext != nil {
+		if c.SecurityContext.Privileged != nil && *c.SecurityContext.Privileged {
+			containerPrivileged = true
+			*privileged = true
+		}
+		if c.SecurityContext.RunAsUser != nil {
+			uid := *c.SecurityContext.RunAsUser
+			if uid == 0 {
+				containerRunAsUser = "root"
+				*runAsUser = "root"
+			} else {
+				containerRunAsUser = fmt.Sprintf("%d", uid)
+				*runAsUser = fmt.Sprintf("%d", uid)
+			}
+		}
+		if c.SecurityContext.AllowPrivilegeEscalation != nil {
+			containerAllowPrivEsc = fmt.Sprintf("%v", *c.SecurityContext.AllowPrivilegeEscalation)
+		}
+		if c.SecurityContext.ReadOnlyRootFilesystem != nil {
+			containerReadOnlyRootFS = fmt.Sprintf("%v", *c.SecurityContext.ReadOnlyRootFilesystem)
+		}
+		if c.SecurityContext.Capabilities != nil {
+			for _, cap := range c.SecurityContext.Capabilities.Add {
+				containerCaps = append(containerCaps, string(cap))
+				*capabilities = append(*capabilities, string(cap))
+			}
+		}
+	}
+
+	// Extract resource limits
+	var resourceParts []string
+	if c.Resources.Limits != nil {
+		if cpu := c.Resources.Limits.Cpu(); cpu != nil && !cpu.IsZero() {
+			resourceParts = append(resourceParts, fmt.Sprintf("cpu:%s", cpu.String()))
+		}
+		if mem := c.Resources.Limits.Memory(); mem != nil && !mem.IsZero() {
+			resourceParts = append(resourceParts, fmt.Sprintf("mem:%s", mem.String()))
+		}
+	}
+	resourceLimits := strings.Join(resourceParts, ", ")
+
+	return JobContainer{
+		Name:           c.Name,
+		Image:          c.Image,
+		Tag:            tag,
+		Registry:       registry,
+		Command:        strings.Join(c.Command, " "),
+		Args:           strings.Join(c.Args, " "),
+		Privileged:     containerPrivileged,
+		Capabilities:   containerCaps,
+		RunAsUser:      containerRunAsUser,
+		AllowPrivEsc:   containerAllowPrivEsc,
+		ReadOnlyRootFS: containerReadOnlyRootFS,
+		ResourceLimits: resourceLimits,
+	}
 }
 
 // ====================
@@ -503,138 +742,6 @@ func calculateFailureRate(job *batchv1.Job) float64 {
 	return float64(job.Status.Failed) / float64(total)
 }
 
-func analyzeContainers(containers []corev1.Container) ([]string, []string, []string) {
-	var containerNames []string
-	var images []string
-	var imageTagTypes []string
-
-	for _, c := range containers {
-		containerNames = append(containerNames, fmt.Sprintf("%s:%s", c.Name, c.Image))
-		images = append(images, c.Image)
-
-		// Determine image tag type
-		if strings.HasSuffix(c.Image, ":latest") || !strings.Contains(c.Image, ":") {
-			imageTagTypes = append(imageTagTypes, "latest")
-		} else if strings.Contains(c.Image, "@sha256:") {
-			imageTagTypes = append(imageTagTypes, "sha256")
-		} else {
-			imageTagTypes = append(imageTagTypes, "pinned")
-		}
-	}
-
-	return containerNames, images, imageTagTypes
-}
-
-func analyzeSecurityContext(podSpec *corev1.PodSpec) (bool, string, bool, []string, []string, bool, bool) {
-	privileged := false
-	runAsUser := "N/A"
-	runAsNonRoot := false
-	var capabilities []string
-	var dangerousCaps []string
-	allowPrivEsc := true // default is true
-	readOnlyRootFS := false
-
-	// Pod-level security context
-	if podSpec.SecurityContext != nil {
-		if podSpec.SecurityContext.RunAsUser != nil {
-			uid := *podSpec.SecurityContext.RunAsUser
-			if uid == 0 {
-				runAsUser = "root"
-			} else {
-				runAsUser = fmt.Sprintf("%d", uid)
-			}
-		}
-		if podSpec.SecurityContext.RunAsNonRoot != nil {
-			runAsNonRoot = *podSpec.SecurityContext.RunAsNonRoot
-		}
-	}
-
-	// Container-level security context (overrides pod-level)
-	for _, c := range podSpec.Containers {
-		if c.SecurityContext != nil {
-			if c.SecurityContext.Privileged != nil && *c.SecurityContext.Privileged {
-				privileged = true
-			}
-			if c.SecurityContext.RunAsUser != nil {
-				uid := *c.SecurityContext.RunAsUser
-				if uid == 0 {
-					runAsUser = "root"
-				} else {
-					runAsUser = fmt.Sprintf("%d", uid)
-				}
-			}
-			if c.SecurityContext.RunAsNonRoot != nil {
-				runAsNonRoot = *c.SecurityContext.RunAsNonRoot
-			}
-			if c.SecurityContext.AllowPrivilegeEscalation != nil {
-				allowPrivEsc = *c.SecurityContext.AllowPrivilegeEscalation
-			}
-			if c.SecurityContext.ReadOnlyRootFilesystem != nil {
-				readOnlyRootFS = *c.SecurityContext.ReadOnlyRootFilesystem
-			}
-			if c.SecurityContext.Capabilities != nil {
-				for _, cap := range c.SecurityContext.Capabilities.Add {
-					capStr := string(cap)
-					capabilities = append(capabilities, capStr)
-					if isDangerousCap(capStr) {
-						dangerousCaps = append(dangerousCaps, capStr)
-					}
-				}
-			}
-		}
-	}
-
-	// If runAsUser not set and not runAsNonRoot, assume root
-	if runAsUser == "N/A" && !runAsNonRoot {
-		runAsUser = "root"
-	}
-
-	return privileged, runAsUser, runAsNonRoot, capabilities, dangerousCaps, allowPrivEsc, readOnlyRootFS
-}
-
-func isDangerousCap(cap string) bool {
-	dangerousCaps := []string{
-		"SYS_ADMIN", "SYS_MODULE", "SYS_RAWIO", "SYS_PTRACE",
-		"SYS_BOOT", "MAC_ADMIN", "MAC_OVERRIDE", "DAC_OVERRIDE",
-		"DAC_READ_SEARCH", "NET_ADMIN", "NET_RAW",
-	}
-	for _, dangerous := range dangerousCaps {
-		if strings.EqualFold(cap, dangerous) {
-			return true
-		}
-	}
-	return false
-}
-
-func analyzeVolumes(podSpec *corev1.PodSpec) ([]string, []string, []string, []string, int) {
-	var secrets []string
-	var configMaps []string
-	var hostPaths []string
-	var sensitiveHostPaths []string
-	writableHostPaths := 0
-
-	for _, v := range podSpec.Volumes {
-		if v.Secret != nil {
-			secrets = append(secrets, v.Secret.SecretName)
-		}
-		if v.ConfigMap != nil {
-			configMaps = append(configMaps, v.ConfigMap.Name)
-		}
-		if v.HostPath != nil {
-			hostPaths = append(hostPaths, v.HostPath.Path)
-			if isSensitiveHostPath(v.HostPath.Path) {
-				sensitiveHostPaths = append(sensitiveHostPaths, v.HostPath.Path)
-			}
-			// Check if mounted as writable
-			if isWritableMount(v.Name, podSpec.Containers) {
-				writableHostPaths++
-			}
-		}
-	}
-
-	return secrets, configMaps, hostPaths, sensitiveHostPaths, writableHostPaths
-}
-
 func isSensitiveHostPath(path string) bool {
 	sensitivePaths := []string{
 		"/var/run/docker.sock",
@@ -656,7 +763,20 @@ func isSensitiveHostPath(path string) bool {
 	return false
 }
 
-func isWritableMount(volumeName string, containers []corev1.Container) bool {
+func isWritableMount(hostPath string, volumes []corev1.Volume, containers []corev1.Container) bool {
+	// Find volume name for this hostPath
+	var volumeName string
+	for _, v := range volumes {
+		if v.HostPath != nil && v.HostPath.Path == hostPath {
+			volumeName = v.Name
+			break
+		}
+	}
+	if volumeName == "" {
+		return false
+	}
+
+	// Check if any container mounts it as writable
 	for _, c := range containers {
 		for _, vm := range c.VolumeMounts {
 			if vm.Name == volumeName && !vm.ReadOnly {
@@ -698,51 +818,24 @@ func detectCronJob(job *batchv1.Job) (bool, string) {
 	return false, ""
 }
 
-var dangerousCommandPatterns = []struct {
-	pattern     *regexp.Regexp
-	description string
-}{
-	{regexp.MustCompile(`bash\s+-i\s+>&\s+/dev/tcp/`), "Reverse shell (bash)"},
-	{regexp.MustCompile(`nc\s+-e\s+/bin/(ba)?sh`), "Reverse shell (netcat)"},
-	{regexp.MustCompile(`python.*-c.*socket`), "Reverse shell (python)"},
-	{regexp.MustCompile(`perl.*socket`), "Reverse shell (perl)"},
-	{regexp.MustCompile(`xmrig|ethminer|minerd|cpuminer`), "Crypto mining"},
-	{regexp.MustCompile(`curl.*\|\s*bash|wget.*\|\s*sh`), "Download and execute"},
-	{regexp.MustCompile(`base64\s+-d.*\|\s*(ba)?sh`), "Base64 encoded execution"},
-	{regexp.MustCompile(`eval\s*\$\(echo.*base64`), "Eval base64 payload"},
-	{regexp.MustCompile(`kubectl\s+get\s+secrets?`), "Secret extraction"},
-	{regexp.MustCompile(`aws\s+s3\s+(cp|sync)`), "AWS data exfiltration"},
-	{regexp.MustCompile(`nmap|masscan|nikto`), "Network scanning"},
-	{regexp.MustCompile(`sqlmap|hydra|john`), "Hacking tools"},
-	{regexp.MustCompile(`/var/run/secrets/kubernetes.io`), "ServiceAccount token access"},
-}
-
-func analyzeDangerousCommands(podSpec *corev1.PodSpec) []string {
-	var dangerous []string
-	seen := make(map[string]bool)
-
-	// Check container commands and args
-	allContainers := append(podSpec.Containers, podSpec.InitContainers...)
-	for _, c := range allContainers {
-		commandStr := strings.Join(append(c.Command, c.Args...), " ")
-
-		for _, pattern := range dangerousCommandPatterns {
-			if pattern.pattern.MatchString(commandStr) {
-				if !seen[pattern.description] {
-					dangerous = append(dangerous, pattern.description)
-					seen[pattern.description] = true
-				}
-			}
-		}
-	}
-
-	return dangerous
-}
-
 func analyzeJobSecurityIssues(finding JobFinding) []string {
 	var issues []string
 
-	// CRITICAL issues
+	// CRITICAL issues - malicious activity detected
+	if len(finding.ReverseShells) > 0 {
+		issues = append(issues, fmt.Sprintf("CRITICAL: Reverse shell patterns: %s", strings.Join(finding.ReverseShells, ", ")))
+	}
+	if len(finding.CryptoMiners) > 0 {
+		issues = append(issues, fmt.Sprintf("CRITICAL: Crypto mining patterns: %s", strings.Join(finding.CryptoMiners, ", ")))
+	}
+	if len(finding.DataExfiltration) > 0 {
+		issues = append(issues, fmt.Sprintf("CRITICAL: Data exfiltration patterns: %s", strings.Join(finding.DataExfiltration, ", ")))
+	}
+	if len(finding.ContainerEscape) > 0 {
+		issues = append(issues, fmt.Sprintf("CRITICAL: Container escape patterns: %s", strings.Join(finding.ContainerEscape, ", ")))
+	}
+
+	// CRITICAL issues - security context
 	if finding.Privileged {
 		issues = append(issues, "Privileged container")
 	}
@@ -758,28 +851,26 @@ func analyzeJobSecurityIssues(finding JobFinding) []string {
 	if len(finding.SensitiveHostPaths) > 0 {
 		issues = append(issues, fmt.Sprintf("Sensitive hostPath mounts: %s", strings.Join(finding.SensitiveHostPaths, ", ")))
 	}
-	if len(finding.DangerousCaps) > 0 {
-		issues = append(issues, fmt.Sprintf("Dangerous capabilities: %s", strings.Join(finding.DangerousCaps, ", ")))
-	}
-	if len(finding.DangerousCommands) > 0 {
-		issues = append(issues, fmt.Sprintf("Dangerous commands detected: %s", strings.Join(finding.DangerousCommands, ", ")))
+
+	// Check for dangerous capabilities
+	dangerousCaps := []string{"SYS_ADMIN", "SYS_MODULE", "SYS_RAWIO", "SYS_PTRACE", "DAC_READ_SEARCH", "NET_ADMIN"}
+	for _, cap := range finding.Capabilities {
+		for _, dangerousCap := range dangerousCaps {
+			if strings.EqualFold(cap, dangerousCap) {
+				issues = append(issues, fmt.Sprintf("Dangerous capability: %s", cap))
+			}
+		}
 	}
 
 	// HIGH issues
 	if finding.RunAsUser == "root" || finding.RunAsUser == "0" {
 		issues = append(issues, "Running as root")
 	}
-	if finding.AllowPrivEsc {
-		issues = append(issues, "allowPrivilegeEscalation not set to false")
-	}
 	if finding.WritableHostPaths > 0 {
 		issues = append(issues, fmt.Sprintf("%d writable hostPath mounts", finding.WritableHostPaths))
 	}
 
 	// MEDIUM issues
-	if !finding.ReadOnlyRootFS {
-		issues = append(issues, "readOnlyRootFilesystem not set to true")
-	}
 	if !finding.HasResourceLimits {
 		issues = append(issues, "No resource limits set")
 	}
@@ -811,416 +902,201 @@ func analyzeJobSecurityIssues(finding JobFinding) []string {
 }
 
 func calculateJobRiskLevel(finding JobFinding) string {
-	riskScore := 0
-
-	// CRITICAL FACTORS (50+ points each)
-	if finding.Privileged && finding.HostNetwork && (finding.RunAsUser == "root" || finding.RunAsUser == "0") {
-		riskScore += 100
+	// CRITICAL: Active backdoors, reverse shells, crypto miners
+	if len(finding.ReverseShells) > 0 {
+		return shared.RiskCritical
 	}
-	if finding.Privileged && finding.WritableHostPaths > 0 {
-		riskScore += 80
+	if len(finding.CryptoMiners) > 0 {
+		return shared.RiskCritical
 	}
-	if len(finding.DangerousCommands) > 0 && finding.Privileged {
-		riskScore += 70
+	if len(finding.ContainerEscape) > 0 {
+		return shared.RiskCritical
 	}
-	if len(finding.SensitiveHostPaths) > 0 && finding.WritableHostPaths > 0 {
-		riskScore += 60
-	}
-	if len(finding.DangerousCaps) > 0 && finding.HostPID {
-		riskScore += 50
-	}
-
-	// HIGH FACTORS (20-40 points each)
-	if finding.Privileged {
-		riskScore += 40
-	}
-	if len(finding.DangerousCaps) > 0 {
-		riskScore += 30
-	}
-	if len(finding.DangerousCommands) > 0 {
-		riskScore += 30
-	}
-	if finding.HostPID || finding.HostIPC {
-		riskScore += 25
-	}
-	if finding.HostNetwork {
-		riskScore += 25
-	}
-	if len(finding.SensitiveHostPaths) > 0 {
-		riskScore += 20
-	}
-	if finding.RunAsUser == "root" || finding.RunAsUser == "0" {
-		riskScore += 20
-	}
-
-	// MEDIUM FACTORS (5-15 points each)
-	if finding.AllowPrivEsc {
-		riskScore += 15
-	}
-	if !finding.HasResourceLimits && finding.Parallelism > 5 {
-		riskScore += 15 // DoS risk
-	}
-	if len(finding.HostPaths) > 0 {
-		riskScore += 10
-	}
-	if finding.WritableHostPaths > 0 {
-		riskScore += 10
-	}
-	for _, tagType := range finding.ImageTagTypes {
-		if tagType == "latest" {
-			riskScore += 8
-			break
+	// Privileged job with hostPath to runtime sockets
+	if finding.Privileged && len(finding.HostPaths) > 0 {
+		for _, hp := range finding.HostPaths {
+			if strings.Contains(hp, "docker.sock") || strings.Contains(hp, "containerd.sock") ||
+				hp == "/" || strings.HasPrefix(hp, "/:") {
+				return shared.RiskCritical
+			}
 		}
 	}
-	if !finding.ReadOnlyRootFS {
-		riskScore += 5
+
+	// HIGH: Data exfiltration, privileged + host access
+	if len(finding.DataExfiltration) > 0 {
+		return shared.RiskHigh
+	}
+	if finding.Privileged && (finding.HostPID || finding.HostIPC) {
+		return shared.RiskHigh
+	}
+	// Check for dangerous capabilities
+	dangerousCaps := []string{"SYS_ADMIN", "SYS_MODULE", "SYS_RAWIO", "SYS_PTRACE", "DAC_READ_SEARCH", "NET_ADMIN"}
+	for _, cap := range finding.Capabilities {
+		for _, dangerousCap := range dangerousCaps {
+			if strings.EqualFold(cap, dangerousCap) {
+				return shared.RiskHigh
+			}
+		}
 	}
 
-	// LOW FACTORS (1-3 points each)
-	if len(finding.Secrets) > 0 {
-		riskScore += 3
+	// MEDIUM: HostNetwork, cloud roles, privileged alone
+	if finding.HostNetwork {
+		return shared.RiskMedium
 	}
-	if !finding.HasResourceLimits {
-		riskScore += 2
+	if finding.CloudRole != "" && finding.CloudRole != "<NONE>" {
+		return shared.RiskMedium
 	}
-	if finding.ServiceAccount == "default" && finding.AutomountSAToken {
-		riskScore += 2
+	if finding.Privileged {
+		return shared.RiskMedium
+	}
+	if finding.HostPID || finding.HostIPC {
+		return shared.RiskMedium
 	}
 
-	// Determine risk level
-	if riskScore >= 50 {
-		return "CRITICAL"
-	} else if riskScore >= 25 {
-		return "HIGH"
-	} else if riskScore >= 10 {
-		return "MEDIUM"
-	}
-	return "LOW"
+	// LOW: Standard job
+	return shared.RiskLow
 }
 
 // ====================
 // Loot File Builders
 // ====================
 
-func buildJobRiskDashboard(findings []JobFinding, riskCounts map[string]int) []string {
-	var lines []string
-	lines = append(lines, `#####################################
-##### Job Risk Statistics Dashboard
-#####################################
-#
-# Summary of job security posture
-#
-`)
+func generateJobLoot(findings []JobFinding, kubeContext string, riskCounts *shared.RiskCounts) []internal.LootFile {
+	var lootContent []string
+	var entrypointsContent []string
 
-	totalJobs := len(findings)
-	lines = append(lines, "\n## Overall Statistics")
-	lines = append(lines, fmt.Sprintf("Total Jobs: %d", totalJobs))
-	lines = append(lines, fmt.Sprintf("CRITICAL Risk: %d", riskCounts["CRITICAL"]))
-	lines = append(lines, fmt.Sprintf("HIGH Risk:     %d", riskCounts["HIGH"]))
-	lines = append(lines, fmt.Sprintf("MEDIUM Risk:   %d", riskCounts["MEDIUM"]))
-	lines = append(lines, fmt.Sprintf("LOW Risk:      %d", riskCounts["LOW"]))
+	// Sort findings by namespace/name
+	sort.Slice(findings, func(i, j int) bool {
+		if findings[i].Namespace != findings[j].Namespace {
+			return findings[i].Namespace < findings[j].Namespace
+		}
+		return findings[i].Name < findings[j].Name
+	})
 
-	// Count various security metrics
-	privilegedCount := 0
-	rootCount := 0
-	failedCount := 0
-	backoffCount := 0
-	noLimitsCount := 0
-	dangerousCmdCount := 0
-	fromCronJobCount := 0
+	// ========================================
+	// Jobs-Commands.txt - Consolidated commands
+	// ========================================
+	lootContent = append(lootContent, "########################################")
+	lootContent = append(lootContent, "##### Jobs Commands")
+	lootContent = append(lootContent, "########################################")
+	lootContent = append(lootContent, "")
 
+	if kubeContext != "" {
+		lootContent = append(lootContent, fmt.Sprintf("kubectl config use-context %s", kubeContext))
+		lootContent = append(lootContent, "")
+	}
+
+	// === ENUMERATION ===
+	lootContent = append(lootContent, "=== ENUMERATION ===")
+	lootContent = append(lootContent, "")
+	lootContent = append(lootContent, "# List all jobs")
+	lootContent = append(lootContent, "kubectl get jobs -A -o wide")
+	lootContent = append(lootContent, "")
+	lootContent = append(lootContent, "# Find privileged jobs")
+	lootContent = append(lootContent, "kubectl get jobs -A -o json | jq -r '.items[] | select(.spec.template.spec.containers[]?.securityContext?.privileged == true) | \"\\(.metadata.namespace)/\\(.metadata.name)\"'")
+	lootContent = append(lootContent, "")
+	lootContent = append(lootContent, "# Find jobs with hostPath volumes")
+	lootContent = append(lootContent, "kubectl get jobs -A -o json | jq -r '.items[] | select(.spec.template.spec.volumes[]?.hostPath != null) | \"\\(.metadata.namespace)/\\(.metadata.name)\"'")
+	lootContent = append(lootContent, "")
+	lootContent = append(lootContent, "# Find failed jobs")
+	lootContent = append(lootContent, "kubectl get jobs -A -o json | jq -r '.items[] | select(.status.failed > 0) | \"\\(.metadata.namespace)/\\(.metadata.name) - Failed: \\(.status.failed)\"'")
+	lootContent = append(lootContent, "")
+
+	// === HIGH RISK ===
+	var hasHighRisk bool
 	for _, f := range findings {
-		if f.Privileged {
-			privilegedCount++
-		}
-		if f.RunAsUser == "root" || f.RunAsUser == "0" {
-			rootCount++
-		}
-		if f.Status == "Failed" || f.Status == "Backoff" {
-			failedCount++
-		}
-		if f.Status == "Backoff" {
-			backoffCount++
-		}
-		if !f.HasResourceLimits {
-			noLimitsCount++
-		}
-		if len(f.DangerousCommands) > 0 {
-			dangerousCmdCount++
-		}
-		if f.FromCronJob {
-			fromCronJobCount++
-		}
-	}
-
-	lines = append(lines, "\n## Security Posture")
-	lines = append(lines, fmt.Sprintf("Privileged Jobs: %d", privilegedCount))
-	lines = append(lines, fmt.Sprintf("Running as Root: %d", rootCount))
-	lines = append(lines, fmt.Sprintf("Failed/Backoff: %d", failedCount))
-	lines = append(lines, fmt.Sprintf("Jobs in Backoff: %d", backoffCount))
-	lines = append(lines, fmt.Sprintf("No Resource Limits: %d", noLimitsCount))
-	lines = append(lines, fmt.Sprintf("Dangerous Commands: %d", dangerousCmdCount))
-	lines = append(lines, fmt.Sprintf("From CronJobs: %d", fromCronJobCount))
-
-	lines = append(lines, "\n## Recommendations")
-	if riskCounts["CRITICAL"] > 0 {
-		lines = append(lines, fmt.Sprintf("⚠️  URGENT: %d CRITICAL jobs require immediate investigation", riskCounts["CRITICAL"]))
-	}
-	if privilegedCount > 0 {
-		lines = append(lines, fmt.Sprintf("⚠️  WARNING: %d privileged jobs detected", privilegedCount))
-	}
-	if dangerousCmdCount > 0 {
-		lines = append(lines, fmt.Sprintf("⚠️  WARNING: %d jobs with dangerous commands", dangerousCmdCount))
-	}
-	if backoffCount > 0 {
-		lines = append(lines, fmt.Sprintf("⚠️  WARNING: %d jobs stuck in backoff (investigate failures)", backoffCount))
-	}
-
-	return lines
-}
-
-func buildFailuresLoot(findings []JobFinding) []string {
-	var lines []string
-	lines = append(lines, `#####################################
-##### Job Failures Analysis
-#####################################
-#
-# Failed jobs and backoff situations
-#
-`)
-
-	hasFailures := false
-	for _, f := range findings {
-		if f.Status == "Failed" || f.Status == "Backoff" || f.Failed > 0 {
-			hasFailures = true
-			lines = append(lines, fmt.Sprintf("\n## [%s] %s/%s", f.RiskLevel, f.Namespace, f.Name))
-			lines = append(lines, fmt.Sprintf("Status: %s", f.Status))
-			lines = append(lines, fmt.Sprintf("Failed: %d | Succeeded: %d | Failure Rate: %.1f%%", f.Failed, f.Succeeded, f.FailureRate*100))
-			lines = append(lines, fmt.Sprintf("Backoff Limit: %d", f.BackoffLimit))
+		if f.RiskLevel == shared.RiskCritical || f.RiskLevel == shared.RiskHigh {
+			if !hasHighRisk {
+				lootContent = append(lootContent, "=== HIGH RISK ===")
+				lootContent = append(lootContent, "")
+				hasHighRisk = true
+			}
+			lootContent = append(lootContent, fmt.Sprintf("# [%s] %s/%s", f.RiskLevel, f.Namespace, f.Name))
+			lootContent = append(lootContent, fmt.Sprintf("kubectl get job %s -n %s -o yaml", f.Name, f.Namespace))
+			lootContent = append(lootContent, fmt.Sprintf("kubectl describe job %s -n %s", f.Name, f.Namespace))
 			if len(f.SecurityIssues) > 0 {
-				lines = append(lines, "Security Issues:")
 				for _, issue := range f.SecurityIssues {
-					lines = append(lines, fmt.Sprintf("  - %s", issue))
+					lootContent = append(lootContent, fmt.Sprintf("#   - %s", issue))
 				}
 			}
-			lines = append(lines, "\n# Investigation commands:")
-			lines = append(lines, fmt.Sprintf("kubectl describe job %s -n %s", f.Name, f.Namespace))
-			lines = append(lines, fmt.Sprintf("kubectl get pods -n %s -l job-name=%s", f.Namespace, f.Name))
-			lines = append(lines, fmt.Sprintf("kubectl logs -n %s -l job-name=%s --tail=100", f.Namespace, f.Name))
-			lines = append(lines, "")
+			lootContent = append(lootContent, "")
 		}
 	}
 
-	if !hasFailures {
-		lines = append(lines, "\n# No failed jobs detected")
-	}
-
-	return lines
-}
-
-func buildHighRiskLoot(findings []JobFinding) []string {
-	var lines []string
-	lines = append(lines, `#####################################
-##### High Risk Jobs
-#####################################
-#
-# CRITICAL and HIGH risk jobs requiring immediate attention
-#
-`)
-
-	hasHighRisk := false
+	// === SECRETS ACCESS ===
+	var hasSecrets bool
 	for _, f := range findings {
-		if f.RiskLevel == "CRITICAL" || f.RiskLevel == "HIGH" {
-			hasHighRisk = true
-			lines = append(lines, fmt.Sprintf("\n### [%s] %s/%s", f.RiskLevel, f.Namespace, f.Name))
-			lines = append(lines, fmt.Sprintf("Status: %s | Duration: %s", f.Status, f.Duration))
-
-			if f.Privileged {
-				lines = append(lines, "⚠️  PRIVILEGED CONTAINER")
+		if len(f.Secrets) > 0 {
+			if !hasSecrets {
+				lootContent = append(lootContent, "=== SECRETS ACCESS ===")
+				lootContent = append(lootContent, "")
+				hasSecrets = true
 			}
-			if f.RunAsUser == "root" {
-				lines = append(lines, "⚠️  RUNNING AS ROOT")
+			lootContent = append(lootContent, fmt.Sprintf("# %s/%s - Secrets: %s", f.Namespace, f.Name, strings.Join(f.Secrets, ", ")))
+			for _, secret := range f.Secrets {
+				lootContent = append(lootContent, fmt.Sprintf("kubectl get secret %s -n %s -o yaml", secret, f.Namespace))
 			}
-			if len(f.DangerousCommands) > 0 {
-				lines = append(lines, fmt.Sprintf("⚠️  DANGEROUS COMMANDS: %s", strings.Join(f.DangerousCommands, ", ")))
-			}
-
-			lines = append(lines, "\nSecurity Issues:")
-			for _, issue := range f.SecurityIssues {
-				lines = append(lines, fmt.Sprintf("  - %s", issue))
-			}
-
-			if len(f.SensitiveHostPaths) > 0 {
-				lines = append(lines, fmt.Sprintf("\nSensitive HostPaths: %s", strings.Join(f.SensitiveHostPaths, ", ")))
-			}
-
-			lines = append(lines, "\n# Exploitation / Investigation:")
-			lines = append(lines, fmt.Sprintf("kubectl get job %s -n %s -o yaml", f.Name, f.Namespace))
-			lines = append(lines, fmt.Sprintf("kubectl get pods -n %s -l job-name=%s -o wide", f.Namespace, f.Name))
-			if f.Status == "Running" {
-				lines = append(lines, fmt.Sprintf("# Exec into running pod:"))
-				lines = append(lines, fmt.Sprintf("POD=$(kubectl get pods -n %s -l job-name=%s -o jsonpath='{.items[0].metadata.name}')", f.Namespace, f.Name))
-				lines = append(lines, fmt.Sprintf("kubectl exec -it -n %s $POD -- /bin/sh", f.Namespace))
-			}
-			lines = append(lines, "")
+			lootContent = append(lootContent, "")
 		}
 	}
 
-	if !hasHighRisk {
-		lines = append(lines, "\n# No CRITICAL or HIGH risk jobs detected")
-	}
-
-	return lines
-}
-
-func buildSecretsLoot(findings []JobFinding) []string {
-	var lines []string
-	lines = append(lines, `#####################################
-##### Jobs with Secret Access
-#####################################
-#
-# Jobs accessing secrets or ServiceAccount tokens
-#
-`)
-
-	hasSecrets := false
-	for _, f := range findings {
-		if len(f.Secrets) > 0 || f.AutomountSAToken {
-			hasSecrets = true
-			lines = append(lines, fmt.Sprintf("\n## [%s] %s/%s", f.RiskLevel, f.Namespace, f.Name))
-			lines = append(lines, fmt.Sprintf("ServiceAccount: %s (AutomountToken: %v)", f.ServiceAccount, f.AutomountSAToken))
-			if len(f.Secrets) > 0 {
-				lines = append(lines, fmt.Sprintf("Mounted Secrets: %s", strings.Join(f.Secrets, ", ")))
-				lines = append(lines, "\n# Extract secrets:")
-				for _, secret := range f.Secrets {
-					lines = append(lines, fmt.Sprintf("kubectl get secret %s -n %s -o yaml", secret, f.Namespace))
-				}
-			}
-			if f.AutomountSAToken {
-				lines = append(lines, "\n# ServiceAccount token location in pod:")
-				lines = append(lines, "# /var/run/secrets/kubernetes.io/serviceaccount/token")
-				if f.Status == "Running" {
-					lines = append(lines, fmt.Sprintf("POD=$(kubectl get pods -n %s -l job-name=%s -o jsonpath='{.items[0].metadata.name}')", f.Namespace, f.Name))
-					lines = append(lines, fmt.Sprintf("kubectl exec -n %s $POD -- cat /var/run/secrets/kubernetes.io/serviceaccount/token", f.Namespace))
-				}
-			}
-			lines = append(lines, "")
-		}
-	}
-
-	if !hasSecrets {
-		lines = append(lines, "\n# No jobs with explicit secret access detected")
-	}
-
-	return lines
-}
-
-func buildCronJobsLoot(findings []JobFinding) []string {
-	var lines []string
-	lines = append(lines, `#####################################
-##### CronJob to Job Mapping
-#####################################
-#
-# Jobs created by CronJobs
-#
-`)
-
+	// === CRONJOB MAPPING ===
 	cronJobMap := make(map[string][]JobFinding)
 	for _, f := range findings {
 		if f.FromCronJob {
 			cronJobMap[f.CronJobName] = append(cronJobMap[f.CronJobName], f)
 		}
 	}
-
 	if len(cronJobMap) > 0 {
+		lootContent = append(lootContent, "=== CRONJOB MAPPING ===")
+		lootContent = append(lootContent, "")
 		for cronJob, jobs := range cronJobMap {
-			lines = append(lines, fmt.Sprintf("\n## CronJob: %s", cronJob))
-			lines = append(lines, fmt.Sprintf("Job Count: %d", len(jobs)))
-
+			lootContent = append(lootContent, fmt.Sprintf("# CronJob: %s - Job Count: %d", cronJob, len(jobs)))
 			for _, job := range jobs {
-				lines = append(lines, fmt.Sprintf("  - [%s] %s/%s (Status: %s, Duration: %s)",
-					job.RiskLevel, job.Namespace, job.Name, job.Status, job.Duration))
+				lootContent = append(lootContent, fmt.Sprintf("#   - [%s] %s/%s (Status: %s)", job.RiskLevel, job.Namespace, job.Name, job.Status))
 			}
-
-			// Show CronJob details
 			if len(jobs) > 0 {
 				ns := jobs[0].Namespace
-				lines = append(lines, fmt.Sprintf("\n# CronJob details:"))
-				lines = append(lines, fmt.Sprintf("kubectl get cronjob %s -n %s -o yaml", cronJob, ns))
-				lines = append(lines, fmt.Sprintf("kubectl describe cronjob %s -n %s", cronJob, ns))
+				lootContent = append(lootContent, fmt.Sprintf("kubectl get cronjob %s -n %s -o yaml", cronJob, ns))
 			}
-			lines = append(lines, "")
+			lootContent = append(lootContent, "")
 		}
-	} else {
-		lines = append(lines, "\n# No CronJob-managed jobs detected")
 	}
 
-	// List one-time jobs
-	var oneTimeJobs []JobFinding
+	// ========================================
+	// Job-Entrypoints.txt - Container startup commands
+	// ========================================
+	entrypointsContent = append(entrypointsContent, "########################################")
+	entrypointsContent = append(entrypointsContent, "##### Job Container Entrypoints")
+	entrypointsContent = append(entrypointsContent, "########################################")
+	entrypointsContent = append(entrypointsContent, "# Only containers with commands or args are shown")
+	entrypointsContent = append(entrypointsContent, "")
+
 	for _, f := range findings {
-		if !f.FromCronJob {
-			oneTimeJobs = append(oneTimeJobs, f)
-		}
-	}
-
-	if len(oneTimeJobs) > 0 {
-		lines = append(lines, fmt.Sprintf("\n## One-Time Jobs (not from CronJobs): %d", len(oneTimeJobs)))
-		for _, job := range oneTimeJobs {
-			lines = append(lines, fmt.Sprintf("  - [%s] %s/%s", job.RiskLevel, job.Namespace, job.Name))
-		}
-	}
-
-	return lines
-}
-
-func buildLongRunningLoot(findings []JobFinding) []string {
-	var lines []string
-	lines = append(lines, `#####################################
-##### Long Running Jobs Analysis
-#####################################
-#
-# Jobs with unusual duration patterns
-#
-`)
-
-	hasLongRunning := false
-	for _, f := range findings {
-		// Consider jobs running > 1 hour or never completing
-		if f.Status == "Running" && f.StartTime != "" {
-			startTime, err := time.Parse(time.RFC3339, f.StartTime)
-			if err == nil {
-				duration := time.Since(startTime)
-				if duration > time.Hour {
-					hasLongRunning = true
-					lines = append(lines, fmt.Sprintf("\n## [%s] %s/%s", f.RiskLevel, f.Namespace, f.Name))
-					lines = append(lines, fmt.Sprintf("Status: %s", f.Status))
-					lines = append(lines, fmt.Sprintf("Running Duration: %s", jobsFormatDuration(duration)))
-					lines = append(lines, fmt.Sprintf("Start Time: %s", f.StartTime))
-
-					if f.ActiveDeadline > 0 {
-						lines = append(lines, fmt.Sprintf("Active Deadline: %ds", f.ActiveDeadline))
-					} else {
-						lines = append(lines, "⚠️  WARNING: No active deadline set (job can run forever)")
-					}
-
-					if len(f.DangerousCommands) > 0 {
-						lines = append(lines, fmt.Sprintf("⚠️  SUSPICIOUS: Dangerous commands detected: %s", strings.Join(f.DangerousCommands, ", ")))
-						lines = append(lines, "⚠️  Possible crypto mining or malicious activity")
-					}
-
-					lines = append(lines, "\n# Investigation:")
-					lines = append(lines, fmt.Sprintf("kubectl get pods -n %s -l job-name=%s", f.Namespace, f.Name))
-					lines = append(lines, fmt.Sprintf("kubectl top pods -n %s -l job-name=%s", f.Namespace, f.Name))
-					lines = append(lines, fmt.Sprintf("kubectl logs -n %s -l job-name=%s --tail=50", f.Namespace, f.Name))
-					lines = append(lines, "")
+		var containerEntries []string
+		for _, c := range f.Containers {
+			if c.Command != "" || c.Args != "" {
+				containerEntries = append(containerEntries, fmt.Sprintf("Container: %s", c.Name))
+				containerEntries = append(containerEntries, fmt.Sprintf("  Image: %s", c.Image))
+				if c.Command != "" {
+					containerEntries = append(containerEntries, fmt.Sprintf("  Command: %s", c.Command))
 				}
+				if c.Args != "" {
+					containerEntries = append(containerEntries, fmt.Sprintf("  Args: %s", c.Args))
+				}
+				containerEntries = append(containerEntries, "")
 			}
+		}
+
+		if len(containerEntries) > 0 {
+			entrypointsContent = append(entrypointsContent, fmt.Sprintf("=== %s/%s ===", f.Namespace, f.Name))
+			entrypointsContent = append(entrypointsContent, "")
+			entrypointsContent = append(entrypointsContent, containerEntries...)
 		}
 	}
 
-	if !hasLongRunning {
-		lines = append(lines, "\n# No long-running jobs detected (>1 hour)")
+	return []internal.LootFile{
+		{Name: "Jobs-Commands", Contents: strings.Join(lootContent, "\n")},
+		{Name: "Job-Entrypoints", Contents: strings.Join(entrypointsContent, "\n")},
 	}
-
-	return lines
 }

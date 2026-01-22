@@ -12,6 +12,7 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/spf13/cobra"
 	v1 "k8s.io/api/core/v1"
@@ -135,7 +136,8 @@ type SecretCertificateInfo struct {
 }
 
 func ListSecrets(cmd *cobra.Command, args []string) {
-	ctx := context.Background()
+	ctx, cancel := shared.ContextWithTimeout()
+	defer cancel()
 	logger := internal.NewLogger()
 
 	parentCmd := cmd.Parent()
@@ -148,18 +150,14 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	// Get all namespaces
-	namespaces, err := clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Error listing namespaces: %v", err), globals.K8S_SECRETS_MODULE_NAME)
-		return
-	}
+	// Get target namespaces
+	namespaces := shared.GetTargetNamespaces(ctx, clientset, &logger, globals.K8S_SECRETS_MODULE_NAME)
 
 	// Get all pods for active exposure analysis
 	logger.InfoM("Analyzing active secret exposure in pods...", globals.K8S_SECRETS_MODULE_NAME)
 	allPods := []v1.Pod{}
-	for _, ns := range namespaces.Items {
-		pods, err := clientset.CoreV1().Pods(ns.Name).List(ctx, metav1.ListOptions{})
+	for _, ns := range namespaces {
+		pods, err := clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
 		if err != nil {
 			continue
 		}
@@ -220,165 +218,135 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 	logger.InfoM("Analyzing secrets and calculating risk scores...", globals.K8S_SECRETS_MODULE_NAME)
 
 	headers := []string{
-		"Risk", "Risk Score", "Namespace", "Name", "Type", "Age (days)",
+		"Namespace", "Name", "Type", "Age (days)",
 		"Mounted In", "RBAC Access", "Patterns", "Data Size", "Key Count",
 		"Is Unused", "Needs Rotation", "Cert Expiry (days)", "Security Issues",
 	}
 	var outputRows [][]string
 	var findings []SecretFinding
 
-	// Risk level counters
-	riskCounts := map[string]int{
-		"CRITICAL": 0,
-		"HIGH":     0,
-		"MEDIUM":   0,
-		"LOW":      0,
-	}
+	// Risk level counters using shared type
+	riskCounts := shared.NewRiskCounts()
 
-	// Loot files
+	// Loot builder using shared pattern
+	loot := shared.NewLootBuilder()
 	namespaceLootEnum := map[string][]string{}
-	var lootDecode []string
-	var lootPatterns []string
-	var lootCloudCreds []string
-	var lootActiveExposure []string
-	var lootExploitation []string
-	var lootRBACAccess []string
-	var lootSATokens []string
-	var lootUnused []string
-	var lootCertExpiry []string
-	var lootOldStale []string
-	var lootWeakCreds []string
-	var lootSecretSprawl []string
-	var lootRemediation []string
 
-	// Initialize loot headers
-	lootDecode = append(lootDecode, `#####################################
+	// Initialize loot sections with headers
+	loot.Section("Secrets-Decode").SetHeader(`#####################################
 ##### Decode Secret Values
 #####################################
 #
 # Extract and decode all secret values
 # WARNING: Contains sensitive data
-#
-`)
+#`)
 
-	lootPatterns = append(lootPatterns, `#####################################
+	loot.Section("Secrets-Pattern-Analysis").SetHeader(`#####################################
 ##### Secret Pattern Analysis
 #####################################
 #
 # Analyze secrets for sensitive patterns
 # Potential credentials, keys, and tokens
-#
-`)
+#`)
 
-	lootCloudCreds = append(lootCloudCreds, `#####################################
+	loot.Section("Secrets-Cloud-Credentials").SetHeader(`#####################################
 ##### Cloud Credential Usage
 #####################################
 #
 # MANUAL EXECUTION REQUIRED
 # Use extracted cloud credentials
-#
-`)
+#`)
 
-	lootActiveExposure = append(lootActiveExposure, `#####################################
+	loot.Section("Secrets-Active-Exposure").SetHeader(`#####################################
 ##### Active Secret Exposure
 #####################################
 #
 # Secrets mounted in running pods
 # Direct access via pod exec
-#
-`)
+#`)
 
-	lootExploitation = append(lootExploitation, `#####################################
+	loot.Section("Secrets-Exploitation").SetHeader(`#####################################
 ##### Secret Exploitation Techniques
 #####################################
 #
 # MANUAL EXECUTION REQUIRED
 # Techniques for extracting and using secrets
-#
-`)
+#`)
 
-	lootRBACAccess = append(lootRBACAccess, `#####################################
+	loot.Section("Secrets-RBAC-Access").SetHeader(`#####################################
 ##### RBAC Secret Access Analysis
 #####################################
 #
 # ANALYSIS REPORT
 # ServiceAccounts with secret read permissions
 # Shows blast radius of secret accessibility
-#
-`)
+#`)
 
-	lootSATokens = append(lootSATokens, `#####################################
+	loot.Section("Secrets-ServiceAccount-Tokens").SetHeader(`#####################################
 ##### ServiceAccount Token Exploitation
 #####################################
 #
 # MANUAL EXECUTION REQUIRED
 # Extract and test ServiceAccount tokens
-#
-`)
+#`)
 
-	lootUnused = append(lootUnused, `#####################################
+	loot.Section("Secrets-Unused-Orphaned").SetHeader(`#####################################
 ##### Unused/Orphaned Secrets
 #####################################
 #
 # ANALYSIS REPORT
 # Secrets not mounted in any pod
 # Cleanup candidates
-#
-`)
+#`)
 
-	lootCertExpiry = append(lootCertExpiry, `#####################################
+	loot.Section("Secrets-Certificate-Expiration").SetHeader(`#####################################
 ##### Certificate Expiration Tracking
 #####################################
 #
 # ANALYSIS REPORT
 # TLS certificate expiration monitoring
-#
-`)
+#`)
 
-	lootOldStale = append(lootOldStale, `#####################################
+	loot.Section("Secrets-Old-Stale").SetHeader(`#####################################
 ##### Old and Stale Secrets
 #####################################
 #
 # ANALYSIS REPORT
 # Secrets older than 180 days
 # Rotation recommended
-#
-`)
+#`)
 
-	lootWeakCreds = append(lootWeakCreds, `#####################################
+	loot.Section("Secrets-Weak-Credentials").SetHeader(`#####################################
 ##### Weak Credential Detection
 #####################################
 #
 # ANALYSIS REPORT
 # Potentially weak passwords and API keys
-#
-`)
+#`)
 
-	lootSecretSprawl = append(lootSecretSprawl, `#####################################
+	loot.Section("Secrets-Secret-Sprawl").SetHeader(`#####################################
 ##### Secret Sprawl Detection
 #####################################
 #
 # ANALYSIS REPORT
 # Duplicate credentials across namespaces
-#
-`)
+#`)
 
-	lootRemediation = append(lootRemediation, `#####################################
+	loot.Section("Secrets-Remediation").SetHeader(`#####################################
 ##### Secret Remediation Guide
 #####################################
 #
 # REMEDIATION STEPS
 # How to fix secret security issues
-#
-`)
+#`)
 
 	// Track secret data for sprawl detection
 	secretDataHashes := make(map[string][]string) // hash -> list of secret names
 
-	for _, ns := range namespaces.Items {
-		secrets, err := clientset.CoreV1().Secrets(ns.Name).List(ctx, metav1.ListOptions{})
+	for _, ns := range namespaces {
+		secrets, err := clientset.CoreV1().Secrets(ns).List(ctx, metav1.ListOptions{})
 		if err != nil {
-			logger.ErrorM(fmt.Sprintf("Error listing secrets in namespace: %v", err), globals.K8S_SECRETS_MODULE_NAME)
+			shared.LogListError(&logger, "secrets", ns, err, globals.K8S_SECRETS_MODULE_NAME, false)
 			continue
 		}
 
@@ -401,7 +369,7 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 
 			// Create finding
 			finding := SecretFinding{
-				Namespace:   ns.Name,
+				Namespace:   ns,
 				Name:        secret.Name,
 				Type:        string(secret.Type),
 				DataKeys:    dataKeys,
@@ -431,7 +399,7 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 			finding.PrivateKeys = k8sinternal.HasPrivateKeys(finding.Type, dataKeys)
 
 			// Check active exposure in pods
-			secretKey := fmt.Sprintf("%s/%s", ns.Name, secret.Name)
+			secretKey := fmt.Sprintf("%s/%s", ns, secret.Name)
 			if pods, found := secretToPods[secretKey]; found {
 				finding.MountedInPods = k8sinternal.UniqueStrings(pods)
 				finding.MountType = secretMountType[secretKey]
@@ -444,10 +412,10 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 			finding.NeedsRotation = (ageDays > 180)
 
 			// RBAC analysis for this secret
-			finding.AccessibleBySAs = getAccessibleServiceAccounts(rbacBindings, ns.Name)
+			finding.AccessibleBySAs = getAccessibleServiceAccounts(rbacBindings, ns)
 			finding.RBACAccessCount = len(finding.AccessibleBySAs)
-			finding.OverPrivilegedAccess = hasOverPrivilegedAccess(rbacBindings, ns.Name)
-			finding.PubliclyAccessible = hasPublicAccess(rbacBindings, ns.Name)
+			finding.OverPrivilegedAccess = hasOverPrivilegedAccess(rbacBindings, ns)
+			finding.PubliclyAccessible = hasPublicAccess(rbacBindings, ns)
 
 			// TLS certificate analysis
 			if secret.Type == v1.SecretTypeTLS {
@@ -480,7 +448,7 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 			// Secret sprawl detection (track secret data hashes)
 			for key, data := range secret.Data {
 				dataHash := fmt.Sprintf("%x", data) // Simple hash
-				secretRef := fmt.Sprintf("%s/%s[%s]", ns.Name, secret.Name, key)
+				secretRef := fmt.Sprintf("%s/%s[%s]", ns, secret.Name, key)
 				secretDataHashes[dataHash] = append(secretDataHashes[dataHash], secretRef)
 			}
 
@@ -490,7 +458,7 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 			// Calculate risk score and level
 			finding.RiskLevel, finding.RiskScore = calculateSecretRiskScore(&finding)
 
-			riskCounts[finding.RiskLevel]++
+			riskCounts.Add(finding.RiskLevel)
 			findings = append(findings, finding)
 
 			// Build output row
@@ -519,9 +487,7 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 			}
 
 			outputRows = append(outputRows, []string{
-				finding.RiskLevel,
-				fmt.Sprintf("%d", finding.RiskScore),
-				ns.Name,
+				ns,
 				secret.Name,
 				finding.Type,
 				fmt.Sprintf("%d", ageDays),
@@ -537,37 +503,38 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 			})
 
 			// Generate loot content
-			generateSecretLootContent(&finding, &secret, dataKeys,
-				&namespaceLootEnum, &lootDecode, &lootPatterns, &lootCloudCreds,
-				&lootActiveExposure, &lootRBACAccess, &lootSATokens, &lootUnused,
-				&lootCertExpiry, &lootOldStale, &lootRemediation)
+			generateSecretLootContent(&finding, &secret, dataKeys, &namespaceLootEnum, loot)
 		}
 	}
 
 	// Generate secret sprawl report
 	for _, refs := range secretDataHashes {
 		if len(refs) > 1 {
-			lootSecretSprawl = append(lootSecretSprawl, fmt.Sprintf("\n### Duplicate secret data found in %d locations:", len(refs)))
+			sprawl := loot.Section("Secrets-Secret-Sprawl")
+			sprawl.Addf("\n### Duplicate secret data found in %d locations:", len(refs))
 			for _, ref := range refs {
-				lootSecretSprawl = append(lootSecretSprawl, fmt.Sprintf("  - %s", ref))
+				sprawl.Addf("  - %s", ref)
 			}
-			lootSecretSprawl = append(lootSecretSprawl, "# Consider consolidating to a single secret source")
-			lootSecretSprawl = append(lootSecretSprawl, "")
+			sprawl.Add("# Consider consolidating to a single secret source")
+			sprawl.AddBlank()
 		}
 	}
 
 	// Generate exploitation techniques
-	lootExploitation = append(lootExploitation, generateExploitationTechniques()...)
+	exploitTechniques := generateExploitationTechniques()
+	for _, technique := range exploitTechniques {
+		loot.Section("Secrets-Exploitation").Add(technique)
+	}
 
 	// Build loot enum
-	var lootEnum []string
-	lootEnum = append(lootEnum, `#####################################
+	enumSection := loot.Section("Secrets-Enum")
+	enumSection.SetHeader(`#####################################
 ##### Enumerate Secrets
 #####################################
 
 `)
 	if globals.KubeContext != "" {
-		lootEnum = append(lootEnum, fmt.Sprintf("kubectl config use-context %s\n", globals.KubeContext))
+		enumSection.Addf("kubectl config use-context %s\n", globals.KubeContext)
 	}
 
 	nsListEnum := make([]string, 0, len(namespaceLootEnum))
@@ -576,23 +543,15 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 	}
 	sort.Strings(nsListEnum)
 	for _, ns := range nsListEnum {
-		lootEnum = append(lootEnum, fmt.Sprintf("\n# Namespace: %s\n", ns))
-		lootEnum = append(lootEnum, namespaceLootEnum[ns]...)
+		enumSection.Addf("\n# Namespace: %s", ns)
+		for _, cmd := range namespaceLootEnum[ns] {
+			enumSection.Add(cmd)
+		}
 	}
 
-	// Add risk summary
-	summary := fmt.Sprintf(`
-# SUMMARY: Risk Distribution
-# CRITICAL: %d secrets
-# HIGH: %d secrets
-# MEDIUM: %d secrets
-# LOW: %d secrets
-#
-# Total secrets: %d
-# Focus on CRITICAL and HIGH risk secrets first
-`, riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"], len(findings))
-
-	lootActiveExposure = append([]string{summary}, lootActiveExposure...)
+	// Add risk summary to key sections
+	summary := shared.RiskSummaryLoot(riskCounts)
+	loot.Section("Secrets-Active-Exposure").SetSummary(summary)
 
 	table := internal.TableFile{
 		Name:   "Secrets",
@@ -600,22 +559,8 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 		Body:   outputRows,
 	}
 
-	lootFiles := []internal.LootFile{
-		{Name: "Secrets-Enum", Contents: strings.Join(k8sinternal.Unique(lootEnum), "\n")},
-		{Name: "Secrets-Decode", Contents: strings.Join(lootDecode, "\n")},
-		{Name: "Secrets-Pattern-Analysis", Contents: strings.Join(lootPatterns, "\n")},
-		{Name: "Secrets-Cloud-Credentials", Contents: strings.Join(lootCloudCreds, "\n")},
-		{Name: "Secrets-Active-Exposure", Contents: strings.Join(lootActiveExposure, "\n")},
-		{Name: "Secrets-Exploitation", Contents: strings.Join(lootExploitation, "\n")},
-		{Name: "Secrets-RBAC-Access", Contents: strings.Join(lootRBACAccess, "\n")},
-		{Name: "Secrets-ServiceAccount-Tokens", Contents: strings.Join(lootSATokens, "\n")},
-		{Name: "Secrets-Unused-Orphaned", Contents: strings.Join(lootUnused, "\n")},
-		{Name: "Secrets-Certificate-Expiration", Contents: strings.Join(lootCertExpiry, "\n")},
-		{Name: "Secrets-Old-Stale", Contents: strings.Join(lootOldStale, "\n")},
-		{Name: "Secrets-Weak-Credentials", Contents: strings.Join(lootWeakCreds, "\n")},
-		{Name: "Secrets-Secret-Sprawl", Contents: strings.Join(lootSecretSprawl, "\n")},
-		{Name: "Secrets-Remediation", Contents: strings.Join(lootRemediation, "\n")},
-	}
+	// Build loot files from builder
+	lootFiles := loot.Build()
 
 	if err := internal.HandleOutput(
 		"Kubernetes",
@@ -636,12 +581,12 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 	}
 
 	if len(outputRows) > 0 {
-		if riskCounts["CRITICAL"] > 0 || riskCounts["HIGH"] > 0 {
+		if riskCounts.Critical > 0 || riskCounts.High > 0 {
 			logger.InfoM(fmt.Sprintf("%d secrets found | Risk: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
-				len(outputRows), riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"]),
+				len(outputRows), riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low),
 				globals.K8S_SECRETS_MODULE_NAME)
 		} else {
-			logger.InfoM(fmt.Sprintf("%d secrets found across %d namespaces", len(outputRows), len(namespaces.Items)), globals.K8S_SECRETS_MODULE_NAME)
+			logger.InfoM(fmt.Sprintf("%d secrets found across %d namespaces", len(outputRows), len(namespaces)), globals.K8S_SECRETS_MODULE_NAME)
 		}
 	} else {
 		logger.InfoM("No secrets found, skipping output file creation", globals.K8S_SECRETS_MODULE_NAME)
@@ -959,9 +904,7 @@ func stringListOrNoneSecret(list []string) string {
 }
 
 func generateSecretLootContent(finding *SecretFinding, secret *v1.Secret, dataKeys []string,
-	namespaceLootEnum *map[string][]string,
-	lootDecode, lootPatterns, lootCloudCreds, lootActiveExposure,
-	lootRBACAccess, lootSATokens, lootUnused, lootCertExpiry, lootOldStale, lootRemediation *[]string) {
+	namespaceLootEnum *map[string][]string, loot *shared.LootBuilder) {
 
 	secretID := fmt.Sprintf("%s/%s", finding.Namespace, finding.Name)
 
@@ -974,137 +917,147 @@ func generateSecretLootContent(finding *SecretFinding, secret *v1.Secret, dataKe
 	)
 
 	// Decode commands
-	*lootDecode = append(*lootDecode, fmt.Sprintf("\n# [%s] Secret: %s (Type: %s)", finding.RiskLevel, secretID, finding.Type))
+	decode := loot.Section("Secrets-Decode")
+	decode.Addf("\n# [%s] Secret: %s (Type: %s)", finding.RiskLevel, secretID, finding.Type)
 	if len(finding.SensitivePatterns) > 0 {
-		*lootDecode = append(*lootDecode, fmt.Sprintf("# Patterns: %s", strings.Join(finding.SensitivePatterns, ", ")))
+		decode.Addf("# Patterns: %s", strings.Join(finding.SensitivePatterns, ", "))
 	}
 	for _, key := range dataKeys {
-		*lootDecode = append(*lootDecode, fmt.Sprintf("kubectl get secret %s -n %s -o jsonpath='{.data.%s}' | base64 -d", finding.Name, finding.Namespace, key))
+		decode.Addf("kubectl get secret %s -n %s -o jsonpath='{.data.%s}' | base64 -d", finding.Name, finding.Namespace, key)
 	}
-	*lootDecode = append(*lootDecode, "")
+	decode.AddBlank()
 
 	// Active exposure analysis
 	if len(finding.MountedInPods) > 0 {
-		*lootActiveExposure = append(*lootActiveExposure, fmt.Sprintf("\n# [%s] %s -> %d pods (%s mount)", finding.RiskLevel, secretID, len(finding.MountedInPods), finding.MountType))
+		exposure := loot.Section("Secrets-Active-Exposure")
+		exposure.Addf("\n# [%s] %s -> %d pods (%s mount)", finding.RiskLevel, secretID, len(finding.MountedInPods), finding.MountType)
 		if len(finding.SensitivePatterns) > 0 {
-			*lootActiveExposure = append(*lootActiveExposure, fmt.Sprintf("# Contains: %s", strings.Join(finding.SensitivePatterns, ", ")))
+			exposure.Addf("# Contains: %s", strings.Join(finding.SensitivePatterns, ", "))
 		}
 		for _, pod := range finding.MountedInPods {
 			parts := strings.Split(pod, "/")
 			if len(parts) == 2 {
-				*lootActiveExposure = append(*lootActiveExposure, fmt.Sprintf("kubectl exec -n %s %s -- sh -c 'ls -la /var/run/secrets/ || env | grep -i secret || env'", parts[0], parts[1]))
+				exposure.Addf("kubectl exec -n %s %s -- sh -c 'ls -la /var/run/secrets/ || env | grep -i secret || env'", parts[0], parts[1])
 			}
 		}
-		*lootActiveExposure = append(*lootActiveExposure, "")
+		exposure.AddBlank()
 	}
 
 	// RBAC access analysis
 	if finding.RBACAccessCount > 0 {
-		*lootRBACAccess = append(*lootRBACAccess, fmt.Sprintf("\n### %s - Accessible by %d ServiceAccounts", secretID, finding.RBACAccessCount))
+		rbac := loot.Section("Secrets-RBAC-Access")
+		rbac.Addf("\n### %s - Accessible by %d ServiceAccounts", secretID, finding.RBACAccessCount)
 		if finding.PubliclyAccessible {
-			*lootRBACAccess = append(*lootRBACAccess, "  - PUBLICLY ACCESSIBLE (system:authenticated)")
+			rbac.Add("  - PUBLICLY ACCESSIBLE (system:authenticated)")
 		}
 		if finding.OverPrivilegedAccess {
-			*lootRBACAccess = append(*lootRBACAccess, "  - Over-privileged access (admin/edit roles)")
+			rbac.Add("  - Over-privileged access (admin/edit roles)")
 		}
 		for i, sa := range finding.AccessibleBySAs {
 			if i < 10 {
-				*lootRBACAccess = append(*lootRBACAccess, fmt.Sprintf("  - %s", sa))
+				rbac.Addf("  - %s", sa)
 			}
 		}
 		if len(finding.AccessibleBySAs) > 10 {
-			*lootRBACAccess = append(*lootRBACAccess, fmt.Sprintf("  - ... and %d more", len(finding.AccessibleBySAs)-10))
+			rbac.Addf("  - ... and %d more", len(finding.AccessibleBySAs)-10)
 		}
-		*lootRBACAccess = append(*lootRBACAccess, "")
+		rbac.AddBlank()
 	}
 
 	// ServiceAccount token analysis
 	if finding.IsSAToken {
-		*lootSATokens = append(*lootSATokens, fmt.Sprintf("\n### %s - ServiceAccount: %s/%s", secretID, finding.SANamespace, finding.SAName))
-		*lootSATokens = append(*lootSATokens, fmt.Sprintf("TOKEN=$(kubectl get secret %s -n %s -o jsonpath='{.data.token}' | base64 -d)", finding.Name, finding.Namespace))
-		*lootSATokens = append(*lootSATokens, "kubectl auth can-i --list --token=$TOKEN")
-		*lootSATokens = append(*lootSATokens, "")
+		saTokens := loot.Section("Secrets-ServiceAccount-Tokens")
+		saTokens.Addf("\n### %s - ServiceAccount: %s/%s", secretID, finding.SANamespace, finding.SAName)
+		saTokens.Addf("TOKEN=$(kubectl get secret %s -n %s -o jsonpath='{.data.token}' | base64 -d)", finding.Name, finding.Namespace)
+		saTokens.Add("kubectl auth can-i --list --token=$TOKEN")
+		saTokens.AddBlank()
 	}
 
 	// Unused secrets
 	if finding.IsUnused {
-		*lootUnused = append(*lootUnused, fmt.Sprintf("\n### %s - Age: %d days", secretID, finding.AgeDays))
-		*lootUnused = append(*lootUnused, fmt.Sprintf("  - Not mounted in any pod"))
-		*lootUnused = append(*lootUnused, fmt.Sprintf("  - Accessible by %d ServiceAccounts", finding.RBACAccessCount))
+		unused := loot.Section("Secrets-Unused-Orphaned")
+		unused.Addf("\n### %s - Age: %d days", secretID, finding.AgeDays)
+		unused.Add("  - Not mounted in any pod")
+		unused.Addf("  - Accessible by %d ServiceAccounts", finding.RBACAccessCount)
 		if finding.AgeDays > 180 {
-			*lootUnused = append(*lootUnused, fmt.Sprintf("  - OLD: Created %d days ago", finding.AgeDays))
+			unused.Addf("  - OLD: Created %d days ago", finding.AgeDays)
 		}
-		*lootUnused = append(*lootUnused, "  - Consider deletion if truly unused")
-		*lootUnused = append(*lootUnused, fmt.Sprintf("  # kubectl delete secret %s -n %s", finding.Name, finding.Namespace))
-		*lootUnused = append(*lootUnused, "")
+		unused.Add("  - Consider deletion if truly unused")
+		unused.Addf("  # kubectl delete secret %s -n %s", finding.Name, finding.Namespace)
+		unused.AddBlank()
 	}
 
 	// Certificate expiration
 	if finding.IsTLS {
-		*lootCertExpiry = append(*lootCertExpiry, fmt.Sprintf("\n### %s", secretID))
-		*lootCertExpiry = append(*lootCertExpiry, fmt.Sprintf("  Subject: %s", finding.CertSubject))
-		*lootCertExpiry = append(*lootCertExpiry, fmt.Sprintf("  Issuer: %s", finding.CertIssuer))
+		certExpiry := loot.Section("Secrets-Certificate-Expiration")
+		certExpiry.Addf("\n### %s", secretID)
+		certExpiry.Addf("  Subject: %s", finding.CertSubject)
+		certExpiry.Addf("  Issuer: %s", finding.CertIssuer)
 		if finding.CertExpired {
-			*lootCertExpiry = append(*lootCertExpiry, "  Status: EXPIRED")
+			certExpiry.Add("  Status: EXPIRED")
 		} else if finding.CertExpiringSoon {
-			*lootCertExpiry = append(*lootCertExpiry, fmt.Sprintf("  Status: Expiring in %d days (URGENT)", finding.CertExpiryDays))
+			certExpiry.Addf("  Status: Expiring in %d days (URGENT)", finding.CertExpiryDays)
 		} else {
-			*lootCertExpiry = append(*lootCertExpiry, fmt.Sprintf("  Expires in: %d days", finding.CertExpiryDays))
+			certExpiry.Addf("  Expires in: %d days", finding.CertExpiryDays)
 		}
 		if finding.CertSelfSigned {
-			*lootCertExpiry = append(*lootCertExpiry, "  Type: Self-signed")
+			certExpiry.Add("  Type: Self-signed")
 		}
-		*lootCertExpiry = append(*lootCertExpiry, "")
+		certExpiry.AddBlank()
 	}
 
 	// Old/stale secrets
 	if finding.AgeDays > 180 {
-		*lootOldStale = append(*lootOldStale, fmt.Sprintf("\n### %s - %d days old", secretID, finding.AgeDays))
-		*lootOldStale = append(*lootOldStale, fmt.Sprintf("  - Created: %s", finding.CreatedAt.Format("2006-01-02")))
+		oldStale := loot.Section("Secrets-Old-Stale")
+		oldStale.Addf("\n### %s - %d days old", secretID, finding.AgeDays)
+		oldStale.Addf("  - Created: %s", finding.CreatedAt.Format("2006-01-02"))
 		if finding.CloudCredentials {
-			*lootOldStale = append(*lootOldStale, "  - Contains cloud credentials (ROTATION RECOMMENDED)")
+			oldStale.Add("  - Contains cloud credentials (ROTATION RECOMMENDED)")
 		}
 		if len(finding.MountedInPods) == 0 {
-			*lootOldStale = append(*lootOldStale, "  - Not currently in use (consider deletion)")
+			oldStale.Add("  - Not currently in use (consider deletion)")
 		}
-		*lootOldStale = append(*lootOldStale, "")
+		oldStale.AddBlank()
 	}
 
 	// Cloud credential patterns
 	if string(finding.Type) == string(v1.SecretTypeDockerConfigJson) {
-		*lootPatterns = append(*lootPatterns, fmt.Sprintf("\n# [%s] DOCKER REGISTRY CREDENTIALS: %s", finding.RiskLevel, secretID))
-		*lootPatterns = append(*lootPatterns, fmt.Sprintf("kubectl get secret %s -n %s -o jsonpath='{.data.\\.dockerconfigjson}' | base64 -d | jq .", finding.Name, finding.Namespace))
-		*lootPatterns = append(*lootPatterns, "")
+		patterns := loot.Section("Secrets-Pattern-Analysis")
+		patterns.Addf("\n# [%s] DOCKER REGISTRY CREDENTIALS: %s", finding.RiskLevel, secretID)
+		patterns.Addf("kubectl get secret %s -n %s -o jsonpath='{.data.\\.dockerconfigjson}' | base64 -d | jq .", finding.Name, finding.Namespace)
+		patterns.AddBlank()
 
-		*lootCloudCreds = append(*lootCloudCreds, fmt.Sprintf("\n# [%s] Docker Registry: %s", finding.RiskLevel, secretID))
-		*lootCloudCreds = append(*lootCloudCreds, fmt.Sprintf("kubectl get secret %s -n %s -o jsonpath='{.data.\\.dockerconfigjson}' | base64 -d > docker-config.json", finding.Name, finding.Namespace))
-		*lootCloudCreds = append(*lootCloudCreds, "# docker login -u <username> -p <password> <registry>")
-		*lootCloudCreds = append(*lootCloudCreds, "")
+		cloudCreds := loot.Section("Secrets-Cloud-Credentials")
+		cloudCreds.Addf("\n# [%s] Docker Registry: %s", finding.RiskLevel, secretID)
+		cloudCreds.Addf("kubectl get secret %s -n %s -o jsonpath='{.data.\\.dockerconfigjson}' | base64 -d > docker-config.json", finding.Name, finding.Namespace)
+		cloudCreds.Add("# docker login -u <username> -p <password> <registry>")
+		cloudCreds.AddBlank()
 	}
 
 	// Remediation
 	if len(finding.SecurityIssues) > 0 {
-		*lootRemediation = append(*lootRemediation, fmt.Sprintf("\n### %s (%d issues)", secretID, len(finding.SecurityIssues)))
+		rem := loot.Section("Secrets-Remediation")
+		rem.Addf("\n### %s (%d issues)", secretID, len(finding.SecurityIssues))
 		for _, issue := range finding.SecurityIssues {
-			*lootRemediation = append(*lootRemediation, fmt.Sprintf("## Issue: %s", issue))
+			rem.Addf("## Issue: %s", issue)
 			switch {
 			case strings.Contains(issue, "PUBLICLY_ACCESSIBLE"):
-				*lootRemediation = append(*lootRemediation, "Remediation: Remove RBAC bindings granting public access")
+				rem.Add("Remediation: Remove RBAC bindings granting public access")
 			case strings.Contains(issue, "RBAC_OVERLY_ACCESSIBLE"):
-				*lootRemediation = append(*lootRemediation, "Remediation: Reduce RBAC permissions, use namespace-scoped Roles")
+				rem.Add("Remediation: Reduce RBAC permissions, use namespace-scoped Roles")
 			case strings.Contains(issue, "OLD_SECRET"):
-				*lootRemediation = append(*lootRemediation, "Remediation: Rotate secret credentials")
+				rem.Add("Remediation: Rotate secret credentials")
 			case strings.Contains(issue, "CERT_EXPIRED"):
-				*lootRemediation = append(*lootRemediation, "Remediation: Renew certificate immediately")
+				rem.Add("Remediation: Renew certificate immediately")
 			case strings.Contains(issue, "CERT_EXPIRING_SOON"):
-				*lootRemediation = append(*lootRemediation, "Remediation: Renew certificate before expiration")
+				rem.Add("Remediation: Renew certificate before expiration")
 			case strings.Contains(issue, "NOT_IMMUTABLE"):
-				*lootRemediation = append(*lootRemediation, "Remediation: Set immutable: true for security and performance")
+				rem.Add("Remediation: Set immutable: true for security and performance")
 			case strings.Contains(issue, "UNUSED_BUT_ACCESSIBLE"):
-				*lootRemediation = append(*lootRemediation, "Remediation: Delete if truly unused, or remove RBAC access")
+				rem.Add("Remediation: Delete if truly unused, or remove RBAC access")
 			}
 		}
-		*lootRemediation = append(*lootRemediation, "")
+		rem.AddBlank()
 	}
 }
 

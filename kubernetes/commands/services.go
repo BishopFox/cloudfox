@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"sort"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -192,7 +192,8 @@ type NetworkPolicyInfo struct {
 }
 
 func ListServices(cmd *cobra.Command, args []string) {
-	ctx := context.Background()
+	ctx, cancel := shared.ContextWithTimeout()
+	defer cancel()
 	logger := internal.NewLogger()
 
 	parentCmd := cmd.Parent()
@@ -205,40 +206,35 @@ func ListServices(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	svcClient := clientset.CoreV1().Services("")
-	endpointsClient := clientset.CoreV1().Endpoints("")
-	podClient := clientset.CoreV1().Pods("")
-
-	services, err := svcClient.List(ctx, metav1.ListOptions{})
+	// Get all Services from target namespaces
+	services, err := clientset.CoreV1().Services(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Error retrieving services: %v", err), globals.K8S_SERVICES_MODULE_NAME)
 		return
 	}
 
 	// Get all Ingresses for correlation
-	allIngresses, err := clientset.NetworkingV1().Ingresses("").List(ctx, metav1.ListOptions{})
+	allIngresses, err := clientset.NetworkingV1().Ingresses(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Warning: Could not list ingresses: %v", err), globals.K8S_SERVICES_MODULE_NAME)
+		shared.LogListError(&logger, "ingresses", "", err, globals.K8S_SERVICES_MODULE_NAME, false)
 		allIngresses = &networkingv1.IngressList{}
 	}
 
 	// Get all NetworkPolicies
-	allNetworkPolicies, err := clientset.NetworkingV1().NetworkPolicies("").List(ctx, metav1.ListOptions{})
+	allNetworkPolicies, err := clientset.NetworkingV1().NetworkPolicies(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Warning: Could not list network policies: %v", err), globals.K8S_SERVICES_MODULE_NAME)
+		shared.LogListError(&logger, "network policies", "", err, globals.K8S_SERVICES_MODULE_NAME, false)
 		allNetworkPolicies = &networkingv1.NetworkPolicyList{}
 	}
 
 	// Get all Pods for backend analysis
-	allPods, err := podClient.List(ctx, metav1.ListOptions{})
+	allPods, err := clientset.CoreV1().Pods(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Warning: Could not list pods: %v", err), globals.K8S_SERVICES_MODULE_NAME)
+		shared.LogListError(&logger, "pods", "", err, globals.K8S_SERVICES_MODULE_NAME, false)
 		allPods = &corev1.PodList{}
 	}
 
 	headers := []string{
-		"Risk",
-		"Score",
 		"Attack Surface",
 		"Namespace",
 		"Service",
@@ -257,125 +253,93 @@ func ListServices(cmd *cobra.Command, args []string) {
 	var outputRows [][]string
 	var findings []ServiceFinding
 
-	// Risk counters
-	riskCounts := map[string]int{
-		"CRITICAL": 0,
-		"HIGH":     0,
-		"MEDIUM":   0,
-		"LOW":      0,
-	}
+	// Risk counters using shared type
+	riskCounts := shared.NewRiskCounts()
 
-	var lootEnum []string
-	var lootTCP []string
-	var lootUDP []string
-	var lootExternalExposure []string
-	var lootDangerousPorts []string
-	var lootLoadBalancers []string
-	var lootNodePorts []string
-	var lootUnprotected []string
-	var lootIngress []string
-	var lootAttackSurface []string
-	var lootRemediation []string
+	// Loot builder using shared pattern
+	loot := shared.NewLootBuilder()
 
-	lootEnum = append(lootEnum, `#####################################
+	loot.Section("Services-Enum").SetHeader(`#####################################
 ##### Service Enumeration
 #####################################
 #
 # Complete service inventory with security analysis
-#
-`)
+#`)
 
-	lootTCP = append(lootTCP, `#####################################
+	loot.Section("Services-TCP").SetHeader(`#####################################
 ##### TCP Service Port-Forward Commands
 #####################################
 #
 # Port-forward to access internal services
-#
-`)
+#`)
 
-	lootUDP = append(lootUDP, `#####################################
+	loot.Section("Services-UDP").SetHeader(`#####################################
 ##### UDP Service Access Commands
 #####################################
 #
 # UDP services require special handling
-#
-`)
+#`)
 
-	lootExternalExposure = append(lootExternalExposure, `#####################################
+	loot.Section("Services-ExternalExposure").SetHeader(`#####################################
 ##### Externally Exposed Services
 #####################################
 #
 # Services accessible from outside the cluster
-# CRITICAL: Review and minimize external exposure
-#
-`)
+#`)
 
-	lootDangerousPorts = append(lootDangerousPorts, `#####################################
+	loot.Section("Services-DangerousPorts").SetHeader(`#####################################
 ##### Dangerous Port Exposure
 #####################################
 #
-# Services exposing administrative, database, or unencrypted protocols
-# HIGH RISK: These ports should not be publicly accessible
-#
-`)
+# Administrative, database, or unencrypted protocols
+#`)
 
-	lootLoadBalancers = append(lootLoadBalancers, `#####################################
+	loot.Section("Services-LoadBalancers").SetHeader(`#####################################
 ##### LoadBalancer Services
 #####################################
 #
 # LoadBalancer services incur cloud provider costs
-# Review for necessity and security
-#
-`)
+#`)
 
-	lootNodePorts = append(lootNodePorts, `#####################################
+	loot.Section("Services-NodePorts").SetHeader(`#####################################
 ##### NodePort Services
 #####################################
 #
 # NodePort services expose on ALL cluster nodes
-# Risk: Bypass ingress controls, direct node access
-#
-`)
+#`)
 
-	lootUnprotected = append(lootUnprotected, `#####################################
+	loot.Section("Services-Unprotected").SetHeader(`#####################################
 ##### Services Without Network Policies
 #####################################
 #
 # Services lacking NetworkPolicy protection
-# RISK: Unrestricted pod-to-pod access
-#
-`)
+#`)
 
-	lootIngress = append(lootIngress, `#####################################
+	loot.Section("Services-Ingress").SetHeader(`#####################################
 ##### Ingress-Exposed Services
 #####################################
 #
 # Services exposed via Ingress resources
-# Review TLS, authentication, and host configurations
-#
-`)
+#`)
 
-	lootAttackSurface = append(lootAttackSurface, `#####################################
+	loot.Section("Services-AttackSurface").SetHeader(`#####################################
 ##### Attack Surface Analysis
 #####################################
 #
-# Services ranked by attack surface (ports × backends × exposure)
-# Prioritize highest attack surface for security review
-#
-`)
+# Services ranked by attack surface
+#`)
 
-	lootRemediation = append(lootRemediation, `#####################################
+	loot.Section("Services-Remediation").SetHeader(`#####################################
 ##### Security Remediation Recommendations
 #####################################
 #
-# Step-by-step fixes for identified security issues
-#
-`)
+# Step-by-step fixes for identified issues
+#`)
 
 	if globals.KubeContext != "" {
-		lootEnum = append(lootEnum, fmt.Sprintf("kubectl config use-context %s\n", globals.KubeContext))
-		lootTCP = append(lootTCP, fmt.Sprintf("kubectl config use-context %s\n", globals.KubeContext))
-		lootUDP = append(lootUDP, fmt.Sprintf("kubectl config use-context %s\n", globals.KubeContext))
+		loot.Section("Services-Enum").Addf("kubectl config use-context %s", globals.KubeContext)
+		loot.Section("Services-TCP").Addf("kubectl config use-context %s", globals.KubeContext)
+		loot.Section("Services-UDP").Addf("kubectl config use-context %s", globals.KubeContext)
 	}
 
 	for _, svc := range services.Items {
@@ -488,7 +452,7 @@ func ListServices(cmd *cobra.Command, args []string) {
 		}
 
 		// Endpoints and backend pod analysis
-		ep, err := endpointsClient.Get(ctx, svc.Name, metav1.GetOptions{})
+		ep, err := clientset.CoreV1().Endpoints(svc.Namespace).Get(ctx, svc.Name, metav1.GetOptions{})
 		if err == nil {
 			for _, subset := range ep.Subsets {
 				finding.EndpointCount += len(subset.Addresses)
@@ -591,7 +555,7 @@ func ListServices(cmd *cobra.Command, args []string) {
 				"CRITICAL: Externally exposed with unrestricted internal access")
 		}
 
-		riskCounts[finding.RiskLevel]++
+		riskCounts.Add(finding.RiskLevel)
 		findings = append(findings, finding)
 
 		// Generate output row
@@ -623,8 +587,6 @@ func ListServices(cmd *cobra.Command, args []string) {
 		}
 
 		outputRows = append(outputRows, []string{
-			finding.RiskLevel,
-			fmt.Sprintf("%d", finding.RiskScore),
 			fmt.Sprintf("%d", finding.AttackSurface),
 			svc.Namespace,
 			svc.Name,
@@ -640,11 +602,8 @@ func ListServices(cmd *cobra.Command, args []string) {
 			fmt.Sprintf("%d", len(finding.SecurityIssues)),
 		})
 
-		// Generate loot content
-		generateServiceLootContent(&finding, &lootEnum, &lootTCP, &lootUDP,
-			&lootExternalExposure, &lootDangerousPorts, &lootLoadBalancers,
-			&lootNodePorts, &lootUnprotected, &lootIngress,
-			&lootAttackSurface, &lootRemediation)
+		// Generate loot content using builder
+		generateServiceLootContent(&finding, loot)
 	}
 
 	// Sort findings by attack surface (descending)
@@ -652,21 +611,11 @@ func ListServices(cmd *cobra.Command, args []string) {
 		return findings[i].AttackSurface > findings[j].AttackSurface
 	})
 
-	// Add summaries
-	if riskCounts["CRITICAL"] > 0 || riskCounts["HIGH"] > 0 {
-		summary := fmt.Sprintf(`
-# SUMMARY: Risk Distribution
-# CRITICAL: %d services
-# HIGH: %d services
-# MEDIUM: %d services
-# LOW: %d services
-#
-# Focus on externally exposed services with dangerous ports.
-# Prioritize by attack surface for efficient security review.
-`, riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"])
-
-		lootExternalExposure = append([]string{summary}, lootExternalExposure...)
-		lootAttackSurface = append([]string{summary}, lootAttackSurface...)
+	// Add risk summary to key sections
+	if riskCounts.Critical > 0 || riskCounts.High > 0 {
+		summary := shared.RiskSummaryLoot(riskCounts)
+		loot.Section("Services-ExternalExposure").SetSummary(summary)
+		loot.Section("Services-AttackSurface").SetSummary(summary)
 	}
 
 	table := internal.TableFile{
@@ -675,52 +624,8 @@ func ListServices(cmd *cobra.Command, args []string) {
 		Body:   outputRows,
 	}
 
-	lootFiles := []internal.LootFile{
-		{
-			Name:     "Services-Enum",
-			Contents: strings.Join(lootEnum, "\n"),
-		},
-		{
-			Name:     "Services-PortForward-TCP",
-			Contents: strings.Join(lootTCP, "\n"),
-		},
-		{
-			Name:     "Services-PortForward-UDP",
-			Contents: strings.Join(lootUDP, "\n"),
-		},
-		{
-			Name:     "Services-External-Exposure",
-			Contents: strings.Join(lootExternalExposure, "\n"),
-		},
-		{
-			Name:     "Services-Dangerous-Ports",
-			Contents: strings.Join(lootDangerousPorts, "\n"),
-		},
-		{
-			Name:     "Services-LoadBalancers",
-			Contents: strings.Join(lootLoadBalancers, "\n"),
-		},
-		{
-			Name:     "Services-NodePorts",
-			Contents: strings.Join(lootNodePorts, "\n"),
-		},
-		{
-			Name:     "Services-Unprotected",
-			Contents: strings.Join(lootUnprotected, "\n"),
-		},
-		{
-			Name:     "Services-Ingress",
-			Contents: strings.Join(lootIngress, "\n"),
-		},
-		{
-			Name:     "Services-Attack-Surface",
-			Contents: strings.Join(lootAttackSurface, "\n"),
-		},
-		{
-			Name:     "Services-Remediation",
-			Contents: strings.Join(lootRemediation, "\n"),
-		},
-	}
+	// Build loot files from builder
+	lootFiles := loot.Build()
 
 	err = internal.HandleOutput(
 		"Kubernetes",
@@ -744,7 +649,7 @@ func ListServices(cmd *cobra.Command, args []string) {
 	if len(outputRows) > 0 {
 		logger.InfoM(fmt.Sprintf("%d services found | Risk: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
 			len(outputRows),
-			riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"]),
+			riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low),
 			globals.K8S_SERVICES_MODULE_NAME)
 	} else {
 		logger.InfoM("No services found, skipping output file creation", globals.K8S_SERVICES_MODULE_NAME)
@@ -1124,154 +1029,127 @@ func generateServiceImpactSummary(finding *ServiceFinding) string {
 	return fmt.Sprintf("%d backend pods", finding.BackendPodCount)
 }
 
-func generateServiceLootContent(finding *ServiceFinding,
-	lootEnum, lootTCP, lootUDP, lootExternalExposure, lootDangerousPorts,
-	lootLoadBalancers, lootNodePorts, lootUnprotected, lootIngress,
-	lootAttackSurface, lootRemediation *[]string) {
-
+func generateServiceLootContent(finding *ServiceFinding, loot *shared.LootBuilder) {
 	ns := finding.Namespace
 	name := finding.Name
 
 	// Enumeration
-	*lootEnum = append(*lootEnum, fmt.Sprintf("\n# [%s] Service: %s/%s", finding.RiskLevel, ns, name))
-	*lootEnum = append(*lootEnum, fmt.Sprintf("# Type: %s | Attack Surface: %d | Backends: %d",
-		finding.Type, finding.AttackSurface, finding.BackendPodCount))
-	*lootEnum = append(*lootEnum, fmt.Sprintf("kubectl get svc %s -n %s -o yaml", name, ns))
-	*lootEnum = append(*lootEnum, fmt.Sprintf("kubectl describe svc %s -n %s", name, ns))
-	*lootEnum = append(*lootEnum, "")
+	loot.Section("Services-Enum").
+		Addf("\n# [%s] Service: %s/%s", finding.RiskLevel, ns, name).
+		Addf("# Type: %s | Attack Surface: %d | Backends: %d", finding.Type, finding.AttackSurface, finding.BackendPodCount).
+		Addf("kubectl get svc %s -n %s -o yaml", name, ns).
+		Addf("kubectl describe svc %s -n %s", name, ns)
 
 	// TCP port-forward
+	tcp := loot.Section("Services-TCP")
 	for _, port := range finding.TCPPorts {
-		*lootTCP = append(*lootTCP, fmt.Sprintf("\n# [%s] %s/%s - Port %d",
-			finding.RiskLevel, ns, name, port))
-		*lootTCP = append(*lootTCP, fmt.Sprintf("kubectl -n %s port-forward svc/%s %d:%d",
-			ns, name, port, port))
+		tcp.Addf("\n# [%s] %s/%s - Port %d", finding.RiskLevel, ns, name, port).
+			Addf("kubectl -n %s port-forward svc/%s %d:%d", ns, name, port, port)
 	}
 
 	// UDP access
+	udp := loot.Section("Services-UDP")
 	for _, port := range finding.UDPPorts {
-		*lootUDP = append(*lootUDP, fmt.Sprintf("\n# [%s] %s/%s - UDP Port %d",
-			finding.RiskLevel, ns, name, port))
-		*lootUDP = append(*lootUDP, fmt.Sprintf("# UDP requires pod with socat or nc"))
-		*lootUDP = append(*lootUDP, fmt.Sprintf("kubectl run udp-test --image=alpine --rm -it -- sh"))
+		udp.Addf("\n# [%s] %s/%s - UDP Port %d", finding.RiskLevel, ns, name, port).
+			Add("# UDP requires pod with socat or nc").
+			Add("kubectl run udp-test --image=alpine --rm -it -- sh")
 	}
 
 	// External exposure
 	if finding.ExternallyExposed {
-		*lootExternalExposure = append(*lootExternalExposure, fmt.Sprintf("\n### [%s] %s/%s",
-			finding.RiskLevel, ns, name))
-		*lootExternalExposure = append(*lootExternalExposure, fmt.Sprintf("# Type: %s | Exposure: %s",
-			finding.Type, strings.Join(finding.ExposureMethods, ",")))
-		*lootExternalExposure = append(*lootExternalExposure, fmt.Sprintf("# Attack Surface: %d | Backends: %d",
-			finding.AttackSurface, finding.BackendPodCount))
-
+		ext := loot.Section("Services-ExternalExposure")
+		ext.Addf("\n### [%s] %s/%s", finding.RiskLevel, ns, name).
+			Addf("# Type: %s | Exposure: %s", finding.Type, strings.Join(finding.ExposureMethods, ",")).
+			Addf("# Attack Surface: %d | Backends: %d", finding.AttackSurface, finding.BackendPodCount)
 		if len(finding.LoadBalancerIPs) > 0 {
-			*lootExternalExposure = append(*lootExternalExposure, fmt.Sprintf("# LoadBalancer IPs: %s",
-				strings.Join(finding.LoadBalancerIPs, ", ")))
+			ext.Addf("# LoadBalancer IPs: %s", strings.Join(finding.LoadBalancerIPs, ", "))
 		}
 		if len(finding.ExternalIPs) > 0 {
-			*lootExternalExposure = append(*lootExternalExposure, fmt.Sprintf("# External IPs: %s",
-				strings.Join(finding.ExternalIPs, ", ")))
+			ext.Addf("# External IPs: %s", strings.Join(finding.ExternalIPs, ", "))
 		}
 		if len(finding.NodePorts) > 0 {
-			*lootExternalExposure = append(*lootExternalExposure, fmt.Sprintf("# NodePorts: %v (accessible on ALL nodes)",
-				finding.NodePorts))
+			ext.Addf("# NodePorts: %v (accessible on ALL nodes)", finding.NodePorts)
 		}
-		*lootExternalExposure = append(*lootExternalExposure, "")
 	}
 
 	// Dangerous ports
 	if len(finding.DangerousPorts) > 0 {
-		*lootDangerousPorts = append(*lootDangerousPorts, fmt.Sprintf("\n### [%s] %s/%s - %d Dangerous Ports",
-			finding.RiskLevel, ns, name, len(finding.DangerousPorts)))
-		*lootDangerousPorts = append(*lootDangerousPorts, fmt.Sprintf("# Exposed: %v | Protected: %v",
-			finding.ExternallyExposed, finding.NetworkPolicyProtected))
+		dp := loot.Section("Services-DangerousPorts")
+		dp.Addf("\n### [%s] %s/%s - %d Dangerous Ports", finding.RiskLevel, ns, name, len(finding.DangerousPorts)).
+			Addf("# Exposed: %v | Protected: %v", finding.ExternallyExposed, finding.NetworkPolicyProtected)
 		for _, port := range finding.DangerousPorts {
-			*lootDangerousPorts = append(*lootDangerousPorts, fmt.Sprintf("# - %s", port))
+			dp.Addf("# - %s", port)
 		}
-		*lootDangerousPorts = append(*lootDangerousPorts, fmt.Sprintf("kubectl -n %s port-forward svc/%s <port>:<port>", ns, name))
-		*lootDangerousPorts = append(*lootDangerousPorts, "")
+		dp.Addf("kubectl -n %s port-forward svc/%s <port>:<port>", ns, name)
 	}
 
 	// LoadBalancers
 	if finding.LoadBalancerCost {
-		*lootLoadBalancers = append(*lootLoadBalancers, fmt.Sprintf("\n### %s/%s - LoadBalancer Service",
-			ns, name))
-		*lootLoadBalancers = append(*lootLoadBalancers, fmt.Sprintf("# IPs: %s",
-			strings.Join(finding.LoadBalancerIPs, ", ")))
-		*lootLoadBalancers = append(*lootLoadBalancers, fmt.Sprintf("# Cost: Cloud provider charges apply"))
-		*lootLoadBalancers = append(*lootLoadBalancers, fmt.Sprintf("# Alternative: Use Ingress controller instead"))
-		*lootLoadBalancers = append(*lootLoadBalancers, "")
+		loot.Section("Services-LoadBalancers").
+			Addf("\n### %s/%s - LoadBalancer Service", ns, name).
+			Addf("# IPs: %s", strings.Join(finding.LoadBalancerIPs, ", ")).
+			Add("# Cost: Cloud provider charges apply").
+			Add("# Alternative: Use Ingress controller instead")
 	}
 
 	// NodePorts
 	if len(finding.NodePorts) > 0 {
-		*lootNodePorts = append(*lootNodePorts, fmt.Sprintf("\n### [%s] %s/%s - NodePort Service",
-			finding.RiskLevel, ns, name))
-		*lootNodePorts = append(*lootNodePorts, fmt.Sprintf("# NodePorts: %v", finding.NodePorts))
-		*lootNodePorts = append(*lootNodePorts, fmt.Sprintf("# Risk: Accessible on ALL cluster nodes"))
-		*lootNodePorts = append(*lootNodePorts, fmt.Sprintf("# Access: <any-node-ip>:%d", finding.NodePorts[0]))
-		*lootNodePorts = append(*lootNodePorts, "")
+		loot.Section("Services-NodePorts").
+			Addf("\n### [%s] %s/%s - NodePort Service", finding.RiskLevel, ns, name).
+			Addf("# NodePorts: %v", finding.NodePorts).
+			Add("# Risk: Accessible on ALL cluster nodes").
+			Addf("# Access: <any-node-ip>:%d", finding.NodePorts[0])
 	}
 
 	// Unprotected
 	if finding.UnrestrictedAccess && finding.ExternallyExposed {
-		*lootUnprotected = append(*lootUnprotected, fmt.Sprintf("\n### [%s] %s/%s - No NetworkPolicy",
-			finding.RiskLevel, ns, name))
-		*lootUnprotected = append(*lootUnprotected, fmt.Sprintf("# Risk: Unrestricted pod-to-pod access"))
-		*lootUnprotected = append(*lootUnprotected, fmt.Sprintf("# Backends: %d pods without network restrictions",
-			finding.BackendPodCount))
-		*lootUnprotected = append(*lootUnprotected, "# Remediation: Create NetworkPolicy to restrict ingress")
-		*lootUnprotected = append(*lootUnprotected, "")
+		loot.Section("Services-Unprotected").
+			Addf("\n### [%s] %s/%s - No NetworkPolicy", finding.RiskLevel, ns, name).
+			Add("# Risk: Unrestricted pod-to-pod access").
+			Addf("# Backends: %d pods without network restrictions", finding.BackendPodCount).
+			Add("# Remediation: Create NetworkPolicy to restrict ingress")
 	}
 
 	// Ingress
 	if finding.IngressCount > 0 {
-		*lootIngress = append(*lootIngress, fmt.Sprintf("\n### %s/%s - %d Ingress Resources",
-			ns, name, finding.IngressCount))
-		*lootIngress = append(*lootIngress, fmt.Sprintf("# Ingresses: %s",
-			strings.Join(finding.IngressNames, ", ")))
-		*lootIngress = append(*lootIngress, fmt.Sprintf("# TLS: %v", finding.HasTLS))
+		ing := loot.Section("Services-Ingress")
+		ing.Addf("\n### %s/%s - %d Ingress Resources", ns, name, finding.IngressCount).
+			Addf("# Ingresses: %s", strings.Join(finding.IngressNames, ", ")).
+			Addf("# TLS: %v", finding.HasTLS)
 		for _, ingName := range finding.IngressNames {
-			*lootIngress = append(*lootIngress, fmt.Sprintf("kubectl get ingress %s -n %s -o yaml", ingName, ns))
+			ing.Addf("kubectl get ingress %s -n %s -o yaml", ingName, ns)
 		}
-		*lootIngress = append(*lootIngress, "")
 	}
 
 	// Attack surface
 	if finding.AttackSurface > 100 {
-		*lootAttackSurface = append(*lootAttackSurface, fmt.Sprintf("\n### Attack Surface: %d - %s/%s",
-			finding.AttackSurface, ns, name))
-		*lootAttackSurface = append(*lootAttackSurface, fmt.Sprintf("# Calculation: %d ports × %d backends × multipliers = %d",
-			finding.TotalPorts, finding.BackendPodCount, finding.AttackSurface))
-		*lootAttackSurface = append(*lootAttackSurface, fmt.Sprintf("# External: %v | Dangerous Ports: %d | Privileged: %d",
-			finding.ExternallyExposed, len(finding.DangerousPorts), finding.PrivilegedBackends))
-		*lootAttackSurface = append(*lootAttackSurface, fmt.Sprintf("# Impact: %s", finding.ImpactSummary))
-		*lootAttackSurface = append(*lootAttackSurface, "")
+		loot.Section("Services-AttackSurface").
+			Addf("\n### Attack Surface: %d - %s/%s", finding.AttackSurface, ns, name).
+			Addf("# Calculation: %d ports × %d backends × multipliers = %d", finding.TotalPorts, finding.BackendPodCount, finding.AttackSurface).
+			Addf("# External: %v | Dangerous Ports: %d | Privileged: %d", finding.ExternallyExposed, len(finding.DangerousPorts), finding.PrivilegedBackends).
+			Addf("# Impact: %s", finding.ImpactSummary)
 	}
 
 	// Remediation
 	if len(finding.SecurityIssues) > 0 {
-		*lootRemediation = append(*lootRemediation, fmt.Sprintf("\n### %s/%s - %d Security Issues",
-			ns, name, len(finding.SecurityIssues)))
+		rem := loot.Section("Services-Remediation")
+		rem.Addf("\n### %s/%s - %d Security Issues", ns, name, len(finding.SecurityIssues))
 		for _, issue := range finding.SecurityIssues {
-			*lootRemediation = append(*lootRemediation, fmt.Sprintf("# - %s", issue))
+			rem.Addf("# - %s", issue)
 		}
-		*lootRemediation = append(*lootRemediation, "# Remediation steps:")
-
+		rem.Add("# Remediation steps:")
 		if finding.ExternallyExposed && !finding.NetworkPolicyProtected {
-			*lootRemediation = append(*lootRemediation, fmt.Sprintf("# 1. Create NetworkPolicy for %s/%s", ns, name))
+			rem.Addf("# 1. Create NetworkPolicy for %s/%s", ns, name)
 		}
 		if !finding.HasTLS && finding.ExternallyExposed {
-			*lootRemediation = append(*lootRemediation, "# 2. Enable TLS/HTTPS encryption")
+			rem.Add("# 2. Enable TLS/HTTPS encryption")
 		}
 		if len(finding.DangerousPorts) > 0 {
-			*lootRemediation = append(*lootRemediation, "# 3. Review dangerous port exposure, restrict or disable")
+			rem.Add("# 3. Review dangerous port exposure")
 		}
 		if finding.LoadBalancerCost {
-			*lootRemediation = append(*lootRemediation, "# 4. Consider migrating to Ingress to reduce costs")
+			rem.Add("# 4. Consider migrating to Ingress")
 		}
-		*lootRemediation = append(*lootRemediation, "")
 	}
 }
 

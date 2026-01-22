@@ -1,13 +1,13 @@
 package commands
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -80,15 +80,10 @@ type WorkloadPDBStatus struct {
 	Issues       []string
 }
 
-const (
-	PDBRiskCritical = "CRITICAL"
-	PDBRiskHigh     = "HIGH"
-	PDBRiskMedium   = "MEDIUM"
-	PDBRiskLow      = "LOW"
-)
 
 func ListPodDisruptionBudgets(cmd *cobra.Command, args []string) {
-	ctx := context.Background()
+	ctx, cancel := shared.ContextWithTimeout()
+	defer cancel()
 	logger := internal.NewLogger()
 
 	parentCmd := cmd.Parent()
@@ -101,29 +96,29 @@ func ListPodDisruptionBudgets(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	// Fetch PodDisruptionBudgets
-	pdbs, err := clientset.PolicyV1().PodDisruptionBudgets(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
+	// Fetch PodDisruptionBudgets from target namespaces
+	pdbs, err := clientset.PolicyV1().PodDisruptionBudgets(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Error fetching PodDisruptionBudgets: %v", err), globals.K8S_PODDISRUPTIONBUDGETS_MODULE_NAME)
 		return
 	}
 
 	// Fetch pods for matching
-	pods, err := clientset.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
+	pods, err := clientset.CoreV1().Pods(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Error fetching Pods: %v", err), globals.K8S_PODDISRUPTIONBUDGETS_MODULE_NAME)
 		return
 	}
 
 	// Fetch deployments
-	deployments, err := clientset.AppsV1().Deployments(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
+	deployments, err := clientset.AppsV1().Deployments(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Error fetching Deployments: %v", err), globals.K8S_PODDISRUPTIONBUDGETS_MODULE_NAME)
 		return
 	}
 
 	// Fetch statefulsets
-	statefulsets, err := clientset.AppsV1().StatefulSets(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
+	statefulsets, err := clientset.AppsV1().StatefulSets(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Error fetching StatefulSets: %v", err), globals.K8S_PODDISRUPTIONBUDGETS_MODULE_NAME)
 		return
@@ -131,10 +126,8 @@ func ListPodDisruptionBudgets(cmd *cobra.Command, args []string) {
 
 	var pdbAnalyses []PDBAnalysis
 	var workloadStatuses []WorkloadPDBStatus
-	var permissivePDBs []string
-	var restrictivePDBs []string
-	var selectorMismatches []string
-	var unprotectedWorkloads []string
+
+	loot := shared.NewLootBuilder()
 
 	// Analyze each PDB
 	for _, pdb := range pdbs.Items {
@@ -163,13 +156,13 @@ func ListPodDisruptionBudgets(cmd *cobra.Command, args []string) {
 
 		// Categorize for loot files
 		if analysis.TooPermissive {
-			permissivePDBs = append(permissivePDBs, formatPermissivePDB(&analysis))
+			loot.Section("Permissive-PDBs").Add(formatPermissivePDB(&analysis))
 		}
 		if analysis.TooRestrictive {
-			restrictivePDBs = append(restrictivePDBs, formatRestrictivePDB(&analysis))
+			loot.Section("Restrictive-PDBs").Add(formatRestrictivePDB(&analysis))
 		}
 		if analysis.SelectorMismatch {
-			selectorMismatches = append(selectorMismatches, formatSelectorMismatch(&analysis))
+			loot.Section("Selector-Mismatches").Add(formatSelectorMismatch(&analysis))
 		}
 
 		pdbAnalyses = append(pdbAnalyses, analysis)
@@ -197,7 +190,7 @@ func ListPodDisruptionBudgets(cmd *cobra.Command, args []string) {
 		status.RiskLevel = pdbRiskScoreToLevel(status.RiskScore)
 
 		if !status.HasPDB && status.Replicas > 1 {
-			unprotectedWorkloads = append(unprotectedWorkloads, formatUnprotectedWorkload(&status))
+			loot.Section("Unprotected-Workloads").Add(formatUnprotectedWorkload(&status))
 		}
 
 		workloadStatuses = append(workloadStatuses, status)
@@ -220,39 +213,17 @@ func ListPodDisruptionBudgets(cmd *cobra.Command, args []string) {
 		status.RiskLevel = pdbRiskScoreToLevel(status.RiskScore)
 
 		if !status.HasPDB && status.Replicas > 1 {
-			unprotectedWorkloads = append(unprotectedWorkloads, formatUnprotectedWorkload(&status))
+			loot.Section("Unprotected-Workloads").Add(formatUnprotectedWorkload(&status))
 		}
 
 		workloadStatuses = append(workloadStatuses, status)
 	}
 
 	// Generate loot files
-	lootFiles := []internal.LootFile{
-		{
-			Name:     "PDB-Enum",
-			Contents: formatPDBEnum(pdbAnalyses),
-		},
-		{
-			Name:     "Permissive-PDBs",
-			Contents: strings.Join(permissivePDBs, "\n"),
-		},
-		{
-			Name:     "Restrictive-PDBs",
-			Contents: strings.Join(restrictivePDBs, "\n"),
-		},
-		{
-			Name:     "Selector-Mismatches",
-			Contents: strings.Join(selectorMismatches, "\n"),
-		},
-		{
-			Name:     "Unprotected-Workloads",
-			Contents: strings.Join(unprotectedWorkloads, "\n"),
-		},
-		{
-			Name:     "Remediation-Guide",
-			Contents: generatePDBRemediationGuide(pdbAnalyses, workloadStatuses),
-		},
-	}
+	loot.Section("PDB-Enum").Add(formatPDBEnum(pdbAnalyses))
+	loot.Section("Remediation-Guide").Add(generatePDBRemediationGuide(pdbAnalyses, workloadStatuses))
+
+	lootFiles := loot.Build()
 
 	// Generate tables
 	pdbTable := generatePDBTable(pdbAnalyses)
@@ -279,8 +250,14 @@ func ListPodDisruptionBudgets(cmd *cobra.Command, args []string) {
 
 	// Summary logging
 	if len(pdbs.Items) > 0 {
-		permissiveCount := len(permissivePDBs)
-		unprotectedCount := len(unprotectedWorkloads)
+		permissiveCount := 0
+		if loot.HasSection("Permissive-PDBs") {
+			permissiveCount = loot.Section("Permissive-PDBs").Len()
+		}
+		unprotectedCount := 0
+		if loot.HasSection("Unprotected-Workloads") {
+			unprotectedCount = loot.Section("Unprotected-Workloads").Len()
+		}
 		logger.InfoM(fmt.Sprintf("%d PDBs analyzed | Permissive: %d | Unprotected workloads: %d | Total workloads: %d",
 			len(pdbs.Items), permissiveCount, unprotectedCount, len(workloadStatuses)),
 			globals.K8S_PODDISRUPTIONBUDGETS_MODULE_NAME)
@@ -463,13 +440,13 @@ func calculateWorkloadRiskScore(status *WorkloadPDBStatus) int {
 
 func pdbRiskScoreToLevel(score int) string {
 	if score >= 70 {
-		return PDBRiskCritical
+		return shared.RiskCritical
 	} else if score >= 50 {
-		return PDBRiskHigh
+		return shared.RiskHigh
 	} else if score >= 25 {
-		return PDBRiskMedium
+		return shared.RiskMedium
 	}
-	return PDBRiskLow
+	return shared.RiskLow
 }
 
 // Formatting functions
@@ -568,7 +545,7 @@ func generatePDBRemediationGuide(pdbs []PDBAnalysis, workloads []WorkloadPDBStat
 }
 
 func generatePDBTable(analyses []PDBAnalysis) internal.TableFile {
-	header := []string{"Namespace", "Name", "MinAvailable", "MaxUnavailable", "CurrentHealthy", "DisruptionsAllowed", "MatchedPods", "Risk", "Score"}
+	header := []string{"Namespace", "Name", "MinAvailable", "MaxUnavailable", "CurrentHealthy", "DisruptionsAllowed", "MatchedPods"}
 	var rows [][]string
 
 	// Sort by risk score
@@ -585,8 +562,6 @@ func generatePDBTable(analyses []PDBAnalysis) internal.TableFile {
 			fmt.Sprintf("%d", pdb.CurrentHealthy),
 			fmt.Sprintf("%d", pdb.DisruptionsAllowed),
 			fmt.Sprintf("%d", len(pdb.MatchedPods)),
-			pdb.RiskLevel,
-			fmt.Sprintf("%d", pdb.RiskScore),
 		})
 	}
 
@@ -598,7 +573,7 @@ func generatePDBTable(analyses []PDBAnalysis) internal.TableFile {
 }
 
 func generateWorkloadTable(workloads []WorkloadPDBStatus) internal.TableFile {
-	header := []string{"Namespace", "Type", "Name", "Replicas", "HasPDB", "PDBs", "Risk", "Score", "Issues"}
+	header := []string{"Namespace", "Type", "Name", "Replicas", "HasPDB", "PDBs", "Issues"}
 	var rows [][]string
 
 	// Sort by risk score
@@ -612,10 +587,8 @@ func generateWorkloadTable(workloads []WorkloadPDBStatus) internal.TableFile {
 			wl.WorkloadType,
 			wl.WorkloadName,
 			fmt.Sprintf("%d", wl.Replicas),
-			fmt.Sprintf("%t", wl.HasPDB),
+			shared.FormatBool(wl.HasPDB),
 			fmt.Sprintf("%d", len(wl.PDBNames)),
-			wl.RiskLevel,
-			fmt.Sprintf("%d", wl.RiskScore),
 			fmt.Sprintf("%d", len(wl.Issues)),
 		})
 	}

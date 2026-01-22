@@ -1,13 +1,13 @@
 package commands
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/spf13/cobra"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
@@ -73,11 +73,6 @@ type HPAAnalysis struct {
 }
 
 const (
-	HPARiskCritical = "CRITICAL"
-	HPARiskHigh     = "HIGH"
-	HPARiskMedium   = "MEDIUM"
-	HPARiskLow      = "LOW"
-
 	// Thresholds
 	UnboundedMaxReplicas  = 100
 	AggressiveMaxReplicas = 50
@@ -85,7 +80,8 @@ const (
 )
 
 func ListHPAs(cmd *cobra.Command, args []string) {
-	ctx := context.Background()
+	ctx, cancel := shared.ContextWithTimeout()
+	defer cancel()
 	logger := internal.NewLogger()
 
 	parentCmd := cmd.Parent()
@@ -98,19 +94,15 @@ func ListHPAs(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	// Fetch HPAs
-	hpas, err := clientset.AutoscalingV2().HorizontalPodAutoscalers(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
+	// Fetch HPAs from target namespaces
+	hpas, err := clientset.AutoscalingV2().HorizontalPodAutoscalers(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Error fetching HPAs: %v", err), globals.K8S_HPAS_MODULE_NAME)
 		return
 	}
 
 	var hpaAnalyses []HPAAnalysis
-	var unboundedHPAs []string
-	var aggressiveHPAs []string
-	var customMetricHPAs []string
-	var scaleToZeroHPAs []string
-	var costRiskHPAs []string
+	loot := shared.NewLootBuilder()
 
 	// Analyze each HPA
 	for _, hpa := range hpas.Items {
@@ -144,57 +136,14 @@ func ListHPAs(cmd *cobra.Command, args []string) {
 		analysis.RiskScore = calculateHPARiskScore(&analysis)
 		analysis.RiskLevel = hpaRiskScoreToLevel(analysis.RiskScore)
 
-		// Categorize for loot files
-		if analysis.UnboundedScaling {
-			unboundedHPAs = append(unboundedHPAs, formatUnboundedHPA(&analysis))
-		}
-		if analysis.AggressiveThreshold {
-			aggressiveHPAs = append(aggressiveHPAs, formatAggressiveHPA(&analysis))
-		}
-		if len(analysis.CustomMetrics) > 0 || len(analysis.ExternalMetrics) > 0 {
-			customMetricHPAs = append(customMetricHPAs, formatCustomMetricHPA(&analysis))
-		}
-		if analysis.ScaleToZeroRisk {
-			scaleToZeroHPAs = append(scaleToZeroHPAs, formatScaleToZeroHPA(&analysis))
-		}
-		if analysis.CostRisk == "HIGH" || analysis.CostRisk == "CRITICAL" {
-			costRiskHPAs = append(costRiskHPAs, formatCostRiskHPA(&analysis))
-		}
-
 		hpaAnalyses = append(hpaAnalyses, analysis)
 	}
 
-	// Generate loot files
-	lootFiles := []internal.LootFile{
-		{
-			Name:     "HPA-Enum",
-			Contents: formatHPAEnum(hpaAnalyses),
-		},
-		{
-			Name:     "Unbounded-Scaling",
-			Contents: strings.Join(unboundedHPAs, "\n"),
-		},
-		{
-			Name:     "Aggressive-Scaling",
-			Contents: strings.Join(aggressiveHPAs, "\n"),
-		},
-		{
-			Name:     "Custom-Metric-HPAs",
-			Contents: strings.Join(customMetricHPAs, "\n"),
-		},
-		{
-			Name:     "Scale-To-Zero-Risk",
-			Contents: strings.Join(scaleToZeroHPAs, "\n"),
-		},
-		{
-			Name:     "Cost-Risk-HPAs",
-			Contents: strings.Join(costRiskHPAs, "\n"),
-		},
-		{
-			Name:     "Remediation-Guide",
-			Contents: generateHPARemediationGuide(hpaAnalyses),
-		},
-	}
+	// Generate consolidated HPA-Commands section
+	loot.Section("HPA-Commands").Add(generateHPACommands(hpaAnalyses))
+
+	// Build loot files
+	lootFiles := loot.Build()
 
 	// Generate table
 	hpaTable := generateHPATable(hpaAnalyses)
@@ -220,10 +169,22 @@ func ListHPAs(cmd *cobra.Command, args []string) {
 
 	// Summary logging
 	if len(hpas.Items) > 0 {
-		unboundedCount := len(unboundedHPAs)
-		costRiskCount := len(costRiskHPAs)
-		logger.InfoM(fmt.Sprintf("%d HPAs analyzed | Unbounded: %d | Cost Risk: %d | Custom Metrics: %d",
-			len(hpas.Items), unboundedCount, costRiskCount, len(customMetricHPAs)),
+		unboundedCount := 0
+		zeroRiskCount := 0
+		customMetricCount := 0
+		for _, hpa := range hpaAnalyses {
+			if hpa.UnboundedScaling {
+				unboundedCount++
+			}
+			if hpa.ScaleToZeroRisk {
+				zeroRiskCount++
+			}
+			if len(hpa.CustomMetrics) > 0 || len(hpa.ExternalMetrics) > 0 {
+				customMetricCount++
+			}
+		}
+		logger.InfoM(fmt.Sprintf("%d HPAs analyzed | Unbounded: %d | Zero-Risk: %d | Custom Metrics: %d",
+			len(hpas.Items), unboundedCount, zeroRiskCount, customMetricCount),
 			globals.K8S_HPAS_MODULE_NAME)
 	} else {
 		logger.InfoM("No HPAs found", globals.K8S_HPAS_MODULE_NAME)
@@ -236,14 +197,14 @@ func analyzeHPASecurity(analysis *HPAAnalysis, hpa *autoscalingv2.HorizontalPodA
 	// Unbounded scaling (very high maxReplicas)
 	if analysis.MaxReplicas >= UnboundedMaxReplicas {
 		analysis.UnboundedScaling = true
-		analysis.CostRisk = "CRITICAL"
+		analysis.CostRisk = shared.RiskCritical
 		issues = append(issues, fmt.Sprintf("CRITICAL: Unbounded scaling (maxReplicas=%d, potential cost explosion)", analysis.MaxReplicas))
 	} else if analysis.MaxReplicas >= AggressiveMaxReplicas {
 		analysis.AggressiveThreshold = true
-		analysis.CostRisk = "HIGH"
+		analysis.CostRisk = shared.RiskHigh
 		issues = append(issues, fmt.Sprintf("HIGH: Aggressive scaling threshold (maxReplicas=%d, cost risk)", analysis.MaxReplicas))
 	} else if analysis.MaxReplicas >= HighCostMaxReplicas {
-		analysis.CostRisk = "MEDIUM"
+		analysis.CostRisk = shared.RiskMedium
 		issues = append(issues, fmt.Sprintf("MEDIUM: High maxReplicas=%d (monitor costs)", analysis.MaxReplicas))
 	}
 
@@ -382,88 +343,49 @@ func calculateHPARiskScore(analysis *HPAAnalysis) int {
 
 func hpaRiskScoreToLevel(score int) string {
 	if score >= 70 {
-		return HPARiskCritical
+		return shared.RiskCritical
 	} else if score >= 50 {
-		return HPARiskHigh
+		return shared.RiskHigh
 	} else if score >= 25 {
-		return HPARiskMedium
+		return shared.RiskMedium
 	}
-	return HPARiskLow
+	return shared.RiskLow
 }
 
-// Formatting functions
-func formatUnboundedHPA(analysis *HPAAnalysis) string {
-	return fmt.Sprintf("[UNBOUNDED] %s/%s | Target: %s/%s | MaxReplicas: %d | Current: %d | Cost Risk: %s",
-		analysis.Namespace, analysis.Name, analysis.TargetKind, analysis.TargetName,
-		analysis.MaxReplicas, analysis.CurrentReplicas, analysis.CostRisk)
-}
-
-func formatAggressiveHPA(analysis *HPAAnalysis) string {
-	return fmt.Sprintf("[AGGRESSIVE] %s/%s | MaxReplicas: %d | MinReplicas: %d | Range: %d | Cost Risk: %s",
-		analysis.Namespace, analysis.Name, analysis.MaxReplicas, analysis.MinReplicas,
-		analysis.MaxReplicas-analysis.MinReplicas, analysis.CostRisk)
-}
-
-func formatCustomMetricHPA(analysis *HPAAnalysis) string {
-	allMetrics := append(analysis.CustomMetrics, analysis.ExternalMetrics...)
-	return fmt.Sprintf("[CUSTOM] %s/%s | Metrics: %s | Validate metric source security",
-		analysis.Namespace, analysis.Name, strings.Join(allMetrics, ", "))
-}
-
-func formatScaleToZeroHPA(analysis *HPAAnalysis) string {
-	return fmt.Sprintf("[SCALE-ZERO] %s/%s | MinReplicas: 0 | Target: %s/%s | Availability risk during low traffic",
-		analysis.Namespace, analysis.Name, analysis.TargetKind, analysis.TargetName)
-}
-
-func formatCostRiskHPA(analysis *HPAAnalysis) string {
-	return fmt.Sprintf("[COST] %s/%s | MaxReplicas: %d | Current: %d | Cost Risk: %s | Monitor scaling behavior",
-		analysis.Namespace, analysis.Name, analysis.MaxReplicas, analysis.CurrentReplicas, analysis.CostRisk)
-}
-
-func formatHPAEnum(analyses []HPAAnalysis) string {
+func generateHPACommands(analyses []HPAAnalysis) string {
 	var lines []string
-	lines = append(lines, "=== Horizontal Pod Autoscaler Security Analysis ===\n")
 
-	for _, hpa := range analyses {
-		lines = append(lines, fmt.Sprintf("HPA: %s/%s", hpa.Namespace, hpa.Name))
-		lines = append(lines, fmt.Sprintf("  Target: %s/%s", hpa.TargetKind, hpa.TargetName))
-		lines = append(lines, fmt.Sprintf("  Replicas: Min=%d | Max=%d | Current=%d | Desired=%d",
-			hpa.MinReplicas, hpa.MaxReplicas, hpa.CurrentReplicas, hpa.DesiredReplicas))
-		lines = append(lines, fmt.Sprintf("  Metrics: %s", strings.Join(hpa.Metrics, ", ")))
-		if len(hpa.CustomMetrics) > 0 {
-			lines = append(lines, fmt.Sprintf("  Custom Metrics: %s", strings.Join(hpa.CustomMetrics, ", ")))
-		}
-		if len(hpa.ExternalMetrics) > 0 {
-			lines = append(lines, fmt.Sprintf("  External Metrics: %s", strings.Join(hpa.ExternalMetrics, ", ")))
-		}
-		lines = append(lines, fmt.Sprintf("  Scaling Enabled: %t", hpa.ScalingEnabled))
-		lines = append(lines, fmt.Sprintf("  Risk Level: %s (Score: %d) | Cost Risk: %s", hpa.RiskLevel, hpa.RiskScore, hpa.CostRisk))
-		if len(hpa.SecurityIssues) > 0 {
-			lines = append(lines, "  Security Issues:")
-			for _, issue := range hpa.SecurityIssues {
-				lines = append(lines, fmt.Sprintf("    - %s", issue))
-			}
-		}
-		lines = append(lines, "")
-	}
-
-	return strings.Join(lines, "\n")
-}
-
-func generateHPARemediationGuide(analyses []HPAAnalysis) string {
-	var lines []string
-	lines = append(lines, "=== HPA Security Remediation Guide ===\n")
-
-	lines = append(lines, "# Create HPA with safe limits:")
-	lines = append(lines, "kubectl autoscale deployment <name> --namespace=<namespace> --min=2 --max=10 --cpu-percent=80")
+	lines = append(lines, "# ===========================================")
+	lines = append(lines, "# HPA Enumeration Commands")
+	lines = append(lines, "# ===========================================")
 	lines = append(lines, "")
 
-	lines = append(lines, "# View HPA status:")
-	lines = append(lines, "kubectl get hpa -n <namespace>")
+	lines = append(lines, "# List all HPAs:")
+	lines = append(lines, "kubectl get hpa -A")
+	lines = append(lines, "")
+
+	lines = append(lines, "# View HPA details:")
 	lines = append(lines, "kubectl describe hpa <name> -n <namespace>")
 	lines = append(lines, "")
 
-	lines = append(lines, "# Update maxReplicas to prevent cost explosion:")
+	lines = append(lines, "# Watch HPA scaling in real-time:")
+	lines = append(lines, "kubectl get hpa -A --watch")
+	lines = append(lines, "")
+
+	lines = append(lines, "# Get HPA metrics status:")
+	lines = append(lines, "kubectl get hpa -A -o wide")
+	lines = append(lines, "")
+
+	lines = append(lines, "# ===========================================")
+	lines = append(lines, "# Remediation Commands")
+	lines = append(lines, "# ===========================================")
+	lines = append(lines, "")
+
+	lines = append(lines, "# Create HPA with safe limits:")
+	lines = append(lines, "kubectl autoscale deployment <name> -n <namespace> --min=2 --max=10 --cpu-percent=80")
+	lines = append(lines, "")
+
+	lines = append(lines, "# Update maxReplicas to prevent unbounded scaling:")
 	lines = append(lines, "kubectl patch hpa <name> -n <namespace> -p '{\"spec\":{\"maxReplicas\":10}}'")
 	lines = append(lines, "")
 
@@ -471,25 +393,50 @@ func generateHPARemediationGuide(analyses []HPAAnalysis) string {
 	lines = append(lines, "kubectl patch hpa <name> -n <namespace> -p '{\"spec\":{\"minReplicas\":2}}'")
 	lines = append(lines, "")
 
-	lines = append(lines, "# Delete dangerous HPA:")
+	lines = append(lines, "# Delete HPA:")
 	lines = append(lines, "kubectl delete hpa <name> -n <namespace>")
 	lines = append(lines, "")
 
-	lines = append(lines, "## Specific Issues:\n")
-
+	// Add specific remediation for high-risk HPAs
+	var highRiskHPAs []HPAAnalysis
 	for _, hpa := range analyses {
-		if hpa.RiskScore >= 50 {
-			lines = append(lines, fmt.Sprintf("# High-risk HPA: %s/%s (Score: %d)", hpa.Namespace, hpa.Name, hpa.RiskScore))
-			for _, issue := range hpa.SecurityIssues {
-				lines = append(lines, fmt.Sprintf("#   - %s", issue))
-			}
+		if hpa.UnboundedScaling || hpa.ScaleToZeroRisk || len(hpa.CustomMetrics) > 0 || len(hpa.ExternalMetrics) > 0 {
+			highRiskHPAs = append(highRiskHPAs, hpa)
+		}
+	}
+
+	if len(highRiskHPAs) > 0 {
+		lines = append(lines, "# ===========================================")
+		lines = append(lines, "# Flagged HPAs - Specific Remediation")
+		lines = append(lines, "# ===========================================")
+		lines = append(lines, "")
+
+		for _, hpa := range highRiskHPAs {
+			var flags []string
 			if hpa.UnboundedScaling {
-				lines = append(lines, fmt.Sprintf("kubectl patch hpa %s -n %s -p '{\"spec\":{\"maxReplicas\":10}}'  # Reduce from %d",
-					hpa.Name, hpa.Namespace, hpa.MaxReplicas))
+				flags = append(flags, "Unbounded")
 			}
 			if hpa.ScaleToZeroRisk {
-				lines = append(lines, fmt.Sprintf("kubectl patch hpa %s -n %s -p '{\"spec\":{\"minReplicas\":2}}'  # Prevent scale-to-zero",
-					hpa.Name, hpa.Namespace))
+				flags = append(flags, "Zero-Risk")
+			}
+			if len(hpa.CustomMetrics) > 0 {
+				flags = append(flags, "Custom")
+			}
+			if len(hpa.ExternalMetrics) > 0 {
+				flags = append(flags, "External")
+			}
+
+			lines = append(lines, fmt.Sprintf("# %s/%s [%s]", hpa.Namespace, hpa.Name, strings.Join(flags, ", ")))
+			lines = append(lines, fmt.Sprintf("# Target: %s/%s | Min: %d | Max: %d", hpa.TargetKind, hpa.TargetName, hpa.MinReplicas, hpa.MaxReplicas))
+
+			if hpa.UnboundedScaling {
+				lines = append(lines, fmt.Sprintf("kubectl patch hpa %s -n %s -p '{\"spec\":{\"maxReplicas\":10}}'", hpa.Name, hpa.Namespace))
+			}
+			if hpa.ScaleToZeroRisk {
+				lines = append(lines, fmt.Sprintf("kubectl patch hpa %s -n %s -p '{\"spec\":{\"minReplicas\":2}}'", hpa.Name, hpa.Namespace))
+			}
+			if len(hpa.CustomMetrics) > 0 || len(hpa.ExternalMetrics) > 0 {
+				lines = append(lines, fmt.Sprintf("kubectl describe hpa %s -n %s  # Verify metric source security", hpa.Name, hpa.Namespace))
 			}
 			lines = append(lines, "")
 		}
@@ -499,7 +446,7 @@ func generateHPARemediationGuide(analyses []HPAAnalysis) string {
 }
 
 func generateHPATable(analyses []HPAAnalysis) internal.TableFile {
-	header := []string{"Namespace", "Name", "Target", "Min", "Max", "Current", "Desired", "Metrics", "Risk", "Score", "Cost"}
+	header := []string{"Namespace", "Name", "Target", "Min", "Max", "Current", "Desired", "Metrics", "Flags"}
 	var rows [][]string
 
 	// Sort by risk score
@@ -510,9 +457,22 @@ func generateHPATable(analyses []HPAAnalysis) internal.TableFile {
 	for _, hpa := range analyses {
 		target := fmt.Sprintf("%s/%s", hpa.TargetKind, hpa.TargetName)
 		metricsStr := strings.Join(hpa.MetricTypes, ",")
-		if len(metricsStr) > 30 {
-			metricsStr = metricsStr[:27] + "..."
+
+		// Build flags
+		var flags []string
+		if hpa.UnboundedScaling {
+			flags = append(flags, "Unbounded")
 		}
+		if hpa.ScaleToZeroRisk {
+			flags = append(flags, "Zero-Risk")
+		}
+		if len(hpa.CustomMetrics) > 0 {
+			flags = append(flags, "Custom")
+		}
+		if len(hpa.ExternalMetrics) > 0 {
+			flags = append(flags, "External")
+		}
+		flagsStr := strings.Join(flags, ",")
 
 		rows = append(rows, []string{
 			hpa.Namespace,
@@ -523,9 +483,7 @@ func generateHPATable(analyses []HPAAnalysis) internal.TableFile {
 			fmt.Sprintf("%d", hpa.CurrentReplicas),
 			fmt.Sprintf("%d", hpa.DesiredReplicas),
 			metricsStr,
-			hpa.RiskLevel,
-			fmt.Sprintf("%d", hpa.RiskScore),
-			hpa.CostRisk,
+			flagsStr,
 		})
 	}
 

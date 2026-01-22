@@ -1,14 +1,15 @@
 package commands
 
 import (
-	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -46,6 +47,31 @@ func (t ReplicaSetsOutput) LootFiles() []internal.LootFile {
 	return t.Loot
 }
 
+// ReplicaSetContainer stores container-level details
+type ReplicaSetContainer struct {
+	Name           string
+	Image          string
+	Tag            string
+	Registry       string
+	Command        string
+	Args           string
+	Privileged     bool
+	Capabilities   []string
+	RunAsUser      string
+	AllowPrivEsc   string
+	ReadOnlyRootFS string
+	ResourceLimits string
+}
+
+// ReplicaSetVolume stores volume details
+type ReplicaSetVolume struct {
+	Name       string
+	VolumeType string
+	Source     string
+	MountPath  string
+	ReadOnly   bool
+}
+
 type ReplicaSetFinding struct {
 	// Basic Info
 	Namespace      string
@@ -62,6 +88,17 @@ type ReplicaSetFinding struct {
 	AvailableReplicas int32
 	ReplicaCount      int32
 	HighReplicaCount  bool
+
+	// Containers and Volumes (for multi-table output)
+	ContainerDetails []ReplicaSetContainer
+	VolumeDetails    []ReplicaSetVolume
+
+	// Suspicious pattern detection
+	BackdoorPatterns []string
+	ReverseShells    []string
+	CryptoMiners     []string
+	DataExfiltration []string
+	ContainerEscapeP []string
 
 	// Security Analysis
 	RiskLevel      string
@@ -136,10 +173,12 @@ type ReplicaSetFinding struct {
 	BaselineViolations   int
 
 	// Metadata
-	Labels      map[string]string
-	Selectors   map[string]string
-	Tolerations []string
-	Annotations map[string]string
+	Labels           map[string]string
+	Selectors        map[string]string
+	Tolerations      []string
+	Annotations      map[string]string
+	ImagePullSecrets []string
+	Affinity         string
 
 	// Cloud
 	CloudProvider string
@@ -150,7 +189,8 @@ type ReplicaSetFinding struct {
 }
 
 func ListReplicaSets(cmd *cobra.Command, args []string) {
-	ctx := context.Background()
+	ctx, cancel := shared.ContextWithTimeout()
+	defer cancel()
 	logger := internal.NewLogger()
 
 	parentCmd := cmd.Parent()
@@ -163,349 +203,532 @@ func ListReplicaSets(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	replicaSets, err := clientset.AppsV1().ReplicaSets("").List(ctx, metav1.ListOptions{})
-	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Error listing ReplicaSets: %v", err), globals.K8S_REPLICASETS_MODULE_NAME)
-		return
+	namespaces := shared.GetTargetNamespaces(ctx, clientset, &logger, globals.K8S_REPLICASETS_MODULE_NAME)
+
+	// Table 1: ReplicaSets Summary
+	summaryHeaders := []string{
+		"Namespace", "Name", "Labels", "Deployment", "Replicas",
+		"Service Account", "Init Containers", "Image Pull Secrets",
+		"Secrets", "ConfigMaps",
+		"Security Context", "Suspicious Patterns", "Cloud IAM",
+		"Affinity", "Tolerations",
 	}
 
-	headers := []string{
-		"Risk", "Blast Radius", "Namespace", "ReplicaSet Name", "Deployment", "Is Orphaned",
-		"Replicas (Desired/Current/Ready)", "Service Account",
-		"HostPID", "HostIPC", "HostNetwork", "Privileged", "RunAsRoot",
-		"AllowPrivEsc", "ReadOnlyRootFS", "SELinux", "AppArmor", "Seccomp",
-		"Capabilities", "Dangerous Caps", "HostPaths", "Sensitive HostPaths",
-		"Secret Volumes", "Secret EnvVars", "Image Tags", "Latest Tags",
-		"Resource Limits", "Resource Requests", "PSS Compliance", "PSS Violations",
-		"Security Issues", "Impact Summary",
+	// Table 2: ReplicaSet-Containers Detail
+	containerHeaders := []string{
+		"Namespace", "ReplicaSet", "Container", "Privileged", "Capabilities",
+		"RunAsUser", "AllowPrivEsc", "ReadOnlyRootFS", "Resource Limits",
+		"Image", "Tag", "Registry",
 	}
 
-	var outputRows [][]string
+	// Table 3: ReplicaSet-Volumes Detail
+	volumeHeaders := []string{
+		"Namespace", "ReplicaSet", "Volume Name", "Type", "Source Path/Name", "Container Mount Path", "Read Only",
+	}
+
+	var summaryRows [][]string
+	var containerRows [][]string
+	var volumeRows [][]string
 	var findings []ReplicaSetFinding
 
-	// Risk level counters
-	riskCounts := map[string]int{
-		"CRITICAL": 0,
-		"HIGH":     0,
-		"MEDIUM":   0,
-		"LOW":      0,
-	}
+	// Risk counters
+	riskCounts := shared.NewRiskCounts()
 
-	// Loot content builders
-	var lootEnum []string
-	var lootHighRisk []string
-	var lootPSSViolations []string
-	var lootOrphaned []string
-	var lootSecretExposure []string
-	var lootImageVulns []string
-	var lootResourceAbuse []string
-	var lootAttackSurface []string
-	var lootRemediation []string
+	// Loot content will be generated after processing all replicasets
+	// We'll use findings to generate consolidated loot
 
-	// Initialize loot headers
-	lootEnum = append(lootEnum, `#####################################
-##### Enumerate ReplicaSet Information
-#####################################
-#
-# ANALYSIS REPORT
-# Detailed ReplicaSet enumeration commands
-#
-`)
-
-	lootHighRisk = append(lootHighRisk, `#####################################
-##### High Risk ReplicaSets
-#####################################
-#
-# MANUAL REVIEW REQUIRED
-# ReplicaSets with CRITICAL or HIGH risk pod templates
-# Each ReplicaSet will create multiple pods with these vulnerabilities
-#
-`)
-
-	lootPSSViolations = append(lootPSSViolations, `#####################################
-##### PSS Violations in Pod Templates
-#####################################
-#
-# ANALYSIS REPORT
-# ReplicaSets with pod templates violating PSS baseline and restricted levels
-# Fix the template to prevent creating non-compliant pods
-#
-`)
-
-	lootOrphaned = append(lootOrphaned, `#####################################
-##### Orphaned ReplicaSets
-#####################################
-#
-# ANALYSIS REPORT
-# ReplicaSets without Deployment ownership
-# May indicate manual creation or attacker persistence
-#
-`)
-
-	lootSecretExposure = append(lootSecretExposure, `#####################################
-##### Secret Exposure in Templates
-#####################################
-#
-# ANALYSIS REPORT
-# ReplicaSets with secrets/configmaps in pod templates
-# Each replica will expose these secrets
-#
-`)
-
-	lootImageVulns = append(lootImageVulns, `#####################################
-##### Image Vulnerabilities in Templates
-#####################################
-#
-# ANALYSIS REPORT
-# ReplicaSets using risky images (latest tags, unverified)
-# Each replica will use these vulnerable images
-#
-`)
-
-	lootResourceAbuse = append(lootResourceAbuse, `#####################################
-##### Resource Abuse Potential
-#####################################
-#
-# ANALYSIS REPORT
-# ReplicaSets without resource limits
-# High replica count without limits = cluster DoS risk
-#
-`)
-
-	lootAttackSurface = append(lootAttackSurface, `#####################################
-##### Attack Surface Analysis
-#####################################
-#
-# ANALYSIS REPORT
-# Total attack surface: vulnerabilities × replica count
-# Shows blast radius of insecure templates
-#
-`)
-
-	lootRemediation = append(lootRemediation, `#####################################
-##### ReplicaSet Remediation Guide
-#####################################
-#
-# REMEDIATION STEPS
-# How to fix pod template security issues
-# Changes will apply to all new pods created by the ReplicaSet
-#
-`)
-
-	for _, rs := range replicaSets.Items {
-		finding := ReplicaSetFinding{
-			Namespace:         rs.Namespace,
-			Name:              rs.Name,
-			DesiredReplicas:   *rs.Spec.Replicas,
-			CurrentReplicas:   rs.Status.Replicas,
-			ReadyReplicas:     rs.Status.ReadyReplicas,
-			AvailableReplicas: rs.Status.AvailableReplicas,
-			ReplicaCount:      *rs.Spec.Replicas,
-			Labels:            rs.Labels,
-			Selectors:         rs.Spec.Selector.MatchLabels,
-			Annotations:       rs.Annotations,
-			InitContainers:    len(rs.Spec.Template.Spec.InitContainers),
+	for _, ns := range namespaces {
+		replicaSets, err := clientset.AppsV1().ReplicaSets(ns).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			shared.LogListError(&logger, "replicasets", ns, err, globals.K8S_REPLICASETS_MODULE_NAME, false)
+			continue
 		}
 
-		// High replica count detection
-		finding.HighReplicaCount = (finding.ReplicaCount > 10)
+		for _, rs := range replicaSets.Items {
+			finding := ReplicaSetFinding{
+				Namespace:         rs.Namespace,
+				Name:              rs.Name,
+				DesiredReplicas:   *rs.Spec.Replicas,
+				CurrentReplicas:   rs.Status.Replicas,
+				ReadyReplicas:     rs.Status.ReadyReplicas,
+				AvailableReplicas: rs.Status.AvailableReplicas,
+				ReplicaCount:      *rs.Spec.Replicas,
+				Labels:            rs.Labels,
+				Selectors:         rs.Spec.Selector.MatchLabels,
+				Annotations:       rs.Annotations,
+				InitContainers:    len(rs.Spec.Template.Spec.InitContainers),
+			}
 
-		// Deployment ownership detection
-		finding.DeploymentName, finding.IsOrphaned = detectDeploymentOwnership(rs)
+			// High replica count detection
+			finding.HighReplicaCount = (finding.ReplicaCount > 10)
 
-		// Detect superseded ReplicaSets (zero replicas, has deployment owner)
-		finding.IsSuperseded = (!finding.IsOrphaned && finding.ReplicaCount == 0)
+			// Deployment ownership detection
+			finding.DeploymentName, finding.IsOrphaned = detectDeploymentOwnership(rs)
 
-		// Tolerations
-		for _, t := range rs.Spec.Template.Spec.Tolerations {
-			finding.Tolerations = append(finding.Tolerations, fmt.Sprintf("Key=%s,Op=%s,Val=%s,Effect=%s", t.Key, t.Operator, t.Value, t.Effect))
-		}
+			// Detect superseded ReplicaSets (zero replicas, has deployment owner)
+			finding.IsSuperseded = (!finding.IsOrphaned && finding.ReplicaCount == 0)
 
-		// Service Account
-		finding.ServiceAccount = rs.Spec.Template.Spec.ServiceAccountName
-
-		// Host namespace settings
-		finding.HostPID = rs.Spec.Template.Spec.HostPID
-		finding.HostIPC = rs.Spec.Template.Spec.HostIPC
-		finding.HostNetwork = rs.Spec.Template.Spec.HostNetwork
-
-		// Analyze all containers (init + regular)
-		allContainers := []corev1.Container{}
-		allContainers = append(allContainers, rs.Spec.Template.Spec.InitContainers...)
-		allContainers = append(allContainers, rs.Spec.Template.Spec.Containers...)
-
-		// Security context analysis
-		secCtx := analyzeTemplateSecurityContext(&rs.Spec.Template.Spec, allContainers)
-		finding.Privileged = secCtx.Privileged != nil && *secCtx.Privileged
-		finding.AllowPrivEsc = secCtx.AllowPrivilegeEscalation == nil || *secCtx.AllowPrivilegeEscalation
-		finding.ReadOnlyRootFilesystem = secCtx.ReadOnlyRootFilesystem
-		finding.ProcMountUnmasked = (secCtx.ProcMount == "Unmasked")
-		finding.RunAsRoot = isTemplateRunAsRoot(secCtx)
-
-		// SELinux analysis
-		if secCtx.SELinuxOptions != nil {
-			finding.SELinuxContext = formatTemplateSELinuxContext(secCtx.SELinuxOptions)
-			finding.SELinuxCustom = (secCtx.SELinuxOptions.Level != "" || secCtx.SELinuxOptions.Role != "" ||
-				secCtx.SELinuxOptions.Type != "" || secCtx.SELinuxOptions.User != "")
-		} else {
-			finding.SELinuxContext = "<none>"
-		}
-
-		// AppArmor analysis
-		finding.AppArmorProfile = getTemplateAppArmorProfile(rs.Spec.Template.Annotations)
-		finding.AppArmorUndefined = (finding.AppArmorProfile == "" || finding.AppArmorProfile == "<none>")
-
-		// Seccomp analysis
-		if secCtx.SeccompProfile != nil {
-			finding.SeccompProfile = formatTemplateSeccompProfile(secCtx.SeccompProfile)
-			finding.SeccompUnconfined = (secCtx.SeccompProfile.Type == corev1.SeccompProfileTypeUnconfined)
-		} else {
-			finding.SeccompProfile = "<none>"
-			finding.SeccompUnconfined = true
-		}
-
-		// FSGroup and SupplementalGroups
-		if secCtx.FSGroup != nil {
-			finding.FSGroup = fmt.Sprintf("%d", *secCtx.FSGroup)
-		} else {
-			finding.FSGroup = "<none>"
-		}
-		for _, sg := range secCtx.SupplementalGroups {
-			finding.SupplementalGroups = append(finding.SupplementalGroups, fmt.Sprintf("%d", sg))
-		}
-
-		// Capability analysis
-		if secCtx.Capabilities != nil {
-			for _, cap := range secCtx.Capabilities.Add {
-				capStr := string(cap)
-				finding.Capabilities = append(finding.Capabilities, capStr)
-				if k8sinternal.IsDangerousCapability(capStr) {
-					finding.DangerousCaps = append(finding.DangerousCaps, capStr)
+			// Tolerations with full details
+			for _, t := range rs.Spec.Template.Spec.Tolerations {
+				var tolParts []string
+				if t.Key != "" {
+					tolParts = append(tolParts, t.Key)
+				}
+				if t.Value != "" {
+					tolParts = append(tolParts, fmt.Sprintf("=%s", t.Value))
+				}
+				if t.Effect != "" {
+					tolParts = append(tolParts, fmt.Sprintf(":%s", t.Effect))
+				}
+				if t.Operator != "" {
+					tolParts = append(tolParts, fmt.Sprintf(" (%s)", t.Operator))
+				}
+				if t.TolerationSeconds != nil {
+					tolParts = append(tolParts, fmt.Sprintf(" [%ds]", *t.TolerationSeconds))
+				}
+				if len(tolParts) > 0 {
+					finding.Tolerations = append(finding.Tolerations, strings.Join(tolParts, ""))
 				}
 			}
-			for _, cap := range secCtx.Capabilities.Drop {
-				capStr := string(cap)
-				finding.Capabilities = append(finding.Capabilities, "-"+capStr)
-				if capStr == "ALL" {
-					finding.DroppedAllCaps = true
+
+			// Extract Image Pull Secrets
+			for _, ips := range rs.Spec.Template.Spec.ImagePullSecrets {
+				finding.ImagePullSecrets = append(finding.ImagePullSecrets, ips.Name)
+			}
+
+			// Extract Affinity
+			finding.Affinity = k8sinternal.PrettyPrintAffinity(rs.Spec.Template.Spec.Affinity)
+
+			// Service Account
+			finding.ServiceAccount = rs.Spec.Template.Spec.ServiceAccountName
+
+			// Host namespace settings
+			finding.HostPID = rs.Spec.Template.Spec.HostPID
+			finding.HostIPC = rs.Spec.Template.Spec.HostIPC
+			finding.HostNetwork = rs.Spec.Template.Spec.HostNetwork
+
+			// Analyze all containers (init + regular)
+			allContainers := []corev1.Container{}
+			allContainers = append(allContainers, rs.Spec.Template.Spec.InitContainers...)
+			allContainers = append(allContainers, rs.Spec.Template.Spec.Containers...)
+
+			// Security context analysis
+			secCtx := analyzeTemplateSecurityContext(&rs.Spec.Template.Spec, allContainers)
+			finding.Privileged = secCtx.Privileged != nil && *secCtx.Privileged
+			finding.AllowPrivEsc = secCtx.AllowPrivilegeEscalation == nil || *secCtx.AllowPrivilegeEscalation
+			finding.ReadOnlyRootFilesystem = secCtx.ReadOnlyRootFilesystem
+			finding.ProcMountUnmasked = (secCtx.ProcMount == "Unmasked")
+			finding.RunAsRoot = isTemplateRunAsRoot(secCtx)
+
+			// SELinux analysis
+			if secCtx.SELinuxOptions != nil {
+				finding.SELinuxContext = formatTemplateSELinuxContext(secCtx.SELinuxOptions)
+				finding.SELinuxCustom = (secCtx.SELinuxOptions.Level != "" || secCtx.SELinuxOptions.Role != "" ||
+					secCtx.SELinuxOptions.Type != "" || secCtx.SELinuxOptions.User != "")
+			} else {
+				finding.SELinuxContext = "<none>"
+			}
+
+			// AppArmor analysis
+			finding.AppArmorProfile = getTemplateAppArmorProfile(rs.Spec.Template.Annotations)
+			finding.AppArmorUndefined = (finding.AppArmorProfile == "" || finding.AppArmorProfile == "<none>")
+
+			// Seccomp analysis
+			if secCtx.SeccompProfile != nil {
+				finding.SeccompProfile = formatTemplateSeccompProfile(secCtx.SeccompProfile)
+				finding.SeccompUnconfined = (secCtx.SeccompProfile.Type == corev1.SeccompProfileTypeUnconfined)
+			} else {
+				finding.SeccompProfile = "<none>"
+				finding.SeccompUnconfined = true
+			}
+
+			// FSGroup and SupplementalGroups
+			if secCtx.FSGroup != nil {
+				finding.FSGroup = fmt.Sprintf("%d", *secCtx.FSGroup)
+			} else {
+				finding.FSGroup = "<none>"
+			}
+			for _, sg := range secCtx.SupplementalGroups {
+				finding.SupplementalGroups = append(finding.SupplementalGroups, fmt.Sprintf("%d", sg))
+			}
+
+			// Capability analysis
+			if secCtx.Capabilities != nil {
+				for _, cap := range secCtx.Capabilities.Add {
+					capStr := string(cap)
+					finding.Capabilities = append(finding.Capabilities, capStr)
+					if k8sinternal.IsDangerousCapability(capStr) {
+						finding.DangerousCaps = append(finding.DangerousCaps, capStr)
+					}
+				}
+				for _, cap := range secCtx.Capabilities.Drop {
+					capStr := string(cap)
+					finding.Capabilities = append(finding.Capabilities, "-"+capStr)
+					if capStr == "ALL" {
+						finding.DroppedAllCaps = true
+					}
 				}
 			}
-		}
 
-		// Image analysis
-		imageAnalyses := analyzeTemplateImages(allContainers)
-		for _, img := range imageAnalyses {
-			finding.Images = append(finding.Images, img.Image)
-			finding.ImageTagTypes = append(finding.ImageTagTypes, img.TagType)
-			finding.ImagePullPolicy = append(finding.ImagePullPolicy, img.PullPolicy)
-			finding.ImageDigests = append(finding.ImageDigests, img.Digest)
-			finding.ImageRegistries = append(finding.ImageRegistries, img.Registry)
-			if img.IsLatest {
-				finding.LatestTag = true
+			// Image analysis
+			imageAnalyses := analyzeTemplateImages(allContainers)
+			for _, img := range imageAnalyses {
+				finding.Images = append(finding.Images, img.Image)
+				finding.ImageTagTypes = append(finding.ImageTagTypes, img.TagType)
+				finding.ImagePullPolicy = append(finding.ImagePullPolicy, img.PullPolicy)
+				finding.ImageDigests = append(finding.ImageDigests, img.Digest)
+				finding.ImageRegistries = append(finding.ImageRegistries, img.Registry)
+				if img.IsLatest {
+					finding.LatestTag = true
+				}
+				if img.IsUnverified {
+					finding.UnverifiedImage = true
+				}
 			}
-			if img.IsUnverified {
-				finding.UnverifiedImage = true
+
+			// Resource analysis
+			resAnalysis := analyzeTemplateResources(allContainers)
+			finding.NoLimits = !resAnalysis.HasLimits
+			finding.NoRequests = !resAnalysis.HasRequests
+			for k, v := range resAnalysis.Limits {
+				finding.ResourceLimits = append(finding.ResourceLimits, fmt.Sprintf("%s=%s", k, v))
+			}
+			for k, v := range resAnalysis.Requests {
+				finding.ResourceRequests = append(finding.ResourceRequests, fmt.Sprintf("%s=%s", k, v))
+			}
+			finding.QoSClass = determineQoSClass(resAnalysis)
+
+			// Volume analysis
+			analyzeTemplateVolumes(&rs.Spec.Template.Spec, &finding, allContainers)
+
+			// Service Account token analysis
+			finding.AutomountSAToken = true // Default
+			if rs.Spec.Template.Spec.AutomountServiceAccountToken != nil {
+				finding.AutomountSAToken = *rs.Spec.Template.Spec.AutomountServiceAccountToken
+			}
+			finding.SATokenProjected = hasTemplateProjectedSAToken(rs.Spec.Template.Spec.Volumes)
+
+			// HostPath analysis
+			analyzeTemplateHostPaths(&rs.Spec.Template.Spec, &finding)
+
+			// Container detail extraction for container table
+			var allCommands []string
+			var allArgs []string
+			for i, c := range allContainers {
+				containerPrivileged := false
+				var containerCaps []string
+				containerRunAsUser := "N/A"
+				containerAllowPrivEsc := "N/A"
+				containerReadOnlyRootFS := "N/A"
+
+				if c.SecurityContext != nil {
+					if c.SecurityContext.Privileged != nil && *c.SecurityContext.Privileged {
+						containerPrivileged = true
+					}
+					if c.SecurityContext.Capabilities != nil {
+						for _, cap := range c.SecurityContext.Capabilities.Add {
+							containerCaps = append(containerCaps, string(cap))
+						}
+					}
+					if c.SecurityContext.RunAsUser != nil {
+						uid := *c.SecurityContext.RunAsUser
+						if uid == 0 {
+							containerRunAsUser = "root"
+						} else {
+							containerRunAsUser = fmt.Sprintf("%d", uid)
+						}
+					}
+					if c.SecurityContext.AllowPrivilegeEscalation != nil {
+						containerAllowPrivEsc = fmt.Sprintf("%v", *c.SecurityContext.AllowPrivilegeEscalation)
+					}
+					if c.SecurityContext.ReadOnlyRootFilesystem != nil {
+						containerReadOnlyRootFS = fmt.Sprintf("%v", *c.SecurityContext.ReadOnlyRootFilesystem)
+					}
+				}
+
+				// Extract resource limits
+				var resourceParts []string
+				if c.Resources.Limits != nil {
+					if cpu := c.Resources.Limits.Cpu(); cpu != nil && !cpu.IsZero() {
+						resourceParts = append(resourceParts, fmt.Sprintf("cpu:%s", cpu.String()))
+					}
+					if mem := c.Resources.Limits.Memory(); mem != nil && !mem.IsZero() {
+						resourceParts = append(resourceParts, fmt.Sprintf("mem:%s", mem.String()))
+					}
+				}
+				resourceLimits := strings.Join(resourceParts, ", ")
+
+				// Parse image details
+				image := c.Image
+				tag := "latest"
+				registry := "docker.io"
+				if strings.Contains(image, ":") {
+					parts := strings.SplitN(image, ":", 2)
+					image = parts[0]
+					tag = parts[1]
+				}
+				if strings.Contains(image, "/") {
+					parts := strings.Split(image, "/")
+					if strings.Contains(parts[0], ".") || parts[0] == "localhost" {
+						registry = parts[0]
+					}
+				}
+
+				// Use imageAnalyses for tag type if available
+				if i < len(imageAnalyses) {
+					tag = imageAnalyses[i].TagType
+					registry = imageAnalyses[i].Registry
+				}
+
+				finding.ContainerDetails = append(finding.ContainerDetails, ReplicaSetContainer{
+					Name:           c.Name,
+					Image:          c.Image,
+					Tag:            tag,
+					Registry:       registry,
+					Command:        strings.Join(c.Command, " "),
+					Args:           strings.Join(c.Args, " "),
+					Privileged:     containerPrivileged,
+					Capabilities:   containerCaps,
+					RunAsUser:      containerRunAsUser,
+					AllowPrivEsc:   containerAllowPrivEsc,
+					ReadOnlyRootFS: containerReadOnlyRootFS,
+					ResourceLimits: resourceLimits,
+				})
+				allCommands = append(allCommands, c.Command...)
+				allArgs = append(allArgs, c.Args...)
+			}
+
+			// Volume detail extraction for volume table
+			for _, v := range rs.Spec.Template.Spec.Volumes {
+				volume := ReplicaSetVolume{
+					Name: v.Name,
+				}
+
+				// Determine volume type and source
+				if v.HostPath != nil {
+					volume.VolumeType = "HostPath"
+					volume.Source = v.HostPath.Path
+				} else if v.Secret != nil {
+					volume.VolumeType = "Secret"
+					volume.Source = v.Secret.SecretName
+				} else if v.ConfigMap != nil {
+					volume.VolumeType = "ConfigMap"
+					volume.Source = v.ConfigMap.Name
+				} else if v.EmptyDir != nil {
+					volume.VolumeType = "EmptyDir"
+					volume.Source = "-"
+				} else if v.PersistentVolumeClaim != nil {
+					volume.VolumeType = "PVC"
+					volume.Source = v.PersistentVolumeClaim.ClaimName
+				} else if v.Projected != nil {
+					volume.VolumeType = "Projected"
+					volume.Source = "-"
+				} else if v.DownwardAPI != nil {
+					volume.VolumeType = "DownwardAPI"
+					volume.Source = "-"
+				} else {
+					volume.VolumeType = "Other"
+					volume.Source = "-"
+				}
+
+				// Find mount path and read-only status
+				for _, container := range allContainers {
+					for _, vm := range container.VolumeMounts {
+						if vm.Name == v.Name {
+							volume.MountPath = vm.MountPath
+							volume.ReadOnly = vm.ReadOnly
+							break
+						}
+					}
+				}
+
+				finding.VolumeDetails = append(finding.VolumeDetails, volume)
+			}
+
+			// Suspicious pattern detection using shared functions
+			var hostPaths []string
+			for _, hp := range finding.HostPaths {
+				// Extract just the path part
+				if idx := strings.Index(hp, ":"); idx != -1 {
+					hostPaths = append(hostPaths, hp[:idx])
+				} else {
+					hostPaths = append(hostPaths, hp)
+				}
+			}
+			finding.ReverseShells = shared.DetectReverseShells(allCommands, allArgs)
+			finding.CryptoMiners = shared.DetectCryptoMiners(allCommands, allArgs, finding.Images)
+			finding.DataExfiltration = shared.DetectDataExfiltration(allCommands, allArgs)
+			finding.ContainerEscapeP = shared.DetectContainerEscape(allCommands, allArgs, hostPaths)
+
+			// Combine all backdoor patterns
+			finding.BackdoorPatterns = append(finding.BackdoorPatterns, finding.ReverseShells...)
+			finding.BackdoorPatterns = append(finding.BackdoorPatterns, finding.CryptoMiners...)
+			finding.BackdoorPatterns = append(finding.BackdoorPatterns, finding.DataExfiltration...)
+			finding.BackdoorPatterns = append(finding.BackdoorPatterns, finding.ContainerEscapeP...)
+
+			// Cloud role detection
+			roleResults := k8sinternal.DetectCloudRole(ctx, clientset, rs.Namespace, rs.Spec.Template.Spec.ServiceAccountName, &rs.Spec.Template.Spec, rs.Spec.Template.Annotations)
+			if len(roleResults) > 0 {
+				finding.CloudProvider = roleResults[0].Provider
+				finding.CloudRole = roleResults[0].Role
+			}
+
+			// PSS Compliance Analysis
+			finding.PSSViolations, finding.PSSCompliance = analyzeTemplatePSSCompliance(&rs.Spec.Template.Spec, &finding, secCtx)
+			finding.RestrictedViolations = countTemplatePSSViolations(finding.PSSViolations, "restricted")
+			finding.BaselineViolations = countTemplatePSSViolations(finding.PSSViolations, "baseline")
+
+			// Security Issues Summary
+			finding.SecurityIssues = generateTemplateSecurityIssues(&finding)
+
+			// Calculate risk score and level
+			finding.RiskLevel, finding.RiskScore = calculateReplicaSetRiskScore(&finding)
+
+			// Calculate blast radius (risk score × replica count)
+			finding.BlastRadius = finding.RiskScore * int(finding.ReplicaCount)
+
+			// Impact summary
+			finding.ImpactSummary = generateImpactSummary(&finding)
+
+			riskCounts.Add(finding.RiskLevel)
+			findings = append(findings, finding)
+
+			// Build Security Context column (pod-level only)
+			var secContextParts []string
+			if finding.HostPID {
+				secContextParts = append(secContextParts, "HostPID")
+			}
+			if finding.HostIPC {
+				secContextParts = append(secContextParts, "HostIPC")
+			}
+			if finding.HostNetwork {
+				secContextParts = append(secContextParts, "HostNetwork")
+			}
+			for _, hp := range finding.SensitiveHostPaths {
+				if strings.Contains(hp, " - ") {
+					hpPath := strings.Split(hp, " - ")[0]
+					secContextParts = append(secContextParts, fmt.Sprintf("HostPath:%s", hpPath))
+				} else {
+					secContextParts = append(secContextParts, fmt.Sprintf("HostPath:%s", hp))
+				}
+			}
+			secContextStr := strings.Join(secContextParts, ", ")
+
+			// Build Suspicious Patterns column
+			suspiciousPatternsStr := strings.Join(finding.BackdoorPatterns, "; ")
+
+			// Build Cloud IAM column
+			var cloudIAMStr string
+			if finding.CloudProvider != "" && finding.CloudRole != "" {
+				cloudIAMStr = fmt.Sprintf("%s: %s", finding.CloudProvider, finding.CloudRole)
+			}
+
+			// Build replicas string
+			replicasStr := fmt.Sprintf("%d/%d/%d", finding.DesiredReplicas, finding.CurrentReplicas, finding.ReadyReplicas)
+
+			// Build Labels column
+			labelsStr := strings.Join(k8sinternal.MapToStringList(finding.Labels), ", ")
+
+			// Build Init Containers count
+			initContainersStr := fmt.Sprintf("%d", finding.InitContainers)
+
+			// Build Image Pull Secrets column
+			imagePullSecretsStr := strings.Join(finding.ImagePullSecrets, ", ")
+
+			// Build Secrets column from SecretVolumes
+			var secretNames []string
+			for _, sv := range finding.SecretVolumes {
+				// Extract just the secret name from format "volname (secret:name)"
+				if idx := strings.Index(sv, "(secret:"); idx != -1 {
+					endIdx := strings.Index(sv[idx:], ")")
+					if endIdx != -1 {
+						secretNames = append(secretNames, sv[idx+8:idx+endIdx])
+					}
+				}
+			}
+			secretsStr := strings.Join(secretNames, ", ")
+
+			// Build ConfigMaps column from ConfigMapVolumes
+			var cmNames []string
+			for _, cmv := range finding.ConfigMapVolumes {
+				// Extract just the configmap name from format "volname (cm:name)"
+				if idx := strings.Index(cmv, "(cm:"); idx != -1 {
+					endIdx := strings.Index(cmv[idx:], ")")
+					if endIdx != -1 {
+						cmNames = append(cmNames, cmv[idx+4:idx+endIdx])
+					}
+				}
+			}
+			configMapsStr := strings.Join(cmNames, ", ")
+
+			// Build Tolerations column
+			tolerationsStr := strings.Join(finding.Tolerations, "; ")
+
+			// Table 1: Summary row
+			summaryRow := []string{
+				finding.Namespace,
+				finding.Name,
+				k8sinternal.NonEmpty(labelsStr),
+				k8sinternal.NonEmpty(finding.DeploymentName),
+				replicasStr,
+				k8sinternal.NonEmpty(finding.ServiceAccount),
+				initContainersStr,
+				k8sinternal.NonEmpty(imagePullSecretsStr),
+				k8sinternal.NonEmpty(secretsStr),
+				k8sinternal.NonEmpty(configMapsStr),
+				k8sinternal.NonEmpty(secContextStr),
+				k8sinternal.NonEmpty(suspiciousPatternsStr),
+				k8sinternal.NonEmpty(cloudIAMStr),
+				k8sinternal.NonEmpty(finding.Affinity),
+				k8sinternal.NonEmpty(tolerationsStr),
+			}
+			summaryRows = append(summaryRows, summaryRow)
+
+			// Table 2: Container rows (one per container)
+			for _, container := range finding.ContainerDetails {
+				capsStr := strings.Join(container.Capabilities, ", ")
+				containerRow := []string{
+					finding.Namespace,
+					finding.Name,
+					container.Name,
+					fmt.Sprintf("%v", container.Privileged),
+					k8sinternal.NonEmpty(capsStr),
+					k8sinternal.NonEmpty(container.RunAsUser),
+					k8sinternal.NonEmpty(container.AllowPrivEsc),
+					k8sinternal.NonEmpty(container.ReadOnlyRootFS),
+					k8sinternal.NonEmpty(container.ResourceLimits),
+					container.Image,
+					container.Tag,
+					container.Registry,
+				}
+				containerRows = append(containerRows, containerRow)
+			}
+
+			// Table 3: Volume rows (one per volume)
+			for _, volume := range finding.VolumeDetails {
+				volumeRow := []string{
+					finding.Namespace,
+					finding.Name,
+					volume.Name,
+					volume.VolumeType,
+					volume.Source,
+					volume.MountPath,
+					fmt.Sprintf("%v", volume.ReadOnly),
+				}
+				volumeRows = append(volumeRows, volumeRow)
 			}
 		}
-
-		// Resource analysis
-		resAnalysis := analyzeTemplateResources(allContainers)
-		finding.NoLimits = !resAnalysis.HasLimits
-		finding.NoRequests = !resAnalysis.HasRequests
-		for k, v := range resAnalysis.Limits {
-			finding.ResourceLimits = append(finding.ResourceLimits, fmt.Sprintf("%s=%s", k, v))
-		}
-		for k, v := range resAnalysis.Requests {
-			finding.ResourceRequests = append(finding.ResourceRequests, fmt.Sprintf("%s=%s", k, v))
-		}
-		finding.QoSClass = determineQoSClass(resAnalysis)
-
-		// Volume analysis
-		analyzeTemplateVolumes(&rs.Spec.Template.Spec, &finding, allContainers)
-
-		// Service Account token analysis
-		finding.AutomountSAToken = true // Default
-		if rs.Spec.Template.Spec.AutomountServiceAccountToken != nil {
-			finding.AutomountSAToken = *rs.Spec.Template.Spec.AutomountServiceAccountToken
-		}
-		finding.SATokenProjected = hasTemplateProjectedSAToken(rs.Spec.Template.Spec.Volumes)
-
-		// HostPath analysis
-		analyzeTemplateHostPaths(&rs.Spec.Template.Spec, &finding)
-
-		// Cloud role detection
-		roleResults := k8sinternal.DetectCloudRole(ctx, clientset, rs.Namespace, rs.Spec.Template.Spec.ServiceAccountName, &rs.Spec.Template.Spec, rs.Spec.Template.Annotations)
-		if len(roleResults) > 0 {
-			finding.CloudProvider = roleResults[0].Provider
-			finding.CloudRole = roleResults[0].Role
-		}
-
-		// PSS Compliance Analysis
-		finding.PSSViolations, finding.PSSCompliance = analyzeTemplatePSSCompliance(&rs.Spec.Template.Spec, &finding, secCtx)
-		finding.RestrictedViolations = countTemplatePSSViolations(finding.PSSViolations, "restricted")
-		finding.BaselineViolations = countTemplatePSSViolations(finding.PSSViolations, "baseline")
-
-		// Security Issues Summary
-		finding.SecurityIssues = generateTemplateSecurityIssues(&finding)
-
-		// Calculate risk score and level
-		finding.RiskLevel, finding.RiskScore = calculateReplicaSetRiskScore(&finding)
-
-		// Calculate blast radius (risk score × replica count)
-		finding.BlastRadius = finding.RiskScore * int(finding.ReplicaCount)
-
-		// Impact summary
-		finding.ImpactSummary = generateImpactSummary(&finding)
-
-		riskCounts[finding.RiskLevel]++
-		findings = append(findings, finding)
-
-		// Generate table row
-		row := generateReplicaSetTableRow(&finding)
-		outputRows = append(outputRows, row)
-
-		// Generate loot content
-		generateReplicaSetLootContent(&finding, &rs,
-			&lootEnum, &lootHighRisk, &lootPSSViolations, &lootOrphaned,
-			&lootSecretExposure, &lootImageVulns, &lootResourceAbuse,
-			&lootAttackSurface, &lootRemediation)
 	}
 
-	// Add summaries
-	summary := fmt.Sprintf(`
-# SUMMARY: Risk Distribution
-# CRITICAL: %d ReplicaSets
-# HIGH: %d ReplicaSets
-# MEDIUM: %d ReplicaSets
-# LOW: %d ReplicaSets
-#
-# Focus on CRITICAL and HIGH risk ReplicaSets first
-# Fixing one template prevents creating multiple vulnerable pods
-`, riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"])
+	// Create all three tables
+	summaryTable := internal.TableFile{Name: "ReplicaSets", Header: summaryHeaders, Body: summaryRows}
+	containerTable := internal.TableFile{Name: "ReplicaSet-Containers", Header: containerHeaders, Body: containerRows}
+	volumeTable := internal.TableFile{Name: "ReplicaSet-Volumes", Header: volumeHeaders, Body: volumeRows}
 
-	lootHighRisk = append([]string{summary}, lootHighRisk...)
+	// Generate consolidated loot files
+	lootFiles := generateReplicaSetLoot(findings, riskCounts)
 
-	// Create table
-	table := internal.TableFile{
-		Name:   "ReplicaSets",
-		Header: headers,
-		Body:   outputRows,
-	}
-
-	// Create loot files
-	lootFiles := []internal.LootFile{
-		{Name: "ReplicaSets-Enum", Contents: strings.Join(lootEnum, "\n")},
-		{Name: "ReplicaSets-High-Risk", Contents: strings.Join(lootHighRisk, "\n")},
-		{Name: "ReplicaSets-PSS-Violations", Contents: strings.Join(lootPSSViolations, "\n")},
-		{Name: "ReplicaSets-Orphaned", Contents: strings.Join(lootOrphaned, "\n")},
-		{Name: "ReplicaSets-Secret-Exposure", Contents: strings.Join(lootSecretExposure, "\n")},
-		{Name: "ReplicaSets-Image-Vulnerabilities", Contents: strings.Join(lootImageVulns, "\n")},
-		{Name: "ReplicaSets-Resource-Abuse", Contents: strings.Join(lootResourceAbuse, "\n")},
-		{Name: "ReplicaSets-Attack-Surface", Contents: strings.Join(lootAttackSurface, "\n")},
-		{Name: "ReplicaSets-Remediation", Contents: strings.Join(lootRemediation, "\n")},
-	}
-
-	if err := internal.HandleOutput(
+	err := internal.HandleOutput(
 		"Kubernetes",
 		format,
 		outputDirectory,
@@ -515,18 +738,26 @@ func ListReplicaSets(cmd *cobra.Command, args []string) {
 		globals.ClusterName,
 		"results",
 		ReplicaSetsOutput{
-			Table: []internal.TableFile{table},
+			Table: []internal.TableFile{summaryTable, containerTable, volumeTable},
 			Loot:  lootFiles,
 		},
-	); err != nil {
+	)
+	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Error handling output: %v", err), globals.K8S_REPLICASETS_MODULE_NAME)
 		return
 	}
 
-	if len(outputRows) > 0 {
-		logger.InfoM(fmt.Sprintf("%d replicasets found | Risk: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
-			len(outputRows), riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"]),
-			globals.K8S_REPLICASETS_MODULE_NAME)
+	if len(summaryRows) > 0 {
+		logger.InfoM(fmt.Sprintf("%d replicasets found", len(summaryRows)), globals.K8S_REPLICASETS_MODULE_NAME)
+		logger.InfoM(fmt.Sprintf("Risk Summary: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
+			riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low), globals.K8S_REPLICASETS_MODULE_NAME)
+
+		if riskCounts.Critical > 0 {
+			logger.InfoM(fmt.Sprintf("⚠️  %d CRITICAL risk replicasets detected!", riskCounts.Critical), globals.K8S_REPLICASETS_MODULE_NAME)
+		}
+		if riskCounts.High > 0 {
+			logger.InfoM(fmt.Sprintf("⚠️  %d HIGH risk replicasets detected!", riskCounts.High), globals.K8S_REPLICASETS_MODULE_NAME)
+		}
 	} else {
 		logger.InfoM("No replicasets found, skipping output file creation", globals.K8S_REPLICASETS_MODULE_NAME)
 	}
@@ -1214,142 +1445,134 @@ func stringListOrNoneRS(list []string) string {
 	return strings.Join(list, ", ")
 }
 
-func generateReplicaSetLootContent(finding *ReplicaSetFinding, rs *appsv1.ReplicaSet,
-	lootEnum, lootHighRisk, lootPSSViolations, lootOrphaned,
-	lootSecretExposure, lootImageVulns, lootResourceAbuse,
-	lootAttackSurface, lootRemediation *[]string) {
+// generateReplicaSetLoot generates consolidated loot files for replicasets
+func generateReplicaSetLoot(findings []ReplicaSetFinding, riskCounts *shared.RiskCounts) []internal.LootFile {
+	var lootContent []string
+	var entrypointsContent []string
 
-	rsID := fmt.Sprintf("%s/%s", finding.Namespace, finding.Name)
+	// Header for ReplicaSet-Loot.txt
+	lootContent = append(lootContent, "#####################################")
+	lootContent = append(lootContent, "##### ReplicaSet Loot - Actionable Commands")
+	lootContent = append(lootContent, "#####################################")
+	lootContent = append(lootContent, "#")
+	lootContent = append(lootContent, fmt.Sprintf("# Risk Summary: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
+		riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low))
+	lootContent = append(lootContent, "#")
+	lootContent = append(lootContent, "")
 
-	// Enumeration
-	*lootEnum = append(*lootEnum, fmt.Sprintf("\n# %s", rsID))
-	*lootEnum = append(*lootEnum, fmt.Sprintf("kubectl describe replicaset -n %s %s", finding.Namespace, finding.Name))
-	*lootEnum = append(*lootEnum, fmt.Sprintf("kubectl get replicaset -n %s %s -o yaml\n", finding.Namespace, finding.Name))
+	// Header for ReplicaSet-Entrypoints.txt
+	entrypointsContent = append(entrypointsContent, "#####################################")
+	entrypointsContent = append(entrypointsContent, "##### ReplicaSet Container Entrypoints")
+	entrypointsContent = append(entrypointsContent, "#####################################")
+	entrypointsContent = append(entrypointsContent, "#")
+	entrypointsContent = append(entrypointsContent, "# Container startup commands (entrypoint/cmd) and arguments")
+	entrypointsContent = append(entrypointsContent, "# Only containers with non-empty commands/args are listed")
+	entrypointsContent = append(entrypointsContent, "#")
+	entrypointsContent = append(entrypointsContent, "")
 
-	// High risk ReplicaSets
-	if finding.RiskLevel == "CRITICAL" || finding.RiskLevel == "HIGH" {
-		*lootHighRisk = append(*lootHighRisk, fmt.Sprintf("\n### [%s] %s (Blast Radius: %d)", finding.RiskLevel, rsID, finding.BlastRadius))
-		*lootHighRisk = append(*lootHighRisk, fmt.Sprintf("# Deployment: %s", k8sinternal.NonEmpty(finding.DeploymentName)))
-		*lootHighRisk = append(*lootHighRisk, fmt.Sprintf("# Replicas: %d (will create %d %s risk pods)", finding.ReplicaCount, finding.ReplicaCount, finding.RiskLevel))
-		*lootHighRisk = append(*lootHighRisk, fmt.Sprintf("# Security Issues: %s", strings.Join(finding.SecurityIssues, ", ")))
-		*lootHighRisk = append(*lootHighRisk, fmt.Sprintf("# Impact: %s", finding.ImpactSummary))
-		*lootHighRisk = append(*lootHighRisk, "")
-		*lootHighRisk = append(*lootHighRisk, "# Fix template to prevent creating vulnerable pods:")
-		if !finding.IsOrphaned {
-			*lootHighRisk = append(*lootHighRisk, fmt.Sprintf("kubectl edit deployment -n %s %s", finding.Namespace, finding.DeploymentName))
-		} else {
-			*lootHighRisk = append(*lootHighRisk, fmt.Sprintf("kubectl edit replicaset -n %s %s", finding.Namespace, finding.Name))
-		}
-		*lootHighRisk = append(*lootHighRisk, "")
+	// Sort findings by risk score (highest first)
+	sort.Slice(findings, func(i, j int) bool {
+		return findings[i].RiskScore > findings[j].RiskScore
+	})
+
+	// Section: ENUMERATION
+	lootContent = append(lootContent, "")
+	lootContent = append(lootContent, "### ENUMERATION - Describe and inspect replicasets")
+	lootContent = append(lootContent, "")
+	for _, f := range findings {
+		lootContent = append(lootContent, fmt.Sprintf("# [%s] %s/%s (Replicas: %d)", f.RiskLevel, f.Namespace, f.Name, f.ReplicaCount))
+		lootContent = append(lootContent, fmt.Sprintf("kubectl describe replicaset -n %s %s", f.Namespace, f.Name))
+		lootContent = append(lootContent, fmt.Sprintf("kubectl get replicaset -n %s %s -o yaml", f.Namespace, f.Name))
+		lootContent = append(lootContent, "")
 	}
 
-	// PSS violations
-	if len(finding.PSSViolations) > 0 {
-		*lootPSSViolations = append(*lootPSSViolations, fmt.Sprintf("\n### %s - %s (%d violations)", rsID, finding.PSSCompliance, len(finding.PSSViolations)))
-		*lootPSSViolations = append(*lootPSSViolations, fmt.Sprintf("# Replicas: %d (each pod will have these violations)", finding.ReplicaCount))
-		for _, violation := range finding.PSSViolations {
-			*lootPSSViolations = append(*lootPSSViolations, fmt.Sprintf("  - %s", violation))
+	// Section: HIGH RISK - Critical and high risk replicasets
+	lootContent = append(lootContent, "")
+	lootContent = append(lootContent, "### HIGH RISK - Critical and high risk replicasets")
+	lootContent = append(lootContent, "")
+	for _, f := range findings {
+		if f.RiskLevel == "CRITICAL" || f.RiskLevel == "HIGH" {
+			lootContent = append(lootContent, fmt.Sprintf("# [%s] %s/%s - Blast Radius: %d", f.RiskLevel, f.Namespace, f.Name, f.BlastRadius))
+			lootContent = append(lootContent, fmt.Sprintf("# Security Issues: %s", strings.Join(f.SecurityIssues, ", ")))
+			lootContent = append(lootContent, fmt.Sprintf("# Replicas: %d pods with these vulnerabilities", f.ReplicaCount))
+			if !f.IsOrphaned && f.DeploymentName != "" {
+				lootContent = append(lootContent, fmt.Sprintf("kubectl edit deployment -n %s %s", f.Namespace, f.DeploymentName))
+			} else {
+				lootContent = append(lootContent, fmt.Sprintf("kubectl edit replicaset -n %s %s", f.Namespace, f.Name))
+			}
+			lootContent = append(lootContent, "")
 		}
-		*lootPSSViolations = append(*lootPSSViolations, "")
 	}
 
-	// Orphaned ReplicaSets
-	if finding.IsOrphaned {
-		*lootOrphaned = append(*lootOrphaned, fmt.Sprintf("\n### %s", rsID))
-		*lootOrphaned = append(*lootOrphaned, "  - No Deployment owner (manually created)")
-		*lootOrphaned = append(*lootOrphaned, fmt.Sprintf("  - Replicas: %d", finding.ReplicaCount))
-		*lootOrphaned = append(*lootOrphaned, "  - May indicate attacker persistence or forgotten test resource")
-		*lootOrphaned = append(*lootOrphaned, fmt.Sprintf("  - Risk Level: %s", finding.RiskLevel))
-		*lootOrphaned = append(*lootOrphaned, "")
+	// Section: EXPLOITATION - Pods from vulnerable templates
+	lootContent = append(lootContent, "")
+	lootContent = append(lootContent, "### EXPLOITATION - Access pods from high-risk replicasets")
+	lootContent = append(lootContent, "")
+	for _, f := range findings {
+		if f.Privileged || len(f.DangerousCaps) > 0 || len(f.SensitiveHostPaths) > 0 {
+			lootContent = append(lootContent, fmt.Sprintf("# [%s] %s/%s - %d vulnerable pods", f.RiskLevel, f.Namespace, f.Name, f.ReplicaCount))
+			lootContent = append(lootContent, fmt.Sprintf("# Get pod names: kubectl get pods -n %s -l app=%s", f.Namespace, f.Name))
+			if f.Privileged {
+				lootContent = append(lootContent, "# Privileged template - all pods can escape to host")
+			}
+			if len(f.DangerousCaps) > 0 {
+				lootContent = append(lootContent, fmt.Sprintf("# Dangerous capabilities: %s", strings.Join(f.DangerousCaps, ", ")))
+			}
+			lootContent = append(lootContent, "")
+		}
 	}
 
-	// Secret exposure
-	if finding.TotalSecretsExposed > 0 {
-		*lootSecretExposure = append(*lootSecretExposure, fmt.Sprintf("\n### %s (%d secrets × %d replicas = %d total exposures)",
-			rsID, finding.TotalSecretsExposed, finding.ReplicaCount, finding.TotalSecretsExposed*int(finding.ReplicaCount)))
-		if len(finding.SecretVolumes) > 0 {
-			*lootSecretExposure = append(*lootSecretExposure, fmt.Sprintf("# Secret volumes: %s", strings.Join(finding.SecretVolumes, ", ")))
+	// Section: SECRETS ACCESS
+	lootContent = append(lootContent, "")
+	lootContent = append(lootContent, "### SECRETS ACCESS - Templates exposing secrets")
+	lootContent = append(lootContent, "")
+	for _, f := range findings {
+		if f.TotalSecretsExposed > 0 {
+			lootContent = append(lootContent, fmt.Sprintf("# [%s] %s/%s (%d secrets × %d replicas)", f.RiskLevel, f.Namespace, f.Name, f.TotalSecretsExposed, f.ReplicaCount))
+			if len(f.SecretVolumes) > 0 {
+				lootContent = append(lootContent, fmt.Sprintf("# Secrets: %s", strings.Join(f.SecretVolumes, ", ")))
+			}
+			lootContent = append(lootContent, "")
 		}
-		if len(finding.SecretEnvVars) > 0 {
-			*lootSecretExposure = append(*lootSecretExposure, fmt.Sprintf("# Secret env vars: %s", strings.Join(finding.SecretEnvVars, ", ")))
-		}
-		*lootSecretExposure = append(*lootSecretExposure, "")
 	}
 
-	// Image vulnerabilities
-	if finding.LatestTag || finding.UnverifiedImage {
-		*lootImageVulns = append(*lootImageVulns, fmt.Sprintf("\n### %s (%d replicas with vulnerable images)", rsID, finding.ReplicaCount))
-		if finding.LatestTag {
-			*lootImageVulns = append(*lootImageVulns, "  - Uses :latest tag (unpinned version)")
+	// Section: PERSISTENCE - Orphaned replicasets
+	lootContent = append(lootContent, "")
+	lootContent = append(lootContent, "### PERSISTENCE - Orphaned replicasets (no deployment owner)")
+	lootContent = append(lootContent, "")
+	for _, f := range findings {
+		if f.IsOrphaned {
+			lootContent = append(lootContent, fmt.Sprintf("# [%s] %s/%s - Orphaned (%d replicas)", f.RiskLevel, f.Namespace, f.Name, f.ReplicaCount))
+			lootContent = append(lootContent, "# May indicate attacker persistence or forgotten test resource")
+			lootContent = append(lootContent, fmt.Sprintf("kubectl delete replicaset -n %s %s", f.Namespace, f.Name))
+			lootContent = append(lootContent, "")
 		}
-		if finding.UnverifiedImage {
-			*lootImageVulns = append(*lootImageVulns, "  - Image not verified with digest (@sha256)")
-		}
-		*lootImageVulns = append(*lootImageVulns, fmt.Sprintf("  - Images: %s", strings.Join(finding.Images, ", ")))
-		*lootImageVulns = append(*lootImageVulns, "")
 	}
 
-	// Resource abuse
-	if finding.NoLimits {
-		*lootResourceAbuse = append(*lootResourceAbuse, fmt.Sprintf("\n### %s - No resource limits", rsID))
-		*lootResourceAbuse = append(*lootResourceAbuse, fmt.Sprintf("  - Replicas: %d", finding.ReplicaCount))
-		*lootResourceAbuse = append(*lootResourceAbuse, "  - Each pod can consume unlimited CPU/memory")
-		if finding.HighReplicaCount {
-			*lootResourceAbuse = append(*lootResourceAbuse, fmt.Sprintf("  - HIGH RISK: %d pods without limits = cluster DoS potential", finding.ReplicaCount))
-		}
-		*lootResourceAbuse = append(*lootResourceAbuse, "")
-	}
-
-	// Attack surface
-	if finding.RiskLevel == "CRITICAL" || finding.RiskLevel == "HIGH" {
-		*lootAttackSurface = append(*lootAttackSurface, fmt.Sprintf("\n### %s", rsID))
-		*lootAttackSurface = append(*lootAttackSurface, fmt.Sprintf("  Risk Score: %d", finding.RiskScore))
-		*lootAttackSurface = append(*lootAttackSurface, fmt.Sprintf("  Replica Count: %d", finding.ReplicaCount))
-		*lootAttackSurface = append(*lootAttackSurface, fmt.Sprintf("  Blast Radius: %d (score × replicas)", finding.BlastRadius))
-		*lootAttackSurface = append(*lootAttackSurface, fmt.Sprintf("  Impact: Fixing 1 template prevents %d vulnerable pods", finding.ReplicaCount))
-		*lootAttackSurface = append(*lootAttackSurface, "")
-	}
-
-	// Remediation
-	if len(finding.SecurityIssues) > 0 {
-		*lootRemediation = append(*lootRemediation, fmt.Sprintf("\n### %s (%d issues affecting %d replicas)", rsID, len(finding.SecurityIssues), finding.ReplicaCount))
-		*lootRemediation = append(*lootRemediation, fmt.Sprintf("# Total pod-level issues: %d × %d = %d", len(finding.SecurityIssues), finding.ReplicaCount, len(finding.SecurityIssues)*int(finding.ReplicaCount)))
-		*lootRemediation = append(*lootRemediation, "")
-
-		for _, issue := range finding.SecurityIssues {
-			*lootRemediation = append(*lootRemediation, fmt.Sprintf("## Issue: %s", issue))
-
-			switch {
-			case strings.Contains(issue, "PRIVILEGED"):
-				*lootRemediation = append(*lootRemediation, "Remediation: Remove privileged: true from pod template securityContext")
-			case strings.Contains(issue, "HOST_PID"):
-				*lootRemediation = append(*lootRemediation, "Remediation: Set hostPID: false in pod template spec")
-			case strings.Contains(issue, "HOST_NETWORK"):
-				*lootRemediation = append(*lootRemediation, "Remediation: Set hostNetwork: false in pod template spec")
-			case strings.Contains(issue, "RUN_AS_ROOT"):
-				*lootRemediation = append(*lootRemediation, "Remediation: Set runAsNonRoot: true in pod template securityContext")
-			case strings.Contains(issue, "ALLOW_PRIV_ESC"):
-				*lootRemediation = append(*lootRemediation, "Remediation: Set allowPrivilegeEscalation: false in pod template securityContext")
-			case strings.Contains(issue, "WRITABLE_ROOT_FS"):
-				*lootRemediation = append(*lootRemediation, "Remediation: Set readOnlyRootFilesystem: true in pod template securityContext")
-			case strings.Contains(issue, "SECCOMP_UNCONFINED"):
-				*lootRemediation = append(*lootRemediation, "Remediation: Set seccompProfile.type: RuntimeDefault in pod template securityContext")
-			case strings.Contains(issue, "NO_RESOURCE_LIMITS"):
-				*lootRemediation = append(*lootRemediation, "Remediation: Add resources.limits for cpu and memory in pod template")
-			case strings.Contains(issue, "ORPHANED_RS"):
-				*lootRemediation = append(*lootRemediation, "Remediation: Delete orphaned ReplicaSet or create Deployment to manage it")
+	// Build entrypoints content
+	for _, f := range findings {
+		var containerEntries []string
+		for _, c := range f.ContainerDetails {
+			if c.Command != "" || c.Args != "" {
+				containerEntries = append(containerEntries, fmt.Sprintf("  Container: %s", c.Name))
+				containerEntries = append(containerEntries, fmt.Sprintf("    Image: %s", c.Image))
+				if c.Command != "" {
+					containerEntries = append(containerEntries, fmt.Sprintf("    Command: %s", c.Command))
+				}
+				if c.Args != "" {
+					containerEntries = append(containerEntries, fmt.Sprintf("    Args: %s", c.Args))
+				}
 			}
 		}
-
-		if !finding.IsOrphaned {
-			*lootRemediation = append(*lootRemediation, "")
-			*lootRemediation = append(*lootRemediation, "# Edit Deployment to update template:")
-			*lootRemediation = append(*lootRemediation, fmt.Sprintf("kubectl edit deployment -n %s %s", finding.Namespace, finding.DeploymentName))
-		} else {
-			*lootRemediation = append(*lootRemediation, "")
-			*lootRemediation = append(*lootRemediation, "# Edit ReplicaSet directly (orphaned):")
-			*lootRemediation = append(*lootRemediation, fmt.Sprintf("kubectl edit replicaset -n %s %s", finding.Namespace, finding.Name))
+		if len(containerEntries) > 0 {
+			entrypointsContent = append(entrypointsContent, fmt.Sprintf("ReplicaSet: %s/%s (Replicas: %d)", f.Namespace, f.Name, f.ReplicaCount))
+			entrypointsContent = append(entrypointsContent, containerEntries...)
+			entrypointsContent = append(entrypointsContent, "")
 		}
-		*lootRemediation = append(*lootRemediation, "")
+	}
+
+	return []internal.LootFile{
+		{Name: "ReplicaSet-Loot", Contents: strings.Join(lootContent, "\n")},
+		{Name: "ReplicaSet-Entrypoints", Contents: strings.Join(entrypointsContent, "\n")},
 	}
 }

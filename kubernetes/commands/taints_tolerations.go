@@ -1,13 +1,13 @@
 package commands
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/spf13/cobra"
 	v1 "k8s.io/api/core/v1"
@@ -91,7 +91,8 @@ func ttToleratesTaint(tol v1.Toleration, taint v1.Taint) bool {
 }
 
 func ListTaintsTolerations(cmd *cobra.Command, args []string) {
-	ctx := context.Background()
+	ctx, cancel := shared.ContextWithTimeout()
+	defer cancel()
 	logger := internal.NewLogger()
 
 	// Extract global flags
@@ -107,7 +108,7 @@ func ListTaintsTolerations(cmd *cobra.Command, args []string) {
 
 	nodes, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Error listing nodes: %v", err), globals.K8S_TAINTS_TOLERATIONS_MODULE_NAME)
+		shared.LogListError(&logger, "nodes", "", err, globals.K8S_TAINTS_TOLERATIONS_MODULE_NAME, true)
 		return
 	}
 
@@ -121,15 +122,9 @@ func ListTaintsTolerations(cmd *cobra.Command, args []string) {
 		nodeComplianceZones[node.Name] = detectComplianceZoneTT(node.Labels, node.Spec.Taints)
 	}
 
-	namespaces, err := clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Error listing namespaces: %v", err), globals.K8S_TAINTS_TOLERATIONS_MODULE_NAME)
-		return
-	}
+	namespaces := shared.GetTargetNamespaces(ctx, clientset, &logger, globals.K8S_TAINTS_TOLERATIONS_MODULE_NAME)
 
 	headersPods := []string{
-		"Risk",
-		"Score",
 		"Namespace",
 		"PodName",
 		"NodeName",
@@ -139,13 +134,12 @@ func ListTaintsTolerations(cmd *cobra.Command, args []string) {
 		"Issues",
 	}
 	var outputRowsPods [][]string
-	var lootContentsPods []string
-	var lootUnauthorizedAccess []string
-	var lootComplianceViolations []string
-	var lootWildcardBypasses []string
-	var lootRemediation []string
 
-	lootUnauthorizedAccess = append(lootUnauthorizedAccess, `#####################################
+	loot := shared.NewLootBuilder()
+
+	loot.Section("PodTolerations-info")
+
+	loot.Section("Unauthorized-Access").SetHeader(`#####################################
 ##### Unauthorized Node Access
 #####################################
 # Pods accessing nodes they shouldn't
@@ -153,7 +147,7 @@ func ListTaintsTolerations(cmd *cobra.Command, args []string) {
 
 `)
 
-	lootComplianceViolations = append(lootComplianceViolations, `#####################################
+	loot.Section("Compliance-Violations").SetHeader(`#####################################
 ##### Compliance Violations
 #####################################
 # Pods bypassing compliance zone isolation
@@ -161,7 +155,7 @@ func ListTaintsTolerations(cmd *cobra.Command, args []string) {
 
 `)
 
-	lootWildcardBypasses = append(lootWildcardBypasses, `#####################################
+	loot.Section("Wildcard-Bypasses").SetHeader(`#####################################
 ##### Wildcard Toleration Bypasses
 #####################################
 # Pods with wildcard tolerations bypassing all taints
@@ -169,7 +163,7 @@ func ListTaintsTolerations(cmd *cobra.Command, args []string) {
 
 `)
 
-	lootRemediation = append(lootRemediation, `#####################################
+	loot.Section("Remediation-Guide").SetHeader(`#####################################
 ##### Remediation Guidance
 #####################################
 # Step-by-step fixes for taint-toleration issues
@@ -180,17 +174,12 @@ func ListTaintsTolerations(cmd *cobra.Command, args []string) {
 	taintTolerated := map[string]bool{}
 	var podMatches []PodTaintMatch
 
-	riskCounts := map[string]int{
-		"CRITICAL": 0,
-		"HIGH":     0,
-		"MEDIUM":   0,
-		"LOW":      0,
-	}
+	riskCounts := shared.NewRiskCounts()
 
-	for _, ns := range namespaces.Items {
-		pods, err := clientset.CoreV1().Pods(ns.Name).List(ctx, metav1.ListOptions{})
+	for _, ns := range namespaces {
+		pods, err := clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
 		if err != nil {
-			logger.ErrorM(fmt.Sprintf("Error listing pods in namespace: %v", err), globals.K8S_TAINTS_TOLERATIONS_MODULE_NAME)
+			shared.LogListError(&logger, "pods", ns, err, globals.K8S_TAINTS_TOLERATIONS_MODULE_NAME, false)
 			continue
 		}
 
@@ -241,7 +230,7 @@ func ListTaintsTolerations(cmd *cobra.Command, args []string) {
 			podMatch.RiskLevel, podMatch.RiskScore = calculateTaintTolerationRisk(&podMatch, nodeRoles[nodeName])
 			podMatch.SecurityIssues = generateTaintTolerationIssues(&podMatch, nodeRoles[nodeName])
 
-			riskCounts[podMatch.RiskLevel]++
+			riskCounts.Add(podMatch.RiskLevel)
 			podMatches = append(podMatches, podMatch)
 
 			toleratedStr := "<NONE>"
@@ -255,8 +244,6 @@ func ListTaintsTolerations(cmd *cobra.Command, args []string) {
 			}
 
 			row := []string{
-				podMatch.RiskLevel,
-				fmt.Sprintf("%d", podMatch.RiskScore),
 				k8sinternal.NonEmpty(pod.Namespace),
 				k8sinternal.NonEmpty(pod.Name),
 				k8sinternal.NonEmpty(nodeName),
@@ -267,98 +254,90 @@ func ListTaintsTolerations(cmd *cobra.Command, args []string) {
 			}
 			outputRowsPods = append(outputRowsPods, row)
 
-			lootContentsPods = append(lootContentsPods,
-				fmt.Sprintf("### [%s] Namespace: %s | Pod: %s | Node: %s (%s)",
-					podMatch.RiskLevel, pod.Namespace, pod.Name, nodeName, nodeRoles[nodeName]),
-				fmt.Sprintf("# Tolerated: %d | Untolerated: %d | Issues: %d",
-					len(toleratedTaints), len(untoleratedTaints), len(podMatch.SecurityIssues)),
-			)
+			loot.Section("PodTolerations-info").Addf("### [%s] Namespace: %s | Pod: %s | Node: %s (%s)",
+				podMatch.RiskLevel, pod.Namespace, pod.Name, nodeName, nodeRoles[nodeName])
+			loot.Section("PodTolerations-info").Addf("# Tolerated: %d | Untolerated: %d | Issues: %d",
+				len(toleratedTaints), len(untoleratedTaints), len(podMatch.SecurityIssues))
 			if len(toleratedTaints) > 0 {
-				lootContentsPods = append(lootContentsPods, "# Tolerated Taints:")
+				loot.Section("PodTolerations-info").Add("# Tolerated Taints:")
 				for _, t := range toleratedTaints {
-					lootContentsPods = append(lootContentsPods, fmt.Sprintf("#   - %s", t))
+					loot.Section("PodTolerations-info").Addf("#   - %s", t)
 				}
 			}
 			if len(untoleratedTaints) > 0 {
-				lootContentsPods = append(lootContentsPods, "# Untolerated Taints:")
+				loot.Section("PodTolerations-info").Add("# Untolerated Taints:")
 				for _, t := range untoleratedTaints {
-					lootContentsPods = append(lootContentsPods, fmt.Sprintf("#   - %s", t))
+					loot.Section("PodTolerations-info").Addf("#   - %s", t)
 				}
 			}
 			if len(podMatch.SecurityIssues) > 0 {
-				lootContentsPods = append(lootContentsPods, "# Security Issues:")
+				loot.Section("PodTolerations-info").Add("# Security Issues:")
 				for _, issue := range podMatch.SecurityIssues {
-					lootContentsPods = append(lootContentsPods, fmt.Sprintf("#   - %s", issue))
+					loot.Section("PodTolerations-info").Addf("#   - %s", issue)
 				}
 			}
-			lootContentsPods = append(lootContentsPods, "")
+			loot.Section("PodTolerations-info").Add("")
 
 			// Loot: Unauthorized access
 			if podMatch.UnauthorizedAccess {
-				lootUnauthorizedAccess = append(lootUnauthorizedAccess,
-					fmt.Sprintf("\n### [%s] %s/%s on %s (%s)", podMatch.RiskLevel, pod.Namespace, pod.Name, nodeName, nodeRoles[nodeName]),
-					fmt.Sprintf("# Privileged: %v | HostAccess: %s", podMatch.IsPrivileged, podMatch.HostAccess),
-				)
+				loot.Section("Unauthorized-Access").Add("")
+				loot.Section("Unauthorized-Access").Addf("### [%s] %s/%s on %s (%s)", podMatch.RiskLevel, pod.Namespace, pod.Name, nodeName, nodeRoles[nodeName])
+				loot.Section("Unauthorized-Access").Addf("# Privileged: %v | HostAccess: %s", podMatch.IsPrivileged, podMatch.HostAccess)
 				if len(podMatch.SecurityIssues) > 0 {
-					lootUnauthorizedAccess = append(lootUnauthorizedAccess, "# Issues:")
+					loot.Section("Unauthorized-Access").Add("# Issues:")
 					for _, issue := range podMatch.SecurityIssues {
-						lootUnauthorizedAccess = append(lootUnauthorizedAccess, fmt.Sprintf("#   - %s", issue))
+						loot.Section("Unauthorized-Access").Addf("#   - %s", issue)
 					}
 				}
-				lootUnauthorizedAccess = append(lootUnauthorizedAccess,
-					fmt.Sprintf("kubectl get pod %s -n %s -o yaml", pod.Name, pod.Namespace),
-					"")
+				loot.Section("Unauthorized-Access").Addf("kubectl get pod %s -n %s -o yaml", pod.Name, pod.Namespace)
+				loot.Section("Unauthorized-Access").Add("")
 			}
 
 			// Loot: Compliance violations
 			if podMatch.ComplianceViolation != "" {
-				lootComplianceViolations = append(lootComplianceViolations,
-					fmt.Sprintf("\n### [CRITICAL] %s/%s - %s Zone Violation", pod.Namespace, pod.Name, podMatch.ComplianceViolation),
-					fmt.Sprintf("# Node: %s | Compliance Zone: %s", nodeName, podMatch.ComplianceViolation),
-					fmt.Sprintf("# Pod bypassing %s compliance isolation", podMatch.ComplianceViolation),
-					fmt.Sprintf("kubectl get pod %s -n %s -o yaml", pod.Name, pod.Namespace),
-					"")
+				loot.Section("Compliance-Violations").Add("")
+				loot.Section("Compliance-Violations").Addf("### [%s] %s/%s - %s Zone Violation", shared.RiskCritical, pod.Namespace, pod.Name, podMatch.ComplianceViolation)
+				loot.Section("Compliance-Violations").Addf("# Node: %s | Compliance Zone: %s", nodeName, podMatch.ComplianceViolation)
+				loot.Section("Compliance-Violations").Addf("# Pod bypassing %s compliance isolation", podMatch.ComplianceViolation)
+				loot.Section("Compliance-Violations").Addf("kubectl get pod %s -n %s -o yaml", pod.Name, pod.Namespace)
+				loot.Section("Compliance-Violations").Add("")
 			}
 
 			// Loot: Wildcard bypasses
 			if podMatch.WildcardBypass {
-				lootWildcardBypasses = append(lootWildcardBypasses,
-					fmt.Sprintf("\n### [%s] %s/%s", podMatch.RiskLevel, pod.Namespace, pod.Name),
-					fmt.Sprintf("# Node: %s (%s) | Privileged: %v", nodeName, nodeRoles[nodeName], podMatch.IsPrivileged),
-					"# WARNING: Wildcard toleration can bypass ALL taints",
-				)
+				loot.Section("Wildcard-Bypasses").Add("")
+				loot.Section("Wildcard-Bypasses").Addf("### [%s] %s/%s", podMatch.RiskLevel, pod.Namespace, pod.Name)
+				loot.Section("Wildcard-Bypasses").Addf("# Node: %s (%s) | Privileged: %v", nodeName, nodeRoles[nodeName], podMatch.IsPrivileged)
+				loot.Section("Wildcard-Bypasses").Add("# WARNING: Wildcard toleration can bypass ALL taints")
 				if len(podMatch.SecurityIssues) > 0 {
-					lootWildcardBypasses = append(lootWildcardBypasses, "# Issues:")
+					loot.Section("Wildcard-Bypasses").Add("# Issues:")
 					for _, issue := range podMatch.SecurityIssues {
-						lootWildcardBypasses = append(lootWildcardBypasses, fmt.Sprintf("#   - %s", issue))
+						loot.Section("Wildcard-Bypasses").Addf("#   - %s", issue)
 					}
 				}
-				lootWildcardBypasses = append(lootWildcardBypasses,
-					fmt.Sprintf("kubectl get pod %s -n %s -o yaml", pod.Name, pod.Namespace),
-					"")
+				loot.Section("Wildcard-Bypasses").Addf("kubectl get pod %s -n %s -o yaml", pod.Name, pod.Namespace)
+				loot.Section("Wildcard-Bypasses").Add("")
 			}
 
 			// Loot: Remediation
 			if len(podMatch.SecurityIssues) > 0 {
-				lootRemediation = append(lootRemediation,
-					fmt.Sprintf("\n### %s/%s - %d Issues", pod.Namespace, pod.Name, len(podMatch.SecurityIssues)),
-				)
+				loot.Section("Remediation-Guide").Add("")
+				loot.Section("Remediation-Guide").Addf("### %s/%s - %d Issues", pod.Namespace, pod.Name, len(podMatch.SecurityIssues))
 				for i, issue := range podMatch.SecurityIssues {
-					lootRemediation = append(lootRemediation, fmt.Sprintf("# %d. %s", i+1, issue))
+					loot.Section("Remediation-Guide").Addf("# %d. %s", i+1, issue)
 				}
-				lootRemediation = append(lootRemediation, "# Remediation steps:")
+				loot.Section("Remediation-Guide").Add("# Remediation steps:")
 				if podMatch.UnauthorizedAccess {
-					lootRemediation = append(lootRemediation, fmt.Sprintf("#   - Remove tolerations allowing access to %s nodes", nodeRoles[nodeName]))
+					loot.Section("Remediation-Guide").Addf("#   - Remove tolerations allowing access to %s nodes", nodeRoles[nodeName])
 				}
 				if podMatch.WildcardBypass {
-					lootRemediation = append(lootRemediation, "#   - Replace wildcard toleration with specific tolerations")
+					loot.Section("Remediation-Guide").Add("#   - Replace wildcard toleration with specific tolerations")
 				}
 				if podMatch.ComplianceViolation != "" {
-					lootRemediation = append(lootRemediation, fmt.Sprintf("#   - Add %s compliance zone taint to prevent unauthorized access", podMatch.ComplianceViolation))
+					loot.Section("Remediation-Guide").Addf("#   - Add %s compliance zone taint to prevent unauthorized access", podMatch.ComplianceViolation)
 				}
-				lootRemediation = append(lootRemediation,
-					fmt.Sprintf("#   kubectl edit pod %s -n %s", pod.Name, pod.Namespace),
-					"")
+				loot.Section("Remediation-Guide").Addf("#   kubectl edit pod %s -n %s", pod.Name, pod.Namespace)
+				loot.Section("Remediation-Guide").Add("")
 			}
 		}
 	}
@@ -371,7 +350,7 @@ func ListTaintsTolerations(cmd *cobra.Command, args []string) {
 	}
 
 	// Add summary
-	if riskCounts["CRITICAL"] > 0 || riskCounts["HIGH"] > 0 {
+	if riskCounts.Critical > 0 || riskCounts.High > 0 {
 		summary := fmt.Sprintf(`
 # SUMMARY: Risk Distribution
 # CRITICAL: %d pod-taint combinations with critical risks
@@ -380,20 +359,15 @@ func ListTaintsTolerations(cmd *cobra.Command, args []string) {
 # LOW: %d pod-taint combinations with low risks
 #
 # Focus on CRITICAL and HIGH risk combinations for security review.
-`, riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"])
-		lootContentsPods = append([]string{summary}, lootContentsPods...)
-	}
-
-	podsLoot := internal.LootFile{
-		Name:     "PodTolerations-info",
-		Contents: strings.Join(lootContentsPods, "\n"),
+`, riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low)
+		loot.Section("PodTolerations-info").SetSummary(summary)
 	}
 
 	// Unmatched taints (not tolerated by any pod)
-	headersTaints := []string{"Taint", "Risk"}
+	headersTaints := []string{"Taint"}
 	var outputRowsTaints [][]string
-	var lootContentsTaints []string
-	lootContentsTaints = append(lootContentsTaints, `#####################################
+
+	loot.Section("UnmatchedTaints-info").SetHeader(`#####################################
 ##### Taints Not Tolerated by Any Pod
 #####################################
 # These taints may indicate:
@@ -406,13 +380,13 @@ func ListTaintsTolerations(cmd *cobra.Command, args []string) {
 	for taint := range allTaintsSet {
 		if tolerated, ok := taintTolerated[taint]; !ok || !tolerated {
 			riskLevel := assessUntoleratedTaintRisk(taint)
-			outputRowsTaints = append(outputRowsTaints, []string{taint, riskLevel})
-			lootContentsTaints = append(lootContentsTaints, fmt.Sprintf("# [%s] %s", riskLevel, taint))
+			outputRowsTaints = append(outputRowsTaints, []string{taint})
+			loot.Section("UnmatchedTaints-info").Addf("# [%s] %s", riskLevel, taint)
 		}
 	}
 	if len(outputRowsTaints) == 0 {
-		outputRowsTaints = append(outputRowsTaints, []string{"<NONE>", "LOW"})
-		lootContentsTaints = append(lootContentsTaints, "# All taints are tolerated by at least one pod")
+		outputRowsTaints = append(outputRowsTaints, []string{"<NONE>"})
+		loot.Section("UnmatchedTaints-info").Add("# All taints are tolerated by at least one pod")
 	}
 
 	taintsTable := internal.TableFile{
@@ -420,10 +394,9 @@ func ListTaintsTolerations(cmd *cobra.Command, args []string) {
 		Header: headersTaints,
 		Body:   outputRowsTaints,
 	}
-	taintsLoot := internal.LootFile{
-		Name:     "UnmatchedTaints-info",
-		Contents: strings.Join(lootContentsTaints, "\n"),
-	}
+
+	// Build all loot files
+	lootFiles := loot.Build()
 
 	// Output handling
 	err = internal.HandleOutput(
@@ -437,14 +410,7 @@ func ListTaintsTolerations(cmd *cobra.Command, args []string) {
 		"results",
 		TaintsTolerationsOutput{
 			Table: []internal.TableFile{podsTable, taintsTable},
-			Loot: []internal.LootFile{
-				podsLoot,
-				taintsLoot,
-				{Name: "Unauthorized-Access", Contents: strings.Join(lootUnauthorizedAccess, "\n")},
-				{Name: "Compliance-Violations", Contents: strings.Join(lootComplianceViolations, "\n")},
-				{Name: "Wildcard-Bypasses", Contents: strings.Join(lootWildcardBypasses, "\n")},
-				{Name: "Remediation-Guide", Contents: strings.Join(lootRemediation, "\n")},
-			},
+			Loot:  lootFiles,
 		},
 	)
 	if err != nil {
@@ -455,7 +421,7 @@ func ListTaintsTolerations(cmd *cobra.Command, args []string) {
 	if len(outputRowsPods) > 0 {
 		logger.InfoM(fmt.Sprintf("%d pod tolerations found | Risk: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
 			len(outputRowsPods),
-			riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"]),
+			riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low),
 			globals.K8S_TAINTS_TOLERATIONS_MODULE_NAME)
 	} else {
 		logger.InfoM("No pod tolerations found, skipping output file creation", globals.K8S_TAINTS_TOLERATIONS_MODULE_NAME)
@@ -626,13 +592,13 @@ func calculateTaintTolerationRisk(match *PodTaintMatch, nodeRole string) (string
 
 	// Determine risk level
 	if score >= 70 {
-		return "CRITICAL", ttMin(score, 100)
+		return shared.RiskCritical, ttMin(score, 100)
 	} else if score >= 40 {
-		return "HIGH", score
+		return shared.RiskHigh, score
 	} else if score >= 20 {
-		return "MEDIUM", score
+		return shared.RiskMedium, score
 	}
-	return "LOW", score
+	return shared.RiskLow, score
 }
 
 func generateTaintTolerationIssues(match *PodTaintMatch, nodeRole string) []string {
@@ -677,16 +643,16 @@ func assessUntoleratedTaintRisk(taint string) string {
 		strings.Contains(lowerTaint, "control-plane") ||
 		strings.Contains(lowerTaint, "pci") ||
 		strings.Contains(lowerTaint, "hipaa") {
-		return "MEDIUM"
+		return shared.RiskMedium
 	}
 
 	// GPU or specialized hardware
 	if strings.Contains(lowerTaint, "gpu") ||
 		strings.Contains(lowerTaint, "nvidia") {
-		return "LOW"
+		return shared.RiskLow
 	}
 
-	return "LOW"
+	return shared.RiskLow
 }
 
 func ttMin(a, b int) int {

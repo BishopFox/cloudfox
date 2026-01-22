@@ -10,6 +10,7 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -39,39 +40,71 @@ func (t DeploymentsOutput) TableFiles() []internal.TableFile { return t.Table }
 func (t DeploymentsOutput) LootFiles() []internal.LootFile   { return t.Loot }
 
 type DeploymentFinding struct {
-	Namespace              string
-	Name                   string
-	Replicas               int32
-	ServiceAccount         string
-	Selectors              []string
-	Images                 []string
-	ImageTagTypes          []string
-	InitContainers         []string
-	Containers             []string
-	ImagePullSecrets       []string
-	Secrets                []string
-	ConfigMaps             []string
-	HostPID                bool
-	HostIPC                bool
-	HostNetwork            bool
-	Privileged             bool
-	RunAsUser              int
-	AllowPrivEsc           bool
-	ReadOnlyRootFS         bool
-	Capabilities           []string
-	DangerousCaps          []string
-	HasResourceLimits      bool
-	HostPaths              []string
-	SensitiveHostPaths     []string
-	WritableHostPaths      int
-	Labels                 map[string]string
-	Affinity               string
-	Tolerations            []string
-	CloudProvider          string
-	CloudRole              string
-	DeploymentStrategy     string
-	SecurityAnnotations    map[string]string
-	RiskLevel              string
+	Namespace           string
+	Name                string
+	Replicas            int32
+	ServiceAccount      string
+	Selectors           []string
+	Images              []string
+	ImageTagTypes       []string
+	InitContainers      []string
+	Containers          []DeploymentContainer
+	ImagePullSecrets    []string
+	Secrets             []string
+	ConfigMaps          []string
+	HostPID             bool
+	HostIPC             bool
+	HostNetwork         bool
+	Privileged          bool
+	RunAsUser           int
+	AllowPrivEsc        bool
+	ReadOnlyRootFS      bool
+	Capabilities        []string
+	DangerousCaps       []string
+	HasResourceLimits   bool
+	HostPaths           []string
+	SensitiveHostPaths  []string
+	WritableHostPaths   int
+	Volumes             []DeploymentVolume
+	Labels              map[string]string
+	Affinity            string
+	Tolerations         []string
+	CloudProvider       string
+	CloudRole           string
+	DeploymentStrategy  string
+	SecurityAnnotations map[string]string
+	RiskLevel           string
+	// Suspicious patterns
+	BackdoorPatterns []string
+	ReverseShells    []string
+	CryptoMiners     []string
+	DataExfiltration []string
+	ContainerEscape  []string
+	Commands         []string
+	Args             []string
+}
+
+type DeploymentContainer struct {
+	Name           string
+	Image          string
+	Tag            string
+	Registry       string
+	Command        string
+	Args           string
+	Privileged     bool
+	Capabilities   []string
+	RunAsUser      string
+	AllowPrivEsc   string
+	ReadOnlyRootFS string
+	ResourceLimits string // Actual CPU/Memory limits
+}
+
+type DeploymentVolume struct {
+	Name       string
+	VolumeType string
+	Source     string
+	MountPath  string
+	ReadOnly   bool
 }
 
 func ListDeployments(cmd *cobra.Command, args []string) {
@@ -88,23 +121,32 @@ func ListDeployments(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	deployments, err := clientset.AppsV1().Deployments("").List(ctx, metav1.ListOptions{})
-	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Error listing Deployments: %v", err), globals.K8S_DEPLOYMENTS_MODULE_NAME)
-		return
+	namespaces := shared.GetTargetNamespaces(ctx, clientset, &logger, globals.K8S_DEPLOYMENTS_MODULE_NAME)
+
+	// Table 1: Deployments Summary
+	summaryHeaders := []string{
+		"Namespace", "Name", "Labels", "Selectors", "Replicas", "Strategy",
+		"Service Account", "Init Containers", "Image Pull Secrets",
+		"Secrets", "ConfigMaps",
+		"Security Context", "Suspicious Patterns", "Cloud IAM",
+		"Affinity", "Tolerations",
 	}
 
-	headers := []string{
-		"Risk", "Namespace", "Deployment Name", "Replicas", "Images", "ImageTagTypes",
-		"ServiceAccount", "Selectors", "Volumes", "Secrets", "ConfigMaps",
-		"Containers", "InitContainers", "ImagePullSecrets",
-		"HostPID", "HostIPC", "HostNetwork", "Privileged", "RunAsUser",
-		"AllowPrivEsc", "ReadOnlyRootFS", "Capabilities", "ResourceLimits",
-		"HostPaths", "Labels", "Affinity", "Tolerations", "Strategy",
-		"Cloud Provider", "Cloud Role",
+	// Table 2: Deployment-Containers Detail
+	containerHeaders := []string{
+		"Namespace", "Deployment", "Container", "Privileged", "Capabilities",
+		"RunAsUser", "AllowPrivEsc", "ReadOnlyRootFS", "Resource Limits",
+		"Image", "Tag", "Registry",
 	}
 
-	var outputRows [][]string
+	// Table 3: Deployment-Volumes Detail
+	volumeHeaders := []string{
+		"Namespace", "Deployment", "Volume Name", "Type", "Source Path/Name", "Container Mount Path", "Read Only",
+	}
+
+	var summaryRows [][]string
+	var containerRows [][]string
+	var volumeRows [][]string
 	var findings []DeploymentFinding
 	namespaceMap := make(map[string][]string)
 
@@ -151,7 +193,14 @@ func ListDeployments(cmd *cobra.Command, args []string) {
 #
 `)
 
-	for _, dep := range deployments.Items {
+	for _, ns := range namespaces {
+		deployments, err := clientset.AppsV1().Deployments(ns).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			logger.ErrorM(fmt.Sprintf("Error listing Deployments in namespace %s: %v", ns, err), globals.K8S_DEPLOYMENTS_MODULE_NAME)
+			continue
+		}
+
+		for _, dep := range deployments.Items {
 		finding := DeploymentFinding{
 			Namespace: dep.Namespace,
 			Name:      dep.Name,
@@ -191,63 +240,85 @@ func ListDeployments(cmd *cobra.Command, args []string) {
 		}
 
 		// Volume analysis
-		var volumes []string
-		hostPaths := []string{}
+		var volumes []DeploymentVolume
+		var hostPaths []string
 		sensitiveHostPaths := []string{}
 		hostPathCount := 0
 		writableHostPaths := 0
 
 		for _, v := range dep.Spec.Template.Spec.Volumes {
-			volumes = append(volumes, v.Name)
+			volume := DeploymentVolume{
+				Name: v.Name,
+			}
 
 			// Secret volumes
 			if v.Secret != nil {
 				finding.Secrets = append(finding.Secrets, v.Secret.SecretName)
+				volume.VolumeType = "Secret"
+				volume.Source = v.Secret.SecretName
 			}
 
 			// ConfigMap volumes
 			if v.ConfigMap != nil {
 				finding.ConfigMaps = append(finding.ConfigMaps, v.ConfigMap.Name)
+				volume.VolumeType = "ConfigMap"
+				volume.Source = v.ConfigMap.Name
 			}
 
 			// HostPath analysis
 			if v.HostPath != nil {
 				hostPathCount++
-				mountPoint := k8sinternal.FindMountPath(v.Name, dep.Spec.Template.Spec.Containers)
+				volume.VolumeType = "HostPath"
+				volume.Source = v.HostPath.Path
+				hostPaths = append(hostPaths, v.HostPath.Path)
+			}
 
-				// Determine if readonly
-				readOnly := false
-				for _, container := range append(dep.Spec.Template.Spec.InitContainers, dep.Spec.Template.Spec.Containers...) {
-					for _, vm := range container.VolumeMounts {
-						if vm.Name == v.Name {
-							readOnly = vm.ReadOnly
-							break
-						}
+			// Other volume types
+			if v.EmptyDir != nil {
+				volume.VolumeType = "EmptyDir"
+				volume.Source = "-"
+			}
+			if v.PersistentVolumeClaim != nil {
+				volume.VolumeType = "PVC"
+				volume.Source = v.PersistentVolumeClaim.ClaimName
+			}
+			if v.Projected != nil {
+				volume.VolumeType = "Projected"
+				volume.Source = "-"
+			}
+			if v.DownwardAPI != nil {
+				volume.VolumeType = "DownwardAPI"
+				volume.Source = "-"
+			}
+			if volume.VolumeType == "" {
+				volume.VolumeType = "Other"
+				volume.Source = "-"
+			}
+
+			// Find mount path and read-only status
+			for _, container := range append(dep.Spec.Template.Spec.InitContainers, dep.Spec.Template.Spec.Containers...) {
+				for _, vm := range container.VolumeMounts {
+					if vm.Name == v.Name {
+						volume.MountPath = vm.MountPath
+						volume.ReadOnly = vm.ReadOnly
+						break
 					}
 				}
+			}
 
-				if !readOnly {
-					writableHostPaths++
-				}
-
+			// Track writable host paths
+			if v.HostPath != nil && !volume.ReadOnly {
+				writableHostPaths++
 				// Analyze host path sensitivity
-				isSensitive, description := k8sinternal.AnalyzeHostPath(v.HostPath.Path, readOnly)
-
-				hostPathLine := fmt.Sprintf("%s:%s", v.HostPath.Path, mountPoint)
-				if readOnly {
-					hostPathLine += " (ro)"
-				} else {
-					hostPathLine += " (rw)"
-				}
-
+				isSensitive, description := k8sinternal.AnalyzeHostPath(v.HostPath.Path, volume.ReadOnly)
 				if isSensitive {
-					hostPathLine += fmt.Sprintf(" - %s", description)
 					sensitiveHostPaths = append(sensitiveHostPaths, fmt.Sprintf("%s - %s", v.HostPath.Path, description))
 				}
-
-				hostPaths = append(hostPaths, hostPathLine)
 			}
+
+			volumes = append(volumes, volume)
 		}
+		finding.Volumes = volumes
 		finding.HostPaths = hostPaths
 		finding.SensitiveHostPaths = sensitiveHostPaths
 		finding.WritableHostPaths = writableHostPaths
@@ -261,49 +332,67 @@ func ListDeployments(cmd *cobra.Command, args []string) {
 		hasImageWithLatestTag := false
 		var capabilities []string
 		var dangerousCaps []string
+		var containers []DeploymentContainer
+		var allCommands []string
+		var allArgs []string
 
-		allContainers := append(dep.Spec.Template.Spec.InitContainers, dep.Spec.Template.Spec.Containers...)
+		allK8sContainers := append(dep.Spec.Template.Spec.InitContainers, dep.Spec.Template.Spec.Containers...)
 
 		// Init containers
 		for _, c := range dep.Spec.Template.Spec.InitContainers {
 			finding.InitContainers = append(finding.InitContainers, c.Name)
 		}
 
-		// Regular containers
-		for _, c := range dep.Spec.Template.Spec.Containers {
-			finding.Containers = append(finding.Containers, c.Name)
-		}
-
 		// Analyze all containers (init + regular)
-		for _, container := range allContainers {
+		for _, c := range allK8sContainers {
+			// Parse image into components
+			image := c.Image
+			tag := "latest"
+			registry := "docker.io"
+
+			if strings.Contains(image, ":") {
+				parts := strings.SplitN(image, ":", 2)
+				image = parts[0]
+				tag = parts[1]
+			}
+			if strings.Contains(image, "/") {
+				parts := strings.Split(image, "/")
+				if strings.Contains(parts[0], ".") || parts[0] == "localhost" {
+					registry = parts[0]
+				}
+			}
+
 			// Image info
-			finding.Images = append(finding.Images, container.Image)
-			tagType := k8sinternal.ImageTagType(container.Image)
+			finding.Images = append(finding.Images, c.Image)
+			tagType := k8sinternal.ImageTagType(c.Image)
 			finding.ImageTagTypes = append(finding.ImageTagTypes, tagType)
-			if tagType == "latest" || !strings.Contains(container.Image, ":") {
+			if tagType == "latest" || !strings.Contains(c.Image, ":") {
 				hasImageWithLatestTag = true
 			}
 
 			// Resource limits
-			if container.Resources.Limits != nil && len(container.Resources.Limits) > 0 {
+			if c.Resources.Limits != nil && len(c.Resources.Limits) > 0 {
 				hasResourceLimits = true
 			}
 
-			// Security context analysis
-			if container.SecurityContext != nil {
+			// Security context analysis - per container
+			containerPrivileged := false
+			var containerCaps []string
+			if c.SecurityContext != nil {
 				// Privileged
-				if container.SecurityContext.Privileged != nil && *container.SecurityContext.Privileged {
+				if c.SecurityContext.Privileged != nil && *c.SecurityContext.Privileged {
+					containerPrivileged = true
 					privileged = true
 				}
 
 				// RunAsUser
-				if container.SecurityContext.RunAsUser != nil {
-					runAsUser = int(*container.SecurityContext.RunAsUser)
+				if c.SecurityContext.RunAsUser != nil {
+					runAsUser = int(*c.SecurityContext.RunAsUser)
 				}
 
 				// AllowPrivilegeEscalation
-				if container.SecurityContext.AllowPrivilegeEscalation != nil {
-					if *container.SecurityContext.AllowPrivilegeEscalation {
+				if c.SecurityContext.AllowPrivilegeEscalation != nil {
+					if *c.SecurityContext.AllowPrivilegeEscalation {
 						allowPrivEsc = true
 					}
 				} else {
@@ -312,25 +401,82 @@ func ListDeployments(cmd *cobra.Command, args []string) {
 				}
 
 				// ReadOnlyRootFilesystem
-				if container.SecurityContext.ReadOnlyRootFilesystem != nil && *container.SecurityContext.ReadOnlyRootFilesystem {
+				if c.SecurityContext.ReadOnlyRootFilesystem != nil && *c.SecurityContext.ReadOnlyRootFilesystem {
 					readOnlyRootFS = true
 				}
 
 				// Capabilities
-				if container.SecurityContext.Capabilities != nil {
-					for _, cap := range container.SecurityContext.Capabilities.Add {
+				if c.SecurityContext.Capabilities != nil {
+					for _, cap := range c.SecurityContext.Capabilities.Add {
 						capStr := string(cap)
+						containerCaps = append(containerCaps, capStr)
 						capabilities = append(capabilities, capStr)
 						if k8sinternal.IsDangerousCapability(capStr) {
 							dangerousCaps = append(dangerousCaps, capStr)
 						}
 					}
-					for _, cap := range container.SecurityContext.Capabilities.Drop {
+					for _, cap := range c.SecurityContext.Capabilities.Drop {
 						capabilities = append(capabilities, "-"+string(cap))
 					}
 				}
 			}
+
+			// Collect commands and args for suspicious pattern detection
+			allCommands = append(allCommands, c.Command...)
+			allArgs = append(allArgs, c.Args...)
+
+			// Per-container security context values for table output
+			containerRunAsUser := "-"
+			containerAllowPrivEsc := "true" // default is true if not specified
+			containerReadOnlyRootFS := "false"
+			containerResourceLimits := "-"
+
+			if c.SecurityContext != nil {
+				if c.SecurityContext.RunAsUser != nil {
+					containerRunAsUser = fmt.Sprintf("%d", *c.SecurityContext.RunAsUser)
+				}
+				if c.SecurityContext.AllowPrivilegeEscalation != nil {
+					containerAllowPrivEsc = fmt.Sprintf("%v", *c.SecurityContext.AllowPrivilegeEscalation)
+				}
+				if c.SecurityContext.ReadOnlyRootFilesystem != nil {
+					containerReadOnlyRootFS = fmt.Sprintf("%v", *c.SecurityContext.ReadOnlyRootFilesystem)
+				}
+			}
+
+			// Build actual resource limits string (CPU/Memory)
+			if c.Resources.Limits != nil && len(c.Resources.Limits) > 0 {
+				var limitParts []string
+				if cpu, ok := c.Resources.Limits["cpu"]; ok {
+					limitParts = append(limitParts, fmt.Sprintf("cpu:%s", cpu.String()))
+				}
+				if mem, ok := c.Resources.Limits["memory"]; ok {
+					limitParts = append(limitParts, fmt.Sprintf("mem:%s", mem.String()))
+				}
+				if len(limitParts) > 0 {
+					containerResourceLimits = strings.Join(limitParts, ", ")
+				}
+			}
+
+			container := DeploymentContainer{
+				Name:           c.Name,
+				Image:          c.Image,
+				Tag:            tag,
+				Registry:       registry,
+				Command:        strings.Join(c.Command, " "),
+				Args:           strings.Join(c.Args, " "),
+				Privileged:     containerPrivileged,
+				Capabilities:   containerCaps,
+				RunAsUser:      containerRunAsUser,
+				AllowPrivEsc:   containerAllowPrivEsc,
+				ReadOnlyRootFS: containerReadOnlyRootFS,
+				ResourceLimits: containerResourceLimits,
+			}
+			containers = append(containers, container)
 		}
+
+		finding.Containers = containers
+		finding.Commands = allCommands
+		finding.Args = allArgs
 
 		finding.Privileged = privileged
 		finding.RunAsUser = runAsUser
@@ -354,7 +500,24 @@ func ListDeployments(cmd *cobra.Command, args []string) {
 		}
 		if len(dep.Spec.Template.Spec.Tolerations) > 0 {
 			for _, t := range dep.Spec.Template.Spec.Tolerations {
-				finding.Tolerations = append(finding.Tolerations, fmt.Sprintf("%s:%s", t.Key, t.Operator))
+				// Build full toleration string: key=value:effect (operator)
+				tolStr := ""
+				if t.Key != "" {
+					tolStr = t.Key
+					if t.Value != "" {
+						tolStr += "=" + t.Value
+					}
+				} else {
+					tolStr = "*" // matches all keys
+				}
+				if t.Effect != "" {
+					tolStr += ":" + string(t.Effect)
+				}
+				tolStr += fmt.Sprintf(" (%s)", t.Operator)
+				if t.TolerationSeconds != nil {
+					tolStr += fmt.Sprintf(" [%ds]", *t.TolerationSeconds)
+				}
+				finding.Tolerations = append(finding.Tolerations, tolStr)
 			}
 		}
 
@@ -371,6 +534,18 @@ func ListDeployments(cmd *cobra.Command, args []string) {
 			finding.CloudProvider = roleResults[0].Provider
 			finding.CloudRole = roleResults[0].Role
 		}
+
+		// Suspicious pattern detection
+		finding.ReverseShells = shared.DetectReverseShells(allCommands, allArgs)
+		finding.CryptoMiners = shared.DetectCryptoMiners(allCommands, allArgs, finding.Images)
+		finding.DataExfiltration = shared.DetectDataExfiltration(allCommands, allArgs)
+		finding.ContainerEscape = shared.DetectContainerEscape(allCommands, allArgs, hostPaths)
+
+		// Combine all backdoor patterns
+		finding.BackdoorPatterns = append(finding.BackdoorPatterns, finding.ReverseShells...)
+		finding.BackdoorPatterns = append(finding.BackdoorPatterns, finding.CryptoMiners...)
+		finding.BackdoorPatterns = append(finding.BackdoorPatterns, finding.DataExfiltration...)
+		finding.BackdoorPatterns = append(finding.BackdoorPatterns, finding.ContainerEscape...)
 
 		// Calculate risk level
 		runAsRoot := (runAsUser == 0 || runAsUser == -1)
@@ -392,67 +567,112 @@ func ListDeployments(cmd *cobra.Command, args []string) {
 		riskCounts[finding.RiskLevel]++
 		findings = append(findings, finding)
 
-		// Build table row
-		runAsUserStr := "<unset>"
-		if runAsUser == 0 {
-			runAsUserStr = "root"
-		} else if runAsUser > 0 {
-			runAsUserStr = fmt.Sprintf("%d", runAsUser)
+		// Merge all suspicious patterns into one column
+		suspiciousPatternsStr := strings.Join(finding.BackdoorPatterns, "; ")
+
+		// Merge security context - only show pod-level settings that are enabled
+		var secContextParts []string
+		if finding.HostPID {
+			secContextParts = append(secContextParts, "HostPID")
+		}
+		if finding.HostIPC {
+			secContextParts = append(secContextParts, "HostIPC")
+		}
+		if finding.HostNetwork {
+			secContextParts = append(secContextParts, "HostNetwork")
+		}
+		for _, hp := range finding.HostPaths {
+			secContextParts = append(secContextParts, fmt.Sprintf("HostPath:%s", hp))
+		}
+		secContextStr := strings.Join(secContextParts, ", ")
+
+		// Merge cloud provider and role
+		var cloudIAMStr string
+		if finding.CloudProvider != "" && finding.CloudRole != "" {
+			cloudIAMStr = fmt.Sprintf("%s: %s", finding.CloudProvider, finding.CloudRole)
 		}
 
-		hostPathsStr := "<NONE>"
-		if len(hostPaths) > 0 {
-			hostPathsStr = strings.Join(hostPaths, "\n")
+		// Format labels for display
+		var labelParts []string
+		for k, v := range finding.Labels {
+			labelParts = append(labelParts, fmt.Sprintf("%s=%s", k, v))
 		}
+		labelsStr := strings.Join(labelParts, ", ")
 
-		labelsStr := "<NONE>"
-		if len(finding.Labels) > 0 {
-			var parts []string
-			for k, v := range finding.Labels {
-				parts = append(parts, fmt.Sprintf("%s=%s", k, v))
-			}
-			sort.Strings(parts)
-			labelsStr = strings.Join(parts, ",")
-		}
+		// Format selectors for display
+		selectorsStr := strings.Join(finding.Selectors, ", ")
 
-		affinityStr := "<NONE>"
-		if finding.Affinity != "" {
-			affinityStr = finding.Affinity
-		}
+		// Format init containers for display
+		initContainersStr := strings.Join(finding.InitContainers, ", ")
 
-		row := []string{
-			finding.RiskLevel,
-			dep.Namespace,
-			dep.Name,
+		// Format image pull secrets for display
+		imagePullSecretsStr := strings.Join(finding.ImagePullSecrets, ", ")
+
+		// Format secrets for display
+		secretsStr := strings.Join(finding.Secrets, ", ")
+
+		// Format configmaps for display
+		configMapsStr := strings.Join(finding.ConfigMaps, ", ")
+
+		// Format tolerations for display
+		tolerationsStr := strings.Join(finding.Tolerations, ", ")
+
+		// Table 1: Summary row
+		summaryRow := []string{
+			finding.Namespace,
+			finding.Name,
+			k8sinternal.NonEmpty(labelsStr),
+			k8sinternal.NonEmpty(selectorsStr),
 			fmt.Sprintf("%d", finding.Replicas),
-			k8sinternal.NonEmpty(strings.Join(finding.Images, ",")),
-			k8sinternal.NonEmpty(strings.Join(finding.ImageTagTypes, ",")),
-			k8sinternal.NonEmpty(finding.ServiceAccount),
-			k8sinternal.NonEmpty(strings.Join(finding.Selectors, ",")),
-			k8sinternal.NonEmpty(strings.Join(volumes, ",")),
-			k8sinternal.NonEmpty(strings.Join(finding.Secrets, ",")),
-			k8sinternal.NonEmpty(strings.Join(finding.ConfigMaps, ",")),
-			k8sinternal.NonEmpty(strings.Join(finding.Containers, ",")),
-			k8sinternal.NonEmpty(strings.Join(finding.InitContainers, ",")),
-			k8sinternal.NonEmpty(strings.Join(finding.ImagePullSecrets, ",")),
-			k8sinternal.SafeBool(dep.Spec.Template.Spec.HostPID),
-			k8sinternal.SafeBool(dep.Spec.Template.Spec.HostIPC),
-			k8sinternal.SafeBool(dep.Spec.Template.Spec.HostNetwork),
-			fmt.Sprintf("%v", privileged),
-			runAsUserStr,
-			fmt.Sprintf("%v", allowPrivEsc),
-			fmt.Sprintf("%v", readOnlyRootFS),
-			k8sinternal.NonEmpty(strings.Join(finding.Capabilities, ",")),
-			fmt.Sprintf("%v", hasResourceLimits),
-			hostPathsStr,
-			labelsStr,
-			affinityStr,
-			k8sinternal.NonEmpty(strings.Join(finding.Tolerations, ",")),
 			finding.DeploymentStrategy,
-			k8sinternal.NonEmpty(finding.CloudProvider),
-			k8sinternal.NonEmpty(finding.CloudRole),
+			k8sinternal.NonEmpty(finding.ServiceAccount),
+			k8sinternal.NonEmpty(initContainersStr),
+			k8sinternal.NonEmpty(imagePullSecretsStr),
+			k8sinternal.NonEmpty(secretsStr),
+			k8sinternal.NonEmpty(configMapsStr),
+			k8sinternal.NonEmpty(secContextStr),
+			k8sinternal.NonEmpty(suspiciousPatternsStr),
+			k8sinternal.NonEmpty(cloudIAMStr),
+			k8sinternal.NonEmpty(finding.Affinity),
+			k8sinternal.NonEmpty(tolerationsStr),
 		}
-		outputRows = append(outputRows, row)
+		summaryRows = append(summaryRows, summaryRow)
+
+		// Table 2: Container rows (one per container)
+		for _, container := range finding.Containers {
+			// Format capabilities
+			capsStr := strings.Join(container.Capabilities, ", ")
+
+			containerRow := []string{
+				finding.Namespace,
+				finding.Name,
+				container.Name,
+				fmt.Sprintf("%v", container.Privileged),
+				k8sinternal.NonEmpty(capsStr),
+				container.RunAsUser,
+				container.AllowPrivEsc,
+				container.ReadOnlyRootFS,
+				k8sinternal.NonEmpty(container.ResourceLimits),
+				container.Image,
+				container.Tag,
+				container.Registry,
+			}
+			containerRows = append(containerRows, containerRow)
+		}
+
+		// Table 3: Volume rows (one per volume)
+		for _, volume := range finding.Volumes {
+			volumeRow := []string{
+				finding.Namespace,
+				finding.Name,
+				volume.Name,
+				volume.VolumeType,
+				volume.Source,
+				volume.MountPath,
+				fmt.Sprintf("%v", volume.ReadOnly),
+			}
+			volumeRows = append(volumeRows, volumeRow)
+		}
 
 		// Loot: Basic enumerate command
 		jq := `'{Namespace:.metadata.namespace,
@@ -577,74 +797,120 @@ Strategy:.spec.strategy.type}'`
 			lootSecretsAccess = append(lootSecretsAccess, fmt.Sprintf("POD=$(kubectl get pods -n %s -l %s -o jsonpath='{.items[0].metadata.name}')", dep.Namespace, strings.Join(finding.Selectors, ",")))
 			lootSecretsAccess = append(lootSecretsAccess, fmt.Sprintf("kubectl exec -n %s $POD -- env | grep -i secret\n", dep.Namespace))
 		}
-	}
-
-	// Build lootEnum with namespace separators
-	lootEnum := []string{
-		"#####################################",
-		"##### Enumerate Deployment Information",
-		"#####################################",
-		"",
-	}
-	if globals.KubeContext != "" {
-		lootEnum = append(lootEnum, fmt.Sprintf("kubectl config use-context %s\n", globals.KubeContext))
-	}
-
-	var namespaces []string
-	for ns := range namespaceMap {
-		namespaces = append(namespaces, ns)
-	}
-	sort.Strings(namespaces)
-
-	for i, ns := range namespaces {
-		lootEnum = append(lootEnum, fmt.Sprintf("\n# Namespace: %s\n", ns))
-		lootEnum = append(lootEnum, namespaceMap[ns]...)
-		if i < len(namespaces)-1 {
-			lootEnum = append(lootEnum, "")
 		}
 	}
 
-	// Add summaries to loot files
+	// Build consolidated Deployment-Commands
+	var lootContent []string
+	lootContent = append(lootContent, "########################################")
+	lootContent = append(lootContent, "##### Deployment Commands")
+	lootContent = append(lootContent, "########################################")
+	lootContent = append(lootContent, "")
+
+	if globals.KubeContext != "" {
+		lootContent = append(lootContent, fmt.Sprintf("kubectl config use-context %s", globals.KubeContext))
+		lootContent = append(lootContent, "")
+	}
+
+	// === ENUMERATION ===
+	lootContent = append(lootContent, "=== ENUMERATION ===")
+	lootContent = append(lootContent, "")
+	lootContent = append(lootContent, "# List all deployments")
+	lootContent = append(lootContent, "kubectl get deployments -A -o wide")
+	lootContent = append(lootContent, "")
+	lootContent = append(lootContent, "# Find privileged deployments")
+	lootContent = append(lootContent, "kubectl get deployments -A -o json | jq -r '.items[] | select(.spec.template.spec.containers[]?.securityContext?.privileged == true) | \"\\(.metadata.namespace)/\\(.metadata.name)\"'")
+	lootContent = append(lootContent, "")
+	lootContent = append(lootContent, "# Find deployments with hostPID/hostIPC/hostNetwork")
+	lootContent = append(lootContent, "kubectl get deployments -A -o json | jq -r '.items[] | select(.spec.template.spec.hostPID == true or .spec.template.spec.hostIPC == true or .spec.template.spec.hostNetwork == true) | \"\\(.metadata.namespace)/\\(.metadata.name)\"'")
+	lootContent = append(lootContent, "")
+	lootContent = append(lootContent, "# Find deployments with hostPath volumes")
+	lootContent = append(lootContent, "kubectl get deployments -A -o json | jq -r '.items[] | select(.spec.template.spec.volumes[]?.hostPath != null) | \"\\(.metadata.namespace)/\\(.metadata.name)\"'")
+	lootContent = append(lootContent, "")
+
+	var sortedNamespaces []string
+	for ns := range namespaceMap {
+		sortedNamespaces = append(sortedNamespaces, ns)
+	}
+	sort.Strings(sortedNamespaces)
+
+	for _, ns := range sortedNamespaces {
+		lootContent = append(lootContent, fmt.Sprintf("# Namespace: %s", ns))
+		lootContent = append(lootContent, namespaceMap[ns]...)
+		lootContent = append(lootContent, "")
+	}
+
+	// === HIGH RISK ===
 	if riskCounts["CRITICAL"] > 0 || riskCounts["HIGH"] > 0 {
-		summary := fmt.Sprintf(`
-# SUMMARY: Risk Distribution
-# CRITICAL: %d deployments
-# HIGH: %d deployments
-# MEDIUM: %d deployments
-# LOW: %d deployments
-#
-# Focus on CRITICAL and HIGH risk deployments first for maximum impact.
-# Each deployment may have multiple replicas, multiplying the attack surface.
-`, riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"])
-
-		lootHighRisk = append([]string{summary}, lootHighRisk...)
-		lootPrivEsc = append([]string{summary}, lootPrivEsc...)
+		lootContent = append(lootContent, "=== HIGH RISK ===")
+		lootContent = append(lootContent, "")
+		lootContent = append(lootContent, fmt.Sprintf("# Risk Distribution: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
+			riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"]))
+		lootContent = append(lootContent, "")
+		lootContent = append(lootContent, lootHighRisk...)
 	}
 
-	table := internal.TableFile{
-		Name:   "Deployments",
-		Header: headers,
-		Body:   outputRows,
+	// === PRIVILEGE ESCALATION ===
+	if len(lootPrivEsc) > 0 {
+		lootContent = append(lootContent, "=== PRIVILEGE ESCALATION ===")
+		lootContent = append(lootContent, "")
+		lootContent = append(lootContent, lootPrivEsc...)
 	}
 
-	lootEnumFile := internal.LootFile{
-		Name:     "Deployment-Enum",
-		Contents: strings.Join(lootEnum, "\n"),
+	// === SECRETS ACCESS ===
+	if len(lootSecretsAccess) > 0 {
+		lootContent = append(lootContent, "=== SECRETS ACCESS ===")
+		lootContent = append(lootContent, "")
+		lootContent = append(lootContent, lootSecretsAccess...)
 	}
 
-	lootHighRiskFile := internal.LootFile{
-		Name:     "Deployment-High-Risk",
-		Contents: strings.Join(lootHighRisk, "\n"),
+	// Build Deployment-Entrypoints
+	var entrypointsContent []string
+	entrypointsContent = append(entrypointsContent, "########################################")
+	entrypointsContent = append(entrypointsContent, "##### Deployment Container Entrypoints")
+	entrypointsContent = append(entrypointsContent, "########################################")
+	entrypointsContent = append(entrypointsContent, "# Only containers with commands or args are shown")
+	entrypointsContent = append(entrypointsContent, "")
+
+	// Sort findings by namespace/name
+	sort.Slice(findings, func(i, j int) bool {
+		if findings[i].Namespace != findings[j].Namespace {
+			return findings[i].Namespace < findings[j].Namespace
+		}
+		return findings[i].Name < findings[j].Name
+	})
+
+	for _, f := range findings {
+		var containerEntries []string
+		for _, c := range f.Containers {
+			if c.Command != "" || c.Args != "" {
+				containerEntries = append(containerEntries, fmt.Sprintf("Container: %s", c.Name))
+				containerEntries = append(containerEntries, fmt.Sprintf("  Image: %s", c.Image))
+				if c.Command != "" {
+					containerEntries = append(containerEntries, fmt.Sprintf("  Command: %s", c.Command))
+				}
+				if c.Args != "" {
+					containerEntries = append(containerEntries, fmt.Sprintf("  Args: %s", c.Args))
+				}
+				containerEntries = append(containerEntries, "")
+			}
+		}
+
+		if len(containerEntries) > 0 {
+			entrypointsContent = append(entrypointsContent, fmt.Sprintf("=== %s/%s ===", f.Namespace, f.Name))
+			entrypointsContent = append(entrypointsContent, "")
+			entrypointsContent = append(entrypointsContent, containerEntries...)
+		}
 	}
 
-	lootPrivEscFile := internal.LootFile{
-		Name:     "Deployment-Privilege-Escalation",
-		Contents: strings.Join(lootPrivEsc, "\n"),
-	}
+	// Create all three tables
+	summaryTable := internal.TableFile{Name: "Deployments", Header: summaryHeaders, Body: summaryRows}
+	containerTable := internal.TableFile{Name: "Deployment-Containers", Header: containerHeaders, Body: containerRows}
+	volumeTable := internal.TableFile{Name: "Deployment-Volumes", Header: volumeHeaders, Body: volumeRows}
 
-	lootSecretsFile := internal.LootFile{
-		Name:     "Deployment-Secrets-Access",
-		Contents: strings.Join(lootSecretsAccess, "\n"),
+	lootFiles := []internal.LootFile{
+		{Name: "Deployment-Commands", Contents: strings.Join(lootContent, "\n")},
+		{Name: "Deployment-Entrypoints", Contents: strings.Join(entrypointsContent, "\n")},
 	}
 
 	if err := internal.HandleOutput(
@@ -657,17 +923,17 @@ Strategy:.spec.strategy.type}'`
 		globals.ClusterName,
 		"results",
 		DeploymentsOutput{
-			Table: []internal.TableFile{table},
-			Loot:  []internal.LootFile{lootEnumFile, lootHighRiskFile, lootPrivEscFile, lootSecretsFile},
+			Table: []internal.TableFile{summaryTable, containerTable, volumeTable},
+			Loot:  lootFiles,
 		},
 	); err != nil {
 		logger.ErrorM(fmt.Sprintf("Error handling output: %v", err), globals.K8S_DEPLOYMENTS_MODULE_NAME)
 		return
 	}
 
-	if len(outputRows) > 0 {
+	if len(summaryRows) > 0 {
 		logger.InfoM(fmt.Sprintf("%d deployments found | Risk: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
-			len(outputRows),
+			len(summaryRows),
 			riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"]),
 			globals.K8S_DEPLOYMENTS_MODULE_NAME)
 	} else {

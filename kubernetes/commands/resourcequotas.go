@@ -1,12 +1,12 @@
 package commands
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -98,7 +98,8 @@ type LimitRangeDetail struct {
 }
 
 func ListResourceQuotas(cmd *cobra.Command, args []string) {
-	ctx := context.Background()
+	ctx, cancel := shared.ContextWithTimeout()
+	defer cancel()
 	logger := internal.NewLogger()
 
 	parentCmd := cmd.Parent()
@@ -111,18 +112,18 @@ func ListResourceQuotas(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	var lootEnum []string
-	lootEnum = append(lootEnum, `#####################################
+	loot := shared.NewLootBuilder()
+
+	loot.Section("ResourceQuota-Enum").SetHeader(`#####################################
 ##### Resource Quota Enumeration
 #####################################
 
 `)
 	if globals.KubeContext != "" {
-		lootEnum = append(lootEnum, fmt.Sprintf("kubectl config use-context %s\n", globals.KubeContext))
+		loot.Section("ResourceQuota-Enum").Addf("kubectl config use-context %s\n", globals.KubeContext)
 	}
 
-	var lootUnprotected []string
-	lootUnprotected = append(lootUnprotected, `#####################################
+	loot.Section("Unprotected-Namespaces").SetHeader(`#####################################
 ##### Namespaces Without Resource Quotas
 #####################################
 # CRITICAL: Resource exhaustion & DoS risk
@@ -130,8 +131,7 @@ func ListResourceQuotas(cmd *cobra.Command, args []string) {
 
 `)
 
-	var lootExcessive []string
-	lootExcessive = append(lootExcessive, `#####################################
+	loot.Section("Excessive-Quotas").SetHeader(`#####################################
 ##### Excessive Resource Quotas
 #####################################
 # HIGH: Cost bomb risk
@@ -139,8 +139,7 @@ func ListResourceQuotas(cmd *cobra.Command, args []string) {
 
 `)
 
-	var lootMissingLimits []string
-	lootMissingLimits = append(lootMissingLimits, `#####################################
+	loot.Section("Missing-LimitRanges").SetHeader(`#####################################
 ##### Missing LimitRanges
 #####################################
 # MEDIUM: Noisy neighbor & resource contention risk
@@ -148,8 +147,7 @@ func ListResourceQuotas(cmd *cobra.Command, args []string) {
 
 `)
 
-	var lootUtilization []string
-	lootUtilization = append(lootUtilization, `#####################################
+	loot.Section("Quota-Utilization").SetHeader(`#####################################
 ##### Quota Utilization Analysis
 #####################################
 # Resource usage vs quota allocation
@@ -157,16 +155,14 @@ func ListResourceQuotas(cmd *cobra.Command, args []string) {
 
 `)
 
-	var lootRemediation []string
-	lootRemediation = append(lootRemediation, `#####################################
+	loot.Section("Remediation-Guide").SetHeader(`#####################################
 ##### Remediation Guidance
 #####################################
 # Step-by-step fixes for resource quota issues
 
 `)
 
-	var lootCostOptimization []string
-	lootCostOptimization = append(lootCostOptimization, `#####################################
+	loot.Section("Cost-Optimization").SetHeader(`#####################################
 ##### Cost Optimization Recommendations
 #####################################
 # Right-size quotas based on actual usage
@@ -174,30 +170,26 @@ func ListResourceQuotas(cmd *cobra.Command, args []string) {
 `)
 
 	// Get all namespaces
-	namespaces, err := clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Error listing namespaces: %v", err), globals.K8S_RESOURCEQUOTAS_MODULE_NAME)
-		return
-	}
+	namespaces := shared.GetTargetNamespaces(ctx, clientset, &logger, globals.K8S_RESOURCEQUOTAS_MODULE_NAME)
 
 	// Get all resource quotas
 	allQuotas, err := clientset.CoreV1().ResourceQuotas("").List(ctx, metav1.ListOptions{})
 	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Error listing resource quotas: %v", err), globals.K8S_RESOURCEQUOTAS_MODULE_NAME)
+		shared.LogListError(&logger, "resource quotas", "", err, globals.K8S_RESOURCEQUOTAS_MODULE_NAME, true)
 		return
 	}
 
 	// Get all limit ranges
 	allLimitRanges, err := clientset.CoreV1().LimitRanges("").List(ctx, metav1.ListOptions{})
 	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Error listing limit ranges: %v", err), globals.K8S_RESOURCEQUOTAS_MODULE_NAME)
+		shared.LogListError(&logger, "limit ranges", "", err, globals.K8S_RESOURCEQUOTAS_MODULE_NAME, false)
 		allLimitRanges = &corev1.LimitRangeList{}
 	}
 
 	// Get all pods for utilization analysis
 	allPods, err := clientset.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
 	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Warning: Could not list pods: %v", err), globals.K8S_RESOURCEQUOTAS_MODULE_NAME)
+		shared.LogListError(&logger, "pods", "", err, globals.K8S_RESOURCEQUOTAS_MODULE_NAME, false)
 		allPods = &corev1.PodList{}
 	}
 
@@ -221,8 +213,6 @@ func ListResourceQuotas(cmd *cobra.Command, args []string) {
 	}
 
 	headers := []string{
-		"Risk",
-		"Score",
 		"Namespace",
 		"Resource Quotas",
 		"Limit Ranges",
@@ -236,25 +226,20 @@ func ListResourceQuotas(cmd *cobra.Command, args []string) {
 	var outputRows [][]string
 	var nsAnalyses []NamespaceQuotaAnalysis
 
-	riskCounts := map[string]int{
-		"CRITICAL": 0,
-		"HIGH":     0,
-		"MEDIUM":   0,
-		"LOW":      0,
-	}
+	riskCounts := shared.NewRiskCounts()
 
-	for _, ns := range namespaces.Items {
+	for _, ns := range namespaces {
 		analysis := NamespaceQuotaAnalysis{
-			Namespace:         ns.Name,
-			IsSystemNamespace: isSystemNamespace(ns.Name),
-			PodsRunning:       podCountByNS[ns.Name],
+			Namespace:         ns,
+			IsSystemNamespace: isSystemNamespace(ns),
+			PodsRunning:       podCountByNS[ns],
 		}
 
 		// Detect compliance zone
-		analysis.ComplianceZone = detectComplianceZoneNS(ns.Labels, ns.Annotations)
+		analysis.ComplianceZone = detectComplianceZoneNS(nil, nil)
 
 		// Check for resource quotas
-		quotas := quotasByNS[ns.Name]
+		quotas := quotasByNS[ns]
 		analysis.HasResourceQuota = len(quotas) > 0
 
 		for _, quota := range quotas {
@@ -284,7 +269,7 @@ func ListResourceQuotas(cmd *cobra.Command, args []string) {
 		}
 
 		// Check for limit ranges
-		limitRanges := limitRangesByNS[ns.Name]
+		limitRanges := limitRangesByNS[ns]
 		analysis.HasLimitRange = len(limitRanges) > 0
 
 		for _, lr := range limitRanges {
@@ -295,7 +280,7 @@ func ListResourceQuotas(cmd *cobra.Command, args []string) {
 		analysis.SecurityIssues = analyzeNamespaceQuotaSecurity(&analysis, quotas, limitRanges)
 		analysis.RiskLevel, analysis.RiskScore = calculateQuotaRiskScore(&analysis)
 
-		riskCounts[analysis.RiskLevel]++
+		riskCounts.Add(analysis.RiskLevel)
 		nsAnalyses = append(nsAnalyses, analysis)
 
 		// Build table row
@@ -325,9 +310,7 @@ func ListResourceQuotas(cmd *cobra.Command, args []string) {
 		}
 
 		outputRows = append(outputRows, []string{
-			analysis.RiskLevel,
-			fmt.Sprintf("%d", analysis.RiskScore),
-			ns.Name,
+			ns,
 			quotaStr,
 			lrStr,
 			cpuQuotaStr,
@@ -338,75 +321,75 @@ func ListResourceQuotas(cmd *cobra.Command, args []string) {
 		})
 
 		// Generate loot content
-		lootEnum = append(lootEnum, fmt.Sprintf("\n# [%s] Namespace: %s", analysis.RiskLevel, ns.Name))
-		lootEnum = append(lootEnum, fmt.Sprintf("kubectl get resourcequota -n %s", ns.Name))
-		lootEnum = append(lootEnum, fmt.Sprintf("kubectl get limitrange -n %s", ns.Name))
-		lootEnum = append(lootEnum, fmt.Sprintf("kubectl describe quota -n %s", ns.Name))
-		lootEnum = append(lootEnum, "")
+		loot.Section("ResourceQuota-Enum").Addf("\n# [%s] Namespace: %s", analysis.RiskLevel, ns)
+		loot.Section("ResourceQuota-Enum").Addf("kubectl get resourcequota -n %s", ns)
+		loot.Section("ResourceQuota-Enum").Addf("kubectl get limitrange -n %s", ns)
+		loot.Section("ResourceQuota-Enum").Addf("kubectl describe quota -n %s", ns)
+		loot.Section("ResourceQuota-Enum").Add("")
 
 		// Loot: Unprotected namespaces
 		if !analysis.HasResourceQuota && !analysis.IsSystemNamespace {
-			lootUnprotected = append(lootUnprotected, fmt.Sprintf("\n### [%s] %s", analysis.RiskLevel, ns.Name))
-			lootUnprotected = append(lootUnprotected, fmt.Sprintf("# Pods Running: %d", analysis.PodsRunning))
+			loot.Section("Unprotected-Namespaces").Addf("\n### [%s] %s", analysis.RiskLevel, ns)
+			loot.Section("Unprotected-Namespaces").Addf("# Pods Running: %d", analysis.PodsRunning)
 			if analysis.ComplianceZone != "" {
-				lootUnprotected = append(lootUnprotected, fmt.Sprintf("# Compliance Zone: %s - CRITICAL VIOLATION", analysis.ComplianceZone))
+				loot.Section("Unprotected-Namespaces").Addf("# Compliance Zone: %s - CRITICAL VIOLATION", analysis.ComplianceZone)
 			}
 			if len(analysis.SecurityIssues) > 0 {
-				lootUnprotected = append(lootUnprotected, "# Issues:")
+				loot.Section("Unprotected-Namespaces").Add("# Issues:")
 				for _, issue := range analysis.SecurityIssues {
-					lootUnprotected = append(lootUnprotected, fmt.Sprintf("#   - %s", issue))
+					loot.Section("Unprotected-Namespaces").Addf("#   - %s", issue)
 				}
 			}
-			lootUnprotected = append(lootUnprotected, "# Risk: Unlimited resource consumption, DoS attacks, cost bombs")
-			lootUnprotected = append(lootUnprotected, fmt.Sprintf("kubectl get pods -n %s --no-headers | wc -l", ns.Name))
-			lootUnprotected = append(lootUnprotected, "")
+			loot.Section("Unprotected-Namespaces").Add("# Risk: Unlimited resource consumption, DoS attacks, cost bombs")
+			loot.Section("Unprotected-Namespaces").Addf("kubectl get pods -n %s --no-headers | wc -l", ns)
+			loot.Section("Unprotected-Namespaces").Add("")
 		}
 
 		// Loot: Excessive quotas
 		if len(analysis.ExcessiveQuotas) > 0 {
-			lootExcessive = append(lootExcessive, fmt.Sprintf("\n### [%s] %s", analysis.RiskLevel, ns.Name))
+			loot.Section("Excessive-Quotas").Addf("\n### [%s] %s", analysis.RiskLevel, ns)
 			for _, excessive := range analysis.ExcessiveQuotas {
-				lootExcessive = append(lootExcessive, fmt.Sprintf("# %s", excessive))
+				loot.Section("Excessive-Quotas").Addf("# %s", excessive)
 			}
-			lootExcessive = append(lootExcessive, "")
+			loot.Section("Excessive-Quotas").Add("")
 		}
 
 		// Loot: Missing limit ranges
 		if !analysis.HasLimitRange && !analysis.IsSystemNamespace {
-			lootMissingLimits = append(lootMissingLimits, fmt.Sprintf("\n### [MEDIUM] %s", ns.Name))
-			lootMissingLimits = append(lootMissingLimits, "# Risk: Pods can request unbounded CPU/memory")
-			lootMissingLimits = append(lootMissingLimits, "# Impact: Noisy neighbor, resource contention, cluster instability")
-			lootMissingLimits = append(lootMissingLimits, "")
+			loot.Section("Missing-LimitRanges").Addf("\n### [%s] %s", shared.RiskMedium, ns)
+			loot.Section("Missing-LimitRanges").Add("# Risk: Pods can request unbounded CPU/memory")
+			loot.Section("Missing-LimitRanges").Add("# Impact: Noisy neighbor, resource contention, cluster instability")
+			loot.Section("Missing-LimitRanges").Add("")
 		}
 
 		// Loot: Utilization analysis
 		if analysis.HasResourceQuota && (analysis.CPUUsed != "" || analysis.MemoryUsed != "") {
-			lootUtilization = append(lootUtilization, fmt.Sprintf("\n### %s", ns.Name))
+			loot.Section("Quota-Utilization").Addf("\n### %s", ns)
 			if analysis.CPUQuota != "" && analysis.CPUUsed != "" {
-				lootUtilization = append(lootUtilization, fmt.Sprintf("# CPU: %s / %s", analysis.CPUUsed, analysis.CPUQuota))
+				loot.Section("Quota-Utilization").Addf("# CPU: %s / %s", analysis.CPUUsed, analysis.CPUQuota)
 			}
 			if analysis.MemoryQuota != "" && analysis.MemoryUsed != "" {
-				lootUtilization = append(lootUtilization, fmt.Sprintf("# Memory: %s / %s", analysis.MemoryUsed, analysis.MemoryQuota))
+				loot.Section("Quota-Utilization").Addf("# Memory: %s / %s", analysis.MemoryUsed, analysis.MemoryQuota)
 			}
-			lootUtilization = append(lootUtilization, fmt.Sprintf("kubectl top pods -n %s --no-headers | awk '{sum+=$2} END {print sum}'", ns.Name))
-			lootUtilization = append(lootUtilization, "")
+			loot.Section("Quota-Utilization").Addf("kubectl top pods -n %s --no-headers | awk '{sum+=$2} END {print sum}'", ns)
+			loot.Section("Quota-Utilization").Add("")
 		}
 
 		// Loot: Remediation
 		if len(analysis.SecurityIssues) > 0 {
-			lootRemediation = append(lootRemediation, fmt.Sprintf("\n### %s - %d Issues", ns.Name, len(analysis.SecurityIssues)))
+			loot.Section("Remediation-Guide").Addf("\n### %s - %d Issues", ns, len(analysis.SecurityIssues))
 			for i, issue := range analysis.SecurityIssues {
-				lootRemediation = append(lootRemediation, fmt.Sprintf("# %d. %s", i+1, issue))
+				loot.Section("Remediation-Guide").Addf("# %d. %s", i+1, issue)
 			}
-			lootRemediation = append(lootRemediation, "# Remediation:")
+			loot.Section("Remediation-Guide").Add("# Remediation:")
 			if !analysis.HasResourceQuota {
-				lootRemediation = append(lootRemediation, "#   - Create ResourceQuota with appropriate limits")
-				lootRemediation = append(lootRemediation, "#   kubectl create quota quota-example -n "+ns.Name+" --hard=cpu=10,memory=20Gi,pods=20")
+				loot.Section("Remediation-Guide").Add("#   - Create ResourceQuota with appropriate limits")
+				loot.Section("Remediation-Guide").Add("#   kubectl create quota quota-example -n " + ns + " --hard=cpu=10,memory=20Gi,pods=20")
 			}
 			if !analysis.HasLimitRange {
-				lootRemediation = append(lootRemediation, "#   - Create LimitRange with default limits")
+				loot.Section("Remediation-Guide").Add("#   - Create LimitRange with default limits")
 			}
-			lootRemediation = append(lootRemediation, "")
+			loot.Section("Remediation-Guide").Add("")
 		}
 	}
 
@@ -417,17 +400,16 @@ func ListResourceQuotas(cmd *cobra.Command, args []string) {
 		quotaDetails = append(quotaDetails, detail)
 
 		if len(detail.Issues) > 0 {
-			lootCostOptimization = append(lootCostOptimization, fmt.Sprintf("\n### %s/%s", detail.Namespace, detail.Name))
+			loot.Section("Cost-Optimization").Addf("\n### %s/%s", detail.Namespace, detail.Name)
 			for _, issue := range detail.Issues {
-				lootCostOptimization = append(lootCostOptimization, fmt.Sprintf("# %s", issue))
+				loot.Section("Cost-Optimization").Addf("# %s", issue)
 			}
-			lootCostOptimization = append(lootCostOptimization, "")
+			loot.Section("Cost-Optimization").Add("")
 		}
 	}
 
 	// Build second table for detailed quota analysis
 	quotaHeaders := []string{
-		"Risk",
 		"Namespace",
 		"Quota Name",
 		"CPU Hard",
@@ -442,7 +424,6 @@ func ListResourceQuotas(cmd *cobra.Command, args []string) {
 	var quotaRows [][]string
 	for _, detail := range quotaDetails {
 		quotaRows = append(quotaRows, []string{
-			detail.RiskLevel,
 			detail.Namespace,
 			detail.Name,
 			getHardLimit(detail, "cpu"),
@@ -456,7 +437,7 @@ func ListResourceQuotas(cmd *cobra.Command, args []string) {
 	}
 
 	// Add summary
-	if riskCounts["CRITICAL"] > 0 || riskCounts["HIGH"] > 0 {
+	if riskCounts.Critical > 0 || riskCounts.High > 0 {
 		summary := fmt.Sprintf(`
 # SUMMARY: Risk Distribution
 # CRITICAL: %d namespaces with critical quota risks
@@ -465,8 +446,8 @@ func ListResourceQuotas(cmd *cobra.Command, args []string) {
 # LOW: %d namespaces with low/acceptable quotas
 #
 # Focus on CRITICAL and HIGH risk namespaces for immediate remediation.
-`, riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"])
-		lootUnprotected = append([]string{summary}, lootUnprotected...)
+`, riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low)
+		loot.Section("Unprotected-Namespaces").SetSummary(summary)
 	}
 
 	table1 := internal.TableFile{
@@ -481,38 +462,9 @@ func ListResourceQuotas(cmd *cobra.Command, args []string) {
 		Body:   quotaRows,
 	}
 
-	lootFiles := []internal.LootFile{
-		{
-			Name:     "ResourceQuota-Enum",
-			Contents: strings.Join(lootEnum, "\n"),
-		},
-		{
-			Name:     "Unprotected-Namespaces",
-			Contents: strings.Join(lootUnprotected, "\n"),
-		},
-		{
-			Name:     "Excessive-Quotas",
-			Contents: strings.Join(lootExcessive, "\n"),
-		},
-		{
-			Name:     "Missing-LimitRanges",
-			Contents: strings.Join(lootMissingLimits, "\n"),
-		},
-		{
-			Name:     "Quota-Utilization",
-			Contents: strings.Join(lootUtilization, "\n"),
-		},
-		{
-			Name:     "Cost-Optimization",
-			Contents: strings.Join(lootCostOptimization, "\n"),
-		},
-		{
-			Name:     "Remediation-Guide",
-			Contents: strings.Join(lootRemediation, "\n"),
-		},
-	}
+	lootFiles := loot.Build()
 
-	err = internal.HandleOutput(
+	if err := internal.HandleOutput(
 		"Kubernetes",
 		format,
 		outputDirectory,
@@ -525,8 +477,7 @@ func ListResourceQuotas(cmd *cobra.Command, args []string) {
 			Table: []internal.TableFile{table1, table2},
 			Loot:  lootFiles,
 		},
-	)
-	if err != nil {
+	); err != nil {
 		logger.ErrorM(fmt.Sprintf("Error handling output: %v", err), globals.K8S_RESOURCEQUOTAS_MODULE_NAME)
 		return
 	}
@@ -534,7 +485,7 @@ func ListResourceQuotas(cmd *cobra.Command, args []string) {
 	if len(outputRows) > 0 {
 		logger.InfoM(fmt.Sprintf("%d namespaces analyzed | Risk: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
 			len(outputRows),
-			riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"]),
+			riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low),
 			globals.K8S_RESOURCEQUOTAS_MODULE_NAME)
 	} else {
 		logger.InfoM("No namespaces found", globals.K8S_RESOURCEQUOTAS_MODULE_NAME)
@@ -596,18 +547,18 @@ func analyzeNamespaceQuotaSecurity(analysis *NamespaceQuotaAnalysis, quotas []co
 
 	// Critical: No resource quota in non-system namespace
 	if !analysis.HasResourceQuota && !analysis.IsSystemNamespace {
-		issues = append(issues, "CRITICAL: No ResourceQuota - unlimited resource consumption possible")
+		issues = append(issues, fmt.Sprintf("%s: No ResourceQuota - unlimited resource consumption possible", shared.RiskCritical))
 		analysis.DoSRisk = true
 	}
 
 	// Critical: Compliance zone without quota
 	if analysis.ComplianceZone != "" && !analysis.HasResourceQuota {
-		issues = append(issues, fmt.Sprintf("CRITICAL: Compliance zone (%s) without ResourceQuota enforcement", analysis.ComplianceZone))
+		issues = append(issues, fmt.Sprintf("%s: Compliance zone (%s) without ResourceQuota enforcement", shared.RiskCritical, analysis.ComplianceZone))
 	}
 
 	// High: No limit range
 	if !analysis.HasLimitRange && !analysis.IsSystemNamespace {
-		issues = append(issues, "HIGH: No LimitRange - pods can request unbounded resources")
+		issues = append(issues, fmt.Sprintf("%s: No LimitRange - pods can request unbounded resources", shared.RiskHigh))
 	}
 
 	// Analyze quotas for excessive values
@@ -619,7 +570,7 @@ func analyzeNamespaceQuotaSecurity(analysis *NamespaceQuotaAnalysis, quotas []co
 				excessive := fmt.Sprintf("EXCESSIVE CPU quota: %s (>1000 cores)", cpu.String())
 				issues = append(issues, excessive)
 				analysis.ExcessiveQuotas = append(analysis.ExcessiveQuotas, excessive)
-				analysis.CostRisk = "HIGH"
+				analysis.CostRisk = shared.RiskHigh
 			}
 		}
 
@@ -630,7 +581,7 @@ func analyzeNamespaceQuotaSecurity(analysis *NamespaceQuotaAnalysis, quotas []co
 				excessive := fmt.Sprintf("EXCESSIVE Memory quota: %s (>1TB)", mem.String())
 				issues = append(issues, excessive)
 				analysis.ExcessiveQuotas = append(analysis.ExcessiveQuotas, excessive)
-				analysis.CostRisk = "HIGH"
+				analysis.CostRisk = shared.RiskHigh
 			}
 		}
 
@@ -650,7 +601,7 @@ func analyzeNamespaceQuotaSecurity(analysis *NamespaceQuotaAnalysis, quotas []co
 	}
 
 	if len(analysis.MissingQuotas) > 0 {
-		issues = append(issues, fmt.Sprintf("MEDIUM: Missing quota types: %s", strings.Join(analysis.MissingQuotas, ", ")))
+		issues = append(issues, fmt.Sprintf("%s: Missing quota types: %s", shared.RiskMedium, strings.Join(analysis.MissingQuotas, ", ")))
 	}
 
 	return issues
@@ -675,7 +626,7 @@ func calculateQuotaRiskScore(analysis *NamespaceQuotaAnalysis) (string, int) {
 	}
 
 	// Excessive quotas
-	if analysis.CostRisk == "HIGH" {
+	if analysis.CostRisk == shared.RiskHigh {
 		score += 25
 	}
 
@@ -694,13 +645,13 @@ func calculateQuotaRiskScore(analysis *NamespaceQuotaAnalysis) (string, int) {
 
 	// Determine risk level
 	if score >= 70 {
-		return "CRITICAL", rqMin(score, 100)
+		return shared.RiskCritical, rqMin(score, 100)
 	} else if score >= 40 {
-		return "HIGH", score
+		return shared.RiskHigh, score
 	} else if score >= 20 {
-		return "MEDIUM", score
+		return shared.RiskMedium, score
 	}
-	return "LOW", score
+	return shared.RiskLow, score
 }
 
 func analyzeResourceQuotaDetail(quota *corev1.ResourceQuota) ResourceQuotaDetail {
@@ -743,13 +694,13 @@ func analyzeResourceQuotaDetail(quota *corev1.ResourceQuota) ResourceQuotaDetail
 	}
 
 	// Calculate risk level
-	detail.RiskLevel = "LOW"
+	detail.RiskLevel = shared.RiskLow
 	if len(detail.Issues) > 2 {
-		detail.RiskLevel = "MEDIUM"
+		detail.RiskLevel = shared.RiskMedium
 	}
 	for _, issue := range detail.Issues {
 		if strings.Contains(issue, ">90%") {
-			detail.RiskLevel = "HIGH"
+			detail.RiskLevel = shared.RiskHigh
 			break
 		}
 	}
