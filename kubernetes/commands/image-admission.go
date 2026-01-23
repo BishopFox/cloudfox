@@ -490,10 +490,12 @@ type AllowedImageEntry struct {
 	AttestationReq    string   // What attestations are required (if any)
 	Conditions        string   // Any conditions (e.g., "no :latest", "digest required")
 	DeployCommand     string   // Example kubectl command to deploy
+	SourceResource    string   // Kubernetes resource where this policy was found (e.g., "ValidatingWebhookConfiguration/gke-binauthz")
+	EnumerateCmd      string   // kubectl command to view the source resource
 }
 
 func ListImageAdmission(cmd *cobra.Command, args []string) {
-	ctx, cancel := shared.ContextWithTimeout()
+	ctx, cancel := shared.ContextWithCancel()
 	defer cancel()
 	logger := internal.NewLogger()
 
@@ -2102,6 +2104,14 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			}
 			if entry.Conditions != "" {
 				loot.Section("AllowedImages").Addf("# Conditions: %s", entry.Conditions)
+			}
+			if entry.SourceResource != "" {
+				loot.Section("AllowedImages").Addf("# Source: %s", entry.SourceResource)
+			}
+			if entry.EnumerateCmd != "" {
+				loot.Section("AllowedImages").Add("#")
+				loot.Section("AllowedImages").Add("# Enumerate source:")
+				loot.Section("AllowedImages").Add(entry.EnumerateCmd)
 			}
 			loot.Section("AllowedImages").Add("#")
 			loot.Section("AllowedImages").Add("# Deploy command:")
@@ -5323,6 +5333,10 @@ func extractAllowedImages(
 	// Check for GCP Binary Authorization (requires special handling)
 	for _, c := range controllers {
 		if c.Type == "gcp-binauth" {
+			// Build source resource info
+			sourceResource := fmt.Sprintf("ValidatingWebhookConfiguration/%s", c.WebhookName)
+			enumerateCmd := fmt.Sprintf("kubectl get validatingwebhookconfiguration %s -o yaml", c.WebhookName)
+
 			// GCP Binary Authorization typically uses always_deny or require-attestation
 			// Add break-glass bypass information
 			entries = append(entries, AllowedImageEntry{
@@ -5332,6 +5346,8 @@ func extractAllowedImages(
 				AllowedPattern:    "*",
 				SignatureRequired: false,
 				Conditions:        "BYPASS: Add break-glass annotation to pod spec",
+				SourceResource:    sourceResource,
+				EnumerateCmd:      enumerateCmd,
 				DeployCommand: `# Add this annotation to your pod spec to bypass Binary Authorization:
 # metadata:
 #   annotations:
@@ -5362,6 +5378,8 @@ EOF`,
 				SignatureRequired: true,
 				AttestationReq:    "GCP Binary Authorization attestor",
 				Conditions:        "Requires attestation from configured attestors (check GCP console)",
+				SourceResource:    sourceResource,
+				EnumerateCmd:      enumerateCmd,
 				DeployCommand: `# Check attestors configured for this cluster:
 gcloud container binauthz policy export
 

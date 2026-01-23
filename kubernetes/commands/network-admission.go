@@ -507,7 +507,7 @@ func checkAndSetVerification(v *NetworkEngineVerification, image string) {
 }
 
 func ListNetworkAdmission(cmd *cobra.Command, args []string) {
-	ctx, cancel := shared.ContextWithTimeout()
+	ctx, cancel := shared.ContextWithCancel()
 	defer cancel()
 	logger := internal.NewLogger()
 
@@ -1028,6 +1028,14 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 # - Internet egress allowed
 # - Metadata API access (169.254.169.254)
 # - Unrestricted DNS egress
+#`)
+
+	loot.Section("Network-Admission-Policy-Enumeration").SetHeader(`#####################################
+##### Network Policy Enumeration Commands
+#####################################
+#
+# Commands to enumerate all network policies across the cluster
+# Run these commands to get a complete view of network controls
 #`)
 
 	if globals.KubeContext != "" {
@@ -1598,6 +1606,9 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			Body:   azureRows,
 		})
 	}
+
+	// Generate comprehensive policy enumeration commands
+	generateNetworkPolicyEnumerationLoot(findings, loot)
 
 	lootFiles := loot.Build()
 
@@ -3634,4 +3645,457 @@ func applyAzureNetworkPolicyVerification(policies map[string][]AzureNetworkPolic
 			policies[ns][i].ImageVerified = verified
 		}
 	}
+}
+
+// generateNetworkPolicyEnumerationLoot creates comprehensive enumeration commands for all detected policy engines
+func generateNetworkPolicyEnumerationLoot(findings []NetworkAdmissionFinding, loot *shared.LootBuilder) {
+	// Track which engines are detected across all namespaces
+	hasK8sNetworkPolicy := false
+	hasCalico := false
+	hasCilium := false
+	hasAntrea := false
+	hasIstio := false
+	hasLinkerd := false
+	hasAWSSecurityGroup := false
+	hasOpenShiftEgress := false
+	hasConsulConnect := false
+	hasKumaMesh := false
+	hasSMI := false
+	hasGlooMesh := false
+	hasNSXT := false
+	hasGCPBackend := false
+	hasAzureNetwork := false
+
+	// Scan all findings to determine which engines are active
+	for _, finding := range findings {
+		if finding.K8sNetworkPolicyCount > 0 {
+			hasK8sNetworkPolicy = true
+		}
+		if finding.CalicoCount > 0 {
+			hasCalico = true
+		}
+		if finding.CiliumCount > 0 {
+			hasCilium = true
+		}
+		if finding.AntreaCount > 0 {
+			hasAntrea = true
+		}
+		if finding.IstioCount > 0 {
+			hasIstio = true
+		}
+		if finding.LinkerdCount > 0 {
+			hasLinkerd = true
+		}
+		if finding.AWSSecurityGroupCount > 0 {
+			hasAWSSecurityGroup = true
+		}
+		if finding.OpenShiftEgressCount > 0 {
+			hasOpenShiftEgress = true
+		}
+		if finding.ConsulConnectCount > 0 {
+			hasConsulConnect = true
+		}
+		if finding.KumaMeshCount > 0 {
+			hasKumaMesh = true
+		}
+		if finding.SMICount > 0 {
+			hasSMI = true
+		}
+		if finding.GlooMeshCount > 0 {
+			hasGlooMesh = true
+		}
+		if finding.NSXTCount > 0 {
+			hasNSXT = true
+		}
+		if finding.GCPBackendCount > 0 {
+			hasGCPBackend = true
+		}
+		if finding.AzureNetworkCount > 0 {
+			hasAzureNetwork = true
+		}
+	}
+
+	// Add context command
+	if globals.KubeContext != "" {
+		loot.Section("Network-Admission-Policy-Enumeration").Addf("kubectl config use-context %s\n", globals.KubeContext)
+	}
+
+	// Kubernetes Native NetworkPolicy (always include as it's the base)
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# KUBERNETES NATIVE NETWORK POLICIES")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	if hasK8sNetworkPolicy {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] Kubernetes NetworkPolicy resources found")
+	} else {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No Kubernetes NetworkPolicy resources found")
+	}
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List all NetworkPolicies across all namespaces:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get networkpolicies -A")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML for all NetworkPolicies:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get networkpolicies -A -o yaml")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+
+	// Calico
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# CALICO NETWORK POLICIES")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	if hasCalico {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] Calico policies found")
+	} else {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No Calico policies found (commands may error)")
+	}
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Calico NetworkPolicies (namespace-scoped):")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get networkpolicies.crd.projectcalico.org -A")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Calico GlobalNetworkPolicies (cluster-scoped):")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get globalnetworkpolicies.crd.projectcalico.org")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get networkpolicies.crd.projectcalico.org -A -o yaml")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get globalnetworkpolicies.crd.projectcalico.org -o yaml")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Calico GlobalNetworkSets (IP allowlists):")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get globalnetworksets.crd.projectcalico.org -o yaml")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+
+	// Cilium
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# CILIUM NETWORK POLICIES")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	if hasCilium {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] Cilium policies found")
+	} else {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No Cilium policies found (commands may error)")
+	}
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List CiliumNetworkPolicies (namespace-scoped):")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get ciliumnetworkpolicies -A")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List CiliumClusterwideNetworkPolicies (cluster-scoped):")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get ciliumclusterwidenetworkpolicies")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get ciliumnetworkpolicies -A -o yaml")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get ciliumclusterwidenetworkpolicies -o yaml")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Cilium Endpoints (shows policy enforcement status):")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get ciliumendpoints -A")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+
+	// Antrea
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ANTREA NETWORK POLICIES")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	if hasAntrea {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] Antrea policies found")
+	} else {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No Antrea policies found (commands may error)")
+	}
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Antrea NetworkPolicies (namespace-scoped):")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get networkpolicies.crd.antrea.io -A")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Antrea ClusterNetworkPolicies (cluster-scoped):")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get clusternetworkpolicies.crd.antrea.io")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get networkpolicies.crd.antrea.io -A -o yaml")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get clusternetworkpolicies.crd.antrea.io -o yaml")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Antrea Tiers (policy priority):")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get tiers.crd.antrea.io")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+
+	// Istio
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ISTIO AUTHORIZATION POLICIES")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	if hasIstio {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] Istio AuthorizationPolicies found")
+	} else {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No Istio policies found (commands may error)")
+	}
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Istio AuthorizationPolicies:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get authorizationpolicies.security.istio.io -A")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Istio PeerAuthentication (mTLS):")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get peerauthentications.security.istio.io -A")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get authorizationpolicies.security.istio.io -A -o yaml")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get peerauthentications.security.istio.io -A -o yaml")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Istio Sidecars (traffic scoping):")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get sidecars.networking.istio.io -A -o yaml")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+
+	// Linkerd
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# LINKERD POLICIES")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	if hasLinkerd {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] Linkerd policies found")
+	} else {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No Linkerd policies found (commands may error)")
+	}
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Linkerd Server resources:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get servers.policy.linkerd.io -A")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Linkerd ServerAuthorizations:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get serverauthorizations.policy.linkerd.io -A")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Linkerd AuthorizationPolicies:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get authorizationpolicies.policy.linkerd.io -A")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get servers.policy.linkerd.io -A -o yaml")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get serverauthorizations.policy.linkerd.io -A -o yaml")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+
+	// AWS Security Groups
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# AWS VPC CNI SECURITY GROUP POLICIES")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	if hasAWSSecurityGroup {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] AWS SecurityGroupPolicies found")
+	} else {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No AWS SecurityGroupPolicies found (commands may error)")
+	}
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List AWS SecurityGroupPolicies:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get securitygrouppolicies.vpcresources.k8s.aws -A")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get securitygrouppolicies.vpcresources.k8s.aws -A -o yaml")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# Check AWS CLI for security group details (requires AWS credentials):")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# aws ec2 describe-security-groups --group-ids <sg-id>")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+
+	// OpenShift Egress
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# OPENSHIFT EGRESS POLICIES")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	if hasOpenShiftEgress {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] OpenShift EgressFirewalls found")
+	} else {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No OpenShift egress policies found (commands may error)")
+	}
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List OVN-Kubernetes EgressFirewalls:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get egressfirewalls.k8s.ovn.org -A")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List legacy EgressNetworkPolicies:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get egressnetworkpolicies.network.openshift.io -A")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get egressfirewalls.k8s.ovn.org -A -o yaml")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get egressnetworkpolicies.network.openshift.io -A -o yaml")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+
+	// Consul Connect
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# HASHICORP CONSUL CONNECT INTENTIONS")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	if hasConsulConnect {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] Consul ServiceIntentions found")
+	} else {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No Consul intentions found (commands may error)")
+	}
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Consul ServiceIntentions:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get serviceintentions.consul.hashicorp.com -A")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Consul IngressGateways:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get ingressgateways.consul.hashicorp.com -A")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get serviceintentions.consul.hashicorp.com -A -o yaml")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+
+	// Kuma Mesh
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# KUMA/KONG MESH POLICIES")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	if hasKumaMesh {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] Kuma MeshTrafficPermissions found")
+	} else {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No Kuma policies found (commands may error)")
+	}
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Kuma MeshTrafficPermissions:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get meshtrafficpermissions.kuma.io -A")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Kuma TrafficPermissions (legacy):")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get trafficpermissions.kuma.io -A")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get meshtrafficpermissions.kuma.io -A -o yaml")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+
+	// SMI (Service Mesh Interface)
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# SMI (SERVICE MESH INTERFACE) POLICIES")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	if hasSMI {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] SMI TrafficTargets found")
+	} else {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No SMI policies found (commands may error)")
+	}
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List SMI TrafficTargets (access control):")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get traffictargets.access.smi-spec.io -A")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List SMI TrafficSplits (traffic routing):")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get trafficsplits.split.smi-spec.io -A")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get traffictargets.access.smi-spec.io -A -o yaml")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+
+	// Gloo Mesh
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# GLOO MESH POLICIES")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	if hasGlooMesh {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] Gloo Mesh AccessPolicies found")
+	} else {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No Gloo Mesh policies found (commands may error)")
+	}
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Gloo Mesh AccessPolicies:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get accesspolicies.security.policy.gloo.solo.io -A")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Gloo Mesh TrafficPolicies:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get trafficpolicies.networking.mesh.gloo.solo.io -A")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get accesspolicies.security.policy.gloo.solo.io -A -o yaml")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+
+	// VMware NSX-T
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# VMWARE NSX-T SECURITY POLICIES")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	if hasNSXT {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] NSX-T SecurityPolicies found")
+	} else {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No NSX-T policies found (commands may error)")
+	}
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List NSX-T SecurityPolicies:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get securitypolicies.nsx.vmware.com -A")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get securitypolicies.nsx.vmware.com -A -o yaml")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+
+	// GCP Backend Policies (Cloud Armor)
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# GCP/GKE BACKEND POLICIES (CLOUD ARMOR)")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	if hasGCPBackend {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] GCP BackendPolicies found")
+	} else {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No GCP BackendPolicies found (commands may error)")
+	}
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List GCP BackendPolicies:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get gcpbackendpolicies.networking.gke.io -A")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get gcpbackendpolicies.networking.gke.io -A -o yaml")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# Check Cloud Armor policies via gcloud (requires GCP credentials):")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# gcloud compute security-policies list")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# gcloud compute security-policies describe <policy-name>")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+
+	// Azure Network Policies
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# AZURE/AKS NETWORK CONFIGURATIONS")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	if hasAzureNetwork {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] Azure network configurations found")
+	} else {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No Azure configurations found (commands may error)")
+	}
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Azure Ingress Prohibited Targets:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get azureingressprohibitedtargets.appgw.ingress.k8s.io -A")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Azure Identity Bindings:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get azureidentitybindings.aadpodidentity.k8s.io -A")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get azureingressprohibitedtargets.appgw.ingress.k8s.io -A -o yaml")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# Check Azure NSG via az CLI (requires Azure credentials):")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# az network nsg list")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# az network nsg rule list --nsg-name <nsg-name> -g <resource-group>")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+
+	// Quick reference summary
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# QUICK ENUMERATION (ALL DETECTED ENGINES)")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("# Run these commands to quickly enumerate all detected policies:")
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+
+	if hasK8sNetworkPolicy {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get networkpolicies -A -o wide")
+	}
+	if hasCalico {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get networkpolicies.crd.projectcalico.org -A -o wide")
+		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get globalnetworkpolicies.crd.projectcalico.org -o wide")
+	}
+	if hasCilium {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get ciliumnetworkpolicies -A -o wide")
+		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get ciliumclusterwidenetworkpolicies -o wide")
+	}
+	if hasAntrea {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get networkpolicies.crd.antrea.io -A -o wide")
+		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get clusternetworkpolicies.crd.antrea.io -o wide")
+	}
+	if hasIstio {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get authorizationpolicies.security.istio.io -A -o wide")
+	}
+	if hasLinkerd {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get servers.policy.linkerd.io -A -o wide")
+		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get serverauthorizations.policy.linkerd.io -A -o wide")
+	}
+	if hasAWSSecurityGroup {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get securitygrouppolicies.vpcresources.k8s.aws -A -o wide")
+	}
+	if hasOpenShiftEgress {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get egressfirewalls.k8s.ovn.org -A -o wide")
+	}
+	if hasConsulConnect {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get serviceintentions.consul.hashicorp.com -A -o wide")
+	}
+	if hasKumaMesh {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get meshtrafficpermissions.kuma.io -A -o wide")
+	}
+	if hasSMI {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get traffictargets.access.smi-spec.io -A -o wide")
+	}
+	if hasGlooMesh {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get accesspolicies.security.policy.gloo.solo.io -A -o wide")
+	}
+	if hasNSXT {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get securitypolicies.nsx.vmware.com -A -o wide")
+	}
+	if hasGCPBackend {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get gcpbackendpolicies.networking.gke.io -A -o wide")
+	}
+	if hasAzureNetwork {
+		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get azureingressprohibitedtargets.appgw.ingress.k8s.io -A -o wide")
+	}
+
+	loot.Section("Network-Admission-Policy-Enumeration").Add("")
 }

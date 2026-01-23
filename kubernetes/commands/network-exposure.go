@@ -1644,7 +1644,7 @@ func appendNmapCommands(commands *[]string, target string, ports []corev1.Servic
 }
 
 func NetworkExposure(cmd *cobra.Command, args []string) {
-	ctx, cancel := shared.ContextWithTimeout()
+	ctx, cancel := shared.ContextWithCancel()
 	defer cancel()
 	logger := internal.NewLogger()
 	parentCmd := cmd.Parent()

@@ -4,37 +4,47 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
+	"os"
+	"strings"
 
 	"github.com/BishopFox/cloudfox/internal"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
-// Default timeouts for Kubernetes API operations
-const (
-	// DefaultTimeout is the default timeout for most API operations
-	DefaultTimeout = 30 * time.Second
-	// LongTimeout is for operations that may take longer (large clusters)
-	LongTimeout = 60 * time.Second
-	// ShortTimeout is for quick operations like single resource gets
-	ShortTimeout = 10 * time.Second
-)
+// Context returns a background context for API operations.
+// We do NOT use timeouts because arbitrary timeouts cause silent data loss.
+// Instead, we detect session/auth errors and exit with clear messages.
+func Context() context.Context {
+	return context.Background()
+}
 
-// ContextWithTimeout creates a context with the default timeout
-// Returns the context and a cancel function that MUST be called (use defer)
+// ContextWithCancel returns a cancellable context for operations that need cleanup.
+// Use this when you need to cancel operations on shutdown/interrupt.
+func ContextWithCancel() (context.Context, context.CancelFunc) {
+	return context.WithCancel(context.Background())
+}
+
+// DEPRECATED: These functions exist only for backward compatibility during migration.
+// They now return contexts WITHOUT timeouts. Modules should migrate to Context().
+
+// ContextWithTimeout is DEPRECATED - returns context without timeout.
+// Arbitrary timeouts cause silent data loss. Use Context() instead.
 func ContextWithTimeout() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), DefaultTimeout)
+	// Return a cancellable context instead of a timeout context
+	// This maintains the same function signature for backward compatibility
+	return context.WithCancel(context.Background())
 }
 
-// ContextWithCustomTimeout creates a context with a custom timeout
-// Returns the context and a cancel function that MUST be called (use defer)
-func ContextWithCustomTimeout(timeout time.Duration) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), timeout)
+// ContextWithCustomTimeout is DEPRECATED - returns context without timeout.
+// Arbitrary timeouts cause silent data loss. Use Context() instead.
+func ContextWithCustomTimeout(_ interface{}) (context.Context, context.CancelFunc) {
+	return context.WithCancel(context.Background())
 }
 
-// ContextWithLongTimeout creates a context with an extended timeout for large operations
-// Returns the context and a cancel function that MUST be called (use defer)
+// ContextWithLongTimeout is DEPRECATED - returns context without timeout.
+// Arbitrary timeouts cause silent data loss. Use Context() instead.
 func ContextWithLongTimeout() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), LongTimeout)
+	return context.WithCancel(context.Background())
 }
 
 // IsTimeoutError checks if the error is a context deadline exceeded error
@@ -47,7 +57,152 @@ func IsContextCanceled(err error) bool {
 	return errors.Is(err, context.Canceled)
 }
 
+// IsSessionError checks if an error indicates a session/authentication problem.
+// If true, the program should exit with a clear message - continuing would produce incomplete results.
+func IsSessionError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Check for Kubernetes API errors
+	if k8serrors.IsUnauthorized(err) {
+		return true
+	}
+	if k8serrors.IsForbidden(err) {
+		// Check if it's a token expiration
+		errStr := err.Error()
+		if strings.Contains(errStr, "token") && (strings.Contains(errStr, "expired") || strings.Contains(errStr, "invalid")) {
+			return true
+		}
+		// Generic forbidden might be permission issue, not session issue
+		return false
+	}
+
+	// Check error message for common session issues
+	errStr := strings.ToLower(err.Error())
+
+	// Authentication failures
+	if strings.Contains(errStr, "unauthorized") ||
+		strings.Contains(errStr, "authentication required") ||
+		strings.Contains(errStr, "invalid bearer token") ||
+		strings.Contains(errStr, "token has expired") ||
+		strings.Contains(errStr, "token is expired") ||
+		strings.Contains(errStr, "unable to authenticate") {
+		return true
+	}
+
+	// Connection issues that indicate cluster is unreachable
+	if strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "no such host") ||
+		strings.Contains(errStr, "connection reset") ||
+		strings.Contains(errStr, "i/o timeout") && strings.Contains(errStr, "dial") {
+		return true
+	}
+
+	// Certificate issues
+	if strings.Contains(errStr, "certificate") && (strings.Contains(errStr, "expired") ||
+		strings.Contains(errStr, "invalid") ||
+		strings.Contains(errStr, "unknown authority")) {
+		return true
+	}
+
+	// Exec credential issues (for EKS, GKE, AKS)
+	if strings.Contains(errStr, "exec plugin") ||
+		strings.Contains(errStr, "credential") && strings.Contains(errStr, "expired") {
+		return true
+	}
+
+	return false
+}
+
+// CheckSessionError checks if an error is a session error and exits if so.
+// Call this on every API error to ensure session issues are caught immediately.
+// Returns true if error was a session error (program will have exited).
+// Returns false if error is not a session error (caller should handle normally).
+func CheckSessionError(err error, logger *internal.Logger, module string) bool {
+	if !IsSessionError(err) {
+		return false
+	}
+
+	// Determine the specific session issue for a helpful message
+	errStr := strings.ToLower(err.Error())
+	var reason string
+
+	switch {
+	case strings.Contains(errStr, "unauthorized") || strings.Contains(errStr, "bearer token"):
+		reason = "Authentication failed - your credentials are invalid or have expired"
+	case strings.Contains(errStr, "token") && strings.Contains(errStr, "expired"):
+		reason = "Your authentication token has expired - please refresh your credentials"
+	case strings.Contains(errStr, "connection refused"):
+		reason = "Cannot connect to the Kubernetes API server - is the cluster running?"
+	case strings.Contains(errStr, "no such host"):
+		reason = "Cannot resolve the Kubernetes API server hostname - check your kubeconfig"
+	case strings.Contains(errStr, "certificate"):
+		reason = "Certificate error - the cluster certificate may be invalid or expired"
+	case strings.Contains(errStr, "exec plugin"):
+		reason = "Credential plugin failed - try refreshing your cloud provider credentials (aws/gcloud/az login)"
+	default:
+		reason = "Session error detected"
+	}
+
+	logger.ErrorM("", module)
+	logger.ErrorM("╔════════════════════════════════════════════════════════════════╗", module)
+	logger.ErrorM("║                    SESSION ERROR DETECTED                       ║", module)
+	logger.ErrorM("╠════════════════════════════════════════════════════════════════╣", module)
+	logger.ErrorM(fmt.Sprintf("║ %s", reason), module)
+	logger.ErrorM("║                                                                  ║", module)
+	logger.ErrorM("║ Your Kubernetes session is no longer valid.                     ║", module)
+	logger.ErrorM("║ Results may be incomplete - please fix and re-run.              ║", module)
+	logger.ErrorM("╠════════════════════════════════════════════════════════════════╣", module)
+	logger.ErrorM("║ Common fixes:                                                   ║", module)
+	logger.ErrorM("║  • Re-authenticate: kubectl auth whoami                         ║", module)
+	logger.ErrorM("║  • Refresh creds: aws eks update-kubeconfig / gcloud ...        ║", module)
+	logger.ErrorM("║  • Check kubeconfig: kubectl config view                        ║", module)
+	logger.ErrorM("╚════════════════════════════════════════════════════════════════╝", module)
+	logger.ErrorM("", module)
+	logger.ErrorM(fmt.Sprintf("Original error: %v", err), module)
+
+	os.Exit(1)
+	return true // Never reached, but satisfies compiler
+}
+
+// HandleAPIError is the primary error handler for Kubernetes API calls.
+// It checks for session errors (and exits if found) or logs and continues for other errors.
+// Returns true if processing should continue, false if it should stop.
+func HandleAPIError(err error, logger *internal.Logger, operation, resource, namespace, module string) bool {
+	if err == nil {
+		return true
+	}
+
+	// First, check if this is a session error - exit immediately if so
+	CheckSessionError(err, logger, module)
+
+	// Not a session error - handle normally
+	msg := fmt.Sprintf("Failed to %s %s", operation, resource)
+	if namespace != "" {
+		msg = fmt.Sprintf("Failed to %s %s in namespace %s", operation, resource, namespace)
+	}
+	msg = fmt.Sprintf("%s: %v", msg, err)
+
+	// Check if this is a permission error (not session, just RBAC)
+	if k8serrors.IsForbidden(err) {
+		logger.ErrorM(fmt.Sprintf("Permission denied: %s (RBAC may restrict access)", msg), module)
+		return true // Continue with other resources
+	}
+
+	// Check if resource doesn't exist (CRD not installed, etc.)
+	if k8serrors.IsNotFound(err) {
+		// This is often expected - CRDs might not be installed
+		return true // Continue silently
+	}
+
+	// Log other errors as warnings and continue
+	logger.ErrorM(fmt.Sprintf("Warning: %s", msg), module)
+	return true
+}
+
 // LogTimeoutError logs a timeout-specific error message
+// DEPRECATED: With smart session detection, timeouts should rarely occur.
 // Returns true if processing should continue (for partial results), false otherwise
 func LogTimeoutError(logger *internal.Logger, resource, namespace string, module string, fatal bool) bool {
 	msg := fmt.Sprintf("Timeout listing %s", resource)
@@ -129,9 +284,13 @@ func GetErrorFatal(resource, namespace string, err error) *K8sError {
 	return NewK8sError("get", resource, namespace, err, SeverityFatal)
 }
 
-// HandleError logs the error appropriately and returns whether processing should continue
+// HandleError logs the error appropriately and returns whether processing should continue.
+// IMPORTANT: This now checks for session errors first!
 // Returns true if processing should continue, false if it should stop
 func HandleError(logger *internal.Logger, k8sErr *K8sError, module string) bool {
+	// First check if this is a session error
+	CheckSessionError(k8sErr.Err, logger, module)
+
 	switch k8sErr.Severity {
 	case SeverityFatal:
 		logger.ErrorM(k8sErr.Error(), module)
@@ -153,6 +312,9 @@ func HandleError(logger *internal.Logger, k8sErr *K8sError, module string) bool 
 // HandleErrorSimple is a simplified error handler that logs and returns continue status
 // Use this when you just need to log and continue/stop based on severity
 func HandleErrorSimple(logger *internal.Logger, op, resource, namespace string, err error, module string, fatal bool) bool {
+	// First check if this is a session error
+	CheckSessionError(err, logger, module)
+
 	severity := SeverityWarning
 	if fatal {
 		severity = SeverityFatal
@@ -164,6 +326,9 @@ func HandleErrorSimple(logger *internal.Logger, op, resource, namespace string, 
 // LogListError is a convenience function for logging list operation errors
 // Returns true if processing should continue (non-fatal), false otherwise
 func LogListError(logger *internal.Logger, resource, namespace string, err error, module string, fatal bool) bool {
+	// First check if this is a session error
+	CheckSessionError(err, logger, module)
+
 	var k8sErr *K8sError
 	if fatal {
 		k8sErr = ListErrorFatal(resource, namespace, err)
@@ -176,6 +341,9 @@ func LogListError(logger *internal.Logger, resource, namespace string, err error
 // LogGetError is a convenience function for logging get operation errors
 // Returns true if processing should continue (non-fatal), false otherwise
 func LogGetError(logger *internal.Logger, resource, namespace string, err error, module string, fatal bool) bool {
+	// First check if this is a session error
+	CheckSessionError(err, logger, module)
+
 	var k8sErr *K8sError
 	if fatal {
 		k8sErr = GetErrorFatal(resource, namespace, err)

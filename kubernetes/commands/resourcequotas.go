@@ -98,7 +98,7 @@ type LimitRangeDetail struct {
 }
 
 func ListResourceQuotas(cmd *cobra.Command, args []string) {
-	ctx, cancel := shared.ContextWithTimeout()
+	ctx, cancel := shared.ContextWithCancel()
 	defer cancel()
 	logger := internal.NewLogger()
 

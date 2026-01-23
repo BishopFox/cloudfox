@@ -2,7 +2,6 @@ package commands
 
 import (
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
@@ -239,7 +238,8 @@ type PSSViolation struct {
 }
 
 func ListPods(cmd *cobra.Command, args []string) {
-	ctx, cancel := shared.ContextWithTimeout()
+	// No arbitrary timeout - session errors are detected and handled properly
+	ctx, cancel := shared.ContextWithCancel()
 	defer cancel()
 	logger := internal.NewLogger()
 
@@ -254,6 +254,7 @@ func ListPods(cmd *cobra.Command, args []string) {
 	clientset := config.GetClientOrExit()
 
 	namespaces := shared.GetTargetNamespaces(ctx, clientset, &logger, globals.K8S_PODS_MODULE_NAME)
+	logger.InfoM(fmt.Sprintf("Scanning %d namespaces for pods", len(namespaces)), globals.K8S_PODS_MODULE_NAME)
 
 	// Table 1: Pods Summary
 	summaryHeaders := []string{
@@ -287,14 +288,49 @@ func ListPods(cmd *cobra.Command, args []string) {
 	// Loot content will be generated after processing all pods
 	// We'll use findings to generate consolidated loot
 
+	// Track enumeration statistics
+	totalPodsEnumerated := 0
+	namespacesWithErrors := 0
+
 	for _, ns := range namespaces {
-		pods, err := clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error listing pods in namespace %s: %v\n", ns, err)
+		// List ALL pods in namespace, handling pagination for large namespaces
+		var allPodsInNS []corev1.Pod
+		continueToken := ""
+
+		for {
+			listOpts := metav1.ListOptions{
+				Limit:    500, // Reasonable batch size
+				Continue: continueToken,
+			}
+
+			pods, err := clientset.CoreV1().Pods(ns).List(ctx, listOpts)
+			if err != nil {
+				// Check for session errors - will exit if session is invalid
+				shared.CheckSessionError(err, &logger, globals.K8S_PODS_MODULE_NAME)
+				// Not a session error - log and continue
+				logger.ErrorM(fmt.Sprintf("Failed to list pods in namespace %s: %v", ns, err), globals.K8S_PODS_MODULE_NAME)
+				namespacesWithErrors++
+				break
+			}
+
+			allPodsInNS = append(allPodsInNS, pods.Items...)
+
+			// Check if there are more pods to fetch
+			if pods.Continue == "" {
+				break
+			}
+			continueToken = pods.Continue
+		}
+
+		// Skip this namespace if there was an error
+		if namespacesWithErrors > 0 && len(allPodsInNS) == 0 {
 			continue
 		}
 
-		for _, pod := range pods.Items {
+		podsInNS := len(allPodsInNS)
+		totalPodsEnumerated += podsInNS
+
+		for _, pod := range allPodsInNS {
 			finding := PodFinding{
 				Namespace:      pod.Namespace,
 				Name:           pod.Name,
@@ -807,7 +843,10 @@ func ListPods(cmd *cobra.Command, args []string) {
 	}
 
 	if len(summaryRows) > 0 {
-		logger.InfoM(fmt.Sprintf("%d pods found across %d namespaces", len(summaryRows), len(namespaces)), globals.K8S_PODS_MODULE_NAME)
+		logger.InfoM(fmt.Sprintf("Enumerated %d pods across %d namespaces (processed: %d)", totalPodsEnumerated, len(namespaces), len(summaryRows)), globals.K8S_PODS_MODULE_NAME)
+		if namespacesWithErrors > 0 {
+			logger.ErrorM(fmt.Sprintf("WARNING: Failed to enumerate pods in %d namespace(s) - results may be incomplete!", namespacesWithErrors), globals.K8S_PODS_MODULE_NAME)
+		}
 		logger.InfoM(fmt.Sprintf("Risk Summary: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
 			riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low), globals.K8S_PODS_MODULE_NAME)
 
@@ -819,6 +858,9 @@ func ListPods(cmd *cobra.Command, args []string) {
 		}
 	} else {
 		logger.InfoM("No pods found, skipping output file creation", globals.K8S_PODS_MODULE_NAME)
+		if namespacesWithErrors > 0 {
+			logger.ErrorM(fmt.Sprintf("WARNING: Failed to enumerate pods in %d namespace(s) - check permissions!", namespacesWithErrors), globals.K8S_PODS_MODULE_NAME)
+		}
 	}
 
 	logger.InfoM(fmt.Sprintf("For context and next steps: https://github.com/BishopFox/cloudfox/wiki/Kubernetes-Commands#%s", globals.K8S_PODS_MODULE_NAME), globals.K8S_PODS_MODULE_NAME)

@@ -135,7 +135,7 @@ func (h HiddenAdminFinding) Loot() string {
 }
 
 func ListHiddenAdmins(cmd *cobra.Command, args []string) {
-	ctx, cancel := shared.ContextWithTimeout()
+	ctx, cancel := shared.ContextWithCancel()
 	defer cancel()
 	logger := internal.NewLogger()
 

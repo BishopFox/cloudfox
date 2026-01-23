@@ -103,7 +103,7 @@ type DaemonSetVolume struct {
 }
 
 func ListDaemonSets(cmd *cobra.Command, args []string) {
-	ctx, cancel := shared.ContextWithTimeout()
+	ctx, cancel := shared.ContextWithCancel()
 	defer cancel()
 	logger := internal.NewLogger()
 

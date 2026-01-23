@@ -91,7 +91,7 @@ func ttToleratesTaint(tol v1.Toleration, taint v1.Taint) bool {
 }
 
 func ListTaintsTolerations(cmd *cobra.Command, args []string) {
-	ctx, cancel := shared.ContextWithTimeout()
+	ctx, cancel := shared.ContextWithCancel()
 	defer cancel()
 	logger := internal.NewLogger()
 
