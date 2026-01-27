@@ -64,6 +64,12 @@ const (
 	CacheKeyLimitRanges           = "k8s-limitranges"
 	CacheKeyPodDisruptionBudgets  = "k8s-poddisruptionbudgets"
 	CacheKeyHPAs                  = "k8s-hpas"
+
+	// Computed analysis cache keys
+	CacheKeyAttackPathsPrivesc = "k8s-attackpaths-privesc"
+	CacheKeyAttackPathsLateral = "k8s-attackpaths-lateral"
+	CacheKeyAttackPathsExfil   = "k8s-attackpaths-exfil"
+	CacheKeyAttackPathsAll     = "k8s-attackpaths-all"
 )
 
 // CacheKey generates a standardized cache key

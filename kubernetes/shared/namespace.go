@@ -2,6 +2,7 @@ package shared
 
 import (
 	"context"
+	"strings"
 
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
@@ -91,4 +92,56 @@ func GetNamespaceOrAll() string {
 
 	// Otherwise, return empty string to query all namespaces
 	return metav1.NamespaceAll
+}
+
+// ShouldCheckAdmissionController checks if a specific admission controller should be checked
+// based on the --admission-controllers flag. Returns true if:
+//   - No filter is specified (empty list means check all)
+//   - The controller name matches one in the filter list (case-insensitive)
+//   - Any of the provided aliases match the filter list
+//
+// Example usage:
+//
+//	if !shared.ShouldCheckAdmissionController("falco", "falco-security") {
+//	    return // Skip this controller check
+//	}
+func ShouldCheckAdmissionController(controllerName string, aliases ...string) bool {
+	// If no filter is specified, check all controllers
+	if len(globals.K8sAdmissionControllers) == 0 {
+		return true
+	}
+
+	// Normalize controller name for comparison
+	controllerLower := strings.ToLower(controllerName)
+
+	// Check if controller or any alias matches the filter
+	for _, filter := range globals.K8sAdmissionControllers {
+		filterLower := strings.ToLower(filter)
+
+		// Check main controller name
+		if controllerLower == filterLower || strings.Contains(controllerLower, filterLower) {
+			return true
+		}
+
+		// Check aliases
+		for _, alias := range aliases {
+			aliasLower := strings.ToLower(alias)
+			if aliasLower == filterLower || strings.Contains(aliasLower, filterLower) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// GetAdmissionControllersFilter returns the configured admission controllers filter.
+// Returns nil if no filter is set (meaning check all).
+func GetAdmissionControllersFilter() []string {
+	return globals.K8sAdmissionControllers
+}
+
+// IsAdmissionControllersFiltered returns true if admission controller filtering is enabled.
+func IsAdmissionControllersFiltered() bool {
+	return len(globals.K8sAdmissionControllers) > 0
 }

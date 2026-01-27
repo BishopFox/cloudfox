@@ -254,8 +254,34 @@ func GetDataExfilPermissions() []DataExfilPermission {
 	}
 }
 
-// CombinedAnalysis performs attack path analysis across cluster and namespace scopes
+// getCacheKeyForPathType returns the cache key for a given path type
+func getCacheKeyForPathType(pathType string) string {
+	switch pathType {
+	case "privesc":
+		return sdk.CacheKeyAttackPathsPrivesc
+	case "lateral":
+		return sdk.CacheKeyAttackPathsLateral
+	case "exfil":
+		return sdk.CacheKeyAttackPathsExfil
+	case "all":
+		return sdk.CacheKeyAttackPathsAll
+	default:
+		return sdk.CacheKey("k8s-attackpaths", pathType)
+	}
+}
+
+// CombinedAnalysis performs attack path analysis across cluster and namespace scopes.
+// Results are cached for the duration of the session to avoid redundant computation.
 func (s *AttackPathService) CombinedAnalysis(ctx context.Context, pathType string) (*CombinedAttackPathData, error) {
+	cacheKey := getCacheKeyForPathType(pathType)
+
+	// Check cache first
+	if cached, found := sdk.Get(cacheKey); found {
+		if result, ok := cached.(*CombinedAttackPathData); ok {
+			return result, nil
+		}
+	}
+
 	result := &CombinedAttackPathData{
 		ClusterPaths:   []AttackPath{},
 		NamespacePaths: make(map[string][]AttackPath),
@@ -288,6 +314,9 @@ func (s *AttackPathService) CombinedAnalysis(ctx context.Context, pathType strin
 			result.AllPaths = append(result.AllPaths, nsPaths...)
 		}
 	}
+
+	// Cache the computed result
+	sdk.Set(cacheKey, result)
 
 	return result, nil
 }

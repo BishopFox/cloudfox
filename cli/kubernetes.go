@@ -42,6 +42,9 @@ var (
 	K8sAzureSubscription string
 	K8sGCPProject        string
 
+	// Admission controller filtering for lazy CRD discovery
+	K8sAdmissionControllers string // Comma-separated list or "all"
+
 	// logger
 	logger = internal.NewLogger()
 
@@ -155,6 +158,24 @@ var (
 
 				// Set timeout
 				globals.K8sTimeout = K8sTimeout
+
+				// Parse --admission-controllers flag
+				if K8sAdmissionControllers != "" {
+					if strings.ToLower(K8sAdmissionControllers) == "all" {
+						// "all" means check everything (empty slice = no filter)
+						globals.K8sAdmissionControllers = nil
+					} else {
+						for _, ctrl := range strings.Split(K8sAdmissionControllers, ",") {
+							ctrl = strings.TrimSpace(strings.ToLower(ctrl))
+							if ctrl != "" {
+								globals.K8sAdmissionControllers = append(globals.K8sAdmissionControllers, ctrl)
+							}
+						}
+						if len(globals.K8sAdmissionControllers) > 0 {
+							logger.InfoM(fmt.Sprintf("Filtering admission checks to: %s", strings.Join(globals.K8sAdmissionControllers, ", ")), "kubernetes")
+						}
+					}
+				}
 			}
 		},
 
@@ -250,6 +271,18 @@ func init() {
 	K8sCommands.PersistentFlags().StringVar(&K8sAWSProfile, "aws-profile", "", "AWS profile name (optional, uses default credentials if not specified)")
 	K8sCommands.PersistentFlags().StringVar(&K8sAzureSubscription, "azure-subscription", "", "Azure subscription ID(s) - comma-separated (optional, discovers all if not specified)")
 	K8sCommands.PersistentFlags().StringVar(&K8sGCPProject, "gcp-project", "", "GCP project ID(s) - comma-separated (optional, discovers all if not specified)")
+
+	// Admission controller filtering flag for lazy CRD discovery
+	K8sCommands.PersistentFlags().StringVar(&K8sAdmissionControllers, "admission-controllers", "",
+		"Filter admission modules to only check for specified controllers - comma-separated\n"+
+			"Use 'all' to check all (default behavior). Known controllers:\n"+
+			"  Pod/Security: gatekeeper, kyverno, pss, vap\n"+
+			"  Runtime: falco, tetragon, kubearmor, tracee, sysdig, prisma, aqua, stackrox, neuvector, crowdstrike\n"+
+			"  Image: trivy, harbor, notary, cosign, prisma, aqua, stackrox, anchore\n"+
+			"  Network: calico, cilium, istio, linkerd\n"+
+			"  Secrets: vault, external-secrets, sealed-secrets\n"+
+			"  Certs: cert-manager, venafi\n"+
+			"  Other: coredns, opa")
 
 	// Add subcommands
 	K8sCommands.AddCommand(

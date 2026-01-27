@@ -65,4 +65,11 @@ var (
 	K8sAWSProfile          string   // AWS profile name for cloud correlation
 	K8sAzureSubscriptions  []string // Azure subscription IDs for cloud correlation (CSV supported)
 	K8sGCPProjects         []string // GCP project IDs for cloud correlation (CSV supported)
+
+	// Admission controller filtering for lazy CRD discovery
+	// Supports: "all", or comma-separated list of known controllers
+	// Known controllers: gatekeeper, kyverno, pss, vap, falco, tetragon, prisma, aqua, stackrox,
+	//                    neuvector, crowdstrike, trivy, harbor, notary, cosign, istio, linkerd,
+	//                    cert-manager, vault, external-secrets, calico, cilium, coredns, etc.
+	K8sAdmissionControllers []string // List of admission controllers to check for (empty = all)
 )

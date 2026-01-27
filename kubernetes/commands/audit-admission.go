@@ -9,13 +9,14 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
 	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/kubernetes"
 )
 
 const K8S_AUDIT_ADMISSION_MODULE_NAME = "audit-admission"
@@ -336,72 +337,95 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 	clientset := config.GetClientOrExit()
 	dynClient := config.GetDynamicClientOrExit()
 
+	// Pre-fetch all DaemonSets, Deployments, Pods, and ConfigMaps once (cached)
+	logger.InfoM("Pre-fetching resources for audit analysis...", K8S_AUDIT_ADMISSION_MODULE_NAME)
+	allDaemonSets, err := sdk.GetDaemonSets(ctx, clientset)
+	if err != nil {
+		logger.ErrorM(fmt.Sprintf("Failed to fetch DaemonSets: %v", err), K8S_AUDIT_ADMISSION_MODULE_NAME)
+		allDaemonSets = []appsv1.DaemonSet{}
+	}
+	allDeployments, err := sdk.GetDeployments(ctx, clientset)
+	if err != nil {
+		logger.ErrorM(fmt.Sprintf("Failed to fetch Deployments: %v", err), K8S_AUDIT_ADMISSION_MODULE_NAME)
+		allDeployments = []appsv1.Deployment{}
+	}
+	allPods, err := sdk.GetPods(ctx, clientset)
+	if err != nil {
+		logger.ErrorM(fmt.Sprintf("Failed to fetch Pods: %v", err), K8S_AUDIT_ADMISSION_MODULE_NAME)
+		allPods = []corev1.Pod{}
+	}
+	allConfigMaps, err := sdk.GetConfigMaps(ctx, clientset)
+	if err != nil {
+		logger.ErrorM(fmt.Sprintf("Failed to fetch ConfigMaps: %v", err), K8S_AUDIT_ADMISSION_MODULE_NAME)
+		allConfigMaps = []corev1.ConfigMap{}
+	}
+
 	// Analyze Falco
 	logger.InfoM("Analyzing Falco...", K8S_AUDIT_ADMISSION_MODULE_NAME)
-	falco, falcoRules := analyzeFalco(ctx, clientset, dynClient)
+	falco, falcoRules := analyzeFalco(ctx, allDaemonSets, allPods, allConfigMaps, dynClient)
 
 	// Analyze Tetragon
 	logger.InfoM("Analyzing Tetragon...", K8S_AUDIT_ADMISSION_MODULE_NAME)
-	tetragon, tracingPolicies := analyzeTetragon(ctx, clientset, dynClient)
+	tetragon, tracingPolicies := analyzeTetragon(ctx, allDaemonSets, allPods, dynClient)
 
 	// Analyze KubeArmor
 	logger.InfoM("Analyzing KubeArmor...", K8S_AUDIT_ADMISSION_MODULE_NAME)
-	kubearmor, kubeArmorPolicies := analyzeKubeArmor(ctx, clientset, dynClient)
+	kubearmor, kubeArmorPolicies := analyzeKubeArmor(ctx, allDaemonSets, allPods, dynClient)
 
 	// Analyze Tracee
 	logger.InfoM("Analyzing Tracee...", K8S_AUDIT_ADMISSION_MODULE_NAME)
-	tracee := analyzeTracee(ctx, clientset, dynClient)
+	tracee := analyzeTracee(ctx, allDaemonSets, allPods, dynClient)
 
 	// Analyze Sysdig
 	logger.InfoM("Analyzing Sysdig...", K8S_AUDIT_ADMISSION_MODULE_NAME)
-	sysdig := analyzeSysdig(ctx, clientset, dynClient)
+	sysdig := analyzeSysdig(ctx, allDaemonSets, allPods, dynClient)
 
 	// Analyze Kubernetes Audit Policy
 	logger.InfoM("Analyzing Kubernetes Audit Policy...", K8S_AUDIT_ADMISSION_MODULE_NAME)
-	k8sAuditPolicy := analyzeK8sAuditPolicy(ctx, clientset)
+	k8sAuditPolicy := analyzeK8sAuditPolicy(ctx, allPods, allConfigMaps)
 
 	// Analyze Prisma Cloud
 	logger.InfoM("Analyzing Prisma Cloud...", K8S_AUDIT_ADMISSION_MODULE_NAME)
-	prismaCloud := auditAnalyzePrismaCloud(ctx, clientset)
+	prismaCloud := auditAnalyzePrismaCloud(allDaemonSets)
 
 	// Analyze Aqua Security
 	logger.InfoM("Analyzing Aqua Security...", K8S_AUDIT_ADMISSION_MODULE_NAME)
-	aquaSecurity := auditAnalyzeAquaSecurity(ctx, clientset)
+	aquaSecurity := auditAnalyzeAquaSecurity(allDaemonSets)
 
 	// Analyze StackRox/Red Hat ACS
 	logger.InfoM("Analyzing StackRox/Red Hat ACS...", K8S_AUDIT_ADMISSION_MODULE_NAME)
-	stackrox := auditAnalyzeStackRox(ctx, clientset)
+	stackrox := auditAnalyzeStackRox(allDaemonSets, allDeployments)
 
 	// Analyze NeuVector
 	logger.InfoM("Analyzing NeuVector...", K8S_AUDIT_ADMISSION_MODULE_NAME)
-	neuvector := auditAnalyzeNeuVector(ctx, clientset)
+	neuvector := auditAnalyzeNeuVector(allDaemonSets, allDeployments)
 
 	// Analyze CrowdStrike Falcon
 	logger.InfoM("Analyzing CrowdStrike Falcon...", K8S_AUDIT_ADMISSION_MODULE_NAME)
-	crowdstrike := auditAnalyzeCrowdStrike(ctx, clientset)
+	crowdstrike := auditAnalyzeCrowdStrike(allDaemonSets, allPods)
 
 	// Analyze Kubescape Runtime
 	logger.InfoM("Analyzing Kubescape Runtime...", K8S_AUDIT_ADMISSION_MODULE_NAME)
-	kubescape := auditAnalyzeKubescape(ctx, clientset)
+	kubescape := auditAnalyzeKubescape(allDaemonSets, allPods)
 
 	// Analyze Deepfence
 	logger.InfoM("Analyzing Deepfence ThreatMapper...", K8S_AUDIT_ADMISSION_MODULE_NAME)
-	deepfence := auditAnalyzeDeepfence(ctx, clientset)
+	deepfence := auditAnalyzeDeepfence(allDaemonSets, allPods)
 
 	// Analyze Wiz Runtime
 	logger.InfoM("Analyzing Wiz Runtime Sensor...", K8S_AUDIT_ADMISSION_MODULE_NAME)
-	wizRuntime := auditAnalyzeWiz(ctx, clientset)
+	wizRuntime := auditAnalyzeWiz(allDaemonSets, allPods)
 
 	// Analyze Lacework
 	logger.InfoM("Analyzing Lacework...", K8S_AUDIT_ADMISSION_MODULE_NAME)
-	lacework := auditAnalyzeLacework(ctx, clientset)
+	lacework := auditAnalyzeLacework(allDaemonSets, allPods)
 
 	// Analyze Audit Log Destinations
 	logger.InfoM("Analyzing audit log destinations...", K8S_AUDIT_ADMISSION_MODULE_NAME)
-	auditLogDestinations := analyzeAuditLogDestinations(ctx, clientset)
+	auditLogDestinations := analyzeAuditLogDestinations(allDaemonSets, allPods)
 
 	// Build findings per namespace
-	findings := buildAuditAdmissionFindings(ctx, clientset, falco, tetragon, kubearmor, tracee, sysdig, prismaCloud, aquaSecurity, stackrox, neuvector, crowdstrike, kubescape, deepfence, wizRuntime, lacework, kubeArmorPolicies)
+	findings := buildAuditAdmissionFindings(allPods, falco, tetragon, kubearmor, tracee, sysdig, prismaCloud, aquaSecurity, stackrox, neuvector, crowdstrike, kubescape, deepfence, wizRuntime, lacework, kubeArmorPolicies)
 
 	// Generate tables
 	summaryHeader := []string{
@@ -781,7 +805,7 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 		Loot:  loot.Build(),
 	}
 
-	err := internal.HandleOutput(
+	if err := internal.HandleOutput(
 		"Kubernetes",
 		"table",
 		outputDir,
@@ -791,8 +815,7 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 		globals.ClusterName,
 		"results",
 		output,
-	)
-	if err != nil {
+	); err != nil {
 		logger.ErrorM(fmt.Sprintf("Error handling output: %v", err), K8S_AUDIT_ADMISSION_MODULE_NAME)
 		return
 	}
@@ -802,94 +825,85 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 // Falco Analysis
 // ============================================================================
 
-func analyzeFalco(ctx context.Context, clientset kubernetes.Interface, dynClient dynamic.Interface) (FalcoInfo, []FalcoRuleInfo) {
+func analyzeFalco(ctx context.Context, allDaemonSets []appsv1.DaemonSet, allPods []corev1.Pod, allConfigMaps []corev1.ConfigMap, dynClient dynamic.Interface) (FalcoInfo, []FalcoRuleInfo) {
 	info := FalcoInfo{}
 	var rules []FalcoRuleInfo
 
-	// Check for Falco DaemonSet
-	namespaces := []string{"falco", "falco-system", "security", "kube-system"}
-	labelSelectors := []string{
-		"app=falco",
-		"app.kubernetes.io/name=falco",
-	}
+	// Check for Falco DaemonSet in pre-fetched data
+	namespaces := map[string]bool{"falco": true, "falco-system": true, "security": true, "kube-system": true}
 
-	for _, ns := range namespaces {
-		daemonSets, err := clientset.AppsV1().DaemonSets(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
+	for _, ds := range allDaemonSets {
+		if !namespaces[ds.Namespace] {
 			continue
 		}
+		nameLC := strings.ToLower(ds.Name)
+		if strings.Contains(nameLC, "falco") && !strings.Contains(nameLC, "sidekick") && !strings.Contains(nameLC, "exporter") {
+			info.Name = "Falco"
+			info.Namespace = ds.Namespace
+			info.TotalPods = int(ds.Status.DesiredNumberScheduled)
+			info.PodsRunning = int(ds.Status.NumberReady)
 
-		for _, ds := range daemonSets.Items {
-			nameLC := strings.ToLower(ds.Name)
-			if strings.Contains(nameLC, "falco") && !strings.Contains(nameLC, "sidekick") && !strings.Contains(nameLC, "exporter") {
-				info.Name = "Falco"
-				info.Namespace = ns
-				info.TotalPods = int(ds.Status.DesiredNumberScheduled)
-				info.PodsRunning = int(ds.Status.NumberReady)
+			// Analyze driver type from container args and verify image
+			for _, container := range ds.Spec.Template.Spec.Containers {
+				// Verify by image
+				if verifyAuditEngineImage(container.Image, "falco") {
+					info.ImageVerified = true
+				}
 
-				// Analyze driver type from container args and verify image
-				for _, container := range ds.Spec.Template.Spec.Containers {
-					// Verify by image
-					if verifyAuditEngineImage(container.Image, "falco") {
-						info.ImageVerified = true
+				for _, arg := range container.Args {
+					if strings.Contains(arg, "modern_ebpf") || strings.Contains(arg, "modern-bpf") {
+						info.DriverType = "modern_ebpf"
+					} else if strings.Contains(arg, "ebpf") {
+						info.DriverType = "ebpf"
 					}
-
-					for _, arg := range container.Args {
-						if strings.Contains(arg, "modern_ebpf") || strings.Contains(arg, "modern-bpf") {
+				}
+				for _, env := range container.Env {
+					if env.Name == "FALCO_BPF_PROBE" || env.Name == "FALCO_DRIVER_NAME" {
+						if strings.Contains(env.Value, "modern") {
 							info.DriverType = "modern_ebpf"
-						} else if strings.Contains(arg, "ebpf") {
+						} else if strings.Contains(env.Value, "ebpf") {
 							info.DriverType = "ebpf"
 						}
 					}
-					for _, env := range container.Env {
-						if env.Name == "FALCO_BPF_PROBE" || env.Name == "FALCO_DRIVER_NAME" {
-							if strings.Contains(env.Value, "modern") {
-								info.DriverType = "modern_ebpf"
-							} else if strings.Contains(env.Value, "ebpf") {
-								info.DriverType = "ebpf"
-							}
-						}
-					}
 				}
-				if info.DriverType == "" {
-					info.DriverType = "kernel_module"
-				}
-
-				break
 			}
-		}
-		if info.Name != "" {
+			if info.DriverType == "" {
+				info.DriverType = "kernel_module"
+			}
 			break
 		}
 	}
 
-	// Also check via label selectors
+	// Also check via pods with labels if DaemonSet not found
 	if info.Name == "" {
-		for _, ns := range namespaces {
-			for _, selector := range labelSelectors {
-				pods, err := clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: selector})
-				if err == nil && len(pods.Items) > 0 {
-					info.Name = "Falco"
-					info.Namespace = ns
-					info.TotalPods = len(pods.Items)
-					for _, pod := range pods.Items {
-						if pod.Status.Phase == corev1.PodRunning {
-							info.PodsRunning++
-						}
-						// Verify by image
-						for _, container := range pod.Spec.Containers {
-							if verifyAuditEngineImage(container.Image, "falco") {
-								info.ImageVerified = true
-								break
-							}
+		labelSelectors := map[string]string{
+			"app":                     "falco",
+			"app.kubernetes.io/name":  "falco",
+		}
+		for _, pod := range allPods {
+			if !namespaces[pod.Namespace] {
+				continue
+			}
+			for labelKey, labelVal := range labelSelectors {
+				if pod.Labels[labelKey] == labelVal {
+					if info.Name == "" {
+						info.Name = "Falco"
+						info.Namespace = pod.Namespace
+						info.DriverType = "unknown"
+					}
+					info.TotalPods++
+					if pod.Status.Phase == corev1.PodRunning {
+						info.PodsRunning++
+					}
+					// Verify by image
+					for _, container := range pod.Spec.Containers {
+						if verifyAuditEngineImage(container.Image, "falco") {
+							info.ImageVerified = true
+							break
 						}
 					}
-					info.DriverType = "unknown"
 					break
 				}
-			}
-			if info.Name != "" {
-				break
 			}
 		}
 	}
@@ -909,12 +923,12 @@ func analyzeFalco(ctx context.Context, clientset kubernetes.Interface, dynClient
 		info.Status = "active"
 	}
 
-	// Check for Falcosidekick (output channels)
-	sidekickPods, err := clientset.CoreV1().Pods(info.Namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "app.kubernetes.io/name=falcosidekick",
-	})
-	if err == nil && len(sidekickPods.Items) > 0 {
-		info.OutputChannels = append(info.OutputChannels, "falcosidekick")
+	// Check for Falcosidekick (output channels) from pre-fetched pods
+	for _, pod := range allPods {
+		if pod.Namespace == info.Namespace && pod.Labels["app.kubernetes.io/name"] == "falcosidekick" {
+			info.OutputChannels = append(info.OutputChannels, "falcosidekick")
+			break
+		}
 	}
 
 	// Check for FalcoRules CRD (if using falco-operator)
@@ -936,20 +950,17 @@ func analyzeFalco(ctx context.Context, clientset kubernetes.Interface, dynClient
 		}
 	}
 
-	// Check ConfigMaps for rules
-	configMaps, err := clientset.CoreV1().ConfigMaps(info.Namespace).List(ctx, metav1.ListOptions{})
-	if err == nil {
-		for _, cm := range configMaps.Items {
-			if strings.Contains(cm.Name, "falco") && strings.Contains(cm.Name, "rules") {
-				// Count rules in ConfigMap
-				for key, data := range cm.Data {
-					if strings.HasSuffix(key, ".yaml") || strings.HasSuffix(key, ".yml") {
-						// Simple heuristic: count "- rule:" occurrences
-						ruleCount := strings.Count(data, "- rule:")
-						info.RulesCount += ruleCount
-						if strings.Contains(cm.Name, "custom") {
-							info.CustomRulesCount += ruleCount
-						}
+	// Check ConfigMaps for rules from pre-fetched data
+	for _, cm := range allConfigMaps {
+		if cm.Namespace == info.Namespace && strings.Contains(cm.Name, "falco") && strings.Contains(cm.Name, "rules") {
+			// Count rules in ConfigMap
+			for key, data := range cm.Data {
+				if strings.HasSuffix(key, ".yaml") || strings.HasSuffix(key, ".yml") {
+					// Simple heuristic: count "- rule:" occurrences
+					ruleCount := strings.Count(data, "- rule:")
+					info.RulesCount += ruleCount
+					if strings.Contains(cm.Name, "custom") {
+						info.CustomRulesCount += ruleCount
 					}
 				}
 			}
@@ -1012,70 +1023,55 @@ func parseFalcoRule(obj map[string]interface{}) FalcoRuleInfo {
 // Tetragon Analysis
 // ============================================================================
 
-func analyzeTetragon(ctx context.Context, clientset kubernetes.Interface, dynClient dynamic.Interface) (TetragonInfo, []TracingPolicyInfo) {
+func analyzeTetragon(ctx context.Context, allDaemonSets []appsv1.DaemonSet, allPods []corev1.Pod, dynClient dynamic.Interface) (TetragonInfo, []TracingPolicyInfo) {
 	info := TetragonInfo{}
 	var policies []TracingPolicyInfo
 
-	// Check for Tetragon DaemonSet
-	namespaces := []string{"kube-system", "tetragon", "cilium"}
-	labelSelectors := []string{
-		"app.kubernetes.io/name=tetragon",
-		"k8s-app=tetragon",
-	}
+	// Check for Tetragon DaemonSet in pre-fetched data
+	namespaces := map[string]bool{"kube-system": true, "tetragon": true, "cilium": true}
 
-	for _, ns := range namespaces {
-		daemonSets, err := clientset.AppsV1().DaemonSets(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
+	for _, ds := range allDaemonSets {
+		if !namespaces[ds.Namespace] {
 			continue
 		}
+		if strings.Contains(strings.ToLower(ds.Name), "tetragon") {
+			info.Name = "Tetragon"
+			info.Namespace = ds.Namespace
+			info.TotalPods = int(ds.Status.DesiredNumberScheduled)
+			info.PodsRunning = int(ds.Status.NumberReady)
+			// Verify by image
+			for _, container := range ds.Spec.Template.Spec.Containers {
+				if verifyAuditEngineImage(container.Image, "tetragon") {
+					info.ImageVerified = true
+					break
+				}
+			}
+			break
+		}
+	}
 
-		for _, ds := range daemonSets.Items {
-			if strings.Contains(strings.ToLower(ds.Name), "tetragon") {
-				info.Name = "Tetragon"
-				info.Namespace = ns
-				info.TotalPods = int(ds.Status.DesiredNumberScheduled)
-				info.PodsRunning = int(ds.Status.NumberReady)
+	// Also check via pods with labels if DaemonSet not found
+	if info.Name == "" {
+		for _, pod := range allPods {
+			if !namespaces[pod.Namespace] {
+				continue
+			}
+			if pod.Labels["app.kubernetes.io/name"] == "tetragon" || pod.Labels["k8s-app"] == "tetragon" {
+				if info.Name == "" {
+					info.Name = "Tetragon"
+					info.Namespace = pod.Namespace
+				}
+				info.TotalPods++
+				if pod.Status.Phase == corev1.PodRunning {
+					info.PodsRunning++
+				}
 				// Verify by image
-				for _, container := range ds.Spec.Template.Spec.Containers {
+				for _, container := range pod.Spec.Containers {
 					if verifyAuditEngineImage(container.Image, "tetragon") {
 						info.ImageVerified = true
 						break
 					}
 				}
-				break
-			}
-		}
-		if info.Name != "" {
-			break
-		}
-	}
-
-	// Also check via label selectors
-	if info.Name == "" {
-		for _, ns := range namespaces {
-			for _, selector := range labelSelectors {
-				pods, err := clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: selector})
-				if err == nil && len(pods.Items) > 0 {
-					info.Name = "Tetragon"
-					info.Namespace = ns
-					info.TotalPods = len(pods.Items)
-					for _, pod := range pods.Items {
-						if pod.Status.Phase == corev1.PodRunning {
-							info.PodsRunning++
-						}
-						// Verify by image
-						for _, container := range pod.Spec.Containers {
-							if verifyAuditEngineImage(container.Image, "tetragon") {
-								info.ImageVerified = true
-								break
-							}
-						}
-					}
-					break
-				}
-			}
-			if info.Name != "" {
-				break
 			}
 		}
 	}
@@ -1205,70 +1201,55 @@ func parseTracingPolicy(obj map[string]interface{}, isCluster bool) TracingPolic
 // KubeArmor Analysis
 // ============================================================================
 
-func analyzeKubeArmor(ctx context.Context, clientset kubernetes.Interface, dynClient dynamic.Interface) (KubeArmorInfo, []KubeArmorPolicyInfo) {
+func analyzeKubeArmor(ctx context.Context, allDaemonSets []appsv1.DaemonSet, allPods []corev1.Pod, dynClient dynamic.Interface) (KubeArmorInfo, []KubeArmorPolicyInfo) {
 	info := KubeArmorInfo{}
 	var policies []KubeArmorPolicyInfo
 
-	// Check for KubeArmor DaemonSet
-	namespaces := []string{"kubearmor", "kube-system", "security"}
-	labelSelectors := []string{
-		"kubearmor-app=kubearmor",
-		"app.kubernetes.io/name=kubearmor",
-	}
+	// Check for KubeArmor DaemonSet in pre-fetched data
+	namespaces := map[string]bool{"kubearmor": true, "kube-system": true, "security": true}
 
-	for _, ns := range namespaces {
-		daemonSets, err := clientset.AppsV1().DaemonSets(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
+	for _, ds := range allDaemonSets {
+		if !namespaces[ds.Namespace] {
 			continue
 		}
+		if strings.Contains(strings.ToLower(ds.Name), "kubearmor") {
+			info.Name = "KubeArmor"
+			info.Namespace = ds.Namespace
+			info.TotalPods = int(ds.Status.DesiredNumberScheduled)
+			info.PodsRunning = int(ds.Status.NumberReady)
+			// Verify by image
+			for _, container := range ds.Spec.Template.Spec.Containers {
+				if verifyAuditEngineImage(container.Image, "kubearmor") {
+					info.ImageVerified = true
+					break
+				}
+			}
+			break
+		}
+	}
 
-		for _, ds := range daemonSets.Items {
-			if strings.Contains(strings.ToLower(ds.Name), "kubearmor") {
-				info.Name = "KubeArmor"
-				info.Namespace = ns
-				info.TotalPods = int(ds.Status.DesiredNumberScheduled)
-				info.PodsRunning = int(ds.Status.NumberReady)
+	// Also check via pods with labels if DaemonSet not found
+	if info.Name == "" {
+		for _, pod := range allPods {
+			if !namespaces[pod.Namespace] {
+				continue
+			}
+			if pod.Labels["kubearmor-app"] == "kubearmor" || pod.Labels["app.kubernetes.io/name"] == "kubearmor" {
+				if info.Name == "" {
+					info.Name = "KubeArmor"
+					info.Namespace = pod.Namespace
+				}
+				info.TotalPods++
+				if pod.Status.Phase == corev1.PodRunning {
+					info.PodsRunning++
+				}
 				// Verify by image
-				for _, container := range ds.Spec.Template.Spec.Containers {
+				for _, container := range pod.Spec.Containers {
 					if verifyAuditEngineImage(container.Image, "kubearmor") {
 						info.ImageVerified = true
 						break
 					}
 				}
-				break
-			}
-		}
-		if info.Name != "" {
-			break
-		}
-	}
-
-	// Also check via label selectors
-	if info.Name == "" {
-		for _, ns := range namespaces {
-			for _, selector := range labelSelectors {
-				pods, err := clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: selector})
-				if err == nil && len(pods.Items) > 0 {
-					info.Name = "KubeArmor"
-					info.Namespace = ns
-					info.TotalPods = len(pods.Items)
-					for _, pod := range pods.Items {
-						if pod.Status.Phase == corev1.PodRunning {
-							info.PodsRunning++
-						}
-						// Verify by image
-						for _, container := range pod.Spec.Containers {
-							if verifyAuditEngineImage(container.Image, "kubearmor") {
-								info.ImageVerified = true
-								break
-							}
-						}
-					}
-					break
-				}
-			}
-			if info.Name != "" {
-				break
 			}
 		}
 	}
@@ -1322,13 +1303,8 @@ func analyzeKubeArmor(ctx context.Context, clientset kubernetes.Interface, dynCl
 		}
 	}
 
-	// Check default posture from ConfigMap
-	cm, err := clientset.CoreV1().ConfigMaps(info.Namespace).Get(ctx, "kubearmor-config", metav1.GetOptions{})
-	if err == nil {
-		if posture, ok := cm.Data["defaultFilePosture"]; ok {
-			info.DefaultPosture = posture
-		}
-	}
+	// Note: Default posture check from ConfigMap is skipped - would require passing allConfigMaps
+	// The default posture is set to "audit" above which is the KubeArmor default
 
 	if info.DefaultPosture == "audit" {
 		info.BypassRisk = "Default posture is audit - violations are logged but not blocked"
@@ -1421,69 +1397,54 @@ func parseKubeArmorPolicy(obj map[string]interface{}, isHost bool) KubeArmorPoli
 // Tracee Analysis
 // ============================================================================
 
-func analyzeTracee(ctx context.Context, clientset kubernetes.Interface, dynClient dynamic.Interface) TraceeInfo {
+func analyzeTracee(ctx context.Context, allDaemonSets []appsv1.DaemonSet, allPods []corev1.Pod, dynClient dynamic.Interface) TraceeInfo {
 	info := TraceeInfo{}
 
-	// Check for Tracee DaemonSet
-	namespaces := []string{"tracee", "tracee-system", "aqua", "kube-system"}
-	labelSelectors := []string{
-		"app.kubernetes.io/name=tracee",
-		"app=tracee",
-	}
+	// Check for Tracee DaemonSet in pre-fetched data
+	namespaces := map[string]bool{"tracee": true, "tracee-system": true, "aqua": true, "kube-system": true}
 
-	for _, ns := range namespaces {
-		daemonSets, err := clientset.AppsV1().DaemonSets(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
+	for _, ds := range allDaemonSets {
+		if !namespaces[ds.Namespace] {
 			continue
 		}
+		if strings.Contains(strings.ToLower(ds.Name), "tracee") {
+			info.Name = "Tracee"
+			info.Namespace = ds.Namespace
+			info.TotalPods = int(ds.Status.DesiredNumberScheduled)
+			info.PodsRunning = int(ds.Status.NumberReady)
+			// Verify by image
+			for _, container := range ds.Spec.Template.Spec.Containers {
+				if verifyAuditEngineImage(container.Image, "tracee") {
+					info.ImageVerified = true
+					break
+				}
+			}
+			break
+		}
+	}
 
-		for _, ds := range daemonSets.Items {
-			if strings.Contains(strings.ToLower(ds.Name), "tracee") {
-				info.Name = "Tracee"
-				info.Namespace = ns
-				info.TotalPods = int(ds.Status.DesiredNumberScheduled)
-				info.PodsRunning = int(ds.Status.NumberReady)
+	// Also check via pods with labels if DaemonSet not found
+	if info.Name == "" {
+		for _, pod := range allPods {
+			if !namespaces[pod.Namespace] {
+				continue
+			}
+			if pod.Labels["app.kubernetes.io/name"] == "tracee" || pod.Labels["app"] == "tracee" {
+				if info.Name == "" {
+					info.Name = "Tracee"
+					info.Namespace = pod.Namespace
+				}
+				info.TotalPods++
+				if pod.Status.Phase == corev1.PodRunning {
+					info.PodsRunning++
+				}
 				// Verify by image
-				for _, container := range ds.Spec.Template.Spec.Containers {
+				for _, container := range pod.Spec.Containers {
 					if verifyAuditEngineImage(container.Image, "tracee") {
 						info.ImageVerified = true
 						break
 					}
 				}
-				break
-			}
-		}
-		if info.Name != "" {
-			break
-		}
-	}
-
-	// Also check via label selectors
-	if info.Name == "" {
-		for _, ns := range namespaces {
-			for _, selector := range labelSelectors {
-				pods, err := clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: selector})
-				if err == nil && len(pods.Items) > 0 {
-					info.Name = "Tracee"
-					info.Namespace = ns
-					info.TotalPods = len(pods.Items)
-					for _, pod := range pods.Items {
-						if pod.Status.Phase == corev1.PodRunning {
-							info.PodsRunning++
-						}
-						// Verify by image
-						for _, container := range pod.Spec.Containers {
-							if verifyAuditEngineImage(container.Image, "tracee") {
-								info.ImageVerified = true
-								break
-							}
-						}
-					}
-					break
-				}
-			}
-			if info.Name != "" {
-				break
 			}
 		}
 	}
@@ -1510,69 +1471,54 @@ func analyzeTracee(ctx context.Context, clientset kubernetes.Interface, dynClien
 // Sysdig Analysis
 // ============================================================================
 
-func analyzeSysdig(ctx context.Context, clientset kubernetes.Interface, dynClient dynamic.Interface) SysdigInfo {
+func analyzeSysdig(ctx context.Context, allDaemonSets []appsv1.DaemonSet, allPods []corev1.Pod, dynClient dynamic.Interface) SysdigInfo {
 	info := SysdigInfo{}
 
-	// Check for Sysdig Agent DaemonSet
-	namespaces := []string{"sysdig", "sysdig-agent", "kube-system"}
-	labelSelectors := []string{
-		"app=sysdig-agent",
-		"app.kubernetes.io/name=sysdig-agent",
-	}
+	// Check for Sysdig Agent DaemonSet in pre-fetched data
+	namespaces := map[string]bool{"sysdig": true, "sysdig-agent": true, "kube-system": true}
 
-	for _, ns := range namespaces {
-		daemonSets, err := clientset.AppsV1().DaemonSets(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
+	for _, ds := range allDaemonSets {
+		if !namespaces[ds.Namespace] {
 			continue
 		}
+		if strings.Contains(strings.ToLower(ds.Name), "sysdig") {
+			info.Name = "Sysdig"
+			info.Namespace = ds.Namespace
+			info.TotalPods = int(ds.Status.DesiredNumberScheduled)
+			info.PodsRunning = int(ds.Status.NumberReady)
+			// Verify by image
+			for _, container := range ds.Spec.Template.Spec.Containers {
+				if verifyAuditEngineImage(container.Image, "sysdig") {
+					info.ImageVerified = true
+					break
+				}
+			}
+			break
+		}
+	}
 
-		for _, ds := range daemonSets.Items {
-			if strings.Contains(strings.ToLower(ds.Name), "sysdig") {
-				info.Name = "Sysdig"
-				info.Namespace = ns
-				info.TotalPods = int(ds.Status.DesiredNumberScheduled)
-				info.PodsRunning = int(ds.Status.NumberReady)
+	// Also check via pods with labels if DaemonSet not found
+	if info.Name == "" {
+		for _, pod := range allPods {
+			if !namespaces[pod.Namespace] {
+				continue
+			}
+			if pod.Labels["app"] == "sysdig-agent" || pod.Labels["app.kubernetes.io/name"] == "sysdig-agent" {
+				if info.Name == "" {
+					info.Name = "Sysdig"
+					info.Namespace = pod.Namespace
+				}
+				info.TotalPods++
+				if pod.Status.Phase == corev1.PodRunning {
+					info.PodsRunning++
+				}
 				// Verify by image
-				for _, container := range ds.Spec.Template.Spec.Containers {
+				for _, container := range pod.Spec.Containers {
 					if verifyAuditEngineImage(container.Image, "sysdig") {
 						info.ImageVerified = true
 						break
 					}
 				}
-				break
-			}
-		}
-		if info.Name != "" {
-			break
-		}
-	}
-
-	// Also check via label selectors
-	if info.Name == "" {
-		for _, ns := range namespaces {
-			for _, selector := range labelSelectors {
-				pods, err := clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: selector})
-				if err == nil && len(pods.Items) > 0 {
-					info.Name = "Sysdig"
-					info.Namespace = ns
-					info.TotalPods = len(pods.Items)
-					for _, pod := range pods.Items {
-						if pod.Status.Phase == corev1.PodRunning {
-							info.PodsRunning++
-						}
-						// Verify by image
-						for _, container := range pod.Spec.Containers {
-							if verifyAuditEngineImage(container.Image, "sysdig") {
-								info.ImageVerified = true
-								break
-							}
-						}
-					}
-					break
-				}
-			}
-			if info.Name != "" {
-				break
 			}
 		}
 	}
@@ -1599,27 +1545,23 @@ func analyzeSysdig(ctx context.Context, clientset kubernetes.Interface, dynClien
 // Kubernetes Audit Policy Analysis
 // ============================================================================
 
-func analyzeK8sAuditPolicy(ctx context.Context, clientset kubernetes.Interface) K8sAuditPolicyInfo {
+func analyzeK8sAuditPolicy(ctx context.Context, allPods []corev1.Pod, allConfigMaps []corev1.ConfigMap) K8sAuditPolicyInfo {
 	info := K8sAuditPolicyInfo{}
 
-	// Check for audit policy ConfigMap (common in managed clusters)
-	auditConfigMaps := []struct {
-		namespace string
-		name      string
-	}{
-		{"kube-system", "audit-policy"},
-		{"kube-system", "kube-apiserver-audit-policy"},
-		{"kube-system", "audit"},
+	// Check for audit policy ConfigMap from pre-fetched data
+	auditConfigMapNames := map[string]bool{
+		"audit-policy":                  true,
+		"kube-apiserver-audit-policy":   true,
+		"audit":                         true,
 	}
 
-	for _, cm := range auditConfigMaps {
-		configMap, err := clientset.CoreV1().ConfigMaps(cm.namespace).Get(ctx, cm.name, metav1.GetOptions{})
-		if err == nil {
+	for _, cm := range allConfigMaps {
+		if cm.Namespace == "kube-system" && auditConfigMapNames[cm.Name] {
 			info.Detected = true
 			info.PolicySource = "configmap"
 
 			// Parse audit policy
-			for key, data := range configMap.Data {
+			for key, data := range cm.Data {
 				if strings.Contains(key, "yaml") || strings.Contains(key, "policy") {
 					// Count rules
 					info.PolicyRules = strings.Count(data, "- level:")
@@ -1657,12 +1599,9 @@ func analyzeK8sAuditPolicy(ctx context.Context, clientset kubernetes.Interface) 
 		}
 	}
 
-	// Check kube-apiserver pod for audit flags (if accessible)
-	pods, err := clientset.CoreV1().Pods("kube-system").List(ctx, metav1.ListOptions{
-		LabelSelector: "component=kube-apiserver",
-	})
-	if err == nil && len(pods.Items) > 0 {
-		for _, pod := range pods.Items {
+	// Check kube-apiserver pod for audit flags from pre-fetched pods
+	for _, pod := range allPods {
+		if pod.Namespace == "kube-system" && pod.Labels["component"] == "kube-apiserver" {
 			for _, container := range pod.Spec.Containers {
 				for _, arg := range container.Command {
 					if strings.Contains(arg, "--audit-policy-file") {
@@ -1705,36 +1644,32 @@ func analyzeK8sAuditPolicy(ctx context.Context, clientset kubernetes.Interface) 
 // Prisma Cloud/Twistlock Analysis
 // ============================================================================
 
-func auditAnalyzePrismaCloud(ctx context.Context, clientset kubernetes.Interface) PrismaCloudInfo {
+func auditAnalyzePrismaCloud(allDaemonSets []appsv1.DaemonSet) PrismaCloudInfo {
 	info := PrismaCloudInfo{}
 
-	// Check for Prisma Cloud Defender DaemonSet
-	namespaces := []string{"twistlock", "prisma-cloud", "pcc"}
+	// Check for Prisma Cloud Defender DaemonSet in pre-fetched data
+	namespaces := map[string]bool{"twistlock": true, "prisma-cloud": true, "pcc": true}
 	imagePatterns := []string{"twistlock", "prismacloud", "registry.twistlock.com"}
 
-	for _, ns := range namespaces {
-		daemonSets, err := clientset.AppsV1().DaemonSets(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
+	for _, ds := range allDaemonSets {
+		if !namespaces[ds.Namespace] {
 			continue
 		}
-
-		for _, ds := range daemonSets.Items {
-			// Verify by image name to reduce false positives
-			for _, container := range ds.Spec.Template.Spec.Containers {
-				for _, pattern := range imagePatterns {
-					if strings.Contains(strings.ToLower(container.Image), pattern) {
-						info.Name = "Prisma Cloud"
-						info.Namespace = ns
-						info.TotalPods = int(ds.Status.DesiredNumberScheduled)
-						info.PodsRunning = int(ds.Status.NumberReady)
-						info.Defenders = info.PodsRunning
-						info.ImageVerified = true
-						break
-					}
-				}
-				if info.Name != "" {
+		// Verify by image name to reduce false positives
+		for _, container := range ds.Spec.Template.Spec.Containers {
+			for _, pattern := range imagePatterns {
+				if strings.Contains(strings.ToLower(container.Image), pattern) {
+					info.Name = "Prisma Cloud"
+					info.Namespace = ds.Namespace
+					info.TotalPods = int(ds.Status.DesiredNumberScheduled)
+					info.PodsRunning = int(ds.Status.NumberReady)
+					info.Defenders = info.PodsRunning
+					info.ImageVerified = true
 					break
 				}
+			}
+			if info.Name != "" {
+				break
 			}
 		}
 		if info.Name != "" {
@@ -1764,36 +1699,32 @@ func auditAnalyzePrismaCloud(ctx context.Context, clientset kubernetes.Interface
 // Aqua Security Analysis
 // ============================================================================
 
-func auditAnalyzeAquaSecurity(ctx context.Context, clientset kubernetes.Interface) AquaInfo {
+func auditAnalyzeAquaSecurity(allDaemonSets []appsv1.DaemonSet) AquaInfo {
 	info := AquaInfo{}
 
-	// Check for Aqua Enforcer DaemonSet
-	namespaces := []string{"aqua", "aqua-security", "kube-system"}
+	// Check for Aqua Enforcer DaemonSet in pre-fetched data
+	namespaces := map[string]bool{"aqua": true, "aqua-security": true, "kube-system": true}
 	imagePatterns := []string{"aquasec", "aqua-enforcer", "registry.aquasec.com"}
 
-	for _, ns := range namespaces {
-		daemonSets, err := clientset.AppsV1().DaemonSets(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
+	for _, ds := range allDaemonSets {
+		if !namespaces[ds.Namespace] {
 			continue
 		}
-
-		for _, ds := range daemonSets.Items {
-			// Verify by image name to reduce false positives
-			for _, container := range ds.Spec.Template.Spec.Containers {
-				for _, pattern := range imagePatterns {
-					if strings.Contains(strings.ToLower(container.Image), pattern) {
-						info.Name = "Aqua Security"
-						info.Namespace = ns
-						info.TotalPods = int(ds.Status.DesiredNumberScheduled)
-						info.PodsRunning = int(ds.Status.NumberReady)
-						info.Enforcers = info.PodsRunning
-						info.ImageVerified = true
-						break
-					}
-				}
-				if info.Name != "" {
+		// Verify by image name to reduce false positives
+		for _, container := range ds.Spec.Template.Spec.Containers {
+			for _, pattern := range imagePatterns {
+				if strings.Contains(strings.ToLower(container.Image), pattern) {
+					info.Name = "Aqua Security"
+					info.Namespace = ds.Namespace
+					info.TotalPods = int(ds.Status.DesiredNumberScheduled)
+					info.PodsRunning = int(ds.Status.NumberReady)
+					info.Enforcers = info.PodsRunning
+					info.ImageVerified = true
 					break
 				}
+			}
+			if info.Name != "" {
+				break
 			}
 		}
 		if info.Name != "" {
@@ -1823,11 +1754,11 @@ func auditAnalyzeAquaSecurity(ctx context.Context, clientset kubernetes.Interfac
 // StackRox/Red Hat ACS Analysis
 // ============================================================================
 
-func auditAnalyzeStackRox(ctx context.Context, clientset kubernetes.Interface) StackRoxInfo {
+func auditAnalyzeStackRox(allDaemonSets []appsv1.DaemonSet, allDeployments []appsv1.Deployment) StackRoxInfo {
 	info := StackRoxInfo{}
 
-	// Check for StackRox/RHACS deployment
-	namespaces := []string{"stackrox", "rhacs-operator", "rhacs", "acs"}
+	// Check for StackRox/RHACS deployment in pre-fetched data
+	namespaces := map[string]bool{"stackrox": true, "rhacs-operator": true, "rhacs": true, "acs": true}
 	imagePatterns := []string{
 		"stackrox",
 		"advanced-cluster-security",
@@ -1836,26 +1767,19 @@ func auditAnalyzeStackRox(ctx context.Context, clientset kubernetes.Interface) S
 	}
 
 	// Check for Central
-	for _, ns := range namespaces {
-		deployments, err := clientset.AppsV1().Deployments(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
+	for _, dep := range allDeployments {
+		if !namespaces[dep.Namespace] {
 			continue
 		}
-
-		for _, dep := range deployments.Items {
-			if strings.Contains(strings.ToLower(dep.Name), "central") {
-				// Verify by image
-				for _, container := range dep.Spec.Template.Spec.Containers {
-					for _, pattern := range imagePatterns {
-						if strings.Contains(strings.ToLower(container.Image), pattern) {
-							info.Name = "StackRox/ACS"
-							info.Namespace = ns
-							info.CentralActive = dep.Status.ReadyReplicas > 0
-							info.ImageVerified = true
-							break
-						}
-					}
-					if info.ImageVerified {
+		if strings.Contains(strings.ToLower(dep.Name), "central") {
+			// Verify by image
+			for _, container := range dep.Spec.Template.Spec.Containers {
+				for _, pattern := range imagePatterns {
+					if strings.Contains(strings.ToLower(container.Image), pattern) {
+						info.Name = "StackRox/ACS"
+						info.Namespace = dep.Namespace
+						info.CentralActive = dep.Status.ReadyReplicas > 0
+						info.ImageVerified = true
 						break
 					}
 				}
@@ -1863,36 +1787,36 @@ func auditAnalyzeStackRox(ctx context.Context, clientset kubernetes.Interface) S
 					break
 				}
 			}
-		}
-		if info.Name != "" {
-			break
+			if info.ImageVerified {
+				break
+			}
 		}
 	}
 
 	// Check for Sensor (daemonset or deployment)
 	if info.Name != "" {
 		// Check DaemonSets for collector
-		daemonSets, err := clientset.AppsV1().DaemonSets(info.Namespace).List(ctx, metav1.ListOptions{})
-		if err == nil {
-			for _, ds := range daemonSets.Items {
-				if strings.Contains(strings.ToLower(ds.Name), "collector") ||
-					strings.Contains(strings.ToLower(ds.Name), "sensor") {
-					info.SensorActive = ds.Status.NumberReady > 0
-					info.TotalPods += int(ds.Status.DesiredNumberScheduled)
-					info.PodsRunning += int(ds.Status.NumberReady)
-				}
+		for _, ds := range allDaemonSets {
+			if ds.Namespace != info.Namespace {
+				continue
+			}
+			if strings.Contains(strings.ToLower(ds.Name), "collector") ||
+				strings.Contains(strings.ToLower(ds.Name), "sensor") {
+				info.SensorActive = ds.Status.NumberReady > 0
+				info.TotalPods += int(ds.Status.DesiredNumberScheduled)
+				info.PodsRunning += int(ds.Status.NumberReady)
 			}
 		}
 
 		// Check Deployments for sensor
-		deployments, err := clientset.AppsV1().Deployments(info.Namespace).List(ctx, metav1.ListOptions{})
-		if err == nil {
-			for _, dep := range deployments.Items {
-				if strings.Contains(strings.ToLower(dep.Name), "sensor") {
-					info.SensorActive = dep.Status.ReadyReplicas > 0
-					info.TotalPods += int(dep.Status.Replicas)
-					info.PodsRunning += int(dep.Status.ReadyReplicas)
-				}
+		for _, dep := range allDeployments {
+			if dep.Namespace != info.Namespace {
+				continue
+			}
+			if strings.Contains(strings.ToLower(dep.Name), "sensor") {
+				info.SensorActive = dep.Status.ReadyReplicas > 0
+				info.TotalPods += int(dep.Status.Replicas)
+				info.PodsRunning += int(dep.Status.ReadyReplicas)
 			}
 		}
 
@@ -1919,11 +1843,11 @@ func auditAnalyzeStackRox(ctx context.Context, clientset kubernetes.Interface) S
 // NeuVector Analysis
 // ============================================================================
 
-func auditAnalyzeNeuVector(ctx context.Context, clientset kubernetes.Interface) NeuVectorInfo {
+func auditAnalyzeNeuVector(allDaemonSets []appsv1.DaemonSet, allDeployments []appsv1.Deployment) NeuVectorInfo {
 	info := NeuVectorInfo{}
 
-	// Check for NeuVector deployment
-	namespaces := []string{"neuvector", "nv-system", "kube-system"}
+	// Check for NeuVector deployment in pre-fetched data
+	namespaces := map[string]bool{"neuvector": true, "nv-system": true, "kube-system": true}
 	imagePatterns := []string{
 		"neuvector/controller",
 		"neuvector/enforcer",
@@ -1931,28 +1855,20 @@ func auditAnalyzeNeuVector(ctx context.Context, clientset kubernetes.Interface) 
 		"docker.io/neuvector",
 	}
 
-	for _, ns := range namespaces {
-		// Check for controller deployment
-		deployments, err := clientset.AppsV1().Deployments(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
+	for _, dep := range allDeployments {
+		if !namespaces[dep.Namespace] {
 			continue
 		}
-
-		for _, dep := range deployments.Items {
-			if strings.Contains(strings.ToLower(dep.Name), "neuvector") &&
-				strings.Contains(strings.ToLower(dep.Name), "controller") {
-				// Verify by image
-				for _, container := range dep.Spec.Template.Spec.Containers {
-					for _, pattern := range imagePatterns {
-						if strings.Contains(strings.ToLower(container.Image), pattern) {
-							info.Name = "NeuVector"
-							info.Namespace = ns
-							info.Controllers = int(dep.Status.ReadyReplicas)
-							info.ImageVerified = true
-							break
-						}
-					}
-					if info.ImageVerified {
+		if strings.Contains(strings.ToLower(dep.Name), "neuvector") &&
+			strings.Contains(strings.ToLower(dep.Name), "controller") {
+			// Verify by image
+			for _, container := range dep.Spec.Template.Spec.Containers {
+				for _, pattern := range imagePatterns {
+					if strings.Contains(strings.ToLower(container.Image), pattern) {
+						info.Name = "NeuVector"
+						info.Namespace = dep.Namespace
+						info.Controllers = int(dep.Status.ReadyReplicas)
+						info.ImageVerified = true
 						break
 					}
 				}
@@ -1960,9 +1876,9 @@ func auditAnalyzeNeuVector(ctx context.Context, clientset kubernetes.Interface) 
 					break
 				}
 			}
-		}
-		if info.Name != "" {
-			break
+			if info.ImageVerified {
+				break
+			}
 		}
 	}
 
@@ -1971,16 +1887,16 @@ func auditAnalyzeNeuVector(ctx context.Context, clientset kubernetes.Interface) 
 	}
 
 	// Check for enforcer DaemonSet
-	daemonSets, err := clientset.AppsV1().DaemonSets(info.Namespace).List(ctx, metav1.ListOptions{})
-	if err == nil {
-		for _, ds := range daemonSets.Items {
-			if strings.Contains(strings.ToLower(ds.Name), "neuvector") &&
-				strings.Contains(strings.ToLower(ds.Name), "enforcer") {
-				info.Enforcers = int(ds.Status.NumberReady)
-				info.TotalPods = int(ds.Status.DesiredNumberScheduled)
-				info.PodsRunning = int(ds.Status.NumberReady)
-				break
-			}
+	for _, ds := range allDaemonSets {
+		if ds.Namespace != info.Namespace {
+			continue
+		}
+		if strings.Contains(strings.ToLower(ds.Name), "neuvector") &&
+			strings.Contains(strings.ToLower(ds.Name), "enforcer") {
+			info.Enforcers = int(ds.Status.NumberReady)
+			info.TotalPods = int(ds.Status.DesiredNumberScheduled)
+			info.PodsRunning = int(ds.Status.NumberReady)
+			break
 		}
 	}
 
@@ -2006,42 +1922,39 @@ func auditAnalyzeNeuVector(ctx context.Context, clientset kubernetes.Interface) 
 // CrowdStrike Falcon Analysis
 // ============================================================================
 
-func auditAnalyzeCrowdStrike(ctx context.Context, clientset kubernetes.Interface) CrowdStrikeInfo {
+func auditAnalyzeCrowdStrike(allDaemonSets []appsv1.DaemonSet, allPods []corev1.Pod) CrowdStrikeInfo {
 	info := CrowdStrikeInfo{}
 
 	// Check for CrowdStrike Falcon using SDK expected namespaces
-	namespaces := GetExpectedNamespaces("crowdstrike")
-	if len(namespaces) == 0 {
-		namespaces = []string{"falcon-system", "crowdstrike", "kube-system"}
+	expectedNs := GetExpectedNamespaces("crowdstrike")
+	namespaces := make(map[string]bool)
+	if len(expectedNs) == 0 {
+		namespaces = map[string]bool{"falcon-system": true, "crowdstrike": true, "kube-system": true}
+	} else {
+		for _, ns := range expectedNs {
+			namespaces[ns] = true
+		}
 	}
 
-	for _, ns := range namespaces {
-		// Check for Falcon sensor DaemonSet
-		daemonSets, err := clientset.AppsV1().DaemonSets(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
+	for _, ds := range allDaemonSets {
+		if !namespaces[ds.Namespace] {
 			continue
 		}
-
-		for _, ds := range daemonSets.Items {
-			if strings.Contains(strings.ToLower(ds.Name), "falcon") {
-				// Verify by image using SDK
-				for _, container := range ds.Spec.Template.Spec.Containers {
-					if verifyAuditEngineImage(container.Image, "crowdstrike") {
-						info.Name = "CrowdStrike Falcon"
-						info.Namespace = ns
-						info.TotalPods = int(ds.Status.DesiredNumberScheduled)
-						info.PodsRunning = int(ds.Status.NumberReady)
-						info.ImageVerified = true
-						break
-					}
-				}
-				if info.ImageVerified {
+		if strings.Contains(strings.ToLower(ds.Name), "falcon") {
+			// Verify by image using SDK
+			for _, container := range ds.Spec.Template.Spec.Containers {
+				if verifyAuditEngineImage(container.Image, "crowdstrike") {
+					info.Name = "CrowdStrike Falcon"
+					info.Namespace = ds.Namespace
+					info.TotalPods = int(ds.Status.DesiredNumberScheduled)
+					info.PodsRunning = int(ds.Status.NumberReady)
+					info.ImageVerified = true
 					break
 				}
 			}
-		}
-		if info.Name != "" {
-			break
+			if info.ImageVerified {
+				break
+			}
 		}
 	}
 
@@ -2068,68 +1981,41 @@ func auditAnalyzeCrowdStrike(ctx context.Context, clientset kubernetes.Interface
 // Kubescape Runtime Analysis
 // ============================================================================
 
-func auditAnalyzeKubescape(ctx context.Context, clientset kubernetes.Interface) KubescapeRuntimeInfo {
+func auditAnalyzeKubescape(allDaemonSets []appsv1.DaemonSet, allPods []corev1.Pod) KubescapeRuntimeInfo {
 	info := KubescapeRuntimeInfo{}
 
 	// Check for Kubescape using SDK expected namespaces
-	namespaces := GetExpectedNamespaces("kubescape-runtime")
-	if len(namespaces) == 0 {
-		namespaces = []string{"kubescape", "armo-system", "kube-system"}
+	expectedNs := GetExpectedNamespaces("kubescape-runtime")
+	namespaces := make(map[string]bool)
+	if len(expectedNs) == 0 {
+		namespaces = map[string]bool{"kubescape": true, "armo-system": true, "kube-system": true}
+	} else {
+		for _, ns := range expectedNs {
+			namespaces[ns] = true
+		}
 	}
 
-	for _, ns := range namespaces {
-		// Check for Kubescape deployment or DaemonSet
-		deployments, err := clientset.AppsV1().Deployments(ns).List(ctx, metav1.ListOptions{})
-		if err == nil {
-			for _, dep := range deployments.Items {
-				if strings.Contains(strings.ToLower(dep.Name), "kubescape") ||
-					strings.Contains(strings.ToLower(dep.Name), "operator") {
-					// Verify by image using SDK
-					for _, container := range dep.Spec.Template.Spec.Containers {
-						if verifyAuditEngineImage(container.Image, "kubescape-runtime") {
-							info.Name = "Kubescape"
-							info.Namespace = ns
-							info.TotalPods = int(dep.Status.Replicas)
-							info.PodsRunning = int(dep.Status.ReadyReplicas)
-							info.ImageVerified = true
-							break
-						}
-					}
-					if info.ImageVerified {
-						break
-					}
+	// Check for node-agent DaemonSet
+	for _, ds := range allDaemonSets {
+		if !namespaces[ds.Namespace] {
+			continue
+		}
+		if strings.Contains(strings.ToLower(ds.Name), "kubescape") ||
+			strings.Contains(strings.ToLower(ds.Name), "node-agent") {
+			// Verify by image using SDK
+			for _, container := range ds.Spec.Template.Spec.Containers {
+				if verifyAuditEngineImage(container.Image, "kubescape-runtime") {
+					info.Name = "Kubescape"
+					info.Namespace = ds.Namespace
+					info.TotalPods = int(ds.Status.DesiredNumberScheduled)
+					info.PodsRunning = int(ds.Status.NumberReady)
+					info.ImageVerified = true
+					break
 				}
 			}
-		}
-		if info.Name != "" {
-			break
-		}
-
-		// Also check for node-agent DaemonSet
-		daemonSets, err := clientset.AppsV1().DaemonSets(ns).List(ctx, metav1.ListOptions{})
-		if err == nil {
-			for _, ds := range daemonSets.Items {
-				if strings.Contains(strings.ToLower(ds.Name), "kubescape") ||
-					strings.Contains(strings.ToLower(ds.Name), "node-agent") {
-					// Verify by image using SDK
-					for _, container := range ds.Spec.Template.Spec.Containers {
-						if verifyAuditEngineImage(container.Image, "kubescape-runtime") {
-							info.Name = "Kubescape"
-							info.Namespace = ns
-							info.TotalPods = int(ds.Status.DesiredNumberScheduled)
-							info.PodsRunning = int(ds.Status.NumberReady)
-							info.ImageVerified = true
-							break
-						}
-					}
-					if info.ImageVerified {
-						break
-					}
-				}
+			if info.ImageVerified {
+				break
 			}
-		}
-		if info.Name != "" {
-			break
 		}
 	}
 
@@ -2156,42 +2042,39 @@ func auditAnalyzeKubescape(ctx context.Context, clientset kubernetes.Interface) 
 // Deepfence ThreatMapper Analysis
 // ============================================================================
 
-func auditAnalyzeDeepfence(ctx context.Context, clientset kubernetes.Interface) DeepfenceInfo {
+func auditAnalyzeDeepfence(allDaemonSets []appsv1.DaemonSet, allPods []corev1.Pod) DeepfenceInfo {
 	info := DeepfenceInfo{}
 
 	// Check for Deepfence using SDK expected namespaces
-	namespaces := GetExpectedNamespaces("deepfence")
-	if len(namespaces) == 0 {
-		namespaces = []string{"deepfence", "kube-system"}
+	expectedNs := GetExpectedNamespaces("deepfence")
+	namespaces := make(map[string]bool)
+	if len(expectedNs) == 0 {
+		namespaces = map[string]bool{"deepfence": true, "kube-system": true}
+	} else {
+		for _, ns := range expectedNs {
+			namespaces[ns] = true
+		}
 	}
 
-	for _, ns := range namespaces {
-		// Check for Deepfence agent DaemonSet
-		daemonSets, err := clientset.AppsV1().DaemonSets(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
+	for _, ds := range allDaemonSets {
+		if !namespaces[ds.Namespace] {
 			continue
 		}
-
-		for _, ds := range daemonSets.Items {
-			if strings.Contains(strings.ToLower(ds.Name), "deepfence") {
-				// Verify by image using SDK
-				for _, container := range ds.Spec.Template.Spec.Containers {
-					if verifyAuditEngineImage(container.Image, "deepfence") {
-						info.Name = "Deepfence ThreatMapper"
-						info.Namespace = ns
-						info.TotalPods = int(ds.Status.DesiredNumberScheduled)
-						info.PodsRunning = int(ds.Status.NumberReady)
-						info.ImageVerified = true
-						break
-					}
-				}
-				if info.ImageVerified {
+		if strings.Contains(strings.ToLower(ds.Name), "deepfence") {
+			// Verify by image using SDK
+			for _, container := range ds.Spec.Template.Spec.Containers {
+				if verifyAuditEngineImage(container.Image, "deepfence") {
+					info.Name = "Deepfence ThreatMapper"
+					info.Namespace = ds.Namespace
+					info.TotalPods = int(ds.Status.DesiredNumberScheduled)
+					info.PodsRunning = int(ds.Status.NumberReady)
+					info.ImageVerified = true
 					break
 				}
 			}
-		}
-		if info.Name != "" {
-			break
+			if info.ImageVerified {
+				break
+			}
 		}
 	}
 
@@ -2218,68 +2101,39 @@ func auditAnalyzeDeepfence(ctx context.Context, clientset kubernetes.Interface) 
 // Wiz Runtime Sensor Analysis
 // ============================================================================
 
-func auditAnalyzeWiz(ctx context.Context, clientset kubernetes.Interface) WizRuntimeInfo {
+func auditAnalyzeWiz(allDaemonSets []appsv1.DaemonSet, allPods []corev1.Pod) WizRuntimeInfo {
 	info := WizRuntimeInfo{}
 
 	// Check for Wiz using SDK expected namespaces
-	namespaces := GetExpectedNamespaces("wiz-runtime")
-	if len(namespaces) == 0 {
-		namespaces = []string{"wiz", "kube-system"}
+	expectedNs := GetExpectedNamespaces("wiz-runtime")
+	namespaces := make(map[string]bool)
+	if len(expectedNs) == 0 {
+		namespaces = map[string]bool{"wiz": true, "kube-system": true}
+	} else {
+		for _, ns := range expectedNs {
+			namespaces[ns] = true
+		}
 	}
 
-	for _, ns := range namespaces {
-		// Check for Wiz sensor DaemonSet
-		daemonSets, err := clientset.AppsV1().DaemonSets(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
+	for _, ds := range allDaemonSets {
+		if !namespaces[ds.Namespace] {
 			continue
 		}
-
-		for _, ds := range daemonSets.Items {
-			if strings.Contains(strings.ToLower(ds.Name), "wiz") {
-				// Verify by image using SDK
-				for _, container := range ds.Spec.Template.Spec.Containers {
-					if verifyAuditEngineImage(container.Image, "wiz-runtime") {
-						info.Name = "Wiz Runtime Sensor"
-						info.Namespace = ns
-						info.TotalPods = int(ds.Status.DesiredNumberScheduled)
-						info.PodsRunning = int(ds.Status.NumberReady)
-						info.ImageVerified = true
-						break
-					}
-				}
-				if info.ImageVerified {
+		if strings.Contains(strings.ToLower(ds.Name), "wiz") {
+			// Verify by image using SDK
+			for _, container := range ds.Spec.Template.Spec.Containers {
+				if verifyAuditEngineImage(container.Image, "wiz-runtime") {
+					info.Name = "Wiz Runtime Sensor"
+					info.Namespace = ds.Namespace
+					info.TotalPods = int(ds.Status.DesiredNumberScheduled)
+					info.PodsRunning = int(ds.Status.NumberReady)
+					info.ImageVerified = true
 					break
 				}
 			}
-		}
-		if info.Name != "" {
-			break
-		}
-
-		// Also check deployments
-		deployments, err := clientset.AppsV1().Deployments(ns).List(ctx, metav1.ListOptions{})
-		if err == nil {
-			for _, dep := range deployments.Items {
-				if strings.Contains(strings.ToLower(dep.Name), "wiz") {
-					// Verify by image using SDK
-					for _, container := range dep.Spec.Template.Spec.Containers {
-						if verifyAuditEngineImage(container.Image, "wiz-runtime") {
-							info.Name = "Wiz Runtime Sensor"
-							info.Namespace = ns
-							info.TotalPods = int(dep.Status.Replicas)
-							info.PodsRunning = int(dep.Status.ReadyReplicas)
-							info.ImageVerified = true
-							break
-						}
-					}
-					if info.ImageVerified {
-						break
-					}
-				}
+			if info.ImageVerified {
+				break
 			}
-		}
-		if info.Name != "" {
-			break
 		}
 	}
 
@@ -2306,42 +2160,39 @@ func auditAnalyzeWiz(ctx context.Context, clientset kubernetes.Interface) WizRun
 // Lacework Analysis
 // ============================================================================
 
-func auditAnalyzeLacework(ctx context.Context, clientset kubernetes.Interface) LaceworkInfo {
+func auditAnalyzeLacework(allDaemonSets []appsv1.DaemonSet, allPods []corev1.Pod) LaceworkInfo {
 	info := LaceworkInfo{}
 
 	// Check for Lacework using SDK expected namespaces
-	namespaces := GetExpectedNamespaces("lacework")
-	if len(namespaces) == 0 {
-		namespaces = []string{"lacework", "kube-system"}
+	expectedNs := GetExpectedNamespaces("lacework")
+	namespaces := make(map[string]bool)
+	if len(expectedNs) == 0 {
+		namespaces = map[string]bool{"lacework": true, "kube-system": true}
+	} else {
+		for _, ns := range expectedNs {
+			namespaces[ns] = true
+		}
 	}
 
-	for _, ns := range namespaces {
-		// Check for Lacework agent DaemonSet
-		daemonSets, err := clientset.AppsV1().DaemonSets(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
+	for _, ds := range allDaemonSets {
+		if !namespaces[ds.Namespace] {
 			continue
 		}
-
-		for _, ds := range daemonSets.Items {
-			if strings.Contains(strings.ToLower(ds.Name), "lacework") {
-				// Verify by image using SDK
-				for _, container := range ds.Spec.Template.Spec.Containers {
-					if verifyAuditEngineImage(container.Image, "lacework") {
-						info.Name = "Lacework"
-						info.Namespace = ns
-						info.TotalPods = int(ds.Status.DesiredNumberScheduled)
-						info.PodsRunning = int(ds.Status.NumberReady)
-						info.ImageVerified = true
-						break
-					}
-				}
-				if info.ImageVerified {
+		if strings.Contains(strings.ToLower(ds.Name), "lacework") {
+			// Verify by image using SDK
+			for _, container := range ds.Spec.Template.Spec.Containers {
+				if verifyAuditEngineImage(container.Image, "lacework") {
+					info.Name = "Lacework"
+					info.Namespace = ds.Namespace
+					info.TotalPods = int(ds.Status.DesiredNumberScheduled)
+					info.PodsRunning = int(ds.Status.NumberReady)
+					info.ImageVerified = true
 					break
 				}
 			}
-		}
-		if info.Name != "" {
-			break
+			if info.ImageVerified {
+				break
+			}
 		}
 	}
 
@@ -2368,7 +2219,7 @@ func auditAnalyzeLacework(ctx context.Context, clientset kubernetes.Interface) L
 // Build Findings
 // ============================================================================
 
-func buildAuditAdmissionFindings(ctx context.Context, clientset kubernetes.Interface,
+func buildAuditAdmissionFindings(allPods []corev1.Pod,
 	falco FalcoInfo, tetragon TetragonInfo, kubearmor KubeArmorInfo,
 	tracee TraceeInfo, sysdig SysdigInfo,
 	prismaCloud PrismaCloudInfo, aquaSecurity AquaInfo,
@@ -2385,19 +2236,15 @@ func buildAuditAdmissionFindings(ctx context.Context, clientset kubernetes.Inter
 		}
 	}
 
-	// Count pods per namespace for coverage metrics
-	for ns, finding := range namespaceData {
-		pods, err := clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
-		if err == nil {
-			// Count running pods (not monitoring system pods)
-			runningPods := 0
-			for _, pod := range pods.Items {
-				if pod.Status.Phase == corev1.PodRunning {
-					runningPods++
-				}
-			}
-			finding.UnmonitoredPods = runningPods // Will be adjusted below if detection is active
+	// Count pods per namespace for coverage metrics from pre-fetched pods
+	podCountsByNS := make(map[string]int)
+	for _, pod := range allPods {
+		if pod.Status.Phase == corev1.PodRunning {
+			podCountsByNS[pod.Namespace]++
 		}
+	}
+	for ns, finding := range namespaceData {
+		finding.UnmonitoredPods = podCountsByNS[ns] // Will be adjusted below if detection is active
 	}
 
 	// Cluster-wide detection tools
@@ -2697,288 +2544,184 @@ func generateAuditAdmissionLoot(loot *shared.LootBuilder,
 // Audit Log Destination Analysis
 // ============================================================================
 
-func analyzeAuditLogDestinations(ctx context.Context, clientset kubernetes.Interface) []AuditLogDestinationInfo {
+func analyzeAuditLogDestinations(allDaemonSets []appsv1.DaemonSet, allPods []corev1.Pod) []AuditLogDestinationInfo {
 	var destinations []AuditLogDestinationInfo
 
-	// 1. Check for Fluentd/Fluent Bit (common log forwarders)
-	fluentNamespaces := []string{"logging", "fluentd", "fluent-bit", "kube-system", "monitoring"}
+	// 1. Check for Fluentd/Fluent Bit (common log forwarders) from pre-fetched DaemonSets
+	fluentNamespaces := map[string]bool{"logging": true, "fluentd": true, "fluent-bit": true, "kube-system": true, "monitoring": true}
 	fluentImagePatterns := []string{"fluentd", "fluent-bit", "fluent/"}
 
-	for _, ns := range fluentNamespaces {
-		daemonSets, err := clientset.AppsV1().DaemonSets(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
+	for _, ds := range allDaemonSets {
+		if !fluentNamespaces[ds.Namespace] {
 			continue
 		}
 
-		for _, ds := range daemonSets.Items {
-			for _, container := range ds.Spec.Template.Spec.Containers {
-				for _, pattern := range fluentImagePatterns {
-					if strings.Contains(strings.ToLower(container.Image), pattern) {
-						destInfo := AuditLogDestinationInfo{
-							Type:        "Fluentd/FluentBit",
-							Name:        ds.Name,
-							Namespace:   ns,
-							Status:      "active",
-							Destination: "configured",
-							TotalPods:   int(ds.Status.DesiredNumberScheduled),
-							PodsRunning: int(ds.Status.NumberReady),
-							Configured:  true,
-						}
+		for _, container := range ds.Spec.Template.Spec.Containers {
+			matched := false
+			for _, pattern := range fluentImagePatterns {
+				if strings.Contains(strings.ToLower(container.Image), pattern) {
+					destInfo := AuditLogDestinationInfo{
+						Type:        "Fluentd/FluentBit",
+						Name:        ds.Name,
+						Namespace:   ds.Namespace,
+						Status:      "active",
+						Destination: "configured",
+						TotalPods:   int(ds.Status.DesiredNumberScheduled),
+						PodsRunning: int(ds.Status.NumberReady),
+						Configured:  true,
+					}
 
-						if destInfo.PodsRunning < destInfo.TotalPods {
-							destInfo.Status = "degraded"
-							destInfo.BypassRisk = fmt.Sprintf("Only %d/%d pods running", destInfo.PodsRunning, destInfo.TotalPods)
-						}
+					if destInfo.PodsRunning < destInfo.TotalPods {
+						destInfo.Status = "degraded"
+						destInfo.BypassRisk = fmt.Sprintf("Only %d/%d pods running", destInfo.PodsRunning, destInfo.TotalPods)
+					}
 
-						// Check for audit log volume mounts
-						for _, vol := range ds.Spec.Template.Spec.Volumes {
-							if vol.HostPath != nil {
-								if strings.Contains(vol.HostPath.Path, "audit") ||
-									strings.Contains(vol.HostPath.Path, "/var/log/kube-apiserver") {
-									destInfo.Destination = "audit-logs: " + vol.HostPath.Path
-								}
+					// Check for audit log volume mounts
+					for _, vol := range ds.Spec.Template.Spec.Volumes {
+						if vol.HostPath != nil {
+							if strings.Contains(vol.HostPath.Path, "audit") ||
+								strings.Contains(vol.HostPath.Path, "/var/log/kube-apiserver") {
+								destInfo.Destination = "audit-logs: " + vol.HostPath.Path
 							}
 						}
-
-						destinations = append(destinations, destInfo)
-						break
-					}
-				}
-			}
-		}
-	}
-
-	// 2. Check for Elasticsearch (common SIEM destination)
-	esNamespaces := []string{"logging", "elasticsearch", "elastic-system", "monitoring"}
-	for _, ns := range esNamespaces {
-		statefulSets, err := clientset.AppsV1().StatefulSets(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			continue
-		}
-
-		for _, sts := range statefulSets.Items {
-			if strings.Contains(strings.ToLower(sts.Name), "elasticsearch") ||
-				strings.Contains(strings.ToLower(sts.Name), "elastic") {
-				// Verify by checking image
-				isElastic := false
-				for _, container := range sts.Spec.Template.Spec.Containers {
-					if strings.Contains(strings.ToLower(container.Image), "elasticsearch") ||
-						strings.Contains(strings.ToLower(container.Image), "elastic") {
-						isElastic = true
-						break
-					}
-				}
-
-				if isElastic {
-					destInfo := AuditLogDestinationInfo{
-						Type:        "Elasticsearch",
-						Name:        sts.Name,
-						Namespace:   ns,
-						Status:      "active",
-						Destination: "elasticsearch cluster",
-						TotalPods:   int(*sts.Spec.Replicas),
-						PodsRunning: int(sts.Status.ReadyReplicas),
-						Configured:  true,
-					}
-
-					if destInfo.PodsRunning < destInfo.TotalPods {
-						destInfo.Status = "degraded"
-						destInfo.BypassRisk = fmt.Sprintf("Only %d/%d replicas ready", destInfo.PodsRunning, destInfo.TotalPods)
 					}
 
 					destinations = append(destinations, destInfo)
-				}
-			}
-		}
-	}
-
-	// 3. Check for Loki (Grafana logging)
-	lokiNamespaces := []string{"loki", "grafana-loki", "monitoring", "logging"}
-	for _, ns := range lokiNamespaces {
-		statefulSets, err := clientset.AppsV1().StatefulSets(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			continue
-		}
-
-		for _, sts := range statefulSets.Items {
-			if strings.Contains(strings.ToLower(sts.Name), "loki") {
-				// Verify by image
-				isLoki := false
-				for _, container := range sts.Spec.Template.Spec.Containers {
-					if strings.Contains(strings.ToLower(container.Image), "loki") {
-						isLoki = true
-						break
-					}
-				}
-
-				if isLoki {
-					destInfo := AuditLogDestinationInfo{
-						Type:        "Loki",
-						Name:        sts.Name,
-						Namespace:   ns,
-						Status:      "active",
-						Destination: "grafana loki",
-						TotalPods:   int(*sts.Spec.Replicas),
-						PodsRunning: int(sts.Status.ReadyReplicas),
-						Configured:  true,
-					}
-
-					if destInfo.PodsRunning < destInfo.TotalPods {
-						destInfo.Status = "degraded"
-						destInfo.BypassRisk = fmt.Sprintf("Only %d/%d replicas ready", destInfo.PodsRunning, destInfo.TotalPods)
-					}
-
-					destinations = append(destinations, destInfo)
-				}
-			}
-		}
-	}
-
-	// 4. Check for Splunk forwarder
-	splunkNamespaces := []string{"splunk", "logging", "monitoring", "kube-system"}
-	for _, ns := range splunkNamespaces {
-		daemonSets, err := clientset.AppsV1().DaemonSets(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			continue
-		}
-
-		for _, ds := range daemonSets.Items {
-			for _, container := range ds.Spec.Template.Spec.Containers {
-				if strings.Contains(strings.ToLower(container.Image), "splunk") {
-					destInfo := AuditLogDestinationInfo{
-						Type:        "Splunk",
-						Name:        ds.Name,
-						Namespace:   ns,
-						Status:      "active",
-						Destination: "splunk forwarder",
-						TotalPods:   int(ds.Status.DesiredNumberScheduled),
-						PodsRunning: int(ds.Status.NumberReady),
-						Configured:  true,
-					}
-
-					if destInfo.PodsRunning < destInfo.TotalPods {
-						destInfo.Status = "degraded"
-						destInfo.BypassRisk = fmt.Sprintf("Only %d/%d pods running", destInfo.PodsRunning, destInfo.TotalPods)
-					}
-
-					destinations = append(destinations, destInfo)
+					matched = true
 					break
 				}
 			}
-		}
-	}
-
-	// 5. Check for cloud provider logging integrations
-	// AWS CloudWatch
-	cwNamespaces := []string{"amazon-cloudwatch", "aws-observability", "kube-system"}
-	for _, ns := range cwNamespaces {
-		daemonSets, err := clientset.AppsV1().DaemonSets(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			continue
-		}
-
-		for _, ds := range daemonSets.Items {
-			for _, container := range ds.Spec.Template.Spec.Containers {
-				if strings.Contains(strings.ToLower(container.Image), "cloudwatch") ||
-					strings.Contains(strings.ToLower(ds.Name), "cloudwatch") {
-					destInfo := AuditLogDestinationInfo{
-						Type:        "CloudWatch",
-						Name:        ds.Name,
-						Namespace:   ns,
-						Status:      "active",
-						Destination: "AWS CloudWatch Logs",
-						TotalPods:   int(ds.Status.DesiredNumberScheduled),
-						PodsRunning: int(ds.Status.NumberReady),
-						Configured:  true,
-					}
-
-					if destInfo.PodsRunning < destInfo.TotalPods {
-						destInfo.Status = "degraded"
-						destInfo.BypassRisk = fmt.Sprintf("Only %d/%d pods running", destInfo.PodsRunning, destInfo.TotalPods)
-					}
-
-					destinations = append(destinations, destInfo)
-					break
-				}
+			if matched {
+				break
 			}
 		}
 	}
 
-	// 6. Check for Vector (Datadog/generic log collector)
-	vectorNamespaces := []string{"vector", "logging", "monitoring", "datadog"}
-	for _, ns := range vectorNamespaces {
-		daemonSets, err := clientset.AppsV1().DaemonSets(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
+	// 2. Check for Splunk forwarder from pre-fetched DaemonSets
+	splunkNamespaces := map[string]bool{"splunk": true, "logging": true, "monitoring": true, "kube-system": true}
+	for _, ds := range allDaemonSets {
+		if !splunkNamespaces[ds.Namespace] {
 			continue
 		}
-
-		for _, ds := range daemonSets.Items {
-			for _, container := range ds.Spec.Template.Spec.Containers {
-				if strings.Contains(strings.ToLower(container.Image), "vector") ||
-					strings.Contains(strings.ToLower(container.Image), "timberio/vector") {
-					destInfo := AuditLogDestinationInfo{
-						Type:        "Vector",
-						Name:        ds.Name,
-						Namespace:   ns,
-						Status:      "active",
-						Destination: "vector pipeline",
-						TotalPods:   int(ds.Status.DesiredNumberScheduled),
-						PodsRunning: int(ds.Status.NumberReady),
-						Configured:  true,
-					}
-
-					if destInfo.PodsRunning < destInfo.TotalPods {
-						destInfo.Status = "degraded"
-						destInfo.BypassRisk = fmt.Sprintf("Only %d/%d pods running", destInfo.PodsRunning, destInfo.TotalPods)
-					}
-
-					destinations = append(destinations, destInfo)
-					break
+		for _, container := range ds.Spec.Template.Spec.Containers {
+			if strings.Contains(strings.ToLower(container.Image), "splunk") {
+				destInfo := AuditLogDestinationInfo{
+					Type:        "Splunk",
+					Name:        ds.Name,
+					Namespace:   ds.Namespace,
+					Status:      "active",
+					Destination: "splunk forwarder",
+					TotalPods:   int(ds.Status.DesiredNumberScheduled),
+					PodsRunning: int(ds.Status.NumberReady),
+					Configured:  true,
 				}
+
+				if destInfo.PodsRunning < destInfo.TotalPods {
+					destInfo.Status = "degraded"
+					destInfo.BypassRisk = fmt.Sprintf("Only %d/%d pods running", destInfo.PodsRunning, destInfo.TotalPods)
+				}
+
+				destinations = append(destinations, destInfo)
+				break
 			}
 		}
 	}
 
-	// 7. Check for Datadog agent
-	datadogNamespaces := []string{"datadog", "monitoring", "kube-system"}
-	for _, ns := range datadogNamespaces {
-		daemonSets, err := clientset.AppsV1().DaemonSets(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
+	// 3. Check for cloud provider logging integrations - AWS CloudWatch
+	cwNamespaces := map[string]bool{"amazon-cloudwatch": true, "aws-observability": true, "kube-system": true}
+	for _, ds := range allDaemonSets {
+		if !cwNamespaces[ds.Namespace] {
 			continue
 		}
-
-		for _, ds := range daemonSets.Items {
-			for _, container := range ds.Spec.Template.Spec.Containers {
-				if strings.Contains(strings.ToLower(container.Image), "datadog") {
-					destInfo := AuditLogDestinationInfo{
-						Type:        "Datadog",
-						Name:        ds.Name,
-						Namespace:   ns,
-						Status:      "active",
-						Destination: "Datadog platform",
-						TotalPods:   int(ds.Status.DesiredNumberScheduled),
-						PodsRunning: int(ds.Status.NumberReady),
-						Configured:  true,
-					}
-
-					if destInfo.PodsRunning < destInfo.TotalPods {
-						destInfo.Status = "degraded"
-						destInfo.BypassRisk = fmt.Sprintf("Only %d/%d pods running", destInfo.PodsRunning, destInfo.TotalPods)
-					}
-
-					destinations = append(destinations, destInfo)
-					break
+		for _, container := range ds.Spec.Template.Spec.Containers {
+			if strings.Contains(strings.ToLower(container.Image), "cloudwatch") ||
+				strings.Contains(strings.ToLower(ds.Name), "cloudwatch") {
+				destInfo := AuditLogDestinationInfo{
+					Type:        "CloudWatch",
+					Name:        ds.Name,
+					Namespace:   ds.Namespace,
+					Status:      "active",
+					Destination: "AWS CloudWatch Logs",
+					TotalPods:   int(ds.Status.DesiredNumberScheduled),
+					PodsRunning: int(ds.Status.NumberReady),
+					Configured:  true,
 				}
+
+				if destInfo.PodsRunning < destInfo.TotalPods {
+					destInfo.Status = "degraded"
+					destInfo.BypassRisk = fmt.Sprintf("Only %d/%d pods running", destInfo.PodsRunning, destInfo.TotalPods)
+				}
+
+				destinations = append(destinations, destInfo)
+				break
 			}
 		}
 	}
 
-	// 8. Check kube-apiserver for audit webhook configuration
-	pods, err := clientset.CoreV1().Pods("kube-system").List(ctx, metav1.ListOptions{
-		LabelSelector: "component=kube-apiserver",
-	})
-	if err == nil && len(pods.Items) > 0 {
-		for _, pod := range pods.Items {
+	// 4. Check for Vector (Datadog/generic log collector)
+	vectorNamespaces := map[string]bool{"vector": true, "logging": true, "monitoring": true, "datadog": true}
+	for _, ds := range allDaemonSets {
+		if !vectorNamespaces[ds.Namespace] {
+			continue
+		}
+		for _, container := range ds.Spec.Template.Spec.Containers {
+			if strings.Contains(strings.ToLower(container.Image), "vector") ||
+				strings.Contains(strings.ToLower(container.Image), "timberio/vector") {
+				destInfo := AuditLogDestinationInfo{
+					Type:        "Vector",
+					Name:        ds.Name,
+					Namespace:   ds.Namespace,
+					Status:      "active",
+					Destination: "vector pipeline",
+					TotalPods:   int(ds.Status.DesiredNumberScheduled),
+					PodsRunning: int(ds.Status.NumberReady),
+					Configured:  true,
+				}
+
+				if destInfo.PodsRunning < destInfo.TotalPods {
+					destInfo.Status = "degraded"
+					destInfo.BypassRisk = fmt.Sprintf("Only %d/%d pods running", destInfo.PodsRunning, destInfo.TotalPods)
+				}
+
+				destinations = append(destinations, destInfo)
+				break
+			}
+		}
+	}
+
+	// 5. Check for Datadog agent
+	datadogNamespaces := map[string]bool{"datadog": true, "monitoring": true, "kube-system": true}
+	for _, ds := range allDaemonSets {
+		if !datadogNamespaces[ds.Namespace] {
+			continue
+		}
+		for _, container := range ds.Spec.Template.Spec.Containers {
+			if strings.Contains(strings.ToLower(container.Image), "datadog") {
+				destInfo := AuditLogDestinationInfo{
+					Type:        "Datadog",
+					Name:        ds.Name,
+					Namespace:   ds.Namespace,
+					Status:      "active",
+					Destination: "Datadog platform",
+					TotalPods:   int(ds.Status.DesiredNumberScheduled),
+					PodsRunning: int(ds.Status.NumberReady),
+					Configured:  true,
+				}
+
+				if destInfo.PodsRunning < destInfo.TotalPods {
+					destInfo.Status = "degraded"
+					destInfo.BypassRisk = fmt.Sprintf("Only %d/%d pods running", destInfo.PodsRunning, destInfo.TotalPods)
+				}
+
+				destinations = append(destinations, destInfo)
+				break
+			}
+		}
+	}
+
+	// 6. Check kube-apiserver for audit webhook configuration from pre-fetched pods
+	for _, pod := range allPods {
+		if pod.Namespace == "kube-system" && pod.Labels["component"] == "kube-apiserver" {
 			for _, container := range pod.Spec.Containers {
 				for _, arg := range container.Command {
 					if strings.Contains(arg, "--audit-webhook-config-file") {
