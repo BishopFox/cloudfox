@@ -7,9 +7,11 @@ import (
 
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
-	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -95,33 +97,63 @@ func ListPodDisruptionBudgets(cmd *cobra.Command, args []string) {
 	logger.InfoM(fmt.Sprintf("Analyzing PodDisruptionBudgets for %s", globals.ClusterName), globals.K8S_PODDISRUPTIONBUDGETS_MODULE_NAME)
 
 	clientset := config.GetClientOrExit()
+	targetNS := shared.GetNamespaceOrAll()
 
-	// Fetch PodDisruptionBudgets from target namespaces
-	pdbs, err := clientset.PolicyV1().PodDisruptionBudgets(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
+	// Fetch PodDisruptionBudgets from cache
+	allPDBs, err := sdk.GetPodDisruptionBudgets(ctx, clientset)
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Error fetching PodDisruptionBudgets: %v", err), globals.K8S_PODDISRUPTIONBUDGETS_MODULE_NAME)
 		return
 	}
 
-	// Fetch pods for matching
-	pods, err := clientset.CoreV1().Pods(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
+	// Filter by target namespace
+	var pdbList []policyv1.PodDisruptionBudget
+	for _, pdb := range allPDBs {
+		if targetNS == "" || pdb.Namespace == targetNS {
+			pdbList = append(pdbList, pdb)
+		}
+	}
+
+	// Fetch pods for matching (cached)
+	allPods, err := sdk.GetPods(ctx, clientset)
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Error fetching Pods: %v", err), globals.K8S_PODDISRUPTIONBUDGETS_MODULE_NAME)
 		return
 	}
+	// Filter pods by target namespace
+	var pods []corev1.Pod
+	for _, pod := range allPods {
+		if targetNS == "" || pod.Namespace == targetNS {
+			pods = append(pods, pod)
+		}
+	}
 
-	// Fetch deployments
-	deployments, err := clientset.AppsV1().Deployments(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
+	// Fetch deployments (cached)
+	allDeployments, err := sdk.GetDeployments(ctx, clientset)
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Error fetching Deployments: %v", err), globals.K8S_PODDISRUPTIONBUDGETS_MODULE_NAME)
 		return
 	}
+	// Filter deployments by target namespace
+	var deployments []appsv1.Deployment
+	for _, dep := range allDeployments {
+		if targetNS == "" || dep.Namespace == targetNS {
+			deployments = append(deployments, dep)
+		}
+	}
 
-	// Fetch statefulsets
-	statefulsets, err := clientset.AppsV1().StatefulSets(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
+	// Fetch statefulsets (cached)
+	allStatefulsets, err := sdk.GetStatefulSets(ctx, clientset)
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Error fetching StatefulSets: %v", err), globals.K8S_PODDISRUPTIONBUDGETS_MODULE_NAME)
 		return
+	}
+	// Filter statefulsets by target namespace
+	var statefulsets []appsv1.StatefulSet
+	for _, ss := range allStatefulsets {
+		if targetNS == "" || ss.Namespace == targetNS {
+			statefulsets = append(statefulsets, ss)
+		}
 	}
 
 	var pdbAnalyses []PDBAnalysis
@@ -130,7 +162,7 @@ func ListPodDisruptionBudgets(cmd *cobra.Command, args []string) {
 	loot := shared.NewLootBuilder()
 
 	// Analyze each PDB
-	for _, pdb := range pdbs.Items {
+	for _, pdb := range pdbList {
 		analysis := PDBAnalysis{
 			Name:               pdb.Name,
 			Namespace:          pdb.Namespace,
@@ -144,7 +176,7 @@ func ListPodDisruptionBudgets(cmd *cobra.Command, args []string) {
 		}
 
 		// Find matching pods
-		analysis.MatchedPods = findMatchingPods(&pdb, pods.Items)
+		analysis.MatchedPods = findMatchingPods(&pdb, pods)
 
 		// Security analysis
 		issues := analyzePDBSecurity(&analysis, &pdb)
@@ -169,10 +201,10 @@ func ListPodDisruptionBudgets(cmd *cobra.Command, args []string) {
 	}
 
 	// Build PDB index by namespace and selector
-	pdbIndex := buildPDBIndex(pdbs.Items)
+	pdbIndex := buildPDBIndex(pdbList)
 
 	// Analyze deployments
-	for _, deploy := range deployments.Items {
+	for _, deploy := range deployments {
 		status := WorkloadPDBStatus{
 			Namespace:    deploy.Namespace,
 			WorkloadType: "Deployment",
@@ -197,7 +229,7 @@ func ListPodDisruptionBudgets(cmd *cobra.Command, args []string) {
 	}
 
 	// Analyze statefulsets
-	for _, sts := range statefulsets.Items {
+	for _, sts := range statefulsets {
 		status := WorkloadPDBStatus{
 			Namespace:    sts.Namespace,
 			WorkloadType: "StatefulSet",
@@ -249,7 +281,7 @@ func ListPodDisruptionBudgets(cmd *cobra.Command, args []string) {
 	}
 
 	// Summary logging
-	if len(pdbs.Items) > 0 {
+	if len(pdbList) > 0 {
 		permissiveCount := 0
 		if loot.HasSection("Permissive-PDBs") {
 			permissiveCount = loot.Section("Permissive-PDBs").Len()
@@ -259,7 +291,7 @@ func ListPodDisruptionBudgets(cmd *cobra.Command, args []string) {
 			unprotectedCount = loot.Section("Unprotected-Workloads").Len()
 		}
 		logger.InfoM(fmt.Sprintf("%d PDBs analyzed | Permissive: %d | Unprotected workloads: %d | Total workloads: %d",
-			len(pdbs.Items), permissiveCount, unprotectedCount, len(workloadStatuses)),
+			len(pdbList), permissiveCount, unprotectedCount, len(workloadStatuses)),
 			globals.K8S_PODDISRUPTIONBUDGETS_MODULE_NAME)
 	} else {
 		logger.InfoM("No PodDisruptionBudgets found", globals.K8S_PODDISRUPTIONBUDGETS_MODULE_NAME)

@@ -7,11 +7,11 @@ import (
 
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
-	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 var PriorityClassesCmd = &cobra.Command{
@@ -147,25 +147,25 @@ func ListPriorityClasses(cmd *cobra.Command, args []string) {
 
 `)
 
-	// Get all PriorityClasses
-	priorityClasses, err := clientset.SchedulingV1().PriorityClasses().List(ctx, metav1.ListOptions{})
+	// Get all PriorityClasses (cached)
+	priorityClassesList, err := sdk.GetPriorityClasses(ctx, clientset)
 	if err != nil {
 		shared.LogListError(&logger, "priority classes", "", err, globals.K8S_PRIORITYCLASSES_MODULE_NAME, true)
 		return
 	}
 
-	// Get all pods for usage analysis
-	allPods, err := clientset.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	// Get all pods for usage analysis (cached)
+	allPodsList, err := sdk.GetPods(ctx, clientset)
 	if err != nil {
 		shared.LogListError(&logger, "pods", "", err, globals.K8S_PRIORITYCLASSES_MODULE_NAME, false)
-		allPods = &corev1.PodList{}
+		allPodsList = []corev1.Pod{}
 	}
 
 	// Build priority class usage map
 	pcUsage := make(map[string][]corev1.Pod)
 	defaultPriorityPods := []corev1.Pod{}
 
-	for _, pod := range allPods.Items {
+	for _, pod := range allPodsList {
 		if pod.Spec.PriorityClassName != "" {
 			pcUsage[pod.Spec.PriorityClassName] = append(pcUsage[pod.Spec.PriorityClassName], pod)
 		} else {
@@ -191,7 +191,7 @@ func ListPriorityClasses(cmd *cobra.Command, args []string) {
 
 	var globalDefaultPC string
 
-	for _, pc := range priorityClasses.Items {
+	for _, pc := range priorityClassesList {
 		analysis := PriorityClassAnalysis{
 			Name:             pc.Name,
 			Value:            pc.Value,
@@ -303,7 +303,7 @@ func ListPriorityClasses(cmd *cobra.Command, args []string) {
 	var podRows [][]string
 	var podAnalyses []PodPriorityAnalysis
 
-	for _, pod := range allPods.Items {
+	for _, pod := range allPodsList {
 		if pod.Status.Phase != corev1.PodRunning && pod.Status.Phase != corev1.PodPending {
 			continue
 		}
@@ -407,7 +407,7 @@ func ListPriorityClasses(cmd *cobra.Command, args []string) {
 # Pods at risk of preemption: %d
 #
 # Focus on CRITICAL and HIGH risk priority classes for immediate remediation.
-`, riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low, len(allPods.Items), len(podAnalyses))
+`, riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low, len(allPodsList), len(podAnalyses))
 		loot.Section("Priority-Abuse").SetSummary(summary)
 	}
 

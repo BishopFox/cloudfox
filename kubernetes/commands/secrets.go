@@ -12,12 +12,12 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
-	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	v1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -150,18 +150,12 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	// Get target namespaces
-	namespaces := shared.GetTargetNamespaces(ctx, clientset, &logger, globals.K8S_SECRETS_MODULE_NAME)
-
-	// Get all pods for active exposure analysis
+	// Get all pods for active exposure analysis using cache
 	logger.InfoM("Analyzing active secret exposure in pods...", globals.K8S_SECRETS_MODULE_NAME)
-	allPods := []v1.Pod{}
-	for _, ns := range namespaces {
-		pods, err := clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			continue
-		}
-		allPods = append(allPods, pods.Items...)
+	allPods, err := sdk.GetPods(ctx, clientset)
+	if err != nil {
+		shared.LogListError(&logger, "pods", "", err, globals.K8S_SECRETS_MODULE_NAME, false)
+		allPods = []v1.Pod{} // Continue with empty pods list
 	}
 
 	// Build secret-to-pod mapping
@@ -343,14 +337,15 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 	// Track secret data for sprawl detection
 	secretDataHashes := make(map[string][]string) // hash -> list of secret names
 
-	for _, ns := range namespaces {
-		secrets, err := clientset.CoreV1().Secrets(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			shared.LogListError(&logger, "secrets", ns, err, globals.K8S_SECRETS_MODULE_NAME, false)
-			continue
-		}
+	// Get all secrets using cache
+	allSecrets, err := sdk.GetSecrets(ctx, clientset)
+	if err != nil {
+		shared.LogListError(&logger, "secrets", "", err, globals.K8S_SECRETS_MODULE_NAME, true)
+		return
+	}
 
-		for _, secret := range secrets.Items {
+	for _, secret := range allSecrets {
+		ns := secret.Namespace
 			age := time.Since(secret.CreationTimestamp.Time)
 			ageDays := int(age.Hours() / 24)
 
@@ -504,7 +499,6 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 
 			// Generate loot content
 			generateSecretLootContent(&finding, &secret, dataKeys, &namespaceLootEnum, loot)
-		}
 	}
 
 	// Generate secret sprawl report
@@ -586,7 +580,7 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 				len(outputRows), riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low),
 				globals.K8S_SECRETS_MODULE_NAME)
 		} else {
-			logger.InfoM(fmt.Sprintf("%d secrets found across %d namespaces", len(outputRows), len(namespaces)), globals.K8S_SECRETS_MODULE_NAME)
+			logger.InfoM(fmt.Sprintf("%d secrets found", len(outputRows)), globals.K8S_SECRETS_MODULE_NAME)
 		}
 	} else {
 		logger.InfoM("No secrets found, skipping output file creation", globals.K8S_SECRETS_MODULE_NAME)
@@ -599,12 +593,19 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 func analyzeSecretRBAC(ctx context.Context, clientset *kubernetes.Clientset) []RBACBinding {
 	var bindings []RBACBinding
 
-	// Get all RoleBindings
-	roleBindings, err := clientset.RbacV1().RoleBindings("").List(ctx, metav1.ListOptions{})
+	// Get all RoleBindings using cache
+	roleBindings, err := sdk.GetRoleBindings(ctx, clientset)
 	if err == nil {
-		for _, rb := range roleBindings.Items {
+		// Build role lookup map from cache
+		allRoles, _ := sdk.GetRoles(ctx, clientset)
+		roleMap := make(map[string]rbacv1.Role)
+		for _, role := range allRoles {
+			roleMap[fmt.Sprintf("%s/%s", role.Namespace, role.Name)] = role
+		}
+
+		for _, rb := range roleBindings {
 			// Check if role grants secret access
-			if grantSecretAccess(ctx, clientset, rb.RoleRef, rb.Namespace) {
+			if grantSecretAccessCached(rb.RoleRef, rb.Namespace, roleMap) {
 				for _, subject := range rb.Subjects {
 					if subject.Kind == "ServiceAccount" {
 						bindings = append(bindings, RBACBinding{
@@ -620,12 +621,19 @@ func analyzeSecretRBAC(ctx context.Context, clientset *kubernetes.Clientset) []R
 		}
 	}
 
-	// Get all ClusterRoleBindings
-	clusterRoleBindings, err := clientset.RbacV1().ClusterRoleBindings().List(ctx, metav1.ListOptions{})
+	// Get all ClusterRoleBindings using cache
+	clusterRoleBindings, err := sdk.GetClusterRoleBindings(ctx, clientset)
 	if err == nil {
-		for _, crb := range clusterRoleBindings.Items {
+		// Build cluster role lookup map from cache
+		allClusterRoles, _ := sdk.GetClusterRoles(ctx, clientset)
+		clusterRoleMap := make(map[string]rbacv1.ClusterRole)
+		for _, cr := range allClusterRoles {
+			clusterRoleMap[cr.Name] = cr
+		}
+
+		for _, crb := range clusterRoleBindings {
 			// Check if cluster role grants secret access
-			if grantSecretAccessCluster(ctx, clientset, crb.RoleRef) {
+			if grantSecretAccessClusterCached(crb.RoleRef, clusterRoleMap) {
 				for _, subject := range crb.Subjects {
 					if subject.Kind == "ServiceAccount" {
 						bindings = append(bindings, RBACBinding{
@@ -644,14 +652,14 @@ func analyzeSecretRBAC(ctx context.Context, clientset *kubernetes.Clientset) []R
 	return bindings
 }
 
-// grantSecretAccess checks if a Role grants secret access
-func grantSecretAccess(ctx context.Context, clientset *kubernetes.Clientset, roleRef rbacv1.RoleRef, namespace string) bool {
+// grantSecretAccessCached checks if a Role grants secret access using cached roles
+func grantSecretAccessCached(roleRef rbacv1.RoleRef, namespace string, roleMap map[string]rbacv1.Role) bool {
 	if roleRef.Kind != "Role" {
 		return false
 	}
 
-	role, err := clientset.RbacV1().Roles(namespace).Get(ctx, roleRef.Name, metav1.GetOptions{})
-	if err != nil {
+	role, found := roleMap[fmt.Sprintf("%s/%s", namespace, roleRef.Name)]
+	if !found {
 		return false
 	}
 
@@ -670,14 +678,14 @@ func grantSecretAccess(ctx context.Context, clientset *kubernetes.Clientset, rol
 	return false
 }
 
-// grantSecretAccessCluster checks if a ClusterRole grants secret access
-func grantSecretAccessCluster(ctx context.Context, clientset *kubernetes.Clientset, roleRef rbacv1.RoleRef) bool {
+// grantSecretAccessClusterCached checks if a ClusterRole grants secret access using cached cluster roles
+func grantSecretAccessClusterCached(roleRef rbacv1.RoleRef, clusterRoleMap map[string]rbacv1.ClusterRole) bool {
 	if roleRef.Kind != "ClusterRole" {
 		return false
 	}
 
-	role, err := clientset.RbacV1().ClusterRoles().Get(ctx, roleRef.Name, metav1.GetOptions{})
-	if err != nil {
+	role, found := clusterRoleMap[roleRef.Name]
+	if !found {
 		return false
 	}
 

@@ -11,11 +11,11 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
 	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -169,17 +169,29 @@ func ListJobs(cmd *cobra.Command, args []string) {
 
 	// Get target namespaces
 	namespaces := shared.GetTargetNamespaces(ctx, clientset, &logger, globals.K8S_JOBS_MODULE_NAME)
-
-	// Collect all jobs from target namespaces
-	var allJobs []batchv1.Job
+	targetNamespaces := make(map[string]struct{})
 	for _, ns := range namespaces {
-		jobs, err := clientset.BatchV1().Jobs(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			shared.LogListError(&logger, "jobs", ns, err, globals.K8S_JOBS_MODULE_NAME, false)
-			continue
-		}
-		allJobs = append(allJobs, jobs.Items...)
+		targetNamespaces[ns] = struct{}{}
 	}
+
+	// Fetch all jobs using cached call
+	allJobs, err := sdk.GetJobs(ctx, clientset)
+	if err != nil {
+		logger.ErrorM(fmt.Sprintf("Error fetching jobs: %v", err), globals.K8S_JOBS_MODULE_NAME)
+		return
+	}
+
+	// Filter jobs by target namespaces
+	var filteredJobs []batchv1.Job
+	for _, job := range allJobs {
+		if len(targetNamespaces) > 0 {
+			if _, ok := targetNamespaces[job.Namespace]; !ok {
+				continue
+			}
+		}
+		filteredJobs = append(filteredJobs, job)
+	}
+	allJobs = filteredJobs
 
 	// Table 1: Jobs Summary
 	summaryHeaders := []string{

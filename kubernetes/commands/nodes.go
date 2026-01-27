@@ -9,8 +9,9 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
-	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1"
@@ -314,32 +315,32 @@ func ListNodes(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	// Fetch all nodes
-	nodes, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	// Fetch all nodes using cache
+	nodes, err := sdk.GetNodes(ctx, clientset)
 	if err != nil {
 		shared.LogListError(&logger, "nodes", "", err, globals.K8S_NODES_MODULE_NAME, true)
 		return
 	}
 
-	// Fetch all pods for workload analysis
-	pods, err := clientset.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	// Fetch all pods for workload analysis using cache
+	pods, err := sdk.GetPods(ctx, clientset)
 	if err != nil {
 		shared.LogListError(&logger, "pods", "", err, globals.K8S_NODES_MODULE_NAME, true)
 		return
 	}
 
-	// Fetch all network policies for IMDS analysis
-	networkPolicies, err := clientset.NetworkingV1().NetworkPolicies("").List(ctx, metav1.ListOptions{})
+	// Fetch all network policies for IMDS analysis using cache
+	networkPolicies, err := sdk.GetNetworkPolicies(ctx, clientset)
 	if err != nil {
 		shared.LogListError(&logger, "network policies", "", err, globals.K8S_NODES_MODULE_NAME, false)
-		networkPolicies = &netv1.NetworkPolicyList{} // Continue without network policies
+		networkPolicies = []netv1.NetworkPolicy{} // Continue without network policies
 	}
 
 	// Create node findings with comprehensive security analysis
 	var findings []NodeFinding
 
-	for _, node := range nodes.Items {
-		finding := analyzeNode(ctx, clientset, node, pods.Items, networkPolicies.Items)
+	for _, node := range nodes {
+		finding := analyzeNode(ctx, clientset, node, pods, networkPolicies)
 		findings = append(findings, finding)
 	}
 

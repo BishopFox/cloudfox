@@ -7,11 +7,11 @@ import (
 
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
-	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 var HPAsCmd = &cobra.Command{
@@ -94,18 +94,31 @@ func ListHPAs(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	// Fetch HPAs from target namespaces
-	hpas, err := clientset.AutoscalingV2().HorizontalPodAutoscalers(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
+	// Fetch HPAs from cache
+	allHPAs, err := sdk.GetHorizontalPodAutoscalers(ctx, clientset)
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Error fetching HPAs: %v", err), globals.K8S_HPAS_MODULE_NAME)
 		return
+	}
+
+	// Filter by target namespace if specified
+	targetNS := shared.GetNamespaceOrAll()
+	var hpasList []autoscalingv2.HorizontalPodAutoscaler
+	if targetNS == "" {
+		hpasList = allHPAs
+	} else {
+		for _, hpa := range allHPAs {
+			if hpa.Namespace == targetNS {
+				hpasList = append(hpasList, hpa)
+			}
+		}
 	}
 
 	var hpaAnalyses []HPAAnalysis
 	loot := shared.NewLootBuilder()
 
 	// Analyze each HPA
-	for _, hpa := range hpas.Items {
+	for _, hpa := range hpasList {
 		analysis := HPAAnalysis{
 			Name:            hpa.Name,
 			Namespace:       hpa.Namespace,
@@ -168,7 +181,7 @@ func ListHPAs(cmd *cobra.Command, args []string) {
 	}
 
 	// Summary logging
-	if len(hpas.Items) > 0 {
+	if len(hpasList) > 0 {
 		unboundedCount := 0
 		zeroRiskCount := 0
 		customMetricCount := 0
@@ -184,7 +197,7 @@ func ListHPAs(cmd *cobra.Command, args []string) {
 			}
 		}
 		logger.InfoM(fmt.Sprintf("%d HPAs analyzed | Unbounded: %d | Zero-Risk: %d | Custom Metrics: %d",
-			len(hpas.Items), unboundedCount, zeroRiskCount, customMetricCount),
+			len(hpasList), unboundedCount, zeroRiskCount, customMetricCount),
 			globals.K8S_HPAS_MODULE_NAME)
 	} else {
 		logger.InfoM("No HPAs found", globals.K8S_HPAS_MODULE_NAME)

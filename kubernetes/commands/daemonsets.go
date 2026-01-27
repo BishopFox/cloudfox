@@ -10,10 +10,10 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
 	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -117,7 +117,8 @@ func ListDaemonSets(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	daemonSets, err := clientset.AppsV1().DaemonSets(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
+	// Get all daemonsets using cache
+	allDaemonSets, err := sdk.GetDaemonSets(ctx, clientset)
 	if err != nil {
 		shared.LogListError(&logger, "daemonsets", "", err, globals.K8S_DAEMONSETS_MODULE_NAME, true)
 		return
@@ -152,7 +153,7 @@ func ListDaemonSets(cmd *cobra.Command, args []string) {
 	// Risk counters
 	riskCounts := shared.NewRiskCounts()
 
-	for _, ds := range daemonSets.Items {
+	for _, ds := range allDaemonSets {
 		spec := ds.Spec.Template.Spec
 
 		// Run comprehensive security analysis

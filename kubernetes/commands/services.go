@@ -9,8 +9,9 @@ import (
 
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
-	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -206,32 +207,32 @@ func ListServices(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	// Get all Services from target namespaces
-	services, err := clientset.CoreV1().Services(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
+	// Get all Services from cache
+	services, err := sdk.GetServices(ctx, clientset)
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Error retrieving services: %v", err), globals.K8S_SERVICES_MODULE_NAME)
 		return
 	}
 
-	// Get all Ingresses for correlation
-	allIngresses, err := clientset.NetworkingV1().Ingresses(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
+	// Get all Ingresses for correlation using cache
+	allIngresses, err := sdk.GetIngresses(ctx, clientset)
 	if err != nil {
 		shared.LogListError(&logger, "ingresses", "", err, globals.K8S_SERVICES_MODULE_NAME, false)
-		allIngresses = &networkingv1.IngressList{}
+		allIngresses = []networkingv1.Ingress{}
 	}
 
-	// Get all NetworkPolicies
-	allNetworkPolicies, err := clientset.NetworkingV1().NetworkPolicies(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
+	// Get all NetworkPolicies using cache
+	allNetworkPolicies, err := sdk.GetNetworkPolicies(ctx, clientset)
 	if err != nil {
 		shared.LogListError(&logger, "network policies", "", err, globals.K8S_SERVICES_MODULE_NAME, false)
-		allNetworkPolicies = &networkingv1.NetworkPolicyList{}
+		allNetworkPolicies = []networkingv1.NetworkPolicy{}
 	}
 
-	// Get all Pods for backend analysis
-	allPods, err := clientset.CoreV1().Pods(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
+	// Get all Pods for backend analysis using cache
+	allPods, err := sdk.GetPods(ctx, clientset)
 	if err != nil {
 		shared.LogListError(&logger, "pods", "", err, globals.K8S_SERVICES_MODULE_NAME, false)
-		allPods = &corev1.PodList{}
+		allPods = []corev1.Pod{}
 	}
 
 	headers := []string{
@@ -342,7 +343,7 @@ func ListServices(cmd *cobra.Command, args []string) {
 		loot.Section("Services-UDP").Addf("kubectl config use-context %s", globals.KubeContext)
 	}
 
-	for _, svc := range services.Items {
+	for _, svc := range services {
 		finding := ServiceFinding{
 			Namespace:   svc.Namespace,
 			Name:        svc.Name,
@@ -462,7 +463,7 @@ func ListServices(cmd *cobra.Command, args []string) {
 		}
 
 		// Backend pod security analysis
-		backendPods := findBackendPods(allPods.Items, svc.Namespace, svc.Spec.Selector)
+		backendPods := findBackendPods(allPods, svc.Namespace, svc.Spec.Selector)
 		finding.BackendPodCount = len(backendPods)
 		for _, pod := range backendPods {
 			finding.BackendPods = append(finding.BackendPods, pod.Name)
@@ -515,7 +516,7 @@ func ListServices(cmd *cobra.Command, args []string) {
 
 		// Network Policy analysis
 		if len(svc.Spec.Selector) > 0 {
-			netpolInfo := servicesAnalyzeNetworkPolicies(allNetworkPolicies.Items, svc.Namespace, svc.Spec.Selector)
+			netpolInfo := servicesAnalyzeNetworkPolicies(allNetworkPolicies, svc.Namespace, svc.Spec.Selector)
 			finding.NetworkPolicyProtected = len(netpolInfo) > 0
 			for _, np := range netpolInfo {
 				finding.NetworkPolicyNames = append(finding.NetworkPolicyNames, np.Name)
@@ -700,10 +701,10 @@ func isPublicIP(ipStr string) bool {
 	return true
 }
 
-func findIngressesForService(ingresses *networkingv1.IngressList, namespace, serviceName string) []IngressInfo {
+func findIngressesForService(ingresses []networkingv1.Ingress, namespace, serviceName string) []IngressInfo {
 	ingressMap := make(map[string]*IngressInfo) // Deduplicate by ingress name
 
-	for _, ing := range ingresses.Items {
+	for _, ing := range ingresses {
 		if ing.Namespace != namespace {
 			continue
 		}

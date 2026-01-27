@@ -1,23 +1,20 @@
 package commands
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"os"
 	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
-	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 )
 
 var ConfigMapsCmd = &cobra.Command{
@@ -92,7 +89,19 @@ func ListConfigMaps(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	namespaces := shared.GetTargetNamespaces(ctx, clientset, &logger, globals.K8S_CONFIGMAPS_MODULE_NAME)
+	// Get all pods using cache for mounting analysis
+	allPods, err := sdk.GetPods(ctx, clientset)
+	if err != nil {
+		shared.LogListError(&logger, "pods", "", err, globals.K8S_CONFIGMAPS_MODULE_NAME, false)
+		allPods = []corev1.Pod{}
+	}
+
+	// Get all ConfigMaps using cache
+	allConfigMaps, err := sdk.GetConfigMaps(ctx, clientset)
+	if err != nil {
+		shared.LogListError(&logger, "configmaps", "", err, globals.K8S_CONFIGMAPS_MODULE_NAME, true)
+		return
+	}
 
 	// Table 1: ConfigMaps Summary
 	summaryHeaders := []string{
@@ -111,19 +120,12 @@ func ListConfigMaps(cmd *cobra.Command, args []string) {
 	// Risk counters
 	riskCounts := shared.NewRiskCounts()
 
-	for _, ns := range namespaces {
-		cms, err := clientset.CoreV1().ConfigMaps(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error listing configmaps in namespace %s: %v\n", ns, err)
-			continue
-		}
+	for _, cm := range allConfigMaps {
+		// Perform comprehensive security analysis
+		finding := analyzeConfigMapSecurity(&cm)
 
-		for _, cm := range cms.Items {
-			// Perform comprehensive security analysis
-			finding := analyzeConfigMapSecurity(&cm)
-
-			// Find pods mounting this ConfigMap
-			finding.MountedByPods = findPodsMountingConfigMap(ctx, clientset, cm.Namespace, cm.Name)
+		// Find pods mounting this ConfigMap using pre-fetched pods
+		finding.MountedByPods = findPodsMountingConfigMapCached(allPods, cm.Namespace, cm.Name)
 			finding.UsageCount = len(finding.MountedByPods)
 
 			// Generate security issues and recommendations
@@ -206,7 +208,6 @@ func ListConfigMaps(cmd *cobra.Command, args []string) {
 					}
 				}
 			}
-		}
 	}
 
 	// Log risk summary
@@ -229,7 +230,7 @@ func ListConfigMaps(cmd *cobra.Command, args []string) {
 	// Generate loot files
 	lootFiles := generateConfigMapLoot(findings, outputDirectory)
 
-	err := internal.HandleOutput(
+	err = internal.HandleOutput(
 		"Kubernetes",
 		format,
 		outputDirectory,
@@ -581,16 +582,15 @@ func buildKeyPatternMap(cm *corev1.ConfigMap, finding ConfigMapFinding) map[stri
 	return keyPatterns
 }
 
-// findPodsMountingConfigMap finds all pods that mount a specific ConfigMap
-func findPodsMountingConfigMap(ctx context.Context, clientset *kubernetes.Clientset, namespace, configMapName string) []string {
+// findPodsMountingConfigMapCached finds all pods that mount a specific ConfigMap using pre-fetched pods
+func findPodsMountingConfigMapCached(allPods []corev1.Pod, namespace, configMapName string) []string {
 	var mountingPods []string
 
-	pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return mountingPods
-	}
-
-	for _, pod := range pods.Items {
+	for _, pod := range allPods {
+		// Only check pods in the same namespace
+		if pod.Namespace != namespace {
+			continue
+		}
 		for _, volume := range pod.Spec.Volumes {
 			if volume.ConfigMap != nil && volume.ConfigMap.Name == configMapName {
 				mountingPods = append(mountingPods, pod.Name)

@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -10,9 +9,9 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
 	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 var DeploymentsCmd = &cobra.Command{
@@ -108,7 +107,8 @@ type DeploymentVolume struct {
 }
 
 func ListDeployments(cmd *cobra.Command, args []string) {
-	ctx := context.Background()
+	ctx, cancel := shared.ContextWithCancel()
+	defer cancel()
 	logger := internal.NewLogger()
 
 	parentCmd := cmd.Parent()
@@ -121,7 +121,12 @@ func ListDeployments(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	namespaces := shared.GetTargetNamespaces(ctx, clientset, &logger, globals.K8S_DEPLOYMENTS_MODULE_NAME)
+	// Get all deployments using cache
+	allDeployments, err := sdk.GetDeployments(ctx, clientset)
+	if err != nil {
+		shared.LogListError(&logger, "deployments", "", err, globals.K8S_DEPLOYMENTS_MODULE_NAME, true)
+		return
+	}
 
 	// Table 1: Deployments Summary
 	summaryHeaders := []string{
@@ -193,14 +198,7 @@ func ListDeployments(cmd *cobra.Command, args []string) {
 #
 `)
 
-	for _, ns := range namespaces {
-		deployments, err := clientset.AppsV1().Deployments(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			logger.ErrorM(fmt.Sprintf("Error listing Deployments in namespace %s: %v", ns, err), globals.K8S_DEPLOYMENTS_MODULE_NAME)
-			continue
-		}
-
-		for _, dep := range deployments.Items {
+	for _, dep := range allDeployments {
 		finding := DeploymentFinding{
 			Namespace: dep.Namespace,
 			Name:      dep.Name,
@@ -796,7 +794,6 @@ Strategy:.spec.strategy.type}'`
 			lootSecretsAccess = append(lootSecretsAccess, "# Extract from running pod:")
 			lootSecretsAccess = append(lootSecretsAccess, fmt.Sprintf("POD=$(kubectl get pods -n %s -l %s -o jsonpath='{.items[0].metadata.name}')", dep.Namespace, strings.Join(finding.Selectors, ",")))
 			lootSecretsAccess = append(lootSecretsAccess, fmt.Sprintf("kubectl exec -n %s $POD -- env | grep -i secret\n", dep.Namespace))
-		}
 		}
 	}
 

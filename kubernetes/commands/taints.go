@@ -8,8 +8,9 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
-	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -137,7 +138,8 @@ func ListTaints(cmd *cobra.Command, args []string) {
 
 `)
 
-	nodes, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	// Get all nodes using cache
+	nodes, err := sdk.GetNodes(ctx, clientset)
 	if err != nil {
 		shared.LogListError(&logger, "nodes", "", err, globals.K8S_TAINTS_MODULE_NAME, true)
 		return
@@ -153,7 +155,7 @@ func ListTaints(cmd *cobra.Command, args []string) {
 
 	riskCounts := shared.NewRiskCounts()
 
-	for _, node := range nodes.Items {
+	for _, node := range nodes {
 		nodeInfo := NodeTaintInfo{
 			NodeName:   node.Name,
 			NodeLabels: node.Labels,

@@ -9,7 +9,6 @@ import (
 	"github.com/BishopFox/cloudfox/kubernetes/sdk"
 	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	v1 "k8s.io/api/rbac/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -297,26 +296,26 @@ func (s *AttackPathService) CombinedAnalysis(ctx context.Context, pathType strin
 func (s *AttackPathService) AnalyzeClusterAttackPaths(ctx context.Context, pathType string) ([]AttackPath, error) {
 	var paths []AttackPath
 
-	// Get ClusterRoleBindings
-	crbs, err := s.clientset.RbacV1().ClusterRoleBindings().List(ctx, metav1.ListOptions{})
+	// Get ClusterRoleBindings (cached)
+	crbsList, err := sdk.GetClusterRoleBindings(ctx, s.clientset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list ClusterRoleBindings: %w", err)
 	}
 
-	// Get ClusterRoles
-	clusterRoles, err := s.clientset.RbacV1().ClusterRoles().List(ctx, metav1.ListOptions{})
+	// Get ClusterRoles (cached)
+	clusterRolesList, err := sdk.GetClusterRoles(ctx, s.clientset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list ClusterRoles: %w", err)
 	}
 
 	// Build ClusterRole map
 	crMap := make(map[string]*v1.ClusterRole)
-	for i := range clusterRoles.Items {
-		crMap[clusterRoles.Items[i].Name] = &clusterRoles.Items[i]
+	for i := range clusterRolesList {
+		crMap[clusterRolesList[i].Name] = &clusterRolesList[i]
 	}
 
 	// Analyze each ClusterRoleBinding
-	for _, crb := range crbs.Items {
+	for _, crb := range crbsList {
 		cr, ok := crMap[crb.RoleRef.Name]
 		if !ok {
 			continue
@@ -344,36 +343,48 @@ func (s *AttackPathService) AnalyzeClusterAttackPaths(ctx context.Context, pathT
 func (s *AttackPathService) AnalyzeNamespaceAttackPaths(ctx context.Context, namespace string, pathType string) ([]AttackPath, error) {
 	var paths []AttackPath
 
-	// Get RoleBindings
-	rbs, err := s.clientset.RbacV1().RoleBindings(namespace).List(ctx, metav1.ListOptions{})
+	// Get RoleBindings (cached) and filter by namespace
+	allRbs, err := sdk.GetRoleBindings(ctx, s.clientset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list RoleBindings in %s: %w", namespace, err)
 	}
+	var rbs []v1.RoleBinding
+	for _, rb := range allRbs {
+		if rb.Namespace == namespace {
+			rbs = append(rbs, rb)
+		}
+	}
 
-	// Get Roles
-	roles, err := s.clientset.RbacV1().Roles(namespace).List(ctx, metav1.ListOptions{})
+	// Get Roles (cached) and filter by namespace
+	allRoles, err := sdk.GetRoles(ctx, s.clientset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list Roles in %s: %w", namespace, err)
 	}
+	var roles []v1.Role
+	for _, role := range allRoles {
+		if role.Namespace == namespace {
+			roles = append(roles, role)
+		}
+	}
 
-	// Get ClusterRoles (RoleBindings can reference ClusterRoles)
-	clusterRoles, err := s.clientset.RbacV1().ClusterRoles().List(ctx, metav1.ListOptions{})
+	// Get ClusterRoles (RoleBindings can reference ClusterRoles) (cached)
+	clusterRoles, err := sdk.GetClusterRoles(ctx, s.clientset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list ClusterRoles: %w", err)
 	}
 
 	// Build Role maps
 	roleMap := make(map[string]*v1.Role)
-	for i := range roles.Items {
-		roleMap[roles.Items[i].Name] = &roles.Items[i]
+	for i := range roles {
+		roleMap[roles[i].Name] = &roles[i]
 	}
 	crMap := make(map[string]*v1.ClusterRole)
-	for i := range clusterRoles.Items {
-		crMap[clusterRoles.Items[i].Name] = &clusterRoles.Items[i]
+	for i := range clusterRoles {
+		crMap[clusterRoles[i].Name] = &clusterRoles[i]
 	}
 
 	// Analyze each RoleBinding
-	for _, rb := range rbs.Items {
+	for _, rb := range rbs {
 		var rules []v1.PolicyRule
 
 		if rb.RoleRef.Kind == "Role" {

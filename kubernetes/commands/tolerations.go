@@ -7,8 +7,9 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
-	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -129,8 +130,6 @@ func ListTolerations(cmd *cobra.Command, args []string) {
 
 `)
 
-	namespaces := shared.GetTargetNamespaces(ctx, clientset, &logger, globals.K8S_TOLERATIONS_MODULE_NAME)
-
 	headers := []string{
 		"Namespace",
 		"Pod Name",
@@ -148,14 +147,14 @@ func ListTolerations(cmd *cobra.Command, args []string) {
 
 	riskCounts := shared.NewRiskCounts()
 
-	for _, ns := range namespaces {
-		pods, err := clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			shared.LogListError(&logger, "pods", ns, err, globals.K8S_TOLERATIONS_MODULE_NAME, false)
-			continue
-		}
+	// Get all pods using cache
+	allPods, err := sdk.GetPods(ctx, clientset)
+	if err != nil {
+		shared.LogListError(&logger, "pods", "", err, globals.K8S_TOLERATIONS_MODULE_NAME, true)
+		return
+	}
 
-		for _, pod := range pods.Items {
+	for _, pod := range allPods {
 			podInfo := PodTolerationInfo{
 				Namespace:      pod.Namespace,
 				PodName:        pod.Name,
@@ -351,7 +350,6 @@ func ListTolerations(cmd *cobra.Command, args []string) {
 				loot.Section("Master-Access").Add("")
 			}
 		}
-	}
 
 	table := internal.TableFile{
 		Name:   "Tolerations",
@@ -375,7 +373,7 @@ func ListTolerations(cmd *cobra.Command, args []string) {
 
 	lootFiles := loot.Build()
 
-	err := internal.HandleOutput(
+	err = internal.HandleOutput(
 		"Kubernetes",
 		format,
 		outputDirectory,

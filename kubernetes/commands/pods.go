@@ -9,6 +9,7 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
 	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -288,49 +289,19 @@ func ListPods(cmd *cobra.Command, args []string) {
 	// Loot content will be generated after processing all pods
 	// We'll use findings to generate consolidated loot
 
+	// Get all pods using cache (handles pagination internally)
+	allPods, err := sdk.GetPods(ctx, clientset)
+	if err != nil {
+		shared.CheckSessionError(err, &logger, globals.K8S_PODS_MODULE_NAME)
+		logger.ErrorM(fmt.Sprintf("Failed to list pods: %v", err), globals.K8S_PODS_MODULE_NAME)
+		return
+	}
+
 	// Track enumeration statistics
-	totalPodsEnumerated := 0
-	namespacesWithErrors := 0
+	totalPodsEnumerated := len(allPods)
+	logger.InfoM(fmt.Sprintf("Processing %d pods across %d namespaces", totalPodsEnumerated, len(namespaces)), globals.K8S_PODS_MODULE_NAME)
 
-	for _, ns := range namespaces {
-		// List ALL pods in namespace, handling pagination for large namespaces
-		var allPodsInNS []corev1.Pod
-		continueToken := ""
-
-		for {
-			listOpts := metav1.ListOptions{
-				Limit:    500, // Reasonable batch size
-				Continue: continueToken,
-			}
-
-			pods, err := clientset.CoreV1().Pods(ns).List(ctx, listOpts)
-			if err != nil {
-				// Check for session errors - will exit if session is invalid
-				shared.CheckSessionError(err, &logger, globals.K8S_PODS_MODULE_NAME)
-				// Not a session error - log and continue
-				logger.ErrorM(fmt.Sprintf("Failed to list pods in namespace %s: %v", ns, err), globals.K8S_PODS_MODULE_NAME)
-				namespacesWithErrors++
-				break
-			}
-
-			allPodsInNS = append(allPodsInNS, pods.Items...)
-
-			// Check if there are more pods to fetch
-			if pods.Continue == "" {
-				break
-			}
-			continueToken = pods.Continue
-		}
-
-		// Skip this namespace if there was an error
-		if namespacesWithErrors > 0 && len(allPodsInNS) == 0 {
-			continue
-		}
-
-		podsInNS := len(allPodsInNS)
-		totalPodsEnumerated += podsInNS
-
-		for _, pod := range allPodsInNS {
+	for _, pod := range allPods {
 			finding := PodFinding{
 				Namespace:      pod.Namespace,
 				Name:           pod.Name,
@@ -813,7 +784,6 @@ func ListPods(cmd *cobra.Command, args []string) {
 				volumeRows = append(volumeRows, volumeRow)
 			}
 		}
-	}
 
 	// Create all three tables
 	summaryTable := internal.TableFile{Name: "Pods", Header: summaryHeaders, Body: summaryRows}
@@ -823,7 +793,7 @@ func ListPods(cmd *cobra.Command, args []string) {
 	// Generate consolidated loot files
 	lootFiles := generatePodLoot(findings, riskCounts)
 
-	err := internal.HandleOutput(
+	err = internal.HandleOutput(
 		"Kubernetes",
 		format,
 		outputDirectory,
@@ -844,9 +814,6 @@ func ListPods(cmd *cobra.Command, args []string) {
 
 	if len(summaryRows) > 0 {
 		logger.InfoM(fmt.Sprintf("Enumerated %d pods across %d namespaces (processed: %d)", totalPodsEnumerated, len(namespaces), len(summaryRows)), globals.K8S_PODS_MODULE_NAME)
-		if namespacesWithErrors > 0 {
-			logger.ErrorM(fmt.Sprintf("WARNING: Failed to enumerate pods in %d namespace(s) - results may be incomplete!", namespacesWithErrors), globals.K8S_PODS_MODULE_NAME)
-		}
 		logger.InfoM(fmt.Sprintf("Risk Summary: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
 			riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low), globals.K8S_PODS_MODULE_NAME)
 
@@ -858,9 +825,6 @@ func ListPods(cmd *cobra.Command, args []string) {
 		}
 	} else {
 		logger.InfoM("No pods found, skipping output file creation", globals.K8S_PODS_MODULE_NAME)
-		if namespacesWithErrors > 0 {
-			logger.ErrorM(fmt.Sprintf("WARNING: Failed to enumerate pods in %d namespace(s) - check permissions!", namespacesWithErrors), globals.K8S_PODS_MODULE_NAME)
-		}
 	}
 
 	logger.InfoM(fmt.Sprintf("For context and next steps: https://github.com/BishopFox/cloudfox/wiki/Kubernetes-Commands#%s", globals.K8S_PODS_MODULE_NAME), globals.K8S_PODS_MODULE_NAME)

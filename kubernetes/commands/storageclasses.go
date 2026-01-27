@@ -7,12 +7,12 @@ import (
 
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
-	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 var StorageClassesCmd = &cobra.Command{
@@ -111,25 +111,33 @@ func ListStorageClasses(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	// Fetch StorageClasses
-	storageClasses, err := clientset.StorageV1().StorageClasses().List(ctx, metav1.ListOptions{})
+	// Fetch StorageClasses (cached)
+	storageClassesList, err := sdk.GetStorageClasses(ctx, clientset)
 	if err != nil {
 		fmt.Printf("[!] Error fetching StorageClasses: %v\n", err)
 		return
 	}
 
-	// Fetch PersistentVolumes for usage analysis
-	pvs, err := clientset.CoreV1().PersistentVolumes().List(ctx, metav1.ListOptions{})
+	// Fetch PersistentVolumes for usage analysis (cached)
+	pvsList, err := sdk.GetPersistentVolumes(ctx, clientset)
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Error fetching PersistentVolumes: %v", err), globals.K8S_STORAGECLASSES_MODULE_NAME)
 		return
 	}
 
-	// Fetch pods for PVC usage
-	pods, err := clientset.CoreV1().Pods(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
+	// Fetch pods for PVC usage (cached)
+	allPods, err := sdk.GetPods(ctx, clientset)
 	if err != nil {
 		fmt.Printf("[!] Error fetching Pods: %v\n", err)
 		return
+	}
+	// Filter by target namespace
+	targetNS := shared.GetNamespaceOrAll()
+	var pods []corev1.Pod
+	for _, pod := range allPods {
+		if targetNS == "" || pod.Namespace == targetNS {
+			pods = append(pods, pod)
+		}
 	}
 
 	var storageAnalyses []SCSecurityAnalysis
@@ -139,10 +147,10 @@ func ListStorageClasses(cmd *cobra.Command, args []string) {
 	loot := shared.NewLootBuilder()
 
 	// Build PVC to Pod mapping
-	pvcToPods := buildPVCPodMapping(pods.Items)
+	pvcToPods := buildPVCPodMapping(pods)
 
 	// Analyze each StorageClass
-	for _, sc := range storageClasses.Items {
+	for _, sc := range storageClassesList {
 		analysis := SCSecurityAnalysis{
 			Name:                 sc.Name,
 			Provisioner:          sc.Provisioner,
@@ -159,7 +167,7 @@ func ListStorageClasses(cmd *cobra.Command, args []string) {
 		analysis.CloudProvider = scDetectCloudProvider(sc.Provisioner)
 
 		// Analyze PVs using this StorageClass
-		analysis.PVsUsingClass, analysis.TotalStorageGB = analyzePVsForStorageClass(sc.Name, pvs.Items)
+		analysis.PVsUsingClass, analysis.TotalStorageGB = analyzePVsForStorageClass(sc.Name, pvsList)
 
 		// Security analysis
 		issues := analyzeSCSecurityIssues(&analysis)
@@ -190,7 +198,7 @@ func ListStorageClasses(cmd *cobra.Command, args []string) {
 	}
 
 	// Analyze PersistentVolumes
-	for _, pv := range pvs.Items {
+	for _, pv := range pvsList {
 		pvAnalysis := PVStorageAnalysis{
 			PVName:        pv.Name,
 			StorageClass:  pv.Spec.StorageClassName,

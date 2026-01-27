@@ -6,12 +6,12 @@ import (
 
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
-	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 var ResourceQuotasCmd = &cobra.Command{
@@ -172,25 +172,25 @@ func ListResourceQuotas(cmd *cobra.Command, args []string) {
 	// Get all namespaces
 	namespaces := shared.GetTargetNamespaces(ctx, clientset, &logger, globals.K8S_RESOURCEQUOTAS_MODULE_NAME)
 
-	// Get all resource quotas
-	allQuotas, err := clientset.CoreV1().ResourceQuotas("").List(ctx, metav1.ListOptions{})
+	// Get all resource quotas (cached)
+	allQuotasList, err := sdk.GetResourceQuotas(ctx, clientset)
 	if err != nil {
 		shared.LogListError(&logger, "resource quotas", "", err, globals.K8S_RESOURCEQUOTAS_MODULE_NAME, true)
 		return
 	}
 
-	// Get all limit ranges
-	allLimitRanges, err := clientset.CoreV1().LimitRanges("").List(ctx, metav1.ListOptions{})
+	// Get all limit ranges (cached)
+	allLimitRangesList, err := sdk.GetLimitRanges(ctx, clientset)
 	if err != nil {
 		shared.LogListError(&logger, "limit ranges", "", err, globals.K8S_RESOURCEQUOTAS_MODULE_NAME, false)
-		allLimitRanges = &corev1.LimitRangeList{}
+		allLimitRangesList = []corev1.LimitRange{}
 	}
 
-	// Get all pods for utilization analysis
-	allPods, err := clientset.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	// Get all pods for utilization analysis (cached)
+	allPodsList, err := sdk.GetPods(ctx, clientset)
 	if err != nil {
 		shared.LogListError(&logger, "pods", "", err, globals.K8S_RESOURCEQUOTAS_MODULE_NAME, false)
-		allPods = &corev1.PodList{}
+		allPodsList = []corev1.Pod{}
 	}
 
 	// Build maps for quick lookup
@@ -198,15 +198,15 @@ func ListResourceQuotas(cmd *cobra.Command, args []string) {
 	limitRangesByNS := make(map[string][]corev1.LimitRange)
 	podCountByNS := make(map[string]int)
 
-	for _, quota := range allQuotas.Items {
+	for _, quota := range allQuotasList {
 		quotasByNS[quota.Namespace] = append(quotasByNS[quota.Namespace], quota)
 	}
 
-	for _, lr := range allLimitRanges.Items {
+	for _, lr := range allLimitRangesList {
 		limitRangesByNS[lr.Namespace] = append(limitRangesByNS[lr.Namespace], lr)
 	}
 
-	for _, pod := range allPods.Items {
+	for _, pod := range allPodsList {
 		if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
 			podCountByNS[pod.Namespace]++
 		}
@@ -395,7 +395,7 @@ func ListResourceQuotas(cmd *cobra.Command, args []string) {
 
 	// Add detailed quota analysis
 	var quotaDetails []ResourceQuotaDetail
-	for _, quota := range allQuotas.Items {
+	for _, quota := range allQuotasList {
 		detail := analyzeResourceQuotaDetail(&quota)
 		quotaDetails = append(quotaDetails, detail)
 

@@ -201,6 +201,16 @@ var K8sAllChecksCommand = &cobra.Command{
 	Short: "Runs all available Kubernetes commands",
 	Long:  `Executes all available Kubernetes commands to collect and display information from the cluster.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		// Warm the cache before running all modules to avoid redundant API calls
+		ctx, cancel := shared.ContextWithTimeout()
+		defer cancel()
+		clientset := config.GetClientOrExit()
+
+		logger.InfoM("Pre-fetching Kubernetes resources to cache...", "all-checks")
+		if err := sdk.WarmCache(ctx, clientset); err != nil {
+			logger.ErrorM(fmt.Sprintf("Cache warming failed (continuing anyway): %v", err), "all-checks")
+		}
+
 		for _, childCmd := range K8sCommands.Commands() {
 			if childCmd == cmd { // Skip the run-all command itself to avoid infinite recursion
 				continue
@@ -209,6 +219,9 @@ var K8sAllChecksCommand = &cobra.Command{
 			logger.InfoM(fmt.Sprintf("Running command: %s", childCmd.Use), "all-checks")
 			childCmd.Run(cmd, args)
 		}
+
+		// Clear cache after all-checks completes
+		sdk.Flush()
 	},
 }
 

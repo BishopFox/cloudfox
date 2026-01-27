@@ -10,12 +10,12 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
-	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -257,8 +257,8 @@ func ListPersistentVolumes(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	// Get all PersistentVolumes
-	pvs, err := clientset.CoreV1().PersistentVolumes().List(ctx, metav1.ListOptions{})
+	// Get all PersistentVolumes (cached)
+	pvsList, err := sdk.GetPersistentVolumes(ctx, clientset)
 	if err != nil {
 		shared.LogListError(&logger, "persistent volumes", "", err, globals.K8S_PERSISTENT_VOLUMES_MODULE_NAME, true)
 		return
@@ -267,18 +267,16 @@ func ListPersistentVolumes(cmd *cobra.Command, args []string) {
 	// Get all namespaces for PVC enumeration
 	namespaces := shared.GetTargetNamespaces(ctx, clientset, &logger, globals.K8S_PERSISTENT_VOLUMES_MODULE_NAME)
 
-	// Get all storage classes
-	storageClasses, err := clientset.StorageV1().StorageClasses().List(ctx, metav1.ListOptions{})
+	// Get all storage classes (cached)
+	storageClassesList, err := sdk.GetStorageClasses(ctx, clientset)
 	if err != nil {
 		shared.LogListError(&logger, "storage classes", "", err, globals.K8S_PERSISTENT_VOLUMES_MODULE_NAME, false)
 	}
 
 	// Storage class map for quick lookup
 	scMap := make(map[string]storagev1.StorageClass)
-	if storageClasses != nil {
-		for _, sc := range storageClasses.Items {
-			scMap[sc.Name] = sc
-		}
+	for _, sc := range storageClassesList {
+		scMap[sc.Name] = sc
 	}
 
 	headers := []string{
@@ -413,24 +411,34 @@ func ListPersistentVolumes(cmd *cobra.Command, args []string) {
 	pvcToPods := make(map[string][]string)
 	pvcToPodsNamespaces := make(map[string][]string)
 
-	// Get all pods across all namespaces to map PVC usage
+	// Build namespace set for filtering
+	targetNamespaces := make(map[string]struct{})
 	for _, ns := range namespaces {
-		pods, err := clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
-		if err == nil {
-			for _, pod := range pods.Items {
-				for _, volume := range pod.Spec.Volumes {
-					if volume.PersistentVolumeClaim != nil {
-						key := fmt.Sprintf("%s/%s", ns, volume.PersistentVolumeClaim.ClaimName)
-						pvcToPods[key] = append(pvcToPods[key], pod.Name)
-						pvcToPodsNamespaces[key] = append(pvcToPodsNamespaces[key], ns)
-					}
+		targetNamespaces[ns] = struct{}{}
+	}
+
+	// Get all pods (cached) to map PVC usage
+	allPods, err := sdk.GetPods(ctx, clientset)
+	if err == nil {
+		for _, pod := range allPods {
+			// Filter by target namespaces
+			if len(targetNamespaces) > 0 {
+				if _, ok := targetNamespaces[pod.Namespace]; !ok {
+					continue
+				}
+			}
+			for _, volume := range pod.Spec.Volumes {
+				if volume.PersistentVolumeClaim != nil {
+					key := fmt.Sprintf("%s/%s", pod.Namespace, volume.PersistentVolumeClaim.ClaimName)
+					pvcToPods[key] = append(pvcToPods[key], pod.Name)
+					pvcToPodsNamespaces[key] = append(pvcToPodsNamespaces[key], pod.Namespace)
 				}
 			}
 		}
 	}
 
 	// Process PersistentVolumes
-	for _, pv := range pvs.Items {
+	for _, pv := range pvsList {
 		finding := PersistentVolumeFinding{
 			PVName: pv.Name,
 			Status: string(pv.Status.Phase),

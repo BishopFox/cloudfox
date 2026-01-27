@@ -8,11 +8,11 @@ import (
 
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
-	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 var EventsCmd = &cobra.Command{
@@ -137,18 +137,31 @@ func ListEvents(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	// Fetch events from target namespaces
-	events, err := clientset.CoreV1().Events(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
+	// Fetch events from cache
+	allEvents, err := sdk.GetEvents(ctx, clientset)
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Error fetching Events: %v", err), globals.K8S_EVENTS_MODULE_NAME)
 		return
 	}
 
+	// Filter by target namespace if specified
+	targetNS := shared.GetNamespaceOrAll()
+	var eventsList []corev1.Event
+	if targetNS == "" {
+		eventsList = allEvents
+	} else {
+		for _, event := range allEvents {
+			if event.Namespace == targetNS {
+				eventsList = append(eventsList, event)
+			}
+		}
+	}
+
 	// Filter events by search query if provided
-	filteredEvents := events.Items
+	filteredEvents := eventsList
 	if searchQuery != "" {
-		filteredEvents = filterEventsBySearch(events.Items, searchQuery)
-		logger.InfoM(fmt.Sprintf("Found %d events matching %q (out of %d total)", len(filteredEvents), searchQuery, len(events.Items)), globals.K8S_EVENTS_MODULE_NAME)
+		filteredEvents = filterEventsBySearch(eventsList, searchQuery)
+		logger.InfoM(fmt.Sprintf("Found %d events matching %q (out of %d total)", len(filteredEvents), searchQuery, len(eventsList)), globals.K8S_EVENTS_MODULE_NAME)
 	}
 
 	var eventAnalyses []EventAnalysis

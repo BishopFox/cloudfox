@@ -9,11 +9,11 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
 	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 var ReplicaSetsCmd = &cobra.Command{
@@ -204,6 +204,17 @@ func ListReplicaSets(cmd *cobra.Command, args []string) {
 	clientset := config.GetClientOrExit()
 
 	namespaces := shared.GetTargetNamespaces(ctx, clientset, &logger, globals.K8S_REPLICASETS_MODULE_NAME)
+	targetNamespaces := make(map[string]struct{})
+	for _, ns := range namespaces {
+		targetNamespaces[ns] = struct{}{}
+	}
+
+	// Fetch all replicasets using cached call
+	allReplicaSets, err := sdk.GetReplicaSets(ctx, clientset)
+	if err != nil {
+		logger.ErrorM(fmt.Sprintf("Error fetching replicasets: %v", err), globals.K8S_REPLICASETS_MODULE_NAME)
+		return
+	}
 
 	// Table 1: ReplicaSets Summary
 	summaryHeaders := []string{
@@ -237,14 +248,13 @@ func ListReplicaSets(cmd *cobra.Command, args []string) {
 	// Loot content will be generated after processing all replicasets
 	// We'll use findings to generate consolidated loot
 
-	for _, ns := range namespaces {
-		replicaSets, err := clientset.AppsV1().ReplicaSets(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			shared.LogListError(&logger, "replicasets", ns, err, globals.K8S_REPLICASETS_MODULE_NAME, false)
-			continue
+	for _, rs := range allReplicaSets {
+		// Filter by target namespaces
+		if len(targetNamespaces) > 0 {
+			if _, ok := targetNamespaces[rs.Namespace]; !ok {
+				continue
+			}
 		}
-
-		for _, rs := range replicaSets.Items {
 			finding := ReplicaSetFinding{
 				Namespace:         rs.Namespace,
 				Name:              rs.Name,
@@ -717,7 +727,6 @@ func ListReplicaSets(cmd *cobra.Command, args []string) {
 				}
 				volumeRows = append(volumeRows, volumeRow)
 			}
-		}
 	}
 
 	// Create all three tables
@@ -728,7 +737,7 @@ func ListReplicaSets(cmd *cobra.Command, args []string) {
 	// Generate consolidated loot files
 	lootFiles := generateReplicaSetLoot(findings, riskCounts)
 
-	err := internal.HandleOutput(
+	err = internal.HandleOutput(
 		"Kubernetes",
 		format,
 		outputDirectory,

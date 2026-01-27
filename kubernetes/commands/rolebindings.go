@@ -10,10 +10,10 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
 	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	rbacv1 "k8s.io/api/rbac/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -92,59 +92,65 @@ func runRoleBindingsCommand(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	// Get all ClusterRoleBindings
-	clusterRoleBindings, err := clientset.RbacV1().ClusterRoleBindings().List(ctx, metav1.ListOptions{})
+	// Get all ClusterRoleBindings using cache
+	clusterRoleBindings, err := sdk.GetClusterRoleBindings(ctx, clientset)
 	if err != nil {
 		shared.LogListError(&logger, "cluster role bindings", "", err, globals.K8S_ROLEBINDINGS_MODULE_NAME, true)
 		return
 	}
 
-	// Get all ClusterRoles for reference
-	clusterRoles, err := clientset.RbacV1().ClusterRoles().List(ctx, metav1.ListOptions{})
+	// Get all ClusterRoles for reference using cache
+	clusterRoles, err := sdk.GetClusterRoles(ctx, clientset)
 	if err != nil {
 		shared.LogListError(&logger, "cluster roles", "", err, globals.K8S_ROLEBINDINGS_MODULE_NAME, false)
+		clusterRoles = []rbacv1.ClusterRole{}
 	}
 	clusterRoleMap := make(map[string]*rbacv1.ClusterRole)
-	if clusterRoles != nil {
-		for i := range clusterRoles.Items {
-			clusterRoleMap[clusterRoles.Items[i].Name] = &clusterRoles.Items[i]
-		}
+	for i := range clusterRoles {
+		clusterRoleMap[clusterRoles[i].Name] = &clusterRoles[i]
 	}
 
-	// Get target namespaces
-	namespaces := shared.GetTargetNamespaces(ctx, clientset, &logger, globals.K8S_ROLEBINDINGS_MODULE_NAME)
+	// Get all Roles and RoleBindings using cache
+	allRoles, err := sdk.GetRoles(ctx, clientset)
+	if err != nil {
+		shared.LogListError(&logger, "roles", "", err, globals.K8S_ROLEBINDINGS_MODULE_NAME, false)
+		allRoles = []rbacv1.Role{}
+	}
+
+	allRoleBindings, err := sdk.GetRoleBindings(ctx, clientset)
+	if err != nil {
+		shared.LogListError(&logger, "role bindings", "", err, globals.K8S_ROLEBINDINGS_MODULE_NAME, false)
+		allRoleBindings = []rbacv1.RoleBinding{}
+	}
+
+	// Build role map by namespace
+	roleMap := make(map[string]map[string]*rbacv1.Role) // namespace -> roleName -> role
+	for i := range allRoles {
+		ns := allRoles[i].Namespace
+		if roleMap[ns] == nil {
+			roleMap[ns] = make(map[string]*rbacv1.Role)
+		}
+		roleMap[ns][allRoles[i].Name] = &allRoles[i]
+	}
 
 	var findings []RoleBindingFinding
 
 	// Process ClusterRoleBindings
-	for _, crb := range clusterRoleBindings.Items {
+	for i := range clusterRoleBindings {
+		crb := clusterRoleBindings[i]
 		finding := analyzeClusterRoleBinding(ctx, clientset, &crb, clusterRoleMap)
 		findings = append(findings, finding)
 	}
 
-	// Process RoleBindings per namespace
-	for _, ns := range namespaces {
-		roleBindings, err := clientset.RbacV1().RoleBindings(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			shared.LogListError(&logger, "role bindings", ns, err, globals.K8S_ROLEBINDINGS_MODULE_NAME, false)
-			continue
+	// Process RoleBindings
+	for i := range allRoleBindings {
+		rb := allRoleBindings[i]
+		nsRoleMap := roleMap[rb.Namespace]
+		if nsRoleMap == nil {
+			nsRoleMap = make(map[string]*rbacv1.Role)
 		}
-
-		roles, err := clientset.RbacV1().Roles(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			shared.LogListError(&logger, "roles", ns, err, globals.K8S_ROLEBINDINGS_MODULE_NAME, false)
-		}
-		roleMap := make(map[string]*rbacv1.Role)
-		if roles != nil {
-			for i := range roles.Items {
-				roleMap[roles.Items[i].Name] = &roles.Items[i]
-			}
-		}
-
-		for _, rb := range roleBindings.Items {
-			finding := analyzeRoleBinding(ctx, clientset, &rb, roleMap, clusterRoleMap)
-			findings = append(findings, finding)
-		}
+		finding := analyzeRoleBinding(ctx, clientset, &rb, nsRoleMap, clusterRoleMap)
+		findings = append(findings, finding)
 	}
 
 	if len(findings) == 0 {

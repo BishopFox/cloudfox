@@ -11,10 +11,11 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
 	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
+	batchv1 "k8s.io/api/batch/v1"
 	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -121,10 +122,27 @@ func ListCronJobs(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	cronJobs, err := clientset.BatchV1().CronJobs(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
+	// Fetch all cronjobs using cached call
+	allCronJobs, err := sdk.GetCronJobs(ctx, clientset)
 	if err != nil {
 		shared.LogListError(&logger, "cronjobs", "", err, globals.K8S_CRONJOBS_MODULE_NAME, true)
 		return
+	}
+
+	// Filter by target namespaces if specified
+	namespaces := shared.GetTargetNamespaces(ctx, clientset, &logger, globals.K8S_CRONJOBS_MODULE_NAME)
+	targetNamespaces := make(map[string]struct{})
+	for _, ns := range namespaces {
+		targetNamespaces[ns] = struct{}{}
+	}
+	var filteredCronJobs []batchv1.CronJob
+	for _, cj := range allCronJobs {
+		if len(targetNamespaces) > 0 {
+			if _, ok := targetNamespaces[cj.Namespace]; !ok {
+				continue
+			}
+		}
+		filteredCronJobs = append(filteredCronJobs, cj)
 	}
 
 	// Table 1: CronJobs Summary
@@ -157,7 +175,7 @@ func ListCronJobs(cmd *cobra.Command, args []string) {
 	// Risk counters
 	riskCounts := shared.NewRiskCounts()
 
-	for _, cj := range cronJobs.Items {
+	for _, cj := range filteredCronJobs {
 		podSpec := cj.Spec.JobTemplate.Spec.Template.Spec
 
 		// Get success/failed history limits with defaults

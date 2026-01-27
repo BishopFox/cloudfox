@@ -9,8 +9,9 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
-	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -79,10 +80,20 @@ func ListEndpoints(cmd *cobra.Command, args []string) {
 	clientset := config.GetClientOrExit()
 
 	// Using v1 Endpoints API for broader compatibility (deprecated in k8s 1.33+, use EndpointSlices for newer clusters)
-	endpoints, err := clientset.CoreV1().Endpoints(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
+	// Fetch all endpoints using cached call
+	allEndpoints, err := sdk.GetEndpoints(ctx, clientset)
 	if err != nil {
 		shared.LogListError(&logger, "endpoints", shared.GetNamespaceOrAll(), err, globals.K8S_ENDPOINTS_MODULE_NAME, true)
 		return
+	}
+
+	// Filter by target namespace if specified
+	targetNS := shared.GetNamespaceOrAll()
+	var endpoints []v1.Endpoints
+	for _, ep := range allEndpoints {
+		if targetNS == "" || ep.Namespace == targetNS {
+			endpoints = append(endpoints, ep)
+		}
 	}
 
 	headers := []string{
@@ -124,7 +135,7 @@ func ListEndpoints(cmd *cobra.Command, args []string) {
 	}
 
 	// Process traditional Endpoints
-	for _, endpoint := range endpoints.Items {
+	for _, endpoint := range endpoints {
 		if len(endpoint.Subsets) == 0 {
 			continue
 		}

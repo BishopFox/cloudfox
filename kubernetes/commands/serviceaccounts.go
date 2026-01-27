@@ -11,6 +11,7 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
 	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -412,122 +413,157 @@ func ListServiceAccounts(cmd *cobra.Command, args []string) {
 	// Get all services for external exposure detection
 	allServices := make(map[string][]corev1.Service) // ns -> []services
 
-	// Get all ClusterRoles
-	clusterRoles, err := clientset.RbacV1().ClusterRoles().List(ctx, metav1.ListOptions{})
+	// Get all ClusterRoles using cache
+	clusterRoles, err := sdk.GetClusterRoles(ctx, clientset)
 	if err != nil {
 		shared.LogListError(&logger, "cluster roles", "", err, globals.K8S_SERVICEACCOUNTS_MODULE_NAME, false)
-	} else {
-		for _, cr := range clusterRoles.Items {
-			allClusterRoles[cr.Name] = &cr
-		}
+		clusterRoles = []rbacv1.ClusterRole{}
+	}
+	for i := range clusterRoles {
+		allClusterRoles[clusterRoles[i].Name] = &clusterRoles[i]
 	}
 
-	// Get all ClusterRoleBindings
-	clusterRoleBindings, err := clientset.RbacV1().ClusterRoleBindings().List(ctx, metav1.ListOptions{})
+	// Get all ClusterRoleBindings using cache
+	clusterRoleBindings, err := sdk.GetClusterRoleBindings(ctx, clientset)
 	if err != nil {
 		shared.LogListError(&logger, "cluster role bindings", "", err, globals.K8S_SERVICEACCOUNTS_MODULE_NAME, false)
-	} else {
-		for _, crb := range clusterRoleBindings.Items {
-			for _, subj := range crb.Subjects {
-				if subj.Kind == "ServiceAccount" {
-					ns := subj.Namespace
-					sa := subj.Name
-					if saClusterRoleBindings[ns] == nil {
-						saClusterRoleBindings[ns] = make(map[string][]string)
-					}
-					saClusterRoleBindings[ns][sa] = append(saClusterRoleBindings[ns][sa], crb.RoleRef.Name)
+		clusterRoleBindings = []rbacv1.ClusterRoleBinding{}
+	}
+	for _, crb := range clusterRoleBindings {
+		for _, subj := range crb.Subjects {
+			if subj.Kind == "ServiceAccount" {
+				ns := subj.Namespace
+				sa := subj.Name
+				if saClusterRoleBindings[ns] == nil {
+					saClusterRoleBindings[ns] = make(map[string][]string)
 				}
+				saClusterRoleBindings[ns][sa] = append(saClusterRoleBindings[ns][sa], crb.RoleRef.Name)
 			}
 		}
 	}
 
-	// Process each namespace
+	// Build namespace set for filtering
+	namespaceSet := make(map[string]struct{})
 	for _, ns := range namespaces {
-		// Get all roles in namespace
-		roles, err := clientset.RbacV1().Roles(ns).List(ctx, metav1.ListOptions{})
-		if err == nil {
-			allRoles[ns] = make(map[string]*rbacv1.Role)
-			for _, role := range roles.Items {
-				allRoles[ns][role.Name] = &role
-			}
-		}
+		namespaceSet[ns] = struct{}{}
+	}
 
-		// Get all pods in namespace to map SA usage
-		pods, err := clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			shared.LogListError(&logger, "pods", ns, err, globals.K8S_SERVICEACCOUNTS_MODULE_NAME, false)
-		} else {
-			for _, pod := range pods.Items {
-				// Only count running/pending pods for "active usage"
-				if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
-					saName := pod.Spec.ServiceAccountName
-					if saName == "" {
-						saName = "default"
-					}
-					if saPods[ns] == nil {
-						saPods[ns] = make(map[string][]corev1.Pod)
-					}
-					saPods[ns][saName] = append(saPods[ns][saName], pod)
+	// Fetch all Roles once (cached)
+	allRolesList, err := sdk.GetRoles(ctx, clientset)
+	if err != nil {
+		shared.LogListError(&logger, "roles", "", err, globals.K8S_SERVICEACCOUNTS_MODULE_NAME, false)
+		allRolesList = []rbacv1.Role{}
+	}
+	for i := range allRolesList {
+		role := &allRolesList[i]
+		if _, ok := namespaceSet[role.Namespace]; ok {
+			if allRoles[role.Namespace] == nil {
+				allRoles[role.Namespace] = make(map[string]*rbacv1.Role)
+			}
+			allRoles[role.Namespace][role.Name] = role
+		}
+	}
+
+	// Fetch all Pods once (cached)
+	allPodsList, err := sdk.GetPods(ctx, clientset)
+	if err != nil {
+		shared.LogListError(&logger, "pods", "", err, globals.K8S_SERVICEACCOUNTS_MODULE_NAME, false)
+		allPodsList = []corev1.Pod{}
+	}
+	for _, pod := range allPodsList {
+		if _, ok := namespaceSet[pod.Namespace]; !ok {
+			continue
+		}
+		// Only count running/pending pods for "active usage"
+		if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
+			saName := pod.Spec.ServiceAccountName
+			if saName == "" {
+				saName = "default"
+			}
+			if saPods[pod.Namespace] == nil {
+				saPods[pod.Namespace] = make(map[string][]corev1.Pod)
+			}
+			saPods[pod.Namespace][saName] = append(saPods[pod.Namespace][saName], pod)
+		}
+	}
+
+	// Fetch all RoleBindings once (cached)
+	allRoleBindingsList, err := sdk.GetRoleBindings(ctx, clientset)
+	if err != nil {
+		shared.LogListError(&logger, "role bindings", "", err, globals.K8S_SERVICEACCOUNTS_MODULE_NAME, false)
+		allRoleBindingsList = []rbacv1.RoleBinding{}
+	}
+	for _, rb := range allRoleBindingsList {
+		if _, ok := namespaceSet[rb.Namespace]; !ok {
+			continue
+		}
+		for _, subj := range rb.Subjects {
+			if subj.Kind == "ServiceAccount" {
+				sa := subj.Name
+				if saRoleBindings[rb.Namespace] == nil {
+					saRoleBindings[rb.Namespace] = make(map[string][]string)
 				}
+				saRoleBindings[rb.Namespace][sa] = append(saRoleBindings[rb.Namespace][sa], rb.RoleRef.Name)
 			}
 		}
+	}
 
-		// Get RoleBindings in namespace
-		roleBindings, err := clientset.RbacV1().RoleBindings(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			shared.LogListError(&logger, "role bindings", ns, err, globals.K8S_SERVICEACCOUNTS_MODULE_NAME, false)
-		} else {
-			for _, rb := range roleBindings.Items {
-				for _, subj := range rb.Subjects {
-					if subj.Kind == "ServiceAccount" {
-						sa := subj.Name
-						if saRoleBindings[ns] == nil {
-							saRoleBindings[ns] = make(map[string][]string)
-						}
-						saRoleBindings[ns][sa] = append(saRoleBindings[ns][sa], rb.RoleRef.Name)
-					}
+	// Fetch all Secrets once (cached) for token lifecycle analysis
+	allSecretsList, err := sdk.GetSecrets(ctx, clientset)
+	if err != nil {
+		shared.LogListError(&logger, "secrets", "", err, globals.K8S_SERVICEACCOUNTS_MODULE_NAME, false)
+		allSecretsList = []corev1.Secret{}
+	}
+	for _, secret := range allSecretsList {
+		if _, ok := namespaceSet[secret.Namespace]; !ok {
+			continue
+		}
+		// Only track SA token secrets
+		if secret.Type == corev1.SecretTypeServiceAccountToken {
+			if saName, ok := secret.Annotations["kubernetes.io/service-account.name"]; ok {
+				if saSecrets[secret.Namespace] == nil {
+					saSecrets[secret.Namespace] = make(map[string][]corev1.Secret)
 				}
+				saSecrets[secret.Namespace][saName] = append(saSecrets[secret.Namespace][saName], secret)
 			}
 		}
+	}
 
-		// Get all secrets for token lifecycle analysis
-		secrets, err := clientset.CoreV1().Secrets(ns).List(ctx, metav1.ListOptions{})
-		if err == nil {
-			for _, secret := range secrets.Items {
-				// Only track SA token secrets
-				if secret.Type == corev1.SecretTypeServiceAccountToken {
-					if saName, ok := secret.Annotations["kubernetes.io/service-account.name"]; ok {
-						if saSecrets[ns] == nil {
-							saSecrets[ns] = make(map[string][]corev1.Secret)
-						}
-						saSecrets[ns][saName] = append(saSecrets[ns][saName], secret)
-					}
-				}
-			}
+	// Fetch all Services once (cached) for external exposure detection
+	allServicesList, err := sdk.GetServices(ctx, clientset)
+	if err != nil {
+		shared.LogListError(&logger, "services", "", err, globals.K8S_SERVICEACCOUNTS_MODULE_NAME, false)
+		allServicesList = []corev1.Service{}
+	}
+	for _, svc := range allServicesList {
+		if _, ok := namespaceSet[svc.Namespace]; ok {
+			allServices[svc.Namespace] = append(allServices[svc.Namespace], svc)
 		}
+	}
 
-		// Get services for external exposure detection
-		services, err := clientset.CoreV1().Services(ns).List(ctx, metav1.ListOptions{})
-		if err == nil {
-			allServices[ns] = services.Items
-		}
+	// Fetch all ServiceAccounts once (cached)
+	allServiceAccountsList, err := sdk.GetServiceAccounts(ctx, clientset)
+	if err != nil {
+		shared.LogListError(&logger, "service accounts", "", err, globals.K8S_SERVICEACCOUNTS_MODULE_NAME, false)
+		allServiceAccountsList = []corev1.ServiceAccount{}
+	}
 
-		// Get ServiceAccounts
-		serviceAccounts, err := clientset.CoreV1().ServiceAccounts(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			shared.LogListError(&logger, "service accounts", ns, err, globals.K8S_SERVICEACCOUNTS_MODULE_NAME, false)
+	// Process each ServiceAccount
+	for _, sa := range allServiceAccountsList {
+		// Filter by target namespaces
+		if _, ok := namespaceSet[sa.Namespace]; !ok {
 			continue
 		}
 
-		for _, sa := range serviceAccounts.Items {
-			finding := SAFinding{
-				Namespace:            ns,
-				Name:                 sa.Name,
-				WorkloadTypes:        make(map[string]int),
-				PodsWithCapabilities: make(map[string]int),
-				PodNodeMap:           make(map[string]string),
-				NodePodCount:         make(map[string]int),
-			}
+		ns := sa.Namespace
+		finding := SAFinding{
+			Namespace:            ns,
+			Name:                 sa.Name,
+			WorkloadTypes:        make(map[string]int),
+			PodsWithCapabilities: make(map[string]int),
+			PodNodeMap:           make(map[string]string),
+			NodePodCount:         make(map[string]int),
+		}
 
 			// Calculate age
 			finding.Age = time.Since(sa.CreationTimestamp.Time)
@@ -796,7 +832,6 @@ func ListServiceAccounts(cmd *cobra.Command, args []string) {
 
 			// Generate loot content
 			serviceAccountGenerateLootContent(&finding, loot)
-		}
 	}
 
 	// Sort findings by blast radius (descending)

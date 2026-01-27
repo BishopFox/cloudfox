@@ -7,10 +7,10 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
-	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 var HiddenAdminsCmd = &cobra.Command{
@@ -162,14 +162,14 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 	// Hidden Admin Attack Paths section for individual findings
 	lootAdminsSection := loot.Section("Hidden-Admin-Attack-Paths")
 
-	// Query all ServiceAccounts to detect cloud IAM annotations
+	// Query all ServiceAccounts to detect cloud IAM annotations using cache
 	serviceAccountCloudIAM := make(map[string]map[string]string) // namespace -> sa name -> cloud IAM
 	serviceAccountPodCount := make(map[string]map[string]int)    // namespace -> sa name -> pod count
 
 	logger.InfoM("Scanning ServiceAccounts for cloud IAM annotations...", globals.K8S_HIDDEN_ADMINS_MODULE_NAME)
-	serviceAccounts, err := clientset.CoreV1().ServiceAccounts("").List(ctx, v1.ListOptions{})
+	serviceAccounts, err := sdk.GetServiceAccounts(ctx, clientset)
 	if err == nil {
-		for _, sa := range serviceAccounts.Items {
+		for _, sa := range serviceAccounts {
 			if serviceAccountCloudIAM[sa.Namespace] == nil {
 				serviceAccountCloudIAM[sa.Namespace] = make(map[string]string)
 			}
@@ -194,11 +194,11 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// Count active pods per ServiceAccount
+	// Count active pods per ServiceAccount using cache
 	logger.InfoM("Counting active pods per ServiceAccount...", globals.K8S_HIDDEN_ADMINS_MODULE_NAME)
-	allPods, err := clientset.CoreV1().Pods("").List(ctx, v1.ListOptions{})
+	allPods, err := sdk.GetPods(ctx, clientset)
 	if err == nil {
-		for _, pod := range allPods.Items {
+		for _, pod := range allPods {
 			saName := pod.Spec.ServiceAccountName
 			if saName == "" {
 				saName = "default"
@@ -210,13 +210,13 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// ClusterRoles
-	clusterRoles, err := clientset.RbacV1().ClusterRoles().List(ctx, v1.ListOptions{})
+	// ClusterRoles using cache
+	clusterRoles, err := sdk.GetClusterRoles(ctx, clientset)
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Error fetching ClusterRoles: %v", err), globals.K8S_HIDDEN_ADMINS_MODULE_NAME)
 		return
 	}
-	for _, role := range clusterRoles.Items {
+	for _, role := range clusterRoles {
 		var findings []string
 		highestRisk := ""
 
@@ -270,13 +270,13 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// ClusterRoleBindings
-	crbs, err := clientset.RbacV1().ClusterRoleBindings().List(ctx, v1.ListOptions{})
+	// ClusterRoleBindings using cache
+	crbs, err := sdk.GetClusterRoleBindings(ctx, clientset)
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Error fetching ClusterRoleBindings: %v", err), globals.K8S_HIDDEN_ADMINS_MODULE_NAME)
 		return
 	}
-	for _, binding := range crbs.Items {
+	for _, binding := range crbs {
 		if binding.Subjects != nil {
 			for _, subject := range binding.Subjects {
 				ns := subject.Namespace
@@ -412,140 +412,145 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// Roles & RoleBindings
-	namespaces := shared.GetTargetNamespaces(ctx, clientset, &logger, globals.K8S_HIDDEN_ADMINS_MODULE_NAME)
-	for _, ns := range namespaces {
-		// Build map of dangerous roles in this namespace
-		dangerousRolesInNS := make(map[string][]string) // roleName -> []findings
+	// Roles & RoleBindings using cache
+	allRoles, err := sdk.GetRoles(ctx, clientset)
+	if err != nil {
+		logger.ErrorM(fmt.Sprintf("Error fetching Roles: %v", err), globals.K8S_HIDDEN_ADMINS_MODULE_NAME)
+	}
 
-		roles, err := clientset.RbacV1().Roles(ns).List(ctx, v1.ListOptions{})
-		if err != nil {
-			logger.ErrorM(fmt.Sprintf("Error fetching Roles in namespace %s: %v", ns, err), globals.K8S_HIDDEN_ADMINS_MODULE_NAME)
-			continue
+	allRoleBindings, err := sdk.GetRoleBindings(ctx, clientset)
+	if err != nil {
+		logger.ErrorM(fmt.Sprintf("Error fetching RoleBindings: %v", err), globals.K8S_HIDDEN_ADMINS_MODULE_NAME)
+	}
+
+	// Process roles grouped by namespace
+	dangerousRolesInNS := make(map[string]map[string][]string) // namespace -> roleName -> []findings
+	for _, role := range allRoles {
+		ns := role.Namespace
+		if dangerousRolesInNS[ns] == nil {
+			dangerousRolesInNS[ns] = make(map[string][]string)
 		}
-		for _, role := range roles.Items {
-			var findings []string
-			highestRisk := ""
 
-			if role.Rules != nil {
-				for _, rule := range role.Rules {
-					if k8sinternal.IsDangerousRule(rule) {
-						riskLevel := k8sinternal.GetRuleRiskLevel(rule)
-						riskDesc := k8sinternal.GetRuleRiskDescription(rule)
-						findings = append(findings, riskDesc)
+		var findings []string
+		highestRisk := ""
 
-						// Track highest risk level
-						if highestRisk == "" || (riskLevel == shared.RiskCritical) || (riskLevel == shared.RiskHigh && highestRisk != shared.RiskCritical) || (riskLevel == shared.RiskMedium && highestRisk != shared.RiskCritical && highestRisk != shared.RiskHigh) {
-							highestRisk = riskLevel
-						}
+		if role.Rules != nil {
+			for _, rule := range role.Rules {
+				if k8sinternal.IsDangerousRule(rule) {
+					riskLevel := k8sinternal.GetRuleRiskLevel(rule)
+					riskDesc := k8sinternal.GetRuleRiskDescription(rule)
+					findings = append(findings, riskDesc)
+
+					// Track highest risk level
+					if highestRisk == "" || (riskLevel == shared.RiskCritical) || (riskLevel == shared.RiskHigh && highestRisk != shared.RiskCritical) || (riskLevel == shared.RiskMedium && highestRisk != shared.RiskCritical && highestRisk != shared.RiskHigh) {
+						highestRisk = riskLevel
 					}
 				}
 			}
-			if len(findings) > 0 {
-				if highestRisk == "" {
-					highestRisk = shared.RiskMedium
-				}
-				riskCounts.Add(highestRisk)
-				dangerousRolesInNS[role.Name] = findings
-				row := HiddenAdminFinding{
-					Namespace:      ns,
-					Entity:         role.Name,
-					EntityType:     "Role",
-					Scope:          "namespace",
-					RiskLevel:      highestRisk,
-					DangerousPerms: strings.Join(findings, "; "),
-					Source:         fmt.Sprintf("Role definition (%s)", role.Name),
-				}
-				tableRows = append(tableRows, row.ToTableRow())
-				lootAdminsSection.Add(row.Loot())
+		}
+		if len(findings) > 0 {
+			if highestRisk == "" {
+				highestRisk = shared.RiskMedium
 			}
+			riskCounts.Add(highestRisk)
+			dangerousRolesInNS[ns][role.Name] = findings
+			row := HiddenAdminFinding{
+				Namespace:      ns,
+				Entity:         role.Name,
+				EntityType:     "Role",
+				Scope:          "namespace",
+				RiskLevel:      highestRisk,
+				DangerousPerms: strings.Join(findings, "; "),
+				Source:         fmt.Sprintf("Role definition (%s)", role.Name),
+			}
+			tableRows = append(tableRows, row.ToTableRow())
+			lootAdminsSection.Add(row.Loot())
 		}
+	}
 
-		rbs, err := clientset.RbacV1().RoleBindings(ns).List(ctx, v1.ListOptions{})
-		if err != nil {
-			logger.ErrorM(fmt.Sprintf("Error fetching RoleBindings in namespace %s: %v", ns, err), globals.K8S_HIDDEN_ADMINS_MODULE_NAME)
-			continue
-		}
-		for _, binding := range rbs.Items {
-			if binding.Subjects != nil {
-				// Check if the role being bound is dangerous
-				roleName := binding.RoleRef.Name
-				var isDangerousBinding bool
-				var bindingPerms string
-				var riskLevel string
+	// Process RoleBindings
+	for _, binding := range allRoleBindings {
+		ns := binding.Namespace
+		if binding.Subjects != nil {
+			// Check if the role being bound is dangerous
+			roleName := binding.RoleRef.Name
+			var isDangerousBinding bool
+			var bindingPerms string
+			var riskLevel string
 
-				// Check if it's a dangerous namespaced role
-				if findings, ok := dangerousRolesInNS[roleName]; ok {
+			// Check if it's a dangerous namespaced role
+			if dangerousRolesInNS[ns] != nil {
+				if findings, ok := dangerousRolesInNS[ns][roleName]; ok {
 					isDangerousBinding = true
 					bindingPerms = fmt.Sprintf("bound to Role %s with: %s", roleName, strings.Join(findings, "; "))
 					riskLevel = shared.RiskHigh
 				}
+			}
 
-				// Check if it's binding to a ClusterRole (which might be cluster-admin or other dangerous ClusterRole)
-				if binding.RoleRef.Kind == "ClusterRole" {
-					if roleName == "cluster-admin" || strings.Contains(roleName, "system:masters") {
-						isDangerousBinding = true
-						bindingPerms = fmt.Sprintf("bound to ClusterRole %s (namespace-scoped)", roleName)
-						riskLevel = shared.RiskCritical
-					} else if roleName == "admin" {
-						isDangerousBinding = true
-						bindingPerms = fmt.Sprintf("bound to ClusterRole %s (namespace-scoped)", roleName)
-						riskLevel = shared.RiskHigh
-					} else if roleName == "edit" {
-						isDangerousBinding = true
-						bindingPerms = fmt.Sprintf("bound to ClusterRole %s (namespace-scoped)", roleName)
-						riskLevel = shared.RiskMedium
-					}
+			// Check if it's binding to a ClusterRole (which might be cluster-admin or other dangerous ClusterRole)
+			if binding.RoleRef.Kind == "ClusterRole" {
+				if roleName == "cluster-admin" || strings.Contains(roleName, "system:masters") {
+					isDangerousBinding = true
+					bindingPerms = fmt.Sprintf("bound to ClusterRole %s (namespace-scoped)", roleName)
+					riskLevel = shared.RiskCritical
+				} else if roleName == "admin" {
+					isDangerousBinding = true
+					bindingPerms = fmt.Sprintf("bound to ClusterRole %s (namespace-scoped)", roleName)
+					riskLevel = shared.RiskHigh
+				} else if roleName == "edit" {
+					isDangerousBinding = true
+					bindingPerms = fmt.Sprintf("bound to ClusterRole %s (namespace-scoped)", roleName)
+					riskLevel = shared.RiskMedium
 				}
+			}
 
-				// Only add subjects if this is a dangerous binding
-				if isDangerousBinding {
-					if riskLevel == "" {
-						riskLevel = shared.RiskMedium
+			// Only add subjects if this is a dangerous binding
+			if isDangerousBinding {
+				if riskLevel == "" {
+					riskLevel = shared.RiskMedium
+				}
+				for _, subject := range binding.Subjects {
+					cloudIAM := ""
+					activePods := 0
+					isDefault := false
+
+					// Detect default ServiceAccount in namespace bindings
+					if subject.Kind == "ServiceAccount" && subject.Name == "default" {
+						isDefault = true
+						// Escalate risk for default SA
+						if riskLevel == shared.RiskMedium {
+							riskLevel = shared.RiskHigh
+						} else if riskLevel == shared.RiskHigh {
+							riskLevel = shared.RiskCritical
+						}
 					}
-					for _, subject := range binding.Subjects {
-						cloudIAM := ""
-						activePods := 0
-						isDefault := false
 
-						// Detect default ServiceAccount in namespace bindings
-						if subject.Kind == "ServiceAccount" && subject.Name == "default" {
-							isDefault = true
-							// Escalate risk for default SA
-							if riskLevel == shared.RiskMedium {
-								riskLevel = shared.RiskHigh
-							} else if riskLevel == shared.RiskHigh {
-								riskLevel = shared.RiskCritical
-							}
+					// Get cloud IAM and pod count for ServiceAccounts
+					if subject.Kind == "ServiceAccount" {
+						if saCloudIAM, ok := serviceAccountCloudIAM[ns][subject.Name]; ok {
+							cloudIAM = saCloudIAM
 						}
-
-						// Get cloud IAM and pod count for ServiceAccounts
-						if subject.Kind == "ServiceAccount" {
-							if saCloudIAM, ok := serviceAccountCloudIAM[ns][subject.Name]; ok {
-								cloudIAM = saCloudIAM
-							}
-							if podCount, ok := serviceAccountPodCount[ns][subject.Name]; ok {
-								activePods = podCount
-							}
+						if podCount, ok := serviceAccountPodCount[ns][subject.Name]; ok {
+							activePods = podCount
 						}
-
-						riskCounts.Add(riskLevel)
-						row := HiddenAdminFinding{
-							Namespace:      ns,
-							Entity:         subject.Name,
-							EntityType:     subject.Kind,
-							Scope:          "namespace",
-							RiskLevel:      riskLevel,
-							DangerousPerms: bindingPerms,
-							Source:         fmt.Sprintf("RoleBinding %s", binding.Name),
-							CloudIAM:       cloudIAM,
-							ActivePods:     activePods,
-							IsDefault:      isDefault,
-							IsWildcard:     false,
-						}
-						tableRows = append(tableRows, row.ToTableRow())
-						lootAdminsSection.Add(row.Loot())
 					}
+
+					riskCounts.Add(riskLevel)
+					row := HiddenAdminFinding{
+						Namespace:      ns,
+						Entity:         subject.Name,
+						EntityType:     subject.Kind,
+						Scope:          "namespace",
+						RiskLevel:      riskLevel,
+						DangerousPerms: bindingPerms,
+						Source:         fmt.Sprintf("RoleBinding %s", binding.Name),
+						CloudIAM:       cloudIAM,
+						ActivePods:     activePods,
+						IsDefault:      isDefault,
+						IsWildcard:     false,
+					}
+					tableRows = append(tableRows, row.ToTableRow())
+					lootAdminsSection.Add(row.Loot())
 				}
 			}
 		}
@@ -583,32 +588,27 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// Query pods to find which ones use these dangerous SAs
+	// Query pods to find which ones use these dangerous SAs (using already cached pods)
 	hasPodsWithDangerousSA := false
 	if len(dangerousSAs) > 0 {
-		for ns := range dangerousSAs {
-			if ns == "<cluster>" {
-				continue // Skip cluster-level entries
-			}
-			pods, err := clientset.CoreV1().Pods(ns).List(ctx, v1.ListOptions{})
-			if err != nil {
-				continue
+		for _, pod := range allPods {
+			ns := pod.Namespace
+			if _, exists := dangerousSAs[ns]; !exists {
+				continue // Skip pods in namespaces without dangerous SAs
 			}
 
-			for _, pod := range pods.Items {
-				saName := pod.Spec.ServiceAccountName
-				if saName == "" {
-					saName = "default"
-				}
+			saName := pod.Spec.ServiceAccountName
+			if saName == "" {
+				saName = "default"
+			}
 
-				if riskLevel, found := dangerousSAs[ns][saName]; found {
-					hasPodsWithDangerousSA = true
-					lootSAPodsSection.AddBlank()
-					lootSAPodsSection.Addf("# [%s] Pod: %s/%s uses dangerous ServiceAccount: %s", riskLevel, ns, pod.Name, saName)
-					lootSAPodsSection.Addf("# Node: %s, Status: %s", pod.Spec.NodeName, pod.Status.Phase)
-					lootSAPodsSection.Addf("kubectl exec -it %s -n %s -- /bin/sh", pod.Name, ns)
-					lootSAPodsSection.Add("# Inside pod, extract SA token: cat /var/run/secrets/kubernetes.io/serviceaccount/token")
-				}
+			if riskLevel, found := dangerousSAs[ns][saName]; found {
+				hasPodsWithDangerousSA = true
+				lootSAPodsSection.AddBlank()
+				lootSAPodsSection.Addf("# [%s] Pod: %s/%s uses dangerous ServiceAccount: %s", riskLevel, ns, pod.Name, saName)
+				lootSAPodsSection.Addf("# Node: %s, Status: %s", pod.Spec.NodeName, pod.Status.Phase)
+				lootSAPodsSection.Addf("kubectl exec -it %s -n %s -- /bin/sh", pod.Name, ns)
+				lootSAPodsSection.Add("# Inside pod, extract SA token: cat /var/run/secrets/kubernetes.io/serviceaccount/token")
 			}
 		}
 

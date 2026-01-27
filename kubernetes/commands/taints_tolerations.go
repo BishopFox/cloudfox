@@ -7,11 +7,11 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
-	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 var TaintsTolerationsCmd = &cobra.Command{
@@ -106,7 +106,8 @@ func ListTaintsTolerations(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	nodes, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	// Get all nodes using cache
+	nodes, err := sdk.GetNodes(ctx, clientset)
 	if err != nil {
 		shared.LogListError(&logger, "nodes", "", err, globals.K8S_TAINTS_TOLERATIONS_MODULE_NAME, true)
 		return
@@ -116,13 +117,11 @@ func ListTaintsTolerations(cmd *cobra.Command, args []string) {
 	nodeRoles := map[string]string{}
 	nodeComplianceZones := map[string]string{}
 
-	for _, node := range nodes.Items {
+	for _, node := range nodes {
 		nodeTaints[node.Name] = node.Spec.Taints
 		nodeRoles[node.Name] = detectNodeRoleTT(node.Labels)
 		nodeComplianceZones[node.Name] = detectComplianceZoneTT(node.Labels, node.Spec.Taints)
 	}
-
-	namespaces := shared.GetTargetNamespaces(ctx, clientset, &logger, globals.K8S_TAINTS_TOLERATIONS_MODULE_NAME)
 
 	headersPods := []string{
 		"Namespace",
@@ -176,14 +175,14 @@ func ListTaintsTolerations(cmd *cobra.Command, args []string) {
 
 	riskCounts := shared.NewRiskCounts()
 
-	for _, ns := range namespaces {
-		pods, err := clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			shared.LogListError(&logger, "pods", ns, err, globals.K8S_TAINTS_TOLERATIONS_MODULE_NAME, false)
-			continue
-		}
+	// Get all pods using cache
+	allPods, err := sdk.GetPods(ctx, clientset)
+	if err != nil {
+		shared.LogListError(&logger, "pods", "", err, globals.K8S_TAINTS_TOLERATIONS_MODULE_NAME, true)
+		return
+	}
 
-		for _, pod := range pods.Items {
+	for _, pod := range allPods {
 			nodeName := pod.Spec.NodeName
 			if nodeName == "" {
 				continue
@@ -339,7 +338,6 @@ func ListTaintsTolerations(cmd *cobra.Command, args []string) {
 				loot.Section("Remediation-Guide").Addf("#   kubectl edit pod %s -n %s", pod.Name, pod.Namespace)
 				loot.Section("Remediation-Guide").Add("")
 			}
-		}
 	}
 
 	// Build pod toleration table and loot

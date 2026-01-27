@@ -11,11 +11,11 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
 	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -180,6 +180,30 @@ func ListStatefulSets(cmd *cobra.Command, args []string) {
 	clientset := config.GetClientOrExit()
 
 	namespaces := shared.GetTargetNamespaces(ctx, clientset, &logger, globals.K8S_STATEFULSETS_MODULE_NAME)
+	targetNamespaces := make(map[string]struct{})
+	for _, ns := range namespaces {
+		targetNamespaces[ns] = struct{}{}
+	}
+
+	// Fetch all resources using cached calls
+	allStatefulSets, err := sdk.GetStatefulSets(ctx, clientset)
+	if err != nil {
+		logger.ErrorM(fmt.Sprintf("Error fetching statefulsets: %v", err), globals.K8S_STATEFULSETS_MODULE_NAME)
+		return
+	}
+
+	allServices, err := sdk.GetServices(ctx, clientset)
+	if err != nil {
+		logger.ErrorM(fmt.Sprintf("Warning: Could not list services: %v", err), globals.K8S_STATEFULSETS_MODULE_NAME)
+		allServices = []corev1.Service{}
+	}
+
+	// Fetch all PVCs (cached)
+	allPVCsList, err := sdk.GetPersistentVolumeClaims(ctx, clientset)
+	if err != nil {
+		logger.ErrorM(fmt.Sprintf("Warning: Could not list PVCs: %v", err), globals.K8S_STATEFULSETS_MODULE_NAME)
+		allPVCsList = []corev1.PersistentVolumeClaim{}
+	}
 
 	// Table 1: StatefulSets Summary
 	summaryHeaders := []string{
@@ -213,29 +237,31 @@ func ListStatefulSets(cmd *cobra.Command, args []string) {
 	// Loot content will be generated after processing all statefulsets
 	// We'll use findings to generate consolidated loot
 
-	for _, ns := range namespaces {
-		statefulSets, err := clientset.AppsV1().StatefulSets(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			shared.LogListError(&logger, "statefulsets", ns, err, globals.K8S_STATEFULSETS_MODULE_NAME, false)
-			continue
+	for _, ss := range allStatefulSets {
+		// Filter by target namespaces
+		if len(targetNamespaces) > 0 {
+			if _, ok := targetNamespaces[ss.Namespace]; !ok {
+				continue
+			}
 		}
 
-		// Get all PVCs for correlation in this namespace
-		allPVCs, err := clientset.CoreV1().PersistentVolumeClaims(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			logger.ErrorM(fmt.Sprintf("Warning: Could not list PVCs in namespace %s: %v", ns, err), globals.K8S_STATEFULSETS_MODULE_NAME)
-			allPVCs = &corev1.PersistentVolumeClaimList{}
+		// Filter services for this namespace
+		var namespacedServices []corev1.Service
+		for _, svc := range allServices {
+			if svc.Namespace == ss.Namespace {
+				namespacedServices = append(namespacedServices, svc)
+			}
 		}
 
-		// Get all services for headless service detection in this namespace
-		allServices, err := clientset.CoreV1().Services(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			logger.ErrorM(fmt.Sprintf("Warning: Could not list services in namespace %s: %v", ns, err), globals.K8S_STATEFULSETS_MODULE_NAME)
-			allServices = &corev1.ServiceList{}
+		// Filter PVCs for this namespace
+		var namespacedPVCs []corev1.PersistentVolumeClaim
+		for _, pvc := range allPVCsList {
+			if pvc.Namespace == ss.Namespace {
+				namespacedPVCs = append(namespacedPVCs, pvc)
+			}
 		}
 
-		for _, ss := range statefulSets.Items {
-		finding := analyzeStatefulSet(&ss, allPVCs.Items, allServices.Items, clientset, ctx)
+		finding := analyzeStatefulSet(&ss, namespacedPVCs, namespacedServices, clientset, ctx)
 		findings = append(findings, finding)
 		riskCounts.Add(finding.RiskLevel)
 
@@ -337,7 +363,6 @@ func ListStatefulSets(cmd *cobra.Command, args []string) {
 				fmt.Sprintf("%v", volume.ReadOnly),
 			}
 			volumeRows = append(volumeRows, volumeRow)
-		}
 		}
 	}
 

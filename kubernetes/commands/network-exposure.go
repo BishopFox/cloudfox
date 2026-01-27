@@ -15,6 +15,7 @@ import (
 	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
@@ -353,7 +354,7 @@ func detectCloudProvider(svc *corev1.Service) string {
 }
 
 // analyzeBackendSecurity analyzes security posture of backend workloads
-func analyzeNetworkExposureBackendSecurity(ctx context.Context, clientset *kubernetes.Clientset, svc *corev1.Service) BackendSecurityInfo {
+func analyzeNetworkExposureBackendSecurity(ctx context.Context, clientset *kubernetes.Clientset, svc *corev1.Service, networkPoliciesByNS map[string][]networkingv1.NetworkPolicy) BackendSecurityInfo {
 	backendInfo := BackendSecurityInfo{
 		ServiceName:   svc.Name,
 		Namespace:     svc.Namespace,
@@ -481,9 +482,8 @@ func analyzeNetworkExposureBackendSecurity(ctx context.Context, clientset *kuber
 		}
 	}
 
-	// Check NetworkPolicy
-	policies, err := clientset.NetworkingV1().NetworkPolicies(svc.Namespace).List(ctx, metav1.ListOptions{})
-	if err == nil && len(policies.Items) > 0 {
+	// Check NetworkPolicy from cached map
+	if len(networkPoliciesByNS[svc.Namespace]) > 0 {
 		backendInfo.HasNetworkPolicy = true
 	}
 
@@ -1667,12 +1667,33 @@ func NetworkExposure(cmd *cobra.Command, args []string) {
 	// Suppress stderr to hide noisy auth plugin errors (gke-gcloud-auth-plugin, aws-iam-authenticator, etc.)
 	restoreStderr := sdk.SuppressStderr()
 
-	// ---- Services Analysis
-	services, err := clientset.CoreV1().Services(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
+	// Get target namespace filter once
+	targetNS := shared.GetNamespaceOrAll()
+
+	// Fetch all NetworkPolicies once (cached) and build namespace map
+	allNetworkPolicies, err := sdk.GetNetworkPolicies(ctx, clientset)
 	if err != nil {
-		shared.LogListError(&logger, "services", shared.GetNamespaceOrAll(), err, globals.K8S_NETWORK_PORTS_MODULE_NAME, false)
+		shared.LogListError(&logger, "network policies", "", err, globals.K8S_NETWORK_PORTS_MODULE_NAME, false)
+		allNetworkPolicies = []networkingv1.NetworkPolicy{}
+	}
+	networkPoliciesByNS := make(map[string][]networkingv1.NetworkPolicy)
+	for _, np := range allNetworkPolicies {
+		networkPoliciesByNS[np.Namespace] = append(networkPoliciesByNS[np.Namespace], np)
+	}
+
+	// ---- Services Analysis (cached)
+	allServices, err := sdk.GetServices(ctx, clientset)
+	if err != nil {
+		shared.LogListError(&logger, "services", targetNS, err, globals.K8S_NETWORK_PORTS_MODULE_NAME, false)
 	} else {
-		for _, svc := range services.Items {
+		// Filter by target namespace if specified
+		var services []corev1.Service
+		for _, svc := range allServices {
+			if targetNS == "" || svc.Namespace == targetNS {
+				services = append(services, svc)
+			}
+		}
+		for _, svc := range services {
 			// Skip headless services
 			if svc.Spec.ClusterIP == "None" {
 				continue
@@ -1682,7 +1703,7 @@ func NetworkExposure(cmd *cobra.Command, args []string) {
 			isInternetFacing, cloudProvider := detectInternetFacing(&svc)
 
 			// Analyze backend security
-			backendSecurity := analyzeNetworkExposureBackendSecurity(ctx, clientset, &svc)
+			backendSecurity := analyzeNetworkExposureBackendSecurity(ctx, clientset, &svc, networkPoliciesByNS)
 
 			// Analyze annotations
 			annotationIssues, dangerousAnnotations := analyzeServiceAnnotations(&svc)
@@ -1690,10 +1711,9 @@ func NetworkExposure(cmd *cobra.Command, args []string) {
 			// Analyze ExternalName services
 			externalNameIssues := analyzeExternalName(&svc)
 
-			// Get NetworkPolicies
-			policies, _ := clientset.NetworkingV1().NetworkPolicies(svc.Namespace).List(ctx, metav1.ListOptions{})
+			// Get NetworkPolicies from cached map
 			var policyNames []string
-			for _, p := range policies.Items {
+			for _, p := range networkPoliciesByNS[svc.Namespace] {
 				policyNames = append(policyNames, p.Name)
 			}
 
@@ -1770,7 +1790,7 @@ func NetworkExposure(cmd *cobra.Command, args []string) {
 						ExposedWorkloads:      backendSecurity.Workloads,
 
 						// Network policy
-						HasNetworkPolicy: len(policies.Items) > 0,
+						HasNetworkPolicy: len(policyNames) > 0,
 						NetworkPolicies:  policyNames,
 
 						// Annotations
@@ -1849,12 +1869,19 @@ func NetworkExposure(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// ---- HostPort Detection (Pods)
-	pods, err := clientset.CoreV1().Pods(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
+	// ---- HostPort Detection (Pods) (cached)
+	allPods, err := sdk.GetPods(ctx, clientset)
 	if err != nil {
-		shared.LogListError(&logger, "pods", shared.GetNamespaceOrAll(), err, globals.K8S_NETWORK_PORTS_MODULE_NAME, false)
+		shared.LogListError(&logger, "pods", targetNS, err, globals.K8S_NETWORK_PORTS_MODULE_NAME, false)
 	} else {
-		for _, pod := range pods.Items {
+		// Filter by target namespace if specified
+		var pods []corev1.Pod
+		for _, pod := range allPods {
+			if targetNS == "" || pod.Namespace == targetNS {
+				pods = append(pods, pod)
+			}
+		}
+		for _, pod := range pods {
 			for _, container := range append(pod.Spec.Containers, pod.Spec.InitContainers...) {
 				for _, port := range container.Ports {
 					if port.HostPort != 0 {
@@ -1914,12 +1941,19 @@ func NetworkExposure(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// ---- Ingresses (simplified - detailed analysis in ingress.go)
-	ingresses, err := clientset.NetworkingV1().Ingresses(shared.GetNamespaceOrAll()).List(ctx, metav1.ListOptions{})
+	// ---- Ingresses (simplified - detailed analysis in ingress.go) (cached)
+	allIngresses, err := sdk.GetIngresses(ctx, clientset)
 	if err != nil {
-		shared.LogListError(&logger, "ingresses", shared.GetNamespaceOrAll(), err, globals.K8S_NETWORK_PORTS_MODULE_NAME, false)
+		shared.LogListError(&logger, "ingresses", targetNS, err, globals.K8S_NETWORK_PORTS_MODULE_NAME, false)
 	} else {
-		for _, ing := range ingresses.Items {
+		// Filter by target namespace if specified
+		var ingresses []networkingv1.Ingress
+		for _, ing := range allIngresses {
+			if targetNS == "" || ing.Namespace == targetNS {
+				ingresses = append(ingresses, ing)
+			}
+		}
+		for _, ing := range ingresses {
 			for _, rule := range ing.Spec.Rules {
 				if rule.Host != "" && rule.HTTP != nil && len(rule.HTTP.Paths) > 0 {
 					// Determine if TLS is enabled

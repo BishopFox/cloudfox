@@ -9,8 +9,9 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
-	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -133,7 +134,7 @@ func ListNamespaces(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	allNamespaces, err := clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
+	allNamespacesList, err := sdk.GetNamespaces(ctx, clientset)
 	if err != nil {
 		shared.LogListError(&logger, "namespaces", "", err, globals.K8S_NAMESPACES_MODULE_NAME, true)
 		return
@@ -141,7 +142,7 @@ func ListNamespaces(cmd *cobra.Command, args []string) {
 
 	// Filter namespaces based on target namespace flags
 	var namespaces []corev1.Namespace
-	for _, ns := range allNamespaces.Items {
+	for _, ns := range allNamespacesList {
 		if shared.ShouldIncludeNamespace(ns.Name) {
 			namespaces = append(namespaces, ns)
 		}

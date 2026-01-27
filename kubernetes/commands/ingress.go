@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"context"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
@@ -12,12 +11,12 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
-	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
+	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
+	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 )
 
 var IngressCmd = &cobra.Command{
@@ -115,7 +114,32 @@ func ListIngress(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	namespaces := shared.GetTargetNamespaces(ctx, clientset, &logger, globals.K8S_INGRESS_MODULE_NAME)
+	// Get all ingresses using cache
+	allIngresses, err := sdk.GetIngresses(ctx, clientset)
+	if err != nil {
+		shared.LogListError(&logger, "ingresses", "", err, globals.K8S_INGRESS_MODULE_NAME, true)
+		return
+	}
+
+	// Get all secrets using cache for certificate analysis
+	allSecrets, _ := sdk.GetSecrets(ctx, clientset)
+	secretMap := make(map[string]corev1.Secret)
+	for _, s := range allSecrets {
+		secretMap[fmt.Sprintf("%s/%s", s.Namespace, s.Name)] = s
+	}
+
+	// Get all services using cache for backend analysis
+	allServices, _ := sdk.GetServices(ctx, clientset)
+	serviceMap := make(map[string]corev1.Service)
+	for _, svc := range allServices {
+		serviceMap[fmt.Sprintf("%s/%s", svc.Namespace, svc.Name)] = svc
+	}
+
+	// Get all pods using cache
+	allPods, _ := sdk.GetPods(ctx, clientset)
+
+	// Get all network policies using cache
+	allNetpols, _ := sdk.GetNetworkPolicies(ctx, clientset)
 
 	headers := []string{
 		"Namespace",
@@ -165,19 +189,13 @@ func ListIngress(cmd *cobra.Command, args []string) {
 		Add("# Get ingress YAML:").
 		Add("kubectl get ingress <name> -n <namespace> -o yaml")
 
-	for _, ns := range namespaces {
-		ingresses, err := clientset.NetworkingV1().Ingresses(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			shared.LogListError(&logger, "ingresses", ns, err, globals.K8S_INGRESS_MODULE_NAME, false)
-			continue
+	for _, ing := range allIngresses {
+		ns := ing.Namespace
+		finding := IngressFinding{
+			Namespace:   ns,
+			Name:        ing.Name,
+			Annotations: ing.Annotations,
 		}
-
-		for _, ing := range ingresses.Items {
-			finding := IngressFinding{
-				Namespace:   ns,
-				Name:        ing.Name,
-				Annotations: ing.Annotations,
-			}
 
 			ingressClass := "<NONE>"
 			if ing.Spec.IngressClassName != nil {
@@ -282,12 +300,12 @@ func ListIngress(cmd *cobra.Command, args []string) {
 			// Analyze security headers
 			finding.SecurityHeaders, finding.MissingHeaders = analyzeSecurityHeaders(&ing)
 
-			// Analyze TLS certificates
+			// Analyze TLS certificates using cached secrets
 			finding.CertExpiry = "N/A"
 			if finding.TLSEnabled {
 				for _, tls := range ing.Spec.TLS {
 					if tls.SecretName != "" {
-						certInfo := analyzeCertificate(ctx, clientset, ns, tls.SecretName)
+						certInfo := analyzeCertificateCached(ns, tls.SecretName, secretMap)
 						finding.CertExpiry = certInfo.ExpiryStatus
 						finding.CertIssues = append(finding.CertIssues, certInfo.Issues...)
 						break // Use first certificate for status
@@ -295,7 +313,7 @@ func ListIngress(cmd *cobra.Command, args []string) {
 				}
 			}
 
-			// Analyze backend security (for first backend as representative)
+			// Analyze backend security (for first backend as representative) using cached data
 			finding.BackendSecurity = "Unknown"
 			finding.BackendPods = 0
 			finding.BackendServiceAccount = "<NONE>"
@@ -304,7 +322,7 @@ func ListIngress(cmd *cobra.Command, args []string) {
 					if rule.HTTP != nil && len(rule.HTTP.Paths) > 0 {
 						for _, path := range rule.HTTP.Paths {
 							if path.Backend.Service != nil {
-								backendInfo := analyzeIngressBackendSecurity(ctx, clientset, ns, path.Backend.Service.Name)
+								backendInfo := analyzeIngressBackendSecurityCached(ns, path.Backend.Service.Name, serviceMap, allPods, allNetpols)
 								finding.BackendSecurity = backendInfo.SecurityLevel
 								finding.BackendPods = backendInfo.PodCount
 								finding.BackendServiceAccount = backendInfo.ServiceAccount
@@ -469,7 +487,6 @@ func ListIngress(cmd *cobra.Command, args []string) {
 				sensPathsStr,
 				finding.BackendSecurity,
 			})
-		}
 	}
 
 	table := internal.TableFile{
@@ -480,7 +497,7 @@ func ListIngress(cmd *cobra.Command, args []string) {
 
 	lootFiles := loot.Build()
 
-	err := internal.HandleOutput(
+	err = internal.HandleOutput(
 		"Kubernetes",
 		format,
 		outputDirectory,
@@ -570,8 +587,8 @@ func detectSensitivePaths(ing *networkingv1.Ingress) []string {
 	return detected
 }
 
-// analyzeCertificate validates TLS certificate from secret
-func analyzeCertificate(ctx context.Context, clientset *kubernetes.Clientset, namespace string, secretName string) CertificateInfo {
+// analyzeCertificateCached validates TLS certificate from cached secrets
+func analyzeCertificateCached(namespace string, secretName string, secretMap map[string]corev1.Secret) CertificateInfo {
 	certInfo := CertificateInfo{
 		SecretName:   secretName,
 		Namespace:    namespace,
@@ -579,9 +596,9 @@ func analyzeCertificate(ctx context.Context, clientset *kubernetes.Clientset, na
 		KeyStrength:  "Unknown",
 	}
 
-	secret, err := clientset.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
-	if err != nil {
-		certInfo.Issues = append(certInfo.Issues, fmt.Sprintf("Cannot read secret: %v", err))
+	secret, found := secretMap[fmt.Sprintf("%s/%s", namespace, secretName)]
+	if !found {
+		certInfo.Issues = append(certInfo.Issues, "Cannot find secret in cache")
 		return certInfo
 	}
 
@@ -649,63 +666,77 @@ func analyzeCertificate(ctx context.Context, clientset *kubernetes.Clientset, na
 	return certInfo
 }
 
-// analyzeBackendSecurity analyzes backend service security
-func analyzeIngressBackendSecurity(ctx context.Context, clientset *kubernetes.Clientset, namespace string, serviceName string) BackendSecurityInfo {
+// analyzeIngressBackendSecurityCached analyzes backend service security using cached data
+func analyzeIngressBackendSecurityCached(namespace string, serviceName string, serviceMap map[string]corev1.Service, allPods []corev1.Pod, allNetpols []networkingv1.NetworkPolicy) BackendSecurityInfo {
 	backendInfo := BackendSecurityInfo{
 		ServiceName:   serviceName,
 		Namespace:     namespace,
 		SecurityLevel: "Unknown",
 	}
 
-	// Get service
-	svc, err := clientset.CoreV1().Services(namespace).Get(ctx, serviceName, metav1.GetOptions{})
-	if err != nil {
-		backendInfo.SecurityIssues = append(backendInfo.SecurityIssues, fmt.Sprintf("Cannot read service: %v", err))
+	// Get service from cache
+	svc, found := serviceMap[fmt.Sprintf("%s/%s", namespace, serviceName)]
+	if !found {
+		backendInfo.SecurityIssues = append(backendInfo.SecurityIssues, "Cannot find service in cache")
 		return backendInfo
 	}
 
-	// Get pods behind service
-	selector := metav1.ListOptions{}
-	if len(svc.Spec.Selector) > 0 {
-		var selectorParts []string
-		for k, v := range svc.Spec.Selector {
-			selectorParts = append(selectorParts, fmt.Sprintf("%s=%s", k, v))
+	// Get pods behind service from cached pods
+	var matchingPods []corev1.Pod
+	for _, pod := range allPods {
+		if pod.Namespace != namespace {
+			continue
 		}
-		selector.LabelSelector = strings.Join(selectorParts, ",")
+		// Check if pod matches service selector
+		if len(svc.Spec.Selector) > 0 {
+			matches := true
+			for k, v := range svc.Spec.Selector {
+				if pod.Labels[k] != v {
+					matches = false
+					break
+				}
+			}
+			if matches {
+				matchingPods = append(matchingPods, pod)
+			}
+		}
 	}
 
-	pods, err := clientset.CoreV1().Pods(namespace).List(ctx, selector)
-	if err == nil {
-		backendInfo.PodCount = len(pods.Items)
+	backendInfo.PodCount = len(matchingPods)
 
-		// Analyze pod security
-		for _, pod := range pods.Items {
+	// Analyze pod security
+	for _, pod := range matchingPods {
+		if backendInfo.ServiceAccount == "" {
+			backendInfo.ServiceAccount = pod.Spec.ServiceAccountName
 			if backendInfo.ServiceAccount == "" {
-				backendInfo.ServiceAccount = pod.Spec.ServiceAccountName
-				if backendInfo.ServiceAccount == "" {
-					backendInfo.ServiceAccount = "default"
-				}
+				backendInfo.ServiceAccount = "default"
 			}
+		}
 
-			// Check for privileged containers
-			for _, container := range pod.Spec.Containers {
-				if container.SecurityContext != nil && container.SecurityContext.Privileged != nil && *container.SecurityContext.Privileged {
-					backendInfo.Privileged = true
-					backendInfo.SecurityIssues = append(backendInfo.SecurityIssues, "Privileged container detected")
-				}
+		// Check for privileged containers
+		for _, container := range pod.Spec.Containers {
+			if container.SecurityContext != nil && container.SecurityContext.Privileged != nil && *container.SecurityContext.Privileged {
+				backendInfo.Privileged = true
+				backendInfo.SecurityIssues = append(backendInfo.SecurityIssues, "Privileged container detected")
 			}
+		}
 
-			// Check for host network
-			if pod.Spec.HostNetwork {
-				backendInfo.HostNetwork = true
-				backendInfo.SecurityIssues = append(backendInfo.SecurityIssues, "Host network enabled")
-			}
+		// Check for host network
+		if pod.Spec.HostNetwork {
+			backendInfo.HostNetwork = true
+			backendInfo.SecurityIssues = append(backendInfo.SecurityIssues, "Host network enabled")
 		}
 	}
 
-	// Check for network policies
-	netpols, err := clientset.NetworkingV1().NetworkPolicies(namespace).List(ctx, metav1.ListOptions{})
-	if err == nil && len(netpols.Items) > 0 {
+	// Check for network policies in namespace from cached netpols
+	hasNetpol := false
+	for _, np := range allNetpols {
+		if np.Namespace == namespace {
+			hasNetpol = true
+			break
+		}
+	}
+	if hasNetpol {
 		backendInfo.HasNetworkPolicy = true
 	} else {
 		backendInfo.SecurityIssues = append(backendInfo.SecurityIssues, "No network policy")

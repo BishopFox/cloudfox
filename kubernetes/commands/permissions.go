@@ -9,6 +9,7 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
+	"github.com/BishopFox/cloudfox/kubernetes/sdk"
 	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -329,35 +330,46 @@ func RunEnumPermissions(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
-	// Fetch all required resources
-	namespaces := shared.GetTargetNamespaces(ctx, clientset, &logger, globals.K8S_PERMISSIONS_MODULE_NAME)
-
-	clusterRoles, err := clientset.RbacV1().ClusterRoles().List(ctx, metav1.ListOptions{})
+	// Fetch all required resources using cache
+	clusterRoles, err := sdk.GetClusterRoles(ctx, clientset)
 	if err != nil {
 		shared.LogListError(&logger, "cluster roles", "", err, globals.K8S_PERMISSIONS_MODULE_NAME, true)
 		return
 	}
 
-	clusterRoleBindings, err := clientset.RbacV1().ClusterRoleBindings().List(ctx, metav1.ListOptions{})
+	clusterRoleBindings, err := sdk.GetClusterRoleBindings(ctx, clientset)
 	if err != nil {
 		shared.LogListError(&logger, "cluster role bindings", "", err, globals.K8S_PERMISSIONS_MODULE_NAME, true)
 		return
+	}
+
+	// Fetch all Roles and RoleBindings at once using cache
+	allRoles, err := sdk.GetRoles(ctx, clientset)
+	if err != nil {
+		shared.LogListError(&logger, "roles", "", err, globals.K8S_PERMISSIONS_MODULE_NAME, false)
+		allRoles = []v1.Role{}
+	}
+
+	allRoleBindings, err := sdk.GetRoleBindings(ctx, clientset)
+	if err != nil {
+		shared.LogListError(&logger, "role bindings", "", err, globals.K8S_PERMISSIONS_MODULE_NAME, false)
+		allRoleBindings = []v1.RoleBinding{}
 	}
 
 	// Build permission findings with security analysis
 	var findings []PermissionFinding
 
 	// Process ClusterRoleBindings
-	for _, crb := range clusterRoleBindings.Items {
+	for _, crb := range clusterRoleBindings {
 		if len(crb.Subjects) == 0 {
 			continue
 		}
 
 		// Find the referenced ClusterRole
 		var clusterRole *v1.ClusterRole
-		for i := range clusterRoles.Items {
-			if clusterRoles.Items[i].Name == crb.RoleRef.Name {
-				clusterRole = &clusterRoles.Items[i]
+		for i := range clusterRoles {
+			if clusterRoles[i].Name == crb.RoleRef.Name {
+				clusterRole = &clusterRoles[i]
 				break
 			}
 		}
@@ -399,67 +411,53 @@ func RunEnumPermissions(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// Process Roles and RoleBindings namespace by namespace
-	for _, ns := range namespaces {
-		roles, err := clientset.RbacV1().Roles(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			shared.LogListError(&logger, "roles", ns, err, globals.K8S_PERMISSIONS_MODULE_NAME, false)
+	// Process Roles and RoleBindings (already filtered by namespace via cache)
+	for _, rb := range allRoleBindings {
+		if len(rb.Subjects) == 0 {
 			continue
 		}
 
-		rbs, err := clientset.RbacV1().RoleBindings(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			shared.LogListError(&logger, "role bindings", ns, err, globals.K8S_PERMISSIONS_MODULE_NAME, false)
+		// Find the referenced Role in the same namespace
+		var role *v1.Role
+		for i := range allRoles {
+			if allRoles[i].Namespace == rb.Namespace && allRoles[i].Name == rb.RoleRef.Name {
+				role = &allRoles[i]
+				break
+			}
+		}
+
+		if role == nil {
 			continue
 		}
 
-		for _, rb := range rbs.Items {
-			if len(rb.Subjects) == 0 {
-				continue
-			}
-
-			// Find the referenced Role
-			var role *v1.Role
-			for i := range roles.Items {
-				if roles.Items[i].Name == rb.RoleRef.Name {
-					role = &roles.Items[i]
-					break
-				}
-			}
-
-			if role == nil {
-				continue
-			}
-
-			// Process each rule in the Role
-			for _, rule := range role.Rules {
-				perms := explodeRule(rule)
-				for _, perm := range perms {
-					for _, subj := range rb.Subjects {
-						subjNamespace := subj.Namespace
-						if subjNamespace == "" {
-							subjNamespace = "<NONE>"
-						}
-
-						finding := PermissionFinding{
-							ResourceType:     "RoleBinding",
-							Namespace:        ns,
-							SubjectKind:      subj.Kind,
-							SubjectName:      subj.Name,
-							SubjectNamespace: subjNamespace,
-							Role:             rb.RoleRef.Name,
-							Verb:             perm.Verb,
-							Resource:         perm.Resource,
-							ResourceNames:    rule.ResourceNames,
-							APIGroup:         perm.APIGroup,
-							Scope:            "namespace",
-						}
-
-						// Perform security analysis
-						analyzePermissionSecurity(&finding)
-
-						findings = append(findings, finding)
+		// Process each rule in the Role
+		for _, rule := range role.Rules {
+			perms := explodeRule(rule)
+			for _, perm := range perms {
+				for _, subj := range rb.Subjects {
+					subjNamespace := subj.Namespace
+					if subjNamespace == "" {
+						subjNamespace = "<NONE>"
 					}
+
+					finding := PermissionFinding{
+						ResourceType:     "RoleBinding",
+						Namespace:        rb.Namespace,
+						SubjectKind:      subj.Kind,
+						SubjectName:      subj.Name,
+						SubjectNamespace: subjNamespace,
+						Role:             rb.RoleRef.Name,
+						Verb:             perm.Verb,
+						Resource:         perm.Resource,
+						ResourceNames:    rule.ResourceNames,
+						APIGroup:         perm.APIGroup,
+						Scope:            "namespace",
+					}
+
+					// Perform security analysis
+					analyzePermissionSecurity(&finding)
+
+					findings = append(findings, finding)
 				}
 			}
 		}

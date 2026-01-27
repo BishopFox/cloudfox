@@ -212,20 +212,20 @@ func (s *ClusterInfoService) enumeratePermissionsWithSource(ctx context.Context,
 	// Build set of principals that match this identity
 	principals := s.buildPrincipalSet(identity)
 
-	// Get ClusterRoles for reference
-	clusterRoles, err := s.clientset.RbacV1().ClusterRoles().List(ctx, metav1.ListOptions{})
+	// Get ClusterRoles for reference (cached)
+	clusterRolesList, err := sdk.GetClusterRoles(ctx, s.clientset)
 	if err != nil {
 		return perms
 	}
 	crMap := make(map[string]*rbacv1.ClusterRole)
-	for i := range clusterRoles.Items {
-		crMap[clusterRoles.Items[i].Name] = &clusterRoles.Items[i]
+	for i := range clusterRolesList {
+		crMap[clusterRolesList[i].Name] = &clusterRolesList[i]
 	}
 
-	// Check ClusterRoleBindings
-	crbs, err := s.clientset.RbacV1().ClusterRoleBindings().List(ctx, metav1.ListOptions{})
+	// Check ClusterRoleBindings (cached)
+	crbsList, err := sdk.GetClusterRoleBindings(ctx, s.clientset)
 	if err == nil {
-		for _, crb := range crbs.Items {
+		for _, crb := range crbsList {
 			// Find which subjects match the identity
 			matchedSubjects := s.findMatchingSubjects(crb.Subjects, principals)
 			if len(matchedSubjects) == 0 {
@@ -247,54 +247,69 @@ func (s *ClusterInfoService) enumeratePermissionsWithSource(ctx context.Context,
 		}
 	}
 
+	// Get all Roles (cached) and build map by namespace
+	allRolesList, err := sdk.GetRoles(ctx, s.clientset)
+	if err != nil {
+		allRolesList = []rbacv1.Role{}
+	}
+	// Build namespace -> role name -> role map
+	rolesByNS := make(map[string]map[string]*rbacv1.Role)
+	for i := range allRolesList {
+		role := &allRolesList[i]
+		if rolesByNS[role.Namespace] == nil {
+			rolesByNS[role.Namespace] = make(map[string]*rbacv1.Role)
+		}
+		rolesByNS[role.Namespace][role.Name] = role
+	}
+
+	// Get all RoleBindings (cached)
+	allRBsList, err := sdk.GetRoleBindings(ctx, s.clientset)
+	if err != nil {
+		allRBsList = []rbacv1.RoleBinding{}
+	}
+
 	// Check RoleBindings in each namespace
 	namespaces := s.getNamespaces(ctx)
+	nsSet := make(map[string]struct{})
 	for _, ns := range namespaces {
-		// Get Roles in this namespace
-		roles, err := s.clientset.RbacV1().Roles(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			continue
-		}
-		roleMap := make(map[string]*rbacv1.Role)
-		for i := range roles.Items {
-			roleMap[roles.Items[i].Name] = &roles.Items[i]
-		}
+		nsSet[ns] = struct{}{}
+	}
 
-		// Check RoleBindings
-		rbs, err := s.clientset.RbacV1().RoleBindings(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
+	for _, rb := range allRBsList {
+		// Only process RoleBindings in target namespaces
+		if _, ok := nsSet[rb.Namespace]; !ok {
 			continue
 		}
 
-		for _, rb := range rbs.Items {
-			// Find which subjects match the identity
-			matchedSubjects := s.findMatchingSubjects(rb.Subjects, principals)
-			if len(matchedSubjects) == 0 {
-				continue
-			}
+		// Find which subjects match the identity
+		matchedSubjects := s.findMatchingSubjects(rb.Subjects, principals)
+		if len(matchedSubjects) == 0 {
+			continue
+		}
 
-			var rules []rbacv1.PolicyRule
-			var roleName, roleKind string
+		var rules []rbacv1.PolicyRule
+		var roleName, roleKind string
 
-			if rb.RoleRef.Kind == "Role" {
+		if rb.RoleRef.Kind == "Role" {
+			if roleMap, ok := rolesByNS[rb.Namespace]; ok {
 				if role, ok := roleMap[rb.RoleRef.Name]; ok {
 					rules = role.Rules
 					roleName = role.Name
 					roleKind = "Role"
 				}
-			} else if rb.RoleRef.Kind == "ClusterRole" {
-				if cr, ok := crMap[rb.RoleRef.Name]; ok {
-					rules = cr.Rules
-					roleName = cr.Name
-					roleKind = "ClusterRole"
-				}
 			}
+		} else if rb.RoleRef.Kind == "ClusterRole" {
+			if cr, ok := crMap[rb.RoleRef.Name]; ok {
+				rules = cr.Rules
+				roleName = cr.Name
+				roleKind = "ClusterRole"
+			}
+		}
 
-			for _, subject := range matchedSubjects {
-				for _, rule := range rules {
-					rulePerms := s.extractPermissionsFromRule(rule, ns, roleName, roleKind, rb.Name, "RoleBinding", subject)
-					perms = append(perms, rulePerms...)
-				}
+		for _, subject := range matchedSubjects {
+			for _, rule := range rules {
+				rulePerms := s.extractPermissionsFromRule(rule, rb.Namespace, roleName, roleKind, rb.Name, "RoleBinding", subject)
+				perms = append(perms, rulePerms...)
 			}
 		}
 	}
@@ -575,14 +590,14 @@ func (s *ClusterInfoService) extractRBACInfo(ctx context.Context, identity *mode
 }
 
 func (s *ClusterInfoService) getNamespaces(ctx context.Context) []string {
-	nsList, err := s.clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
+	nsList, err := sdk.GetNamespaces(ctx, s.clientset)
 	if err != nil {
 		// Fallback to common namespaces
 		return []string{"default", "kube-system", "kube-public", "kube-node-lease"}
 	}
 
-	namespaces := make([]string, 0, len(nsList.Items))
-	for _, ns := range nsList.Items {
+	namespaces := make([]string, 0, len(nsList))
+	for _, ns := range nsList {
 		namespaces = append(namespaces, ns.Name)
 	}
 	return namespaces
