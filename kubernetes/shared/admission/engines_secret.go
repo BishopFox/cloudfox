@@ -282,4 +282,73 @@ func (r *EngineRegistry) registerSecretEngines() {
 		LabelSelectors:     []string{"control-plane=doppler-operator"},
 		RequireImageVerification: true,
 	})
+
+	// =============================================================================
+	// Policy Engines with Secret Policy Capabilities
+	// =============================================================================
+
+	// OPA Gatekeeper - Can enforce constraints on Secret resources
+	r.register(&Engine{
+		ID:       "gatekeeper",
+		Name:     "OPA Gatekeeper",
+		Category: CategorySecret,
+		TrustedRegistries: []string{
+			"openpolicyagent/",
+			"quay.io/gatekeeper/",
+			"docker.io/openpolicyagent/",
+		},
+		ImagePatterns: []string{
+			"openpolicyagent/gatekeeper",
+			"gatekeeper",
+		},
+		DeploymentPatterns: []string{"gatekeeper-controller-manager", "gatekeeper-audit"},
+		ExpectedNamespaces: []string{"gatekeeper-system", "kube-system"},
+		WebhookPatterns:    []string{"gatekeeper-validating", "gatekeeper-mutating"},
+		CRDGroups:          []string{"constraints.gatekeeper.sh", "templates.gatekeeper.sh"},
+		LabelSelectors:     []string{"control-plane=controller-manager", "gatekeeper.sh/system=yes"},
+		RequireImageVerification: true,
+	})
+
+	// Kyverno - Can validate/mutate Secret resources
+	r.register(&Engine{
+		ID:       "kyverno",
+		Name:     "Kyverno",
+		Category: CategorySecret,
+		TrustedRegistries: []string{
+			"ghcr.io/kyverno/",
+			"nirmata/",
+			"docker.io/nirmata/",
+		},
+		ImagePatterns: []string{
+			"kyverno/kyverno",
+			"kyverno",
+			"nirmata/kyverno",
+		},
+		DeploymentPatterns: []string{"kyverno", "kyverno-admission-controller"},
+		ExpectedNamespaces: []string{"kyverno", "kube-system"},
+		WebhookPatterns:    []string{"kyverno-resource-validating", "kyverno-resource-mutating"},
+		CRDGroups:          []string{"kyverno.io"},
+		LabelSelectors:     []string{"app.kubernetes.io/name=kyverno", "app=kyverno"},
+		RequireImageVerification: true,
+	})
+
+	// Kubewarden - Can enforce policies on Secret resources
+	r.register(&Engine{
+		ID:       "kubewarden",
+		Name:     "Kubewarden",
+		Category: CategorySecret,
+		TrustedRegistries: []string{
+			"ghcr.io/kubewarden/",
+		},
+		ImagePatterns: []string{
+			"kubewarden/policy-server",
+			"kubewarden/kubewarden-controller",
+		},
+		DeploymentPatterns: []string{"kubewarden-controller", "policy-server"},
+		ExpectedNamespaces: []string{"kubewarden", "kubewarden-system"},
+		WebhookPatterns:    []string{"kubewarden"},
+		CRDGroups:          []string{"policies.kubewarden.io"},
+		LabelSelectors:     []string{"app=kubewarden-policy-server", "app.kubernetes.io/name=kubewarden-controller"},
+		RequireImageVerification: true,
+	})
 }

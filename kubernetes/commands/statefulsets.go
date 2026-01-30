@@ -129,6 +129,7 @@ type StatefulSetFinding struct {
 	AllowPrivilegeEscalation int
 	Capabilities             []string
 	SecurityIssues           []string
+	RiskScore                int // Internal score for prioritization (0-100)
 
 	// Resource Analysis
 	HasResourceLimits   bool
@@ -142,11 +143,6 @@ type StatefulSetFinding struct {
 	ServiceAccount string
 	CloudProvider  string
 	CloudRole      string
-
-	// Risk Assessment
-	RiskLevel     string
-	RiskScore     int
-	ImpactSummary string
 
 	// Labels and Selectors
 	Labels           map[string]string
@@ -231,9 +227,6 @@ func ListStatefulSets(cmd *cobra.Command, args []string) {
 	var volumeRows [][]string
 	var findings []StatefulSetFinding
 
-	// Risk counters
-	riskCounts := shared.NewRiskCounts()
-
 	// Loot content will be generated after processing all statefulsets
 	// We'll use findings to generate consolidated loot
 
@@ -262,8 +255,8 @@ func ListStatefulSets(cmd *cobra.Command, args []string) {
 		}
 
 		finding := analyzeStatefulSet(&ss, namespacedPVCs, namespacedServices, clientset, ctx)
+		finding.RiskScore = calculateStatefulSetRiskScore(&finding)
 		findings = append(findings, finding)
-		riskCounts.Add(finding.RiskLevel)
 
 		// Build Security Context column (pod-level only)
 		var secContextParts []string
@@ -372,7 +365,7 @@ func ListStatefulSets(cmd *cobra.Command, args []string) {
 	volumeTable := internal.TableFile{Name: "StatefulSet-Volumes", Header: volumeHeaders, Body: volumeRows}
 
 	// Generate consolidated loot files
-	lootFiles := generateStatefulSetConsolidatedLoot(findings, riskCounts)
+	lootFiles := generateStatefulSetConsolidatedLoot(findings)
 
 	if err := internal.HandleOutput(
 		"Kubernetes",
@@ -394,14 +387,6 @@ func ListStatefulSets(cmd *cobra.Command, args []string) {
 
 	if len(summaryRows) > 0 {
 		logger.InfoM(fmt.Sprintf("%d statefulsets found", len(summaryRows)), globals.K8S_STATEFULSETS_MODULE_NAME)
-		logger.InfoM(fmt.Sprintf("Risk Summary: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
-			riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low), globals.K8S_STATEFULSETS_MODULE_NAME)
-		if riskCounts.Critical > 0 {
-			logger.InfoM(fmt.Sprintf("⚠️  %d CRITICAL risk statefulsets detected!", riskCounts.Critical), globals.K8S_STATEFULSETS_MODULE_NAME)
-		}
-		if riskCounts.High > 0 {
-			logger.InfoM(fmt.Sprintf("⚠️  %d HIGH risk statefulsets detected!", riskCounts.High), globals.K8S_STATEFULSETS_MODULE_NAME)
-		}
 	} else {
 		logger.InfoM("No statefulsets found, skipping output file creation", globals.K8S_STATEFULSETS_MODULE_NAME)
 	}
@@ -493,7 +478,7 @@ func analyzeStatefulSet(ss *appsv1.StatefulSet, allPVCs []corev1.PersistentVolum
 
 		if vct.Spec.StorageClassName != nil {
 			vci.StorageClass = *vct.Spec.StorageClassName
-			if !Contains(finding.StorageClasses, vci.StorageClass) {
+			if !shared.Contains(finding.StorageClasses, vci.StorageClass) {
 				finding.StorageClasses = append(finding.StorageClasses, vci.StorageClass)
 			}
 		}
@@ -584,7 +569,7 @@ func analyzeStatefulSet(ss *appsv1.StatefulSet, allPVCs []corev1.PersistentVolum
 		if container.SecurityContext != nil && container.SecurityContext.Capabilities != nil {
 			for _, cap := range container.SecurityContext.Capabilities.Add {
 				capStr := string(cap)
-				if !Contains(finding.Capabilities, capStr) {
+				if !shared.Contains(finding.Capabilities, capStr) {
 					finding.Capabilities = append(finding.Capabilities, capStr)
 				}
 			}
@@ -813,143 +798,169 @@ func analyzeStatefulSet(ss *appsv1.StatefulSet, allPVCs []corev1.PersistentVolum
 			fmt.Sprintf("Partition set to %d (pods may be on old versions)", finding.Partition))
 	}
 
-	// Calculate risk
-	finding.RiskLevel, finding.RiskScore = calculateStatefulSetRisk(&finding)
-	finding.ImpactSummary = generateStatefulSetImpact(&finding)
-
 	return finding
 }
 
-func calculateStatefulSetRisk(finding *StatefulSetFinding) (string, int) {
+// calculateStatefulSetRiskScore returns an internal score (0-100) for prioritization
+func calculateStatefulSetRiskScore(finding *StatefulSetFinding) int {
 	score := 0
 
-	// StatefulSets are inherently higher risk (critical data)
-	score += 10
+	// Critical patterns (50+ points)
+	if len(finding.ReverseShells) > 0 {
+		score += 50
+	}
+	if len(finding.CryptoMiners) > 0 {
+		score += 45
+	}
+	if len(finding.DataExfiltration) > 0 {
+		score += 45
+	}
+	if len(finding.ContainerEscapeP) > 0 {
+		score += 50
+	}
 
-	// Privileged containers
+	// Privileged access (30-40 points)
 	if finding.PrivilegedContainers > 0 {
 		score += 40
 	}
-
-	// Host access
 	if finding.HostPID {
-		score += 25
+		score += 35
 	}
 	if finding.HostIPC {
-		score += 20
+		score += 30
 	}
 	if finding.HostNetwork {
 		score += 30
 	}
 
-	// Dangerous volumes
+	// Dangerous volumes (20-30 points)
 	if len(finding.HostPathVolumes) > 0 {
-		score += 35 // HostPath = node escape
+		score += 25
 	}
-
-	// RunAsRoot
-	if finding.RunAsRoot > 0 {
-		score += finding.RunAsRoot * 5
-	}
-
-	// Dangerous access modes
-	if len(finding.DangerousAccessModes) > 0 {
+	if len(finding.DangerousVolumes) > 0 {
 		score += 20
 	}
-
-	// No resource limits
-	if !finding.HasResourceLimits {
-		score += 15
+	if len(finding.DangerousAccessModes) > 0 {
+		score += 15 // ReadWriteMany PVCs
 	}
 
-	// Risky update strategy
-	if finding.Partition > 0 {
-		score += 10 // Partitioned updates can leave inconsistent state
+	// Dangerous capabilities (15-25 points each)
+	dangerousCaps := map[string]int{
+		"SYS_ADMIN":       25,
+		"SYS_MODULE":      20,
+		"SYS_RAWIO":       20,
+		"SYS_PTRACE":      20,
+		"DAC_READ_SEARCH": 15,
+		"NET_ADMIN":       15,
 	}
-
-	// Capabilities
 	for _, cap := range finding.Capabilities {
-		if cap == "SYS_ADMIN" || cap == "NET_ADMIN" {
-			score += 20
+		if points, ok := dangerousCaps[cap]; ok {
+			score += points
 		}
 	}
 
-	// Determine risk level
-	if score >= 80 {
-		return "CRITICAL", statefulSetsMin(score, 100)
-	} else if score >= 50 {
-		return "HIGH", score
-	} else if score >= 25 {
-		return "MEDIUM", score
+	// Medium risk factors (10-15 points)
+	if finding.RunAsRoot > 0 {
+		score += 15
 	}
-	return "LOW", score
-}
-
-func generateStatefulSetImpact(finding *StatefulSetFinding) string {
-	if finding.RiskLevel == "CRITICAL" {
-		return fmt.Sprintf("CRITICAL stateful workload with %d security issues", len(finding.SecurityIssues))
+	if finding.AllowPrivilegeEscalation > 0 {
+		score += 10
+	}
+	if !finding.HasResourceLimits {
+		score += 10
 	}
 
-	if finding.PrivilegedContainers > 0 && len(finding.HostPathVolumes) > 0 {
-		return "Privileged containers with HostPath access = full node compromise"
+	// StatefulSet-specific risks
+	if finding.Partition > 0 {
+		score += 5 // Pods may be on old vulnerable versions
 	}
 
-	if finding.TotalPVCCount > 0 {
-		return fmt.Sprintf("Manages %d PVCs (%s each) - data persistence risk", finding.TotalPVCCount, finding.PVCStorageSize)
+	// Cloud role adds value
+	if finding.CloudRole != "" {
+		score += 15
 	}
 
-	return fmt.Sprintf("%d replicas with %d security issues", finding.Replicas, len(finding.SecurityIssues))
+	// Replica count amplifies risk
+	if finding.Replicas > 5 {
+		score += 5
+	}
+
+	// Cap at 100
+	if score > 100 {
+		score = 100
+	}
+
+	return score
 }
 
 // generateStatefulSetConsolidatedLoot generates consolidated loot files for statefulsets
-func generateStatefulSetConsolidatedLoot(findings []StatefulSetFinding, riskCounts *shared.RiskCounts) []internal.LootFile {
+func generateStatefulSetConsolidatedLoot(findings []StatefulSetFinding) []internal.LootFile {
+	// Sort findings by RiskScore descending for prioritization
+	sort.Slice(findings, func(i, j int) bool {
+		return findings[i].RiskScore > findings[j].RiskScore
+	})
+
 	var lootContent []string
 	var entrypointsContent []string
 
 	// Header for StatefulSet-Loot.txt
-	lootContent = append(lootContent, "#####################################")
-	lootContent = append(lootContent, "##### StatefulSet Loot - Actionable Commands")
-	lootContent = append(lootContent, "#####################################")
-	lootContent = append(lootContent, "#")
-	lootContent = append(lootContent, fmt.Sprintf("# Risk Summary: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
-		riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low))
+	lootContent = append(lootContent, "########################################")
+	lootContent = append(lootContent, "##### StatefulSet Commands")
+	lootContent = append(lootContent, "########################################")
 	lootContent = append(lootContent, "#")
 	lootContent = append(lootContent, "")
 
 	// Header for StatefulSet-Entrypoints.txt
-	entrypointsContent = append(entrypointsContent, "#####################################")
+	entrypointsContent = append(entrypointsContent, "########################################")
 	entrypointsContent = append(entrypointsContent, "##### StatefulSet Container Entrypoints")
-	entrypointsContent = append(entrypointsContent, "#####################################")
+	entrypointsContent = append(entrypointsContent, "########################################")
 	entrypointsContent = append(entrypointsContent, "#")
 	entrypointsContent = append(entrypointsContent, "# Container startup commands (entrypoint/cmd) and arguments")
 	entrypointsContent = append(entrypointsContent, "# Only containers with non-empty commands/args are listed")
 	entrypointsContent = append(entrypointsContent, "#")
 	entrypointsContent = append(entrypointsContent, "")
 
-	// Sort findings by risk score (highest first)
-	sort.Slice(findings, func(i, j int) bool {
-		return findings[i].RiskScore > findings[j].RiskScore
-	})
-
 	// Section: ENUMERATION
 	lootContent = append(lootContent, "")
-	lootContent = append(lootContent, "### ENUMERATION - Describe and inspect statefulsets")
+	lootContent = append(lootContent, "=== ENUMERATION ===")
 	lootContent = append(lootContent, "")
 	for _, f := range findings {
-		lootContent = append(lootContent, fmt.Sprintf("# [%s] %s/%s (Replicas: %d/%d, PVCs: %d)", f.RiskLevel, f.Namespace, f.Name, f.ReadyReplicas, f.Replicas, f.TotalPVCCount))
+		lootContent = append(lootContent, fmt.Sprintf("# %s/%s (Replicas: %d/%d, PVCs: %d)", f.Namespace, f.Name, f.ReadyReplicas, f.Replicas, f.TotalPVCCount))
 		lootContent = append(lootContent, fmt.Sprintf("kubectl describe statefulset -n %s %s", f.Namespace, f.Name))
 		lootContent = append(lootContent, fmt.Sprintf("kubectl get statefulset -n %s %s -o yaml", f.Namespace, f.Name))
 		lootContent = append(lootContent, "")
 	}
 
-	// Section: HIGH RISK - Critical and high risk statefulsets
+	// Section: SUSPICIOUS STATEFULSETS - Pattern-based detection
 	lootContent = append(lootContent, "")
-	lootContent = append(lootContent, "### HIGH RISK - Critical and high risk statefulsets")
+	lootContent = append(lootContent, "=== SUSPICIOUS STATEFULSETS ===")
 	lootContent = append(lootContent, "")
 	for _, f := range findings {
-		if f.RiskLevel == "CRITICAL" || f.RiskLevel == "HIGH" {
-			lootContent = append(lootContent, fmt.Sprintf("# [%s] %s/%s - Score: %d", f.RiskLevel, f.Namespace, f.Name, f.RiskScore))
-			lootContent = append(lootContent, fmt.Sprintf("# Security Issues: %s", strings.Join(f.SecurityIssues, ", ")))
+		var issues []string
+		if f.PrivilegedContainers > 0 {
+			issues = append(issues, fmt.Sprintf("privileged=%d", f.PrivilegedContainers))
+		}
+		if f.HostPID {
+			issues = append(issues, "hostPID")
+		}
+		if f.HostIPC {
+			issues = append(issues, "hostIPC")
+		}
+		if f.HostNetwork {
+			issues = append(issues, "hostNetwork")
+		}
+		if len(f.HostPathVolumes) > 0 {
+			issues = append(issues, fmt.Sprintf("hostPath=%d", len(f.HostPathVolumes)))
+		}
+		if len(f.BackdoorPatterns) > 0 {
+			issues = append(issues, fmt.Sprintf("backdoorPatterns=%d", len(f.BackdoorPatterns)))
+		}
+		if len(issues) > 0 {
+			lootEntry := shared.FormatSuspiciousEntry(f.Namespace, f.Name, issues)
+			lootContent = append(lootContent, lootEntry...)
+			if len(f.SecurityIssues) > 0 {
+				lootContent = append(lootContent, fmt.Sprintf("# Security Issues: %s", strings.Join(f.SecurityIssues, ", ")))
+			}
 			if f.CloudProvider != "" && f.CloudRole != "" {
 				lootContent = append(lootContent, fmt.Sprintf("# Cloud Role: %s (%s)", f.CloudRole, f.CloudProvider))
 			}
@@ -960,11 +971,11 @@ func generateStatefulSetConsolidatedLoot(findings []StatefulSetFinding, riskCoun
 
 	// Section: EXPLOITATION - Privileged statefulsets
 	lootContent = append(lootContent, "")
-	lootContent = append(lootContent, "### EXPLOITATION - Privileged statefulsets and host access")
+	lootContent = append(lootContent, "=== EXPLOITATION ===")
 	lootContent = append(lootContent, "")
 	for _, f := range findings {
 		if f.PrivilegedContainers > 0 || len(f.HostPathVolumes) > 0 || f.HostPID || f.HostNetwork {
-			lootContent = append(lootContent, fmt.Sprintf("# [%s] %s/%s", f.RiskLevel, f.Namespace, f.Name))
+			lootContent = append(lootContent, fmt.Sprintf("# %s/%s", f.Namespace, f.Name))
 			if f.PrivilegedContainers > 0 {
 				lootContent = append(lootContent, fmt.Sprintf("# %d privileged containers - can escape to host", f.PrivilegedContainers))
 			}
@@ -984,11 +995,11 @@ func generateStatefulSetConsolidatedLoot(findings []StatefulSetFinding, riskCoun
 
 	// Section: PERSISTENCE - PVCs and data access
 	lootContent = append(lootContent, "")
-	lootContent = append(lootContent, "### PERSISTENCE - PVCs and persistent data access")
+	lootContent = append(lootContent, "=== PERSISTENCE ===")
 	lootContent = append(lootContent, "")
 	for _, f := range findings {
 		if f.TotalPVCCount > 0 {
-			lootContent = append(lootContent, fmt.Sprintf("# [%s] %s/%s - %d PVCs (%s each)", f.RiskLevel, f.Namespace, f.Name, f.TotalPVCCount, f.PVCStorageSize))
+			lootContent = append(lootContent, fmt.Sprintf("# %s/%s - %d PVCs (%s each)", f.Namespace, f.Name, f.TotalPVCCount, f.PVCStorageSize))
 			if len(f.StorageClasses) > 0 {
 				lootContent = append(lootContent, fmt.Sprintf("# Storage classes: %s", strings.Join(f.StorageClasses, ", ")))
 			}
@@ -999,11 +1010,11 @@ func generateStatefulSetConsolidatedLoot(findings []StatefulSetFinding, riskCoun
 
 	// Section: SECRETS ACCESS
 	lootContent = append(lootContent, "")
-	lootContent = append(lootContent, "### SECRETS ACCESS - Statefulsets exposing secrets")
+	lootContent = append(lootContent, "=== SECRETS ACCESS ===")
 	lootContent = append(lootContent, "")
 	for _, f := range findings {
 		if len(f.SecretVolumes) > 0 {
-			lootContent = append(lootContent, fmt.Sprintf("# [%s] %s/%s (%d secret volumes)", f.RiskLevel, f.Namespace, f.Name, len(f.SecretVolumes)))
+			lootContent = append(lootContent, fmt.Sprintf("# %s/%s (%d secret volumes)", f.Namespace, f.Name, len(f.SecretVolumes)))
 			lootContent = append(lootContent, fmt.Sprintf("# Secrets: %s", strings.Join(f.SecretVolumes, ", ")))
 			lootContent = append(lootContent, "")
 		}
@@ -1035,11 +1046,4 @@ func generateStatefulSetConsolidatedLoot(findings []StatefulSetFinding, riskCoun
 		{Name: "StatefulSet-Loot", Contents: strings.Join(lootContent, "\n")},
 		{Name: "StatefulSet-Entrypoints", Contents: strings.Join(entrypointsContent, "\n")},
 	}
-}
-
-func statefulSetsMin(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

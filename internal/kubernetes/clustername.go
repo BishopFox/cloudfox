@@ -4,6 +4,7 @@ import (
 	"context"
 	"math/rand"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -25,17 +26,18 @@ func randomSuffix() string {
 	return string(b)
 }
 
-// GetClusterName retrieves the cluster name using multiple detection methods
+// GetClusterName retrieves the cluster name using multiple detection methods.
+// Priority: kubeconfig context (user-configured, most authoritative) > node labels > API server URL > error parsing.
 func GetClusterName(clientset *kubernetes.Clientset) string {
 	ctx := context.Background()
 
-	// Attempt 1: Check node labels for cluster name (most authoritative)
-	if name := getClusterNameFromNodes(ctx, clientset); name != "" {
+	// Attempt 1: Parse kubeconfig context/cluster name (most authoritative — user-configured)
+	if name := getClusterNameFromKubeconfig(); name != "" {
 		return name
 	}
 
-	// Attempt 2: Parse kubeconfig context name (very reliable)
-	if name := getClusterNameFromKubeconfig(); name != "" {
+	// Attempt 2: Check node labels for cluster name (cloud provider metadata)
+	if name := getClusterNameFromNodes(ctx, clientset); name != "" {
 		return name
 	}
 
@@ -101,13 +103,26 @@ func getClusterNameFromNodes(ctx context.Context, clientset *kubernetes.Clientse
 	return ""
 }
 
-// getClusterNameFromKubeconfig extracts cluster name from kubeconfig context
+// getClusterNameFromKubeconfig extracts cluster name from kubeconfig context.
+// This is the most authoritative source — it's what the user configured.
 func getClusterNameFromKubeconfig() string {
-	if globals.KubeConfigPath == "" {
+	// Try to resolve kubeconfig path if not explicitly set
+	kubeconfigPath := globals.KubeConfigPath
+	if kubeconfigPath == "" {
+		if env := os.Getenv("KUBECONFIG"); env != "" {
+			kubeconfigPath = env
+		} else if home, err := os.UserHomeDir(); err == nil {
+			candidate := home + "/.kube/config"
+			if _, err := os.Stat(candidate); err == nil {
+				kubeconfigPath = candidate
+			}
+		}
+	}
+	if kubeconfigPath == "" {
 		return ""
 	}
 
-	kubeconfig, err := clientcmd.LoadFromFile(globals.KubeConfigPath)
+	kubeconfig, err := clientcmd.LoadFromFile(kubeconfigPath)
 	if err != nil {
 		return ""
 	}
@@ -132,30 +147,24 @@ func getClusterNameFromKubeconfig() string {
 		return ""
 	}
 
-	// For EKS: context often looks like "arn:aws:eks:us-east-1:123456789012:cluster/my-cluster"
+	// For EKS: cluster entry is an ARN like "arn:aws:eks:us-east-1:123456789012:cluster/my-cluster"
 	if strings.HasPrefix(clusterName, "arn:aws:eks:") {
 		if name := extractEKSClusterName(clusterName); name != "" {
 			return name
 		}
 	}
 
-	// For AKS: context often looks like "my-aks-cluster" directly or "my-resource-group_my-aks-cluster"
-	if strings.Contains(clusterName, "_") {
-		parts := strings.Split(clusterName, "_")
-		if len(parts) >= 2 {
-			return parts[len(parts)-1] // Return last part (cluster name)
-		}
-	}
-
-	// For GKE: context often looks like "gke_project-id_zone_cluster-name"
+	// For GKE: cluster entry looks like "gke_project-id_zone_cluster-name"
 	if strings.HasPrefix(clusterName, "gke_") {
 		if name := extractGKEClusterName(clusterName); name != "" {
 			return name
 		}
 	}
 
-	// For generic kubeconfigs, return the cluster name as-is if it's reasonable
-	if !strings.Contains(clusterName, ":") && len(clusterName) < 100 {
+	// For generic kubeconfigs (including AKS which is typically just "my-aks-cluster"),
+	// return the cluster name as-is. Don't split on underscores — that's a valid character
+	// in cluster names and splitting breaks non-cloud names.
+	if len(clusterName) < 200 {
 		return clusterName
 	}
 

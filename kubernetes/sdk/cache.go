@@ -10,6 +10,7 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/patrickmn/go-cache"
 	admissionv1 "k8s.io/api/admissionregistration/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
@@ -64,6 +65,7 @@ const (
 	CacheKeyLimitRanges           = "k8s-limitranges"
 	CacheKeyPodDisruptionBudgets  = "k8s-poddisruptionbudgets"
 	CacheKeyHPAs                  = "k8s-hpas"
+	CacheKeyCRDs                  = "k8s-crds"
 
 	// Computed analysis cache keys
 	CacheKeyAttackPathsPrivesc = "k8s-attackpaths-privesc"
@@ -201,6 +203,15 @@ func WarmCache(ctx context.Context, clientset *kubernetes.Clientset) error {
 		defer wg.Done()
 		if _, err := GetIngresses(ctx, clientset); err != nil {
 			errChan <- fmt.Errorf("ingresses: %w", err)
+		}
+	}()
+
+	// CRDs (uses apiextensions client, not standard clientset)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if _, err := GetCRDs(ctx); err != nil {
+			errChan <- fmt.Errorf("crds: %w", err)
 		}
 	}()
 
@@ -759,6 +770,39 @@ func GetMutatingWebhooks(ctx context.Context, clientset *kubernetes.Clientset) (
 }
 
 // ============================================================================
+// CRD RESOURCES
+// ============================================================================
+
+// GetCRDs returns all Custom Resource Definitions, using cache if available.
+// Note: requires apiextensions clientset, not the standard clientset.
+func GetCRDs(ctx context.Context) ([]apiextensionsv1.CustomResourceDefinition, error) {
+	return GetOrSet(CacheKeyCRDs, func() ([]apiextensionsv1.CustomResourceDefinition, error) {
+		apiextClient, err := GetApiextensionsClientset()
+		if err != nil {
+			return nil, err
+		}
+		crdList, err := apiextClient.ApiextensionsV1().CustomResourceDefinitions().List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return nil, err
+		}
+		return crdList.Items, nil
+	})
+}
+
+// GetCRDGroups returns the set of API groups registered as CRDs, using cache if available.
+func GetCRDGroups(ctx context.Context) (map[string]bool, error) {
+	crds, err := GetCRDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	groups := make(map[string]bool, len(crds))
+	for _, crd := range crds {
+		groups[crd.Spec.Group] = true
+	}
+	return groups, nil
+}
+
+// ============================================================================
 // CLUSTER RESOURCES
 // ============================================================================
 
@@ -928,6 +972,8 @@ func CacheStats() map[string]int {
 			case []admissionv1.ValidatingWebhookConfiguration:
 				stats[key] = len(v)
 			case []admissionv1.MutatingWebhookConfiguration:
+				stats[key] = len(v)
+			case []apiextensionsv1.CustomResourceDefinition:
 				stats[key] = len(v)
 			}
 		}

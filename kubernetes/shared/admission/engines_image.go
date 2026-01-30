@@ -620,4 +620,66 @@ func (r *EngineRegistry) registerImageEngines() {
 		WebhookPatterns:    []string{"gitlab"},
 		RequireImageVerification: true,
 	})
+
+	// CrowdStrike Falcon - Container image scanning
+	r.register(&Engine{
+		ID:       "crowdstrike",
+		Name:     "CrowdStrike Falcon",
+		Category: CategoryImage,
+		TrustedRegistries: []string{
+			"registry.crowdstrike.com/",
+		},
+		ImagePatterns: []string{
+			"falcon-sensor",
+			"falcon-container",
+			"falcon-imageanalyzer",
+		},
+		DeploymentPatterns: []string{"falcon-sensor", "falcon-image-analyzer"},
+		ExpectedNamespaces: []string{"falcon-system", "crowdstrike"},
+		CRDGroups:          []string{"falcon.crowdstrike.com"},
+		WebhookPatterns:    []string{"falcon"},
+		RequireImageVerification: true,
+	})
+
+	// =============================================================================
+	// Additional Policy Tools with Image Scanning Capabilities
+	// =============================================================================
+
+	// Conftest - OPA-based policy testing for container images
+	r.register(&Engine{
+		ID:       "conftest",
+		Name:     "Conftest",
+		Category: CategoryImage,
+		TrustedRegistries: []string{
+			"openpolicyagent/",
+		},
+		ImagePatterns: []string{
+			"conftest",
+			"openpolicyagent/conftest",
+		},
+		DeploymentPatterns: []string{"conftest"},
+		ExpectedNamespaces: []string{"conftest", "kube-system"},
+		WebhookPatterns:    []string{"conftest"},
+		RequireImageVerification: true,
+	})
+
+	// Datree - Image policy validation
+	r.register(&Engine{
+		ID:       "datree",
+		Name:     "Datree",
+		Category: CategoryImage,
+		TrustedRegistries: []string{
+			"datree/",
+			"docker.io/datree/",
+		},
+		ImagePatterns: []string{
+			"datree/admission-webhook",
+			"datree/webhook-server",
+		},
+		DeploymentPatterns: []string{"datree-webhook"},
+		ExpectedNamespaces: []string{"datree", "kube-system"},
+		WebhookPatterns:    []string{"datree-webhook"},
+		LabelSelectors:     []string{"app=datree-webhook"},
+		RequireImageVerification: true,
+	})
 }

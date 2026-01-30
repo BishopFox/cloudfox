@@ -219,9 +219,6 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 	var outputRows [][]string
 	var findings []SecretFinding
 
-	// Risk level counters using shared type
-	riskCounts := shared.NewRiskCounts()
-
 	// Loot builder using shared pattern
 	loot := shared.NewLootBuilder()
 	namespaceLootEnum := map[string][]string{}
@@ -450,10 +447,6 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 			// Security Issues Summary
 			finding.SecurityIssues = generateSecretSecurityIssues(&finding)
 
-			// Calculate risk score and level
-			finding.RiskLevel, finding.RiskScore = calculateSecretRiskScore(&finding)
-
-			riskCounts.Add(finding.RiskLevel)
 			findings = append(findings, finding)
 
 			// Build output row
@@ -543,10 +536,6 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// Add risk summary to key sections
-	summary := shared.RiskSummaryLoot(riskCounts)
-	loot.Section("Secrets-Active-Exposure").SetSummary(summary)
-
 	table := internal.TableFile{
 		Name:   "Secrets",
 		Header: headers,
@@ -575,13 +564,7 @@ func ListSecrets(cmd *cobra.Command, args []string) {
 	}
 
 	if len(outputRows) > 0 {
-		if riskCounts.Critical > 0 || riskCounts.High > 0 {
-			logger.InfoM(fmt.Sprintf("%d secrets found | Risk: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
-				len(outputRows), riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low),
-				globals.K8S_SECRETS_MODULE_NAME)
-		} else {
-			logger.InfoM(fmt.Sprintf("%d secrets found", len(outputRows)), globals.K8S_SECRETS_MODULE_NAME)
-		}
+		logger.InfoM(fmt.Sprintf("%d secrets found", len(outputRows)), globals.K8S_SECRETS_MODULE_NAME)
 	} else {
 		logger.InfoM("No secrets found, skipping output file creation", globals.K8S_SECRETS_MODULE_NAME)
 	}

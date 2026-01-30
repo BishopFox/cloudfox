@@ -59,7 +59,7 @@ Examples:
 func init() {
 	EventsCmd.Flags().BoolP("all", "a", false, "Show all events (no limit)")
 	EventsCmd.Flags().IntP("limit", "l", 500, "Maximum number of events to display")
-	EventsCmd.Flags().StringP("search", "s", "", "Filter events by keyword (searches name, namespace, reason, message)")
+	EventsCmd.Flags().String("search", "", "Filter events by keyword (searches name, namespace, reason, message)")
 }
 
 type EventsOutput struct {
@@ -244,7 +244,6 @@ func ListEvents(cmd *cobra.Command, args []string) {
 
 	// Generate tables
 	eventTable := generateEventTable(eventAnalyses, limit, showAll)
-	summaryTable := generateSummaryTable(summaries)
 
 	err = internal.HandleOutput(
 		"Kubernetes",
@@ -256,7 +255,7 @@ func ListEvents(cmd *cobra.Command, args []string) {
 		globals.ClusterName,
 		"results",
 		EventsOutput{
-			Table: []internal.TableFile{summaryTable, eventTable},
+			Table: []internal.TableFile{eventTable},
 			Loot:  lootFiles,
 		},
 	)
@@ -590,36 +589,6 @@ func generateEventTable(analyses []EventAnalysis, limit int, showAll bool) inter
 
 	return internal.TableFile{
 		Name:   "Events",
-		Header: header,
-		Body:   rows,
-	}
-}
-
-func generateSummaryTable(summaries []EventSummary) internal.TableFile {
-	header := []string{"Namespace", "Total", "Warnings", "Security", "OOM", "Scheduling", "ImagePull", "Admission", "Auth"}
-	var rows [][]string
-
-	// Sort by risk score
-	sort.Slice(summaries, func(i, j int) bool {
-		return summaries[i].RiskScore > summaries[j].RiskScore
-	})
-
-	for _, s := range summaries {
-		rows = append(rows, []string{
-			s.Namespace,
-			fmt.Sprintf("%d", s.TotalEvents),
-			fmt.Sprintf("%d", s.WarningEvents),
-			fmt.Sprintf("%d", s.SecurityEvents),
-			fmt.Sprintf("%d", s.OOMKilled),
-			fmt.Sprintf("%d", s.FailedScheduling),
-			fmt.Sprintf("%d", s.ImagePullFailures),
-			fmt.Sprintf("%d", s.AdmissionDenials),
-			fmt.Sprintf("%d", s.AuthFailures),
-		})
-	}
-
-	return internal.TableFile{
-		Name:   "Event-Summary",
 		Header: header,
 		Body:   rows,
 	}

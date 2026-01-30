@@ -41,9 +41,8 @@ type CronJobFinding struct {
 	Namespace             string
 	Name                  string
 	Schedule              string
-	RiskLevel             string
-	RiskScore             int
 	SecurityIssues        []string
+	RiskScore             int
 	Suspend               bool
 	ConcurrencyPolicy     string
 	BackdoorPatterns      []string
@@ -172,9 +171,6 @@ func ListCronJobs(cmd *cobra.Command, args []string) {
 	var volumeRows [][]string
 	var findings []CronJobFinding
 
-	// Risk counters
-	riskCounts := shared.NewRiskCounts()
-
 	for _, cj := range filteredCronJobs {
 		podSpec := cj.Spec.JobTemplate.Spec.Template.Spec
 
@@ -208,10 +204,10 @@ func ListCronJobs(cmd *cobra.Command, args []string) {
 			cj.Spec.JobTemplate.Spec.Template.Annotations,
 		)
 
-		findings = append(findings, finding)
+		// Calculate risk score for internal prioritization
+		finding.RiskScore = calculateCronJobRiskScore(&finding)
 
-		// Count risk levels
-		riskCounts.Add(finding.RiskLevel)
+		findings = append(findings, finding)
 
 		// Merge all suspicious patterns into one column
 		suspiciousPatternsStr := strings.Join(finding.BackdoorPatterns, "; ")
@@ -352,15 +348,6 @@ func ListCronJobs(cmd *cobra.Command, args []string) {
 
 	if len(summaryRows) > 0 {
 		logger.InfoM(fmt.Sprintf("%d cronjobs found", len(summaryRows)), globals.K8S_CRONJOBS_MODULE_NAME)
-		logger.InfoM(fmt.Sprintf("Risk Summary: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
-			riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low), globals.K8S_CRONJOBS_MODULE_NAME)
-
-		if riskCounts.Critical > 0 {
-			logger.InfoM(fmt.Sprintf("⚠️  %d CRITICAL risk cronjobs detected! Check CronJob-Suspicious loot file", riskCounts.Critical), globals.K8S_CRONJOBS_MODULE_NAME)
-		}
-		if riskCounts.High > 0 {
-			logger.InfoM(fmt.Sprintf("⚠️  %d HIGH risk cronjobs detected! Check CronJob-Suspicious loot file", riskCounts.High), globals.K8S_CRONJOBS_MODULE_NAME)
-		}
 	} else {
 		logger.InfoM("No cronjobs found, skipping output file creation", globals.K8S_CRONJOBS_MODULE_NAME)
 	}
@@ -714,100 +701,179 @@ func analyzeCronJobSecurity(
 	scheduleAnalysis, scheduleRisk := analyzeSchedule(schedule)
 	finding.ScheduleAnalysis = scheduleAnalysis
 
-	// Calculate risk level
-	finding.RiskLevel = calculateCronJobRiskLevel(finding, scheduleRisk)
-
-	// Calculate risk score (0-100)
-	finding.RiskScore = calculateCronJobRiskScore(finding, scheduleRisk)
-
 	// Generate security issues
 	finding.SecurityIssues = generateCronJobSecurityIssues(finding, scheduleRisk)
 
 	return finding
 }
 
-func calculateCronJobRiskLevel(finding CronJobFinding, scheduleRisk string) string {
-	// CRITICAL: Active backdoors, reverse shells, crypto miners
+// calculateCronJobRiskScore calculates risk score 0-100 based on security factors
+func calculateCronJobRiskScore(finding *CronJobFinding) int {
+	score := 0
+
+	// CRITICAL: Malicious activity patterns (highest priority)
 	if len(finding.ReverseShells) > 0 {
-		return shared.RiskCritical
+		score += 95 // Reverse shell = immediate threat
 	}
 	if len(finding.CryptoMiners) > 0 {
-		return shared.RiskCritical
+		score += 90 // Crypto mining = active abuse
 	}
-	if len(finding.ContainerEscape) > 0 && (finding.HostPID || finding.HostIPC || finding.Privileged) {
-		return shared.RiskCritical
-	}
-	if scheduleRisk == shared.RiskCritical && len(finding.BackdoorPatterns) > 0 {
-		return shared.RiskCritical
-	}
-
-	// HIGH: Data exfiltration, container escape vectors, privileged + hostPath, dangerous capabilities
 	if len(finding.DataExfiltration) > 0 {
-		return shared.RiskHigh
+		score += 85 // Data exfiltration = data theft
 	}
 	if len(finding.ContainerEscape) > 0 {
-		return shared.RiskHigh
+		score += 80 // Container escape techniques
 	}
-	if finding.Privileged && len(finding.HostPaths) > 0 {
-		return shared.RiskHigh
-	}
-	if finding.HostPID || finding.HostIPC {
-		return shared.RiskHigh
-	}
-	// Dangerous capabilities
-	for _, cap := range finding.Capabilities {
-		if strings.Contains(cap, "SYS_ADMIN") || strings.Contains(cap, "SYS_MODULE") {
-			return shared.RiskHigh
+
+	// HIGH: Schedule frequency (crypto miner / backdoor pattern)
+	if finding.Schedule == "* * * * *" {
+		score += 70 // Every minute = crypto miner pattern
+	} else {
+		// Check for very frequent schedules
+		parts := strings.Fields(finding.Schedule)
+		if len(parts) >= 2 {
+			minute := parts[0]
+			hour := parts[1]
+
+			// Every 2-5 minutes
+			if minute == "*/2" || minute == "*/3" || minute == "*/4" || minute == "*/5" {
+				score += 55
+			}
+
+			// Off-hours execution (2am-5am) - backdoor/exfiltration pattern
+			if hour == "2" || hour == "3" || hour == "4" {
+				score += 50
+			}
+
+			// Every 10-15 minutes
+			if minute == "*/10" || minute == "*/15" {
+				score += 30
+			}
 		}
 	}
-	if scheduleRisk == shared.RiskHigh {
-		return shared.RiskHigh
-	}
 
-	// MEDIUM: HostNetwork, suspicious schedules, cloud roles
-	if finding.HostNetwork {
-		return shared.RiskMedium
-	}
-	if scheduleRisk == shared.RiskMedium {
-		return shared.RiskMedium
-	}
-	if finding.CloudRole != "" && finding.CloudRole != "<NONE>" {
-		return shared.RiskMedium
-	}
+	// HIGH: Privileged access
 	if finding.Privileged {
-		return shared.RiskMedium
+		score += 75
+		// Privileged + host namespace = critical
+		if finding.HostPID || finding.HostNetwork || finding.HostIPC {
+			score += 25 // Bonus for combination
+		}
 	}
 
-	// LOW: Standard cronjob
-	return shared.RiskLow
+	// MEDIUM-HIGH: Host namespace access
+	if finding.HostPID {
+		score += 60 // Can view/kill host processes
+	}
+	if finding.HostNetwork {
+		score += 50 // Access to host network
+	}
+	if finding.HostIPC {
+		score += 45 // Access to host IPC
+	}
+
+	// MEDIUM-HIGH: Dangerous host paths
+	for _, hp := range finding.HostPaths {
+		if strings.Contains(hp, "docker.sock") || strings.Contains(hp, "containerd.sock") {
+			score += 80 // Container runtime socket = cluster admin
+		} else if hp == "/" || hp == "/:" {
+			score += 70 // Root filesystem
+		} else if strings.Contains(hp, "/etc/kubernetes") || strings.Contains(hp, "kubelet") {
+			score += 65 // K8s secrets
+		} else if strings.Contains(hp, "/var/run") || strings.Contains(hp, "/etc") {
+			score += 40 // Sensitive system paths
+		} else {
+			score += 20 // Any hostPath is a risk
+		}
+	}
+
+	// MEDIUM: Dangerous capabilities
+	dangerousCaps := map[string]int{
+		"SYS_ADMIN":       70,
+		"SYS_MODULE":      65,
+		"SYS_RAWIO":       50,
+		"SYS_PTRACE":      50,
+		"DAC_READ_SEARCH": 40,
+		"DAC_OVERRIDE":    35,
+		"NET_ADMIN":       35,
+		"SYS_BOOT":        45,
+		"SYS_TIME":        30,
+		"MAC_ADMIN":       40,
+		"MAC_OVERRIDE":    35,
+	}
+	for _, cap := range finding.Capabilities {
+		for dangerousCap, capScore := range dangerousCaps {
+			if strings.Contains(cap, dangerousCap) {
+				score += capScore
+				break
+			}
+		}
+	}
+
+	// MEDIUM: Active status
+	if !finding.Suspend {
+		// Active cronjob with malicious patterns is more dangerous
+		if len(finding.BackdoorPatterns) > 0 {
+			score += 40
+		} else {
+			score += 10 // Active but no malicious patterns
+		}
+	} else {
+		// Suspended cronjobs with malicious patterns are dormant backdoors
+		if len(finding.BackdoorPatterns) > 0 {
+			score += 15
+		}
+	}
+
+	// MEDIUM: Concurrency policy
+	if finding.ConcurrencyPolicy == "Allow" {
+		score += 15 // Multiple jobs can run simultaneously
+	}
+
+	// LOW-MEDIUM: Cloud IAM role
+	if finding.CloudRole != "" {
+		if strings.Contains(strings.ToLower(finding.CloudRole), "admin") {
+			score += 35 // Admin role = elevated cloud permissions
+		} else {
+			score += 20 // Any cloud role is a risk
+		}
+	}
+
+	// LOW-MEDIUM: Service account
+	if finding.ServiceAccount == "default" {
+		score += 5 // Using default service account
+	}
+
+	// LOW: Failed job history (potential misconfiguration or detection)
+	if finding.FailedJobsHistory > 5 {
+		score += 10
+	}
+
+	// Cap score at 100
+	if score > 100 {
+		score = 100
+	}
+
+	return score
 }
 
 func generateCronJobLoot(findings []CronJobFinding, kubeContext string) []internal.LootFile {
 	var lootContent []string
 	var entrypointsContent []string
 
-	// Separate findings by risk level
-	var critical, high []CronJobFinding
+	// Sort all findings by RiskScore descending for prioritization
+	sort.Slice(findings, func(i, j int) bool {
+		return findings[i].RiskScore > findings[j].RiskScore
+	})
+
+	// Collect suspicious findings (those with security issues or suspicious patterns)
+	var suspicious []CronJobFinding
 	for _, f := range findings {
-		switch f.RiskLevel {
-		case shared.RiskCritical:
-			critical = append(critical, f)
-		case shared.RiskHigh:
-			high = append(high, f)
+		if len(f.SecurityIssues) > 0 || len(f.BackdoorPatterns) > 0 || len(f.CryptoMiners) > 0 ||
+			len(f.ReverseShells) > 0 || len(f.DataExfiltration) > 0 || len(f.ContainerEscape) > 0 {
+			suspicious = append(suspicious, f)
 		}
 	}
-
-	// Sort each group by namespace, then name
-	sortFindings := func(findings []CronJobFinding) {
-		sort.Slice(findings, func(i, j int) bool {
-			if findings[i].Namespace != findings[j].Namespace {
-				return findings[i].Namespace < findings[j].Namespace
-			}
-			return findings[i].Name < findings[j].Name
-		})
-	}
-	sortFindings(critical)
-	sortFindings(high)
 
 	// ========================================
 	// CronJob-Commands.txt - Consolidated commands
@@ -847,25 +913,13 @@ func generateCronJobLoot(findings []CronJobFinding, kubeContext string) []intern
 	lootContent = append(lootContent, "kubectl get jobs -A --field-selector status.successful!=1")
 	lootContent = append(lootContent, "")
 
-	// === HIGH RISK ===
-	if len(critical) > 0 || len(high) > 0 {
-		lootContent = append(lootContent, "=== HIGH RISK ===")
+	// === SUSPICIOUS CRONJOBS ===
+	if len(suspicious) > 0 {
+		lootContent = append(lootContent, "=== SUSPICIOUS CRONJOBS ===")
 		lootContent = append(lootContent, "")
 
-		for _, f := range critical {
-			lootContent = append(lootContent, fmt.Sprintf("# [CRITICAL] %s/%s - Score: %d", f.Namespace, f.Name, f.RiskScore))
-			lootContent = append(lootContent, fmt.Sprintf("kubectl get cronjob %s -n %s -o yaml", f.Name, f.Namespace))
-			lootContent = append(lootContent, fmt.Sprintf("kubectl describe cronjob %s -n %s", f.Name, f.Namespace))
-			if len(f.SecurityIssues) > 0 {
-				for _, issue := range f.SecurityIssues {
-					lootContent = append(lootContent, fmt.Sprintf("#   - %s", issue))
-				}
-			}
-			lootContent = append(lootContent, "")
-		}
-
-		for _, f := range high {
-			lootContent = append(lootContent, fmt.Sprintf("# [HIGH] %s/%s - Score: %d", f.Namespace, f.Name, f.RiskScore))
+		for _, f := range suspicious {
+			lootContent = append(lootContent, shared.FormatSuspiciousEntry(f.Namespace, f.Name, f.SecurityIssues)...)
 			lootContent = append(lootContent, fmt.Sprintf("kubectl get cronjob %s -n %s -o yaml", f.Name, f.Namespace))
 			lootContent = append(lootContent, fmt.Sprintf("kubectl describe cronjob %s -n %s", f.Name, f.Namespace))
 			lootContent = append(lootContent, "")
@@ -913,7 +967,12 @@ func generateCronJobLoot(findings []CronJobFinding, kubeContext string) []intern
 	// Sort all findings by namespace/name for consistent output
 	allFindings := make([]CronJobFinding, len(findings))
 	copy(allFindings, findings)
-	sortFindings(allFindings)
+	sort.Slice(allFindings, func(i, j int) bool {
+		if allFindings[i].Namespace != allFindings[j].Namespace {
+			return allFindings[i].Namespace < allFindings[j].Namespace
+		}
+		return allFindings[i].Name < allFindings[j].Name
+	})
 
 	for _, f := range allFindings {
 		var containerEntries []string
@@ -946,149 +1005,57 @@ func generateCronJobLoot(findings []CronJobFinding, kubeContext string) []intern
 	}
 }
 
-// calculateCronJobRiskScore calculates a numeric risk score (0-100)
-func calculateCronJobRiskScore(finding CronJobFinding, scheduleRisk string) int {
-	score := 0
-
-	// Backdoors and malicious activity (50 points max)
-	if len(finding.ReverseShells) > 0 {
-		score += 50
-	}
-	if len(finding.CryptoMiners) > 0 {
-		score += 50
-	}
-	if len(finding.DataExfiltration) > 0 {
-		score += 30
-	}
-	if len(finding.ContainerEscape) > 0 {
-		score += 40
-	}
-
-	// Privileged access (25 points max)
-	if finding.Privileged {
-		score += 20
-	}
-	if finding.HostPID {
-		score += 15
-	}
-	if finding.HostIPC {
-		score += 10
-	}
-	if finding.HostNetwork {
-		score += 15
-	}
-
-	// Dangerous hostPaths (20 points max)
-	for _, hp := range finding.HostPaths {
-		if strings.Contains(hp, "docker.sock") || strings.Contains(hp, "containerd.sock") {
-			score += 20
-			break
-		} else if hp == "/" || hp == "/:" {
-			score += 15
-			break
-		} else {
-			score += 5
-		}
-	}
-
-	// Dangerous capabilities (15 points max)
-	dangerousCaps := []string{"SYS_ADMIN", "SYS_MODULE", "SYS_RAWIO", "SYS_PTRACE", "DAC_READ_SEARCH", "NET_ADMIN"}
-	for _, cap := range finding.Capabilities {
-		for _, dangerousCap := range dangerousCaps {
-			if strings.Contains(cap, dangerousCap) {
-				score += 5
-				break
-			}
-		}
-	}
-
-	// Schedule-based risk (20 points max)
-	switch scheduleRisk {
-	case shared.RiskCritical:
-		score += 20
-	case shared.RiskHigh:
-		score += 15
-	case shared.RiskMedium:
-		score += 10
-	case shared.RiskLow:
-		score += 5
-	}
-
-	// Concurrency policy risk (10 points)
-	if finding.ConcurrencyPolicy == "Allow" {
-		score += 10
-	}
-
-	// Cloud role with high privileges (10 points)
-	if finding.CloudRole != "" && (strings.Contains(strings.ToLower(finding.CloudRole), "admin") ||
-		strings.Contains(strings.ToLower(finding.CloudRole), "cluster")) {
-		score += 10
-	}
-
-	// Not suspended but has issues (5 points)
-	if !finding.Suspend && (len(finding.BackdoorPatterns) > 0 || finding.Privileged) {
-		score += 5
-	}
-
-	// Cap at 100
-	if score > 100 {
-		score = 100
-	}
-
-	return score
-}
-
 // generateCronJobSecurityIssues creates a list of specific security issues and recommendations
 func generateCronJobSecurityIssues(finding CronJobFinding, scheduleRisk string) []string {
 	var issues []string
 
-	// Critical malicious activity
+	// Malicious activity
 	if len(finding.ReverseShells) > 0 {
-		issues = append(issues, fmt.Sprintf("CRITICAL: Reverse shell patterns detected: %s - scheduled backdoor execution", strings.Join(finding.ReverseShells, ", ")))
+		issues = append(issues, fmt.Sprintf("Reverse shell patterns detected: %s - scheduled backdoor execution", strings.Join(finding.ReverseShells, ", ")))
 	}
 	if len(finding.CryptoMiners) > 0 {
-		issues = append(issues, fmt.Sprintf("CRITICAL: Crypto mining patterns detected: %s - scheduled resource abuse", strings.Join(finding.CryptoMiners, ", ")))
+		issues = append(issues, fmt.Sprintf("Crypto mining patterns detected: %s - scheduled resource abuse", strings.Join(finding.CryptoMiners, ", ")))
 	}
 	if len(finding.DataExfiltration) > 0 {
-		issues = append(issues, fmt.Sprintf("CRITICAL: Data exfiltration patterns: %s - scheduled data theft", strings.Join(finding.DataExfiltration, ", ")))
+		issues = append(issues, fmt.Sprintf("Data exfiltration patterns: %s - scheduled data theft", strings.Join(finding.DataExfiltration, ", ")))
 	}
 	if len(finding.ContainerEscape) > 0 {
-		issues = append(issues, fmt.Sprintf("CRITICAL: Container escape techniques: %s - scheduled node compromise", strings.Join(finding.ContainerEscape, ", ")))
+		issues = append(issues, fmt.Sprintf("Container escape techniques: %s - scheduled node compromise", strings.Join(finding.ContainerEscape, ", ")))
 	}
 
-	// Schedule-based risks
+	// Schedule-based issues
 	if scheduleRisk == shared.RiskCritical {
-		issues = append(issues, fmt.Sprintf("CRITICAL: Very frequent schedule (%s) - %s - potential DoS or aggressive attack", finding.Schedule, finding.ScheduleAnalysis))
+		issues = append(issues, fmt.Sprintf("Very frequent schedule (%s) - %s", finding.Schedule, finding.ScheduleAnalysis))
 	} else if scheduleRisk == shared.RiskHigh {
-		issues = append(issues, fmt.Sprintf("HIGH: Frequent schedule (%s) - %s - review necessity", finding.Schedule, finding.ScheduleAnalysis))
+		issues = append(issues, fmt.Sprintf("Frequent schedule (%s) - %s", finding.Schedule, finding.ScheduleAnalysis))
 	} else if scheduleRisk == shared.RiskMedium {
-		issues = append(issues, fmt.Sprintf("MEDIUM: Moderate schedule (%s) - %s", finding.Schedule, finding.ScheduleAnalysis))
+		issues = append(issues, fmt.Sprintf("Moderate schedule (%s) - %s", finding.Schedule, finding.ScheduleAnalysis))
 	}
 
 	// Privileged access
 	if finding.Privileged {
-		issues = append(issues, "HIGH: Privileged CronJob - scheduled jobs have kernel access")
+		issues = append(issues, "Privileged CronJob - scheduled jobs have kernel access")
 	}
 	if finding.HostPID {
-		issues = append(issues, "HIGH: hostPID enabled - scheduled jobs can view/kill host processes")
+		issues = append(issues, "hostPID enabled - scheduled jobs can view/kill host processes")
 	}
 	if finding.HostIPC {
-		issues = append(issues, "MEDIUM: hostIPC enabled - scheduled jobs can access host IPC")
+		issues = append(issues, "hostIPC enabled - scheduled jobs can access host IPC")
 	}
 	if finding.HostNetwork {
-		issues = append(issues, "MEDIUM: hostNetwork enabled - scheduled jobs on host network")
+		issues = append(issues, "hostNetwork enabled - scheduled jobs on host network")
 	}
 
 	// Dangerous hostPath mounts
 	for _, hp := range finding.HostPaths {
 		if strings.Contains(hp, "docker.sock") || strings.Contains(hp, "containerd.sock") {
-			issues = append(issues, fmt.Sprintf("CRITICAL: Container runtime socket mounted (%s) - scheduled cluster admin access", hp))
+			issues = append(issues, fmt.Sprintf("Container runtime socket mounted (%s) - scheduled cluster admin access", hp))
 		} else if hp == "/" || hp == "/:" {
-			issues = append(issues, "CRITICAL: Root filesystem mounted - scheduled complete node access")
+			issues = append(issues, "Root filesystem mounted - scheduled complete node access")
 		} else if strings.Contains(hp, "/var/run") {
-			issues = append(issues, fmt.Sprintf("HIGH: Sensitive path mounted: %s - review necessity", hp))
+			issues = append(issues, fmt.Sprintf("Sensitive path mounted: %s", hp))
 		} else {
-			issues = append(issues, fmt.Sprintf("MEDIUM: HostPath volume: %s", hp))
+			issues = append(issues, fmt.Sprintf("HostPath volume: %s", hp))
 		}
 	}
 
@@ -1106,45 +1073,40 @@ func generateCronJobSecurityIssues(finding CronJobFinding, scheduleRisk string) 
 	for _, cap := range finding.Capabilities {
 		for dangerousCap, desc := range dangerousCaps {
 			if strings.Contains(cap, dangerousCap) {
-				issues = append(issues, fmt.Sprintf("HIGH: Dangerous capability %s - enables %s", dangerousCap, desc))
+				issues = append(issues, fmt.Sprintf("Dangerous capability %s - enables %s", dangerousCap, desc))
 			}
 		}
 	}
 
 	// Concurrency policy
 	if finding.ConcurrencyPolicy == "Allow" {
-		issues = append(issues, "MEDIUM: Concurrency policy 'Allow' - multiple jobs can run simultaneously (resource exhaustion risk)")
+		issues = append(issues, "Concurrency policy 'Allow' - multiple jobs can run simultaneously")
 	}
 
 	// Suspension status
 	if finding.Suspend {
-		issues = append(issues, "INFO: CronJob is suspended - not currently running")
+		issues = append(issues, "CronJob is suspended - not currently running")
 	} else if len(finding.BackdoorPatterns) > 0 {
-		issues = append(issues, "CRITICAL: Malicious CronJob is ACTIVE - executing on schedule")
+		issues = append(issues, "Malicious CronJob is ACTIVE - executing on schedule")
 	}
 
 	// Cloud IAM role
 	if finding.CloudRole != "" {
 		if strings.Contains(strings.ToLower(finding.CloudRole), "admin") {
-			issues = append(issues, fmt.Sprintf("HIGH: Cloud admin role assigned: %s - scheduled jobs have elevated cloud permissions", finding.CloudRole))
+			issues = append(issues, fmt.Sprintf("Cloud admin role assigned: %s - scheduled jobs have elevated cloud permissions", finding.CloudRole))
 		} else {
-			issues = append(issues, fmt.Sprintf("LOW: Cloud IAM role: %s - verify least privilege for scheduled tasks", finding.CloudRole))
+			issues = append(issues, fmt.Sprintf("Cloud IAM role: %s", finding.CloudRole))
 		}
 	}
 
 	// Service account
 	if finding.ServiceAccount == "default" {
-		issues = append(issues, "LOW: Using default service account - should use dedicated ServiceAccount for scheduled jobs")
+		issues = append(issues, "Using default service account")
 	}
 
 	// Job history
 	if finding.FailedJobsHistory > 5 {
-		issues = append(issues, fmt.Sprintf("MEDIUM: High failed job count (%d) - investigate failures", finding.FailedJobsHistory))
-	}
-
-	// No issues found
-	if len(issues) == 0 {
-		issues = append(issues, "LOW: Standard CronJob configuration - no obvious security issues")
+		issues = append(issues, fmt.Sprintf("High failed job count (%d) - investigate failures", finding.FailedJobsHistory))
 	}
 
 	return issues

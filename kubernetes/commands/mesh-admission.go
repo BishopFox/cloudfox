@@ -10,6 +10,7 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/BishopFox/cloudfox/kubernetes/shared"
+	"github.com/BishopFox/cloudfox/kubernetes/shared/admission"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -26,6 +27,8 @@ var MeshAdmissionCmd = &cobra.Command{
 	Short:   "Analyze service mesh mTLS and security configurations",
 	Long: `
 Analyze all service mesh security configurations including:
+
+Service Mesh mTLS:
   - Istio PeerAuthentication (mTLS modes)
   - Istio RequestAuthentication (JWT)
   - Istio sidecar injection status
@@ -34,12 +37,37 @@ Analyze all service mesh security configurations including:
   - Consul Connect
   - Open Service Mesh (OSM)
   - Kuma/Kong Mesh
+
+Security Analysis:
   - Coverage gap analysis
   - mTLS bypass vectors
+  - Authentication policy enforcement
 
-  cloudfox kubernetes mesh-admission`,
+Cloud-Specific Service Mesh (in-cluster detection):
+  Detects cloud-managed service mesh from CRDs and deployments.
+  No --cloud-provider flag required - reads cluster resources directly.
+
+  AWS:
+    - AWS App Mesh (VirtualNode, VirtualService, VirtualGateway)
+    - App Mesh Controller detection
+
+  GCP:
+    - GCP Traffic Director (Envoy-based mesh)
+    - Anthos Service Mesh (ASM)
+    - GKE Gateway API integration
+
+  Azure:
+    - Azure Application Gateway Ingress Controller (AGIC)
+    - Open Service Mesh (OSM) on AKS
+    - Azure-managed Istio add-on
+
+Examples:
+  cloudfox kubernetes mesh-admission
+  cloudfox kubernetes mesh-admission --detailed`,
 	Run: ListMeshAdmission,
 }
+
+// init() removed - detailed flag is now a global persistent flag in cli/kubernetes.go
 
 type MeshAdmissionOutput struct {
 	Table []internal.TableFile
@@ -48,6 +76,16 @@ type MeshAdmissionOutput struct {
 
 func (t MeshAdmissionOutput) TableFiles() []internal.TableFile { return t.Table }
 func (t MeshAdmissionOutput) LootFiles() []internal.LootFile   { return t.Loot }
+
+// MeshEnumeratedPolicy is a unified representation of any policy/rule across all mesh tools
+type MeshEnumeratedPolicy struct {
+	Namespace string
+	Tool      string
+	Name      string
+	Scope     string // MESH, NAMESPACE, WORKLOAD, Cluster
+	Type      string // PeerAuthentication, RequestAuthentication, ServerAuthorization, etc.
+	Details   string // tool-specific summary
+}
 
 // MeshAdmissionFinding represents mesh security for a namespace
 type MeshAdmissionFinding struct {
@@ -73,8 +111,7 @@ type MeshAdmissionFinding struct {
 	JWTPolicies    int
 	AuthPolicies   int
 
-	// Risk Analysis
-	RiskLevel      string
+	// Security Issues
 	SecurityIssues []string
 	BypassVectors  []string
 }
@@ -86,10 +123,9 @@ type IstioInfo struct {
 	Version           string
 	Status            string
 	ControlPlaneReady bool
-	GlobalMTLSMode    string
-	AutoInjection     bool
-	BypassRisk        string
-	ImageVerified     bool // True if Istio control plane image was verified
+	GlobalMTLSMode string
+	AutoInjection  bool
+	ImageVerified  bool // True if Istio control plane image was verified
 }
 
 // IstioPeerAuthInfo represents an Istio PeerAuthentication policy
@@ -97,10 +133,9 @@ type IstioPeerAuthInfo struct {
 	Name       string
 	Namespace  string
 	Scope      string // MESH, NAMESPACE, WORKLOAD
-	MTLSMode   string // STRICT, PERMISSIVE, DISABLE, UNSET
-	Selector   string
-	PortMTLS   map[int]string // port-specific mTLS settings
-	BypassRisk string
+	MTLSMode string // STRICT, PERMISSIVE, DISABLE, UNSET
+	Selector string
+	PortMTLS map[int]string // port-specific mTLS settings
 }
 
 // IstioRequestAuthInfo represents an Istio RequestAuthentication policy
@@ -112,7 +147,6 @@ type IstioRequestAuthInfo struct {
 	Issuers        []string
 	Audiences      []string
 	ForwardHeaders bool
-	BypassRisk     string
 }
 
 // LinkerdInfo represents Linkerd mesh status
@@ -124,7 +158,6 @@ type LinkerdInfo struct {
 	MTLSEnabled    bool
 	IdentityIssuer string
 	AutoInjection  bool
-	BypassRisk     string
 	ImageVerified  bool // True if Linkerd control plane image was verified
 }
 
@@ -133,10 +166,9 @@ type LinkerdServerAuthInfo struct {
 	Name           string
 	Namespace      string
 	Type           string // Server, ServerAuthorization, MeshTLSAuthentication
-	MTLSMode       string
-	Identities     []string
-	Networks       []string
-	BypassRisk     string
+	MTLSMode   string
+	Identities []string
+	Networks   []string
 }
 
 // CiliumMeshInfo represents Cilium Service Mesh status
@@ -144,10 +176,9 @@ type CiliumMeshInfo struct {
 	Name          string
 	Namespace     string
 	Status        string
-	MTLSEnabled   bool
-	MTLSMode      string
-	EnvoyEnabled  bool
-	BypassRisk    string
+	MTLSEnabled  bool
+	MTLSMode     string
+	EnvoyEnabled bool
 	ImageVerified bool // True if Cilium agent image was verified
 }
 
@@ -156,10 +187,9 @@ type ConsulConnectInfo struct {
 	Name          string
 	Namespace     string
 	Status        string
-	MTLSEnabled   bool
+	MTLSEnabled  bool
 	AutoInjection bool
-	Intentions    int
-	BypassRisk    string
+	Intentions   int
 	ImageVerified bool // True if Consul Connect image was verified
 }
 
@@ -168,10 +198,9 @@ type OSMInfo struct {
 	Name           string
 	Namespace      string
 	Status         string
-	MTLSEnabled    bool
+	MTLSEnabled   bool
 	PermissiveMode bool
-	BypassRisk     string
-	ImageVerified  bool // True if OSM controller image was verified
+	ImageVerified bool // True if OSM controller image was verified
 }
 
 // FSMInfo represents Flomesh Service Mesh status
@@ -179,10 +208,9 @@ type FSMInfo struct {
 	Name           string
 	Namespace      string
 	Status         string
-	MTLSEnabled    bool
+	MTLSEnabled   bool
 	PermissiveMode bool
-	BypassRisk     string
-	ImageVerified  bool // True if FSM controller image was verified
+	ImageVerified bool // True if FSM controller image was verified
 }
 
 // KumaMeshInfo represents Kuma/Kong Mesh status
@@ -190,9 +218,8 @@ type KumaMeshInfo struct {
 	Name          string
 	Namespace     string
 	Status        string
-	MTLSEnabled   bool
-	MTLSMode      string
-	BypassRisk    string
+	MTLSEnabled  bool
+	MTLSMode     string
 	ImageVerified bool // True if Kuma control plane image was verified
 }
 
@@ -205,10 +232,9 @@ type AWSAppMeshInfo struct {
 	TotalPods      int
 	MTLSEnabled    bool
 	AutoInjection  bool
-	VirtualNodes   int
+	VirtualNodes    int
 	VirtualServices int
-	ImageVerified  bool
-	BypassRisk     string
+	ImageVerified   bool
 }
 
 // InjectionStatus represents sidecar injection status for a namespace
@@ -219,15 +245,14 @@ type InjectionStatus struct {
 	InjectionLabel     string
 	PodsWithSidecar    int
 	PodsWithoutSidecar int
-	TotalPods          int
-	CoveragePercent    float64
-	BypassRisk         string
+	TotalPods       int
+	CoveragePercent float64
 }
 
 // verifyMeshEngineImage checks if a container image matches known patterns for a mesh engine
 // Now uses the shared admission SDK for centralized engine detection
 func verifyMeshEngineImage(image string, engine string) bool {
-	return VerifyControllerImage(image, engine)
+	return admission.VerifyControllerImage(image, engine)
 }
 
 func ListMeshAdmission(cmd *cobra.Command, args []string) {
@@ -239,6 +264,7 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 	verbosity, _ := parentCmd.PersistentFlags().GetInt("verbosity")
 	wrap, _ := parentCmd.PersistentFlags().GetBool("wrap")
 	outputDir, _ := parentCmd.PersistentFlags().GetString("outdir")
+	detailed := globals.K8sDetailed
 
 	logger.InfoM(fmt.Sprintf("Analyzing service mesh security for %s", globals.ClusterName), K8S_MESH_ADMISSION_MODULE_NAME)
 
@@ -284,6 +310,29 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 	// Build findings per namespace
 	findings := buildMeshAdmissionFindings(istio, istioPeerAuth, istioReqAuth, linkerd, linkerdAuth, ciliumMesh, consul, osm, kuma, awsAppMesh, injectionStatus)
 
+	// Enumerate all policies into unified format
+	logger.InfoM("Enumerating policies across all mesh tools...", K8S_MESH_ADMISSION_MODULE_NAME)
+	var allPolicies []MeshEnumeratedPolicy
+
+	// Convert existing parsed policies
+	for _, pa := range istioPeerAuth {
+		allPolicies = append(allPolicies, istioPeerAuthToPolicy(pa))
+	}
+	for _, ra := range istioReqAuth {
+		allPolicies = append(allPolicies, istioRequestAuthToPolicy(ra))
+	}
+	for _, la := range linkerdAuth {
+		allPolicies = append(allPolicies, linkerdAuthToPolicy(la))
+	}
+
+	// Sort by tool then namespace
+	sort.Slice(allPolicies, func(i, j int) bool {
+		if allPolicies[i].Tool != allPolicies[j].Tool {
+			return allPolicies[i].Tool < allPolicies[j].Tool
+		}
+		return allPolicies[i].Namespace < allPolicies[j].Namespace
+	})
+
 	// Generate tables
 	summaryHeader := []string{
 		"Namespace",
@@ -294,8 +343,16 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 		"With Sidecar",
 		"Without Sidecar",
 		"JWT Auth",
-		"Risk Level",
 		"Issues",
+	}
+
+	policiesHeader := []string{
+		"Namespace",
+		"Tool",
+		"Name",
+		"Scope",
+		"Type",
+		"Details",
 	}
 
 	istioHeader := []string{
@@ -304,27 +361,27 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 		"Status",
 		"Global mTLS",
 		"Auto Injection",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	peerAuthHeader := []string{
-		"Name",
 		"Namespace",
+		"Name",
 		"Scope",
 		"mTLS Mode",
 		"Selector",
 		"Port-Specific",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	reqAuthHeader := []string{
-		"Name",
 		"Namespace",
+		"Name",
 		"Selector",
 		"JWT Rules",
 		"Issuers",
 		"Audiences",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	linkerdHeader := []string{
@@ -334,17 +391,17 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 		"mTLS Enabled",
 		"Auto Injection",
 		"Identity Issuer",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	linkerdAuthHeader := []string{
-		"Name",
 		"Namespace",
+		"Name",
 		"Type",
 		"mTLS Mode",
 		"Identities",
 		"Networks",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	injectionHeader := []string{
@@ -355,16 +412,88 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 		"With Sidecar",
 		"Without Sidecar",
 		"Coverage %",
-		"Bypass Risk",
+		"Issues",
+	}
+
+	// Cilium Mesh detail table
+	ciliumMeshHeader := []string{
+		"Name",
+		"Namespace",
+		"Status",
+		"mTLS Enabled",
+		"mTLS Mode",
+		"Envoy Enabled",
+		"Issues",
+	}
+
+	// Consul Connect detail table
+	consulConnectHeader := []string{
+		"Name",
+		"Namespace",
+		"Status",
+		"mTLS Enabled",
+		"Auto Injection",
+		"Intentions",
+		"Issues",
+	}
+
+	// OSM detail table
+	osmHeader := []string{
+		"Name",
+		"Namespace",
+		"Status",
+		"mTLS Enabled",
+		"Permissive Mode",
+		"Issues",
+	}
+
+	// FSM detail table
+	fsmHeader := []string{
+		"Name",
+		"Namespace",
+		"Status",
+		"mTLS Enabled",
+		"Permissive Mode",
+		"Issues",
+	}
+
+	// Kuma Mesh detail table
+	kumaHeader := []string{
+		"Name",
+		"Namespace",
+		"Status",
+		"mTLS Enabled",
+		"mTLS Mode",
+		"Issues",
+	}
+
+	// AWS App Mesh detail table
+	awsAppMeshHeader := []string{
+		"Name",
+		"Namespace",
+		"Status",
+		"Pods Running",
+		"mTLS Enabled",
+		"Auto Injection",
+		"Virtual Nodes",
+		"Virtual Services",
+		"Issues",
 	}
 
 	var summaryRows [][]string
+	var policiesRows [][]string
 	var istioRows [][]string
 	var peerAuthRows [][]string
 	var reqAuthRows [][]string
 	var linkerdRows [][]string
 	var linkerdAuthRows [][]string
 	var injectionRows [][]string
+	var ciliumMeshRows [][]string
+	var consulConnectRows [][]string
+	var osmRows [][]string
+	var fsmRows [][]string
+	var kumaRows [][]string
+	var awsAppMeshRows [][]string
 
 	loot := shared.NewLootBuilder()
 
@@ -403,20 +532,47 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 			fmt.Sprintf("%d", finding.PodsWithSidecar),
 			fmt.Sprintf("%d", finding.PodsWithoutSidecar),
 			jwtAuth,
-			finding.RiskLevel,
 			issues,
+		})
+	}
+
+	// Build unified policies rows
+	for _, policy := range allPolicies {
+		policiesRows = append(policiesRows, []string{
+			policy.Namespace,
+			policy.Tool,
+			policy.Name,
+			policy.Scope,
+			policy.Type,
+			policy.Details,
 		})
 	}
 
 	// Build Istio rows
 	if istio.Name != "" {
+		// Detect issues
+		var istioIssues []string
+		if istio.Status != "Running" && istio.Status != "Healthy" {
+			istioIssues = append(istioIssues, "Not running")
+		}
+		if istio.GlobalMTLSMode == "PERMISSIVE" || istio.GlobalMTLSMode == "DISABLE" {
+			istioIssues = append(istioIssues, "mTLS not strict")
+		}
+		if !istio.AutoInjection {
+			istioIssues = append(istioIssues, "Auto injection disabled")
+		}
+		istioIssuesStr := "<NONE>"
+		if len(istioIssues) > 0 {
+			istioIssuesStr = strings.Join(istioIssues, "; ")
+		}
+
 		istioRows = append(istioRows, []string{
 			istio.Namespace,
 			istio.Version,
 			istio.Status,
 			istio.GlobalMTLSMode,
 			fmt.Sprintf("%v", istio.AutoInjection),
-			istio.BypassRisk,
+			istioIssuesStr,
 		})
 	}
 
@@ -436,14 +592,30 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 			selector = "*"
 		}
 
+		// Detect issues
+		var paIssues []string
+		if pa.MTLSMode == "PERMISSIVE" {
+			paIssues = append(paIssues, "Permissive mTLS mode")
+		}
+		if pa.MTLSMode == "DISABLE" {
+			paIssues = append(paIssues, "mTLS disabled")
+		}
+		if selector == "*" && pa.Scope == "Namespace" {
+			paIssues = append(paIssues, "Applies to all pods in namespace")
+		}
+		paIssuesStr := "<NONE>"
+		if len(paIssues) > 0 {
+			paIssuesStr = strings.Join(paIssues, "; ")
+		}
+
 		peerAuthRows = append(peerAuthRows, []string{
-			pa.Name,
 			pa.Namespace,
+			pa.Name,
 			pa.Scope,
 			pa.MTLSMode,
 			selector,
 			portMTLS,
-			pa.BypassRisk,
+			paIssuesStr,
 		})
 	}
 
@@ -468,19 +640,54 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 			audiences = strings.Join(ra.Audiences, ", ")
 		}
 
+		// Detect issues
+		var raIssues []string
+		if ra.JWTRules == 0 {
+			raIssues = append(raIssues, "No JWT rules defined")
+		}
+		if len(ra.Issuers) == 0 {
+			raIssues = append(raIssues, "No issuers configured")
+		}
+		if selector == "*" {
+			raIssues = append(raIssues, "Applies to all pods")
+		}
+		raIssuesStr := "<NONE>"
+		if len(raIssues) > 0 {
+			raIssuesStr = strings.Join(raIssues, "; ")
+		}
+
 		reqAuthRows = append(reqAuthRows, []string{
-			ra.Name,
 			ra.Namespace,
+			ra.Name,
 			selector,
 			fmt.Sprintf("%d", ra.JWTRules),
 			issuers,
 			audiences,
-			ra.BypassRisk,
+			raIssuesStr,
 		})
 	}
 
 	// Build Linkerd rows
 	if linkerd.Name != "" {
+		// Detect issues
+		var linkerdIssues []string
+		if linkerd.Status != "Running" && linkerd.Status != "Healthy" {
+			linkerdIssues = append(linkerdIssues, "Not running")
+		}
+		if !linkerd.MTLSEnabled {
+			linkerdIssues = append(linkerdIssues, "mTLS disabled")
+		}
+		if !linkerd.AutoInjection {
+			linkerdIssues = append(linkerdIssues, "Auto injection disabled")
+		}
+		if linkerd.IdentityIssuer == "" {
+			linkerdIssues = append(linkerdIssues, "No identity issuer")
+		}
+		linkerdIssuesStr := "<NONE>"
+		if len(linkerdIssues) > 0 {
+			linkerdIssuesStr = strings.Join(linkerdIssues, "; ")
+		}
+
 		linkerdRows = append(linkerdRows, []string{
 			linkerd.Namespace,
 			linkerd.Version,
@@ -488,7 +695,7 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 			fmt.Sprintf("%v", linkerd.MTLSEnabled),
 			fmt.Sprintf("%v", linkerd.AutoInjection),
 			linkerd.IdentityIssuer,
-			linkerd.BypassRisk,
+			linkerdIssuesStr,
 		})
 	}
 
@@ -508,14 +715,27 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 			networks = strings.Join(la.Networks, ", ")
 		}
 
+		// Detect issues
+		var laIssues []string
+		if la.MTLSMode == "permissive" || la.MTLSMode == "disabled" {
+			laIssues = append(laIssues, "mTLS not strict")
+		}
+		if len(la.Identities) == 0 {
+			laIssues = append(laIssues, "No identities configured")
+		}
+		laIssuesStr := "<NONE>"
+		if len(laIssues) > 0 {
+			laIssuesStr = strings.Join(laIssues, "; ")
+		}
+
 		linkerdAuthRows = append(linkerdAuthRows, []string{
-			la.Name,
 			la.Namespace,
+			la.Name,
 			la.Type,
 			la.MTLSMode,
 			identities,
 			networks,
-			la.BypassRisk,
+			laIssuesStr,
 		})
 	}
 
@@ -531,6 +751,22 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 			label = "-"
 		}
 
+		// Detect issues
+		var injIssues []string
+		if !is.InjectionEnabled {
+			injIssues = append(injIssues, "Injection disabled")
+		}
+		if is.CoveragePercent < 50.0 {
+			injIssues = append(injIssues, "Low sidecar coverage")
+		}
+		if is.PodsWithoutSidecar > 0 && is.InjectionEnabled {
+			injIssues = append(injIssues, "Pods missing sidecars")
+		}
+		injIssuesStr := "<NONE>"
+		if len(injIssues) > 0 {
+			injIssuesStr = strings.Join(injIssues, "; ")
+		}
+
 		injectionRows = append(injectionRows, []string{
 			is.Namespace,
 			is.MeshProvider,
@@ -539,7 +775,174 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 			fmt.Sprintf("%d", is.PodsWithSidecar),
 			fmt.Sprintf("%d", is.PodsWithoutSidecar),
 			fmt.Sprintf("%.1f%%", is.CoveragePercent),
-			is.BypassRisk,
+			injIssuesStr,
+		})
+	}
+
+	// Build Cilium Mesh rows
+	if ciliumMesh.Name != "" {
+		// Detect issues
+		var ciliumIssues []string
+		if !ciliumMesh.MTLSEnabled {
+			ciliumIssues = append(ciliumIssues, "mTLS disabled")
+		}
+		if ciliumMesh.MTLSMode == "permissive" || ciliumMesh.MTLSMode == "disabled" {
+			ciliumIssues = append(ciliumIssues, "Weak mTLS mode")
+		}
+		if !ciliumMesh.EnvoyEnabled {
+			ciliumIssues = append(ciliumIssues, "Envoy proxy disabled")
+		}
+		issuesStr := "<NONE>"
+		if len(ciliumIssues) > 0 {
+			issuesStr = strings.Join(ciliumIssues, "; ")
+		}
+
+		ciliumMeshRows = append(ciliumMeshRows, []string{
+			ciliumMesh.Name,
+			ciliumMesh.Namespace,
+			ciliumMesh.Status,
+			shared.FormatBool(ciliumMesh.MTLSEnabled),
+			ciliumMesh.MTLSMode,
+			shared.FormatBool(ciliumMesh.EnvoyEnabled),
+			issuesStr,
+		})
+	}
+
+	// Build Consul Connect rows
+	if consul.Name != "" {
+		// Detect issues
+		var consulIssues []string
+		if !consul.MTLSEnabled {
+			consulIssues = append(consulIssues, "mTLS disabled")
+		}
+		if !consul.AutoInjection {
+			consulIssues = append(consulIssues, "Auto injection disabled")
+		}
+		if consul.Intentions == 0 {
+			consulIssues = append(consulIssues, "No intentions defined")
+		}
+		issuesStr := "<NONE>"
+		if len(consulIssues) > 0 {
+			issuesStr = strings.Join(consulIssues, "; ")
+		}
+
+		consulConnectRows = append(consulConnectRows, []string{
+			consul.Name,
+			consul.Namespace,
+			consul.Status,
+			shared.FormatBool(consul.MTLSEnabled),
+			shared.FormatBool(consul.AutoInjection),
+			fmt.Sprintf("%d", consul.Intentions),
+			issuesStr,
+		})
+	}
+
+	// Build OSM rows
+	if osm.Name != "" {
+		// Detect issues
+		var osmIssues []string
+		if !osm.MTLSEnabled {
+			osmIssues = append(osmIssues, "mTLS disabled")
+		}
+		if osm.PermissiveMode {
+			osmIssues = append(osmIssues, "Permissive mode enabled")
+		}
+		issuesStr := "<NONE>"
+		if len(osmIssues) > 0 {
+			issuesStr = strings.Join(osmIssues, "; ")
+		}
+
+		osmRows = append(osmRows, []string{
+			osm.Name,
+			osm.Namespace,
+			osm.Status,
+			shared.FormatBool(osm.MTLSEnabled),
+			shared.FormatBool(osm.PermissiveMode),
+			issuesStr,
+		})
+	}
+
+	// Build FSM rows
+	if fsm.Name != "" {
+		// Detect issues
+		var fsmIssues []string
+		if !fsm.MTLSEnabled {
+			fsmIssues = append(fsmIssues, "mTLS disabled")
+		}
+		if fsm.PermissiveMode {
+			fsmIssues = append(fsmIssues, "Permissive mode enabled")
+		}
+		issuesStr := "<NONE>"
+		if len(fsmIssues) > 0 {
+			issuesStr = strings.Join(fsmIssues, "; ")
+		}
+
+		fsmRows = append(fsmRows, []string{
+			fsm.Name,
+			fsm.Namespace,
+			fsm.Status,
+			shared.FormatBool(fsm.MTLSEnabled),
+			shared.FormatBool(fsm.PermissiveMode),
+			issuesStr,
+		})
+	}
+
+	// Build Kuma Mesh rows
+	if kuma.Name != "" {
+		// Detect issues
+		var kumaIssues []string
+		if !kuma.MTLSEnabled {
+			kumaIssues = append(kumaIssues, "mTLS disabled")
+		}
+		if kuma.MTLSMode == "permissive" || kuma.MTLSMode == "disabled" {
+			kumaIssues = append(kumaIssues, "Weak mTLS mode")
+		}
+		issuesStr := "<NONE>"
+		if len(kumaIssues) > 0 {
+			issuesStr = strings.Join(kumaIssues, "; ")
+		}
+
+		kumaRows = append(kumaRows, []string{
+			kuma.Name,
+			kuma.Namespace,
+			kuma.Status,
+			shared.FormatBool(kuma.MTLSEnabled),
+			kuma.MTLSMode,
+			issuesStr,
+		})
+	}
+
+	// Build AWS App Mesh rows
+	if awsAppMesh.Name != "" {
+		// Detect issues
+		var appMeshIssues []string
+		if !awsAppMesh.MTLSEnabled {
+			appMeshIssues = append(appMeshIssues, "mTLS disabled")
+		}
+		if !awsAppMesh.AutoInjection {
+			appMeshIssues = append(appMeshIssues, "Auto injection disabled")
+		}
+		if awsAppMesh.VirtualNodes == 0 && awsAppMesh.VirtualServices == 0 {
+			appMeshIssues = append(appMeshIssues, "No virtual nodes or services")
+		}
+		if awsAppMesh.PodsRunning < awsAppMesh.TotalPods {
+			appMeshIssues = append(appMeshIssues, "Not all pods running")
+		}
+		issuesStr := "<NONE>"
+		if len(appMeshIssues) > 0 {
+			issuesStr = strings.Join(appMeshIssues, "; ")
+		}
+
+		awsAppMeshRows = append(awsAppMeshRows, []string{
+			awsAppMesh.Name,
+			awsAppMesh.Namespace,
+			awsAppMesh.Status,
+			fmt.Sprintf("%d/%d", awsAppMesh.PodsRunning, awsAppMesh.TotalPods),
+			shared.FormatBool(awsAppMesh.MTLSEnabled),
+			shared.FormatBool(awsAppMesh.AutoInjection),
+			fmt.Sprintf("%d", awsAppMesh.VirtualNodes),
+			fmt.Sprintf("%d", awsAppMesh.VirtualServices),
+			issuesStr,
 		})
 	}
 
@@ -549,58 +952,118 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 	// Build output tables
 	var tables []internal.TableFile
 
+	// Always show: summary + unified policies
 	tables = append(tables, internal.TableFile{
 		Name:   "Mesh-Admission-Summary",
 		Header: summaryHeader,
 		Body:   summaryRows,
 	})
 
-	if len(istioRows) > 0 {
+	if len(policiesRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Mesh-Admission-Istio",
-			Header: istioHeader,
-			Body:   istioRows,
+			Name:   "Mesh-Admission-Policies",
+			Header: policiesHeader,
+			Body:   policiesRows,
 		})
 	}
 
-	if len(peerAuthRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Mesh-Admission-Istio-PeerAuth",
-			Header: peerAuthHeader,
-			Body:   peerAuthRows,
-		})
-	}
+	// Detailed tables: per-tool breakdowns (only with --detailed)
+	if detailed {
+		if len(istioRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Mesh-Admission-Istio",
+				Header: istioHeader,
+				Body:   istioRows,
+			})
+		}
 
-	if len(reqAuthRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Mesh-Admission-Istio-RequestAuth",
-			Header: reqAuthHeader,
-			Body:   reqAuthRows,
-		})
-	}
+		if len(peerAuthRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Mesh-Admission-Istio-PeerAuth",
+				Header: peerAuthHeader,
+				Body:   peerAuthRows,
+			})
+		}
 
-	if len(linkerdRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Mesh-Admission-Linkerd",
-			Header: linkerdHeader,
-			Body:   linkerdRows,
-		})
-	}
+		if len(reqAuthRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Mesh-Admission-Istio-RequestAuth",
+				Header: reqAuthHeader,
+				Body:   reqAuthRows,
+			})
+		}
 
-	if len(linkerdAuthRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Mesh-Admission-Linkerd-Auth",
-			Header: linkerdAuthHeader,
-			Body:   linkerdAuthRows,
-		})
-	}
+		if len(linkerdRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Mesh-Admission-Linkerd",
+				Header: linkerdHeader,
+				Body:   linkerdRows,
+			})
+		}
 
-	if len(injectionRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Mesh-Admission-Injection-Status",
-			Header: injectionHeader,
-			Body:   injectionRows,
-		})
+		if len(linkerdAuthRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Mesh-Admission-Linkerd-Auth",
+				Header: linkerdAuthHeader,
+				Body:   linkerdAuthRows,
+			})
+		}
+
+		if len(injectionRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Mesh-Admission-Injection-Status",
+				Header: injectionHeader,
+				Body:   injectionRows,
+			})
+		}
+
+		if len(ciliumMeshRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Mesh-Admission-Cilium",
+				Header: ciliumMeshHeader,
+				Body:   ciliumMeshRows,
+			})
+		}
+
+		if len(consulConnectRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Mesh-Admission-Consul-Connect",
+				Header: consulConnectHeader,
+				Body:   consulConnectRows,
+			})
+		}
+
+		if len(osmRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Mesh-Admission-OSM",
+				Header: osmHeader,
+				Body:   osmRows,
+			})
+		}
+
+		if len(fsmRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Mesh-Admission-FSM",
+				Header: fsmHeader,
+				Body:   fsmRows,
+			})
+		}
+
+		if len(kumaRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Mesh-Admission-Kuma",
+				Header: kumaHeader,
+				Body:   kumaRows,
+			})
+		}
+
+		if len(awsAppMeshRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Mesh-Admission-AWS-AppMesh",
+				Header: awsAppMeshHeader,
+				Body:   awsAppMeshRows,
+			})
+		}
 	}
 
 	output := MeshAdmissionOutput{
@@ -661,7 +1124,6 @@ func analyzeIstio(ctx context.Context, clientset kubernetes.Interface, dynClient
 				// Check readiness
 				if dep.Status.ReadyReplicas < dep.Status.Replicas {
 					info.Status = "degraded"
-					info.BypassRisk = fmt.Sprintf("Only %d/%d istiod replicas ready", dep.Status.ReadyReplicas, dep.Status.Replicas)
 				}
 
 				info.ControlPlaneReady = dep.Status.ReadyReplicas > 0
@@ -770,13 +1232,6 @@ func analyzeIstio(ctx context.Context, clientset kubernetes.Interface, dynClient
 		}
 	}
 
-	// Assess risk
-	if info.GlobalMTLSMode == "PERMISSIVE" {
-		info.BypassRisk = "Global mTLS is PERMISSIVE - plaintext allowed"
-	} else if info.GlobalMTLSMode == "DISABLE" {
-		info.BypassRisk = "Global mTLS is DISABLED - no encryption"
-	}
-
 	return info, peerAuth, reqAuth
 }
 
@@ -835,24 +1290,6 @@ func parseIstioPeerAuth(obj map[string]interface{}) IstioPeerAuthInfo {
 		pa.MTLSMode = "UNSET"
 	}
 
-	// Assess risk
-	switch pa.MTLSMode {
-	case "PERMISSIVE":
-		pa.BypassRisk = "Allows plaintext connections"
-	case "DISABLE":
-		pa.BypassRisk = "mTLS disabled"
-	case "UNSET":
-		pa.BypassRisk = "Inherits parent policy"
-	}
-
-	// Check for port-level exceptions
-	for port, mode := range pa.PortMTLS {
-		if mode == "PERMISSIVE" || mode == "DISABLE" {
-			pa.BypassRisk = fmt.Sprintf("Port %d has %s mTLS", port, mode)
-			break
-		}
-	}
-
 	return pa
 }
 
@@ -899,10 +1336,6 @@ func parseIstioRequestAuth(obj map[string]interface{}) IstioRequestAuthInfo {
 		}
 	}
 
-	if ra.JWTRules == 0 {
-		ra.BypassRisk = "No JWT rules defined"
-	}
-
 	return ra
 }
 
@@ -940,7 +1373,6 @@ func analyzeLinkerd(ctx context.Context, clientset kubernetes.Interface, dynClie
 				// Check readiness
 				if dep.Status.ReadyReplicas < dep.Status.Replicas {
 					info.Status = "degraded"
-					info.BypassRisk = fmt.Sprintf("Only %d/%d control plane replicas ready", dep.Status.ReadyReplicas, dep.Status.Replicas)
 				}
 				break
 			}
@@ -1043,10 +1475,6 @@ func analyzeLinkerd(ctx context.Context, clientset kubernetes.Interface, dynClie
 		}
 	}
 
-	if !info.MTLSEnabled {
-		info.BypassRisk = "mTLS identity issuer not found"
-	}
-
 	return info, auth
 }
 
@@ -1101,7 +1529,6 @@ func parseLinkerdServerAuth(obj map[string]interface{}) LinkerdServerAuthInfo {
 			// Check for unauthenticated
 			if _, ok := client["unauthenticated"].(bool); ok {
 				sa.MTLSMode = "PERMISSIVE"
-				sa.BypassRisk = "Allows unauthenticated connections"
 			}
 
 			// Check for networks
@@ -1265,10 +1692,6 @@ func analyzeCiliumMesh(ctx context.Context, clientset kubernetes.Interface, dynC
 		}
 	}
 
-	if !info.MTLSEnabled {
-		info.BypassRisk = "Cilium mTLS not configured"
-	}
-
 	return info
 }
 
@@ -1351,10 +1774,6 @@ func analyzeConsulConnect(ctx context.Context, clientset kubernetes.Interface, d
 		}
 	}
 
-	if !info.MTLSEnabled {
-		info.BypassRisk = "Connect injection not detected"
-	}
-
 	return info
 }
 
@@ -1423,10 +1842,6 @@ func analyzeOSM(ctx context.Context, clientset kubernetes.Interface, dynClient d
 		}
 	}
 
-	if info.PermissiveMode {
-		info.BypassRisk = "Permissive traffic policy mode enabled"
-	}
-
 	return info
 }
 
@@ -1438,7 +1853,7 @@ func analyzeFSM(ctx context.Context, clientset kubernetes.Interface, dynClient d
 	info := FSMInfo{}
 
 	// Check for FSM control plane using SDK expected namespaces
-	namespaces := GetExpectedNamespaces("fsm")
+	namespaces := admission.GetExpectedNamespaces("fsm")
 	if len(namespaces) == 0 {
 		namespaces = []string{"fsm-system", "kube-system"}
 	}
@@ -1481,10 +1896,6 @@ func analyzeFSM(ctx context.Context, clientset kubernetes.Interface, dynClient d
 
 	// FSM has mTLS enabled by default
 	info.MTLSEnabled = true
-
-	if info.PermissiveMode {
-		info.BypassRisk = "Permissive traffic policy mode enabled"
-	}
 
 	return info
 }
@@ -1566,12 +1977,6 @@ func analyzeKumaMesh(ctx context.Context, clientset kubernetes.Interface, dynCli
 		}
 	}
 
-	if !info.MTLSEnabled {
-		info.BypassRisk = "mTLS not enabled in Mesh configuration"
-	} else if info.MTLSMode == "PERMISSIVE" {
-		info.BypassRisk = "mTLS in permissive mode - plaintext allowed"
-	}
-
 	return info
 }
 
@@ -1625,15 +2030,10 @@ func analyzeAWSAppMesh(ctx context.Context, clientset kubernetes.Interface, dynC
 
 				if dep.Status.ReadyReplicas < dep.Status.Replicas {
 					info.Status = "degraded"
-					info.BypassRisk = fmt.Sprintf("Only %d/%d controller replicas ready", dep.Status.ReadyReplicas, dep.Status.Replicas)
 				}
 
 				if !info.ImageVerified {
 					info.Status = "unverified"
-					if info.BypassRisk != "" {
-						info.BypassRisk += "; "
-					}
-					info.BypassRisk += "Detection based on name only - verify manually"
 				}
 				break
 			}
@@ -1707,14 +2107,6 @@ func analyzeAWSAppMesh(ctx context.Context, clientset kubernetes.Interface, dynC
 	vsList, err := dynClient.Resource(virtualServiceGVR).Namespace("").List(ctx, metav1.ListOptions{})
 	if err == nil {
 		info.VirtualServices = len(vsList.Items)
-	}
-
-	// Assess risk
-	if !info.MTLSEnabled {
-		if info.BypassRisk != "" {
-			info.BypassRisk += "; "
-		}
-		info.BypassRisk += "TLS not enforced on virtual nodes"
 	}
 
 	return info
@@ -1863,12 +2255,9 @@ func analyzeInjectionStatus(ctx context.Context, clientset kubernetes.Interface,
 			is.CoveragePercent = float64(is.PodsWithSidecar) / float64(is.TotalPods) * 100
 		}
 
-		// Assess risk
+		// Set default mesh provider
 		if is.MeshProvider == "" {
 			is.MeshProvider = "-"
-		}
-		if is.PodsWithoutSidecar > 0 && is.MeshProvider != "-" {
-			is.BypassRisk = fmt.Sprintf("%d pods without mesh sidecar", is.PodsWithoutSidecar)
 		}
 
 		status = append(status, is)
@@ -1977,18 +2366,13 @@ func buildMeshAdmissionFindings(
 			finding.MTLSMode = "-"
 		}
 
-		// Calculate risk
+		// Calculate security issues
 		if finding.MeshProvider == "-" {
-			finding.RiskLevel = "HIGH"
 			finding.SecurityIssues = append(finding.SecurityIssues, "No service mesh")
 		} else if !finding.MTLSEnforced {
-			finding.RiskLevel = "MEDIUM"
 			finding.SecurityIssues = append(finding.SecurityIssues, "mTLS not enforced")
 		} else if finding.PodsWithoutSidecar > 0 {
-			finding.RiskLevel = "MEDIUM"
 			finding.SecurityIssues = append(finding.SecurityIssues, fmt.Sprintf("%d pods without sidecar", finding.PodsWithoutSidecar))
-		} else {
-			finding.RiskLevel = "LOW"
 		}
 
 		if finding.MTLSMode == "PERMISSIVE" {
@@ -1998,18 +2382,87 @@ func buildMeshAdmissionFindings(
 		findings = append(findings, finding)
 	}
 
-	// Sort by risk level then namespace
+	// Sort by namespace
 	sort.Slice(findings, func(i, j int) bool {
-		riskOrder := map[string]int{"HIGH": 0, "MEDIUM": 1, "LOW": 2}
-		if riskOrder[findings[i].RiskLevel] != riskOrder[findings[j].RiskLevel] {
-			return riskOrder[findings[i].RiskLevel] < riskOrder[findings[j].RiskLevel]
-		}
 		return findings[i].Namespace < findings[j].Namespace
 	})
 
 	return findings
 }
 
+// ============================================================================
+// Policy Conversion Functions
+// ============================================================================
+
+// istioPeerAuthToPolicy converts IstioPeerAuthInfo to MeshEnumeratedPolicy
+func istioPeerAuthToPolicy(pa IstioPeerAuthInfo) MeshEnumeratedPolicy {
+	details := fmt.Sprintf("mode=%s", pa.MTLSMode)
+	if pa.Selector != "" {
+		details += fmt.Sprintf(", selector=%s", pa.Selector)
+	}
+	if len(pa.PortMTLS) > 0 {
+		var ports []string
+		for port, mode := range pa.PortMTLS {
+			ports = append(ports, fmt.Sprintf("%d:%s", port, mode))
+		}
+		details += fmt.Sprintf(", ports=[%s]", strings.Join(ports, ","))
+	}
+	return MeshEnumeratedPolicy{
+		Namespace: pa.Namespace,
+		Tool:      "Istio",
+		Name:      pa.Name,
+		Scope:     pa.Scope,
+		Type:      "PeerAuthentication",
+		Details:   details,
+	}
+}
+
+// istioRequestAuthToPolicy converts IstioRequestAuthInfo to MeshEnumeratedPolicy
+func istioRequestAuthToPolicy(ra IstioRequestAuthInfo) MeshEnumeratedPolicy {
+	details := fmt.Sprintf("%d JWT rules", ra.JWTRules)
+	if len(ra.Issuers) > 0 {
+		if len(ra.Issuers) > 2 {
+			details += fmt.Sprintf(", issuers=%s...", strings.Join(ra.Issuers[:2], ","))
+		} else {
+			details += fmt.Sprintf(", issuers=%s", strings.Join(ra.Issuers, ","))
+		}
+	}
+	scope := "NAMESPACE"
+	if ra.Selector == "" {
+		scope = "WORKLOAD"
+	}
+	return MeshEnumeratedPolicy{
+		Namespace: ra.Namespace,
+		Tool:      "Istio",
+		Name:      ra.Name,
+		Scope:     scope,
+		Type:      "RequestAuthentication",
+		Details:   details,
+	}
+}
+
+// linkerdAuthToPolicy converts LinkerdServerAuthInfo to MeshEnumeratedPolicy
+func linkerdAuthToPolicy(la LinkerdServerAuthInfo) MeshEnumeratedPolicy {
+	details := fmt.Sprintf("mode=%s", la.MTLSMode)
+	if len(la.Identities) > 0 {
+		if len(la.Identities) > 2 {
+			details += fmt.Sprintf(", identities=%s...", strings.Join(la.Identities[:2], ","))
+		} else {
+			details += fmt.Sprintf(", identities=%s", strings.Join(la.Identities, ","))
+		}
+	}
+	if len(la.Networks) > 0 {
+		details += fmt.Sprintf(", networks=%s", strings.Join(la.Networks, ","))
+	}
+	return MeshEnumeratedPolicy{
+		Namespace: la.Namespace,
+		Tool:      "Linkerd",
+		Name:      la.Name,
+		Scope:     "NAMESPACE",
+		Type:      la.Type,
+		Details:   details,
+	}
+}
 
 // ============================================================================
 // Loot Generation
@@ -2024,69 +2477,74 @@ func generateMeshAdmissionLoot(loot *shared.LootBuilder,
 	awsAppMesh AWSAppMeshInfo,
 	injectionStatus []InjectionStatus) {
 
-	// Summary
-	loot.Section("Summary").Add("# Service Mesh Security Summary")
-	loot.Section("Summary").Add("#")
+	s := loot.Section("Mesh-Admission-Commands")
+	s.Add("# Service Mesh Security Summary")
+	s.Add("#")
 
-	// Detected meshes
-	meshCount := 0
+	// Detected meshes with status
+	type toolStatus struct {
+		name   string
+		status string
+		detail string
+	}
+	var detected []toolStatus
+
 	if istio.Name != "" {
-		meshCount++
-		loot.Section("Summary").Add(fmt.Sprintf("# Istio: %s (version: %s, global mTLS: %s)", istio.Status, istio.Version, istio.GlobalMTLSMode))
+		detail := fmt.Sprintf("version: %s, global mTLS: %s", istio.Version, istio.GlobalMTLSMode)
+		detected = append(detected, toolStatus{"Istio", istio.Status, detail})
 	}
 	if linkerd.Name != "" {
-		meshCount++
-		loot.Section("Summary").Add(fmt.Sprintf("# Linkerd: %s (mTLS: %v)", linkerd.Status, linkerd.MTLSEnabled))
+		detail := fmt.Sprintf("mTLS: %v", linkerd.MTLSEnabled)
+		detected = append(detected, toolStatus{"Linkerd", linkerd.Status, detail})
 	}
 	if cilium.Name != "" && cilium.EnvoyEnabled {
-		meshCount++
-		loot.Section("Summary").Add(fmt.Sprintf("# Cilium Service Mesh: %s (mTLS: %v)", cilium.Status, cilium.MTLSEnabled))
+		detail := fmt.Sprintf("mTLS: %v", cilium.MTLSEnabled)
+		detected = append(detected, toolStatus{"Cilium Service Mesh", cilium.Status, detail})
 	}
 	if consul.Name != "" {
-		meshCount++
-		loot.Section("Summary").Add(fmt.Sprintf("# Consul Connect: %s (mTLS: %v)", consul.Status, consul.MTLSEnabled))
+		detail := fmt.Sprintf("mTLS: %v", consul.MTLSEnabled)
+		detected = append(detected, toolStatus{"Consul Connect", consul.Status, detail})
 	}
 	if osm.Name != "" {
-		meshCount++
-		permissive := ""
+		detail := ""
 		if osm.PermissiveMode {
-			permissive = " (PERMISSIVE MODE)"
+			detail = "PERMISSIVE MODE"
 		}
-		loot.Section("Summary").Add(fmt.Sprintf("# Open Service Mesh: %s%s", osm.Status, permissive))
+		detected = append(detected, toolStatus{"Open Service Mesh", osm.Status, detail})
 	}
 	if fsm.Name != "" {
-		meshCount++
-		permissive := ""
+		detail := ""
 		if fsm.PermissiveMode {
-			permissive = " (PERMISSIVE MODE)"
+			detail = "PERMISSIVE MODE"
 		}
-		loot.Section("Summary").Add(fmt.Sprintf("# Flomesh Service Mesh: %s%s", fsm.Status, permissive))
+		detected = append(detected, toolStatus{"Flomesh Service Mesh", fsm.Status, detail})
 	}
 	if kuma.Name != "" {
-		meshCount++
-		loot.Section("Summary").Add(fmt.Sprintf("# Kuma Mesh: %s (mTLS: %v, mode: %s)", kuma.Status, kuma.MTLSEnabled, kuma.MTLSMode))
+		detail := fmt.Sprintf("mTLS: %v, mode: %s", kuma.MTLSEnabled, kuma.MTLSMode)
+		detected = append(detected, toolStatus{"Kuma Mesh", kuma.Status, detail})
 	}
 	if awsAppMesh.Name != "" {
-		meshCount++
 		status := awsAppMesh.Status
 		if awsAppMesh.ImageVerified {
 			status += " (verified)"
 		}
-		loot.Section("Summary").Add(fmt.Sprintf("# AWS App Mesh: %s (mTLS: %v, nodes: %d, services: %d)", status, awsAppMesh.MTLSEnabled, awsAppMesh.VirtualNodes, awsAppMesh.VirtualServices))
+		detail := fmt.Sprintf("mTLS: %v, nodes: %d, services: %d", awsAppMesh.MTLSEnabled, awsAppMesh.VirtualNodes, awsAppMesh.VirtualServices)
+		detected = append(detected, toolStatus{"AWS App Mesh", status, detail})
 	}
 
-	if meshCount == 0 {
-		loot.Section("Summary").Add("#")
-		loot.Section("Summary").Add("# WARNING: No service mesh detected!")
-		loot.Section("Summary").Add("# Service-to-service communication is NOT encrypted")
+	if len(detected) == 0 {
+		s.Add("# WARNING: No service mesh detected")
+		s.Add("# Service-to-service communication is NOT encrypted")
+	} else {
+		s.Add(fmt.Sprintf("# Detected Tools: %d", len(detected)))
+		for _, t := range detected {
+			s.Add(fmt.Sprintf("#   %s: %s (%s)", t.name, strings.ToUpper(t.status), t.detail))
+		}
 	}
 
-	loot.Section("Summary").Add("#")
+	s.Add("#")
 
-	// mTLS Analysis
-	loot.Section("MTLSAnalysis").Add("# mTLS Coverage Analysis")
-	loot.Section("MTLSAnalysis").Add("#")
-
+	// mTLS Coverage
 	strictCount := 0
 	permissiveCount := 0
 	noMeshCount := 0
@@ -2101,81 +2559,71 @@ func generateMeshAdmissionLoot(loot *shared.LootBuilder,
 		}
 	}
 
-	loot.Section("MTLSAnalysis").Add(fmt.Sprintf("# Namespaces with STRICT mTLS: %d", strictCount))
-	loot.Section("MTLSAnalysis").Add(fmt.Sprintf("# Namespaces with PERMISSIVE mTLS: %d", permissiveCount))
-	loot.Section("MTLSAnalysis").Add(fmt.Sprintf("# Namespaces without mesh: %d", noMeshCount))
-	loot.Section("MTLSAnalysis").Add("#")
+	s.Add(fmt.Sprintf("# Namespaces with STRICT mTLS: %d", strictCount))
+	s.Add(fmt.Sprintf("# Namespaces with PERMISSIVE mTLS: %d", permissiveCount))
+	s.Add(fmt.Sprintf("# Namespaces without mesh: %d", noMeshCount))
+	s.Add("#")
 
-	// Bypass vectors
-	loot.Section("BypassVectors").Add("# mTLS Bypass Vectors")
-	loot.Section("BypassVectors").Add("#")
+	// Bypass vectors (only if relevant)
+	var bypasses []string
 
 	if istio.GlobalMTLSMode == "PERMISSIVE" {
-		loot.Section("BypassVectors").Add("# - Istio global mTLS is PERMISSIVE - plaintext connections accepted")
+		bypasses = append(bypasses, "Istio global mTLS is PERMISSIVE - plaintext connections accepted")
 	}
 
 	for _, pa := range istioPeerAuth {
 		if pa.MTLSMode == "PERMISSIVE" || pa.MTLSMode == "DISABLE" {
-			loot.Section("BypassVectors").Add(fmt.Sprintf("# - PeerAuthentication %s/%s: %s mTLS", pa.Namespace, pa.Name, pa.MTLSMode))
+			bypasses = append(bypasses, fmt.Sprintf("PeerAuthentication %s/%s: %s mTLS", pa.Namespace, pa.Name, pa.MTLSMode))
 		}
 	}
 
 	for _, la := range linkerdAuth {
-		if la.BypassRisk != "" {
-			loot.Section("BypassVectors").Add(fmt.Sprintf("# - Linkerd %s %s/%s: %s", la.Type, la.Namespace, la.Name, la.BypassRisk))
+		if la.MTLSMode == "PERMISSIVE" {
+			bypasses = append(bypasses, fmt.Sprintf("Linkerd %s %s/%s: allows unauthenticated", la.Type, la.Namespace, la.Name))
 		}
 	}
 
 	// Pods without sidecar
 	for _, is := range injectionStatus {
 		if is.PodsWithoutSidecar > 0 && is.MeshProvider != "-" {
-			loot.Section("BypassVectors").Add(fmt.Sprintf("# - Namespace %s: %d pods without %s sidecar", is.Namespace, is.PodsWithoutSidecar, is.MeshProvider))
+			bypasses = append(bypasses, fmt.Sprintf("Namespace %s: %d pods without %s sidecar", is.Namespace, is.PodsWithoutSidecar, is.MeshProvider))
 		}
 	}
 
-	loot.Section("BypassVectors").Add("#")
-
-	// Recommendations
-	loot.Section("Recommendations").Add("# Recommendations")
-	loot.Section("Recommendations").Add("#")
-
-	if meshCount == 0 {
-		loot.Section("Recommendations").Add("# 1. Deploy a service mesh for mTLS between services")
-		loot.Section("Recommendations").Add("#    Istio: istioctl install --set profile=default")
-		loot.Section("Recommendations").Add("#    Linkerd: linkerd install | kubectl apply -f -")
+	if len(bypasses) > 0 {
+		s.Add("# Bypass Vectors:")
+		for _, b := range bypasses {
+			s.Addf("#   %s", b)
+		}
+		s.Add("#")
 	}
 
-	if istio.GlobalMTLSMode == "PERMISSIVE" {
-		loot.Section("Recommendations").Add("# 2. Enable STRICT mTLS mode for Istio:")
-		loot.Section("Recommendations").Add("#    kubectl apply -f - <<EOF")
-		loot.Section("Recommendations").Add("#    apiVersion: security.istio.io/v1")
-		loot.Section("Recommendations").Add("#    kind: PeerAuthentication")
-		loot.Section("Recommendations").Add("#    metadata:")
-		loot.Section("Recommendations").Add("#      name: default")
-		loot.Section("Recommendations").Add("#      namespace: istio-system")
-		loot.Section("Recommendations").Add("#    spec:")
-		loot.Section("Recommendations").Add("#      mtls:")
-		loot.Section("Recommendations").Add("#        mode: STRICT")
-		loot.Section("Recommendations").Add("#    EOF")
-	}
+	// Commands (only for detected tools)
+	s.Add("# Commands")
+	s.Add("#")
 
-	// Commands
-	loot.Section("Commands").Add("# Useful Commands")
-	loot.Section("Commands").Add("#")
 	if istio.Name != "" {
-		loot.Section("Commands").Add("# Check Istio mTLS status:")
-		loot.Section("Commands").Add("istioctl analyze -A")
-		loot.Section("Commands").Add("kubectl get peerauthentication -A")
-		loot.Section("Commands").Add("kubectl get requestauthentication -A")
-		loot.Section("Commands").Add("#")
+		s.Add("# Check Istio mTLS status:")
+		s.Add("istioctl analyze -A")
+		s.Add("kubectl get peerauthentication -A")
+		s.Add("kubectl get requestauthentication -A")
+		s.Add("#")
 	}
+
 	if linkerd.Name != "" {
-		loot.Section("Commands").Add("# Check Linkerd mTLS:")
-		loot.Section("Commands").Add("linkerd check")
-		loot.Section("Commands").Add("kubectl get server,serverauthorization -A")
-		loot.Section("Commands").Add("#")
+		s.Add("# Check Linkerd mTLS:")
+		s.Add("linkerd check")
+		s.Add("kubectl get server,serverauthorization -A")
+		s.Add("#")
 	}
-	loot.Section("Commands").Add("# List namespaces with injection enabled:")
-	loot.Section("Commands").Add("kubectl get ns -l istio-injection=enabled")
-	loot.Section("Commands").Add("kubectl get ns -l linkerd.io/inject=enabled")
+
+	if istio.Name != "" || linkerd.Name != "" {
+		s.Add("# List namespaces with injection enabled:")
+		if istio.Name != "" {
+			s.Add("kubectl get ns -l istio-injection=enabled")
+		}
+		if linkerd.Name != "" {
+			s.Add("kubectl get ns -l linkerd.io/inject=enabled")
+		}
+	}
 }

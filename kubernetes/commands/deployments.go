@@ -72,7 +72,6 @@ type DeploymentFinding struct {
 	CloudRole           string
 	DeploymentStrategy  string
 	SecurityAnnotations map[string]string
-	RiskLevel           string
 	// Suspicious patterns
 	BackdoorPatterns []string
 	ReverseShells    []string
@@ -81,6 +80,8 @@ type DeploymentFinding struct {
 	ContainerEscape  []string
 	Commands         []string
 	Args             []string
+	// Risk scoring (internal use only - not displayed)
+	RiskScore int
 }
 
 type DeploymentContainer struct {
@@ -104,6 +105,107 @@ type DeploymentVolume struct {
 	Source     string
 	MountPath  string
 	ReadOnly   bool
+}
+
+// calculateDeploymentRiskScore calculates comprehensive risk score (internal use only for prioritization)
+func calculateDeploymentRiskScore(finding *DeploymentFinding) int {
+	score := 0
+
+	// CRITICAL factors - Suspicious patterns (highest priority)
+	if len(finding.ReverseShells) > 0 {
+		score += 95 // Reverse shells = critical
+	}
+	if len(finding.CryptoMiners) > 0 {
+		score += 90 // Crypto miners = critical
+	}
+	if len(finding.DataExfiltration) > 0 {
+		score += 85 // Data exfiltration = critical
+	}
+	if len(finding.ContainerEscape) > 0 {
+		score += 90 // Container escape attempts = critical
+	}
+
+	// Privileged configurations
+	if finding.Privileged {
+		score += 80
+		if finding.HostPID || finding.HostNetwork || finding.HostIPC {
+			score += 20 // Privileged + host namespace = guaranteed escape path
+		}
+	}
+
+	// Host namespace access
+	if finding.HostPID {
+		score += 60
+	}
+	if finding.HostNetwork {
+		score += 50
+	}
+	if finding.HostIPC {
+		score += 45
+
+	}
+
+	// Sensitive host paths (high risk)
+	for _, hp := range finding.SensitiveHostPaths {
+		if strings.Contains(hp, "docker.sock") || strings.Contains(hp, "containerd") {
+			score += 95 // Container runtime socket = CRITICAL
+		} else if strings.Contains(hp, "/etc/kubernetes") || strings.Contains(hp, "kubelet") {
+			score += 85 // K8s secrets = CRITICAL
+		} else if strings.Contains(hp, " / ") || strings.Contains(hp, "/etc ") {
+			score += 70 // Root or /etc access
+		} else {
+			score += 25 // Other sensitive paths
+		}
+	}
+
+	// Writable host paths
+	score += finding.WritableHostPaths * 20
+
+	// Dangerous capabilities
+	for _, cap := range finding.DangerousCaps {
+		switch cap {
+		case "SYS_ADMIN", "SYS_MODULE":
+			score += 70
+		case "SYS_PTRACE", "SYS_RAWIO":
+			score += 50
+		case "NET_ADMIN", "DAC_READ_SEARCH", "DAC_OVERRIDE":
+			score += 35
+		default:
+			score += 15
+		}
+	}
+
+	// Security context weaknesses
+	if finding.AllowPrivEsc {
+		score += 15
+	}
+	if !finding.ReadOnlyRootFS {
+		score += 8
+	}
+
+	// Image security issues
+	for _, tagType := range finding.ImageTagTypes {
+		if tagType == "latest" {
+			score += 10
+		}
+	}
+
+	// Resource limits
+	if !finding.HasResourceLimits {
+		score += 15
+	}
+
+	// Cloud role access
+	if finding.CloudRole != "" {
+		score += 25
+	}
+
+	// Cap score at 100
+	if score > 100 {
+		score = 100
+	}
+
+	return score
 }
 
 func ListDeployments(cmd *cobra.Command, args []string) {
@@ -155,26 +257,17 @@ func ListDeployments(cmd *cobra.Command, args []string) {
 	var findings []DeploymentFinding
 	namespaceMap := make(map[string][]string)
 
-	// Risk level counters
-	riskCounts := map[string]int{
-		"CRITICAL": 0,
-		"HIGH":     0,
-		"MEDIUM":   0,
-		"LOW":      0,
-	}
-
 	// Loot collections
-	var lootHighRisk []string
+	var lootSuspicious []string
 	var lootPrivEsc []string
 	var lootSecretsAccess []string
 
-	lootHighRisk = append(lootHighRisk, `#####################################
-##### High-Risk Deployments
+	lootSuspicious = append(lootSuspicious, `#####################################
+##### Suspicious Deployments
 #####################################
 #
 # MANUAL REVIEW REQUIRED
-# Deployments with CRITICAL or HIGH security risks
-# Prioritize these for immediate remediation
+# Deployments with security concerns
 #
 `)
 
@@ -545,24 +638,9 @@ func ListDeployments(cmd *cobra.Command, args []string) {
 		finding.BackdoorPatterns = append(finding.BackdoorPatterns, finding.DataExfiltration...)
 		finding.BackdoorPatterns = append(finding.BackdoorPatterns, finding.ContainerEscape...)
 
-		// Calculate risk level
-		runAsRoot := (runAsUser == 0 || runAsUser == -1)
-		hasDangerousCaps := len(dangerousCaps) > 0
-		finding.RiskLevel = k8sinternal.GetDeploymentRiskLevel(
-			privileged,
-			dep.Spec.Template.Spec.HostPID,
-			dep.Spec.Template.Spec.HostIPC,
-			dep.Spec.Template.Spec.HostNetwork,
-			hostPathCount,
-			writableHostPaths,
-			runAsRoot,
-			hasDangerousCaps,
-			allowPrivEsc,
-			hasImageWithLatestTag,
-			hasResourceLimits,
-		)
+		// Calculate risk score (internal use only for prioritization)
+		finding.RiskScore = calculateDeploymentRiskScore(&finding)
 
-		riskCounts[finding.RiskLevel]++
 		findings = append(findings, finding)
 
 		// Merge all suspicious patterns into one column
@@ -698,49 +776,51 @@ Strategy:.spec.strategy.type}'`
 		cmdStr := fmt.Sprintf("kubectl get deployment %q -n %q -o json | jq -r %s \n", dep.Name, dep.Namespace, jq)
 		namespaceMap[dep.Namespace] = append(namespaceMap[dep.Namespace], cmdStr)
 
-		// Generate detailed loot based on risk level
+		// Generate detailed loot for suspicious deployments
 		depID := fmt.Sprintf("%s/%s", dep.Namespace, dep.Name)
 
-		// HIGH RISK LOOT
-		if finding.RiskLevel == "CRITICAL" || finding.RiskLevel == "HIGH" {
-			lootHighRisk = append(lootHighRisk, fmt.Sprintf("\n### [%s] %s", finding.RiskLevel, depID))
+		// Check if deployment is suspicious
+		isSuspicious := privileged || dep.Spec.Template.Spec.HostPID || dep.Spec.Template.Spec.HostIPC ||
+			dep.Spec.Template.Spec.HostNetwork || len(sensitiveHostPaths) > 0 || len(dangerousCaps) > 0 ||
+			len(finding.BackdoorPatterns) > 0 || hasImageWithLatestTag
 
-			var riskFactors []string
+		// SUSPICIOUS DEPLOYMENTS LOOT
+		if isSuspicious {
+			var issues []string
 			if privileged {
-				riskFactors = append(riskFactors, "PRIVILEGED")
+				issues = append(issues, "Privileged container")
 			}
 			if dep.Spec.Template.Spec.HostPID {
-				riskFactors = append(riskFactors, "HOSTPID")
+				issues = append(issues, "hostPID enabled")
 			}
 			if dep.Spec.Template.Spec.HostIPC {
-				riskFactors = append(riskFactors, "HOSTIPC")
+				issues = append(issues, "hostIPC enabled")
 			}
 			if dep.Spec.Template.Spec.HostNetwork {
-				riskFactors = append(riskFactors, "HOSTNETWORK")
+				issues = append(issues, "hostNetwork enabled")
 			}
-			if writableHostPaths > 0 {
-				riskFactors = append(riskFactors, fmt.Sprintf("WRITABLE_HOSTPATHS:%d", writableHostPaths))
+			if len(sensitiveHostPaths) > 0 {
+				issues = append(issues, fmt.Sprintf("Sensitive hostPaths: %s", strings.Join(sensitiveHostPaths, ", ")))
 			}
 			if len(dangerousCaps) > 0 {
-				riskFactors = append(riskFactors, fmt.Sprintf("DANGEROUS_CAPS:%s", strings.Join(dangerousCaps, ",")))
+				issues = append(issues, fmt.Sprintf("Dangerous capabilities: %s", strings.Join(dangerousCaps, ", ")))
+			}
+			if len(finding.BackdoorPatterns) > 0 {
+				issues = append(issues, fmt.Sprintf("Suspicious patterns: %s", strings.Join(finding.BackdoorPatterns, ", ")))
 			}
 			if hasImageWithLatestTag {
-				riskFactors = append(riskFactors, "LATEST_TAG")
-			}
-			if !hasResourceLimits {
-				riskFactors = append(riskFactors, "NO_RESOURCE_LIMITS")
+				issues = append(issues, "Using 'latest' image tag")
 			}
 
-			lootHighRisk = append(lootHighRisk, fmt.Sprintf("# Risk Factors: %s", strings.Join(riskFactors, ", ")))
-			lootHighRisk = append(lootHighRisk, fmt.Sprintf("# Replicas: %d (multiply exposure by replica count)", finding.Replicas))
-			lootHighRisk = append(lootHighRisk, fmt.Sprintf("kubectl get deployment -n %s %s -o yaml", dep.Namespace, dep.Name))
-			lootHighRisk = append(lootHighRisk, "# Scale down to investigate:")
-			lootHighRisk = append(lootHighRisk, fmt.Sprintf("kubectl scale deployment -n %s %s --replicas=0\n", dep.Namespace, dep.Name))
+			lootSuspicious = append(lootSuspicious, shared.FormatSuspiciousEntry(dep.Namespace, dep.Name, issues)...)
+			lootSuspicious = append(lootSuspicious, fmt.Sprintf("kubectl get deployment -n %s %s -o yaml", dep.Namespace, dep.Name))
+			lootSuspicious = append(lootSuspicious, fmt.Sprintf("kubectl describe deployment -n %s %s", dep.Namespace, dep.Name))
+			lootSuspicious = append(lootSuspicious, "")
 		}
 
 		// PRIVILEGE ESCALATION LOOT
-		if finding.RiskLevel == "CRITICAL" || finding.RiskLevel == "HIGH" {
-			lootPrivEsc = append(lootPrivEsc, fmt.Sprintf("\n### [%s] %s", finding.RiskLevel, depID))
+		if isSuspicious {
+			lootPrivEsc = append(lootPrivEsc, fmt.Sprintf("\n### %s", depID))
 
 			if privileged && (dep.Spec.Template.Spec.HostPID || dep.Spec.Template.Spec.HostNetwork || dep.Spec.Template.Spec.HostIPC) {
 				lootPrivEsc = append(lootPrivEsc, "# CRITICAL: Privileged + Host Namespaces = Container Escape")
@@ -775,7 +855,7 @@ Strategy:.spec.strategy.type}'`
 
 		// SECRETS ACCESS LOOT
 		if len(finding.Secrets) > 0 || len(finding.ConfigMaps) > 0 {
-			lootSecretsAccess = append(lootSecretsAccess, fmt.Sprintf("\n### [%s] %s", finding.RiskLevel, depID))
+			lootSecretsAccess = append(lootSecretsAccess, fmt.Sprintf("\n### %s", depID))
 
 			if len(finding.Secrets) > 0 {
 				lootSecretsAccess = append(lootSecretsAccess, fmt.Sprintf("# Secrets: %s", strings.Join(finding.Secrets, ", ")))
@@ -796,6 +876,11 @@ Strategy:.spec.strategy.type}'`
 			lootSecretsAccess = append(lootSecretsAccess, fmt.Sprintf("kubectl exec -n %s $POD -- env | grep -i secret\n", dep.Namespace))
 		}
 	}
+
+	// Sort findings by RiskScore descending for prioritized output
+	sort.Slice(findings, func(i, j int) bool {
+		return findings[i].RiskScore > findings[j].RiskScore
+	})
 
 	// Build consolidated Deployment-Commands
 	var lootContent []string
@@ -837,14 +922,11 @@ Strategy:.spec.strategy.type}'`
 		lootContent = append(lootContent, "")
 	}
 
-	// === HIGH RISK ===
-	if riskCounts["CRITICAL"] > 0 || riskCounts["HIGH"] > 0 {
-		lootContent = append(lootContent, "=== HIGH RISK ===")
+	// === SUSPICIOUS DEPLOYMENTS ===
+	if len(lootSuspicious) > 0 {
+		lootContent = append(lootContent, "=== SUSPICIOUS DEPLOYMENTS ===")
 		lootContent = append(lootContent, "")
-		lootContent = append(lootContent, fmt.Sprintf("# Risk Distribution: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
-			riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"]))
-		lootContent = append(lootContent, "")
-		lootContent = append(lootContent, lootHighRisk...)
+		lootContent = append(lootContent, lootSuspicious...)
 	}
 
 	// === PRIVILEGE ESCALATION ===
@@ -929,10 +1011,7 @@ Strategy:.spec.strategy.type}'`
 	}
 
 	if len(summaryRows) > 0 {
-		logger.InfoM(fmt.Sprintf("%d deployments found | Risk: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
-			len(summaryRows),
-			riskCounts["CRITICAL"], riskCounts["HIGH"], riskCounts["MEDIUM"], riskCounts["LOW"]),
-			globals.K8S_DEPLOYMENTS_MODULE_NAME)
+		logger.InfoM(fmt.Sprintf("%d deployments found", len(summaryRows)), globals.K8S_DEPLOYMENTS_MODULE_NAME)
 	} else {
 		logger.InfoM("No deployments found, skipping output file creation", globals.K8S_DEPLOYMENTS_MODULE_NAME)
 	}

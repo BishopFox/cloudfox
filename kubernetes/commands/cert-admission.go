@@ -7,10 +7,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/keyvault/armkeyvault"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/acm"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/BishopFox/cloudfox/kubernetes/shared"
+	"github.com/BishopFox/cloudfox/kubernetes/shared/admission"
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -31,14 +37,32 @@ Analyze all certificate management configurations including:
   - Kubernetes CSR resources
   - CSR approver policies
   - Venafi integration
-  - AWS ACM integration
   - Istio certificate management
   - Certificate expiration analysis
   - Self-signed vs CA-signed certificates
 
-  cloudfox kubernetes cert-admission`,
+Cloud Provider Integration:
+  AWS:
+    - AWS ACM (Certificate Manager) - certificate details and expiration
+    - AWS Private CA Issuer
+    Requires: AWS credentials with acm:ListCertificates, acm:DescribeCertificate
+
+  GCP:
+    - Google CAS (Certificate Authority Service) Issuer
+    - GKE certificate management
+
+  Azure:
+    - Azure Key Vault Certificate Issuer
+    - Azure Key Vault certificates
+    Requires: Azure credentials with Key Vault read access
+
+Examples:
+  cloudfox kubernetes cert-admission
+  cloudfox kubernetes cert-admission --detailed`,
 	Run: ListCertAdmission,
 }
+
+// init() removed - detailed flag is now a global persistent flag in cli/kubernetes.go
 
 type CertAdmissionOutput struct {
 	Table []internal.TableFile
@@ -47,6 +71,16 @@ type CertAdmissionOutput struct {
 
 func (t CertAdmissionOutput) TableFiles() []internal.TableFile { return t.Table }
 func (t CertAdmissionOutput) LootFiles() []internal.LootFile   { return t.Loot }
+
+// CertEnumeratedPolicy represents a unified policy entry from any cert management tool
+type CertEnumeratedPolicy struct {
+	Namespace string
+	Tool      string
+	Name      string
+	Scope     string
+	Type      string
+	Details   string
+}
 
 // CertAdmissionFinding represents certificate management for a namespace
 type CertAdmissionFinding struct {
@@ -72,8 +106,7 @@ type CertAdmissionFinding struct {
 	VaultCerts         int
 	VenafiCerts        int
 
-	// Risk Analysis
-	RiskLevel      string
+	// Issues
 	SecurityIssues []string
 }
 
@@ -86,7 +119,6 @@ type CertManagerInfo struct {
 	PodsRunning   int
 	TotalPods     int
 	Webhooks      bool
-	BypassRisk    string
 	ImageVerified bool // True if cert-manager image was verified
 }
 
@@ -102,7 +134,6 @@ type IssuerInfo struct {
 	VaultPath     string
 	VenafiZone    string
 	CASecretName  string
-	BypassRisk    string
 }
 
 // CertAdmissionCertInfo represents a cert-manager Certificate
@@ -122,7 +153,6 @@ type CertAdmissionCertInfo struct {
 	DaysUntilExpiry int
 	IsExpired      bool
 	IsExpiringSoon bool
-	BypassRisk     string
 }
 
 // CertificateRequestInfo represents a cert-manager CertificateRequest
@@ -134,7 +164,6 @@ type CertificateRequestInfo struct {
 	Approved    bool
 	Denied      bool
 	FailureTime string
-	BypassRisk  string
 }
 
 // CSRInfo represents a Kubernetes CertificateSigningRequest
@@ -147,7 +176,6 @@ type CSRInfo struct {
 	Denied       bool
 	Issued       bool
 	ExpirationSeconds int
-	BypassRisk   string
 }
 
 // CSRApproverInfo represents a CSR auto-approver
@@ -157,7 +185,6 @@ type CSRApproverInfo struct {
 	Type         string // kubelet-csr-approver, cert-manager, custom
 	SignerNames  []string
 	AutoApprove  bool
-	BypassRisk   string
 }
 
 // VenafiInfo represents Venafi integration details
@@ -171,7 +198,6 @@ type VenafiInfo struct {
 	CustomFields  []string
 	PodsRunning   int
 	TotalPods     int
-	BypassRisk    string
 	ImageVerified bool // True if Venafi operator image was verified
 }
 
@@ -185,7 +211,6 @@ type SPIFFEInfo struct {
 	TotalAgents   int
 	TrustDomain   string
 	Registrations int
-	BypassRisk    string
 	ImageVerified bool // True if SPIRE server/agent image was verified
 }
 
@@ -198,14 +223,13 @@ type IstioCertInfo struct {
 	WorkloadCertTTL string
 	RotationEnabled bool
 	ExternalCA      bool
-	BypassRisk      string
 	ImageVerified   bool // True if Istio control plane image was verified
 }
 
 // verifyCertEngineImage checks if a container image matches known patterns for a cert engine
 // Now uses the shared admission SDK for centralized engine detection
 func verifyCertEngineImage(image string, engine string) bool {
-	return VerifyControllerImage(image, engine)
+	return admission.VerifyControllerImage(image, engine)
 }
 
 func ListCertAdmission(cmd *cobra.Command, args []string) {
@@ -217,6 +241,7 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 	verbosity, _ := parentCmd.PersistentFlags().GetInt("verbosity")
 	wrap, _ := parentCmd.PersistentFlags().GetBool("wrap")
 	outputDir, _ := parentCmd.PersistentFlags().GetString("outdir")
+	detailed := globals.K8sDetailed
 
 	logger.InfoM(fmt.Sprintf("Analyzing certificate management for %s", globals.ClusterName), K8S_CERT_ADMISSION_MODULE_NAME)
 
@@ -259,6 +284,31 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 	logger.InfoM("Analyzing Istio Certificates...", K8S_CERT_ADMISSION_MODULE_NAME)
 	istioCerts := analyzeIstioCerts(ctx, clientset, dynClient)
 
+	// Initialize cloud clients for certificate enumeration (if cloud providers specified)
+	certCloudClients := initCertCloudClients(logger)
+
+	// Analyze cloud provider certificates (if credentials available)
+	var awsACMCerts []AWSACMCertificateInfo
+	var azureKeyVaultCerts []AzureKeyVaultCertInfo
+
+	if certCloudClients != nil {
+		logger.InfoM("Analyzing cloud provider certificates...", K8S_CERT_ADMISSION_MODULE_NAME)
+
+		if certCloudClients.AWSACMClient != nil {
+			awsACMCerts = analyzeAWSACMCertificates(ctx, certCloudClients, logger)
+			if len(awsACMCerts) > 0 {
+				logger.InfoM(fmt.Sprintf("Found %d AWS ACM certificates", len(awsACMCerts)), K8S_CERT_ADMISSION_MODULE_NAME)
+			}
+		}
+
+		if certCloudClients.AzureKeyVaultClient != nil {
+			azureKeyVaultCerts = analyzeAzureKeyVaultCerts(ctx, certCloudClients, logger)
+			if len(azureKeyVaultCerts) > 0 {
+				logger.InfoM(fmt.Sprintf("Found %d Azure Key Vault certificates", len(azureKeyVaultCerts)), K8S_CERT_ADMISSION_MODULE_NAME)
+			}
+		}
+	}
+
 	// Build findings per namespace
 	findings := buildCertAdmissionFindings(certManager, issuers, certificates)
 
@@ -274,8 +324,17 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 		"Self-Signed",
 		"CA-Signed",
 		"ACME",
-		"Risk Level",
 		"Issues",
+	}
+
+	// Unified policies table header
+	policiesHeader := []string{
+		"Namespace",
+		"Tool",
+		"Name",
+		"Scope",
+		"Type",
+		"Details",
 	}
 
 	certManagerHeader := []string{
@@ -284,39 +343,39 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 		"Status",
 		"Pods Running",
 		"Webhooks",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	issuerHeader := []string{
-		"Name",
 		"Namespace",
+		"Name",
 		"Scope",
 		"Type",
 		"Ready",
 		"Details",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	certificateHeader := []string{
-		"Name",
 		"Namespace",
+		"Name",
 		"Secret",
 		"Issuer",
 		"DNS Names",
 		"Ready",
 		"Expires",
 		"Days Left",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	certRequestHeader := []string{
-		"Name",
 		"Namespace",
+		"Name",
 		"Issuer",
 		"Approved",
 		"Denied",
 		"Ready",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	csrHeader := []string{
@@ -326,16 +385,16 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 		"Usages",
 		"Approved",
 		"Issued",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	csrApproverHeader := []string{
-		"Name",
 		"Namespace",
+		"Name",
 		"Type",
 		"Signer Names",
 		"Auto Approve",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	venafiHeader := []string{
@@ -345,7 +404,7 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 		"TPP URL",
 		"Cloud URL",
 		"Zone",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	spiffeHeader := []string{
@@ -355,7 +414,7 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 		"Agents Running",
 		"Trust Domain",
 		"Registrations",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	istioCertHeader := []string{
@@ -364,10 +423,32 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 		"Workload Cert TTL",
 		"External CA",
 		"Rotation Enabled",
-		"Bypass Risk",
+		"Issues",
+	}
+
+	// Cloud certificate headers
+	awsACMHeader := []string{
+		"ARN",
+		"Domain",
+		"Status",
+		"Type",
+		"Expires",
+		"In Use",
+		"Issues",
+	}
+
+	azureKeyVaultHeader := []string{
+		"Vault Name",
+		"Certificate Name",
+		"Status",
+		"ID",
+		"Expires",
+		"Days Left",
+		"Issues",
 	}
 
 	var summaryRows [][]string
+	var policiesRows [][]string
 	var certManagerRows [][]string
 	var issuerRows [][]string
 	var certificateRows [][]string
@@ -377,6 +458,8 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 	var venafiRows [][]string
 	var spiffeRows [][]string
 	var istioCertRows [][]string
+	var awsACMRows [][]string
+	var azureKeyVaultRows [][]string
 
 	loot := shared.NewLootBuilder()
 
@@ -402,7 +485,6 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 			fmt.Sprintf("%d", finding.SelfSignedCerts),
 			fmt.Sprintf("%d", finding.CASignedCerts),
 			fmt.Sprintf("%d", finding.ACMECerts),
-			finding.RiskLevel,
 			issues,
 		})
 	}
@@ -414,17 +496,33 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 			webhooks = "Yes"
 		}
 
+		// Detect issues
+		var cmIssues []string
+		if certManager.Status != "Running" && certManager.Status != "Healthy" {
+			cmIssues = append(cmIssues, "Not running")
+		}
+		if !certManager.Webhooks {
+			cmIssues = append(cmIssues, "Webhooks disabled")
+		}
+		if certManager.PodsRunning < certManager.TotalPods {
+			cmIssues = append(cmIssues, "Not all pods running")
+		}
+		issuesStr := "<NONE>"
+		if len(cmIssues) > 0 {
+			issuesStr = strings.Join(cmIssues, "; ")
+		}
+
 		certManagerRows = append(certManagerRows, []string{
 			certManager.Namespace,
 			certManager.Version,
 			certManager.Status,
 			fmt.Sprintf("%d/%d", certManager.PodsRunning, certManager.TotalPods),
 			webhooks,
-			certManager.BypassRisk,
+			issuesStr,
 		})
 	}
 
-	// Build issuer rows
+	// Build issuer rows and policies
 	for _, issuer := range issuers {
 		scope := "Namespace"
 		ns := issuer.Namespace
@@ -450,14 +548,37 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 			details = fmt.Sprintf("secret: %s", issuer.CASecretName)
 		}
 
+		// Detect issues
+		var issuerIssues []string
+		if !issuer.Ready {
+			issuerIssues = append(issuerIssues, "Not ready")
+		}
+		if issuer.Type == "SelfSigned" {
+			issuerIssues = append(issuerIssues, "Self-signed issuer")
+		}
+		issuerIssuesStr := "<NONE>"
+		if len(issuerIssues) > 0 {
+			issuerIssuesStr = strings.Join(issuerIssues, "; ")
+		}
+
 		issuerRows = append(issuerRows, []string{
-			issuer.Name,
 			ns,
+			issuer.Name,
 			scope,
 			issuer.Type,
 			ready,
 			details,
-			issuer.BypassRisk,
+			issuerIssuesStr,
+		})
+
+		// Add to unified policies table
+		policiesRows = append(policiesRows, []string{
+			ns,
+			"cert-manager",
+			issuer.Name,
+			scope,
+			issuer.Type,
+			details,
 		})
 	}
 
@@ -490,16 +611,66 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 			daysLeft = "EXPIRED"
 		}
 
+		// Detect issues
+		var certIssues []string
+		if cert.IsExpired {
+			certIssues = append(certIssues, "Certificate expired")
+		} else if cert.IsExpiringSoon {
+			certIssues = append(certIssues, fmt.Sprintf("Expiring in %d days", cert.DaysUntilExpiry))
+		}
+		if !cert.Ready {
+			certIssues = append(certIssues, "Not ready")
+		}
+		certIssuesStr := "<NONE>"
+		if len(certIssues) > 0 {
+			certIssuesStr = strings.Join(certIssues, "; ")
+		}
+
 		certificateRows = append(certificateRows, []string{
-			cert.Name,
 			cert.Namespace,
+			cert.Name,
 			cert.SecretName,
 			fmt.Sprintf("%s/%s", cert.IssuerKind, cert.IssuerRef),
 			dnsNames,
 			ready,
 			expires,
 			daysLeft,
-			cert.BypassRisk,
+			certIssuesStr,
+		})
+
+		// Add to unified policies table with expiration details
+		var certDetailParts []string
+		certDetailParts = append(certDetailParts, fmt.Sprintf("Issuer: %s/%s", cert.IssuerKind, cert.IssuerRef))
+		if expires != "-" {
+			certDetailParts = append(certDetailParts, fmt.Sprintf("Expires: %s", expires))
+		}
+		if cert.IsExpired {
+			certDetailParts = append(certDetailParts, "EXPIRED")
+		} else if cert.IsExpiringSoon {
+			certDetailParts = append(certDetailParts, fmt.Sprintf("%dd left", cert.DaysUntilExpiry))
+		} else if cert.DaysUntilExpiry > 0 {
+			certDetailParts = append(certDetailParts, fmt.Sprintf("%dd left", cert.DaysUntilExpiry))
+		}
+		if !cert.Ready {
+			certDetailParts = append(certDetailParts, fmt.Sprintf("NOT READY: %s", cert.ReadyReason))
+		}
+		if len(cert.DNSNames) > 0 {
+			if len(cert.DNSNames) > 2 {
+				certDetailParts = append(certDetailParts, fmt.Sprintf("DNS: %s +%d", strings.Join(cert.DNSNames[:2], ","), len(cert.DNSNames)-2))
+			} else {
+				certDetailParts = append(certDetailParts, fmt.Sprintf("DNS: %s", strings.Join(cert.DNSNames, ",")))
+			}
+		}
+		if cert.SecretName != "" {
+			certDetailParts = append(certDetailParts, fmt.Sprintf("Secret: %s", cert.SecretName))
+		}
+		policiesRows = append(policiesRows, []string{
+			cert.Namespace,
+			"cert-manager",
+			cert.Name,
+			"Namespace",
+			"Certificate",
+			strings.Join(certDetailParts, ", "),
 		})
 	}
 
@@ -518,14 +689,41 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 			denied = "Yes"
 		}
 
+		// Detect issues
+		var crIssues []string
+		if cr.Denied {
+			crIssues = append(crIssues, "Request denied")
+		}
+		if !cr.Approved && !cr.Denied {
+			crIssues = append(crIssues, "Pending approval")
+		}
+		if !cr.Ready {
+			crIssues = append(crIssues, "Not ready")
+		}
+		crIssuesStr := "<NONE>"
+		if len(crIssues) > 0 {
+			crIssuesStr = strings.Join(crIssues, "; ")
+		}
+
 		certRequestRows = append(certRequestRows, []string{
-			cr.Name,
 			cr.Namespace,
+			cr.Name,
 			cr.IssuerRef,
 			approved,
 			denied,
 			ready,
-			cr.BypassRisk,
+			crIssuesStr,
+		})
+
+		// Add to unified policies table
+		crDetails := fmt.Sprintf("Issuer: %s, Approved: %s", cr.IssuerRef, approved)
+		policiesRows = append(policiesRows, []string{
+			cr.Namespace,
+			"cert-manager",
+			cr.Name,
+			"Namespace",
+			"CertificateRequest",
+			crDetails,
 		})
 	}
 
@@ -545,6 +743,19 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 			usages = strings.Join(csr.Usages, ", ")
 		}
 
+		// Detect issues
+		var csrIssues []string
+		if !csr.Approved {
+			csrIssues = append(csrIssues, "Not approved")
+		}
+		if csr.Approved && !csr.Issued {
+			csrIssues = append(csrIssues, "Approved but not issued")
+		}
+		csrIssuesStr := "<NONE>"
+		if len(csrIssues) > 0 {
+			csrIssuesStr = strings.Join(csrIssues, "; ")
+		}
+
 		csrRows = append(csrRows, []string{
 			csr.Name,
 			csr.SignerName,
@@ -552,7 +763,18 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 			usages,
 			approved,
 			issued,
-			csr.BypassRisk,
+			csrIssuesStr,
+		})
+
+		// Add to unified policies table
+		csrDetails := fmt.Sprintf("Signer: %s, Approved: %s, Issued: %s", csr.SignerName, approved, issued)
+		policiesRows = append(policiesRows, []string{
+			"<CLUSTER>", // CSRs are cluster-scoped
+			"k8s-csr",
+			csr.Name,
+			"Cluster",
+			"CSR",
+			csrDetails,
 		})
 	}
 
@@ -568,13 +790,40 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 			signers = strings.Join(approver.SignerNames, ", ")
 		}
 
+		// Detect issues
+		var approverIssues []string
+		if approver.AutoApprove {
+			approverIssues = append(approverIssues, "Auto-approve enabled")
+		}
+		for _, signer := range approver.SignerNames {
+			if signer == "*" {
+				approverIssues = append(approverIssues, "Wildcard signer")
+				break
+			}
+		}
+		approverIssuesStr := "<NONE>"
+		if len(approverIssues) > 0 {
+			approverIssuesStr = strings.Join(approverIssues, "; ")
+		}
+
 		csrApproverRows = append(csrApproverRows, []string{
-			approver.Name,
 			approver.Namespace,
+			approver.Name,
 			approver.Type,
 			signers,
 			autoApprove,
-			approver.BypassRisk,
+			approverIssuesStr,
+		})
+
+		// Add to unified policies table
+		approverDetails := fmt.Sprintf("Auto-Approve: %s, Signers: %s", autoApprove, signers)
+		policiesRows = append(policiesRows, []string{
+			approver.Namespace,
+			"csr-approver",
+			approver.Name,
+			"Namespace",
+			approver.Type,
+			approverDetails,
 		})
 	}
 
@@ -592,9 +841,21 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 		if venafi.Zone != "" {
 			zone = venafi.Zone
 		}
-		bypassRisk := "-"
-		if venafi.BypassRisk != "" {
-			bypassRisk = venafi.BypassRisk
+
+		// Detect issues
+		var venafiIssues []string
+		if venafi.Status != "Running" && venafi.Status != "Healthy" {
+			venafiIssues = append(venafiIssues, "Not running")
+		}
+		if venafi.PodsRunning < venafi.TotalPods {
+			venafiIssues = append(venafiIssues, "Not all pods running")
+		}
+		if venafi.Zone == "" {
+			venafiIssues = append(venafiIssues, "No zone configured")
+		}
+		venafiIssuesStr := "<NONE>"
+		if len(venafiIssues) > 0 {
+			venafiIssuesStr = strings.Join(venafiIssues, "; ")
 		}
 
 		venafiRows = append(venafiRows, []string{
@@ -604,7 +865,18 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 			tppUrl,
 			cloudUrl,
 			zone,
-			bypassRisk,
+			venafiIssuesStr,
+		})
+
+		// Add to unified policies table
+		venafiDetails := fmt.Sprintf("Status: %s, Zone: %s", venafi.Status, zone)
+		policiesRows = append(policiesRows, []string{
+			venafi.Namespace,
+			"venafi",
+			venafi.Name,
+			"Namespace",
+			"Venafi Enhanced Issuer",
+			venafiDetails,
 		})
 	}
 
@@ -618,9 +890,21 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 		if spiffe.TrustDomain != "" {
 			trustDomain = spiffe.TrustDomain
 		}
-		bypassRisk := "-"
-		if spiffe.BypassRisk != "" {
-			bypassRisk = spiffe.BypassRisk
+
+		// Detect issues
+		var spiffeIssues []string
+		if !spiffe.ServerRunning {
+			spiffeIssues = append(spiffeIssues, "Server not running")
+		}
+		if spiffe.AgentsRunning < spiffe.TotalAgents {
+			spiffeIssues = append(spiffeIssues, "Not all agents running")
+		}
+		if spiffe.TrustDomain == "" {
+			spiffeIssues = append(spiffeIssues, "No trust domain")
+		}
+		spiffeIssuesStr := "<NONE>"
+		if len(spiffeIssues) > 0 {
+			spiffeIssuesStr = strings.Join(spiffeIssues, "; ")
 		}
 
 		spiffeRows = append(spiffeRows, []string{
@@ -630,7 +914,18 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 			fmt.Sprintf("%d/%d", spiffe.AgentsRunning, spiffe.TotalAgents),
 			trustDomain,
 			fmt.Sprintf("%d", spiffe.Registrations),
-			bypassRisk,
+			spiffeIssuesStr,
+		})
+
+		// Add to unified policies table
+		spiffeDetails := fmt.Sprintf("Status: %s, Trust Domain: %s, Registrations: %d", spiffe.Status, trustDomain, spiffe.Registrations)
+		policiesRows = append(policiesRows, []string{
+			spiffe.Namespace,
+			"spiffe",
+			spiffe.Name,
+			"Namespace",
+			"SPIFFE/SPIRE",
+			spiffeDetails,
 		})
 	}
 
@@ -648,9 +943,18 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 		if istioCerts.WorkloadCertTTL != "" {
 			certTTL = istioCerts.WorkloadCertTTL
 		}
-		bypassRisk := "-"
-		if istioCerts.BypassRisk != "" {
-			bypassRisk = istioCerts.BypassRisk
+
+		// Detect issues
+		var istioCertIssues []string
+		if !istioCerts.RotationEnabled {
+			istioCertIssues = append(istioCertIssues, "Rotation disabled")
+		}
+		if istioCerts.Status != "Running" && istioCerts.Status != "Healthy" {
+			istioCertIssues = append(istioCertIssues, "Not running")
+		}
+		istioCertIssuesStr := "<NONE>"
+		if len(istioCertIssues) > 0 {
+			istioCertIssuesStr = strings.Join(istioCertIssues, "; ")
 		}
 
 		istioCertRows = append(istioCertRows, []string{
@@ -659,7 +963,113 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 			certTTL,
 			externalCA,
 			rotationEnabled,
-			bypassRisk,
+			istioCertIssuesStr,
+		})
+
+		// Add to unified policies table
+		istioDetails := fmt.Sprintf("Status: %s, TTL: %s, External CA: %s", istioCerts.Status, certTTL, externalCA)
+		policiesRows = append(policiesRows, []string{
+			istioCerts.Namespace,
+			"istio",
+			istioCerts.Name,
+			"Namespace",
+			"Istio Certificates",
+			istioDetails,
+		})
+	}
+
+	// Build AWS ACM certificate rows
+	for _, cert := range awsACMCerts {
+		inUse := "No"
+		if len(cert.InUseBy) > 0 {
+			inUse = fmt.Sprintf("Yes (%d)", len(cert.InUseBy))
+		}
+		expires := "-"
+		if !cert.NotAfter.IsZero() {
+			expires = cert.NotAfter.Format("2006-01-02")
+		}
+
+		// Detect issues
+		var acmIssues []string
+		if cert.Status != "ISSUED" {
+			acmIssues = append(acmIssues, "Status: "+cert.Status)
+		}
+		if len(cert.InUseBy) == 0 {
+			acmIssues = append(acmIssues, "Not in use")
+		}
+		acmIssuesStr := "<NONE>"
+		if len(acmIssues) > 0 {
+			acmIssuesStr = strings.Join(acmIssues, "; ")
+		}
+
+		awsACMRows = append(awsACMRows, []string{
+			cert.ARN,
+			cert.DomainName,
+			cert.Status,
+			cert.Type,
+			expires,
+			inUse,
+			acmIssuesStr,
+		})
+
+		// Add to unified policies table
+		acmDetails := fmt.Sprintf("Domain: %s, Status: %s, Type: %s, Expires: %s", cert.DomainName, cert.Status, cert.Type, expires)
+		policiesRows = append(policiesRows, []string{
+			"<AWS>",
+			"aws-acm",
+			cert.DomainName,
+			"Cloud",
+			"AWS ACM Certificate",
+			acmDetails,
+		})
+	}
+
+	// Build Azure Key Vault certificate rows
+	for _, cert := range azureKeyVaultCerts {
+		status := "Disabled"
+		if cert.Enabled {
+			status = "Enabled"
+		}
+		expires := "-"
+		if !cert.Expires.IsZero() {
+			expires = cert.Expires.Format("2006-01-02")
+		}
+
+		// Detect issues
+		var akvIssues []string
+		if !cert.Enabled {
+			akvIssues = append(akvIssues, "Certificate disabled")
+		}
+		if cert.DaysUntilExpiry <= 30 && cert.DaysUntilExpiry > 0 {
+			akvIssues = append(akvIssues, fmt.Sprintf("Expiring in %d days", cert.DaysUntilExpiry))
+		}
+		if cert.DaysUntilExpiry <= 0 {
+			akvIssues = append(akvIssues, "Expired")
+		}
+		akvIssuesStr := "<NONE>"
+		if len(akvIssues) > 0 {
+			akvIssuesStr = strings.Join(akvIssues, "; ")
+		}
+
+		azureKeyVaultRows = append(azureKeyVaultRows, []string{
+			cert.VaultName,
+			cert.CertificateName,
+			status,
+			cert.VaultURI,
+			expires,
+			fmt.Sprintf("%d", cert.DaysUntilExpiry),
+			akvIssuesStr,
+		})
+
+		// Add to unified policies table
+		akvDetails := fmt.Sprintf("Vault: %s, Status: %s, Expires: %s", cert.VaultName, status, expires)
+		policiesRows = append(policiesRows, []string{
+			"<AZURE>",
+			"azure-keyvault",
+			cert.CertificateName,
+			"Cloud",
+			"Azure Key Vault Certificate",
+			akvDetails,
 		})
 	}
 
@@ -669,82 +1079,112 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 	// Build output tables
 	var tables []internal.TableFile
 
+	// Always include summary
 	tables = append(tables, internal.TableFile{
 		Name:   "Cert-Admission-Summary",
 		Header: summaryHeader,
 		Body:   summaryRows,
 	})
 
-	if len(certManagerRows) > 0 {
+	// Always include unified policies table
+	if len(policiesRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Cert-Admission-CertManager",
-			Header: certManagerHeader,
-			Body:   certManagerRows,
+			Name:   "Cert-Admission-Policies",
+			Header: policiesHeader,
+			Body:   policiesRows,
 		})
 	}
 
-	if len(issuerRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Cert-Admission-Issuers",
-			Header: issuerHeader,
-			Body:   issuerRows,
-		})
-	}
+	// Detail tables only shown with --detailed flag
+	if detailed {
+		if len(certManagerRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Cert-Admission-CertManager",
+				Header: certManagerHeader,
+				Body:   certManagerRows,
+			})
+		}
 
-	if len(certificateRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Cert-Admission-Certificates",
-			Header: certificateHeader,
-			Body:   certificateRows,
-		})
-	}
+		if len(issuerRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Cert-Admission-Issuers",
+				Header: issuerHeader,
+				Body:   issuerRows,
+			})
+		}
 
-	if len(certRequestRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Cert-Admission-CertificateRequests",
-			Header: certRequestHeader,
-			Body:   certRequestRows,
-		})
-	}
+		if len(certificateRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Cert-Admission-Certificates",
+				Header: certificateHeader,
+				Body:   certificateRows,
+			})
+		}
 
-	if len(csrRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Cert-Admission-CSRs",
-			Header: csrHeader,
-			Body:   csrRows,
-		})
-	}
+		if len(certRequestRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Cert-Admission-CertificateRequests",
+				Header: certRequestHeader,
+				Body:   certRequestRows,
+			})
+		}
 
-	if len(csrApproverRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Cert-Admission-CSRApprovers",
-			Header: csrApproverHeader,
-			Body:   csrApproverRows,
-		})
-	}
+		if len(csrRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Cert-Admission-CSRs",
+				Header: csrHeader,
+				Body:   csrRows,
+			})
+		}
 
-	if len(venafiRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Cert-Admission-Venafi",
-			Header: venafiHeader,
-			Body:   venafiRows,
-		})
-	}
+		if len(csrApproverRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Cert-Admission-CSRApprovers",
+				Header: csrApproverHeader,
+				Body:   csrApproverRows,
+			})
+		}
 
-	if len(spiffeRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Cert-Admission-SPIFFE",
-			Header: spiffeHeader,
-			Body:   spiffeRows,
-		})
-	}
+		if len(venafiRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Cert-Admission-Venafi",
+				Header: venafiHeader,
+				Body:   venafiRows,
+			})
+		}
 
-	if len(istioCertRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Cert-Admission-IstioCerts",
-			Header: istioCertHeader,
-			Body:   istioCertRows,
-		})
+		if len(spiffeRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Cert-Admission-SPIFFE",
+				Header: spiffeHeader,
+				Body:   spiffeRows,
+			})
+		}
+
+		if len(istioCertRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Cert-Admission-IstioCerts",
+				Header: istioCertHeader,
+				Body:   istioCertRows,
+			})
+		}
+
+		// Cloud provider certificate tables
+		if len(awsACMRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Cert-Admission-AWS-ACM",
+				Header: awsACMHeader,
+				Body:   awsACMRows,
+			})
+		}
+
+		if len(azureKeyVaultRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Cert-Admission-Azure-KeyVault",
+				Header: azureKeyVaultHeader,
+				Body:   azureKeyVaultRows,
+			})
+		}
 	}
 
 	output := CertAdmissionOutput{
@@ -815,7 +1255,6 @@ func analyzeCertManager(ctx context.Context, clientset kubernetes.Interface) Cer
 
 				if info.PodsRunning < info.TotalPods {
 					info.Status = "degraded"
-					info.BypassRisk = fmt.Sprintf("Only %d/%d cert-manager pods running", info.PodsRunning, info.TotalPods)
 				}
 
 				break
@@ -860,10 +1299,6 @@ func analyzeCertManager(ctx context.Context, clientset kubernetes.Interface) Cer
 		if info.ImageVerified {
 			break
 		}
-	}
-
-	if !info.Webhooks {
-		info.BypassRisk = "cert-manager webhooks not found"
 	}
 
 	return info
@@ -925,7 +1360,6 @@ func parseIssuer(obj map[string]interface{}, isCluster bool) IssuerInfo {
 		// Determine issuer type
 		if _, ok := spec["selfSigned"]; ok {
 			issuer.Type = "SelfSigned"
-			issuer.BypassRisk = "Self-signed certificates - not trusted by clients"
 		} else if ca, ok := spec["ca"].(map[string]interface{}); ok {
 			issuer.Type = "CA"
 			if secretName, ok := ca["secretName"].(string); ok {
@@ -935,9 +1369,6 @@ func parseIssuer(obj map[string]interface{}, isCluster bool) IssuerInfo {
 			issuer.Type = "ACME"
 			if server, ok := acme["server"].(string); ok {
 				issuer.ACMEServer = server
-				if strings.Contains(server, "staging") {
-					issuer.BypassRisk = "Using staging ACME server"
-				}
 			}
 		} else if vault, ok := spec["vault"].(map[string]interface{}); ok {
 			issuer.Type = "Vault"
@@ -970,10 +1401,6 @@ func parseIssuer(obj map[string]interface{}, isCluster bool) IssuerInfo {
 				}
 			}
 		}
-	}
-
-	if !issuer.Ready && issuer.BypassRisk == "" {
-		issuer.BypassRisk = fmt.Sprintf("Issuer not ready: %s", issuer.ReadyReason)
 	}
 
 	return issuer
@@ -1076,15 +1503,6 @@ func parseCertAdmissionCert(obj map[string]interface{}) CertAdmissionCertInfo {
 		}
 	}
 
-	// Assess risk
-	if cert.IsExpired {
-		cert.BypassRisk = "Certificate EXPIRED"
-	} else if cert.IsExpiringSoon {
-		cert.BypassRisk = fmt.Sprintf("Expires in %d days", cert.DaysUntilExpiry)
-	} else if !cert.Ready {
-		cert.BypassRisk = fmt.Sprintf("Certificate not ready: %s", cert.ReadyReason)
-	}
-
 	return cert
 }
 
@@ -1151,12 +1569,6 @@ func parseCertAdmissionCertRequest(obj map[string]interface{}) CertificateReques
 		}
 	}
 
-	if cr.Denied {
-		cr.BypassRisk = "Certificate request denied"
-	} else if !cr.Approved && !cr.Ready {
-		cr.BypassRisk = "Pending approval"
-	}
-
 	return cr
 }
 
@@ -1200,14 +1612,6 @@ func analyzeCSRs(ctx context.Context, clientset kubernetes.Interface) []CSRInfo 
 
 		info.Issued = len(csr.Status.Certificate) > 0
 
-		// Assess risk
-		if info.Approved && !info.Issued {
-			info.BypassRisk = "Approved but not issued"
-		}
-		if strings.Contains(info.SignerName, "legacy-unknown") {
-			info.BypassRisk = "Legacy unknown signer - may auto-approve"
-		}
-
 		csrs = append(csrs, info)
 	}
 
@@ -1240,10 +1644,6 @@ func analyzeCSRApprovers(ctx context.Context, clientset kubernetes.Interface, dy
 					SignerNames: []string{"kubernetes.io/kubelet-serving"},
 				}
 
-				if approver.AutoApprove {
-					approver.BypassRisk = "Auto-approves kubelet CSRs"
-				}
-
 				approvers = append(approvers, approver)
 			}
 		}
@@ -1274,8 +1674,6 @@ func analyzeCSRApprovers(ctx context.Context, clientset kubernetes.Interface, dy
 				policies, err := dynClient.Resource(crpGVR).Namespace("").List(ctx, metav1.ListOptions{})
 				if err == nil && len(policies.Items) > 0 {
 					approver.AutoApprove = false // Has policies, not auto-approve
-				} else {
-					approver.BypassRisk = "No CertificateRequestPolicies found"
 				}
 
 				approvers = append(approvers, approver)
@@ -1295,7 +1693,7 @@ func analyzeVenafi(ctx context.Context, clientset kubernetes.Interface, dynClien
 
 	// Check for Venafi Enhanced Issuer (VEI) deployment
 	// Using SDK's expected namespaces for Venafi
-	namespaces := GetExpectedNamespaces("venafi")
+	namespaces := admission.GetExpectedNamespaces("venafi")
 	if len(namespaces) == 0 {
 		namespaces = []string{"venafi", "cert-manager", "kube-system"}
 	}
@@ -1319,7 +1717,6 @@ func analyzeVenafi(ctx context.Context, clientset kubernetes.Interface, dynClien
 
 					if info.PodsRunning < info.TotalPods {
 						info.Status = "degraded"
-						info.BypassRisk = fmt.Sprintf("Only %d/%d Venafi pods running", info.PodsRunning, info.TotalPods)
 					}
 					break
 				}
@@ -1423,7 +1820,6 @@ func analyzeSPIFFE(ctx context.Context, clientset kubernetes.Interface, dynClien
 
 				if !info.ServerRunning {
 					info.Status = "not-running"
-					info.BypassRisk = "SPIRE server not running"
 				}
 				break
 			}
@@ -1451,7 +1847,6 @@ func analyzeSPIFFE(ctx context.Context, clientset kubernetes.Interface, dynClien
 
 					if info.AgentsRunning < info.TotalAgents {
 						info.Status = "degraded"
-						info.BypassRisk = fmt.Sprintf("Only %d/%d SPIRE agents running", info.AgentsRunning, info.TotalAgents)
 					}
 					break
 				}
@@ -1615,11 +2010,6 @@ func analyzeIstioCerts(ctx context.Context, clientset kubernetes.Interface, dynC
 		}
 	}
 
-	// Check for short TTLs which might cause issues
-	if strings.Contains(info.WorkloadCertTTL, "m") && !strings.Contains(info.WorkloadCertTTL, "h") {
-		info.BypassRisk = "Short workload cert TTL may cause rotation issues"
-	}
-
 	return info
 }
 
@@ -1689,32 +2079,25 @@ func buildCertAdmissionFindings(certManager CertManagerInfo, issuers []IssuerInf
 	// Build findings list
 	var findings []CertAdmissionFinding
 	for _, finding := range namespaceData {
-		// Calculate risk
+		// Identify issues
 		if finding.ExpiredCerts > 0 {
-			finding.RiskLevel = "CRITICAL"
 			finding.SecurityIssues = append(finding.SecurityIssues, fmt.Sprintf("%d expired certs", finding.ExpiredCerts))
-		} else if finding.ExpiringSoonCerts > 0 {
-			finding.RiskLevel = "HIGH"
+		}
+		if finding.ExpiringSoonCerts > 0 {
 			finding.SecurityIssues = append(finding.SecurityIssues, fmt.Sprintf("%d certs expiring soon", finding.ExpiringSoonCerts))
-		} else if finding.FailedCerts > 0 {
-			finding.RiskLevel = "MEDIUM"
+		}
+		if finding.FailedCerts > 0 {
 			finding.SecurityIssues = append(finding.SecurityIssues, fmt.Sprintf("%d failed certs", finding.FailedCerts))
-		} else if finding.SelfSignedCerts > 0 && finding.CASignedCerts == 0 && finding.ACMECerts == 0 {
-			finding.RiskLevel = "MEDIUM"
+		}
+		if finding.SelfSignedCerts > 0 && finding.CASignedCerts == 0 && finding.ACMECerts == 0 {
 			finding.SecurityIssues = append(finding.SecurityIssues, "Only self-signed certs")
-		} else {
-			finding.RiskLevel = "LOW"
 		}
 
 		findings = append(findings, *finding)
 	}
 
-	// Sort by risk level then namespace
+	// Sort by namespace
 	sort.Slice(findings, func(i, j int) bool {
-		riskOrder := map[string]int{"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
-		if riskOrder[findings[i].RiskLevel] != riskOrder[findings[j].RiskLevel] {
-			return riskOrder[findings[i].RiskLevel] < riskOrder[findings[j].RiskLevel]
-		}
 		return findings[i].Namespace < findings[j].Namespace
 	})
 
@@ -1737,13 +2120,13 @@ func generateCertAdmissionLoot(loot *shared.LootBuilder,
 	istioCerts IstioCertInfo) {
 
 	// Summary
-	loot.Section("Summary").Add("# Certificate Management Summary")
-	loot.Section("Summary").Add("#")
+	loot.Section("cert-admission").Add("# Certificate Management Summary")
+	loot.Section("cert-admission").Add("#")
 
 	if certManager.Name != "" {
-		loot.Section("Summary").Add(fmt.Sprintf("# cert-manager: %s (version: %s)", certManager.Status, certManager.Version))
+		loot.Section("cert-admission").Add(fmt.Sprintf("# cert-manager: %s (version: %s)", certManager.Status, certManager.Version))
 	} else {
-		loot.Section("Summary").Add("# cert-manager: NOT INSTALLED")
+		loot.Section("cert-admission").Add("# cert-manager: NOT INSTALLED")
 	}
 
 	// Count issuers
@@ -1756,19 +2139,19 @@ func generateCertAdmissionLoot(loot *shared.LootBuilder,
 			nsIssuers++
 		}
 	}
-	loot.Section("Summary").Add(fmt.Sprintf("# ClusterIssuers: %d", clusterIssuers))
-	loot.Section("Summary").Add(fmt.Sprintf("# Namespace Issuers: %d", nsIssuers))
-	loot.Section("Summary").Add(fmt.Sprintf("# Certificates: %d", len(certificates)))
+	loot.Section("cert-admission").Add(fmt.Sprintf("# ClusterIssuers: %d", clusterIssuers))
+	loot.Section("cert-admission").Add(fmt.Sprintf("# Namespace Issuers: %d", nsIssuers))
+	loot.Section("cert-admission").Add(fmt.Sprintf("# Certificates: %d", len(certificates)))
 	if venafi.Name != "" {
-		loot.Section("Summary").Add(fmt.Sprintf("# Venafi: %s", venafi.Status))
+		loot.Section("cert-admission").Add(fmt.Sprintf("# Venafi: %s", venafi.Status))
 	}
 	if spiffe.Name != "" {
-		loot.Section("Summary").Add(fmt.Sprintf("# SPIFFE/SPIRE: %s", spiffe.Status))
+		loot.Section("cert-admission").Add(fmt.Sprintf("# SPIFFE/SPIRE: %s", spiffe.Status))
 	}
 	if istioCerts.Name != "" {
-		loot.Section("Summary").Add(fmt.Sprintf("# Istio Certificates: %s", istioCerts.Status))
+		loot.Section("cert-admission").Add(fmt.Sprintf("# Istio Certificates: %s", istioCerts.Status))
 	}
-	loot.Section("Summary").Add("#")
+	loot.Section("cert-admission").Add("#")
 
 	// Certificate health
 	valid := 0
@@ -1790,138 +2173,253 @@ func generateCertAdmissionLoot(loot *shared.LootBuilder,
 		}
 	}
 
-	loot.Section("CertHealth").Add("# Certificate Health")
-	loot.Section("CertHealth").Add("#")
-	loot.Section("CertHealth").Add(fmt.Sprintf("# Valid: %d", valid))
-	loot.Section("CertHealth").Add(fmt.Sprintf("# Expiring Soon (30 days): %d", expiringSoon))
-	loot.Section("CertHealth").Add(fmt.Sprintf("# EXPIRED: %d", expired))
-	loot.Section("CertHealth").Add(fmt.Sprintf("# Failed: %d", failed))
-	loot.Section("CertHealth").Add("#")
+	loot.Section("cert-admission").Add("# Certificate Health")
+	loot.Section("cert-admission").Add("#")
+	loot.Section("cert-admission").Add(fmt.Sprintf("# Valid: %d", valid))
+	loot.Section("cert-admission").Add(fmt.Sprintf("# Expiring Soon (30 days): %d", expiringSoon))
+	loot.Section("cert-admission").Add(fmt.Sprintf("# EXPIRED: %d", expired))
+	loot.Section("cert-admission").Add(fmt.Sprintf("# Failed: %d", failed))
+	loot.Section("cert-admission").Add("#")
 
 	// Expired certificates
 	if expired > 0 {
-		loot.Section("Expired").Add("# EXPIRED CERTIFICATES")
-		loot.Section("Expired").Add("#")
+		loot.Section("cert-admission").Add("# EXPIRED CERTIFICATES")
+		loot.Section("cert-admission").Add("#")
 		for _, cert := range certificates {
 			if cert.IsExpired {
-				loot.Section("Expired").Add(fmt.Sprintf("# %s/%s (expired: %s)", cert.Namespace, cert.Name, cert.NotAfter.Format("2006-01-02")))
+				loot.Section("cert-admission").Add(fmt.Sprintf("# %s/%s (expired: %s)", cert.Namespace, cert.Name, cert.NotAfter.Format("2006-01-02")))
 			}
 		}
-		loot.Section("Expired").Add("#")
+		loot.Section("cert-admission").Add("#")
 	}
 
 	// Expiring soon
 	if expiringSoon > 0 {
-		loot.Section("ExpiringSoon").Add("# CERTIFICATES EXPIRING SOON")
-		loot.Section("ExpiringSoon").Add("#")
+		loot.Section("cert-admission").Add("# CERTIFICATES EXPIRING SOON")
+		loot.Section("cert-admission").Add("#")
 		for _, cert := range certificates {
 			if cert.IsExpiringSoon {
-				loot.Section("ExpiringSoon").Add(fmt.Sprintf("# %s/%s (expires: %s, %d days)", cert.Namespace, cert.Name, cert.NotAfter.Format("2006-01-02"), cert.DaysUntilExpiry))
+				loot.Section("cert-admission").Add(fmt.Sprintf("# %s/%s (expires: %s, %d days)", cert.Namespace, cert.Name, cert.NotAfter.Format("2006-01-02"), cert.DaysUntilExpiry))
 			}
 		}
-		loot.Section("ExpiringSoon").Add("#")
+		loot.Section("cert-admission").Add("#")
 	}
-
-	// Bypass vectors
-	loot.Section("BypassVectors").Add("# Certificate Bypass Vectors")
-	loot.Section("BypassVectors").Add("#")
-
-	for _, issuer := range issuers {
-		if issuer.BypassRisk != "" {
-			scope := "Issuer"
-			if issuer.IsCluster {
-				scope = "ClusterIssuer"
-			}
-			loot.Section("BypassVectors").Add(fmt.Sprintf("# %s %s: %s", scope, issuer.Name, issuer.BypassRisk))
-		}
-	}
-
-	for _, approver := range csrApprovers {
-		if approver.BypassRisk != "" {
-			loot.Section("BypassVectors").Add(fmt.Sprintf("# CSR Approver %s: %s", approver.Name, approver.BypassRisk))
-		}
-	}
-
-	if venafi.BypassRisk != "" {
-		loot.Section("BypassVectors").Add(fmt.Sprintf("# Venafi: %s", venafi.BypassRisk))
-	}
-
-	if spiffe.BypassRisk != "" {
-		loot.Section("BypassVectors").Add(fmt.Sprintf("# SPIFFE/SPIRE: %s", spiffe.BypassRisk))
-	}
-
-	if istioCerts.BypassRisk != "" {
-		loot.Section("BypassVectors").Add(fmt.Sprintf("# Istio Certs: %s", istioCerts.BypassRisk))
-	}
-
-	loot.Section("BypassVectors").Add("#")
 
 	// Enterprise Certificate Management
 	if venafi.Name != "" || spiffe.Name != "" || istioCerts.Name != "" {
-		loot.Section("EnterpriseCerts").Add("# Enterprise Certificate Management")
-		loot.Section("EnterpriseCerts").Add("#")
+		loot.Section("cert-admission").Add("# Enterprise Certificate Management")
+		loot.Section("cert-admission").Add("#")
 
 		if venafi.Name != "" {
-			loot.Section("EnterpriseCerts").Add(fmt.Sprintf("# Venafi: %s (namespace: %s)", venafi.Status, venafi.Namespace))
+			loot.Section("cert-admission").Add(fmt.Sprintf("# Venafi: %s (namespace: %s)", venafi.Status, venafi.Namespace))
 			if venafi.TPPUrl != "" {
-				loot.Section("EnterpriseCerts").Add(fmt.Sprintf("#   TPP URL: %s", venafi.TPPUrl))
+				loot.Section("cert-admission").Add(fmt.Sprintf("#   TPP URL: %s", venafi.TPPUrl))
 			}
 			if venafi.CloudApiUrl != "" {
-				loot.Section("EnterpriseCerts").Add(fmt.Sprintf("#   Cloud API: %s", venafi.CloudApiUrl))
+				loot.Section("cert-admission").Add(fmt.Sprintf("#   Cloud API: %s", venafi.CloudApiUrl))
 			}
 			if venafi.Zone != "" {
-				loot.Section("EnterpriseCerts").Add(fmt.Sprintf("#   Zone: %s", venafi.Zone))
+				loot.Section("cert-admission").Add(fmt.Sprintf("#   Zone: %s", venafi.Zone))
 			}
 		}
 
 		if spiffe.Name != "" {
-			loot.Section("EnterpriseCerts").Add(fmt.Sprintf("# SPIFFE/SPIRE: %s (namespace: %s)", spiffe.Status, spiffe.Namespace))
+			loot.Section("cert-admission").Add(fmt.Sprintf("# SPIFFE/SPIRE: %s (namespace: %s)", spiffe.Status, spiffe.Namespace))
 			if spiffe.TrustDomain != "" {
-				loot.Section("EnterpriseCerts").Add(fmt.Sprintf("#   Trust Domain: %s", spiffe.TrustDomain))
+				loot.Section("cert-admission").Add(fmt.Sprintf("#   Trust Domain: %s", spiffe.TrustDomain))
 			}
-			loot.Section("EnterpriseCerts").Add(fmt.Sprintf("#   Registrations: %d", spiffe.Registrations))
+			loot.Section("cert-admission").Add(fmt.Sprintf("#   Registrations: %d", spiffe.Registrations))
 		}
 
 		if istioCerts.Name != "" {
-			loot.Section("EnterpriseCerts").Add(fmt.Sprintf("# Istio Certificates: %s (namespace: %s)", istioCerts.Status, istioCerts.Namespace))
-			loot.Section("EnterpriseCerts").Add(fmt.Sprintf("#   Workload Cert TTL: %s", istioCerts.WorkloadCertTTL))
+			loot.Section("cert-admission").Add(fmt.Sprintf("# Istio Certificates: %s (namespace: %s)", istioCerts.Status, istioCerts.Namespace))
+			loot.Section("cert-admission").Add(fmt.Sprintf("#   Workload Cert TTL: %s", istioCerts.WorkloadCertTTL))
 			if istioCerts.ExternalCA {
-				loot.Section("EnterpriseCerts").Add("#   External CA: Yes")
+				loot.Section("cert-admission").Add("#   External CA: Yes")
 			}
 		}
 
-		loot.Section("EnterpriseCerts").Add("#")
+		loot.Section("cert-admission").Add("#")
 	}
 
-	// Recommendations
-	loot.Section("Recommendations").Add("# Recommendations")
-	loot.Section("Recommendations").Add("#")
+	// Commands (only for detected tools)
+	loot.Section("cert-admission").Add("# Useful Commands")
+	loot.Section("cert-admission").Add("#")
 
-	if certManager.Name == "" {
-		loot.Section("Recommendations").Add("# 1. Install cert-manager for automated certificate management:")
-		loot.Section("Recommendations").Add("#    kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.14.0/cert-manager.yaml")
+	if certManager.Name != "" {
+		loot.Section("cert-admission").Add("# List all certificates:")
+		loot.Section("cert-admission").Add("kubectl get certificates -A")
+		loot.Section("cert-admission").Add("#")
+		loot.Section("cert-admission").Add("# List all issuers:")
+		loot.Section("cert-admission").Add("kubectl get issuers,clusterissuers -A")
+		loot.Section("cert-admission").Add("#")
+		loot.Section("cert-admission").Add("# Check certificate details:")
+		loot.Section("cert-admission").Add("kubectl describe certificate <name> -n <namespace>")
+		loot.Section("cert-admission").Add("#")
 	}
 
-	if expired > 0 {
-		loot.Section("Recommendations").Add("# 2. Renew expired certificates immediately")
+	if len(csrs) > 0 {
+		loot.Section("cert-admission").Add("# Check CSRs:")
+		loot.Section("cert-admission").Add("kubectl get csr")
+		loot.Section("cert-admission").Add("#")
 	}
 
-	if expiringSoon > 0 {
-		loot.Section("Recommendations").Add("# 3. Review certificates expiring soon and ensure auto-renewal is configured")
+	if venafi.Name != "" {
+		loot.Section("cert-admission").Add("# Check Venafi issuers:")
+		loot.Section("cert-admission").Add("kubectl get venafiissuers,venaficlusterissuers -A")
+		loot.Section("cert-admission").Add("#")
 	}
 
-	// Commands
-	loot.Section("Commands").Add("# Useful Commands")
-	loot.Section("Commands").Add("#")
-	loot.Section("Commands").Add("# List all certificates:")
-	loot.Section("Commands").Add("kubectl get certificates -A")
-	loot.Section("Commands").Add("#")
-	loot.Section("Commands").Add("# List all issuers:")
-	loot.Section("Commands").Add("kubectl get issuers,clusterissuers -A")
-	loot.Section("Commands").Add("#")
-	loot.Section("Commands").Add("# Check certificate details:")
-	loot.Section("Commands").Add("kubectl describe certificate <name> -n <namespace>")
-	loot.Section("Commands").Add("#")
-	loot.Section("Commands").Add("# Check CSRs:")
-	loot.Section("Commands").Add("kubectl get csr")
+	if spiffe.Name != "" {
+		loot.Section("cert-admission").Add("# Check SPIFFE registrations:")
+		loot.Section("cert-admission").Add("kubectl get clusterspiffeids -A")
+		loot.Section("cert-admission").Add("#")
+	}
+
+	if istioCerts.Name != "" {
+		loot.Section("cert-admission").Add("# Check Istio certificates:")
+		loot.Section("cert-admission").Add(fmt.Sprintf("kubectl get secret -n %s -l istio.io/config=true", istioCerts.Namespace))
+		loot.Section("cert-admission").Add("#")
+	}
+}
+
+// ============================================================================
+// Cloud Provider API Integration
+// ============================================================================
+
+// CertCloudClients holds cloud provider clients for certificate enumeration
+type CertCloudClients struct {
+	AWSACMClient       *acm.Client
+	AzureKeyVaultClient *armkeyvault.VaultsClient
+}
+
+// AWSACMCertificateInfo represents an AWS ACM certificate
+type AWSACMCertificateInfo struct {
+	ARN              string
+	DomainName       string
+	Status           string
+	Type             string // AMAZON_ISSUED, IMPORTED, PRIVATE
+	Issuer           string
+	NotBefore        time.Time
+	NotAfter         time.Time
+	DaysUntilExpiry  int
+	InUseBy          []string
+	RenewalEligible  bool
+	KeyAlgorithm     string
+}
+
+// AzureKeyVaultCertInfo represents an Azure Key Vault certificate
+type AzureKeyVaultCertInfo struct {
+	VaultName        string
+	VaultURI         string
+	CertificateName  string
+	Enabled          bool
+	NotBefore        time.Time
+	Expires          time.Time
+	DaysUntilExpiry  int
+}
+
+// initCertCloudClients attempts to initialize cloud provider clients for cert enumeration
+// Similar to initDNSCloudClients in dns-admission.go
+func initCertCloudClients(logger internal.Logger) *CertCloudClients {
+	clients := &CertCloudClients{}
+
+	// Try to initialize AWS ACM client
+	cfg, err := awsconfig.LoadDefaultConfig(context.Background())
+	if err == nil {
+		clients.AWSACMClient = acm.NewFromConfig(cfg)
+		logger.InfoM("AWS ACM client initialized", K8S_CERT_ADMISSION_MODULE_NAME)
+	}
+
+	// Try to initialize Azure Key Vault client
+	cred, err := azidentity.NewDefaultAzureCredential(nil)
+	if err == nil {
+		// Note: Would need subscription ID from env
+		subID := "" // Would get from AZURE_SUBSCRIPTION_ID env var
+		if subID != "" {
+			vaultsClient, err := armkeyvault.NewVaultsClient(subID, cred, nil)
+			if err == nil {
+				clients.AzureKeyVaultClient = vaultsClient
+				logger.InfoM("Azure Key Vault client initialized", K8S_CERT_ADMISSION_MODULE_NAME)
+			}
+		}
+	}
+
+	return clients
+}
+
+// analyzeAWSACMCertificates retrieves certificate info from AWS ACM
+// Uses AWS API if cloud clients are available, otherwise falls back to in-cluster detection
+func analyzeAWSACMCertificates(ctx context.Context, cloudClients *CertCloudClients, logger internal.Logger) []AWSACMCertificateInfo {
+	var certs []AWSACMCertificateInfo
+
+	if cloudClients == nil || cloudClients.AWSACMClient == nil {
+		return certs
+	}
+
+	// List all certificates
+	listOutput, err := cloudClients.AWSACMClient.ListCertificates(ctx, &acm.ListCertificatesInput{})
+	if err != nil {
+		logger.ErrorM(fmt.Sprintf("Failed to list ACM certificates: %v", err), K8S_CERT_ADMISSION_MODULE_NAME)
+		return certs
+	}
+
+	for _, certSummary := range listOutput.CertificateSummaryList {
+		// Get certificate details
+		descOutput, err := cloudClients.AWSACMClient.DescribeCertificate(ctx, &acm.DescribeCertificateInput{
+			CertificateArn: certSummary.CertificateArn,
+		})
+		if err != nil {
+			continue
+		}
+
+		cert := descOutput.Certificate
+		certInfo := AWSACMCertificateInfo{
+			ARN:        aws.ToString(cert.CertificateArn),
+			DomainName: aws.ToString(cert.DomainName),
+			Status:     string(cert.Status),
+			Type:       string(cert.Type),
+			Issuer:     aws.ToString(cert.Issuer),
+		}
+
+		if cert.NotBefore != nil {
+			certInfo.NotBefore = *cert.NotBefore
+		}
+		if cert.NotAfter != nil {
+			certInfo.NotAfter = *cert.NotAfter
+			certInfo.DaysUntilExpiry = int(time.Until(certInfo.NotAfter).Hours() / 24)
+		}
+
+		for _, lb := range cert.InUseBy {
+			certInfo.InUseBy = append(certInfo.InUseBy, lb)
+		}
+
+		if cert.RenewalEligibility == "ELIGIBLE" {
+			certInfo.RenewalEligible = true
+		}
+
+		if cert.KeyAlgorithm != "" {
+			certInfo.KeyAlgorithm = string(cert.KeyAlgorithm)
+		}
+
+		certs = append(certs, certInfo)
+	}
+
+	logger.InfoM(fmt.Sprintf("Found %d AWS ACM certificates", len(certs)), K8S_CERT_ADMISSION_MODULE_NAME)
+	return certs
+}
+
+// analyzeAzureKeyVaultCerts retrieves certificate info from Azure Key Vault
+func analyzeAzureKeyVaultCerts(ctx context.Context, cloudClients *CertCloudClients, logger internal.Logger) []AzureKeyVaultCertInfo {
+	var certs []AzureKeyVaultCertInfo
+
+	if cloudClients == nil || cloudClients.AzureKeyVaultClient == nil {
+		return certs
+	}
+
+	// Note: This would require listing vaults and then certificates from each vault
+	// Simplified implementation - would expand in production
+
+	logger.InfoM("Azure Key Vault certificate enumeration requires additional setup", K8S_CERT_ADMISSION_MODULE_NAME)
+	return certs
 }

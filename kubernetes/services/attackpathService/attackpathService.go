@@ -3,6 +3,7 @@ package attackpathservice
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/BishopFox/cloudfox/kubernetes/sdk"
@@ -16,6 +17,7 @@ type AttackPathService struct {
 	clientset  *kubernetes.Clientset
 	logger     *internal.Logger
 	moduleName string
+	crdGroups  map[string]bool // API groups from CRDs in the cluster (populated at analysis time)
 }
 
 // New creates a new AttackPathService using the shared clientset
@@ -92,8 +94,9 @@ type AttackPath struct {
 	ScopeType      string   `json:"scopeType"` // cluster, namespace
 	ScopeID        string   `json:"scopeId"`   // namespace name or "cluster"
 	ScopeName      string   `json:"scopeName"`
-	PathType       string   `json:"pathType"` // "exfil", "lateral", or "privesc"
-	RoleName       string   `json:"roleName"` // The role/clusterrole granting this
+	PathType       string   `json:"pathType"`   // "exfil", "lateral", or "privesc"
+	SourceType     string   `json:"sourceType"` // "core" (built-in K8s) or "crd" (custom resource)
+	RoleName       string   `json:"roleName"`   // The role/clusterrole granting this
 	BindingName    string   `json:"bindingName"`
 }
 
@@ -170,6 +173,12 @@ func GetPrivescPermissions() []PrivescPermission {
 
 		// PersistentVolume - HIGH
 		{Verb: "create", Resource: "persistentvolumes", APIGroup: "", Category: "Storage", RiskLevel: shared.RiskHigh, Description: "Create hostPath PVs for node filesystem access"},
+
+		// CRD Management - HIGH (can create CRDs without validation, then inject data via controllers)
+		{Verb: "create", Resource: "customresourcedefinitions", APIGroup: "apiextensions.k8s.io", Category: "CRD Management", RiskLevel: shared.RiskHigh, Description: "Create CRDs without validation to inject data into controllers"},
+		{Verb: "update", Resource: "customresourcedefinitions", APIGroup: "apiextensions.k8s.io", Category: "CRD Management", RiskLevel: shared.RiskHigh, Description: "Modify CRD validation schemas to weaken security controls"},
+		{Verb: "patch", Resource: "customresourcedefinitions", APIGroup: "apiextensions.k8s.io", Category: "CRD Management", RiskLevel: shared.RiskHigh, Description: "Patch CRD definitions to remove validation or add conversion webhooks"},
+		{Verb: "delete", Resource: "customresourcedefinitions", APIGroup: "apiextensions.k8s.io", Category: "CRD Management", RiskLevel: shared.RiskHigh, Description: "Delete CRDs to disrupt controllers and remove security policies"},
 	}
 }
 
@@ -216,6 +225,14 @@ func GetLateralMovementPermissions() []LateralMovementPermission {
 		// Ingress/Gateway - MEDIUM
 		{Verb: "update", Resource: "ingresses", APIGroup: "networking.k8s.io", Category: "Ingress", RiskLevel: shared.RiskMedium, Description: "Modify ingress to redirect traffic"},
 		{Verb: "patch", Resource: "ingresses", APIGroup: "networking.k8s.io", Category: "Ingress", RiskLevel: shared.RiskMedium, Description: "Patch ingress to redirect traffic"},
+
+		// CRD-based Lateral Movement - modify security policy CRDs to open paths
+		{Verb: "delete", Resource: "*", APIGroup: "networking.istio.io", Category: "CRD Policy Bypass", RiskLevel: shared.RiskHigh, Description: "Delete Istio network policies to enable lateral movement"},
+		{Verb: "update", Resource: "*", APIGroup: "networking.istio.io", Category: "CRD Policy Bypass", RiskLevel: shared.RiskHigh, Description: "Modify Istio network policies to allow traffic"},
+		{Verb: "delete", Resource: "*", APIGroup: "cilium.io", Category: "CRD Policy Bypass", RiskLevel: shared.RiskHigh, Description: "Delete Cilium network policies to enable lateral movement"},
+		{Verb: "update", Resource: "*", APIGroup: "cilium.io", Category: "CRD Policy Bypass", RiskLevel: shared.RiskHigh, Description: "Modify Cilium network policies to allow traffic"},
+		{Verb: "delete", Resource: "*", APIGroup: "projectcalico.org", Category: "CRD Policy Bypass", RiskLevel: shared.RiskHigh, Description: "Delete Calico network policies to enable lateral movement"},
+		{Verb: "update", Resource: "*", APIGroup: "projectcalico.org", Category: "CRD Policy Bypass", RiskLevel: shared.RiskHigh, Description: "Modify Calico network policies to allow traffic"},
 	}
 }
 
@@ -244,6 +261,15 @@ func GetDataExfilPermissions() []DataExfilPermission {
 		// Custom Resources (may contain sensitive data) - MEDIUM
 		{Verb: "get", Resource: "*", APIGroup: "*", Category: "Custom Resources", RiskLevel: shared.RiskMedium, Description: "Read custom resources that may contain sensitive data"},
 		{Verb: "list", Resource: "*", APIGroup: "*", Category: "Custom Resources", RiskLevel: shared.RiskMedium, Description: "List custom resources that may contain sensitive data"},
+
+		// CRD-specific sensitive data - cert-manager, external-secrets, vault
+		{Verb: "get", Resource: "*", APIGroup: "cert-manager.io", Category: "CRD Secrets (Certs)", RiskLevel: shared.RiskHigh, Description: "Read cert-manager certificates and private keys"},
+		{Verb: "list", Resource: "*", APIGroup: "cert-manager.io", Category: "CRD Secrets (Certs)", RiskLevel: shared.RiskHigh, Description: "List cert-manager certificates"},
+		{Verb: "get", Resource: "*", APIGroup: "external-secrets.io", Category: "CRD Secrets (ExtSecrets)", RiskLevel: shared.RiskHigh, Description: "Read external-secrets that reference cloud secret stores"},
+		{Verb: "list", Resource: "*", APIGroup: "external-secrets.io", Category: "CRD Secrets (ExtSecrets)", RiskLevel: shared.RiskHigh, Description: "List external-secrets configurations"},
+		{Verb: "get", Resource: "*", APIGroup: "secrets-store.csi.x-k8s.io", Category: "CRD Secrets (CSI)", RiskLevel: shared.RiskHigh, Description: "Read secrets-store CSI driver configurations"},
+		{Verb: "get", Resource: "*", APIGroup: "vault.hashicorp.com", Category: "CRD Secrets (Vault)", RiskLevel: shared.RiskHigh, Description: "Read Vault secrets and auth configurations"},
+		{Verb: "list", Resource: "*", APIGroup: "vault.hashicorp.com", Category: "CRD Secrets (Vault)", RiskLevel: shared.RiskHigh, Description: "List Vault secrets and auth configurations"},
 
 		// Service Account Tokens - HIGH
 		{Verb: "create", Resource: "serviceaccounts/token", APIGroup: "", Category: "Token Exfil", RiskLevel: shared.RiskHigh, Description: "Generate SA tokens for external use"},
@@ -286,6 +312,15 @@ func (s *AttackPathService) CombinedAnalysis(ctx context.Context, pathType strin
 		NamespacePaths: make(map[string][]AttackPath),
 		AllPaths:       []AttackPath{},
 		Namespaces:     []string{},
+	}
+
+	// Load CRD groups for dynamic matching
+	crdGroups, err := sdk.GetCRDGroups(ctx)
+	if err != nil {
+		// Non-fatal: CRD detection won't work but static analysis continues
+		s.crdGroups = make(map[string]bool)
+	} else {
+		s.crdGroups = crdGroups
 	}
 
 	// Get target namespaces (respects namespace filtering flags)
@@ -467,11 +502,34 @@ func apiGroupMatchesRule(ruleGroup, permGroup string) bool {
 
 // matchedPermission holds a matched permission with its resolved verb/resource for exploit generation
 type matchedPermission struct {
-	category       string
-	riskLevel      string
-	description    string
-	matchedVerb    string // The actual verb from the permission definition (not the wildcard)
+	category        string
+	riskLevel       string
+	description     string
+	matchedVerb     string // The actual verb from the permission definition (not the wildcard)
 	matchedResource string // The actual resource from the permission definition
+	matchedAPIGroup string // The API group from the permission definition
+}
+
+// crdAPIGroups contains API groups that indicate CRD-based resources
+var crdAPIGroups = map[string]bool{
+	"apiextensions.k8s.io":        true,
+	"cert-manager.io":             true,
+	"external-secrets.io":         true,
+	"secrets-store.csi.x-k8s.io":  true,
+	"vault.hashicorp.com":         true,
+	"networking.istio.io":         true,
+	"cilium.io":                   true,
+	"projectcalico.org":           true,
+}
+
+func sourceTypeForAPIGroup(apiGroup string) string {
+	if crdAPIGroups[apiGroup] {
+		return "crd"
+	}
+	if apiGroup == "*" {
+		return "core" // wildcards default to core
+	}
+	return "core"
 }
 
 // findMatchingPrivescPermissions returns all privesc permissions that a given RBAC rule grants.
@@ -497,6 +555,7 @@ func findMatchingPrivescPermissions(ruleVerb, ruleResource, ruleAPIGroup string)
 				description:     perm.Description,
 				matchedVerb:     perm.Verb,
 				matchedResource: perm.Resource,
+				matchedAPIGroup: perm.APIGroup,
 			})
 		}
 	}
@@ -525,6 +584,7 @@ func findMatchingLateralPermissions(ruleVerb, ruleResource, ruleAPIGroup string)
 				description:     perm.Description,
 				matchedVerb:     perm.Verb,
 				matchedResource: perm.Resource,
+				matchedAPIGroup: perm.APIGroup,
 			})
 		}
 	}
@@ -553,6 +613,7 @@ func findMatchingExfilPermissions(ruleVerb, ruleResource, ruleAPIGroup string) [
 				description:     perm.Description,
 				matchedVerb:     perm.Verb,
 				matchedResource: perm.Resource,
+				matchedAPIGroup: perm.APIGroup,
 			})
 		}
 	}
@@ -606,6 +667,7 @@ func (s *AttackPathService) analyzeRulesForAttackPaths(
 								ScopeID:        scopeID,
 								ScopeName:      scopeName,
 								PathType:       "privesc",
+								SourceType:     sourceTypeForAPIGroup(match.matchedAPIGroup),
 								RoleName:       roleName,
 								BindingName:    bindingName,
 							}
@@ -631,6 +693,7 @@ func (s *AttackPathService) analyzeRulesForAttackPaths(
 								ScopeID:        scopeID,
 								ScopeName:      scopeName,
 								PathType:       "lateral",
+								SourceType:     sourceTypeForAPIGroup(match.matchedAPIGroup),
 								RoleName:       roleName,
 								BindingName:    bindingName,
 							}
@@ -656,11 +719,23 @@ func (s *AttackPathService) analyzeRulesForAttackPaths(
 								ScopeID:        scopeID,
 								ScopeName:      scopeName,
 								PathType:       "exfil",
+								SourceType:     sourceTypeForAPIGroup(match.matchedAPIGroup),
 								RoleName:       roleName,
 								BindingName:    bindingName,
 							}
 							paths = append(paths, path)
 						}
+					}
+
+					// Dynamic CRD group matching: detect when RBAC grants dangerous
+					// permissions on any CRD API group actually present in the cluster
+					if len(s.crdGroups) > 0 {
+						paths = append(paths, s.checkDynamicCRDAccess(
+							verb, resource, apiGroup,
+							principal, principalType, roleName, bindingName,
+							scopeType, scopeID, scopeName, subject.Namespace,
+							pathType,
+						)...)
 					}
 				}
 			}
@@ -670,9 +745,146 @@ func (s *AttackPathService) analyzeRulesForAttackPaths(
 	return paths
 }
 
+// checkDynamicCRDAccess detects when an RBAC rule grants dangerous permissions on a CRD API group
+// that actually exists in the cluster. This catches cases like: a subject has create/update/delete
+// on resources in "cert-manager.io" or any other CRD group — not just the hardcoded static checks.
+func (s *AttackPathService) checkDynamicCRDAccess(
+	verb, resource, apiGroup string,
+	principal, principalType, roleName, bindingName string,
+	scopeType, scopeID, scopeName, namespace string,
+	pathType string,
+) []AttackPath {
+	var paths []AttackPath
+
+	// Only check dangerous verbs
+	dangerousVerbs := map[string]bool{
+		"create": true, "update": true, "patch": true, "delete": true, "deletecollection": true, "*": true,
+	}
+	if !dangerousVerbs[verb] {
+		return nil
+	}
+
+	// Check if the rule's API group matches any CRD group in the cluster
+	matchedGroups := s.matchingCRDGroups(apiGroup)
+	if len(matchedGroups) == 0 {
+		return nil
+	}
+
+	// Skip if this would duplicate a static check (already covered by hardcoded permissions)
+	for _, group := range matchedGroups {
+		if crdAPIGroups[group] {
+			continue // already handled by static permission lists
+		}
+
+		effectiveVerb := verb
+		if effectiveVerb == "*" {
+			effectiveVerb = "create/update/patch/delete"
+		}
+		effectiveResource := resource
+		if effectiveResource == "*" {
+			effectiveResource = "all resources"
+		}
+
+		desc := fmt.Sprintf("Can %s %s in CRD group %s", effectiveVerb, effectiveResource, group)
+		exploitCmd := generateDynamicCRDExploitCommand(verb, resource, group, scopeID, principal)
+
+		// Determine path type and category
+		category := "CRD Resource Access"
+		riskLevel := shared.RiskMedium
+		if verb == "*" || verb == "create" {
+			riskLevel = shared.RiskHigh
+		}
+
+		// For privesc: modifying CRD resources could escalate privileges
+		if pathType == "privesc" || pathType == "all" {
+			paths = append(paths, AttackPath{
+				Principal:      principal,
+				PrincipalType:  principalType,
+				Method:         category,
+				TargetResource: fmt.Sprintf("%s/%s", group, resource),
+				Permissions:    []string{fmt.Sprintf("%s %s", verb, resource)},
+				Category:       category,
+				RiskLevel:      riskLevel,
+				Description:    desc,
+				ExploitCommand: exploitCmd,
+				Namespace:      namespace,
+				ScopeType:      scopeType,
+				ScopeID:        scopeID,
+				ScopeName:      scopeName,
+				PathType:       "privesc",
+				SourceType:     "crd",
+				RoleName:       roleName,
+				BindingName:    bindingName,
+			})
+		}
+
+		// For lateral: CRD resource access can enable lateral movement
+		if pathType == "lateral" || pathType == "all" {
+			paths = append(paths, AttackPath{
+				Principal:      principal,
+				PrincipalType:  principalType,
+				Method:         category,
+				TargetResource: fmt.Sprintf("%s/%s", group, resource),
+				Permissions:    []string{fmt.Sprintf("%s %s", verb, resource)},
+				Category:       category,
+				RiskLevel:      riskLevel,
+				Description:    desc,
+				ExploitCommand: exploitCmd,
+				Namespace:      namespace,
+				ScopeType:      scopeType,
+				ScopeID:        scopeID,
+				ScopeName:      scopeName,
+				PathType:       "lateral",
+				SourceType:     "crd",
+				RoleName:       roleName,
+				BindingName:    bindingName,
+			})
+		}
+
+		// For exfil: reading CRD resources could expose sensitive data
+		if pathType == "exfil" || pathType == "all" {
+			paths = append(paths, AttackPath{
+				Principal:      principal,
+				PrincipalType:  principalType,
+				Method:         category,
+				TargetResource: fmt.Sprintf("%s/%s", group, resource),
+				Permissions:    []string{fmt.Sprintf("%s %s", verb, resource)},
+				Category:       category,
+				RiskLevel:      riskLevel,
+				Description:    desc,
+				ExploitCommand: exploitCmd,
+				Namespace:      namespace,
+				ScopeType:      scopeType,
+				ScopeID:        scopeID,
+				ScopeName:      scopeName,
+				PathType:       "exfil",
+				SourceType:     "crd",
+				RoleName:       roleName,
+				BindingName:    bindingName,
+			})
+		}
+	}
+
+	return paths
+}
+
+// matchingCRDGroups returns CRD groups that match the given API group (supports wildcards)
+func (s *AttackPathService) matchingCRDGroups(apiGroup string) []string {
+	if apiGroup == "*" {
+		// Wildcard matches all CRD groups
+		groups := make([]string, 0, len(s.crdGroups))
+		for g := range s.crdGroups {
+			groups = append(groups, g)
+		}
+		return groups
+	}
+	if s.crdGroups[apiGroup] {
+		return []string{apiGroup}
+	}
+	return nil
+}
+
 // Helper functions
-
-
 
 func formatPrincipal(subject v1.Subject) string {
 	switch subject.Kind {
@@ -686,6 +898,74 @@ func formatPrincipal(subject v1.Subject) string {
 	default:
 		return subject.Name
 	}
+}
+
+// generateDynamicCRDExploitCommand creates detailed exploitation commands for dynamically
+// discovered CRD API groups. Since these are not hardcoded, the commands guide the operator
+// through enumeration and exploitation of the specific CRD group.
+func generateDynamicCRDExploitCommand(verb, resource, group, scope, principal string) string {
+	nsFlag := ""
+	if scope != "cluster" {
+		nsFlag = fmt.Sprintf("-n %s ", scope)
+	}
+
+	res := resource
+	if res == "*" {
+		res = "<resource>"
+	}
+
+	lines := []string{
+		fmt.Sprintf("# CRD Group: %s", group),
+		fmt.Sprintf("# Permission: %s on %s", verb, resource),
+		"",
+		"# Step 1: Discover CRDs in this API group",
+		fmt.Sprintf("kubectl get crds -o name | xargs -I{} kubectl get {} -o jsonpath='{.spec.group}' | grep -l %s", group),
+		fmt.Sprintf("kubectl api-resources --api-group=%s", group),
+		"",
+		"# Step 2: List existing custom resources",
+		fmt.Sprintf("kubectl get %s%s -A --as=%s 2>/dev/null", nsFlag, res, principal),
+	}
+
+	switch verb {
+	case "*":
+		lines = append(lines, "",
+			"# Step 3: Full access — enumerate, read, modify, and create resources",
+			fmt.Sprintf("kubectl get %s%s -A -o yaml --as=%s", nsFlag, res, principal),
+			"",
+			"# Step 4: Create a new resource (modify spec as needed)",
+			fmt.Sprintf("kubectl get %s%s -o yaml --as=%s | head -50  # copy and modify an existing resource", nsFlag, res, principal),
+			fmt.Sprintf("# kubectl apply %s-f crafted-resource.yaml --as=%s", nsFlag, principal),
+			"",
+			"# Step 5: Check for sensitive data in resource specs",
+			fmt.Sprintf("kubectl get %s%s -A -o yaml --as=%s | grep -iE 'password|secret|token|key|cert|credential'", nsFlag, res, principal),
+		)
+	case "create":
+		lines = append(lines, "",
+			"# Step 3: Get an existing resource as a template",
+			fmt.Sprintf("kubectl get %s%s -o yaml 2>/dev/null | head -50", nsFlag, res),
+			"",
+			"# Step 4: Create a crafted resource (modify spec for exploitation)",
+			fmt.Sprintf("# kubectl apply %s-f crafted-resource.yaml --as=%s", nsFlag, principal),
+		)
+	case "update", "patch":
+		lines = append(lines, "",
+			"# Step 3: Read existing resources to identify modification targets",
+			fmt.Sprintf("kubectl get %s%s -A -o yaml 2>/dev/null", nsFlag, res),
+			"",
+			fmt.Sprintf("# Step 4: Modify a resource (%s)", verb),
+			fmt.Sprintf("# kubectl %s %s%s <name> --as=%s --type=merge -p '{\"spec\":{...}}'", verb, nsFlag, res, principal),
+		)
+	case "delete", "deletecollection":
+		lines = append(lines, "",
+			"# Step 3: Identify resources to delete (e.g., security policies, network rules)",
+			fmt.Sprintf("kubectl get %s%s -A --as=%s", nsFlag, res, principal),
+			"",
+			"# Step 4: Delete a target resource to weaken security controls",
+			fmt.Sprintf("# kubectl delete %s%s <name> --as=%s", nsFlag, res, principal),
+		)
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 func generateExploitCommand(pathType, verb, resource, scope, principal string) string {
@@ -1162,6 +1442,40 @@ EOF`, namespaceFlag)
 			return fmt.Sprintf("kubectl %sget pvc -o wide", namespaceFlag)
 		default:
 			return fmt.Sprintf("kubectl %s%s pvc", namespaceFlag, verb)
+		}
+
+	// --- CRD Management ---
+	case "customresourcedefinitions":
+		switch verb {
+		case "create":
+			return `# Create a CRD without validation to inject arbitrary data into controllers
+kubectl apply -f - <<'EOF'
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: exploits.attacker.example.com
+spec:
+  group: attacker.example.com
+  names:
+    kind: Exploit
+    plural: exploits
+  scope: Namespaced
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        x-kubernetes-preserve-unknown-fields: true
+EOF`
+		case "delete":
+			return "# Delete a CRD to disrupt controllers (deletes ALL custom resources of that type!)\nkubectl delete crd <crd-name>"
+		case "update", "patch":
+			return fmt.Sprintf(`# Remove validation from an existing CRD
+kubectl %s crd <crd-name> --type=json -p='[{"op":"replace","path":"/spec/versions/0/schema/openAPIV3Schema","value":{"type":"object","x-kubernetes-preserve-unknown-fields":true}}]'`, verb)
+		default:
+			return fmt.Sprintf("kubectl %s%s customresourcedefinitions", namespaceFlag, verb)
 		}
 	}
 

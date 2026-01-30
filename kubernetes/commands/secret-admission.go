@@ -10,6 +10,7 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/BishopFox/cloudfox/kubernetes/shared"
+	"github.com/BishopFox/cloudfox/kubernetes/shared/admission"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -26,15 +27,48 @@ var SecretAdmissionCmd = &cobra.Command{
 	Short:   "Analyze external secret management and encryption policies",
 	Long: `
 Analyze all cluster secret management configurations including:
+
+Secret Management Solutions:
   - HashiCorp Vault (Agent Injector, Secrets Operator, CSI Provider)
-  - External Secrets Operator (ESO)
+  - External Secrets Operator (ESO) with ClusterSecretStore/SecretStore
   - Sealed Secrets (Bitnami)
-  - Secrets Store CSI Driver (AWS, Azure, GCP providers)
   - Secret encryption at rest analysis
   - Unmanaged secrets detection
-  - Policy verification and bypass detection
 
-  cloudfox kubernetes secret-admission`,
+Secrets Store CSI Driver (in-cluster detection):
+  Detects cloud secret store integrations from SecretProviderClass CRDs.
+  No --cloud-provider flag required - reads CRDs directly.
+
+  AWS:
+    - AWS Secrets Manager provider
+    - AWS Systems Manager Parameter Store
+    - SecretProviderClass with provider: aws
+
+  GCP:
+    - Google Secret Manager provider
+    - SecretProviderClass with provider: gcp
+
+  Azure:
+    - Azure Key Vault provider
+    - SecretProviderClass with provider: azure
+    - Key Vault secret/key/certificate references
+
+External Secrets Operator Backends:
+  Detects ESO ClusterSecretStore and SecretStore configurations for:
+  - AWS Secrets Manager, Parameter Store
+  - GCP Secret Manager
+  - Azure Key Vault
+  - HashiCorp Vault
+  - Kubernetes secrets (for secret copying across namespaces)
+
+Security Analysis:
+  - Policy verification and bypass detection
+  - Secrets without external management (potential plaintext)
+  - CSI driver mount configurations
+
+Examples:
+  cloudfox kubernetes secret-admission
+  cloudfox kubernetes secret-admission --detailed`,
 	Run: ListSecretAdmission,
 }
 
@@ -64,7 +98,6 @@ type SecretAdmissionFinding struct {
 	VaultManagedSecrets         int
 	VaultInjectedPods           int
 	VaultRoles                  []string
-	VaultBypassRisk             string
 
 	// External Secrets Operator
 	ESOActive              bool
@@ -72,28 +105,22 @@ type SecretAdmissionFinding struct {
 	ESOExternalSecretCount int
 	ESOManagedSecrets      int
 	ESOProviders           []string
-	ESOBypassRisk          string
 
 	// Sealed Secrets
 	SealedSecretsActive       bool
 	SealedSecretCount         int
 	SealedSecretsManagedCount int
 	SealedSecretsScope        string // cluster-wide or namespace
-	SealedSecretsBypassRisk   string
 
 	// Secrets Store CSI Driver
 	CSIDriverActive       bool
 	CSIProviderClasses    int
 	CSIMountedSecrets     int
 	CSIProviders          []string // aws, azure, gcp, vault
-	CSIBypassRisk         string
 
-	// Risk Analysis
-	RiskLevel            string
 	SecurityIssues       []string
 	BypassTechniques     []string
 	UnmanagedHighRisk    int // Unmanaged secrets with sensitive data
-	Recommendations      []string
 
 	// Blocking Analysis (for summary table)
 	SecretCreationBlocked   bool
@@ -114,7 +141,7 @@ type VaultAgentInjectorConfig struct {
 	AuthMethod        string // kubernetes, jwt, etc.
 	VaultAddr         string
 	TLSEnabled        bool
-	BypassRisk        string
+
 	SecurityIssues    []string
 	ImageVerified     bool // True if Vault Agent Injector image was verified
 }
@@ -130,7 +157,7 @@ type VaultSecretsOperatorConfig struct {
 	DynamicSecrets  int
 	PKISecrets      int
 	SyncedSecrets   int
-	BypassRisk      string
+
 	SecurityIssues  []string
 	ImageVerified   bool // True if Vault Secrets Operator image was verified
 }
@@ -146,7 +173,7 @@ type VaultAuthConfig struct {
 	Role           string
 	Headers        map[string]string
 	AllowedNS      []string
-	BypassRisk     string
+
 }
 
 // VaultStaticSecretConfig represents a VaultStaticSecret CRD
@@ -162,7 +189,7 @@ type VaultStaticSecretConfig struct {
 	DestinationType  string // Secret, ConfigMap
 	SyncStatus       string
 	LastSyncTime     string
-	BypassRisk       string
+
 }
 
 // VaultDynamicSecretConfig represents a VaultDynamicSecret CRD
@@ -177,7 +204,7 @@ type VaultDynamicSecretConfig struct {
 	RenewalPercent  int
 	DestinationName string
 	SyncStatus      string
-	BypassRisk      string
+
 }
 
 // ExternalSecretConfig represents an ExternalSecret CRD
@@ -193,7 +220,7 @@ type ExternalSecretConfig struct {
 	SyncStatus        string
 	LastSyncTime      string
 	Provider          string // aws, azure, gcp, vault, etc.
-	BypassRisk        string
+
 }
 
 // SecretStoreConfig represents a SecretStore or ClusterSecretStore CRD
@@ -207,7 +234,7 @@ type SecretStoreConfig struct {
 	Conditions        string
 	ReferencedBy      int    // Number of ExternalSecrets using this store
 	AuthMethod        string
-	BypassRisk        string
+
 	SecurityIssues    []string
 }
 
@@ -220,7 +247,7 @@ type SealedSecretConfig struct {
 	TargetName      string
 	Status          string // Synced, Error, etc.
 	ConditionStatus string
-	BypassRisk      string
+
 }
 
 // SecretProviderClassConfig represents a SecretProviderClass CRD (Secrets Store CSI Driver)
@@ -232,7 +259,7 @@ type SecretProviderClassConfig struct {
 	SecretObjects     int    // Number of secrets to sync
 	UsedByPods        int    // Number of pods mounting this class
 	Status            string
-	BypassRisk        string
+
 	SecurityIssues    []string
 }
 
@@ -246,13 +273,12 @@ type UnmanagedSecretInfo struct {
 	IsHighRisk     bool
 	RiskReason     string
 	MountedInPods  int
-	Recommendation string
 }
 
 // verifySecretEngineImage checks if a container image matches known patterns for a secret engine
 // Now uses the shared admission SDK for centralized engine detection
 func verifySecretEngineImage(image string, engine string) bool {
-	return VerifyControllerImage(image, engine)
+	return admission.VerifyControllerImage(image, engine)
 }
 
 func ListSecretAdmission(cmd *cobra.Command, args []string) {
@@ -308,7 +334,6 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 		"ESO",
 		"Sealed Secrets",
 		"CSI Driver",
-		"Risk Level",
 		"Issues",
 	}
 
@@ -321,7 +346,7 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 		"Vault Address",
 		"TLS Enabled",
 		"Failure Policy",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	// Vault Secrets Operator detail table
@@ -333,7 +358,7 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 		"Static Secrets",
 		"Dynamic Secrets",
 		"PKI Secrets",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	// VaultAuth detail table
@@ -345,7 +370,7 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 		"Service Account",
 		"Role",
 		"Allowed Namespaces",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	// VaultStaticSecret detail table
@@ -358,7 +383,7 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 		"Type",
 		"Destination",
 		"Sync Status",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	// External Secrets Operator detail table
@@ -369,7 +394,7 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 		"SecretStores",
 		"ClusterSecretStores",
 		"ExternalSecrets",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	// SecretStore detail table
@@ -381,7 +406,7 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 		"Auth Method",
 		"Status",
 		"Referenced By",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	// ExternalSecret detail table
@@ -394,7 +419,7 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 		"Target Name",
 		"Data Keys",
 		"Sync Status",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	// Sealed Secrets detail table
@@ -405,7 +430,7 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 		"Encrypted Keys",
 		"Target Name",
 		"Status",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	// SecretProviderClass detail table
@@ -416,7 +441,7 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 		"Secret Objects",
 		"Used By Pods",
 		"Status",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	// Unmanaged Secrets detail table
@@ -426,10 +451,10 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 		"Type",
 		"Data Keys",
 		"Age",
-		"High Risk",
-		"Risk Reason",
+		"Sensitive",
+		"Details",
 		"Mounted In Pods",
-		"Recommendation",
+		"Issues",
 	}
 
 	var summaryRows [][]string
@@ -502,7 +527,6 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 			esoStatus,
 			sealedStatus,
 			csiStatus,
-			finding.RiskLevel,
 			issues,
 		})
 	}
@@ -513,6 +537,23 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 		if vaultInjector.TLSEnabled {
 			tlsEnabled = "Yes"
 		}
+
+		// Detect issues
+		var vaultInjIssues []string
+		if !vaultInjector.TLSEnabled {
+			vaultInjIssues = append(vaultInjIssues, "TLS disabled")
+		}
+		if vaultInjector.FailurePolicy == "Ignore" {
+			vaultInjIssues = append(vaultInjIssues, "Failure policy set to Ignore")
+		}
+		if vaultInjector.PodsRunning < vaultInjector.TotalPods {
+			vaultInjIssues = append(vaultInjIssues, "Not all pods running")
+		}
+		issuesStr := "<NONE>"
+		if len(vaultInjIssues) > 0 {
+			issuesStr = strings.Join(vaultInjIssues, "; ")
+		}
+
 		vaultInjectorRows = append(vaultInjectorRows, []string{
 			vaultInjector.Namespace,
 			vaultInjector.Status,
@@ -521,12 +562,25 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 			vaultInjector.VaultAddr,
 			tlsEnabled,
 			vaultInjector.FailurePolicy,
-			vaultInjector.BypassRisk,
+			issuesStr,
 		})
 	}
 
 	// Build Vault Secrets Operator rows
 	if vaultOperator.Name != "" {
+		// Detect issues
+		var vaultOpIssues []string
+		if vaultOperator.Status != "Running" && vaultOperator.Status != "Healthy" {
+			vaultOpIssues = append(vaultOpIssues, "Not running")
+		}
+		if vaultOperator.VaultAuthCount == 0 {
+			vaultOpIssues = append(vaultOpIssues, "No VaultAuth configured")
+		}
+		issuesStr := "<NONE>"
+		if len(vaultOpIssues) > 0 {
+			issuesStr = strings.Join(vaultOpIssues, "; ")
+		}
+
 		vaultOperatorRows = append(vaultOperatorRows, []string{
 			vaultOperator.Namespace,
 			vaultOperator.Status,
@@ -535,7 +589,7 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 			fmt.Sprintf("%d", vaultOperator.StaticSecrets),
 			fmt.Sprintf("%d", vaultOperator.DynamicSecrets),
 			fmt.Sprintf("%d", vaultOperator.PKISecrets),
-			vaultOperator.BypassRisk,
+			issuesStr,
 		})
 	}
 
@@ -545,6 +599,23 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 		if len(va.AllowedNS) > 0 {
 			allowedNS = strings.Join(va.AllowedNS, ", ")
 		}
+
+		// Detect issues
+		var vaultAuthIssues []string
+		for _, ns := range va.AllowedNS {
+			if ns == "*" {
+				vaultAuthIssues = append(vaultAuthIssues, "Allows all namespaces")
+				break
+			}
+		}
+		if va.Role == "" {
+			vaultAuthIssues = append(vaultAuthIssues, "No role specified")
+		}
+		issuesStr := "<NONE>"
+		if len(vaultAuthIssues) > 0 {
+			issuesStr = strings.Join(vaultAuthIssues, "; ")
+		}
+
 		vaultAuthRows = append(vaultAuthRows, []string{
 			va.Name,
 			va.Namespace,
@@ -553,12 +624,25 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 			va.ServiceAccount,
 			va.Role,
 			allowedNS,
-			va.BypassRisk,
+			issuesStr,
 		})
 	}
 
 	// Build VaultStaticSecret rows
 	for _, vs := range vaultStaticSecrets {
+		// Detect issues
+		var vaultStaticIssues []string
+		if vs.SyncStatus != "Synced" && vs.SyncStatus != "Ready" && vs.SyncStatus != "" {
+			vaultStaticIssues = append(vaultStaticIssues, "Sync issue: "+vs.SyncStatus)
+		}
+		if vs.VaultAuthRef == "" {
+			vaultStaticIssues = append(vaultStaticIssues, "No auth ref")
+		}
+		issuesStr := "<NONE>"
+		if len(vaultStaticIssues) > 0 {
+			issuesStr = strings.Join(vaultStaticIssues, "; ")
+		}
+
 		vaultStaticRows = append(vaultStaticRows, []string{
 			vs.Name,
 			vs.Namespace,
@@ -568,12 +652,25 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 			vs.Type,
 			vs.DestinationName,
 			vs.SyncStatus,
-			vs.BypassRisk,
+			issuesStr,
 		})
 	}
 
 	// Build ESO Controller rows
 	if esoController.Name != "" {
+		// Detect issues
+		var esoIssues []string
+		if esoController.Status != "Running" && esoController.Status != "Healthy" {
+			esoIssues = append(esoIssues, "Not running")
+		}
+		if len(secretStores) == 0 && len(clusterSecretStores) == 0 {
+			esoIssues = append(esoIssues, "No secret stores configured")
+		}
+		issuesStr := "<NONE>"
+		if len(esoIssues) > 0 {
+			issuesStr = strings.Join(esoIssues, "; ")
+		}
+
 		esoControllerRows = append(esoControllerRows, []string{
 			esoController.Namespace,
 			esoController.Status,
@@ -581,7 +678,7 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 			fmt.Sprintf("%d", len(secretStores)),
 			fmt.Sprintf("%d", len(clusterSecretStores)),
 			fmt.Sprintf("%d", len(externalSecrets)),
-			esoController.BypassRisk,
+			issuesStr,
 		})
 	}
 
@@ -589,6 +686,20 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 	for _, ss := range secretStores {
 		scope := "Namespace"
 		ns := ss.Namespace
+
+		// Detect issues
+		var ssIssues []string
+		if ss.Status != "Valid" && ss.Status != "Ready" && ss.Status != "" {
+			ssIssues = append(ssIssues, "Status: "+ss.Status)
+		}
+		if ss.ReferencedBy == 0 {
+			ssIssues = append(ssIssues, "Not referenced")
+		}
+		issuesStr := "<NONE>"
+		if len(ssIssues) > 0 {
+			issuesStr = strings.Join(ssIssues, "; ")
+		}
+
 		secretStoreRows = append(secretStoreRows, []string{
 			ss.Name,
 			ns,
@@ -597,10 +708,23 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 			ss.AuthMethod,
 			ss.Status,
 			fmt.Sprintf("%d", ss.ReferencedBy),
-			ss.BypassRisk,
+			issuesStr,
 		})
 	}
 	for _, css := range clusterSecretStores {
+		// Detect issues
+		var cssIssues []string
+		if css.Status != "Valid" && css.Status != "Ready" && css.Status != "" {
+			cssIssues = append(cssIssues, "Status: "+css.Status)
+		}
+		if css.ReferencedBy == 0 {
+			cssIssues = append(cssIssues, "Not referenced")
+		}
+		issuesStr := "<NONE>"
+		if len(cssIssues) > 0 {
+			issuesStr = strings.Join(cssIssues, "; ")
+		}
+
 		secretStoreRows = append(secretStoreRows, []string{
 			css.Name,
 			"<CLUSTER>",
@@ -609,12 +733,25 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 			css.AuthMethod,
 			css.Status,
 			fmt.Sprintf("%d", css.ReferencedBy),
-			css.BypassRisk,
+			issuesStr,
 		})
 	}
 
 	// Build ExternalSecret rows
 	for _, es := range externalSecrets {
+		// Detect issues
+		var esIssues []string
+		if es.SyncStatus != "SecretSynced" && es.SyncStatus != "Ready" && es.SyncStatus != "" {
+			esIssues = append(esIssues, "Sync issue: "+es.SyncStatus)
+		}
+		if es.RefreshInterval == "0" || es.RefreshInterval == "0s" {
+			esIssues = append(esIssues, "No refresh configured")
+		}
+		issuesStr := "<NONE>"
+		if len(esIssues) > 0 {
+			issuesStr = strings.Join(esIssues, "; ")
+		}
+
 		externalSecretRows = append(externalSecretRows, []string{
 			es.Name,
 			es.Namespace,
@@ -624,7 +761,7 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 			es.TargetName,
 			fmt.Sprintf("%d", es.DataKeys),
 			es.SyncStatus,
-			es.BypassRisk,
+			issuesStr,
 		})
 	}
 
@@ -638,6 +775,20 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 				encryptedKeys = strings.Join(ss.EncryptedKeys, ", ")
 			}
 		}
+
+		// Detect issues
+		var sealedIssues []string
+		if ss.Status != "Ready" && ss.Status != "Synced" && ss.Status != "" {
+			sealedIssues = append(sealedIssues, "Status: "+ss.Status)
+		}
+		if ss.Scope == "cluster-wide" {
+			sealedIssues = append(sealedIssues, "Cluster-wide scope")
+		}
+		issuesStr := "<NONE>"
+		if len(sealedIssues) > 0 {
+			issuesStr = strings.Join(sealedIssues, "; ")
+		}
+
 		sealedSecretsRows = append(sealedSecretsRows, []string{
 			ss.Name,
 			ss.Namespace,
@@ -645,12 +796,25 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 			encryptedKeys,
 			ss.TargetName,
 			ss.Status,
-			ss.BypassRisk,
+			issuesStr,
 		})
 	}
 
 	// Build SecretProviderClass rows
 	for _, spc := range secretProviderClasses {
+		// Detect issues
+		var spcIssues []string
+		if spc.Status != "Ready" && spc.Status != "" {
+			spcIssues = append(spcIssues, "Status: "+spc.Status)
+		}
+		if spc.UsedByPods == 0 {
+			spcIssues = append(spcIssues, "Not used by any pods")
+		}
+		issuesStr := "<NONE>"
+		if len(spcIssues) > 0 {
+			issuesStr = strings.Join(spcIssues, "; ")
+		}
+
 		secretProviderClassRows = append(secretProviderClassRows, []string{
 			spc.Name,
 			spc.Namespace,
@@ -658,7 +822,7 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 			fmt.Sprintf("%d", spc.SecretObjects),
 			fmt.Sprintf("%d", spc.UsedByPods),
 			spc.Status,
-			spc.BypassRisk,
+			issuesStr,
 		})
 	}
 
@@ -676,6 +840,23 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 				dataKeys = strings.Join(us.DataKeys, ", ")
 			}
 		}
+
+		// Detect issues
+		var unmanagedIssues []string
+		if us.IsHighRisk {
+			unmanagedIssues = append(unmanagedIssues, "High risk secret")
+		}
+		if us.MountedInPods > 0 {
+			unmanagedIssues = append(unmanagedIssues, "Mounted in pods")
+		}
+		if us.Type == "Opaque" {
+			unmanagedIssues = append(unmanagedIssues, "Opaque type")
+		}
+		issuesStr := "<NONE>"
+		if len(unmanagedIssues) > 0 {
+			issuesStr = strings.Join(unmanagedIssues, "; ")
+		}
+
 		unmanagedSecretsRows = append(unmanagedSecretsRows, []string{
 			us.Name,
 			us.Namespace,
@@ -685,7 +866,7 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 			highRisk,
 			us.RiskReason,
 			fmt.Sprintf("%d", us.MountedInPods),
-			us.Recommendation,
+			issuesStr,
 		})
 	}
 
@@ -855,7 +1036,6 @@ func analyzeVaultAgentInjector(ctx context.Context, clientset kubernetes.Interfa
 	// Verify webhook targets pods
 	if !webhookTargetsPods(whObject) {
 		config.Status = "webhook-misconfigured"
-		config.BypassRisk = "Webhook does not target pods"
 		return config
 	}
 
@@ -890,7 +1070,6 @@ func analyzeVaultAgentInjector(ctx context.Context, clientset kubernetes.Interfa
 
 	if totalPods == 0 {
 		config.Status = "not-running"
-		config.BypassRisk = "No injector pods found"
 		return config
 	}
 
@@ -900,7 +1079,6 @@ func analyzeVaultAgentInjector(ctx context.Context, clientset kubernetes.Interfa
 
 	if podsRunning == 0 {
 		config.Status = "not-running"
-		config.BypassRisk = "Injector pods not running"
 		return config
 	}
 
@@ -949,7 +1127,6 @@ func analyzeVaultAgentInjector(ctx context.Context, clientset kubernetes.Interfa
 
 	// Check for bypass risks
 	if config.FailurePolicy == "Ignore" {
-		config.BypassRisk = "FailurePolicy=Ignore allows bypass"
 		config.SecurityIssues = append(config.SecurityIssues, "Webhook can be bypassed during failures")
 	}
 	if !config.TLSEnabled && config.VaultAddr != "" {
@@ -1110,14 +1287,12 @@ func analyzeVaultSecretsOperator(ctx context.Context, clientset kubernetes.Inter
 		if config.StaticSecrets > 0 || config.DynamicSecrets > 0 {
 			config.Name = "Vault Secrets Operator"
 			config.Status = "CRDs-only"
-			config.BypassRisk = "VSO CRDs found but operator may not be running"
 		}
 		return config, vaultAuths, staticSecrets, dynamicSecrets
 	}
 
 	if podsRunning == 0 {
 		config.Status = "not-running"
-		config.BypassRisk = "Operator pods not running - secrets will not sync"
 	} else {
 		config.Status = "active"
 		config.SyncedSecrets = config.StaticSecrets + config.DynamicSecrets + config.PKISecrets
@@ -1194,13 +1369,10 @@ func parseVaultAuth(obj map[string]interface{}) VaultAuthConfig {
 
 	// Analyze bypass risks
 	if auth.Method == "" {
-		auth.BypassRisk = "No auth method configured"
 	} else if len(auth.AllowedNS) == 0 {
-		auth.BypassRisk = "No namespace restrictions"
 	} else {
 		for _, ns := range auth.AllowedNS {
 			if ns == "*" {
-				auth.BypassRisk = "Wildcard namespace allowed"
 				break
 			}
 		}
@@ -1240,8 +1412,7 @@ func parseVaultStaticSecret(obj map[string]interface{}) VaultStaticSecretConfig 
 								secret.SyncStatus = "Synced"
 							} else {
 								secret.SyncStatus = "Error"
-								if msg, ok := condMap["message"].(string); ok {
-									secret.BypassRisk = fmt.Sprintf("Sync error: %s", secretAdmissionTruncateString(msg, 50))
+								if _, ok := condMap["message"].(string); ok {
 								}
 							}
 						}
@@ -1319,7 +1490,7 @@ type ESOControllerConfig struct {
 	Namespace     string
 	Status        string
 	PodsRunning   int
-	BypassRisk    string
+
 	ImageVerified bool // True if External Secrets Operator image was verified
 }
 
@@ -1435,7 +1606,6 @@ func analyzeExternalSecretsOperator(ctx context.Context, clientset kubernetes.In
 
 		if podsRunning == 0 {
 			config.Status = "not-running"
-			config.BypassRisk = "Controller not running - secrets will not sync"
 		} else {
 			config.Status = "active"
 		}
@@ -1508,8 +1678,7 @@ func parseSecretStore(obj map[string]interface{}, isCluster bool) SecretStoreCon
 								store.Status = "Valid"
 							} else {
 								store.Status = "Invalid"
-								if msg, ok := condMap["message"].(string); ok {
-									store.BypassRisk = fmt.Sprintf("Store error: %s", secretAdmissionTruncateString(msg, 50))
+								if _, ok := condMap["message"].(string); ok {
 								}
 							}
 						}
@@ -1526,7 +1695,6 @@ func parseSecretStore(obj map[string]interface{}, isCluster bool) SecretStoreCon
 	// Security analysis
 	if store.Provider == "fake" {
 		store.SecurityIssues = append(store.SecurityIssues, "Using fake provider - not for production")
-		store.BypassRisk = "Fake provider - secrets not externally managed"
 	}
 
 	return store
@@ -1653,8 +1821,7 @@ func parseExternalSecret(obj map[string]interface{}, storeProviders map[string]s
 								es.SyncStatus = "Synced"
 							} else {
 								es.SyncStatus = "Error"
-								if msg, ok := condMap["message"].(string); ok {
-									es.BypassRisk = fmt.Sprintf("Sync error: %s", secretAdmissionTruncateString(msg, 50))
+								if _, ok := condMap["message"].(string); ok {
 								}
 							}
 						}
@@ -1685,7 +1852,7 @@ type SealedSecretsControllerConfig struct {
 	Status        string
 	PodsRunning   int
 	PublicKey     string
-	BypassRisk    string
+
 	ImageVerified bool // True if Sealed Secrets controller image was verified
 }
 
@@ -1744,7 +1911,6 @@ func analyzeSealedSecrets(ctx context.Context, clientset kubernetes.Interface, d
 	if config.Name != "" {
 		if podsRunning == 0 {
 			config.Status = "not-running"
-			config.BypassRisk = "Controller not running - sealed secrets cannot be decrypted"
 		} else {
 			config.Status = "active"
 		}
@@ -1830,8 +1996,7 @@ func parseSealedSecret(obj map[string]interface{}) SealedSecretConfig {
 								ss.Status = "Synced"
 							} else {
 								ss.Status = "Error"
-								if msg, ok := condMap["message"].(string); ok {
-									ss.BypassRisk = fmt.Sprintf("Sync error: %s", secretAdmissionTruncateString(msg, 50))
+								if _, ok := condMap["message"].(string); ok {
 								}
 							}
 						}
@@ -1847,7 +2012,6 @@ func parseSealedSecret(obj map[string]interface{}) SealedSecretConfig {
 
 	// Scope-based bypass risk
 	if ss.Scope == "cluster-wide" {
-		ss.BypassRisk = "cluster-wide scope - can be moved to any namespace"
 	}
 
 	return ss
@@ -1863,7 +2027,7 @@ type CSIDriverConfig struct {
 	Status        string
 	PodsRunning   int
 	Providers     []string
-	BypassRisk    string
+
 	ImageVerified bool // True if Secrets Store CSI Driver image was verified
 }
 
@@ -1883,7 +2047,6 @@ func analyzeSecretsStoreCSIDriver(ctx context.Context, clientset kubernetes.Inte
 					config.Status = "active"
 				} else {
 					config.Status = "not-running"
-					config.BypassRisk = "CSI driver pods not running"
 				}
 
 				// Verify by checking container images in the DaemonSet spec
@@ -2229,15 +2392,6 @@ func analyzeUnmanagedSecrets(ctx context.Context, clientset kubernetes.Interface
 			info.RiskReason = "-"
 		}
 
-		// Recommendations
-		if isHighRisk {
-			info.Recommendation = "Migrate to external secret management"
-		} else if info.MountedInPods > 0 {
-			info.Recommendation = "Consider external management"
-		} else {
-			info.Recommendation = "Review if still needed"
-		}
-
 		unmanagedSecrets = append(unmanagedSecrets, info)
 	}
 
@@ -2410,7 +2564,6 @@ func buildSecretAdmissionFindings(ctx context.Context, clientset kubernetes.Inte
 			finding.ESOActive || finding.SealedSecretsActive || finding.CSIDriverActive
 
 		// Calculate risk level
-		finding.RiskLevel = calculateSecretRiskLevel(finding)
 
 		// Add security issues
 		if finding.UnmanagedHighRisk > 0 {
@@ -2429,39 +2582,6 @@ func buildSecretAdmissionFindings(ctx context.Context, clientset kubernetes.Inte
 	})
 
 	return findings
-}
-
-func calculateSecretRiskLevel(finding *SecretAdmissionFinding) string {
-	score := 0
-
-	// High risk unmanaged secrets
-	score += finding.UnmanagedHighRisk * 20
-
-	// No management at all
-	if !finding.HasExternalManagement && finding.TotalSecrets > 0 {
-		score += 30
-	}
-
-	// Low coverage
-	if finding.TotalSecrets > 0 {
-		coverage := float64(finding.ManagedSecrets) / float64(finding.TotalSecrets)
-		if coverage < 0.25 {
-			score += 20
-		} else if coverage < 0.5 {
-			score += 10
-		}
-	}
-
-	if score >= 50 {
-		return "CRITICAL"
-	} else if score >= 30 {
-		return "HIGH"
-	} else if score >= 15 {
-		return "MEDIUM"
-	} else if score > 0 {
-		return "LOW"
-	}
-	return "INFO"
 }
 
 func secretAdmissionContainsString(slice []string, s string) bool {
@@ -2550,16 +2670,16 @@ func generateSecretAdmissionLoot(loot *shared.LootBuilder,
 	loot.Section("HighRiskSecrets").Add("# These secrets contain sensitive data and are not managed by external systems")
 	loot.Section("HighRiskSecrets").Add("#")
 
-	highRiskCount := 0
+	hasHighRiskSecrets := false
 	for _, us := range unmanagedSecrets {
 		if us.IsHighRisk {
-			highRiskCount++
+			hasHighRiskSecrets = true
 			loot.Section("HighRiskSecrets").Add(fmt.Sprintf("# %s/%s - %s", us.Namespace, us.Name, us.RiskReason))
 			loot.Section("HighRiskSecrets").Add(fmt.Sprintf("kubectl get secret %s -n %s -o yaml", us.Name, us.Namespace))
 		}
 	}
 
-	if highRiskCount == 0 {
+	if !hasHighRiskSecrets {
 		loot.Section("HighRiskSecrets").Add("# No high-risk unmanaged secrets found")
 	}
 
@@ -2582,12 +2702,6 @@ func generateSecretAdmissionLoot(loot *shared.LootBuilder,
 			loot.Section("VaultBypass").Add("# WARNING: Vault Agent Injector has failurePolicy=Ignore")
 			loot.Section("VaultBypass").Add("# Pods can be created without Vault injection during webhook failures")
 		}
-
-		for _, va := range vaultAuths {
-			if va.BypassRisk != "" {
-				loot.Section("VaultBypass").Add(fmt.Sprintf("# VaultAuth %s/%s: %s", va.Namespace, va.Name, va.BypassRisk))
-			}
-		}
 	}
 
 	// ESO issues
@@ -2595,36 +2709,11 @@ func generateSecretAdmissionLoot(loot *shared.LootBuilder,
 		loot.Section("ESOIssues").Add("# External Secrets Operator Issues")
 		loot.Section("ESOIssues").Add("#")
 
-		for _, ss := range secretStores {
-			if ss.Status == "Invalid" || ss.BypassRisk != "" {
-				loot.Section("ESOIssues").Add(fmt.Sprintf("# SecretStore %s/%s: %s", ss.Namespace, ss.Name, ss.BypassRisk))
-			}
-		}
-		for _, css := range clusterSecretStores {
-			if css.Status == "Invalid" || css.BypassRisk != "" {
-				loot.Section("ESOIssues").Add(fmt.Sprintf("# ClusterSecretStore %s: %s", css.Name, css.BypassRisk))
-			}
-		}
-
 		for _, es := range externalSecrets {
 			if es.SyncStatus == "Error" {
-				loot.Section("ESOIssues").Add(fmt.Sprintf("# ExternalSecret %s/%s: %s", es.Namespace, es.Name, es.BypassRisk))
+				loot.Section("ESOIssues").Add(fmt.Sprintf("# ExternalSecret %s/%s has sync error", es.Namespace, es.Name))
 			}
 		}
-	}
-
-	// Recommendations
-	loot.Section("Recommendations").Add("# Recommendations")
-	loot.Section("Recommendations").Add("#")
-
-	if activeEngines == 0 {
-		loot.Section("Recommendations").Add("# 1. Deploy external secret management (ESO, Vault, Sealed Secrets)")
-		loot.Section("Recommendations").Add("#    - External Secrets Operator: helm install external-secrets external-secrets/external-secrets -n external-secrets --create-namespace")
-		loot.Section("Recommendations").Add("#    - Sealed Secrets: helm install sealed-secrets sealed-secrets/sealed-secrets -n kube-system")
-	}
-
-	if highRiskCount > 0 {
-		loot.Section("Recommendations").Add(fmt.Sprintf("# 2. Migrate %d high-risk secrets to external management", highRiskCount))
 	}
 
 	// Commands

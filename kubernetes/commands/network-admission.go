@@ -12,6 +12,7 @@ import (
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/BishopFox/cloudfox/kubernetes/sdk"
 	"github.com/BishopFox/cloudfox/kubernetes/shared"
+	"github.com/BishopFox/cloudfox/kubernetes/shared/admission"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1"
@@ -28,20 +29,52 @@ var NetworkAdmissionCmd = &cobra.Command{
 	Short:   "Analyze network admission controllers, policies, and security enforcement",
 	Long: `
 Analyze all cluster network admission configurations including:
-  - Kubernetes NetworkPolicies with comprehensive security analysis
-  - CNI-specific policies (Calico, Cilium, Antrea)
-  - Service mesh policies (Istio AuthorizationPolicy, Linkerd)
+
+Kubernetes Network Policies:
+  - Native NetworkPolicies with comprehensive security analysis
   - Coverage gap identification (namespaces/pods without policies)
   - Policy weakness detection (overly permissive rules)
+  - Default-deny policy recommendations
+
+CNI-Specific Policies:
+  - Calico NetworkPolicy and GlobalNetworkPolicy
+  - Cilium NetworkPolicy and CiliumClusterwideNetworkPolicy
+  - Antrea NetworkPolicy and ClusterNetworkPolicy
+
+Service Mesh Policies:
+  - Istio AuthorizationPolicy
+  - Linkerd Server and ServerAuthorization
+
+Security Analysis:
   - Lateral movement opportunity analysis
   - Data exfiltration risk assessment
-  - Metadata API access detection
-  - Default-deny policy recommendations
-  - Risk-based scoring for prioritized security review
+  - Metadata API access detection (169.254.169.254)
 
-  cloudfox kubernetes network-admission`,
+Cloud-Specific Network Policies (in-cluster detection):
+  Detects cloud-specific network policies from in-cluster CRDs.
+  No --cloud-provider flag required - reads CRDs directly.
+
+  AWS EKS:
+    - VPC CNI SecurityGroupPolicy (pod-level security groups)
+    - AWS security group attachments to pods
+
+  GCP GKE:
+    - GCPBackendPolicy (Cloud Armor, IAP integration)
+    - GCPGatewayPolicy (Gateway API security)
+    - HealthCheckPolicy
+
+  Azure AKS:
+    - AzureIngressProhibitedTarget (AGIC configuration)
+    - AzureIdentity/AzureIdentityBinding (AAD Pod Identity)
+    - Azure CNI network policy integration
+
+Examples:
+  cloudfox kubernetes network-admission
+  cloudfox kubernetes network-admission --detailed`,
 	Run: ListNetworkAdmission,
 }
+
+// init() removed - detailed flag is now a global persistent flag in cli/kubernetes.go
 
 // NetworkPoliciesCmd is an alias for backwards compatibility
 var NetworkPoliciesCmd = NetworkAdmissionCmd
@@ -54,6 +87,15 @@ type NetworkAdmissionOutput struct {
 func (t NetworkAdmissionOutput) TableFiles() []internal.TableFile { return t.Table }
 func (t NetworkAdmissionOutput) LootFiles() []internal.LootFile   { return t.Loot }
 
+type NetworkEnumeratedPolicy struct {
+	Namespace string
+	Tool      string
+	Name      string
+	Scope     string
+	Type      string
+	Details   string
+}
+
 // NetworkAdmissionFinding represents comprehensive network policy analysis for a namespace
 type NetworkAdmissionFinding struct {
 	// Basic Info
@@ -61,7 +103,6 @@ type NetworkAdmissionFinding struct {
 	Age       string
 
 	// Security Analysis
-	RiskLevel      string
 	SecurityIssues []string
 
 	// Policy Coverage
@@ -168,7 +209,6 @@ type K8sNetworkPolicyInfo struct {
 	DefaultDenyIngress    bool
 	DefaultDenyEgress     bool
 	CoveredPods           int
-	RiskLevel             string
 	Weaknesses            []string
 	ImageVerified         bool // True if CNI/policy controller image was verified
 }
@@ -189,7 +229,6 @@ type CalicoNetworkPolicyInfo struct {
 	AllowsMetadataAPI     bool
 	IsDefaultDeny         bool
 	Action                string // Allow, Deny, Log, Pass
-	RiskLevel             string
 	ImageVerified         bool // True if Calico controller image was verified
 }
 
@@ -208,7 +247,6 @@ type CiliumNetworkPolicyInfo struct {
 	HasL7Rules            bool // HTTP, DNS, Kafka, etc.
 	L7Protocols           []string
 	IsDefaultDeny         bool
-	RiskLevel             string
 	ImageVerified         bool // True if Cilium agent image was verified
 }
 
@@ -228,7 +266,6 @@ type AntreaNetworkPolicyInfo struct {
 	AllowsMetadataAPI     bool
 	IsDefaultDeny         bool
 	Action                string // Allow, Drop, Reject, Pass
-	RiskLevel             string
 	ImageVerified         bool // True if Antrea agent image was verified
 }
 
@@ -242,7 +279,6 @@ type IstioAuthorizationPolicyInfo struct {
 	AllowsInternetIngress bool
 	AllowsCrossNS         bool
 	HasMTLS               bool
-	RiskLevel             string
 	ImageVerified         bool // True if Istio proxy/control plane image was verified
 }
 
@@ -252,7 +288,6 @@ type LinkerdPolicyInfo struct {
 	Namespace     string
 	Kind          string // Server, ServerAuthorization, AuthorizationPolicy
 	Selector      string
-	RiskLevel     string
 	ImageVerified bool // True if Linkerd proxy/control plane image was verified
 }
 
@@ -264,7 +299,6 @@ type AWSSecurityGroupPolicyInfo struct {
 	SecurityGroupIDs     []string
 	AllowsInternetEgress bool // SG rules analysis
 	AllowsAllTraffic     bool
-	RiskLevel            string
 	ImageVerified        bool // True if AWS VPC CNI image was verified
 }
 
@@ -277,7 +311,6 @@ type OpenShiftEgressFirewallInfo struct {
 	AllowsInternet    bool
 	DeniesMetadataAPI bool
 	DeniesAllEgress   bool
-	RiskLevel         string
 	ImageVerified     bool // True if OpenShift network operator image was verified
 }
 
@@ -291,7 +324,6 @@ type ConsulConnectIntentionInfo struct {
 	AllowsAllSources   bool
 	DeniesAllSources   bool
 	HasMTLS            bool
-	RiskLevel          string
 	ImageVerified      bool // True if Consul Connect image was verified
 }
 
@@ -305,7 +337,6 @@ type KumaMeshPolicyInfo struct {
 	RuleCount           int
 	AllowsAllTraffic    bool
 	DeniesAllTraffic    bool
-	RiskLevel           string
 	ImageVerified       bool // True if Kuma control plane image was verified
 }
 
@@ -318,7 +349,6 @@ type SMITrafficPolicyInfo struct {
 	DestinationService string
 	SourceServices     []string
 	AllowsAllSources   bool
-	RiskLevel          string
 	ImageVerified      bool // True if SMI mesh provider image was verified
 }
 
@@ -331,7 +361,6 @@ type GlooMeshPolicyInfo struct {
 	Action           string // ALLOW, DENY
 	RuleCount        int
 	AllowsAllTraffic bool
-	RiskLevel        string
 	ImageVerified    bool // True if Gloo Mesh management plane image was verified
 }
 
@@ -344,7 +373,6 @@ type NSXTSecurityPolicyInfo struct {
 	RuleCount        int
 	DefaultAction    string // allow, drop, reject
 	AllowsAllTraffic bool
-	RiskLevel        string
 	ImageVerified    bool // True if NSX-T NCP image was verified
 }
 
@@ -358,7 +386,6 @@ type GCPBackendPolicyInfo struct {
 	HasCloudArmor             bool
 	HasIAP                    bool // Identity-Aware Proxy enabled
 	ConnectionDrainingTimeout int
-	RiskLevel                 string
 	ImageVerified             bool // True if GKE gateway controller image was verified
 }
 
@@ -370,7 +397,6 @@ type AzureNetworkPolicyInfo struct {
 	TargetService      string
 	ProhibitedTargets  []string
 	HasManagedIdentity bool
-	RiskLevel          string
 	ImageVerified      bool // True if Azure CNI/network policy image was verified
 }
 
@@ -470,7 +496,7 @@ func verifyNetworkEngines(ctx context.Context, clientset kubernetes.Interface) N
 // Now uses the shared admission SDK for centralized engine detection
 func checkAndSetVerification(v *NetworkEngineVerification, image string) {
 	for localEngine, sdkEngine := range networkEngineToSDKMapping {
-		if VerifyControllerImage(image, sdkEngine) {
+		if admission.VerifyControllerImage(image, sdkEngine) {
 			switch localEngine {
 			case "calico":
 				v.Calico = true
@@ -516,6 +542,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 	wrap, _ := parentCmd.PersistentFlags().GetBool("wrap")
 	outputDirectory, _ := parentCmd.PersistentFlags().GetString("outdir")
 	format, _ := parentCmd.PersistentFlags().GetString("output")
+	detailed := globals.K8sDetailed
 
 	logger.InfoM(fmt.Sprintf("Analyzing network admission policies for %s", globals.ClusterName), globals.K8S_NETWORK_ADMISSION_MODULE_NAME)
 
@@ -590,6 +617,76 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 
 	logger.InfoM("Analyzing Azure/AKS network policies...", globals.K8S_NETWORK_ADMISSION_MODULE_NAME)
 	allAzureNetworkPolicies := analyzeAzureNetworkPolicies(ctx, dynClient)
+
+	// Analyze policy engine network constraints (Gatekeeper, Kyverno, Kubewarden)
+	logger.InfoM("Analyzing Gatekeeper network constraints...", globals.K8S_NETWORK_ADMISSION_MODULE_NAME)
+	allGatekeeperNetworkConstraints := analyzeGatekeeperNetworkConstraints(ctx, dynClient)
+	if len(allGatekeeperNetworkConstraints) > 0 {
+		logger.InfoM(fmt.Sprintf("Found %d Gatekeeper network constraints", len(allGatekeeperNetworkConstraints)), globals.K8S_NETWORK_ADMISSION_MODULE_NAME)
+	}
+
+	logger.InfoM("Analyzing Kyverno network policies...", globals.K8S_NETWORK_ADMISSION_MODULE_NAME)
+	allKyvernoNetworkPolicies := analyzeKyvernoNetworkPolicies(ctx, dynClient)
+	if len(allKyvernoNetworkPolicies) > 0 {
+		logger.InfoM(fmt.Sprintf("Found %d Kyverno network policies", len(allKyvernoNetworkPolicies)), globals.K8S_NETWORK_ADMISSION_MODULE_NAME)
+	}
+
+	logger.InfoM("Analyzing Kubewarden network policies...", globals.K8S_NETWORK_ADMISSION_MODULE_NAME)
+	allKubewardenNetworkPolicies := analyzeKubewardenNetworkPolicies(ctx, dynClient)
+	if len(allKubewardenNetworkPolicies) > 0 {
+		logger.InfoM(fmt.Sprintf("Found %d Kubewarden network policies", len(allKubewardenNetworkPolicies)), globals.K8S_NETWORK_ADMISSION_MODULE_NAME)
+	}
+
+	// Analyze CNAPP platform network policies
+	logger.InfoM("Analyzing Aqua network policies...", globals.K8S_NETWORK_ADMISSION_MODULE_NAME)
+	allAquaNetworkPolicies := analyzeAquaNetworkPolicies(ctx, dynClient)
+	if len(allAquaNetworkPolicies) > 0 {
+		logger.InfoM(fmt.Sprintf("Found %d Aqua network policies", len(allAquaNetworkPolicies)), globals.K8S_NETWORK_ADMISSION_MODULE_NAME)
+	}
+
+	logger.InfoM("Analyzing Prisma network policies...", globals.K8S_NETWORK_ADMISSION_MODULE_NAME)
+	allPrismaNetworkPolicies := analyzePrismaNetworkPolicies(ctx, dynClient)
+	if len(allPrismaNetworkPolicies) > 0 {
+		logger.InfoM(fmt.Sprintf("Found %d Prisma network policies", len(allPrismaNetworkPolicies)), globals.K8S_NETWORK_ADMISSION_MODULE_NAME)
+	}
+
+	logger.InfoM("Analyzing Sysdig network policies...", globals.K8S_NETWORK_ADMISSION_MODULE_NAME)
+	allSysdigNetworkPolicies := analyzeSysdigNetworkPolicies(ctx, dynClient)
+	if len(allSysdigNetworkPolicies) > 0 {
+		logger.InfoM(fmt.Sprintf("Found %d Sysdig network policies", len(allSysdigNetworkPolicies)), globals.K8S_NETWORK_ADMISSION_MODULE_NAME)
+	}
+
+	logger.InfoM("Analyzing StackRox network policies...", globals.K8S_NETWORK_ADMISSION_MODULE_NAME)
+	allStackRoxNetworkPolicies := analyzeStackRoxNetworkPolicies(ctx, dynClient)
+	if len(allStackRoxNetworkPolicies) > 0 {
+		logger.InfoM(fmt.Sprintf("Found %d StackRox network policies", len(allStackRoxNetworkPolicies)), globals.K8S_NETWORK_ADMISSION_MODULE_NAME)
+	}
+
+	logger.InfoM("Analyzing NeuVector network policies...", globals.K8S_NETWORK_ADMISSION_MODULE_NAME)
+	allNeuVectorNetworkPolicies := analyzeNeuVectorNetworkPolicies(ctx, dynClient)
+	if len(allNeuVectorNetworkPolicies) > 0 {
+		logger.InfoM(fmt.Sprintf("Found %d NeuVector network policies", len(allNeuVectorNetworkPolicies)), globals.K8S_NETWORK_ADMISSION_MODULE_NAME)
+	}
+
+	// Analyze multitenancy platform network policies
+	logger.InfoM("Analyzing Capsule network policies...", globals.K8S_NETWORK_ADMISSION_MODULE_NAME)
+	allCapsuleNetworkPolicies := analyzeCapsuleNetworkPolicies(ctx, dynClient)
+	if len(allCapsuleNetworkPolicies) > 0 {
+		logger.InfoM(fmt.Sprintf("Found %d Capsule network policies", len(allCapsuleNetworkPolicies)), globals.K8S_NETWORK_ADMISSION_MODULE_NAME)
+	}
+
+	logger.InfoM("Analyzing Rancher network policies...", globals.K8S_NETWORK_ADMISSION_MODULE_NAME)
+	allRancherNetworkPolicies := analyzeRancherNetworkPolicies(ctx, dynClient)
+	if len(allRancherNetworkPolicies) > 0 {
+		logger.InfoM(fmt.Sprintf("Found %d Rancher network policies", len(allRancherNetworkPolicies)), globals.K8S_NETWORK_ADMISSION_MODULE_NAME)
+	}
+
+	// Analyze Polaris network checks
+	logger.InfoM("Analyzing Polaris network checks...", globals.K8S_NETWORK_ADMISSION_MODULE_NAME)
+	allPolarisNetworkChecks := analyzePolarisNetworkChecks(ctx, dynClient)
+	if len(allPolarisNetworkChecks) > 0 {
+		logger.InfoM(fmt.Sprintf("Found %d Polaris network checks", len(allPolarisNetworkChecks)), globals.K8S_NETWORK_ADMISSION_MODULE_NAME)
+	}
 
 	// Restore stderr
 	restoreStderr()
@@ -770,7 +867,6 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		}
 
 		// Risk scoring
-		finding.RiskLevel = calculateNetworkAdmissionRiskLevel(finding)
 
 		// Recommendations
 		finding.Recommendations = generateNetworkAdmissionRecommendations(finding)
@@ -808,6 +904,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		"Cross-NS",
 		"Metadata",
 		"Covered Pods",
+		"Issues",
 	}
 
 	// Calico policy detail table
@@ -822,6 +919,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		"Default Deny",
 		"Internet In",
 		"Internet Out",
+		"Issues",
 	}
 
 	// Cilium policy detail table
@@ -836,6 +934,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		"Default Deny",
 		"Internet In",
 		"Internet Out",
+		"Issues",
 	}
 
 	// Antrea policy detail table
@@ -849,6 +948,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		"Ingress Rules",
 		"Egress Rules",
 		"Action",
+		"Issues",
 	}
 
 	// Istio policy detail table
@@ -859,6 +959,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		"Selector",
 		"Rules",
 		"mTLS",
+		"Issues",
 	}
 
 	// Linkerd policy detail table
@@ -867,6 +968,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		"Name",
 		"Kind",
 		"Selector",
+		"Issues",
 	}
 
 	// AWS SecurityGroupPolicy detail table
@@ -876,6 +978,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		"Pod Selector",
 		"Security Groups",
 		"Allows All",
+		"Issues",
 	}
 
 	// OpenShift EgressFirewall detail table
@@ -886,6 +989,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		"Rules",
 		"Allows Internet",
 		"Denies Metadata",
+		"Issues",
 	}
 
 	// Consul Connect detail table
@@ -896,6 +1000,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		"Action",
 		"Sources",
 		"Allows All",
+		"Issues",
 	}
 
 	// Kuma Mesh detail table
@@ -906,6 +1011,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		"Target",
 		"Action",
 		"Rules",
+		"Issues",
 	}
 
 	// SMI detail table
@@ -916,6 +1022,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		"Provider",
 		"Destination",
 		"Allows All",
+		"Issues",
 	}
 
 	// Gloo Mesh detail table
@@ -926,6 +1033,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		"Apply To",
 		"Action",
 		"Rules",
+		"Issues",
 	}
 
 	// NSX-T detail table
@@ -936,6 +1044,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		"Priority",
 		"Rules",
 		"Default Action",
+		"Issues",
 	}
 
 	// GCP Backend Policy detail table
@@ -946,6 +1055,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		"Target",
 		"Cloud Armor",
 		"IAP Enabled",
+		"Issues",
 	}
 
 	// Azure Network Policy detail table
@@ -955,6 +1065,88 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		"Kind",
 		"Target",
 		"Managed Identity",
+		"Issues",
+	}
+
+	// Gatekeeper Network Constraints detail table
+	gatekeeperNetworkHeaders := []string{
+		"Name",
+		"Kind",
+		"Enforcement",
+		"Match Namespaces",
+		"Exclude Namespaces",
+		"Network Rules",
+		"Violations",
+		"Issues",
+	}
+
+	// Kyverno Network Policies detail table
+	kyvernoNetworkHeaders := []string{
+		"Namespace",
+		"Name",
+		"Scope",
+		"Action",
+		"Background",
+		"Rules",
+		"Network Rules",
+		"Issues",
+	}
+
+	// Kubewarden Network Policies detail table
+	kubewardenNetworkHeaders := []string{
+		"Namespace",
+		"Name",
+		"Policy Server",
+		"Mode",
+		"Module",
+		"Network Rules",
+		"Issues",
+	}
+
+	// CNAPP Network Policies detail table (Aqua, Prisma, Sysdig, StackRox, NeuVector)
+	cnappNetworkHeaders := []string{
+		"Platform",
+		"Name",
+		"Namespace",
+		"Scope",
+		"Mode",
+		"Ingress Rules",
+		"Egress Rules",
+		"Has Default Deny",
+		"Issues",
+	}
+
+	// Capsule Network Policies detail table
+	capsuleNetworkHeaders := []string{
+		"Tenant Name",
+		"Namespace",
+		"Network Policies",
+		"Allowed External IPs",
+		"Ingress Classes",
+		"Has Network Isolation",
+		"Issues",
+	}
+
+	// Rancher Network Policies detail table
+	rancherNetworkHeaders := []string{
+		"Project Name",
+		"Project ID",
+		"Namespace",
+		"Network Policy",
+		"PSP Template",
+		"Has Isolation",
+		"Issues",
+	}
+
+	// Polaris Network Checks detail table
+	polarisNetworkHeaders := []string{
+		"Namespace",
+		"Check ID",
+		"Check Name",
+		"Severity",
+		"Category",
+		"Has Network Policy",
+		"Issues",
 	}
 
 	var outputRows [][]string
@@ -973,73 +1165,27 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 	var nsxtRows [][]string
 	var gcpRows [][]string
 	var azureRows [][]string
+	var gatekeeperNetworkRows [][]string
+	var kyvernoNetworkRows [][]string
+	var kubewardenNetworkRows [][]string
+	var cnappNetworkRows [][]string
+	var capsuleNetworkRows [][]string
+	var rancherNetworkRows [][]string
+	var polarisNetworkRows [][]string
 
 	loot := shared.NewLootBuilder()
 
-	// Initialize loot sections
-	loot.Section("Network-Admission-Enum").SetHeader(`#####################################
+	// Initialize single loot section
+	loot.Section("network-admission").SetHeader(`#####################################
 ##### Network Admission Enumeration
 #####################################
 #
 # Network policies control pod-to-pod and pod-to-external traffic
 # Multiple policy engines can be active simultaneously
-#
-# Policy Engines Detected:
-# - Kubernetes NetworkPolicy (native)
-# - Calico NetworkPolicy/GlobalNetworkPolicy
-# - Cilium CiliumNetworkPolicy/CiliumClusterwideNetworkPolicy
-# - Antrea NetworkPolicy/ClusterNetworkPolicy
-# - Istio AuthorizationPolicy
-# - Linkerd Server/ServerAuthorization
-# - AWS VPC CNI SecurityGroupPolicy
-# - OpenShift EgressFirewall/EgressNetworkPolicy
-# - HashiCorp Consul Connect ServiceIntentions
-# - Kuma/Kong MeshTrafficPermission
-# - SMI TrafficTarget (OSM, Traefik Mesh)
-# - Gloo Mesh AccessPolicy/TrafficPolicy
-# - VMware NSX-T SecurityPolicy
-# - GCP/GKE GCPBackendPolicy (Cloud Armor)
-# - Azure/AKS network configurations
-#`)
-
-	loot.Section("Network-Admission-Default-Deny").SetHeader(`#####################################
-##### Default-Deny Recommendations
-#####################################
-#
-# SECURITY BEST PRACTICE: Implement default-deny policies
-# Namespaces without default-deny allow unrestricted traffic
-#`)
-
-	loot.Section("Network-Admission-Lateral-Movement").SetHeader(`#####################################
-##### Lateral Movement Analysis
-#####################################
-#
-# Namespaces where lateral movement is possible due to:
-# - Missing network policies
-# - Permissive cross-namespace access
-# - No default-deny policies
-#`)
-
-	loot.Section("Network-Admission-Data-Exfil").SetHeader(`#####################################
-##### Data Exfiltration Risks
-#####################################
-#
-# Egress policies that allow potential data exfiltration:
-# - Internet egress allowed
-# - Metadata API access (169.254.169.254)
-# - Unrestricted DNS egress
-#`)
-
-	loot.Section("Network-Admission-Policy-Enumeration").SetHeader(`#####################################
-##### Network Policy Enumeration Commands
-#####################################
-#
-# Commands to enumerate all network policies across the cluster
-# Run these commands to get a complete view of network controls
 #`)
 
 	if globals.KubeContext != "" {
-		loot.Section("Network-Admission-Enum").Addf("kubectl config use-context %s\n", globals.KubeContext)
+		loot.Section("network-admission").Addf("kubectl config use-context %s\n", globals.KubeContext)
 	}
 
 	for _, finding := range findings {
@@ -1187,6 +1333,28 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 				defaultDenyStr = "Egress"
 			}
 
+			// Detect issues
+			var npIssues []string
+			if !p.DefaultDenyIngress && !p.DefaultDenyEgress {
+				npIssues = append(npIssues, "No default deny")
+			}
+			if p.AllowsInternetIngress {
+				npIssues = append(npIssues, "Allows internet ingress")
+			}
+			if p.AllowsInternetEgress {
+				npIssues = append(npIssues, "Allows internet egress")
+			}
+			if p.AllowsMetadataAPI {
+				npIssues = append(npIssues, "Allows metadata API")
+			}
+			if p.CoveredPods == 0 {
+				npIssues = append(npIssues, "No pods covered")
+			}
+			npIssuesStr := "<NONE>"
+			if len(npIssues) > 0 {
+				npIssuesStr = strings.Join(npIssues, "; ")
+			}
+
 			k8sNetPolRows = append(k8sNetPolRows, []string{
 				p.Namespace,
 				p.Name,
@@ -1199,6 +1367,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 				shared.FormatBool(p.AllowsCrossNS),
 				shared.FormatBool(p.AllowsMetadataAPI),
 				fmt.Sprintf("%d", p.CoveredPods),
+				npIssuesStr,
 			})
 		}
 	}
@@ -1212,6 +1381,23 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 				scope = "Global"
 				ns = "<CLUSTER>"
 			}
+
+			// Detect issues
+			var calicoIssues []string
+			if !p.IsDefaultDeny {
+				calicoIssues = append(calicoIssues, "No default deny")
+			}
+			if p.AllowsInternetIngress {
+				calicoIssues = append(calicoIssues, "Allows internet ingress")
+			}
+			if p.AllowsInternetEgress {
+				calicoIssues = append(calicoIssues, "Allows internet egress")
+			}
+			calicoIssuesStr := "<NONE>"
+			if len(calicoIssues) > 0 {
+				calicoIssuesStr = strings.Join(calicoIssues, "; ")
+			}
+
 			calicoRows = append(calicoRows, []string{
 				ns,
 				p.Name,
@@ -1223,10 +1409,27 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 				shared.FormatBool(p.IsDefaultDeny),
 				shared.FormatBool(p.AllowsInternetIngress),
 				shared.FormatBool(p.AllowsInternetEgress),
+				calicoIssuesStr,
 			})
 		}
 	}
 	for _, p := range calicoGlobalPolicies {
+		// Detect issues for global policies
+		var calicoGlobalIssues []string
+		if !p.IsDefaultDeny {
+			calicoGlobalIssues = append(calicoGlobalIssues, "No default deny")
+		}
+		if p.AllowsInternetIngress {
+			calicoGlobalIssues = append(calicoGlobalIssues, "Allows internet ingress")
+		}
+		if p.AllowsInternetEgress {
+			calicoGlobalIssues = append(calicoGlobalIssues, "Allows internet egress")
+		}
+		calicoGlobalIssuesStr := "<NONE>"
+		if len(calicoGlobalIssues) > 0 {
+			calicoGlobalIssuesStr = strings.Join(calicoGlobalIssues, "; ")
+		}
+
 		calicoRows = append(calicoRows, []string{
 			"<CLUSTER>",
 			p.Name,
@@ -1238,6 +1441,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			shared.FormatBool(p.IsDefaultDeny),
 			shared.FormatBool(p.AllowsInternetIngress),
 			shared.FormatBool(p.AllowsInternetEgress),
+			calicoGlobalIssuesStr,
 		})
 	}
 
@@ -1254,6 +1458,23 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			if p.HasL7Rules {
 				l7Str = strings.Join(p.L7Protocols, ",")
 			}
+
+			// Detect issues
+			var ciliumIssues []string
+			if !p.IsDefaultDeny {
+				ciliumIssues = append(ciliumIssues, "No default deny")
+			}
+			if p.AllowsInternetIngress {
+				ciliumIssues = append(ciliumIssues, "Allows internet ingress")
+			}
+			if p.AllowsInternetEgress {
+				ciliumIssues = append(ciliumIssues, "Allows internet egress")
+			}
+			ciliumIssuesStr := "<NONE>"
+			if len(ciliumIssues) > 0 {
+				ciliumIssuesStr = strings.Join(ciliumIssues, "; ")
+			}
+
 			ciliumRows = append(ciliumRows, []string{
 				ns,
 				p.Name,
@@ -1265,6 +1486,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 				shared.FormatBool(p.IsDefaultDeny),
 				shared.FormatBool(p.AllowsInternetIngress),
 				shared.FormatBool(p.AllowsInternetEgress),
+				ciliumIssuesStr,
 			})
 		}
 	}
@@ -1273,6 +1495,23 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		if p.HasL7Rules {
 			l7Str = strings.Join(p.L7Protocols, ",")
 		}
+
+		// Detect issues for clusterwide policies
+		var ciliumCWIssues []string
+		if !p.IsDefaultDeny {
+			ciliumCWIssues = append(ciliumCWIssues, "No default deny")
+		}
+		if p.AllowsInternetIngress {
+			ciliumCWIssues = append(ciliumCWIssues, "Allows internet ingress")
+		}
+		if p.AllowsInternetEgress {
+			ciliumCWIssues = append(ciliumCWIssues, "Allows internet egress")
+		}
+		ciliumCWIssuesStr := "<NONE>"
+		if len(ciliumCWIssues) > 0 {
+			ciliumCWIssuesStr = strings.Join(ciliumCWIssues, "; ")
+		}
+
 		ciliumRows = append(ciliumRows, []string{
 			"<CLUSTER>",
 			p.Name,
@@ -1284,6 +1523,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			shared.FormatBool(p.IsDefaultDeny),
 			shared.FormatBool(p.AllowsInternetIngress),
 			shared.FormatBool(p.AllowsInternetEgress),
+			ciliumCWIssuesStr,
 		})
 	}
 
@@ -1296,6 +1536,20 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 				scope = "Cluster"
 				ns = "<CLUSTER>"
 			}
+
+			// Detect issues
+			var antreaIssues []string
+			if p.Action == "Allow" {
+				antreaIssues = append(antreaIssues, "Allow action (permissive)")
+			}
+			if p.IngressRuleCount == 0 && p.EgressRuleCount == 0 {
+				antreaIssues = append(antreaIssues, "No rules defined")
+			}
+			antreaIssuesStr := "<NONE>"
+			if len(antreaIssues) > 0 {
+				antreaIssuesStr = strings.Join(antreaIssues, "; ")
+			}
+
 			antreaRows = append(antreaRows, []string{
 				ns,
 				p.Name,
@@ -1306,10 +1560,24 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 				fmt.Sprintf("%d", p.IngressRuleCount),
 				fmt.Sprintf("%d", p.EgressRuleCount),
 				p.Action,
+				antreaIssuesStr,
 			})
 		}
 	}
 	for _, p := range antreaClusterPolicies {
+		// Detect issues for cluster policies
+		var antreaCPIssues []string
+		if p.Action == "Allow" {
+			antreaCPIssues = append(antreaCPIssues, "Allow action (permissive)")
+		}
+		if p.IngressRuleCount == 0 && p.EgressRuleCount == 0 {
+			antreaCPIssues = append(antreaCPIssues, "No rules defined")
+		}
+		antreaCPIssuesStr := "<NONE>"
+		if len(antreaCPIssues) > 0 {
+			antreaCPIssuesStr = strings.Join(antreaCPIssues, "; ")
+		}
+
 		antreaRows = append(antreaRows, []string{
 			"<CLUSTER>",
 			p.Name,
@@ -1320,12 +1588,29 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			fmt.Sprintf("%d", p.IngressRuleCount),
 			fmt.Sprintf("%d", p.EgressRuleCount),
 			p.Action,
+			antreaCPIssuesStr,
 		})
 	}
 
 	// Istio rows
 	for _, policies := range allIstioPolicies {
 		for _, p := range policies {
+			// Detect issues
+			var istioIssues []string
+			if p.Action == "ALLOW" {
+				istioIssues = append(istioIssues, "Allow action")
+			}
+			if !p.HasMTLS {
+				istioIssues = append(istioIssues, "No mTLS")
+			}
+			if p.Rules == 0 {
+				istioIssues = append(istioIssues, "No rules defined")
+			}
+			istioIssuesStr := "<NONE>"
+			if len(istioIssues) > 0 {
+				istioIssuesStr = strings.Join(istioIssues, "; ")
+			}
+
 			istioRows = append(istioRows, []string{
 				p.Namespace,
 				p.Name,
@@ -1333,6 +1618,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 				p.Selector,
 				fmt.Sprintf("%d", p.Rules),
 				shared.FormatBool(p.HasMTLS),
+				istioIssuesStr,
 			})
 		}
 	}
@@ -1340,11 +1626,22 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 	// Linkerd rows
 	for _, policies := range allLinkerdPolicies {
 		for _, p := range policies {
+			// Detect issues
+			var linkerdIssues []string
+			if p.Selector == "" || p.Selector == "*" {
+				linkerdIssues = append(linkerdIssues, "Broad selector")
+			}
+			linkerdIssuesStr := "<NONE>"
+			if len(linkerdIssues) > 0 {
+				linkerdIssuesStr = strings.Join(linkerdIssues, "; ")
+			}
+
 			linkerdRows = append(linkerdRows, []string{
 				p.Namespace,
 				p.Name,
 				p.Kind,
 				p.Selector,
+				linkerdIssuesStr,
 			})
 		}
 	}
@@ -1352,12 +1649,26 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 	// AWS SecurityGroupPolicy rows
 	for _, policies := range allAWSSecurityGroupPolicies {
 		for _, p := range policies {
+			// Detect issues
+			var awsSGIssues []string
+			if p.AllowsAllTraffic {
+				awsSGIssues = append(awsSGIssues, "Allows all traffic")
+			}
+			if len(p.SecurityGroupIDs) == 0 {
+				awsSGIssues = append(awsSGIssues, "No security groups")
+			}
+			awsSGIssuesStr := "<NONE>"
+			if len(awsSGIssues) > 0 {
+				awsSGIssuesStr = strings.Join(awsSGIssues, "; ")
+			}
+
 			awsSGRows = append(awsSGRows, []string{
 				p.Namespace,
 				p.Name,
 				p.PodSelector,
 				strings.Join(p.SecurityGroupIDs, ", "),
 				shared.FormatBool(p.AllowsAllTraffic),
+				awsSGIssuesStr,
 			})
 		}
 	}
@@ -1365,6 +1676,22 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 	// OpenShift EgressFirewall rows
 	for _, policies := range allOpenShiftEgressPolicies {
 		for _, p := range policies {
+			// Detect issues
+			var ocpIssues []string
+			if p.AllowsInternet {
+				ocpIssues = append(ocpIssues, "Allows internet egress")
+			}
+			if !p.DeniesMetadataAPI {
+				ocpIssues = append(ocpIssues, "Metadata API not denied")
+			}
+			if p.RuleCount == 0 {
+				ocpIssues = append(ocpIssues, "No rules defined")
+			}
+			ocpIssuesStr := "<NONE>"
+			if len(ocpIssues) > 0 {
+				ocpIssuesStr = strings.Join(ocpIssues, "; ")
+			}
+
 			openshiftEgressRows = append(openshiftEgressRows, []string{
 				p.Namespace,
 				p.Name,
@@ -1372,6 +1699,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 				fmt.Sprintf("%d", p.RuleCount),
 				shared.FormatBool(p.AllowsInternet),
 				shared.FormatBool(p.DeniesMetadataAPI),
+				ocpIssuesStr,
 			})
 		}
 	}
@@ -1379,6 +1707,19 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 	// Consul Connect rows
 	for _, policies := range allConsulConnectPolicies {
 		for _, p := range policies {
+			// Detect issues
+			var consulIssues []string
+			if p.AllowsAllSources {
+				consulIssues = append(consulIssues, "Allows all sources")
+			}
+			if p.Action == "allow" && p.SourceCount == 0 {
+				consulIssues = append(consulIssues, "No source restrictions")
+			}
+			consulIssuesStr := "<NONE>"
+			if len(consulIssues) > 0 {
+				consulIssuesStr = strings.Join(consulIssues, "; ")
+			}
+
 			consulRows = append(consulRows, []string{
 				p.Namespace,
 				p.Name,
@@ -1386,6 +1727,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 				p.Action,
 				fmt.Sprintf("%d", p.SourceCount),
 				shared.FormatBool(p.AllowsAllSources),
+				consulIssuesStr,
 			})
 		}
 	}
@@ -1393,6 +1735,19 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 	// Kuma Mesh rows
 	for _, policies := range allKumaMeshPolicies {
 		for _, p := range policies {
+			// Detect issues
+			var kumaIssues []string
+			if p.Action == "Allow" || p.Action == "allow" {
+				kumaIssues = append(kumaIssues, "Allow action")
+			}
+			if p.RuleCount == 0 {
+				kumaIssues = append(kumaIssues, "No rules defined")
+			}
+			kumaIssuesStr := "<NONE>"
+			if len(kumaIssues) > 0 {
+				kumaIssuesStr = strings.Join(kumaIssues, "; ")
+			}
+
 			kumaRows = append(kumaRows, []string{
 				p.Namespace,
 				p.Name,
@@ -1400,6 +1755,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 				p.TargetRef,
 				p.Action,
 				fmt.Sprintf("%d", p.RuleCount),
+				kumaIssuesStr,
 			})
 		}
 	}
@@ -1407,6 +1763,16 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 	// SMI rows
 	for _, policies := range allSMIPolicies {
 		for _, p := range policies {
+			// Detect issues
+			var smiIssues []string
+			if p.AllowsAllSources {
+				smiIssues = append(smiIssues, "Allows all sources")
+			}
+			smiIssuesStr := "<NONE>"
+			if len(smiIssues) > 0 {
+				smiIssuesStr = strings.Join(smiIssues, "; ")
+			}
+
 			smiRows = append(smiRows, []string{
 				p.Namespace,
 				p.Name,
@@ -1414,6 +1780,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 				p.MeshProvider,
 				p.DestinationService,
 				shared.FormatBool(p.AllowsAllSources),
+				smiIssuesStr,
 			})
 		}
 	}
@@ -1421,6 +1788,19 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 	// Gloo Mesh rows
 	for _, policies := range allGlooMeshPolicies {
 		for _, p := range policies {
+			// Detect issues
+			var glooIssues []string
+			if p.Action == "ALLOW" || p.Action == "allow" {
+				glooIssues = append(glooIssues, "Allow action")
+			}
+			if p.RuleCount == 0 {
+				glooIssues = append(glooIssues, "No rules defined")
+			}
+			glooIssuesStr := "<NONE>"
+			if len(glooIssues) > 0 {
+				glooIssuesStr = strings.Join(glooIssues, "; ")
+			}
+
 			glooRows = append(glooRows, []string{
 				p.Namespace,
 				p.Name,
@@ -1428,6 +1808,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 				p.ApplyToRefs,
 				p.Action,
 				fmt.Sprintf("%d", p.RuleCount),
+				glooIssuesStr,
 			})
 		}
 	}
@@ -1435,6 +1816,19 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 	// NSX-T rows
 	for _, policies := range allNSXTPolicies {
 		for _, p := range policies {
+			// Detect issues
+			var nsxtIssues []string
+			if p.DefaultAction == "ALLOW" || p.DefaultAction == "allow" {
+				nsxtIssues = append(nsxtIssues, "Default allow action")
+			}
+			if p.RuleCount == 0 {
+				nsxtIssues = append(nsxtIssues, "No rules defined")
+			}
+			nsxtIssuesStr := "<NONE>"
+			if len(nsxtIssues) > 0 {
+				nsxtIssuesStr = strings.Join(nsxtIssues, "; ")
+			}
+
 			nsxtRows = append(nsxtRows, []string{
 				p.Namespace,
 				p.Name,
@@ -1442,6 +1836,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 				fmt.Sprintf("%d", p.Priority),
 				fmt.Sprintf("%d", p.RuleCount),
 				p.DefaultAction,
+				nsxtIssuesStr,
 			})
 		}
 	}
@@ -1449,6 +1844,19 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 	// GCP Backend Policy rows
 	for _, policies := range allGCPBackendPolicies {
 		for _, p := range policies {
+			// Detect issues
+			var gcpIssues []string
+			if p.CloudArmorPolicy == "" {
+				gcpIssues = append(gcpIssues, "No Cloud Armor policy")
+			}
+			if !p.HasIAP {
+				gcpIssues = append(gcpIssues, "No IAP configured")
+			}
+			gcpIssuesStr := "<NONE>"
+			if len(gcpIssues) > 0 {
+				gcpIssuesStr = strings.Join(gcpIssues, "; ")
+			}
+
 			gcpRows = append(gcpRows, []string{
 				p.Namespace,
 				p.Name,
@@ -1456,6 +1864,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 				p.TargetRef,
 				p.CloudArmorPolicy,
 				shared.FormatBool(p.HasIAP),
+				gcpIssuesStr,
 			})
 		}
 	}
@@ -1463,15 +1872,724 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 	// Azure Network Policy rows
 	for _, policies := range allAzureNetworkPolicies {
 		for _, p := range policies {
+			// Detect issues
+			var azureIssues []string
+			if !p.HasManagedIdentity {
+				azureIssues = append(azureIssues, "No managed identity")
+			}
+			azureIssuesStr := "<NONE>"
+			if len(azureIssues) > 0 {
+				azureIssuesStr = strings.Join(azureIssues, "; ")
+			}
+
 			azureRows = append(azureRows, []string{
 				p.Namespace,
 				p.Name,
 				p.Kind,
 				p.TargetService,
 				shared.FormatBool(p.HasManagedIdentity),
+				azureIssuesStr,
 			})
 		}
 	}
+
+	// Gatekeeper Network Constraint rows
+	for _, c := range allGatekeeperNetworkConstraints {
+		matchNs := "-"
+		if len(c.MatchNamespaces) > 0 {
+			if len(c.MatchNamespaces) > 3 {
+				matchNs = strings.Join(c.MatchNamespaces[:3], ", ") + "..."
+			} else {
+				matchNs = strings.Join(c.MatchNamespaces, ", ")
+			}
+		}
+		excludeNs := "-"
+		if len(c.ExcludeNamespaces) > 0 {
+			if len(c.ExcludeNamespaces) > 3 {
+				excludeNs = strings.Join(c.ExcludeNamespaces[:3], ", ") + "..."
+			} else {
+				excludeNs = strings.Join(c.ExcludeNamespaces, ", ")
+			}
+		}
+		networkRules := "-"
+		if len(c.NetworkRules) > 0 {
+			if len(c.NetworkRules) > 2 {
+				networkRules = strings.Join(c.NetworkRules[:2], "; ") + "..."
+			} else {
+				networkRules = strings.Join(c.NetworkRules, "; ")
+			}
+		}
+
+		// Detect issues
+		var gkNetIssues []string
+		if c.EnforcementAction == "dryrun" || c.EnforcementAction == "warn" {
+			gkNetIssues = append(gkNetIssues, "Not enforcing ("+c.EnforcementAction+")")
+		}
+		if c.ViolationCount > 0 {
+			gkNetIssues = append(gkNetIssues, fmt.Sprintf("%d violations", c.ViolationCount))
+		}
+		if len(c.ExcludeNamespaces) > 0 {
+			gkNetIssues = append(gkNetIssues, "Has exclusions")
+		}
+		if len(c.NetworkRules) == 0 {
+			gkNetIssues = append(gkNetIssues, "No network rules")
+		}
+		gkNetIssuesStr := "<NONE>"
+		if len(gkNetIssues) > 0 {
+			gkNetIssuesStr = strings.Join(gkNetIssues, "; ")
+		}
+
+		gatekeeperNetworkRows = append(gatekeeperNetworkRows, []string{
+			c.Name,
+			c.Kind,
+			c.EnforcementAction,
+			matchNs,
+			excludeNs,
+			networkRules,
+			fmt.Sprintf("%d", c.ViolationCount),
+			gkNetIssuesStr,
+		})
+	}
+
+	// Kyverno Network Policy rows
+	for _, p := range allKyvernoNetworkPolicies {
+		scope := "Namespace"
+		if p.IsClusterPolicy {
+			scope = "Cluster"
+		}
+		networkRules := "-"
+		if len(p.NetworkRules) > 0 {
+			if len(p.NetworkRules) > 2 {
+				networkRules = strings.Join(p.NetworkRules[:2], "; ") + "..."
+			} else {
+				networkRules = strings.Join(p.NetworkRules, "; ")
+			}
+		}
+
+		// Detect issues
+		var kyNetIssues []string
+		if p.ValidationAction == "Audit" || p.ValidationAction == "audit" {
+			kyNetIssues = append(kyNetIssues, "Audit mode (not enforcing)")
+		}
+		if !p.Background {
+			kyNetIssues = append(kyNetIssues, "Background processing disabled")
+		}
+		if p.RuleCount == 0 {
+			kyNetIssues = append(kyNetIssues, "No rules defined")
+		}
+		if len(p.NetworkRules) == 0 {
+			kyNetIssues = append(kyNetIssues, "No network rules")
+		}
+		kyNetIssuesStr := "<NONE>"
+		if len(kyNetIssues) > 0 {
+			kyNetIssuesStr = strings.Join(kyNetIssues, "; ")
+		}
+
+		kyvernoNetworkRows = append(kyvernoNetworkRows, []string{
+			p.Namespace,
+			p.Name,
+			scope,
+			p.ValidationAction,
+			shared.FormatBool(p.Background),
+			fmt.Sprintf("%d", p.RuleCount),
+			networkRules,
+			kyNetIssuesStr,
+		})
+	}
+
+	// Kubewarden Network Policy rows
+	for _, p := range allKubewardenNetworkPolicies {
+		ns := p.Namespace
+		if ns == "" {
+			ns = "-"
+		}
+		module := p.Module
+		if len(module) > 40 {
+			module = module[:40] + "..."
+		}
+		networkRules := "-"
+		if len(p.NetworkRules) > 0 {
+			if len(p.NetworkRules) > 2 {
+				networkRules = strings.Join(p.NetworkRules[:2], "; ") + "..."
+			} else {
+				networkRules = strings.Join(p.NetworkRules, "; ")
+			}
+		}
+
+		// Detect issues
+		var kwNetIssues []string
+		if p.Mode == "monitor" {
+			kwNetIssues = append(kwNetIssues, "Monitor mode (not enforcing)")
+		}
+		if p.Module == "" {
+			kwNetIssues = append(kwNetIssues, "No module specified")
+		}
+		if len(p.NetworkRules) == 0 {
+			kwNetIssues = append(kwNetIssues, "No network rules")
+		}
+		kwNetIssuesStr := "<NONE>"
+		if len(kwNetIssues) > 0 {
+			kwNetIssuesStr = strings.Join(kwNetIssues, "; ")
+		}
+
+		kubewardenNetworkRows = append(kubewardenNetworkRows, []string{
+			ns,
+			p.Name,
+			p.PolicyServer,
+			p.Mode,
+			module,
+			networkRules,
+			kwNetIssuesStr,
+		})
+	}
+
+	// Build CNAPP Network Policy rows (Aqua, Prisma, Sysdig, StackRox, NeuVector)
+	allCNAPPPolicies := append(allAquaNetworkPolicies, allPrismaNetworkPolicies...)
+	allCNAPPPolicies = append(allCNAPPPolicies, allSysdigNetworkPolicies...)
+	allCNAPPPolicies = append(allCNAPPPolicies, allStackRoxNetworkPolicies...)
+	allCNAPPPolicies = append(allCNAPPPolicies, allNeuVectorNetworkPolicies...)
+
+	for _, p := range allCNAPPPolicies {
+		scope := p.Scope
+		if scope == "" {
+			scope = "namespace"
+		}
+		mode := p.Mode
+		if mode == "" {
+			mode = "<NONE>"
+		}
+
+		// Detect issues
+		var cnappIssues []string
+		if !p.HasDefaultDeny {
+			cnappIssues = append(cnappIssues, "No default deny")
+		}
+		if p.IngressRules == 0 && p.EgressRules == 0 {
+			cnappIssues = append(cnappIssues, "No rules defined")
+		}
+		if mode == "audit" || mode == "monitor" || mode == "learn" {
+			cnappIssues = append(cnappIssues, "Not enforcing")
+		}
+		if scope == "cluster-wide" || scope == "*" {
+			cnappIssues = append(cnappIssues, "Overly broad scope")
+		}
+		issuesStr := "<NONE>"
+		if len(cnappIssues) > 0 {
+			issuesStr = strings.Join(cnappIssues, "; ")
+		}
+
+		cnappNetworkRows = append(cnappNetworkRows, []string{
+			p.Platform,
+			p.Name,
+			p.Namespace,
+			scope,
+			mode,
+			fmt.Sprintf("%d", p.IngressRules),
+			fmt.Sprintf("%d", p.EgressRules),
+			shared.FormatBool(p.HasDefaultDeny),
+			issuesStr,
+		})
+	}
+
+	// Build Capsule Network Policy rows
+	for _, p := range allCapsuleNetworkPolicies {
+		networkPolicies := "<NONE>"
+		if len(p.NetworkPolicies) > 0 {
+			networkPolicies = strings.Join(p.NetworkPolicies, ", ")
+		}
+		externalIPs := "<NONE>"
+		if len(p.AllowedExternalIPs) > 0 {
+			externalIPs = strings.Join(p.AllowedExternalIPs, ", ")
+		}
+		ingressClasses := "<NONE>"
+		if len(p.IngressClasses) > 0 {
+			ingressClasses = strings.Join(p.IngressClasses, ", ")
+		}
+
+		// Detect issues
+		var capsuleNetIssues []string
+		if !p.HasNetworkIsolation {
+			capsuleNetIssues = append(capsuleNetIssues, "No network isolation")
+		}
+		if len(p.NetworkPolicies) == 0 {
+			capsuleNetIssues = append(capsuleNetIssues, "No network policies")
+		}
+		for _, ip := range p.AllowedExternalIPs {
+			if ip == "*" || ip == "0.0.0.0/0" || ip == "::/0" {
+				capsuleNetIssues = append(capsuleNetIssues, "Allows all external IPs")
+				break
+			}
+		}
+		issuesStr := "<NONE>"
+		if len(capsuleNetIssues) > 0 {
+			issuesStr = strings.Join(capsuleNetIssues, "; ")
+		}
+
+		capsuleNetworkRows = append(capsuleNetworkRows, []string{
+			p.TenantName,
+			p.Namespace,
+			networkPolicies,
+			externalIPs,
+			ingressClasses,
+			shared.FormatBool(p.HasNetworkIsolation),
+			issuesStr,
+		})
+	}
+
+	// Build Rancher Network Policy rows
+	for _, p := range allRancherNetworkPolicies {
+		netPolicy := p.NetworkPolicy
+		if netPolicy == "" {
+			netPolicy = "<NONE>"
+		}
+		pspTemplate := p.PSPTemplate
+		if pspTemplate == "" {
+			pspTemplate = "<NONE>"
+		}
+
+		// Detect issues
+		var rancherNetIssues []string
+		if !p.HasIsolation {
+			rancherNetIssues = append(rancherNetIssues, "No network isolation")
+		}
+		if p.NetworkPolicy == "" {
+			rancherNetIssues = append(rancherNetIssues, "No network policy")
+		}
+		if p.PSPTemplate == "" {
+			rancherNetIssues = append(rancherNetIssues, "No PSP template")
+		}
+		issuesStr := "<NONE>"
+		if len(rancherNetIssues) > 0 {
+			issuesStr = strings.Join(rancherNetIssues, "; ")
+		}
+
+		rancherNetworkRows = append(rancherNetworkRows, []string{
+			p.ProjectName,
+			p.ProjectID,
+			p.Namespace,
+			netPolicy,
+			pspTemplate,
+			shared.FormatBool(p.HasIsolation),
+			issuesStr,
+		})
+	}
+
+	// Build Polaris Network Check rows
+	for _, p := range allPolarisNetworkChecks {
+		checkID := p.CheckID
+		if checkID == "" {
+			checkID = "<NONE>"
+		}
+		checkName := p.CheckName
+		if checkName == "" {
+			checkName = "<NONE>"
+		}
+		severity := p.Severity
+		if severity == "" {
+			severity = "<NONE>"
+		}
+		category := p.Category
+		if category == "" {
+			category = "<NONE>"
+		}
+
+		// Detect issues
+		var polarisNetIssues []string
+		if !p.HasNetworkPolicy {
+			polarisNetIssues = append(polarisNetIssues, "No network policy")
+		}
+		if severity == "danger" || severity == "critical" || severity == "high" {
+			polarisNetIssues = append(polarisNetIssues, "High severity finding")
+		}
+		issuesStr := "<NONE>"
+		if len(polarisNetIssues) > 0 {
+			issuesStr = strings.Join(polarisNetIssues, "; ")
+		}
+
+		polarisNetworkRows = append(polarisNetworkRows, []string{
+			p.Namespace,
+			checkID,
+			checkName,
+			severity,
+			category,
+			shared.FormatBool(p.HasNetworkPolicy),
+			issuesStr,
+		})
+	}
+
+	// Create unified policies table (merging all policy types)
+	var unifiedPolicyRows [][]string
+	unifiedPolicyHeaders := []string{"Namespace", "Tool", "Name", "Scope", "Type", "Details"}
+
+	// K8s NetworkPolicies
+	for _, policies := range allK8sNetPolicies {
+		for _, p := range policies {
+			details := fmt.Sprintf("Ingress:%d, Egress:%d", p.IngressRuleCount, p.EgressRuleCount)
+			if p.IsDefaultDeny {
+				details += ", Default-Deny"
+			}
+			policyType := strings.Join(p.PolicyTypes, ",")
+			unifiedPolicyRows = append(unifiedPolicyRows, []string{
+				p.Namespace,
+				"K8s NetworkPolicy",
+				p.Name,
+				"Namespace",
+				policyType,
+				details,
+			})
+		}
+	}
+
+	// Calico policies
+	for _, policies := range allCalicoPolicies {
+		for _, p := range policies {
+			scope := "Namespace"
+			ns := p.Namespace
+			if p.IsGlobal {
+				scope = "Global"
+				ns = "<CLUSTER>"
+			}
+			details := fmt.Sprintf("Ingress:%d, Egress:%d, Action:%s", p.IngressRuleCount, p.EgressRuleCount, p.Action)
+			policyType := strings.Join(p.Types, ",")
+			unifiedPolicyRows = append(unifiedPolicyRows, []string{
+				ns,
+				"Calico",
+				p.Name,
+				scope,
+				policyType,
+				details,
+			})
+		}
+	}
+	for _, p := range calicoGlobalPolicies {
+		details := fmt.Sprintf("Ingress:%d, Egress:%d, Action:%s", p.IngressRuleCount, p.EgressRuleCount, p.Action)
+		policyType := strings.Join(p.Types, ",")
+		unifiedPolicyRows = append(unifiedPolicyRows, []string{
+			"<CLUSTER>",
+			"Calico",
+			p.Name,
+			"Global",
+			policyType,
+			details,
+		})
+	}
+
+	// Cilium policies
+	for _, policies := range allCiliumPolicies {
+		for _, p := range policies {
+			scope := "Namespace"
+			ns := p.Namespace
+			if p.IsClusterwide {
+				scope = "Clusterwide"
+				ns = "<CLUSTER>"
+			}
+			details := fmt.Sprintf("Ingress:%d, Egress:%d", p.IngressRuleCount, p.EgressRuleCount)
+			if p.HasL7Rules {
+				details += fmt.Sprintf(", L7:%s", strings.Join(p.L7Protocols, ","))
+			}
+			unifiedPolicyRows = append(unifiedPolicyRows, []string{
+				ns,
+				"Cilium",
+				p.Name,
+				scope,
+				"NetworkPolicy",
+				details,
+			})
+		}
+	}
+	for _, p := range ciliumClusterwidePolicies {
+		details := fmt.Sprintf("Ingress:%d, Egress:%d", p.IngressRuleCount, p.EgressRuleCount)
+		if p.HasL7Rules {
+			details += fmt.Sprintf(", L7:%s", strings.Join(p.L7Protocols, ","))
+		}
+		unifiedPolicyRows = append(unifiedPolicyRows, []string{
+			"<CLUSTER>",
+			"Cilium",
+			p.Name,
+			"Clusterwide",
+			"NetworkPolicy",
+			details,
+		})
+	}
+
+	// Antrea policies
+	for _, policies := range allAntreaPolicies {
+		for _, p := range policies {
+			scope := "Namespace"
+			ns := p.Namespace
+			if p.IsCluster {
+				scope = "Cluster"
+				ns = "<CLUSTER>"
+			}
+			details := fmt.Sprintf("Ingress:%d, Egress:%d, Action:%s, Tier:%s", p.IngressRuleCount, p.EgressRuleCount, p.Action, p.Tier)
+			unifiedPolicyRows = append(unifiedPolicyRows, []string{
+				ns,
+				"Antrea",
+				p.Name,
+				scope,
+				"NetworkPolicy",
+				details,
+			})
+		}
+	}
+	for _, p := range antreaClusterPolicies {
+		details := fmt.Sprintf("Ingress:%d, Egress:%d, Action:%s, Tier:%s", p.IngressRuleCount, p.EgressRuleCount, p.Action, p.Tier)
+		unifiedPolicyRows = append(unifiedPolicyRows, []string{
+			"<CLUSTER>",
+			"Antrea",
+			p.Name,
+			"Cluster",
+			"NetworkPolicy",
+			details,
+		})
+	}
+
+	// Istio policies
+	for _, policies := range allIstioPolicies {
+		for _, p := range policies {
+			details := fmt.Sprintf("Rules:%d, Action:%s", p.Rules, p.Action)
+			if p.HasMTLS {
+				details += ", mTLS"
+			}
+			unifiedPolicyRows = append(unifiedPolicyRows, []string{
+				p.Namespace,
+				"Istio",
+				p.Name,
+				"Namespace",
+				"AuthorizationPolicy",
+				details,
+			})
+		}
+	}
+
+	// Linkerd policies
+	for _, policies := range allLinkerdPolicies {
+		for _, p := range policies {
+			unifiedPolicyRows = append(unifiedPolicyRows, []string{
+				p.Namespace,
+				"Linkerd",
+				p.Name,
+				"Namespace",
+				p.Kind,
+				"-",
+			})
+		}
+	}
+
+	// AWS SecurityGroupPolicy
+	for _, policies := range allAWSSecurityGroupPolicies {
+		for _, p := range policies {
+			details := fmt.Sprintf("SGs:%s", strings.Join(p.SecurityGroupIDs, ","))
+			unifiedPolicyRows = append(unifiedPolicyRows, []string{
+				p.Namespace,
+				"AWS VPC CNI",
+				p.Name,
+				"Namespace",
+				"SecurityGroupPolicy",
+				details,
+			})
+		}
+	}
+
+	// OpenShift EgressFirewall
+	for _, policies := range allOpenShiftEgressPolicies {
+		for _, p := range policies {
+			details := fmt.Sprintf("Rules:%d", p.RuleCount)
+			unifiedPolicyRows = append(unifiedPolicyRows, []string{
+				p.Namespace,
+				"OpenShift",
+				p.Name,
+				"Namespace",
+				p.Kind,
+				details,
+			})
+		}
+	}
+
+	// Consul Connect
+	for _, policies := range allConsulConnectPolicies {
+		for _, p := range policies {
+			details := fmt.Sprintf("Sources:%d, Action:%s", p.SourceCount, p.Action)
+			unifiedPolicyRows = append(unifiedPolicyRows, []string{
+				p.Namespace,
+				"Consul Connect",
+				p.Name,
+				"Namespace",
+				"ServiceIntentions",
+				details,
+			})
+		}
+	}
+
+	// Kuma Mesh
+	for _, policies := range allKumaMeshPolicies {
+		for _, p := range policies {
+			details := fmt.Sprintf("Rules:%d, Action:%s", p.RuleCount, p.Action)
+			unifiedPolicyRows = append(unifiedPolicyRows, []string{
+				p.Namespace,
+				"Kuma/Kong Mesh",
+				p.Name,
+				"Namespace",
+				p.Kind,
+				details,
+			})
+		}
+	}
+
+	// SMI policies
+	for _, policies := range allSMIPolicies {
+		for _, p := range policies {
+			details := fmt.Sprintf("Provider:%s", p.MeshProvider)
+			unifiedPolicyRows = append(unifiedPolicyRows, []string{
+				p.Namespace,
+				"SMI",
+				p.Name,
+				"Namespace",
+				p.Kind,
+				details,
+			})
+		}
+	}
+
+	// Gloo Mesh
+	for _, policies := range allGlooMeshPolicies {
+		for _, p := range policies {
+			details := fmt.Sprintf("Rules:%d, Action:%s", p.RuleCount, p.Action)
+			unifiedPolicyRows = append(unifiedPolicyRows, []string{
+				p.Namespace,
+				"Gloo Mesh",
+				p.Name,
+				"Namespace",
+				p.Kind,
+				details,
+			})
+		}
+	}
+
+	// NSX-T
+	for _, policies := range allNSXTPolicies {
+		for _, p := range policies {
+			details := fmt.Sprintf("Rules:%d, Priority:%d, DefaultAction:%s", p.RuleCount, p.Priority, p.DefaultAction)
+			unifiedPolicyRows = append(unifiedPolicyRows, []string{
+				p.Namespace,
+				"VMware NSX-T",
+				p.Name,
+				"Namespace",
+				"SecurityPolicy",
+				details,
+			})
+		}
+	}
+
+	// GCP Backend Policy
+	for _, policies := range allGCPBackendPolicies {
+		for _, p := range policies {
+			details := fmt.Sprintf("CloudArmor:%s", p.CloudArmorPolicy)
+			if p.HasIAP {
+				details += ", IAP"
+			}
+			unifiedPolicyRows = append(unifiedPolicyRows, []string{
+				p.Namespace,
+				"GCP/GKE",
+				p.Name,
+				"Namespace",
+				p.Kind,
+				details,
+			})
+		}
+	}
+
+	// Azure Network Policy
+	for _, policies := range allAzureNetworkPolicies {
+		for _, p := range policies {
+			details := p.Kind
+			if p.HasManagedIdentity {
+				details += ", ManagedIdentity"
+			}
+			unifiedPolicyRows = append(unifiedPolicyRows, []string{
+				p.Namespace,
+				"Azure/AKS",
+				p.Name,
+				"Namespace",
+				p.Kind,
+				details,
+			})
+		}
+	}
+
+	// Gatekeeper Network Constraints
+	for _, c := range allGatekeeperNetworkConstraints {
+		details := fmt.Sprintf("Enforcement:%s", c.EnforcementAction)
+		if c.ViolationCount > 0 {
+			details += fmt.Sprintf(", Violations:%d", c.ViolationCount)
+		}
+		if len(c.MatchNamespaces) > 0 {
+			details += fmt.Sprintf(", Match:%d ns", len(c.MatchNamespaces))
+		}
+		unifiedPolicyRows = append(unifiedPolicyRows, []string{
+			"<CLUSTER>",
+			"Gatekeeper",
+			c.Name,
+			"Cluster",
+			c.Kind,
+			details,
+		})
+	}
+
+	// Kyverno Network Policies
+	for _, p := range allKyvernoNetworkPolicies {
+		scope := "Namespace"
+		ns := p.Namespace
+		if p.IsClusterPolicy {
+			scope = "Cluster"
+			ns = "<CLUSTER>"
+		}
+		details := fmt.Sprintf("Action:%s, Rules:%d", p.ValidationAction, p.RuleCount)
+		if p.Background {
+			details += ", Background"
+		}
+		unifiedPolicyRows = append(unifiedPolicyRows, []string{
+			ns,
+			"Kyverno",
+			p.Name,
+			scope,
+			"NetworkPolicy",
+			details,
+		})
+	}
+
+	// Kubewarden Network Policies
+	for _, p := range allKubewardenNetworkPolicies {
+		ns := p.Namespace
+		if ns == "" {
+			ns = "<CLUSTER>"
+		}
+		details := fmt.Sprintf("Mode:%s", p.Mode)
+		if p.Module != "" {
+			// Shorten long module names
+			module := p.Module
+			if len(module) > 30 {
+				module = module[:30] + "..."
+			}
+			details += fmt.Sprintf(", Module:%s", module)
+		}
+		unifiedPolicyRows = append(unifiedPolicyRows, []string{
+			ns,
+			"Kubewarden",
+			p.Name,
+			"Namespace",
+			"AdmissionPolicy",
+			details,
+		})
+	}
+
+	// Sort unified policies by namespace, then tool
+	sort.SliceStable(unifiedPolicyRows, func(i, j int) bool {
+		if unifiedPolicyRows[i][0] != unifiedPolicyRows[j][0] {
+			return unifiedPolicyRows[i][0] < unifiedPolicyRows[j][0]
+		}
+		return unifiedPolicyRows[i][1] < unifiedPolicyRows[j][1]
+	})
 
 	// Sort by namespace
 	sort.SliceStable(outputRows, func(i, j int) bool {
@@ -1487,124 +2605,197 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		},
 	}
 
-	if len(k8sNetPolRows) > 0 {
+	// Add unified policies table (always shown)
+	if len(unifiedPolicyRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Network-Admission-K8s-Policies",
-			Header: k8sNetPolHeaders,
-			Body:   k8sNetPolRows,
+			Name:   "Network-Admission-Policies",
+			Header: unifiedPolicyHeaders,
+			Body:   unifiedPolicyRows,
 		})
 	}
 
-	if len(calicoRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Network-Admission-Calico",
-			Header: calicoHeaders,
-			Body:   calicoRows,
-		})
-	}
+	// Detail tables only shown with --detailed flag
+	if detailed {
+		if len(k8sNetPolRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Network-Admission-K8s-Policies",
+				Header: k8sNetPolHeaders,
+				Body:   k8sNetPolRows,
+			})
+		}
 
-	if len(ciliumRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Network-Admission-Cilium",
-			Header: ciliumHeaders,
-			Body:   ciliumRows,
-		})
-	}
+		if len(calicoRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Network-Admission-Calico",
+				Header: calicoHeaders,
+				Body:   calicoRows,
+			})
+		}
 
-	if len(antreaRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Network-Admission-Antrea",
-			Header: antreaHeaders,
-			Body:   antreaRows,
-		})
-	}
+		if len(ciliumRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Network-Admission-Cilium",
+				Header: ciliumHeaders,
+				Body:   ciliumRows,
+			})
+		}
 
-	if len(istioRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Network-Admission-Istio",
-			Header: istioHeaders,
-			Body:   istioRows,
-		})
-	}
+		if len(antreaRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Network-Admission-Antrea",
+				Header: antreaHeaders,
+				Body:   antreaRows,
+			})
+		}
 
-	if len(linkerdRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Network-Admission-Linkerd",
-			Header: linkerdHeaders,
-			Body:   linkerdRows,
-		})
-	}
+		if len(istioRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Network-Admission-Istio",
+				Header: istioHeaders,
+				Body:   istioRows,
+			})
+		}
 
-	if len(awsSGRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Network-Admission-AWS-SecurityGroup",
-			Header: awsSGHeaders,
-			Body:   awsSGRows,
-		})
-	}
+		if len(linkerdRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Network-Admission-Linkerd",
+				Header: linkerdHeaders,
+				Body:   linkerdRows,
+			})
+		}
 
-	if len(openshiftEgressRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Network-Admission-OpenShift-Egress",
-			Header: openshiftEgressHeaders,
-			Body:   openshiftEgressRows,
-		})
-	}
+		if len(awsSGRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Network-Admission-AWS-SecurityGroup",
+				Header: awsSGHeaders,
+				Body:   awsSGRows,
+			})
+		}
 
-	if len(consulRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Network-Admission-Consul-Connect",
-			Header: consulHeaders,
-			Body:   consulRows,
-		})
-	}
+		if len(openshiftEgressRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Network-Admission-OpenShift-Egress",
+				Header: openshiftEgressHeaders,
+				Body:   openshiftEgressRows,
+			})
+		}
 
-	if len(kumaRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Network-Admission-Kuma-Mesh",
-			Header: kumaHeaders,
-			Body:   kumaRows,
-		})
-	}
+		if len(consulRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Network-Admission-Consul-Connect",
+				Header: consulHeaders,
+				Body:   consulRows,
+			})
+		}
 
-	if len(smiRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Network-Admission-SMI",
-			Header: smiHeaders,
-			Body:   smiRows,
-		})
-	}
+		if len(kumaRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Network-Admission-Kuma-Mesh",
+				Header: kumaHeaders,
+				Body:   kumaRows,
+			})
+		}
 
-	if len(glooRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Network-Admission-Gloo-Mesh",
-			Header: glooHeaders,
-			Body:   glooRows,
-		})
-	}
+		if len(smiRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Network-Admission-SMI",
+				Header: smiHeaders,
+				Body:   smiRows,
+			})
+		}
 
-	if len(nsxtRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Network-Admission-NSX-T",
-			Header: nsxtHeaders,
-			Body:   nsxtRows,
-		})
-	}
+		if len(glooRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Network-Admission-Gloo-Mesh",
+				Header: glooHeaders,
+				Body:   glooRows,
+			})
+		}
 
-	if len(gcpRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Network-Admission-GCP",
-			Header: gcpHeaders,
-			Body:   gcpRows,
-		})
-	}
+		if len(nsxtRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Network-Admission-NSX-T",
+				Header: nsxtHeaders,
+				Body:   nsxtRows,
+			})
+		}
 
-	if len(azureRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Network-Admission-Azure",
-			Header: azureHeaders,
-			Body:   azureRows,
-		})
+		if len(gcpRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Network-Admission-GCP",
+				Header: gcpHeaders,
+				Body:   gcpRows,
+			})
+		}
+
+		if len(azureRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Network-Admission-Azure",
+				Header: azureHeaders,
+				Body:   azureRows,
+			})
+		}
+
+		// Policy engine detailed tables
+		if len(gatekeeperNetworkRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Network-Admission-Gatekeeper",
+				Header: gatekeeperNetworkHeaders,
+				Body:   gatekeeperNetworkRows,
+			})
+		}
+
+		if len(kyvernoNetworkRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Network-Admission-Kyverno",
+				Header: kyvernoNetworkHeaders,
+				Body:   kyvernoNetworkRows,
+			})
+		}
+
+		if len(kubewardenNetworkRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Network-Admission-Kubewarden",
+				Header: kubewardenNetworkHeaders,
+				Body:   kubewardenNetworkRows,
+			})
+		}
+
+		// CNAPP Network Policies (Aqua, Prisma, Sysdig, StackRox, NeuVector)
+		if len(cnappNetworkRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Network-Admission-CNAPP",
+				Header: cnappNetworkHeaders,
+				Body:   cnappNetworkRows,
+			})
+		}
+
+		// Capsule Network Policies
+		if len(capsuleNetworkRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Network-Admission-Capsule",
+				Header: capsuleNetworkHeaders,
+				Body:   capsuleNetworkRows,
+			})
+		}
+
+		// Rancher Network Policies
+		if len(rancherNetworkRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Network-Admission-Rancher",
+				Header: rancherNetworkHeaders,
+				Body:   rancherNetworkRows,
+			})
+		}
+
+		// Polaris Network Checks
+		if len(polarisNetworkRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Network-Admission-Polaris",
+				Header: polarisNetworkHeaders,
+				Body:   polarisNetworkRows,
+			})
+		}
 	}
 
 	// Generate comprehensive policy enumeration commands
@@ -1727,7 +2918,6 @@ func analyzeK8sNetworkPolicies(ctx context.Context, clientset *kubernetes.Client
 		}
 
 		// Risk level
-		info.RiskLevel = calculateK8sNetworkPolicyRisk(info)
 
 		result[np.Namespace] = append(result[np.Namespace], info)
 	}
@@ -3301,40 +4491,6 @@ func isEmptyK8sSelector(selector *metav1.LabelSelector) bool {
 	return selector == nil || (len(selector.MatchLabels) == 0 && len(selector.MatchExpressions) == 0)
 }
 
-func calculateK8sNetworkPolicyRisk(info K8sNetworkPolicyInfo) string {
-	if info.AllowsInternetIngress && info.AllowsInternetEgress {
-		return shared.RiskCritical
-	}
-	if info.AllowsInternetIngress || info.AllowsInternetEgress {
-		return shared.RiskHigh
-	}
-	if info.AllowsMetadataAPI {
-		return shared.RiskHigh
-	}
-	if info.AllowsCrossNS {
-		return shared.RiskMedium
-	}
-	return shared.RiskLow
-}
-
-func calculateNetworkAdmissionRiskLevel(finding NetworkAdmissionFinding) string {
-	if !finding.HasNetworkPolicy {
-		return shared.RiskCritical
-	}
-	if finding.AllowsInternetIngress && finding.AllowsInternetEgress {
-		return shared.RiskCritical
-	}
-	if finding.AllowsMetadataAPI {
-		return shared.RiskHigh
-	}
-	if finding.AllowsInternetIngress || finding.AllowsInternetEgress {
-		return shared.RiskHigh
-	}
-	if !finding.HasDefaultDenyIngress && !finding.HasDefaultDenyEgress {
-		return shared.RiskMedium
-	}
-	return shared.RiskLow
-}
 
 func generateNetworkAdmissionRecommendations(finding NetworkAdmissionFinding) []string {
 	var recs []string
@@ -3401,119 +4557,63 @@ func appendUnique(slice []string, item string) []string {
 func generateNetworkAdmissionLoot(finding *NetworkAdmissionFinding, loot *shared.LootBuilder) {
 	// No policies - critical finding
 	if !finding.HasNetworkPolicy {
-		loot.Section("Network-Admission-Lateral-Movement").
-			Addf("\n# [CRITICAL] Namespace: %s", finding.Namespace).
-			Add("# NO network policies - all traffic allowed").
-			Addf("# %d pods are completely unprotected", finding.TotalPods).
+		loot.Section("network-admission").
+			Addf("\n# [CRITICAL] Namespace: %s - NO network policies", finding.Namespace).
 			Addf("kubectl get pods -n %s", finding.Namespace).
 			AddBlank()
-
-		loot.Section("Network-Admission-Default-Deny").
-			Addf("\n# ─────────────────────────────────────────────────────────────").
-			Addf("# Namespace: %s (NO POLICIES)", finding.Namespace).
-			Addf("# ─────────────────────────────────────────────────────────────").
-			Add("# Recommended default-deny policy:").
-			Add(generateK8sDefaultDenyTemplate(finding.Namespace)).
-			AddBlank()
-
 		return
 	}
 
-	// Has policies but no default deny
-	if !finding.HasDefaultDenyIngress || !finding.HasDefaultDenyEgress {
-		loot.Section("Network-Admission-Default-Deny").
-			Addf("\n# ─────────────────────────────────────────────────────────────").
-			Addf("# Namespace: %s", finding.Namespace)
-		if !finding.HasDefaultDenyIngress {
-			loot.Section("Network-Admission-Default-Deny").Add("# Missing: default-deny INGRESS")
-		}
-		if !finding.HasDefaultDenyEgress {
-			loot.Section("Network-Admission-Default-Deny").Add("# Missing: default-deny EGRESS")
-		}
-		loot.Section("Network-Admission-Default-Deny").
-			Add("# Recommended policy:").
-			Add(generateK8sDefaultDenyTemplate(finding.Namespace)).
-			AddBlank()
-	}
-
-	// Data exfiltration risks
-	if finding.AllowsInternetEgress || finding.AllowsMetadataAPI {
-		loot.Section("Network-Admission-Data-Exfil").
-			Addf("\n# [HIGH] Namespace: %s", finding.Namespace)
-		if finding.AllowsInternetEgress {
-			loot.Section("Network-Admission-Data-Exfil").Add("# [!] Internet egress allowed - data exfiltration possible")
-		}
-		if finding.AllowsMetadataAPI {
-			loot.Section("Network-Admission-Data-Exfil").Add("# [!] Metadata API access allowed - credential theft risk")
-		}
-		loot.Section("Network-Admission-Data-Exfil").
-			Addf("kubectl get networkpolicies -n %s", finding.Namespace).
-			AddBlank()
-	}
-
 	// Enum section
-	loot.Section("Network-Admission-Enum").
+	loot.Section("network-admission").
 		Addf("\n# Namespace: %s (%d policies)", finding.Namespace, finding.PolicyCount)
 
 	if finding.K8sNetworkPolicyCount > 0 {
-		loot.Section("Network-Admission-Enum").Addf("kubectl get networkpolicies -n %s", finding.Namespace)
+		loot.Section("network-admission").Addf("kubectl get networkpolicies -n %s", finding.Namespace)
 	}
 	if finding.CalicoCount > 0 {
-		loot.Section("Network-Admission-Enum").Addf("kubectl get networkpolicies.projectcalico.org -n %s", finding.Namespace)
+		loot.Section("network-admission").Addf("kubectl get networkpolicies.projectcalico.org -n %s", finding.Namespace)
 	}
 	if finding.CiliumCount > 0 {
-		loot.Section("Network-Admission-Enum").Addf("kubectl get ciliumnetworkpolicies -n %s", finding.Namespace)
+		loot.Section("network-admission").Addf("kubectl get ciliumnetworkpolicies -n %s", finding.Namespace)
 	}
 	if finding.AntreaCount > 0 {
-		loot.Section("Network-Admission-Enum").Addf("kubectl get networkpolicies.crd.antrea.io -n %s", finding.Namespace)
+		loot.Section("network-admission").Addf("kubectl get networkpolicies.crd.antrea.io -n %s", finding.Namespace)
 	}
 	if finding.IstioCount > 0 {
-		loot.Section("Network-Admission-Enum").Addf("kubectl get authorizationpolicies.security.istio.io -n %s", finding.Namespace)
+		loot.Section("network-admission").Addf("kubectl get authorizationpolicies.security.istio.io -n %s", finding.Namespace)
 	}
 	if finding.AWSSecurityGroupCount > 0 {
-		loot.Section("Network-Admission-Enum").Addf("kubectl get securitygrouppolicies.vpcresources.k8s.aws -n %s", finding.Namespace)
+		loot.Section("network-admission").Addf("kubectl get securitygrouppolicies.vpcresources.k8s.aws -n %s", finding.Namespace)
 	}
 	if finding.OpenShiftEgressCount > 0 {
-		loot.Section("Network-Admission-Enum").Addf("kubectl get egressfirewalls.k8s.ovn.org -n %s", finding.Namespace)
-		loot.Section("Network-Admission-Enum").Addf("kubectl get egressnetworkpolicies.network.openshift.io -n %s", finding.Namespace)
+		loot.Section("network-admission").Addf("kubectl get egressfirewalls.k8s.ovn.org -n %s", finding.Namespace)
+		loot.Section("network-admission").Addf("kubectl get egressnetworkpolicies.network.openshift.io -n %s", finding.Namespace)
 	}
 	if finding.ConsulConnectCount > 0 {
-		loot.Section("Network-Admission-Enum").Addf("kubectl get serviceintentions.consul.hashicorp.com -n %s", finding.Namespace)
+		loot.Section("network-admission").Addf("kubectl get serviceintentions.consul.hashicorp.com -n %s", finding.Namespace)
 	}
 	if finding.KumaMeshCount > 0 {
-		loot.Section("Network-Admission-Enum").Addf("kubectl get meshtrafficpermissions.kuma.io -n %s", finding.Namespace)
+		loot.Section("network-admission").Addf("kubectl get meshtrafficpermissions.kuma.io -n %s", finding.Namespace)
 	}
 	if finding.SMICount > 0 {
-		loot.Section("Network-Admission-Enum").Addf("kubectl get traffictargets.access.smi-spec.io -n %s", finding.Namespace)
+		loot.Section("network-admission").Addf("kubectl get traffictargets.access.smi-spec.io -n %s", finding.Namespace)
 	}
 	if finding.GlooMeshCount > 0 {
-		loot.Section("Network-Admission-Enum").Addf("kubectl get accesspolicies.security.policy.gloo.solo.io -n %s", finding.Namespace)
+		loot.Section("network-admission").Addf("kubectl get accesspolicies.security.policy.gloo.solo.io -n %s", finding.Namespace)
 	}
 	if finding.NSXTCount > 0 {
-		loot.Section("Network-Admission-Enum").Addf("kubectl get securitypolicies.nsx.vmware.com -n %s", finding.Namespace)
+		loot.Section("network-admission").Addf("kubectl get securitypolicies.nsx.vmware.com -n %s", finding.Namespace)
 	}
 	if finding.GCPBackendCount > 0 {
-		loot.Section("Network-Admission-Enum").Addf("kubectl get gcpbackendpolicies.networking.gke.io -n %s", finding.Namespace)
+		loot.Section("network-admission").Addf("kubectl get gcpbackendpolicies.networking.gke.io -n %s", finding.Namespace)
 	}
 	if finding.AzureNetworkCount > 0 {
-		loot.Section("Network-Admission-Enum").Addf("kubectl get azureingressprohibitedtargets.appgw.ingress.k8s.io -n %s", finding.Namespace)
-		loot.Section("Network-Admission-Enum").Addf("kubectl get azureidentitybindings.aadpodidentity.k8s.io -n %s", finding.Namespace)
+		loot.Section("network-admission").Addf("kubectl get azureingressprohibitedtargets.appgw.ingress.k8s.io -n %s", finding.Namespace)
+		loot.Section("network-admission").Addf("kubectl get azureidentitybindings.aadpodidentity.k8s.io -n %s", finding.Namespace)
 	}
 
-	loot.Section("Network-Admission-Enum").AddBlank()
-}
-
-func generateK8sDefaultDenyTemplate(namespace string) string {
-	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: default-deny-all
-  namespace: %s
-spec:
-  podSelector: {}
-  policyTypes:
-  - Ingress
-  - Egress`, namespace)
+	loot.Section("network-admission").AddBlank()
 }
 
 // Image verification helper functions
@@ -3647,7 +4747,7 @@ func applyAzureNetworkPolicyVerification(policies map[string][]AzureNetworkPolic
 	}
 }
 
-// generateNetworkPolicyEnumerationLoot creates comprehensive enumeration commands for all detected policy engines
+// generateNetworkPolicyEnumerationLoot creates enumeration commands only for detected policy engines
 func generateNetworkPolicyEnumerationLoot(findings []NetworkAdmissionFinding, loot *shared.LootBuilder) {
 	// Track which engines are detected across all namespaces
 	hasK8sNetworkPolicy := false
@@ -3715,387 +4815,991 @@ func generateNetworkPolicyEnumerationLoot(findings []NetworkAdmissionFinding, lo
 		}
 	}
 
-	// Add context command
-	if globals.KubeContext != "" {
-		loot.Section("Network-Admission-Policy-Enumeration").Addf("kubectl config use-context %s\n", globals.KubeContext)
-	}
-
-	// Kubernetes Native NetworkPolicy (always include as it's the base)
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# KUBERNETES NATIVE NETWORK POLICIES")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	if hasK8sNetworkPolicy {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] Kubernetes NetworkPolicy resources found")
-	} else {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No Kubernetes NetworkPolicy resources found")
-	}
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List all NetworkPolicies across all namespaces:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get networkpolicies -A")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML for all NetworkPolicies:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get networkpolicies -A -o yaml")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-
-	// Calico
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# CALICO NETWORK POLICIES")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	if hasCalico {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] Calico policies found")
-	} else {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No Calico policies found (commands may error)")
-	}
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Calico NetworkPolicies (namespace-scoped):")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get networkpolicies.crd.projectcalico.org -A")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Calico GlobalNetworkPolicies (cluster-scoped):")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get globalnetworkpolicies.crd.projectcalico.org")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get networkpolicies.crd.projectcalico.org -A -o yaml")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get globalnetworkpolicies.crd.projectcalico.org -o yaml")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Calico GlobalNetworkSets (IP allowlists):")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get globalnetworksets.crd.projectcalico.org -o yaml")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-
-	// Cilium
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# CILIUM NETWORK POLICIES")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	if hasCilium {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] Cilium policies found")
-	} else {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No Cilium policies found (commands may error)")
-	}
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List CiliumNetworkPolicies (namespace-scoped):")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get ciliumnetworkpolicies -A")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List CiliumClusterwideNetworkPolicies (cluster-scoped):")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get ciliumclusterwidenetworkpolicies")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get ciliumnetworkpolicies -A -o yaml")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get ciliumclusterwidenetworkpolicies -o yaml")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Cilium Endpoints (shows policy enforcement status):")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get ciliumendpoints -A")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-
-	// Antrea
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ANTREA NETWORK POLICIES")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	if hasAntrea {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] Antrea policies found")
-	} else {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No Antrea policies found (commands may error)")
-	}
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Antrea NetworkPolicies (namespace-scoped):")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get networkpolicies.crd.antrea.io -A")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Antrea ClusterNetworkPolicies (cluster-scoped):")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get clusternetworkpolicies.crd.antrea.io")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get networkpolicies.crd.antrea.io -A -o yaml")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get clusternetworkpolicies.crd.antrea.io -o yaml")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Antrea Tiers (policy priority):")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get tiers.crd.antrea.io")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-
-	// Istio
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ISTIO AUTHORIZATION POLICIES")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	if hasIstio {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] Istio AuthorizationPolicies found")
-	} else {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No Istio policies found (commands may error)")
-	}
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Istio AuthorizationPolicies:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get authorizationpolicies.security.istio.io -A")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Istio PeerAuthentication (mTLS):")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get peerauthentications.security.istio.io -A")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get authorizationpolicies.security.istio.io -A -o yaml")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get peerauthentications.security.istio.io -A -o yaml")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Istio Sidecars (traffic scoping):")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get sidecars.networking.istio.io -A -o yaml")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-
-	// Linkerd
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# LINKERD POLICIES")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	if hasLinkerd {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] Linkerd policies found")
-	} else {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No Linkerd policies found (commands may error)")
-	}
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Linkerd Server resources:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get servers.policy.linkerd.io -A")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Linkerd ServerAuthorizations:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get serverauthorizations.policy.linkerd.io -A")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Linkerd AuthorizationPolicies:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get authorizationpolicies.policy.linkerd.io -A")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get servers.policy.linkerd.io -A -o yaml")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get serverauthorizations.policy.linkerd.io -A -o yaml")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-
-	// AWS Security Groups
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# AWS VPC CNI SECURITY GROUP POLICIES")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	if hasAWSSecurityGroup {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] AWS SecurityGroupPolicies found")
-	} else {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No AWS SecurityGroupPolicies found (commands may error)")
-	}
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List AWS SecurityGroupPolicies:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get securitygrouppolicies.vpcresources.k8s.aws -A")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get securitygrouppolicies.vpcresources.k8s.aws -A -o yaml")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# Check AWS CLI for security group details (requires AWS credentials):")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# aws ec2 describe-security-groups --group-ids <sg-id>")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-
-	// OpenShift Egress
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# OPENSHIFT EGRESS POLICIES")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	if hasOpenShiftEgress {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] OpenShift EgressFirewalls found")
-	} else {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No OpenShift egress policies found (commands may error)")
-	}
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List OVN-Kubernetes EgressFirewalls:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get egressfirewalls.k8s.ovn.org -A")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List legacy EgressNetworkPolicies:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get egressnetworkpolicies.network.openshift.io -A")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get egressfirewalls.k8s.ovn.org -A -o yaml")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get egressnetworkpolicies.network.openshift.io -A -o yaml")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-
-	// Consul Connect
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# HASHICORP CONSUL CONNECT INTENTIONS")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	if hasConsulConnect {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] Consul ServiceIntentions found")
-	} else {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No Consul intentions found (commands may error)")
-	}
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Consul ServiceIntentions:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get serviceintentions.consul.hashicorp.com -A")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Consul IngressGateways:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get ingressgateways.consul.hashicorp.com -A")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get serviceintentions.consul.hashicorp.com -A -o yaml")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-
-	// Kuma Mesh
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# KUMA/KONG MESH POLICIES")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	if hasKumaMesh {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] Kuma MeshTrafficPermissions found")
-	} else {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No Kuma policies found (commands may error)")
-	}
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Kuma MeshTrafficPermissions:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get meshtrafficpermissions.kuma.io -A")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Kuma TrafficPermissions (legacy):")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get trafficpermissions.kuma.io -A")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get meshtrafficpermissions.kuma.io -A -o yaml")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-
-	// SMI (Service Mesh Interface)
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# SMI (SERVICE MESH INTERFACE) POLICIES")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	if hasSMI {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] SMI TrafficTargets found")
-	} else {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No SMI policies found (commands may error)")
-	}
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List SMI TrafficTargets (access control):")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get traffictargets.access.smi-spec.io -A")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List SMI TrafficSplits (traffic routing):")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get trafficsplits.split.smi-spec.io -A")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get traffictargets.access.smi-spec.io -A -o yaml")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-
-	// Gloo Mesh
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# GLOO MESH POLICIES")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	if hasGlooMesh {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] Gloo Mesh AccessPolicies found")
-	} else {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No Gloo Mesh policies found (commands may error)")
-	}
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Gloo Mesh AccessPolicies:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get accesspolicies.security.policy.gloo.solo.io -A")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Gloo Mesh TrafficPolicies:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get trafficpolicies.networking.mesh.gloo.solo.io -A")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get accesspolicies.security.policy.gloo.solo.io -A -o yaml")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-
-	// VMware NSX-T
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# VMWARE NSX-T SECURITY POLICIES")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	if hasNSXT {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] NSX-T SecurityPolicies found")
-	} else {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No NSX-T policies found (commands may error)")
-	}
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List NSX-T SecurityPolicies:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get securitypolicies.nsx.vmware.com -A")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get securitypolicies.nsx.vmware.com -A -o yaml")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-
-	// GCP Backend Policies (Cloud Armor)
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# GCP/GKE BACKEND POLICIES (CLOUD ARMOR)")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	if hasGCPBackend {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] GCP BackendPolicies found")
-	} else {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No GCP BackendPolicies found (commands may error)")
-	}
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List GCP BackendPolicies:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get gcpbackendpolicies.networking.gke.io -A")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get gcpbackendpolicies.networking.gke.io -A -o yaml")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# Check Cloud Armor policies via gcloud (requires GCP credentials):")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# gcloud compute security-policies list")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# gcloud compute security-policies describe <policy-name>")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-
-	// Azure Network Policies
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# AZURE/AKS NETWORK CONFIGURATIONS")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	if hasAzureNetwork {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [DETECTED] Azure network configurations found")
-	} else {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("# [NOT DETECTED] No Azure configurations found (commands may error)")
-	}
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Azure Ingress Prohibited Targets:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get azureingressprohibitedtargets.appgw.ingress.k8s.io -A")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# List Azure Identity Bindings:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get azureidentitybindings.aadpodidentity.k8s.io -A")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# Get detailed YAML:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get azureingressprohibitedtargets.appgw.ingress.k8s.io -A -o yaml")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# Check Azure NSG via az CLI (requires Azure credentials):")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# az network nsg list")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# az network nsg rule list --nsg-name <nsg-name> -g <resource-group>")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
-
-	// Quick reference summary
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# QUICK ENUMERATION (ALL DETECTED ENGINES)")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# ═══════════════════════════════════════════════════════════")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("# Run these commands to quickly enumerate all detected policies:")
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	// Only add commands for detected policy engines
+	loot.Section("network-admission").Add("\n# Cluster-wide policy enumeration (detected tools only)")
 
 	if hasK8sNetworkPolicy {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get networkpolicies -A -o wide")
+		loot.Section("network-admission").Add("\n# K8s NetworkPolicy")
+		loot.Section("network-admission").Add("kubectl get networkpolicies -A -o wide")
 	}
 	if hasCalico {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get networkpolicies.crd.projectcalico.org -A -o wide")
-		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get globalnetworkpolicies.crd.projectcalico.org -o wide")
+		loot.Section("network-admission").Add("\n# Calico")
+		loot.Section("network-admission").Add("kubectl get networkpolicies.crd.projectcalico.org -A -o wide")
+		loot.Section("network-admission").Add("kubectl get globalnetworkpolicies.crd.projectcalico.org -o wide")
 	}
 	if hasCilium {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get ciliumnetworkpolicies -A -o wide")
-		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get ciliumclusterwidenetworkpolicies -o wide")
+		loot.Section("network-admission").Add("\n# Cilium")
+		loot.Section("network-admission").Add("kubectl get ciliumnetworkpolicies -A -o wide")
+		loot.Section("network-admission").Add("kubectl get ciliumclusterwidenetworkpolicies -o wide")
 	}
 	if hasAntrea {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get networkpolicies.crd.antrea.io -A -o wide")
-		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get clusternetworkpolicies.crd.antrea.io -o wide")
+		loot.Section("network-admission").Add("\n# Antrea")
+		loot.Section("network-admission").Add("kubectl get networkpolicies.crd.antrea.io -A -o wide")
+		loot.Section("network-admission").Add("kubectl get clusternetworkpolicies.crd.antrea.io -o wide")
 	}
 	if hasIstio {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get authorizationpolicies.security.istio.io -A -o wide")
+		loot.Section("network-admission").Add("\n# Istio")
+		loot.Section("network-admission").Add("kubectl get authorizationpolicies.security.istio.io -A -o wide")
 	}
 	if hasLinkerd {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get servers.policy.linkerd.io -A -o wide")
-		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get serverauthorizations.policy.linkerd.io -A -o wide")
+		loot.Section("network-admission").Add("\n# Linkerd")
+		loot.Section("network-admission").Add("kubectl get servers.policy.linkerd.io -A -o wide")
+		loot.Section("network-admission").Add("kubectl get serverauthorizations.policy.linkerd.io -A -o wide")
 	}
 	if hasAWSSecurityGroup {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get securitygrouppolicies.vpcresources.k8s.aws -A -o wide")
+		loot.Section("network-admission").Add("\n# AWS SecurityGroupPolicy")
+		loot.Section("network-admission").Add("kubectl get securitygrouppolicies.vpcresources.k8s.aws -A -o wide")
 	}
 	if hasOpenShiftEgress {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get egressfirewalls.k8s.ovn.org -A -o wide")
+		loot.Section("network-admission").Add("\n# OpenShift EgressFirewall")
+		loot.Section("network-admission").Add("kubectl get egressfirewalls.k8s.ovn.org -A -o wide")
 	}
 	if hasConsulConnect {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get serviceintentions.consul.hashicorp.com -A -o wide")
+		loot.Section("network-admission").Add("\n# Consul Connect")
+		loot.Section("network-admission").Add("kubectl get serviceintentions.consul.hashicorp.com -A -o wide")
 	}
 	if hasKumaMesh {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get meshtrafficpermissions.kuma.io -A -o wide")
+		loot.Section("network-admission").Add("\n# Kuma/Kong Mesh")
+		loot.Section("network-admission").Add("kubectl get meshtrafficpermissions.kuma.io -A -o wide")
 	}
 	if hasSMI {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get traffictargets.access.smi-spec.io -A -o wide")
+		loot.Section("network-admission").Add("\n# SMI")
+		loot.Section("network-admission").Add("kubectl get traffictargets.access.smi-spec.io -A -o wide")
 	}
 	if hasGlooMesh {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get accesspolicies.security.policy.gloo.solo.io -A -o wide")
+		loot.Section("network-admission").Add("\n# Gloo Mesh")
+		loot.Section("network-admission").Add("kubectl get accesspolicies.security.policy.gloo.solo.io -A -o wide")
 	}
 	if hasNSXT {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get securitypolicies.nsx.vmware.com -A -o wide")
+		loot.Section("network-admission").Add("\n# VMware NSX-T")
+		loot.Section("network-admission").Add("kubectl get securitypolicies.nsx.vmware.com -A -o wide")
 	}
 	if hasGCPBackend {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get gcpbackendpolicies.networking.gke.io -A -o wide")
+		loot.Section("network-admission").Add("\n# GCP/GKE")
+		loot.Section("network-admission").Add("kubectl get gcpbackendpolicies.networking.gke.io -A -o wide")
 	}
 	if hasAzureNetwork {
-		loot.Section("Network-Admission-Policy-Enumeration").Add("kubectl get azureingressprohibitedtargets.appgw.ingress.k8s.io -A -o wide")
+		loot.Section("network-admission").Add("\n# Azure/AKS")
+		loot.Section("network-admission").Add("kubectl get azureingressprohibitedtargets.appgw.ingress.k8s.io -A -o wide")
+	}
+}
+
+// ============================================================================
+// Policy Engine Network Policy Analysis (Gatekeeper, Kyverno, Kubewarden)
+// ============================================================================
+
+// GatekeeperNetworkConstraintInfo represents a Gatekeeper constraint related to network policies
+type GatekeeperNetworkConstraintInfo struct {
+	Name               string
+	Kind               string // The constraint template kind (e.g., K8sAllowedNetworks)
+	EnforcementAction  string // deny, dryrun, warn
+	MatchNamespaces    []string
+	ExcludeNamespaces  []string
+	NetworkRules       []string // Extracted network-related rules
+	ViolationCount     int
+	IsNetworkRelated   bool
+}
+
+// KyvernoNetworkPolicyInfo represents a Kyverno policy related to network resources
+type KyvernoNetworkPolicyInfo struct {
+	Name                string
+	Namespace           string
+	IsClusterPolicy     bool
+	ValidationAction    string // enforce, audit
+	Background          bool
+	RuleCount           int
+	NetworkRules        []string // Rules that target NetworkPolicy resources
+	IsNetworkRelated    bool
+	TargetsNetworkPolicy bool
+}
+
+// KubewardenNetworkPolicyInfo represents a Kubewarden policy for network resources
+type KubewardenNetworkPolicyInfo struct {
+	Name              string
+	Namespace         string
+	PolicyServer      string
+	Mode              string // protect, monitor
+	Module            string // The WASM module
+	IsNetworkRelated  bool
+	NetworkRules      []string
+}
+
+// analyzeGatekeeperNetworkConstraints finds Gatekeeper constraints that enforce network policies
+func analyzeGatekeeperNetworkConstraints(ctx context.Context, dynClient dynamic.Interface) []GatekeeperNetworkConstraintInfo {
+	var constraints []GatekeeperNetworkConstraintInfo
+
+	// Network-related constraint template patterns
+	networkPatterns := []string{
+		"network", "egress", "ingress", "cidr", "port", "protocol",
+		"allowednetwork", "denynetwork", "networkpolicy",
 	}
 
-	loot.Section("Network-Admission-Policy-Enumeration").Add("")
+	// List all constraint templates first
+	templateGVR := schema.GroupVersionResource{
+		Group:    "templates.gatekeeper.sh",
+		Version:  "v1",
+		Resource: "constrainttemplates",
+	}
+
+	templates, err := dynClient.Resource(templateGVR).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return constraints
+	}
+
+	// For each template, check if it's network-related and get constraints
+	for _, tmpl := range templates.Items {
+		templateName := tmpl.GetName()
+		isNetworkRelated := false
+
+		// Check if template name suggests network policy
+		for _, pattern := range networkPatterns {
+			if strings.Contains(strings.ToLower(templateName), pattern) {
+				isNetworkRelated = true
+				break
+			}
+		}
+
+		// Check CRD targets
+		if spec, ok := tmpl.Object["spec"].(map[string]interface{}); ok {
+			if crd, ok := spec["crd"].(map[string]interface{}); ok {
+				if specNested, ok := crd["spec"].(map[string]interface{}); ok {
+					if names, ok := specNested["names"].(map[string]interface{}); ok {
+						if kind, ok := names["kind"].(string); ok {
+							for _, pattern := range networkPatterns {
+								if strings.Contains(strings.ToLower(kind), pattern) {
+									isNetworkRelated = true
+									break
+								}
+							}
+						}
+					}
+				}
+			}
+			// Check targets for NetworkPolicy resources
+			if targets, ok := spec["targets"].([]interface{}); ok {
+				for _, target := range targets {
+					if targetMap, ok := target.(map[string]interface{}); ok {
+						if rego, ok := targetMap["rego"].(string); ok {
+							if strings.Contains(rego, "NetworkPolicy") ||
+								strings.Contains(rego, "network") ||
+								strings.Contains(rego, "egress") ||
+								strings.Contains(rego, "ingress") {
+								isNetworkRelated = true
+							}
+						}
+					}
+				}
+			}
+		}
+
+		if !isNetworkRelated {
+			continue
+		}
+
+		// Now get constraints of this type
+		constraintGVR := schema.GroupVersionResource{
+			Group:    "constraints.gatekeeper.sh",
+			Version:  "v1beta1",
+			Resource: strings.ToLower(templateName),
+		}
+
+		constraintList, err := dynClient.Resource(constraintGVR).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			continue
+		}
+
+		for _, c := range constraintList.Items {
+			info := GatekeeperNetworkConstraintInfo{
+				Name:             c.GetName(),
+				Kind:             templateName,
+				IsNetworkRelated: true,
+			}
+
+			if spec, ok := c.Object["spec"].(map[string]interface{}); ok {
+				if action, ok := spec["enforcementAction"].(string); ok {
+					info.EnforcementAction = action
+				} else {
+					info.EnforcementAction = "deny" // default
+				}
+
+				if match, ok := spec["match"].(map[string]interface{}); ok {
+					if namespaces, ok := match["namespaces"].([]interface{}); ok {
+						for _, ns := range namespaces {
+							if nsStr, ok := ns.(string); ok {
+								info.MatchNamespaces = append(info.MatchNamespaces, nsStr)
+							}
+						}
+					}
+					if excluded, ok := match["excludedNamespaces"].([]interface{}); ok {
+						for _, ns := range excluded {
+							if nsStr, ok := ns.(string); ok {
+								info.ExcludeNamespaces = append(info.ExcludeNamespaces, nsStr)
+							}
+						}
+					}
+				}
+
+				// Extract parameters as network rules
+				if params, ok := spec["parameters"].(map[string]interface{}); ok {
+					info.NetworkRules = append(info.NetworkRules, fmt.Sprintf("%v", params))
+				}
+			}
+
+			// Get violation count from status
+			if status, ok := c.Object["status"].(map[string]interface{}); ok {
+				if violations, ok := status["totalViolations"].(int64); ok {
+					info.ViolationCount = int(violations)
+				} else if violations, ok := status["totalViolations"].(float64); ok {
+					info.ViolationCount = int(violations)
+				}
+			}
+
+			constraints = append(constraints, info)
+		}
+	}
+
+	return constraints
+}
+
+// analyzeKyvernoNetworkPolicies finds Kyverno policies that target NetworkPolicy resources
+func analyzeKyvernoNetworkPolicies(ctx context.Context, dynClient dynamic.Interface) []KyvernoNetworkPolicyInfo {
+	var policies []KyvernoNetworkPolicyInfo
+
+	// ClusterPolicy
+	cpGVR := schema.GroupVersionResource{
+		Group:    "kyverno.io",
+		Version:  "v1",
+		Resource: "clusterpolicies",
+	}
+
+	cpList, err := dynClient.Resource(cpGVR).List(ctx, metav1.ListOptions{})
+	if err == nil {
+		for _, cp := range cpList.Items {
+			info := analyzeKyvernoPolicy(cp.Object, cp.GetName(), "", true)
+			if info.IsNetworkRelated {
+				policies = append(policies, info)
+			}
+		}
+	}
+
+	// Namespaced Policy
+	pGVR := schema.GroupVersionResource{
+		Group:    "kyverno.io",
+		Version:  "v1",
+		Resource: "policies",
+	}
+
+	pList, err := dynClient.Resource(pGVR).Namespace("").List(ctx, metav1.ListOptions{})
+	if err == nil {
+		for _, p := range pList.Items {
+			info := analyzeKyvernoPolicy(p.Object, p.GetName(), p.GetNamespace(), false)
+			if info.IsNetworkRelated {
+				policies = append(policies, info)
+			}
+		}
+	}
+
+	return policies
+}
+
+func analyzeKyvernoPolicy(obj map[string]interface{}, name, namespace string, isCluster bool) KyvernoNetworkPolicyInfo {
+	info := KyvernoNetworkPolicyInfo{
+		Name:            name,
+		Namespace:       namespace,
+		IsClusterPolicy: isCluster,
+	}
+
+	if spec, ok := obj["spec"].(map[string]interface{}); ok {
+		if vfa, ok := spec["validationFailureAction"].(string); ok {
+			info.ValidationAction = vfa
+		}
+		if bg, ok := spec["background"].(bool); ok {
+			info.Background = bg
+		}
+
+		if rules, ok := spec["rules"].([]interface{}); ok {
+			info.RuleCount = len(rules)
+			for _, r := range rules {
+				if rMap, ok := r.(map[string]interface{}); ok {
+					ruleName, _ := rMap["name"].(string)
+
+					// Check if rule matches NetworkPolicy resources
+					if match, ok := rMap["match"].(map[string]interface{}); ok {
+						if any, ok := match["any"].([]interface{}); ok {
+							for _, a := range any {
+								if aMap, ok := a.(map[string]interface{}); ok {
+									if resources, ok := aMap["resources"].(map[string]interface{}); ok {
+										if kinds, ok := resources["kinds"].([]interface{}); ok {
+											for _, k := range kinds {
+												if kStr, ok := k.(string); ok {
+													if strings.Contains(kStr, "NetworkPolicy") {
+														info.IsNetworkRelated = true
+														info.TargetsNetworkPolicy = true
+														info.NetworkRules = append(info.NetworkRules, ruleName)
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+						if all, ok := match["all"].([]interface{}); ok {
+							for _, a := range all {
+								if aMap, ok := a.(map[string]interface{}); ok {
+									if resources, ok := aMap["resources"].(map[string]interface{}); ok {
+										if kinds, ok := resources["kinds"].([]interface{}); ok {
+											for _, k := range kinds {
+												if kStr, ok := k.(string); ok {
+													if strings.Contains(kStr, "NetworkPolicy") {
+														info.IsNetworkRelated = true
+														info.TargetsNetworkPolicy = true
+														info.NetworkRules = append(info.NetworkRules, ruleName)
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+						// Also check resources directly (older format)
+						if resources, ok := match["resources"].(map[string]interface{}); ok {
+							if kinds, ok := resources["kinds"].([]interface{}); ok {
+								for _, k := range kinds {
+									if kStr, ok := k.(string); ok {
+										if strings.Contains(kStr, "NetworkPolicy") {
+											info.IsNetworkRelated = true
+											info.TargetsNetworkPolicy = true
+											info.NetworkRules = append(info.NetworkRules, ruleName)
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return info
+}
+
+// analyzeKubewardenNetworkPolicies finds Kubewarden policies related to network resources
+func analyzeKubewardenNetworkPolicies(ctx context.Context, dynClient dynamic.Interface) []KubewardenNetworkPolicyInfo {
+	var policies []KubewardenNetworkPolicyInfo
+
+	// Network-related module patterns
+	networkModules := []string{
+		"network", "egress", "ingress", "port", "protocol",
+	}
+
+	// ClusterAdmissionPolicy
+	capGVR := schema.GroupVersionResource{
+		Group:    "policies.kubewarden.io",
+		Version:  "v1",
+		Resource: "clusteradmissionpolicies",
+	}
+
+	capList, err := dynClient.Resource(capGVR).List(ctx, metav1.ListOptions{})
+	if err == nil {
+		for _, cap := range capList.Items {
+			info := parseKubewardenPolicy(cap.Object, cap.GetName(), "", networkModules)
+			if info.IsNetworkRelated {
+				policies = append(policies, info)
+			}
+		}
+	}
+
+	// AdmissionPolicy (namespaced)
+	apGVR := schema.GroupVersionResource{
+		Group:    "policies.kubewarden.io",
+		Version:  "v1",
+		Resource: "admissionpolicies",
+	}
+
+	apList, err := dynClient.Resource(apGVR).Namespace("").List(ctx, metav1.ListOptions{})
+	if err == nil {
+		for _, ap := range apList.Items {
+			info := parseKubewardenPolicy(ap.Object, ap.GetName(), ap.GetNamespace(), networkModules)
+			if info.IsNetworkRelated {
+				policies = append(policies, info)
+			}
+		}
+	}
+
+	return policies
+}
+
+func parseKubewardenPolicy(obj map[string]interface{}, name, namespace string, networkModules []string) KubewardenNetworkPolicyInfo {
+	info := KubewardenNetworkPolicyInfo{
+		Name:      name,
+		Namespace: namespace,
+	}
+
+	if spec, ok := obj["spec"].(map[string]interface{}); ok {
+		if module, ok := spec["module"].(string); ok {
+			info.Module = module
+			// Check if module is network-related
+			for _, pattern := range networkModules {
+				if strings.Contains(strings.ToLower(module), pattern) {
+					info.IsNetworkRelated = true
+					break
+				}
+			}
+		}
+
+		if mode, ok := spec["mode"].(string); ok {
+			info.Mode = mode
+		}
+
+		if policyServer, ok := spec["policyServer"].(string); ok {
+			info.PolicyServer = policyServer
+		}
+
+		// Check rules for NetworkPolicy targets
+		if rules, ok := spec["rules"].([]interface{}); ok {
+			for _, r := range rules {
+				if rMap, ok := r.(map[string]interface{}); ok {
+					if resources, ok := rMap["resources"].([]interface{}); ok {
+						for _, res := range resources {
+							if resStr, ok := res.(string); ok {
+								if strings.Contains(resStr, "networkpolicies") {
+									info.IsNetworkRelated = true
+									info.NetworkRules = append(info.NetworkRules, resStr)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return info
+}
+
+// ============================================================================
+// CNAPP Platform Network Policy Analysis
+// ============================================================================
+
+// CNAPPNetworkPolicyInfo represents network policies from CNAPP platforms
+type CNAPPNetworkPolicyInfo struct {
+	Platform        string // aqua, prisma, sysdig, stackrox, neuvector
+	Name            string
+	Namespace       string
+	Scope           string // cluster, namespace, workload
+	Mode            string // enforce, alert, monitor
+	NetworkRules    []string
+	IngressRules    int
+	EgressRules     int
+	HasDefaultDeny  bool
+}
+
+// analyzeAquaNetworkPolicies analyzes Aqua network micro-segmentation policies
+func analyzeAquaNetworkPolicies(ctx context.Context, dynClient dynamic.Interface) []CNAPPNetworkPolicyInfo {
+	var policies []CNAPPNetworkPolicyInfo
+
+	// Aqua uses RuntimePolicy CRD for network controls
+	gvr := schema.GroupVersionResource{
+		Group:    "aquasecurity.github.io",
+		Version:  "v1alpha1",
+		Resource: "runtimepolicies",
+	}
+
+	list, err := dynClient.Resource(gvr).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return policies
+	}
+
+	for _, item := range list.Items {
+		info := CNAPPNetworkPolicyInfo{
+			Platform:  "aqua",
+			Name:      item.GetName(),
+			Namespace: item.GetNamespace(),
+		}
+
+		if spec, ok := item.Object["spec"].(map[string]interface{}); ok {
+			if networkPolicy, ok := spec["network"].(map[string]interface{}); ok {
+				info.Scope = "workload"
+				if enabled, ok := networkPolicy["enabled"].(bool); ok && enabled {
+					if blockInbound, ok := networkPolicy["block_inbound"].(bool); ok && blockInbound {
+						info.HasDefaultDeny = true
+						info.IngressRules++
+					}
+					if blockOutbound, ok := networkPolicy["block_outbound"].(bool); ok && blockOutbound {
+						info.EgressRules++
+					}
+				}
+			}
+			if enforcement, ok := spec["enforcement_mode"].(string); ok {
+				info.Mode = enforcement
+			}
+		}
+
+		if info.IngressRules > 0 || info.EgressRules > 0 {
+			policies = append(policies, info)
+		}
+	}
+
+	return policies
+}
+
+// analyzePrismaNetworkPolicies analyzes Prisma Cloud/Twistlock network policies
+func analyzePrismaNetworkPolicies(ctx context.Context, dynClient dynamic.Interface) []CNAPPNetworkPolicyInfo {
+	var policies []CNAPPNetworkPolicyInfo
+
+	// Prisma Cloud uses different CRD versions
+	gvrs := []schema.GroupVersionResource{
+		{Group: "twistlock.com", Version: "v1", Resource: "policies"},
+		{Group: "prismacloud.io", Version: "v1", Resource: "policies"},
+	}
+
+	for _, gvr := range gvrs {
+		list, err := dynClient.Resource(gvr).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			continue
+		}
+
+		for _, item := range list.Items {
+			info := CNAPPNetworkPolicyInfo{
+				Platform:  "prisma",
+				Name:      item.GetName(),
+				Namespace: item.GetNamespace(),
+			}
+
+			if spec, ok := item.Object["spec"].(map[string]interface{}); ok {
+				if pType, ok := spec["type"].(string); ok {
+					if strings.Contains(strings.ToLower(pType), "network") ||
+						strings.Contains(strings.ToLower(pType), "firewall") {
+						info.Scope = "workload"
+						if rules, ok := spec["rules"].([]interface{}); ok {
+							for _, r := range rules {
+								if rMap, ok := r.(map[string]interface{}); ok {
+									if direction, ok := rMap["direction"].(string); ok {
+										if strings.ToLower(direction) == "inbound" {
+											info.IngressRules++
+										} else {
+											info.EgressRules++
+										}
+									}
+								}
+							}
+						}
+						policies = append(policies, info)
+					}
+				}
+			}
+		}
+	}
+
+	return policies
+}
+
+// analyzeSysdigNetworkPolicies analyzes Sysdig network policies
+func analyzeSysdigNetworkPolicies(ctx context.Context, dynClient dynamic.Interface) []CNAPPNetworkPolicyInfo {
+	var policies []CNAPPNetworkPolicyInfo
+
+	gvr := schema.GroupVersionResource{
+		Group:    "sysdig.com",
+		Version:  "v1",
+		Resource: "policies",
+	}
+
+	list, err := dynClient.Resource(gvr).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return policies
+	}
+
+	for _, item := range list.Items {
+		info := CNAPPNetworkPolicyInfo{
+			Platform:  "sysdig",
+			Name:      item.GetName(),
+			Namespace: item.GetNamespace(),
+		}
+
+		if spec, ok := item.Object["spec"].(map[string]interface{}); ok {
+			if pType, ok := spec["type"].(string); ok {
+				if strings.Contains(strings.ToLower(pType), "network") {
+					info.Scope = "workload"
+					policies = append(policies, info)
+				}
+			}
+		}
+	}
+
+	return policies
+}
+
+// analyzeStackRoxNetworkPolicies analyzes StackRox/RHACS network policies
+func analyzeStackRoxNetworkPolicies(ctx context.Context, dynClient dynamic.Interface) []CNAPPNetworkPolicyInfo {
+	var policies []CNAPPNetworkPolicyInfo
+
+	gvr := schema.GroupVersionResource{
+		Group:    "platform.stackrox.io",
+		Version:  "v1alpha1",
+		Resource: "networkpolicies",
+	}
+
+	list, err := dynClient.Resource(gvr).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return policies
+	}
+
+	for _, item := range list.Items {
+		info := CNAPPNetworkPolicyInfo{
+			Platform:  "stackrox",
+			Name:      item.GetName(),
+			Namespace: item.GetNamespace(),
+			Scope:     "cluster",
+		}
+
+		if spec, ok := item.Object["spec"].(map[string]interface{}); ok {
+			if deployment, ok := spec["deployment"].(map[string]interface{}); ok {
+				info.Scope = "workload"
+				if name, ok := deployment["name"].(string); ok {
+					info.NetworkRules = append(info.NetworkRules, "deployment:"+name)
+				}
+			}
+		}
+
+		policies = append(policies, info)
+	}
+
+	return policies
+}
+
+// analyzeNeuVectorNetworkPolicies analyzes NeuVector network policies
+func analyzeNeuVectorNetworkPolicies(ctx context.Context, dynClient dynamic.Interface) []CNAPPNetworkPolicyInfo {
+	var policies []CNAPPNetworkPolicyInfo
+
+	// NeuVector uses CRD for network rules
+	gvr := schema.GroupVersionResource{
+		Group:    "neuvector.com",
+		Version:  "v1",
+		Resource: "nvrules",
+	}
+
+	list, err := dynClient.Resource(gvr).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		// Try nvsecurityrules
+		gvr.Resource = "nvsecurityrules"
+		list, err = dynClient.Resource(gvr).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return policies
+		}
+	}
+
+	for _, item := range list.Items {
+		info := CNAPPNetworkPolicyInfo{
+			Platform:  "neuvector",
+			Name:      item.GetName(),
+			Namespace: item.GetNamespace(),
+			Scope:     "workload",
+		}
+
+		if spec, ok := item.Object["spec"].(map[string]interface{}); ok {
+			if networkRules, ok := spec["network"].(map[string]interface{}); ok {
+				if ingress, ok := networkRules["ingress"].([]interface{}); ok {
+					info.IngressRules = len(ingress)
+				}
+				if egress, ok := networkRules["egress"].([]interface{}); ok {
+					info.EgressRules = len(egress)
+				}
+			}
+			if mode, ok := spec["mode"].(string); ok {
+				info.Mode = mode
+			}
+		}
+
+		if info.IngressRules > 0 || info.EgressRules > 0 {
+			policies = append(policies, info)
+		}
+	}
+
+	return policies
+}
+
+// ============================================================================
+// Multitenancy Platform Network Policy Analysis (Capsule, Rancher)
+// ============================================================================
+
+// CapsuleNetworkPolicyInfo represents Capsule tenant network restrictions
+type CapsuleNetworkPolicyInfo struct {
+	TenantName           string
+	Namespace            string
+	NetworkPolicies      []string
+	AllowedExternalIPs   []string
+	ForbiddenLabels      []string
+	IngressClasses       []string
+	StorageClasses       []string
+	LimitRanges          []string
+	HasNetworkIsolation  bool
+}
+
+// RancherNetworkPolicyInfo represents Rancher project network policies
+type RancherNetworkPolicyInfo struct {
+	ProjectName       string
+	Namespace         string
+	ProjectID         string
+	NetworkPolicy     string
+	PSPTemplate       string
+	HasIsolation      bool
+}
+
+// analyzeCapsuleNetworkPolicies analyzes Capsule tenant network isolation
+func analyzeCapsuleNetworkPolicies(ctx context.Context, dynClient dynamic.Interface) []CapsuleNetworkPolicyInfo {
+	var policies []CapsuleNetworkPolicyInfo
+
+	gvr := schema.GroupVersionResource{
+		Group:    "capsule.clastix.io",
+		Version:  "v1beta2",
+		Resource: "tenants",
+	}
+
+	list, err := dynClient.Resource(gvr).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		// Try v1beta1
+		gvr.Version = "v1beta1"
+		list, err = dynClient.Resource(gvr).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return policies
+		}
+	}
+
+	for _, item := range list.Items {
+		info := CapsuleNetworkPolicyInfo{
+			TenantName: item.GetName(),
+		}
+
+		if spec, ok := item.Object["spec"].(map[string]interface{}); ok {
+			// Check network policies
+			if netPol, ok := spec["networkPolicies"].(map[string]interface{}); ok {
+				info.HasNetworkIsolation = true
+				if items, ok := netPol["items"].([]interface{}); ok {
+					for _, np := range items {
+						if npMap, ok := np.(map[string]interface{}); ok {
+							if name, ok := npMap["name"].(string); ok {
+								info.NetworkPolicies = append(info.NetworkPolicies, name)
+							}
+						}
+					}
+				}
+			}
+
+			// Check external IPs restriction
+			if externalIPs, ok := spec["externalServiceIPs"].(map[string]interface{}); ok {
+				if allowed, ok := externalIPs["allowed"].([]interface{}); ok {
+					for _, ip := range allowed {
+						if ipStr, ok := ip.(string); ok {
+							info.AllowedExternalIPs = append(info.AllowedExternalIPs, ipStr)
+						}
+					}
+				}
+			}
+
+			// Check ingress classes restriction
+			if ingress, ok := spec["ingressOptions"].(map[string]interface{}); ok {
+				if classes, ok := ingress["allowedClasses"].(map[string]interface{}); ok {
+					if items, ok := classes["allowed"].([]interface{}); ok {
+						for _, c := range items {
+							if cStr, ok := c.(string); ok {
+								info.IngressClasses = append(info.IngressClasses, cStr)
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// Get namespaces owned by tenant
+		if status, ok := item.Object["status"].(map[string]interface{}); ok {
+			if namespaces, ok := status["namespaces"].([]interface{}); ok {
+				for _, ns := range namespaces {
+					if nsStr, ok := ns.(string); ok {
+						infoCopy := info
+						infoCopy.Namespace = nsStr
+						policies = append(policies, infoCopy)
+					}
+				}
+			}
+		}
+
+		// If no namespaces in status, still add the policy
+		if len(policies) == 0 || policies[len(policies)-1].TenantName != info.TenantName {
+			policies = append(policies, info)
+		}
+	}
+
+	return policies
+}
+
+// analyzeRancherNetworkPolicies analyzes Rancher project network isolation
+func analyzeRancherNetworkPolicies(ctx context.Context, dynClient dynamic.Interface) []RancherNetworkPolicyInfo {
+	var policies []RancherNetworkPolicyInfo
+
+	// Projects
+	projectGVR := schema.GroupVersionResource{
+		Group:    "management.cattle.io",
+		Version:  "v3",
+		Resource: "projects",
+	}
+
+	projectList, err := dynClient.Resource(projectGVR).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return policies
+	}
+
+	for _, item := range projectList.Items {
+		info := RancherNetworkPolicyInfo{
+			ProjectName: item.GetName(),
+		}
+
+		if spec, ok := item.Object["spec"].(map[string]interface{}); ok {
+			if projectID, ok := spec["projectId"].(string); ok {
+				info.ProjectID = projectID
+			}
+
+			// Check container default resource limit
+			if containerDefault, ok := spec["containerDefaultResourceLimit"].(map[string]interface{}); ok {
+				if _, ok := containerDefault["limitsCpu"]; ok {
+					info.HasIsolation = true
+				}
+			}
+
+			// Check namespace default resource quota
+			if nsDefault, ok := spec["namespaceDefaultResourceQuota"].(map[string]interface{}); ok {
+				if limit, ok := nsDefault["limit"].(map[string]interface{}); ok {
+					if _, ok := limit["pods"]; ok {
+						info.HasIsolation = true
+					}
+				}
+			}
+		}
+
+		// Get annotations for network policy
+		annotations := item.GetAnnotations()
+		if np, ok := annotations["field.cattle.io/projectDefaultNetworkPolicy"]; ok {
+			info.NetworkPolicy = np
+			info.HasIsolation = true
+		}
+
+		policies = append(policies, info)
+	}
+
+	// Also check ProjectNetworkPolicy CRD
+	pnpGVR := schema.GroupVersionResource{
+		Group:    "management.cattle.io",
+		Version:  "v3",
+		Resource: "projectnetworkpolicies",
+	}
+
+	pnpList, err := dynClient.Resource(pnpGVR).List(ctx, metav1.ListOptions{})
+	if err == nil {
+		for _, item := range pnpList.Items {
+			info := RancherNetworkPolicyInfo{
+				ProjectName:  item.GetName(),
+				Namespace:    item.GetNamespace(),
+				HasIsolation: true,
+			}
+
+			if spec, ok := item.Object["spec"].(map[string]interface{}); ok {
+				if projectID, ok := spec["projectId"].(string); ok {
+					info.ProjectID = projectID
+				}
+			}
+
+			policies = append(policies, info)
+		}
+	}
+
+	return policies
+}
+
+// ============================================================================
+// Polaris Network Policy Analysis
+// ============================================================================
+
+// PolarisNetworkCheckInfo represents Polaris checks related to network policies
+type PolarisNetworkCheckInfo struct {
+	Namespace              string
+	CheckID                string
+	CheckName              string
+	Severity               string
+	Category               string
+	HasNetworkPolicy       bool
+	MissingNetworkPolicy   bool
+}
+
+// analyzePolarisNetworkChecks analyzes Polaris reports for network policy findings
+func analyzePolarisNetworkChecks(ctx context.Context, dynClient dynamic.Interface) []PolarisNetworkCheckInfo {
+	var checks []PolarisNetworkCheckInfo
+
+	// Polaris stores results in ConfigAuditReport CRD (from its operator mode)
+	// or as annotations on resources
+
+	// Check for Polaris ConfigAuditReport (if using with trivy-operator compatibility)
+	gvr := schema.GroupVersionResource{
+		Group:    "aquasecurity.github.io",
+		Version:  "v1alpha1",
+		Resource: "configauditreports",
+	}
+
+	list, err := dynClient.Resource(gvr).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return checks
+	}
+
+	for _, item := range list.Items {
+		namespace := item.GetNamespace()
+
+		if report, ok := item.Object["report"].(map[string]interface{}); ok {
+			if checksList, ok := report["checks"].([]interface{}); ok {
+				for _, c := range checksList {
+					if cMap, ok := c.(map[string]interface{}); ok {
+						checkID, _ := cMap["checkID"].(string)
+						// Filter for network-related checks
+						if strings.Contains(strings.ToLower(checkID), "network") {
+							info := PolarisNetworkCheckInfo{
+								Namespace: namespace,
+								CheckID:   checkID,
+							}
+							if title, ok := cMap["title"].(string); ok {
+								info.CheckName = title
+							}
+							if severity, ok := cMap["severity"].(string); ok {
+								info.Severity = severity
+							}
+							if category, ok := cMap["category"].(string); ok {
+								info.Category = category
+							}
+							if success, ok := cMap["success"].(bool); ok {
+								info.HasNetworkPolicy = success
+								info.MissingNetworkPolicy = !success
+							}
+							checks = append(checks, info)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return checks
+}
+
+// ============================================================================
+// Conftest Network Policy Analysis
+// ============================================================================
+
+// ConftestNetworkPolicyInfo represents Conftest policy results for network resources
+type ConftestNetworkPolicyInfo struct {
+	Namespace    string
+	PolicyName   string
+	PolicyPath   string
+	ResourceKind string
+	Failures     int
+	Warnings     int
+	Successes    int
 }

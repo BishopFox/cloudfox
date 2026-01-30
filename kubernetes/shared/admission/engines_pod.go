@@ -218,4 +218,50 @@ func (r *EngineRegistry) registerPodEngines() {
 		WebhookPatterns:    []string{"conftest"},
 		RequireImageVerification: true,
 	})
+
+	// =============================================================================
+	// Multitenancy Platforms with Pod Security Enforcement
+	// =============================================================================
+
+	// Capsule - Tenant pod restrictions and security policies
+	r.register(&Engine{
+		ID:       "capsule",
+		Name:     "Capsule",
+		Category: CategoryPod,
+		TrustedRegistries: []string{
+			"quay.io/clastix/",
+			"ghcr.io/clastix/",
+		},
+		ImagePatterns: []string{
+			"clastix/capsule",
+			"capsule",
+		},
+		DeploymentPatterns: []string{"capsule-controller-manager"},
+		ExpectedNamespaces: []string{"capsule-system", "kube-system"},
+		WebhookPatterns:    []string{"capsule-validating", "capsule-mutating"},
+		CRDGroups:          []string{"capsule.clastix.io"},
+		LabelSelectors:     []string{"control-plane=controller-manager", "app=capsule"},
+		RequireImageVerification: true,
+	})
+
+	// Rancher - Project-level pod security policies
+	r.register(&Engine{
+		ID:       "rancher",
+		Name:     "Rancher",
+		Category: CategoryPod,
+		TrustedRegistries: []string{
+			"rancher/",
+			"docker.io/rancher/",
+		},
+		ImagePatterns: []string{
+			"rancher/rancher",
+			"rancher/rancher-agent",
+		},
+		DeploymentPatterns: []string{"rancher"},
+		ExpectedNamespaces: []string{"cattle-system", "rancher"},
+		WebhookPatterns:    []string{"rancher-webhook"},
+		CRDGroups:          []string{"management.cattle.io", "project.cattle.io"},
+		LabelSelectors:     []string{"app=rancher"},
+		RequireImageVerification: true,
+	})
 }

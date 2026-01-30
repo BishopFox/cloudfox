@@ -25,18 +25,49 @@ var MultitenancyAdmissionCmd = &cobra.Command{
 	Short:   "Analyze multi-tenancy and namespace isolation configurations",
 	Long: `
 Analyze all multi-tenancy configurations including:
+
+Kubernetes Multi-Tenancy:
   - Hierarchical Namespace Controller (HNC)
   - Capsule (Tenant CRDs)
   - vCluster detection
   - Loft (VirtualCluster, Space CRDs)
   - Kiosk (Account, Space CRDs)
+  - Rancher project/cluster management
+
+Isolation Analysis:
   - Namespace isolation analysis
   - Cross-tenant resource detection
   - Resource quota enforcement
+  - Network policy coverage
 
-  cloudfox kubernetes multitenancy-admission`,
+Cloud-Specific Multi-Tenancy (in-cluster detection):
+  Detects cloud resource controllers for multi-tenant management.
+  No --cloud-provider flag required - reads cluster resources directly.
+
+  AWS:
+    - AWS Controllers for Kubernetes (ACK)
+    - EKS namespace-based team isolation
+
+  GCP:
+    - GCP Config Connector resource quotas
+    - GKE Config Sync for tenant configuration
+
+  Azure:
+    - Azure Service Operator resource policies
+    - AKS namespace isolation
+
+  Multi-Cloud:
+    - Crossplane multi-cloud resource management
+    - Karmada multi-cluster management
+    - Admiralty multi-cluster scheduling
+
+Examples:
+  cloudfox kubernetes multitenancy-admission
+  cloudfox kubernetes multitenancy-admission --detailed`,
 	Run: ListMultitenancyAdmission,
 }
+
+// init() removed - detailed flag is now a global persistent flag in cli/kubernetes.go
 
 type MultitenancyAdmissionOutput struct {
 	Table []internal.TableFile
@@ -45,6 +76,15 @@ type MultitenancyAdmissionOutput struct {
 
 func (t MultitenancyAdmissionOutput) TableFiles() []internal.TableFile { return t.Table }
 func (t MultitenancyAdmissionOutput) LootFiles() []internal.LootFile   { return t.Loot }
+
+type MultitenancyEnumeratedPolicy struct {
+	Namespace string
+	Tool      string
+	Name      string
+	Scope     string
+	Type      string
+	Details   string
+}
 
 // MultitenancyAdmissionFinding represents multi-tenancy status for a namespace
 type MultitenancyAdmissionFinding struct {
@@ -66,8 +106,6 @@ type MultitenancyAdmissionFinding struct {
 	ChildNamespaces    []string
 	HierarchyDepth     int
 
-	// Risk Analysis
-	RiskLevel      string
 	SecurityIssues []string
 }
 
@@ -80,7 +118,6 @@ type HNCInfo struct {
 	TotalPods     int
 	Hierarchies   int
 	ImageVerified bool
-	BypassRisk    string
 }
 
 // HNCHierarchyInfo represents an HNC hierarchy
@@ -90,7 +127,6 @@ type HNCHierarchyInfo struct {
 	Children        []string
 	DepthFromRoot   int
 	PropagatedRoles int
-	BypassRisk      string
 }
 
 // CapsuleInfo represents Capsule controller status
@@ -102,7 +138,6 @@ type CapsuleInfo struct {
 	TotalPods     int
 	Tenants       int
 	ImageVerified bool
-	BypassRisk    string
 }
 
 // CapsuleTenantInfo represents a Capsule Tenant
@@ -117,7 +152,6 @@ type CapsuleTenantInfo struct {
 	LimitRanges       bool
 	ResourceQuotas    bool
 	NetworkPolicies   bool
-	BypassRisk        string
 }
 
 // VClusterInfo represents a vCluster instance
@@ -131,7 +165,6 @@ type VClusterInfo struct {
 	K8sVersion      string
 	HostClusterRole string
 	ImageVerified   bool
-	BypassRisk      string
 }
 
 // LoftInfo represents Loft controller status
@@ -145,7 +178,6 @@ type LoftInfo struct {
 	Spaces           int
 	Teams            int
 	ImageVerified    bool
-	BypassRisk       string
 }
 
 // LoftSpaceInfo represents a Loft Space
@@ -156,7 +188,6 @@ type LoftSpaceInfo struct {
 	User            string
 	SleepAfter      string
 	DeleteAfter     string
-	BypassRisk      string
 }
 
 // KioskInfo represents Kiosk controller status
@@ -169,7 +200,6 @@ type KioskInfo struct {
 	Accounts      int
 	Spaces        int
 	ImageVerified bool
-	BypassRisk    string
 }
 
 // KioskAccountInfo represents a Kiosk Account
@@ -179,7 +209,6 @@ type KioskAccountInfo struct {
 	SpaceLimit      int
 	SpacesUsed      int
 	DefaultCluster  string
-	BypassRisk      string
 }
 
 // OPAGatekeeperTenantInfo represents OPA/Gatekeeper tenant policy configuration
@@ -193,7 +222,27 @@ type OPAGatekeeperTenantInfo struct {
 	ConstraintTemplates     int
 	Constraints             int
 	TenantIsolationPolicies int
-	BypassRisk              string
+}
+
+// ConstraintTemplateInfo represents an individual OPA Gatekeeper ConstraintTemplate
+type ConstraintTemplateInfo struct {
+	Name        string
+	Kind        string // The constraint kind this template creates
+	Description string
+	Rego        string // First line or summary of the Rego policy
+	Targets     string // target (e.g., "admission.k8s.gatekeeper.sh")
+}
+
+// ConstraintInfo represents an individual OPA Gatekeeper Constraint
+type ConstraintInfo struct {
+	Name               string
+	Kind               string // The constraint kind (from ConstraintTemplate)
+	EnforcementAction  string // deny, dryrun, warn
+	Match              string // Summary of match criteria
+	Parameters         string // Summary of parameters
+	Violations         int
+	TotalViolations    int
+	IsTenantIsolation  bool
 }
 
 // NamespaceIsolationInfo represents isolation status for a namespace
@@ -207,7 +256,6 @@ type NamespaceIsolationInfo struct {
 	HasResourceQuota   bool
 	HasLimitRange      bool
 	PodSecurityStd     string // privileged, baseline, restricted
-	BypassRisk         string
 }
 
 // CrossTenantResourceInfo represents resources that may cross tenant boundaries
@@ -216,9 +264,7 @@ type CrossTenantResourceInfo struct {
 	Name           string
 	Scope          string // Cluster, Namespaces
 	AffectedTenants []string
-	RiskLevel      string
 	Description    string
-	BypassRisk     string
 }
 
 func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
@@ -230,6 +276,7 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 	verbosity, _ := parentCmd.PersistentFlags().GetInt("verbosity")
 	wrap, _ := parentCmd.PersistentFlags().GetBool("wrap")
 	outputDir, _ := parentCmd.PersistentFlags().GetString("outdir")
+	detailed := globals.K8sDetailed
 
 	logger.InfoM(fmt.Sprintf("Analyzing multi-tenancy for %s", globals.ClusterName), K8S_MULTITENANCY_ADMISSION_MODULE_NAME)
 
@@ -258,7 +305,7 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 
 	// Analyze OPA/Gatekeeper tenant policies
 	logger.InfoM("Analyzing OPA/Gatekeeper tenant policies...", K8S_MULTITENANCY_ADMISSION_MODULE_NAME)
-	opaGatekeeper := analyzeOPAGatekeeperTenant(ctx, clientset, dynClient)
+	opaGatekeeper, opaTemplates, opaConstraints := analyzeOPAGatekeeperTenant(ctx, clientset, dynClient)
 
 	// Analyze namespace isolation
 	logger.InfoM("Analyzing namespace isolation...", K8S_MULTITENANCY_ADMISSION_MODULE_NAME)
@@ -281,7 +328,6 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 		"Resource Quota",
 		"Limit Range",
 		"Pod Security",
-		"Risk Level",
 		"Issues",
 	}
 
@@ -290,7 +336,7 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 		"Status",
 		"Pods Running",
 		"Hierarchies",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	hncHierarchyHeader := []string{
@@ -299,7 +345,7 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 		"Children",
 		"Depth",
 		"Propagated Roles",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	capsuleHeader := []string{
@@ -307,10 +353,11 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 		"Status",
 		"Pods Running",
 		"Tenants",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	capsuleTenantHeader := []string{
+		"Namespace",
 		"Tenant",
 		"Namespaces",
 		"Namespace Quota",
@@ -318,17 +365,17 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 		"Limit Ranges",
 		"Resource Quotas",
 		"Network Policies",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	vclusterHeader := []string{
-		"Name",
 		"Namespace",
+		"Name",
 		"Status",
 		"Syncer Running",
 		"K8s Version",
 		"Host Role",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	isolationHeader := []string{
@@ -340,17 +387,17 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 		"Resource Quota",
 		"Limit Range",
 		"Pod Security Std",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	crossTenantHeader := []string{
+		"Namespace",
 		"Type",
 		"Name",
 		"Scope",
 		"Affected Tenants",
-		"Risk Level",
 		"Description",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	opaGatekeeperHeader := []string{
@@ -361,7 +408,57 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 		"Constraint Templates",
 		"Constraints",
 		"Tenant Policies",
-		"Bypass Risk",
+		"Issues",
+	}
+
+	// Detailed OPA Gatekeeper headers
+	opaTemplatesHeader := []string{
+		"Name",
+		"Kind",
+		"Description",
+		"Targets",
+		"Rego (first line)",
+		"Issues",
+	}
+
+	opaConstraintsHeader := []string{
+		"Name",
+		"Kind",
+		"Enforcement",
+		"Match",
+		"Parameters",
+		"Violations",
+		"Tenant Policy",
+		"Issues",
+	}
+
+	// Loft Space detail header
+	loftSpaceHeader := []string{
+		"Namespace",
+		"Space Name",
+		"User",
+		"Team",
+		"Sleep After",
+		"Delete After",
+		"Issues",
+	}
+
+	// Kiosk Account detail header
+	kioskAccountHeader := []string{
+		"Account Name",
+		"Subjects",
+		"Spaces (Used/Limit)",
+		"Default Cluster",
+		"Issues",
+	}
+
+	policiesHeader := []string{
+		"Namespace",
+		"Tool",
+		"Name",
+		"Scope",
+		"Type",
+		"Details",
 	}
 
 	var summaryRows [][]string
@@ -373,6 +470,11 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 	var isolationRows [][]string
 	var crossTenantRows [][]string
 	var opaGatekeeperRows [][]string
+	var opaTemplatesRows [][]string
+	var opaConstraintsRows [][]string
+	var loftSpaceRows [][]string
+	var kioskAccountRows [][]string
+	var policiesRows [][]string
 
 	loot := shared.NewLootBuilder()
 
@@ -410,11 +512,7 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 
 		issues := "-"
 		if len(finding.SecurityIssues) > 0 {
-			if len(finding.SecurityIssues) > 2 {
-				issues = strings.Join(finding.SecurityIssues[:2], "; ") + fmt.Sprintf(" (+%d)", len(finding.SecurityIssues)-2)
-			} else {
-				issues = strings.Join(finding.SecurityIssues, "; ")
-			}
+			issues = strings.Join(finding.SecurityIssues, "; ")
 		}
 
 		summaryRows = append(summaryRows, []string{
@@ -426,19 +524,37 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 			quota,
 			limitRange,
 			podSec,
-			finding.RiskLevel,
 			issues,
 		})
 	}
 
 	// Build HNC rows
 	if hnc.Name != "" {
+		// Detect issues
+		var hncIssues []string
+		if !hnc.ImageVerified {
+			hncIssues = append(hncIssues, "Image not verified")
+		}
+		if hnc.Status == "degraded" {
+			hncIssues = append(hncIssues, "Controller degraded")
+		}
+		if hnc.PodsRunning < hnc.TotalPods {
+			hncIssues = append(hncIssues, "Not all pods running")
+		}
+		if hnc.Hierarchies == 0 {
+			hncIssues = append(hncIssues, "No hierarchies configured")
+		}
+		hncIssuesStr := "<NONE>"
+		if len(hncIssues) > 0 {
+			hncIssuesStr = strings.Join(hncIssues, "; ")
+		}
+
 		hncRows = append(hncRows, []string{
 			hnc.Namespace,
 			hnc.Status,
 			fmt.Sprintf("%d/%d", hnc.PodsRunning, hnc.TotalPods),
 			fmt.Sprintf("%d", hnc.Hierarchies),
-			hnc.BypassRisk,
+			hncIssuesStr,
 		})
 	}
 
@@ -458,24 +574,59 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 			parent = "-"
 		}
 
+		// Detect issues
+		var hierIssues []string
+		if h.DepthFromRoot > 3 {
+			hierIssues = append(hierIssues, "Deep hierarchy (>3 levels)")
+		}
+		if h.PropagatedRoles == 0 && h.Parent != "" {
+			hierIssues = append(hierIssues, "No propagated roles")
+		}
+		if h.Parent == "" && len(h.Children) == 0 {
+			hierIssues = append(hierIssues, "Orphan namespace")
+		}
+		hierIssuesStr := "<NONE>"
+		if len(hierIssues) > 0 {
+			hierIssuesStr = strings.Join(hierIssues, "; ")
+		}
+
 		hncHierarchyRows = append(hncHierarchyRows, []string{
 			h.Namespace,
 			parent,
 			children,
 			fmt.Sprintf("%d", h.DepthFromRoot),
 			fmt.Sprintf("%d", h.PropagatedRoles),
-			h.BypassRisk,
+			hierIssuesStr,
 		})
 	}
 
 	// Build Capsule rows
 	if capsule.Name != "" {
+		// Detect issues
+		var capsuleIssues []string
+		if !capsule.ImageVerified {
+			capsuleIssues = append(capsuleIssues, "Image not verified")
+		}
+		if capsule.Status == "degraded" {
+			capsuleIssues = append(capsuleIssues, "Controller degraded")
+		}
+		if capsule.PodsRunning < capsule.TotalPods {
+			capsuleIssues = append(capsuleIssues, "Not all pods running")
+		}
+		if capsule.Tenants == 0 {
+			capsuleIssues = append(capsuleIssues, "No tenants configured")
+		}
+		capsuleIssuesStr := "<NONE>"
+		if len(capsuleIssues) > 0 {
+			capsuleIssuesStr = strings.Join(capsuleIssues, "; ")
+		}
+
 		capsuleRows = append(capsuleRows, []string{
 			capsule.Namespace,
 			capsule.Status,
 			fmt.Sprintf("%d/%d", capsule.PodsRunning, capsule.TotalPods),
 			fmt.Sprintf("%d", capsule.Tenants),
-			capsule.BypassRisk,
+			capsuleIssuesStr,
 		})
 	}
 
@@ -508,7 +659,39 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 			networkPolicies = "Yes"
 		}
 
+		// Use first namespace or "-" for namespace column
+		namespace := "-"
+		if len(t.Namespaces) > 0 {
+			namespace = t.Namespaces[0]
+		}
+
+		// Detect issues
+		var tenantIssues []string
+		if len(t.Owners) == 0 {
+			tenantIssues = append(tenantIssues, "No owners defined")
+		}
+		if !t.LimitRanges {
+			tenantIssues = append(tenantIssues, "No limit ranges")
+		}
+		if !t.ResourceQuotas {
+			tenantIssues = append(tenantIssues, "No resource quotas")
+		}
+		if !t.NetworkPolicies {
+			tenantIssues = append(tenantIssues, "No network policies")
+		}
+		if len(t.Namespaces) == 0 {
+			tenantIssues = append(tenantIssues, "No namespaces assigned")
+		}
+		if t.NamespaceQuota == 0 {
+			tenantIssues = append(tenantIssues, "Unlimited namespace quota")
+		}
+		tenantIssuesStr := "<NONE>"
+		if len(tenantIssues) > 0 {
+			tenantIssuesStr = strings.Join(tenantIssues, "; ")
+		}
+
 		capsuleTenantRows = append(capsuleTenantRows, []string{
+			namespace,
 			t.Name,
 			namespaces,
 			fmt.Sprintf("%d", t.NamespaceQuota),
@@ -516,7 +699,7 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 			limitRanges,
 			resourceQuotas,
 			networkPolicies,
-			t.BypassRisk,
+			tenantIssuesStr,
 		})
 	}
 
@@ -527,14 +710,119 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 			syncer = "Yes"
 		}
 
+		// Detect issues
+		var vclusterIssues []string
+		if !v.ImageVerified {
+			vclusterIssues = append(vclusterIssues, "Image not verified")
+		}
+		if v.Status == "degraded" || v.Status == "unverified" {
+			vclusterIssues = append(vclusterIssues, "vCluster not healthy")
+		}
+		if !v.SyncerRunning {
+			vclusterIssues = append(vclusterIssues, "Syncer not running")
+		}
+		if v.HostClusterRole == "cluster-admin" {
+			vclusterIssues = append(vclusterIssues, "Excessive host role")
+		}
+		vclusterIssuesStr := "<NONE>"
+		if len(vclusterIssues) > 0 {
+			vclusterIssuesStr = strings.Join(vclusterIssues, "; ")
+		}
+
 		vclusterRows = append(vclusterRows, []string{
-			v.Name,
 			v.Namespace,
+			v.Name,
 			v.Status,
 			syncer,
 			v.K8sVersion,
 			v.HostClusterRole,
-			v.BypassRisk,
+			vclusterIssuesStr,
+		})
+	}
+
+	// Build Loft Space rows
+	for _, space := range loftSpaces {
+		sleepAfter := "-"
+		if space.SleepAfter != "" {
+			sleepAfter = space.SleepAfter
+		}
+		deleteAfter := "-"
+		if space.DeleteAfter != "" {
+			deleteAfter = space.DeleteAfter
+		}
+		user := space.User
+		if user == "" {
+			user = "-"
+		}
+		team := space.Team
+		if team == "" {
+			team = "-"
+		}
+
+		// Detect issues
+		var spaceIssues []string
+		if space.User == "" && space.Team == "" {
+			spaceIssues = append(spaceIssues, "No owner assigned")
+		}
+		if space.SleepAfter == "" && space.DeleteAfter == "" {
+			spaceIssues = append(spaceIssues, "No auto-cleanup configured")
+		}
+		if space.Namespace == "" {
+			spaceIssues = append(spaceIssues, "No namespace assigned")
+		}
+		spaceIssuesStr := "<NONE>"
+		if len(spaceIssues) > 0 {
+			spaceIssuesStr = strings.Join(spaceIssues, "; ")
+		}
+
+		loftSpaceRows = append(loftSpaceRows, []string{
+			space.Namespace,
+			space.Name,
+			user,
+			team,
+			sleepAfter,
+			deleteAfter,
+			spaceIssuesStr,
+		})
+	}
+
+	// Build Kiosk Account rows
+	for _, acct := range kioskAccounts {
+		subjects := "-"
+		if len(acct.Subjects) > 0 {
+			if len(acct.Subjects) > 3 {
+				subjects = strings.Join(acct.Subjects[:3], ", ") + "..."
+			} else {
+				subjects = strings.Join(acct.Subjects, ", ")
+			}
+		}
+		defaultCluster := acct.DefaultCluster
+		if defaultCluster == "" {
+			defaultCluster = "-"
+		}
+
+		// Detect issues
+		var acctIssues []string
+		if len(acct.Subjects) == 0 {
+			acctIssues = append(acctIssues, "No subjects defined")
+		}
+		if acct.SpaceLimit == 0 {
+			acctIssues = append(acctIssues, "Unlimited space quota")
+		}
+		if acct.SpacesUsed >= acct.SpaceLimit && acct.SpaceLimit > 0 {
+			acctIssues = append(acctIssues, "At space limit")
+		}
+		acctIssuesStr := "<NONE>"
+		if len(acctIssues) > 0 {
+			acctIssuesStr = strings.Join(acctIssues, "; ")
+		}
+
+		kioskAccountRows = append(kioskAccountRows, []string{
+			acct.Name,
+			subjects,
+			fmt.Sprintf("%d/%d", acct.SpacesUsed, acct.SpaceLimit),
+			defaultCluster,
+			acctIssuesStr,
 		})
 	}
 
@@ -571,6 +859,33 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 			podSecStd = "-"
 		}
 
+		// Detect issues
+		var isoIssues []string
+		if !iso.HasNetworkPolicy {
+			isoIssues = append(isoIssues, "No network policy")
+		} else if !iso.DefaultDenyIngress {
+			isoIssues = append(isoIssues, "No default deny ingress")
+		}
+		if !iso.DefaultDenyEgress && iso.HasNetworkPolicy {
+			isoIssues = append(isoIssues, "No default deny egress")
+		}
+		if !iso.HasResourceQuota {
+			isoIssues = append(isoIssues, "No resource quota")
+		}
+		if !iso.HasLimitRange {
+			isoIssues = append(isoIssues, "No limit range")
+		}
+		if iso.PodSecurityStd == "" || iso.PodSecurityStd == "privileged" {
+			isoIssues = append(isoIssues, "Weak/no pod security")
+		}
+		if iso.TenantLabel == "" {
+			isoIssues = append(isoIssues, "No tenant label")
+		}
+		isoIssuesStr := "<NONE>"
+		if len(isoIssues) > 0 {
+			isoIssuesStr = strings.Join(isoIssues, "; ")
+		}
+
 		isolationRows = append(isolationRows, []string{
 			iso.Namespace,
 			tenantLabel,
@@ -580,14 +895,16 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 			quota,
 			limitRange,
 			podSecStd,
-			iso.BypassRisk,
+			isoIssuesStr,
 		})
 	}
 
 	// Build cross-tenant resource rows
 	for _, ctr := range crossTenantResources {
 		affectedTenants := "-"
+		namespace := "-"
 		if len(ctr.AffectedTenants) > 0 {
+			namespace = ctr.AffectedTenants[0]
 			if len(ctr.AffectedTenants) > 3 {
 				affectedTenants = strings.Join(ctr.AffectedTenants[:3], ", ") + "..."
 			} else {
@@ -595,19 +912,34 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 			}
 		}
 
-		bypassRisk := "-"
-		if ctr.BypassRisk != "" {
-			bypassRisk = ctr.BypassRisk
+		// Detect issues (all cross-tenant resources are potential issues)
+		var ctrIssues []string
+		if ctr.Scope == "Cluster" {
+			ctrIssues = append(ctrIssues, "Cluster-wide scope")
+		}
+		if len(ctr.AffectedTenants) > 1 {
+			ctrIssues = append(ctrIssues, fmt.Sprintf("Affects %d tenants", len(ctr.AffectedTenants)))
+		}
+		if strings.Contains(strings.ToLower(ctr.Description), "cluster-admin") ||
+			strings.Contains(strings.ToLower(ctr.Description), "wildcard") {
+			ctrIssues = append(ctrIssues, "Excessive permissions")
+		}
+		if ctr.Type == "PersistentVolume" && strings.Contains(ctr.Description, "HostPath") {
+			ctrIssues = append(ctrIssues, "HostPath exposure")
+		}
+		ctrIssuesStr := "<NONE>"
+		if len(ctrIssues) > 0 {
+			ctrIssuesStr = strings.Join(ctrIssues, "; ")
 		}
 
 		crossTenantRows = append(crossTenantRows, []string{
+			namespace,
 			ctr.Type,
 			ctr.Name,
 			ctr.Scope,
 			affectedTenants,
-			ctr.RiskLevel,
 			ctr.Description,
-			bypassRisk,
+			ctrIssuesStr,
 		})
 	}
 
@@ -617,10 +949,29 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 		if opaGatekeeper.ImageVerified {
 			imageVerified = "Yes"
 		}
-		bypassRisk := "-"
-		if opaGatekeeper.BypassRisk != "" {
-			bypassRisk = opaGatekeeper.BypassRisk
+
+		// Detect issues
+		var opaIssues []string
+		if !opaGatekeeper.ImageVerified {
+			opaIssues = append(opaIssues, "Image not verified")
 		}
+		if opaGatekeeper.Status == "degraded" {
+			opaIssues = append(opaIssues, "Controller degraded")
+		}
+		if opaGatekeeper.PodsRunning < opaGatekeeper.TotalPods {
+			opaIssues = append(opaIssues, "Not all pods running")
+		}
+		if opaGatekeeper.Constraints == 0 {
+			opaIssues = append(opaIssues, "No constraints defined")
+		}
+		if opaGatekeeper.TenantIsolationPolicies == 0 {
+			opaIssues = append(opaIssues, "No tenant isolation policies")
+		}
+		opaIssuesStr := "<NONE>"
+		if len(opaIssues) > 0 {
+			opaIssuesStr = strings.Join(opaIssues, "; ")
+		}
+
 		opaGatekeeperRows = append(opaGatekeeperRows, []string{
 			opaGatekeeper.Namespace,
 			opaGatekeeper.Status,
@@ -629,12 +980,255 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 			fmt.Sprintf("%d", opaGatekeeper.ConstraintTemplates),
 			fmt.Sprintf("%d", opaGatekeeper.Constraints),
 			fmt.Sprintf("%d", opaGatekeeper.TenantIsolationPolicies),
-			bypassRisk,
+			opaIssuesStr,
+		})
+	}
+
+	// Build detailed OPA ConstraintTemplate rows
+	for _, tmpl := range opaTemplates {
+		desc := tmpl.Description
+		if desc == "" {
+			desc = "-"
+		}
+		targets := tmpl.Targets
+		if targets == "" {
+			targets = "-"
+		}
+		rego := tmpl.Rego
+		if rego == "" {
+			rego = "-"
+		}
+
+		// Detect issues
+		var tmplIssues []string
+		if tmpl.Description == "" {
+			tmplIssues = append(tmplIssues, "No description")
+		}
+		if tmpl.Kind == "" {
+			tmplIssues = append(tmplIssues, "No kind defined")
+		}
+		if tmpl.Rego == "" {
+			tmplIssues = append(tmplIssues, "Empty rego policy")
+		}
+		tmplIssuesStr := "<NONE>"
+		if len(tmplIssues) > 0 {
+			tmplIssuesStr = strings.Join(tmplIssues, "; ")
+		}
+
+		opaTemplatesRows = append(opaTemplatesRows, []string{
+			tmpl.Name,
+			tmpl.Kind,
+			desc,
+			targets,
+			rego,
+			tmplIssuesStr,
+		})
+	}
+
+	// Build detailed OPA Constraint rows
+	for _, c := range opaConstraints {
+		isTenant := "No"
+		if c.IsTenantIsolation {
+			isTenant = "Yes"
+		}
+		violations := fmt.Sprintf("%d", c.Violations)
+		if c.TotalViolations > c.Violations {
+			violations = fmt.Sprintf("%d (total: %d)", c.Violations, c.TotalViolations)
+		}
+
+		// Detect issues
+		var constIssues []string
+		if c.EnforcementAction == "dryrun" || c.EnforcementAction == "warn" {
+			constIssues = append(constIssues, "Not enforcing ("+c.EnforcementAction+")")
+		}
+		if c.Violations > 0 {
+			constIssues = append(constIssues, fmt.Sprintf("%d violations", c.Violations))
+		}
+		if c.Match == "all" {
+			constIssues = append(constIssues, "Broad match scope")
+		}
+		constIssuesStr := "<NONE>"
+		if len(constIssues) > 0 {
+			constIssuesStr = strings.Join(constIssues, "; ")
+		}
+
+		opaConstraintsRows = append(opaConstraintsRows, []string{
+			c.Name,
+			c.Kind,
+			c.EnforcementAction,
+			c.Match,
+			c.Parameters,
+			violations,
+			isTenant,
+			constIssuesStr,
+		})
+	}
+
+	// Build unified policies table
+	for _, h := range hncHierarchies {
+		parent := h.Parent
+		if parent == "" {
+			parent = "-"
+		}
+		children := "-"
+		if len(h.Children) > 0 {
+			if len(h.Children) > 3 {
+				children = strings.Join(h.Children[:3], ", ") + "..."
+			} else {
+				children = strings.Join(h.Children, ", ")
+			}
+		}
+		details := fmt.Sprintf("Parent: %s, Children: %s, Depth: %d, Propagated Roles: %d", parent, children, h.DepthFromRoot, h.PropagatedRoles)
+		policiesRows = append(policiesRows, []string{
+			h.Namespace,
+			"HNC",
+			h.Namespace,
+			"Hierarchy",
+			"Namespace",
+			details,
+		})
+	}
+
+	for _, t := range capsuleTenants {
+		namespace := "-"
+		if len(t.Namespaces) > 0 {
+			namespace = t.Namespaces[0]
+		}
+		namespaces := "-"
+		if len(t.Namespaces) > 0 {
+			if len(t.Namespaces) > 3 {
+				namespaces = strings.Join(t.Namespaces[:3], ", ") + "..."
+			} else {
+				namespaces = strings.Join(t.Namespaces, ", ")
+			}
+		}
+		owners := "-"
+		if len(t.Owners) > 0 {
+			owners = strings.Join(t.Owners, ", ")
+		}
+		limitRanges := "No"
+		if t.LimitRanges {
+			limitRanges = "Yes"
+		}
+		resourceQuotas := "No"
+		if t.ResourceQuotas {
+			resourceQuotas = "Yes"
+		}
+		networkPolicies := "No"
+		if t.NetworkPolicies {
+			networkPolicies = "Yes"
+		}
+		details := fmt.Sprintf("Namespaces: %s, Quota: %d, Owners: %s, LimitRanges: %s, ResourceQuotas: %s, NetworkPolicies: %s",
+			namespaces, t.NamespaceQuota, owners, limitRanges, resourceQuotas, networkPolicies)
+		policiesRows = append(policiesRows, []string{
+			namespace,
+			"Capsule",
+			t.Name,
+			"Tenant",
+			"Multi-namespace",
+			details,
+		})
+	}
+
+	for _, v := range vclusters {
+		syncer := "No"
+		if v.SyncerRunning {
+			syncer = "Yes"
+		}
+		details := fmt.Sprintf("Status: %s, Syncer: %s, K8s Version: %s, Host Role: %s", v.Status, syncer, v.K8sVersion, v.HostClusterRole)
+		policiesRows = append(policiesRows, []string{
+			v.Namespace,
+			"vCluster",
+			v.Name,
+			"Virtual Cluster",
+			"Namespace",
+			details,
+		})
+	}
+
+	for _, iso := range nsIsolation {
+		netpol := "No"
+		if iso.HasNetworkPolicy {
+			netpol = "Yes"
+		}
+		denyIngress := "No"
+		if iso.DefaultDenyIngress {
+			denyIngress = "Yes"
+		}
+		denyEgress := "No"
+		if iso.DefaultDenyEgress {
+			denyEgress = "Yes"
+		}
+		quota := "No"
+		if iso.HasResourceQuota {
+			quota = "Yes"
+		}
+		limitRange := "No"
+		if iso.HasLimitRange {
+			limitRange = "Yes"
+		}
+		tenantLabel := "-"
+		if iso.TenantLabel != "" && iso.TenantValue != "" {
+			tenantLabel = fmt.Sprintf("%s=%s", iso.TenantLabel, iso.TenantValue)
+		}
+		podSecStd := iso.PodSecurityStd
+		if podSecStd == "" {
+			podSecStd = "-"
+		}
+		details := fmt.Sprintf("Tenant: %s, NetworkPolicy: %s, DefaultDenyIngress: %s, DefaultDenyEgress: %s, ResourceQuota: %s, LimitRange: %s, PodSecurityStd: %s",
+			tenantLabel, netpol, denyIngress, denyEgress, quota, limitRange, podSecStd)
+		policiesRows = append(policiesRows, []string{
+			iso.Namespace,
+			"Isolation",
+			iso.Namespace,
+			"Namespace Config",
+			"Namespace",
+			details,
+		})
+	}
+
+	for _, ctr := range crossTenantResources {
+		namespace := "-"
+		affectedTenants := "-"
+		if len(ctr.AffectedTenants) > 0 {
+			namespace = ctr.AffectedTenants[0]
+			if len(ctr.AffectedTenants) > 3 {
+				affectedTenants = strings.Join(ctr.AffectedTenants[:3], ", ") + "..."
+			} else {
+				affectedTenants = strings.Join(ctr.AffectedTenants, ", ")
+			}
+		}
+		details := fmt.Sprintf("Scope: %s, Affected Tenants: %s, Description: %s", ctr.Scope, affectedTenants, ctr.Description)
+		policiesRows = append(policiesRows, []string{
+			namespace,
+			"Cross-Tenant",
+			ctr.Name,
+			ctr.Type,
+			"Cluster",
+			details,
+		})
+	}
+
+	if opaGatekeeper.Name != "" {
+		imageVerified := "No"
+		if opaGatekeeper.ImageVerified {
+			imageVerified = "Yes"
+		}
+		details := fmt.Sprintf("Status: %s, Pods: %d/%d, Verified: %s, Templates: %d, Constraints: %d, Tenant Policies: %d",
+			opaGatekeeper.Status, opaGatekeeper.PodsRunning, opaGatekeeper.TotalPods, imageVerified,
+			opaGatekeeper.ConstraintTemplates, opaGatekeeper.Constraints, opaGatekeeper.TenantIsolationPolicies)
+		policiesRows = append(policiesRows, []string{
+			opaGatekeeper.Namespace,
+			"OPA Gatekeeper",
+			opaGatekeeper.Name,
+			"Policy Engine",
+			"Cluster",
+			details,
 		})
 	}
 
 	// Generate loot
-	generateMultitenancyLoot(loot, findings, hnc, hncHierarchies, capsule, capsuleTenants, vclusters, loft, loftSpaces, kiosk, kioskAccounts, nsIsolation, opaGatekeeper)
+	generateMultitenancyLoot(loot, findings, hnc, hncHierarchies, capsule, capsuleTenants, vclusters, loft, loftSpaces, kiosk, kioskAccounts, nsIsolation, opaGatekeeper, opaTemplates, opaConstraints)
 
 	// Build output tables
 	var tables []internal.TableFile
@@ -645,68 +1239,115 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 		Body:   summaryRows,
 	})
 
-	if len(hncRows) > 0 {
+	// Always show unified policies table
+	if len(policiesRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Multitenancy-Admission-HNC",
-			Header: hncHeader,
-			Body:   hncRows,
+			Name:   "Multitenancy-Admission-Policies",
+			Header: policiesHeader,
+			Body:   policiesRows,
 		})
 	}
 
-	if len(hncHierarchyRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Multitenancy-Admission-HNC-Hierarchies",
-			Header: hncHierarchyHeader,
-			Body:   hncHierarchyRows,
-		})
-	}
+	// Only show detailed tables if --detailed flag is set
+	if detailed {
+		if len(hncRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Multitenancy-Admission-HNC",
+				Header: hncHeader,
+				Body:   hncRows,
+			})
+		}
 
-	if len(capsuleRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Multitenancy-Admission-Capsule",
-			Header: capsuleHeader,
-			Body:   capsuleRows,
-		})
-	}
+		if len(hncHierarchyRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Multitenancy-Admission-HNC-Hierarchies",
+				Header: hncHierarchyHeader,
+				Body:   hncHierarchyRows,
+			})
+		}
 
-	if len(capsuleTenantRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Multitenancy-Admission-Capsule-Tenants",
-			Header: capsuleTenantHeader,
-			Body:   capsuleTenantRows,
-		})
-	}
+		if len(capsuleRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Multitenancy-Admission-Capsule",
+				Header: capsuleHeader,
+				Body:   capsuleRows,
+			})
+		}
 
-	if len(vclusterRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Multitenancy-Admission-vClusters",
-			Header: vclusterHeader,
-			Body:   vclusterRows,
-		})
-	}
+		if len(capsuleTenantRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Multitenancy-Admission-Capsule-Tenants",
+				Header: capsuleTenantHeader,
+				Body:   capsuleTenantRows,
+			})
+		}
 
-	if len(isolationRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Multitenancy-Admission-Namespace-Isolation",
-			Header: isolationHeader,
-			Body:   isolationRows,
-		})
-	}
+		if len(vclusterRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Multitenancy-Admission-vClusters",
+				Header: vclusterHeader,
+				Body:   vclusterRows,
+			})
+		}
 
-	if len(crossTenantRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Multitenancy-Admission-Cross-Tenant-Resources",
-			Header: crossTenantHeader,
-			Body:   crossTenantRows,
-		})
-	}
+		if len(isolationRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Multitenancy-Admission-Namespace-Isolation",
+				Header: isolationHeader,
+				Body:   isolationRows,
+			})
+		}
 
-	if len(opaGatekeeperRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Multitenancy-Admission-OPA-Gatekeeper",
-			Header: opaGatekeeperHeader,
-			Body:   opaGatekeeperRows,
-		})
+		if len(crossTenantRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Multitenancy-Admission-Cross-Tenant-Resources",
+				Header: crossTenantHeader,
+				Body:   crossTenantRows,
+			})
+		}
+
+		if len(opaGatekeeperRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Multitenancy-Admission-OPA-Gatekeeper",
+				Header: opaGatekeeperHeader,
+				Body:   opaGatekeeperRows,
+			})
+		}
+
+		// Detailed OPA Gatekeeper tables showing individual policies
+		if len(opaTemplatesRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Multitenancy-Admission-OPA-ConstraintTemplates",
+				Header: opaTemplatesHeader,
+				Body:   opaTemplatesRows,
+			})
+		}
+
+		if len(opaConstraintsRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Multitenancy-Admission-OPA-Constraints",
+				Header: opaConstraintsHeader,
+				Body:   opaConstraintsRows,
+			})
+		}
+
+		// Loft Spaces detail table
+		if len(loftSpaceRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Multitenancy-Admission-Loft-Spaces",
+				Header: loftSpaceHeader,
+				Body:   loftSpaceRows,
+			})
+		}
+
+		// Kiosk Accounts detail table
+		if len(kioskAccountRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Multitenancy-Admission-Kiosk-Accounts",
+				Header: kioskAccountHeader,
+				Body:   kioskAccountRows,
+			})
+		}
 	}
 
 	output := MultitenancyAdmissionOutput{
@@ -779,15 +1420,10 @@ func analyzeHNC(ctx context.Context, clientset kubernetes.Interface, dynClient d
 
 				if dep.Status.ReadyReplicas < dep.Status.Replicas {
 					info.Status = "degraded"
-					info.BypassRisk = fmt.Sprintf("Only %d/%d HNC pods running", dep.Status.ReadyReplicas, dep.Status.Replicas)
 				}
 
 				if !info.ImageVerified {
 					info.Status = "unverified"
-					if info.BypassRisk != "" {
-						info.BypassRisk += "; "
-					}
-					info.BypassRisk += "Detection based on name only - verify manually"
 				}
 
 				info.TotalPods = int(dep.Status.Replicas)
@@ -927,15 +1563,10 @@ func analyzeCapsule(ctx context.Context, clientset kubernetes.Interface, dynClie
 
 				if dep.Status.ReadyReplicas < dep.Status.Replicas {
 					info.Status = "degraded"
-					info.BypassRisk = fmt.Sprintf("Only %d/%d Capsule pods running", dep.Status.ReadyReplicas, dep.Status.Replicas)
 				}
 
 				if !info.ImageVerified {
 					info.Status = "unverified"
-					if info.BypassRisk != "" {
-						info.BypassRisk += "; "
-					}
-					info.BypassRisk += "Detection based on name only - verify manually"
 				}
 
 				info.TotalPods = int(dep.Status.Replicas)
@@ -1060,17 +1691,6 @@ func parseCapsuleTenant(obj map[string]interface{}) CapsuleTenantInfo {
 		}
 	}
 
-	// Assess risk
-	if !t.NetworkPolicies {
-		t.BypassRisk = "No network policies enforced"
-	}
-	if !t.ResourceQuotas {
-		if t.BypassRisk != "" {
-			t.BypassRisk += "; "
-		}
-		t.BypassRisk += "No resource quotas"
-	}
-
 	return t
 }
 
@@ -1103,7 +1723,6 @@ func analyzeVClusters(ctx context.Context, clientset kubernetes.Interface, dynCl
 
 			if sts.Status.ReadyReplicas < *sts.Spec.Replicas {
 				v.Status = "degraded"
-				v.BypassRisk = fmt.Sprintf("Only %d/%d replicas ready", sts.Status.ReadyReplicas, *sts.Spec.Replicas)
 			}
 			v.TotalPods = int(*sts.Spec.Replicas)
 			v.PodsRunning = int(sts.Status.ReadyReplicas)
@@ -1132,10 +1751,6 @@ func analyzeVClusters(ctx context.Context, clientset kubernetes.Interface, dynCl
 
 			if !v.ImageVerified {
 				v.Status = "unverified"
-				if v.BypassRisk != "" {
-					v.BypassRisk += "; "
-				}
-				v.BypassRisk += "Detection based on labels only - verify manually"
 			}
 
 			vclusters = append(vclusters, v)
@@ -1246,15 +1861,10 @@ func analyzeLoft(ctx context.Context, clientset kubernetes.Interface, dynClient 
 
 				if dep.Status.ReadyReplicas < dep.Status.Replicas {
 					info.Status = "degraded"
-					info.BypassRisk = fmt.Sprintf("Only %d/%d Loft pods running", dep.Status.ReadyReplicas, dep.Status.Replicas)
 				}
 
 				if !info.ImageVerified {
 					info.Status = "unverified"
-					if info.BypassRisk != "" {
-						info.BypassRisk += "; "
-					}
-					info.BypassRisk += "Detection based on name only - verify manually"
 				}
 
 				info.TotalPods = int(dep.Status.Replicas)
@@ -1390,15 +2000,10 @@ func analyzeKiosk(ctx context.Context, clientset kubernetes.Interface, dynClient
 
 				if dep.Status.ReadyReplicas < dep.Status.Replicas {
 					info.Status = "degraded"
-					info.BypassRisk = fmt.Sprintf("Only %d/%d Kiosk pods running", dep.Status.ReadyReplicas, dep.Status.Replicas)
 				}
 
 				if !info.ImageVerified {
 					info.Status = "unverified"
-					if info.BypassRisk != "" {
-						info.BypassRisk += "; "
-					}
-					info.BypassRisk += "Detection based on name only - verify manually"
 				}
 
 				info.TotalPods = int(dep.Status.Replicas)
@@ -1479,10 +2084,6 @@ func parseKioskAccount(obj map[string]interface{}) KioskAccountInfo {
 		}
 	}
 
-	if a.SpaceLimit == 0 {
-		a.BypassRisk = "No space limit configured"
-	}
-
 	return a
 }
 
@@ -1490,8 +2091,10 @@ func parseKioskAccount(obj map[string]interface{}) KioskAccountInfo {
 // OPA/Gatekeeper Tenant Policy Analysis
 // ============================================================================
 
-func analyzeOPAGatekeeperTenant(ctx context.Context, clientset kubernetes.Interface, dynClient dynamic.Interface) OPAGatekeeperTenantInfo {
+func analyzeOPAGatekeeperTenant(ctx context.Context, clientset kubernetes.Interface, dynClient dynamic.Interface) (OPAGatekeeperTenantInfo, []ConstraintTemplateInfo, []ConstraintInfo) {
 	info := OPAGatekeeperTenantInfo{}
+	var templates []ConstraintTemplateInfo
+	var constraints []ConstraintInfo
 
 	// Image patterns for verification to reduce false positives
 	imagePatterns := []string{
@@ -1531,15 +2134,10 @@ func analyzeOPAGatekeeperTenant(ctx context.Context, clientset kubernetes.Interf
 
 				if dep.Status.ReadyReplicas < dep.Status.Replicas {
 					info.Status = "degraded"
-					info.BypassRisk = fmt.Sprintf("Only %d/%d Gatekeeper pods running", dep.Status.ReadyReplicas, dep.Status.Replicas)
 				}
 
 				if !info.ImageVerified {
 					info.Status = "unverified"
-					if info.BypassRisk != "" {
-						info.BypassRisk += "; "
-					}
-					info.BypassRisk += "Detection based on name only - verify manually"
 				}
 
 				info.TotalPods = int(dep.Status.Replicas)
@@ -1553,10 +2151,10 @@ func analyzeOPAGatekeeperTenant(ctx context.Context, clientset kubernetes.Interf
 	}
 
 	if info.Name == "" {
-		return info
+		return info, templates, constraints
 	}
 
-	// Count ConstraintTemplates
+	// Get ConstraintTemplates with details
 	constraintTemplateGVR := schema.GroupVersionResource{
 		Group:    "templates.gatekeeper.sh",
 		Version:  "v1",
@@ -1564,15 +2162,14 @@ func analyzeOPAGatekeeperTenant(ctx context.Context, clientset kubernetes.Interf
 	}
 
 	ctList, err := dynClient.Resource(constraintTemplateGVR).Namespace("").List(ctx, metav1.ListOptions{})
-	if err == nil {
-		info.ConstraintTemplates = len(ctList.Items)
-	} else {
+	if err != nil {
 		// Try v1beta1
 		constraintTemplateGVR.Version = "v1beta1"
 		ctList, err = dynClient.Resource(constraintTemplateGVR).Namespace("").List(ctx, metav1.ListOptions{})
-		if err == nil {
-			info.ConstraintTemplates = len(ctList.Items)
-		}
+	}
+
+	if err == nil {
+		info.ConstraintTemplates = len(ctList.Items)
 	}
 
 	// Count Constraints and check for tenant isolation policies
@@ -1581,17 +2178,11 @@ func analyzeOPAGatekeeperTenant(ctx context.Context, clientset kubernetes.Interf
 	// Get all constraint kinds by listing constraint templates
 	if ctList != nil {
 		for _, ct := range ctList.Items {
-			kind := ""
-			if spec, ok := ct.Object["spec"].(map[string]interface{}); ok {
-				if crd, ok := spec["crd"].(map[string]interface{}); ok {
-					if names, ok := crd["spec"].(map[string]interface{}); ok {
-						if namesSpec, ok := names["names"].(map[string]interface{}); ok {
-							kind, _ = namesSpec["kind"].(string)
-						}
-					}
-				}
-			}
+			// Parse template details
+			tmplInfo := parseConstraintTemplate(ct.Object)
+			templates = append(templates, tmplInfo)
 
+			kind := tmplInfo.Kind
 			if kind != "" {
 				// Try to list constraints of this kind
 				constraintGVR := schema.GroupVersionResource{
@@ -1604,15 +2195,14 @@ func analyzeOPAGatekeeperTenant(ctx context.Context, clientset kubernetes.Interf
 				if err == nil {
 					info.Constraints += len(constraintList.Items)
 
-					// Check for tenant isolation policies
+					// Parse individual constraints
 					for _, constraint := range constraintList.Items {
-						name := constraint.GetName()
-						nameLower := strings.ToLower(name)
-						for _, keyword := range tenantPolicyKeywords {
-							if strings.Contains(nameLower, keyword) {
-								info.TenantIsolationPolicies++
-								break
-							}
+						constInfo := parseConstraint(constraint.Object, kind, tenantPolicyKeywords)
+						constraints = append(constraints, constInfo)
+
+						// Count tenant isolation policies
+						if constInfo.IsTenantIsolation {
+							info.TenantIsolationPolicies++
 						}
 					}
 				}
@@ -1620,15 +2210,162 @@ func analyzeOPAGatekeeperTenant(ctx context.Context, clientset kubernetes.Interf
 		}
 	}
 
-	// Assess bypass risk
-	if info.TenantIsolationPolicies == 0 {
-		if info.BypassRisk != "" {
-			info.BypassRisk += "; "
+	return info, templates, constraints
+}
+
+// parseConstraintTemplate extracts detailed info from a ConstraintTemplate
+func parseConstraintTemplate(obj map[string]interface{}) ConstraintTemplateInfo {
+	tmpl := ConstraintTemplateInfo{}
+
+	if metadata, ok := obj["metadata"].(map[string]interface{}); ok {
+		tmpl.Name, _ = metadata["name"].(string)
+
+		// Get description from annotations if available
+		if annotations, ok := metadata["annotations"].(map[string]interface{}); ok {
+			if desc, ok := annotations["description"].(string); ok {
+				tmpl.Description = desc
+			}
 		}
-		info.BypassRisk += "No tenant isolation policies detected"
 	}
 
-	return info
+	if spec, ok := obj["spec"].(map[string]interface{}); ok {
+		// Get the kind this template creates
+		if crd, ok := spec["crd"].(map[string]interface{}); ok {
+			if crdSpec, ok := crd["spec"].(map[string]interface{}); ok {
+				if names, ok := crdSpec["names"].(map[string]interface{}); ok {
+					tmpl.Kind, _ = names["kind"].(string)
+				}
+			}
+		}
+
+		// Get targets
+		if targets, ok := spec["targets"].([]interface{}); ok {
+			var targetNames []string
+			for _, t := range targets {
+				if tMap, ok := t.(map[string]interface{}); ok {
+					if target, ok := tMap["target"].(string); ok {
+						targetNames = append(targetNames, target)
+					}
+
+					// Get first line of rego
+					if rego, ok := tMap["rego"].(string); ok && tmpl.Rego == "" {
+						lines := strings.Split(rego, "\n")
+						for _, line := range lines {
+							line = strings.TrimSpace(line)
+							if line != "" && !strings.HasPrefix(line, "#") {
+								if len(line) > 60 {
+									tmpl.Rego = line[:60] + "..."
+								} else {
+									tmpl.Rego = line
+								}
+								break
+							}
+						}
+					}
+				}
+			}
+			tmpl.Targets = strings.Join(targetNames, ", ")
+		}
+	}
+
+	// Generate description from name if not set
+	if tmpl.Description == "" && tmpl.Kind != "" {
+		tmpl.Description = fmt.Sprintf("Creates %s constraints", tmpl.Kind)
+	}
+
+	return tmpl
+}
+
+// parseConstraint extracts detailed info from a Constraint
+func parseConstraint(obj map[string]interface{}, kind string, tenantKeywords []string) ConstraintInfo {
+	c := ConstraintInfo{
+		Kind: kind,
+	}
+
+	if metadata, ok := obj["metadata"].(map[string]interface{}); ok {
+		c.Name, _ = metadata["name"].(string)
+	}
+
+	if spec, ok := obj["spec"].(map[string]interface{}); ok {
+		// Get enforcement action
+		if action, ok := spec["enforcementAction"].(string); ok {
+			c.EnforcementAction = action
+		} else {
+			c.EnforcementAction = "deny" // default
+		}
+
+		// Summarize match criteria
+		if match, ok := spec["match"].(map[string]interface{}); ok {
+			var matchParts []string
+
+			if kinds, ok := match["kinds"].([]interface{}); ok && len(kinds) > 0 {
+				matchParts = append(matchParts, fmt.Sprintf("%d kind(s)", len(kinds)))
+			}
+			if namespaces, ok := match["namespaces"].([]interface{}); ok && len(namespaces) > 0 {
+				matchParts = append(matchParts, fmt.Sprintf("%d ns", len(namespaces)))
+			}
+			if excludedNamespaces, ok := match["excludedNamespaces"].([]interface{}); ok && len(excludedNamespaces) > 0 {
+				matchParts = append(matchParts, fmt.Sprintf("excl %d ns", len(excludedNamespaces)))
+			}
+			if labelSelector, ok := match["labelSelector"].(map[string]interface{}); ok {
+				if matchLabels, ok := labelSelector["matchLabels"].(map[string]interface{}); ok && len(matchLabels) > 0 {
+					matchParts = append(matchParts, fmt.Sprintf("%d label(s)", len(matchLabels)))
+				}
+			}
+			if namespaceSelector, ok := match["namespaceSelector"].(map[string]interface{}); ok {
+				if matchLabels, ok := namespaceSelector["matchLabels"].(map[string]interface{}); ok && len(matchLabels) > 0 {
+					matchParts = append(matchParts, "ns selector")
+				}
+			}
+
+			if len(matchParts) > 0 {
+				c.Match = strings.Join(matchParts, ", ")
+			} else {
+				c.Match = "all"
+			}
+		} else {
+			c.Match = "all"
+		}
+
+		// Summarize parameters
+		if params, ok := spec["parameters"].(map[string]interface{}); ok {
+			if len(params) > 0 {
+				var paramKeys []string
+				for k := range params {
+					paramKeys = append(paramKeys, k)
+				}
+				if len(paramKeys) > 3 {
+					c.Parameters = strings.Join(paramKeys[:3], ", ") + "..."
+				} else {
+					c.Parameters = strings.Join(paramKeys, ", ")
+				}
+			}
+		}
+		if c.Parameters == "" {
+			c.Parameters = "-"
+		}
+	}
+
+	// Get violation count from status
+	if status, ok := obj["status"].(map[string]interface{}); ok {
+		if violations, ok := status["violations"].([]interface{}); ok {
+			c.Violations = len(violations)
+		}
+		if totalViolations, ok := status["totalViolations"].(float64); ok {
+			c.TotalViolations = int(totalViolations)
+		}
+	}
+
+	// Check if this is a tenant isolation policy
+	nameLower := strings.ToLower(c.Name)
+	for _, keyword := range tenantKeywords {
+		if strings.Contains(nameLower, keyword) {
+			c.IsTenantIsolation = true
+			break
+		}
+	}
+
+	return c
 }
 
 // ============================================================================
@@ -1701,24 +2438,6 @@ func analyzeNamespaceIsolation(ctx context.Context, clientset kubernetes.Interfa
 		limitRanges, err := clientset.CoreV1().LimitRanges(ns).List(ctx, metav1.ListOptions{})
 		if err == nil && len(limitRanges.Items) > 0 {
 			iso.HasLimitRange = true
-		}
-
-		// Assess risk
-		var risks []string
-		if !iso.HasNetworkPolicy {
-			risks = append(risks, "No network policy")
-		} else if !iso.DefaultDenyIngress {
-			risks = append(risks, "No default deny ingress")
-		}
-		if !iso.HasResourceQuota {
-			risks = append(risks, "No resource quota")
-		}
-		if iso.PodSecurityStd == "" || iso.PodSecurityStd == "privileged" {
-			risks = append(risks, "No pod security enforcement")
-		}
-
-		if len(risks) > 0 {
-			iso.BypassRisk = strings.Join(risks, "; ")
 		}
 
 		isolation = append(isolation, iso)
@@ -1808,48 +2527,30 @@ func buildMultitenancyFindings(
 			}
 		}
 
-		// Calculate risk
-		riskScore := 0
+		// Identify security issues
 		if !finding.HasNetworkPolicy {
-			riskScore += 3
 			finding.SecurityIssues = append(finding.SecurityIssues, "No network policy")
 		} else if !iso.DefaultDenyIngress {
-			riskScore += 2
 			finding.SecurityIssues = append(finding.SecurityIssues, "No default deny")
 		}
 
 		if !finding.HasResourceQuota {
-			riskScore += 1
 			finding.SecurityIssues = append(finding.SecurityIssues, "No resource quota")
 		}
 
 		if !finding.HasPodSecurityStd {
-			riskScore += 2
 			finding.SecurityIssues = append(finding.SecurityIssues, "No pod security")
 		}
 
 		if finding.TenantProvider == "" {
-			riskScore += 1
 			finding.SecurityIssues = append(finding.SecurityIssues, "No tenant assignment")
-		}
-
-		if riskScore >= 5 {
-			finding.RiskLevel = "HIGH"
-		} else if riskScore >= 3 {
-			finding.RiskLevel = "MEDIUM"
-		} else {
-			finding.RiskLevel = "LOW"
 		}
 
 		findings = append(findings, finding)
 	}
 
-	// Sort by risk level then namespace
+	// Sort by namespace
 	sort.Slice(findings, func(i, j int) bool {
-		riskOrder := map[string]int{"HIGH": 0, "MEDIUM": 1, "LOW": 2}
-		if riskOrder[findings[i].RiskLevel] != riskOrder[findings[j].RiskLevel] {
-			return riskOrder[findings[i].RiskLevel] < riskOrder[findings[j].RiskLevel]
-		}
 		return findings[i].Namespace < findings[j].Namespace
 	})
 
@@ -1868,32 +2569,36 @@ func generateMultitenancyLoot(loot *shared.LootBuilder,
 	loft LoftInfo, loftSpaces []LoftSpaceInfo,
 	kiosk KioskInfo, kioskAccounts []KioskAccountInfo,
 	nsIsolation []NamespaceIsolationInfo,
-	opaGatekeeper OPAGatekeeperTenantInfo) {
+	opaGatekeeper OPAGatekeeperTenantInfo,
+	opaTemplates []ConstraintTemplateInfo,
+	opaConstraints []ConstraintInfo) {
 
-	// Summary
-	loot.Section("Summary").Add("# Multi-Tenancy Summary")
-	loot.Section("Summary").Add("#")
+	section := loot.Section("Multitenancy-Admission-Commands")
 
+	section.Add("# Multi-Tenancy Analysis")
+	section.Add("#")
+
+	// Detected tools
 	providerCount := 0
 	if hnc.Name != "" {
 		providerCount++
-		loot.Section("Summary").Add(fmt.Sprintf("# HNC: %s (%d hierarchies)", hnc.Status, hnc.Hierarchies))
+		section.Add(fmt.Sprintf("# HNC: %s (%d hierarchies)", hnc.Status, hnc.Hierarchies))
 	}
 	if capsule.Name != "" {
 		providerCount++
-		loot.Section("Summary").Add(fmt.Sprintf("# Capsule: %s (%d tenants)", capsule.Status, capsule.Tenants))
+		section.Add(fmt.Sprintf("# Capsule: %s (%d tenants)", capsule.Status, capsule.Tenants))
 	}
 	if len(vclusters) > 0 {
 		providerCount++
-		loot.Section("Summary").Add(fmt.Sprintf("# vClusters: %d instances", len(vclusters)))
+		section.Add(fmt.Sprintf("# vClusters: %d instances", len(vclusters)))
 	}
 	if loft.Name != "" {
 		providerCount++
-		loot.Section("Summary").Add(fmt.Sprintf("# Loft: %s (%d spaces, %d vClusters, %d teams)", loft.Status, loft.Spaces, loft.VirtualClusters, loft.Teams))
+		section.Add(fmt.Sprintf("# Loft: %s (%d spaces, %d vClusters, %d teams)", loft.Status, loft.Spaces, loft.VirtualClusters, loft.Teams))
 	}
 	if kiosk.Name != "" {
 		providerCount++
-		loot.Section("Summary").Add(fmt.Sprintf("# Kiosk: %s (%d accounts, %d spaces)", kiosk.Status, kiosk.Accounts, kiosk.Spaces))
+		section.Add(fmt.Sprintf("# Kiosk: %s (%d accounts, %d spaces)", kiosk.Status, kiosk.Accounts, kiosk.Spaces))
 	}
 	if opaGatekeeper.Name != "" {
 		providerCount++
@@ -1901,21 +2606,44 @@ func generateMultitenancyLoot(loot *shared.LootBuilder,
 		if opaGatekeeper.ImageVerified {
 			status += " (verified)"
 		}
-		loot.Section("Summary").Add(fmt.Sprintf("# OPA Gatekeeper: %s (%d templates, %d constraints, %d tenant policies)", status, opaGatekeeper.ConstraintTemplates, opaGatekeeper.Constraints, opaGatekeeper.TenantIsolationPolicies))
+		section.Add(fmt.Sprintf("# OPA Gatekeeper: %s (%d templates, %d constraints, %d tenant policies)", status, opaGatekeeper.ConstraintTemplates, opaGatekeeper.Constraints, opaGatekeeper.TenantIsolationPolicies))
+
+		// Add detailed constraint template info
+		if len(opaTemplates) > 0 {
+			section.Add("#")
+			section.Add("# Constraint Templates:")
+			for _, tmpl := range opaTemplates {
+				section.Add(fmt.Sprintf("#   - %s (kind: %s)", tmpl.Name, tmpl.Kind))
+			}
+		}
+
+		// Add detailed constraint info
+		if len(opaConstraints) > 0 {
+			section.Add("#")
+			section.Add("# Active Constraints:")
+			for _, c := range opaConstraints {
+				tenantMarker := ""
+				if c.IsTenantIsolation {
+					tenantMarker = " [TENANT]"
+				}
+				violationInfo := ""
+				if c.Violations > 0 {
+					violationInfo = fmt.Sprintf(" (%d violations)", c.Violations)
+				}
+				section.Add(fmt.Sprintf("#   - %s (%s, %s)%s%s", c.Name, c.Kind, c.EnforcementAction, tenantMarker, violationInfo))
+			}
+		}
 	}
 
 	if providerCount == 0 {
-		loot.Section("Summary").Add("#")
-		loot.Section("Summary").Add("# WARNING: No multi-tenancy solution detected!")
-		loot.Section("Summary").Add("# Namespace isolation is limited to basic Kubernetes primitives")
+		section.Add("#")
+		section.Add("# WARNING: No multi-tenancy solution detected!")
+		section.Add("# Namespace isolation is limited to basic Kubernetes primitives")
 	}
 
-	loot.Section("Summary").Add("#")
+	section.Add("#")
 
-	// Isolation analysis
-	loot.Section("Isolation").Add("# Namespace Isolation Analysis")
-	loot.Section("Isolation").Add("#")
-
+	// Isolation statistics
 	isolated := 0
 	noNetpol := 0
 	noQuota := 0
@@ -1936,67 +2664,49 @@ func generateMultitenancyLoot(loot *shared.LootBuilder,
 		}
 	}
 
-	loot.Section("Isolation").Add(fmt.Sprintf("# Namespaces with proper isolation: %d/%d", isolated, len(nsIsolation)))
-	loot.Section("Isolation").Add(fmt.Sprintf("# Namespaces without network policy: %d", noNetpol))
-	loot.Section("Isolation").Add(fmt.Sprintf("# Namespaces without resource quota: %d", noQuota))
-	loot.Section("Isolation").Add(fmt.Sprintf("# Namespaces without pod security: %d", noPodSec))
-	loot.Section("Isolation").Add("#")
+	section.Add("# Namespace Isolation Statistics")
+	section.Add(fmt.Sprintf("# Namespaces with proper isolation: %d/%d", isolated, len(nsIsolation)))
+	section.Add(fmt.Sprintf("# Namespaces without network policy: %d", noNetpol))
+	section.Add(fmt.Sprintf("# Namespaces without resource quota: %d", noQuota))
+	section.Add(fmt.Sprintf("# Namespaces without pod security: %d", noPodSec))
+	section.Add("#")
 
-	// Bypass vectors
-	loot.Section("BypassVectors").Add("# Tenant Isolation Bypass Vectors")
-	loot.Section("BypassVectors").Add("#")
-
-	for _, iso := range nsIsolation {
-		if iso.BypassRisk != "" {
-			loot.Section("BypassVectors").Add(fmt.Sprintf("# %s: %s", iso.Namespace, iso.BypassRisk))
-		}
+	// Commands for detected tools only
+	section.Add("# Useful Commands")
+	section.Add("#")
+	if capsule.Name != "" {
+		section.Add("# List Capsule tenants:")
+		section.Add("kubectl get tenants")
+		section.Add("#")
 	}
-
-	for _, t := range capsuleTenants {
-		if t.BypassRisk != "" {
-			loot.Section("BypassVectors").Add(fmt.Sprintf("# Capsule tenant %s: %s", t.Name, t.BypassRisk))
-		}
+	if hnc.Name != "" {
+		section.Add("# List HNC hierarchies:")
+		section.Add("kubectl hns tree --all-namespaces")
+		section.Add("#")
 	}
-
-	loot.Section("BypassVectors").Add("#")
-
-	// Recommendations
-	loot.Section("Recommendations").Add("# Recommendations")
-	loot.Section("Recommendations").Add("#")
-
-	if providerCount == 0 {
-		loot.Section("Recommendations").Add("# 1. Deploy a multi-tenancy solution:")
-		loot.Section("Recommendations").Add("#    Capsule: kubectl apply -f https://raw.githubusercontent.com/projectcapsule/capsule/main/config/install.yaml")
-		loot.Section("Recommendations").Add("#    HNC: kubectl apply -f https://github.com/kubernetes-sigs/hierarchical-namespaces/releases/latest/download/default.yaml")
+	if len(vclusters) > 0 {
+		section.Add("# List vClusters:")
+		section.Add("vcluster list")
+		section.Add("#")
 	}
-
-	if noNetpol > 0 {
-		loot.Section("Recommendations").Add(fmt.Sprintf("# 2. Add network policies to %d namespaces", noNetpol))
+	if loft.Name != "" {
+		section.Add("# List Loft spaces:")
+		section.Add("kubectl get spaces -A")
+		section.Add("#")
 	}
-
-	if noQuota > 0 {
-		loot.Section("Recommendations").Add(fmt.Sprintf("# 3. Add resource quotas to %d namespaces", noQuota))
+	if kiosk.Name != "" {
+		section.Add("# List Kiosk accounts:")
+		section.Add("kubectl get accounts")
+		section.Add("#")
 	}
-
-	if noPodSec > 0 {
-		loot.Section("Recommendations").Add(fmt.Sprintf("# 4. Enable Pod Security Standards for %d namespaces", noPodSec))
+	if opaGatekeeper.Name != "" {
+		section.Add("# List Gatekeeper constraints:")
+		section.Add("kubectl get constraints")
+		section.Add("#")
 	}
-
-	// Commands
-	loot.Section("Commands").Add("# Useful Commands")
-	loot.Section("Commands").Add("#")
-	loot.Section("Commands").Add("# List Capsule tenants:")
-	loot.Section("Commands").Add("kubectl get tenants")
-	loot.Section("Commands").Add("#")
-	loot.Section("Commands").Add("# List HNC hierarchies:")
-	loot.Section("Commands").Add("kubectl hns tree --all-namespaces")
-	loot.Section("Commands").Add("#")
-	loot.Section("Commands").Add("# List vClusters:")
-	loot.Section("Commands").Add("vcluster list")
-	loot.Section("Commands").Add("#")
-	loot.Section("Commands").Add("# Check namespace isolation:")
-	loot.Section("Commands").Add("kubectl get networkpolicies -A")
-	loot.Section("Commands").Add("kubectl get resourcequotas -A")
+	section.Add("# Check namespace isolation:")
+	section.Add("kubectl get networkpolicies -A")
+	section.Add("kubectl get resourcequotas -A")
 }
 
 // ============================================================================
@@ -2056,9 +2766,7 @@ func analyzeCrossTenantResources(ctx context.Context, clientset kubernetes.Inter
 					Name:            crb.Name,
 					Scope:           "Cluster",
 					AffectedTenants: tenantList,
-					RiskLevel:       "HIGH",
 					Description:     fmt.Sprintf("Grants %s role to subjects in %d tenants", crb.RoleRef.Name, len(tenantsAffected)),
-					BypassRisk:      "May allow cross-tenant privilege escalation",
 				})
 			}
 
@@ -2071,9 +2779,7 @@ func analyzeCrossTenantResources(ctx context.Context, clientset kubernetes.Inter
 						Name:            crb.Name,
 						Scope:           "Cluster",
 						AffectedTenants: []string{"all"},
-						RiskLevel:       "CRITICAL",
 						Description:     fmt.Sprintf("Grants '%s' cluster-wide", role),
-						BypassRisk:      "Full cluster access bypasses tenant isolation",
 					})
 					break
 				}
@@ -2098,9 +2804,7 @@ func analyzeCrossTenantResources(ctx context.Context, clientset kubernetes.Inter
 						Name:            pv.Name,
 						Scope:           "Cluster",
 						AffectedTenants: []string{claimNs},
-						RiskLevel:       "MEDIUM",
 						Description:     fmt.Sprintf("PV with %s mode can be shared", accessMode),
-						BypassRisk:      "Data may be accessible across namespaces",
 					})
 					break
 				}
@@ -2113,9 +2817,7 @@ func analyzeCrossTenantResources(ctx context.Context, clientset kubernetes.Inter
 					Name:            pv.Name,
 					Scope:           "Cluster",
 					AffectedTenants: []string{"all"},
-					RiskLevel:       "CRITICAL",
 					Description:     fmt.Sprintf("HostPath PV: %s", pv.Spec.HostPath.Path),
-					BypassRisk:      "Host filesystem access bypasses all isolation",
 				})
 			}
 		}
@@ -2137,9 +2839,7 @@ func analyzeCrossTenantResources(ctx context.Context, clientset kubernetes.Inter
 				Name:            gnp.GetName(),
 				Scope:           "Cluster",
 				AffectedTenants: []string{"all"},
-				RiskLevel:       "MEDIUM",
 				Description:     "Cluster-wide network policy affects all tenants",
-				BypassRisk:      "May override tenant network policies",
 			})
 		}
 	}
@@ -2160,9 +2860,7 @@ func analyzeCrossTenantResources(ctx context.Context, clientset kubernetes.Inter
 						Name:            fmt.Sprintf("%s/%s", ns, svc.Name),
 						Scope:           fmt.Sprintf("-> %s", svc.Spec.ExternalName),
 						AffectedTenants: []string{ns},
-						RiskLevel:       "MEDIUM",
 						Description:     "ExternalName service points to another namespace",
-						BypassRisk:      "May bypass network policies",
 					})
 				}
 			}
@@ -2206,9 +2904,7 @@ func analyzeCrossTenantResources(ctx context.Context, clientset kubernetes.Inter
 						Name:            cr.Name,
 						Scope:           "Cluster",
 						AffectedTenants: []string{"all"},
-						RiskLevel:       "HIGH",
 						Description:     "ClusterRole with wildcard permissions",
-						BypassRisk:      "Wide permissions may bypass tenant boundaries",
 					})
 					break
 				}

@@ -204,4 +204,57 @@ func (r *EngineRegistry) registerCertEngines() {
 		LabelSelectors:     []string{"app.kubernetes.io/name=cert-manager-csi-driver"},
 		RequireImageVerification: true,
 	})
+
+	// Azure Key Vault Certificate Issuer (via cert-manager)
+	r.register(&Engine{
+		ID:       "azure-keyvault-issuer",
+		Name:     "Azure Key Vault Issuer",
+		Category: CategoryCert,
+		TrustedRegistries: []string{
+			"mcr.microsoft.com/",
+		},
+		ImagePatterns: []string{
+			"azure-keyvault-controller",
+			"keyvault-cert-controller",
+			"akv2k8s",
+		},
+		DeploymentPatterns: []string{"akv2k8s-controller", "azure-keyvault-controller"},
+		ExpectedNamespaces: []string{"akv2k8s", "azure-keyvault"},
+		CRDGroups:          []string{"spv.no", "keyvault.azure.com"},
+		LabelSelectors:     []string{"app=akv2k8s"},
+		RequireImageVerification: true,
+	})
+
+	// DigiCert Certificate Issuer
+	r.register(&Engine{
+		ID:       "digicert-issuer",
+		Name:     "DigiCert Issuer",
+		Category: CategoryCert,
+		TrustedRegistries: []string{
+			"digicert/",
+		},
+		ImagePatterns: []string{
+			"digicert/cert-manager-issuer",
+			"digicert-issuer",
+		},
+		DeploymentPatterns: []string{"digicert-issuer"},
+		ExpectedNamespaces: []string{"cert-manager", "digicert"},
+		CRDGroups:          []string{"certmanager.digicert.com"},
+		RequireImageVerification: true,
+	})
+
+	// Origin CA Issuer (Cloudflare)
+	r.register(&Engine{
+		ID:       "origin-ca-issuer",
+		Name:     "Cloudflare Origin CA Issuer",
+		Category: CategoryCert,
+		ImagePatterns: []string{
+			"origin-ca-issuer",
+			"cloudflare-origin-ca-issuer",
+		},
+		DeploymentPatterns: []string{"origin-ca-issuer"},
+		ExpectedNamespaces: []string{"cert-manager", "origin-ca-issuer"},
+		CRDGroups:          []string{"cert-manager.io"},
+		RequireImageVerification: true,
+	})
 }

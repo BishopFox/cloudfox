@@ -12,6 +12,7 @@ import (
 
 	"github.com/BishopFox/cloudfox/globals"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -19,13 +20,15 @@ import (
 )
 
 var (
-	clientsetOnce    sync.Once
-	dynamicOnce      sync.Once
-	restConfigOnce   sync.Once
-	sharedClientset  *kubernetes.Clientset
-	sharedDynamic    dynamic.Interface
-	sharedRestConfig *rest.Config
-	initErr          error
+	clientsetOnce         sync.Once
+	dynamicOnce           sync.Once
+	restConfigOnce        sync.Once
+	apiextensionsOnce     sync.Once
+	sharedClientset       *kubernetes.Clientset
+	sharedDynamic         dynamic.Interface
+	sharedRestConfig      *rest.Config
+	sharedApiextensions   *apiextensionsclientset.Clientset
+	initErr               error
 )
 
 // ClientConfig holds the configuration for creating Kubernetes clients
@@ -139,6 +142,19 @@ func GetDynamicClient() (dynamic.Interface, error) {
 	return sharedDynamic, initErr
 }
 
+// GetApiextensionsClientset returns a cached apiextensions clientset for CRD operations
+func GetApiextensionsClientset() (*apiextensionsclientset.Clientset, error) {
+	apiextensionsOnce.Do(func() {
+		restConfig, err := GetRESTConfig()
+		if err != nil {
+			initErr = fmt.Errorf("failed to get REST config: %w", err)
+			return
+		}
+		sharedApiextensions, initErr = apiextensionsclientset.NewForConfig(restConfig)
+	})
+	return sharedApiextensions, initErr
+}
+
 // NewClientset creates a new clientset from the provided config (not cached)
 func NewClientset(cfg ClientConfig) (*kubernetes.Clientset, error) {
 	restConfig, err := BuildRESTConfig(cfg)
@@ -162,9 +178,11 @@ func ResetClients() {
 	clientsetOnce = sync.Once{}
 	dynamicOnce = sync.Once{}
 	restConfigOnce = sync.Once{}
+	apiextensionsOnce = sync.Once{}
 	sharedClientset = nil
 	sharedDynamic = nil
 	sharedRestConfig = nil
+	sharedApiextensions = nil
 	initErr = nil
 }
 

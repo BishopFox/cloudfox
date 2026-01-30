@@ -10,6 +10,7 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/BishopFox/cloudfox/kubernetes/shared"
+	"github.com/BishopFox/cloudfox/kubernetes/shared/admission"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	nodev1 "k8s.io/api/node/v1"
@@ -27,17 +28,44 @@ var RuntimeAdmissionCmd = &cobra.Command{
 	Short:   "Analyze container runtime security configurations and policies",
 	Long: `
 Analyze all cluster runtime security configurations including:
+
+Container Runtime Classes:
   - RuntimeClasses (gVisor, Kata Containers, Firecracker, etc.)
+  - Sandboxed vs unsandboxed workload analysis
+  - Runtime bypass detection
+
+Security Profiles:
   - Seccomp profiles (SeccompProfile CRDs, node profiles)
   - AppArmor profiles (node and pod configurations)
   - SELinux policies
   - Pod security context coverage
-  - Sandboxed vs unsandboxed workload analysis
-  - Runtime bypass detection
+  - Security Profiles Operator (SPO) detection
 
-  cloudfox kubernetes runtime-admission`,
+Cloud-Specific Runtime Security (in-cluster detection):
+  Detects cloud-specific runtime configurations from RuntimeClasses and node labels.
+  No --cloud-provider flag required - reads cluster resources directly.
+
+  AWS:
+    - AWS Bottlerocket OS detection
+    - AWS Firecracker microVM runtime
+    - EKS optimized AMI detection
+
+  GCP:
+    - GKE Sandbox (gVisor) RuntimeClass detection
+    - GKE Autopilot secure-by-default enforcement
+
+  Azure:
+    - Azure Kata Containers runtime
+    - Azure Confidential Containers
+    - AKS node security configuration
+
+Examples:
+  cloudfox kubernetes runtime-admission
+  cloudfox kubernetes runtime-admission --detailed`,
 	Run: ListRuntimeAdmission,
 }
+
+// init() removed - detailed flag is now a global persistent flag in cli/kubernetes.go
 
 type RuntimeAdmissionOutput struct {
 	Table []internal.TableFile
@@ -46,6 +74,16 @@ type RuntimeAdmissionOutput struct {
 
 func (t RuntimeAdmissionOutput) TableFiles() []internal.TableFile { return t.Table }
 func (t RuntimeAdmissionOutput) LootFiles() []internal.LootFile   { return t.Loot }
+
+// RuntimeEnumeratedPolicy is a unified representation of any policy/rule across runtime security tools
+type RuntimeEnumeratedPolicy struct {
+	Namespace string
+	Tool      string
+	Name      string
+	Scope     string // Cluster or Namespace
+	Type      string // RuntimeClass, SeccompProfile, AppArmorProfile, PSS, etc.
+	Details   string // tool-specific summary
+}
 
 // RuntimeAdmissionFinding represents runtime security analysis for a namespace
 type RuntimeAdmissionFinding struct {
@@ -89,8 +127,7 @@ type RuntimeAdmissionFinding struct {
 	HostNetworkPods     int
 	HostIPCPods         int
 
-	// Risk analysis
-	RiskLevel           string
+	// Security analysis
 	SecurityIssues      []string
 	Recommendations     []string
 }
@@ -108,7 +145,6 @@ type RuntimeClassInfo struct {
 	UsedByPods     int
 	Namespaces     []string
 	SecurityLevel  string // high, medium, low
-	BypassRisk     string
 }
 
 // SeccompProfileInfo represents a Seccomp profile
@@ -120,7 +156,6 @@ type SeccompProfileInfo struct {
 	Status          string
 	TargetNodes     []string
 	UsedByPods      int
-	BypassRisk      string
 }
 
 // AppArmorProfileInfo represents an AppArmor profile
@@ -132,7 +167,6 @@ type AppArmorProfileInfo struct {
 	Enforced     bool
 	TargetNodes  []string
 	UsedByPods   int
-	BypassRisk   string
 }
 
 // SeccompOperatorInfo represents Seccomp Operator status
@@ -144,7 +178,6 @@ type SeccompOperatorInfo struct {
 	TotalPods     int
 	Profiles      int
 	ImageVerified bool
-	BypassRisk    string
 }
 
 // RuntimeFalcoInfo represents Falco runtime security configuration for runtime-admission
@@ -157,7 +190,6 @@ type RuntimeFalcoInfo struct {
 	Version       string
 	RulesLoaded   bool
 	ImageVerified bool
-	BypassRisk    string
 }
 
 // RuntimeTraceeInfo represents Tracee runtime security configuration for runtime-admission
@@ -169,7 +201,6 @@ type RuntimeTraceeInfo struct {
 	TotalPods     int
 	Version       string
 	ImageVerified bool
-	BypassRisk    string
 }
 
 // RuntimePSSInfo represents PSS enforcement configuration for runtime-admission
@@ -179,7 +210,6 @@ type RuntimePSSInfo struct {
 	AuditLevel      string
 	WarnLevel       string
 	EnforceVersion  string
-	BypassRisk      string
 }
 
 // UnsandboxedPodInfo represents a pod without runtime sandboxing
@@ -193,8 +223,6 @@ type UnsandboxedPodInfo struct {
 	HostPID         bool
 	HostNetwork     bool
 	Capabilities    []string
-	RiskLevel       string
-	RiskReasons     []string
 }
 
 func ListRuntimeAdmission(cmd *cobra.Command, args []string) {
@@ -206,6 +234,7 @@ func ListRuntimeAdmission(cmd *cobra.Command, args []string) {
 	verbosity, _ := parentCmd.PersistentFlags().GetInt("verbosity")
 	wrap, _ := parentCmd.PersistentFlags().GetBool("wrap")
 	outputDir, _ := parentCmd.PersistentFlags().GetString("outdir")
+	detailed := globals.K8sDetailed
 
 	logger.InfoM(fmt.Sprintf("Analyzing runtime security for %s", globals.ClusterName), K8S_RUNTIME_ADMISSION_MODULE_NAME)
 
@@ -243,6 +272,108 @@ func ListRuntimeAdmission(cmd *cobra.Command, args []string) {
 	// Update RuntimeClass usage counts
 	updateRuntimeClassUsage(runtimeClasses, findings)
 
+	// Enumerate all policies into unified format
+	logger.InfoM("Enumerating policies across all tools...", K8S_RUNTIME_ADMISSION_MODULE_NAME)
+	var allPolicies []RuntimeEnumeratedPolicy
+
+	// Convert RuntimeClasses
+	for _, rc := range runtimeClasses {
+		allPolicies = append(allPolicies, RuntimeEnumeratedPolicy{
+			Namespace: "<CLUSTER>",
+			Tool:      "RuntimeClass",
+			Name:      rc.Name,
+			Scope:     "Cluster",
+			Type:      rc.HandlerType,
+			Details:   fmt.Sprintf("handler=%s, sandboxed=%v, security=%s, used_by=%d pods", rc.Handler, rc.IsSandboxed, rc.SecurityLevel, rc.UsedByPods),
+		})
+	}
+
+	// Convert Seccomp Profiles
+	for _, sp := range seccompProfiles {
+		ns := sp.Namespace
+		scope := "Namespace"
+		if sp.IsClusterScoped {
+			ns = "<CLUSTER>"
+			scope = "Cluster"
+		}
+		allPolicies = append(allPolicies, RuntimeEnumeratedPolicy{
+			Namespace: ns,
+			Tool:      "Seccomp Operator",
+			Name:      sp.Name,
+			Scope:     scope,
+			Type:      sp.ProfileType,
+			Details:   fmt.Sprintf("status=%s, used_by=%d pods", sp.Status, sp.UsedByPods),
+		})
+	}
+
+	// Convert AppArmor Profiles
+	for _, ap := range appArmorProfiles {
+		ns := ap.Namespace
+		if ns == "" {
+			ns = "<NODE>"
+		}
+		allPolicies = append(allPolicies, RuntimeEnumeratedPolicy{
+			Namespace: ns,
+			Tool:      "AppArmor",
+			Name:      ap.Name,
+			Scope:     "Namespace",
+			Type:      ap.ProfileType,
+			Details:   fmt.Sprintf("status=%s, enforced=%v, used_by=%d pods", ap.Status, ap.Enforced, ap.UsedByPods),
+		})
+	}
+
+	// Convert PSS levels
+	for _, pss := range pssResults {
+		allPolicies = append(allPolicies, RuntimeEnumeratedPolicy{
+			Namespace: pss.Namespace,
+			Tool:      "PSS",
+			Name:      pss.Namespace,
+			Scope:     "Namespace",
+			Type:      "PodSecurityStandard",
+			Details:   fmt.Sprintf("enforce=%s, audit=%s, warn=%s", pss.EnforceLevel, pss.AuditLevel, pss.WarnLevel),
+		})
+	}
+
+	// Add runtime security tools
+	if seccompOperator.Name != "" {
+		allPolicies = append(allPolicies, RuntimeEnumeratedPolicy{
+			Namespace: seccompOperator.Namespace,
+			Tool:      "Seccomp Operator",
+			Name:      seccompOperator.Name,
+			Scope:     "Cluster",
+			Type:      "Operator",
+			Details:   fmt.Sprintf("status=%s, profiles=%d, pods=%d/%d", seccompOperator.Status, seccompOperator.Profiles, seccompOperator.PodsRunning, seccompOperator.TotalPods),
+		})
+	}
+	if falco.Name != "" {
+		allPolicies = append(allPolicies, RuntimeEnumeratedPolicy{
+			Namespace: falco.Namespace,
+			Tool:      "Falco",
+			Name:      falco.Name,
+			Scope:     "Cluster",
+			Type:      "RuntimeDetection",
+			Details:   fmt.Sprintf("status=%s, pods=%d/%d", falco.Status, falco.PodsRunning, falco.TotalPods),
+		})
+	}
+	if tracee.Name != "" {
+		allPolicies = append(allPolicies, RuntimeEnumeratedPolicy{
+			Namespace: tracee.Namespace,
+			Tool:      "Tracee",
+			Name:      tracee.Name,
+			Scope:     "Cluster",
+			Type:      "eBPF Detection",
+			Details:   fmt.Sprintf("status=%s, pods=%d/%d", tracee.Status, tracee.PodsRunning, tracee.TotalPods),
+		})
+	}
+
+	// Sort by tool then namespace
+	sort.Slice(allPolicies, func(i, j int) bool {
+		if allPolicies[i].Tool != allPolicies[j].Tool {
+			return allPolicies[i].Tool < allPolicies[j].Tool
+		}
+		return allPolicies[i].Namespace < allPolicies[j].Namespace
+	})
+
 	// Generate tables
 	summaryHeader := []string{
 		"Namespace",
@@ -255,11 +386,20 @@ func ListRuntimeAdmission(cmd *cobra.Command, args []string) {
 		"AppArmor Enabled",
 		"AppArmor Coverage",
 		"Privileged",
-		"Risk Level",
 		"Issues",
 	}
 
+	policiesHeader := []string{
+		"Namespace",
+		"Tool",
+		"Name",
+		"Scope",
+		"Type",
+		"Details",
+	}
+
 	runtimeClassHeader := []string{
+		"Namespace",
 		"Name",
 		"Handler",
 		"Type",
@@ -268,34 +408,34 @@ func ListRuntimeAdmission(cmd *cobra.Command, args []string) {
 		"Node Selector",
 		"Used By Pods",
 		"Namespaces",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	seccompProfileHeader := []string{
-		"Name",
 		"Namespace",
+		"Name",
 		"Scope",
 		"Type",
 		"Status",
 		"Target Nodes",
 		"Used By Pods",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	appArmorProfileHeader := []string{
-		"Name",
 		"Namespace",
+		"Name",
 		"Type",
 		"Status",
 		"Enforced",
 		"Target Nodes",
 		"Used By Pods",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	unsandboxedPodHeader := []string{
-		"Name",
 		"Namespace",
+		"Name",
 		"Runtime Class",
 		"Seccomp",
 		"AppArmor",
@@ -303,18 +443,17 @@ func ListRuntimeAdmission(cmd *cobra.Command, args []string) {
 		"HostPID",
 		"HostNetwork",
 		"Capabilities",
-		"Risk Level",
-		"Risk Reasons",
+		"Issues",
 	}
 
 	runtimeSecurityToolsHeader := []string{
-		"Tool",
 		"Namespace",
+		"Tool",
 		"Status",
 		"Pods Running",
 		"Total Pods",
 		"Image Verified",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	pssHeader := []string{
@@ -323,10 +462,11 @@ func ListRuntimeAdmission(cmd *cobra.Command, args []string) {
 		"Audit Level",
 		"Warn Level",
 		"Enforce Version",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	var summaryRows [][]string
+	var policiesRows [][]string
 	var runtimeClassRows [][]string
 	var seccompProfileRows [][]string
 	var appArmorProfileRows [][]string
@@ -358,8 +498,19 @@ func ListRuntimeAdmission(cmd *cobra.Command, args []string) {
 			fmt.Sprintf("%d", finding.AppArmorEnabled),
 			finding.AppArmorCoverage,
 			fmt.Sprintf("%d", finding.PrivilegedPods),
-			finding.RiskLevel,
 			issues,
+		})
+	}
+
+	// Build unified policies rows
+	for _, p := range allPolicies {
+		policiesRows = append(policiesRows, []string{
+			p.Namespace,
+			p.Tool,
+			p.Name,
+			p.Scope,
+			p.Type,
+			p.Details,
 		})
 	}
 
@@ -391,7 +542,24 @@ func ListRuntimeAdmission(cmd *cobra.Command, args []string) {
 			}
 		}
 
+		// Detect issues
+		var rcIssues []string
+		if !rc.IsSandboxed {
+			rcIssues = append(rcIssues, "Not sandboxed")
+		}
+		if rc.SecurityLevel == "low" || rc.SecurityLevel == "" {
+			rcIssues = append(rcIssues, "Low security level")
+		}
+		if rc.UsedByPods == 0 {
+			rcIssues = append(rcIssues, "Not used")
+		}
+		rcIssuesStr := "<NONE>"
+		if len(rcIssues) > 0 {
+			rcIssuesStr = strings.Join(rcIssues, "; ")
+		}
+
 		runtimeClassRows = append(runtimeClassRows, []string{
+			"<CLUSTER>",
 			rc.Name,
 			rc.Handler,
 			rc.HandlerType,
@@ -400,7 +568,7 @@ func ListRuntimeAdmission(cmd *cobra.Command, args []string) {
 			nodeSelector,
 			fmt.Sprintf("%d", rc.UsedByPods),
 			namespaces,
-			rc.BypassRisk,
+			rcIssuesStr,
 		})
 	}
 
@@ -422,15 +590,31 @@ func ListRuntimeAdmission(cmd *cobra.Command, args []string) {
 			}
 		}
 
+		// Detect issues
+		var spIssues []string
+		if sp.Status != "Installed" && sp.Status != "Active" && sp.Status != "Ready" {
+			spIssues = append(spIssues, "Status: "+sp.Status)
+		}
+		if sp.UsedByPods == 0 {
+			spIssues = append(spIssues, "Not used")
+		}
+		if sp.ProfileType == "Unconfined" {
+			spIssues = append(spIssues, "Unconfined profile")
+		}
+		spIssuesStr := "<NONE>"
+		if len(spIssues) > 0 {
+			spIssuesStr = strings.Join(spIssues, "; ")
+		}
+
 		seccompProfileRows = append(seccompProfileRows, []string{
-			sp.Name,
 			ns,
+			sp.Name,
 			scope,
 			sp.ProfileType,
 			sp.Status,
 			targetNodes,
 			fmt.Sprintf("%d", sp.UsedByPods),
-			sp.BypassRisk,
+			spIssuesStr,
 		})
 	}
 
@@ -455,72 +639,98 @@ func ListRuntimeAdmission(cmd *cobra.Command, args []string) {
 			}
 		}
 
+		// Detect issues
+		var apIssues []string
+		if !ap.Enforced {
+			apIssues = append(apIssues, "Not enforced")
+		}
+		if ap.Status != "Installed" && ap.Status != "Active" && ap.Status != "Ready" {
+			apIssues = append(apIssues, "Status: "+ap.Status)
+		}
+		if ap.UsedByPods == 0 {
+			apIssues = append(apIssues, "Not used")
+		}
+		apIssuesStr := "<NONE>"
+		if len(apIssues) > 0 {
+			apIssuesStr = strings.Join(apIssues, "; ")
+		}
+
 		appArmorProfileRows = append(appArmorProfileRows, []string{
-			ap.Name,
 			ns,
+			ap.Name,
 			ap.ProfileType,
 			ap.Status,
 			enforced,
 			targetNodes,
 			fmt.Sprintf("%d", ap.UsedByPods),
-			ap.BypassRisk,
+			apIssuesStr,
 		})
 	}
 
-	// Build unsandboxed pod rows (limit to high risk ones)
-	highRiskCount := 0
+	// Build unsandboxed pod rows (limit to 100 pods)
+	podCount := 0
 	for _, pod := range unsandboxedPods {
-		if pod.RiskLevel == "CRITICAL" || pod.RiskLevel == "HIGH" {
-			highRiskCount++
-			if highRiskCount > 100 {
-				continue // Limit rows
-			}
-
-			privileged := "No"
-			if pod.Privileged {
-				privileged = "Yes"
-			}
-			hostPID := "No"
-			if pod.HostPID {
-				hostPID = "Yes"
-			}
-			hostNetwork := "No"
-			if pod.HostNetwork {
-				hostNetwork = "Yes"
-			}
-
-			caps := "-"
-			if len(pod.Capabilities) > 0 {
-				if len(pod.Capabilities) > 3 {
-					caps = strings.Join(pod.Capabilities[:3], ", ") + "..."
-				} else {
-					caps = strings.Join(pod.Capabilities, ", ")
-				}
-			}
-
-			reasons := "-"
-			if len(pod.RiskReasons) > 0 {
-				if len(pod.RiskReasons) > 2 {
-					reasons = strings.Join(pod.RiskReasons[:2], "; ") + "..."
-				} else {
-					reasons = strings.Join(pod.RiskReasons, "; ")
-				}
-			}
-
-			unsandboxedPodRows = append(unsandboxedPodRows, []string{
-				pod.Name,
-				pod.Namespace,
-				pod.RuntimeClass,
-				pod.SeccompProfile,
-				pod.AppArmorProfile,
-				privileged,
-				hostPID,
-				hostNetwork,
-				caps,
-				pod.RiskLevel,
-				reasons,
-			})
+		podCount++
+		if podCount > 100 {
+			break // Limit rows
 		}
+
+		privileged := "No"
+		if pod.Privileged {
+			privileged = "Yes"
+		}
+		hostPID := "No"
+		if pod.HostPID {
+			hostPID = "Yes"
+		}
+		hostNetwork := "No"
+		if pod.HostNetwork {
+			hostNetwork = "Yes"
+		}
+
+		caps := "-"
+		if len(pod.Capabilities) > 0 {
+			if len(pod.Capabilities) > 3 {
+				caps = strings.Join(pod.Capabilities[:3], ", ") + "..."
+			} else {
+				caps = strings.Join(pod.Capabilities, ", ")
+			}
+		}
+
+		// Detect issues
+		var podIssues []string
+		if pod.Privileged {
+			podIssues = append(podIssues, "Privileged")
+		}
+		if pod.HostPID {
+			podIssues = append(podIssues, "Host PID")
+		}
+		if pod.HostNetwork {
+			podIssues = append(podIssues, "Host network")
+		}
+		if len(pod.Capabilities) > 0 {
+			podIssues = append(podIssues, "Extra capabilities")
+		}
+		if pod.SeccompProfile == "" || pod.SeccompProfile == "Unconfined" {
+			podIssues = append(podIssues, "No seccomp")
+		}
+		podIssuesStr := "<NONE>"
+		if len(podIssues) > 0 {
+			podIssuesStr = strings.Join(podIssues, "; ")
+		}
+
+		unsandboxedPodRows = append(unsandboxedPodRows, []string{
+			pod.Namespace,
+			pod.Name,
+			pod.RuntimeClass,
+			pod.SeccompProfile,
+			pod.AppArmorProfile,
+			privileged,
+			hostPID,
+			hostNetwork,
+			caps,
+			podIssuesStr,
+		})
 	}
 
 	// Build runtime security tools rows
@@ -529,18 +739,31 @@ func ListRuntimeAdmission(cmd *cobra.Command, args []string) {
 		if seccompOperator.ImageVerified {
 			imageVerified = "Yes"
 		}
-		bypassRisk := "-"
-		if seccompOperator.BypassRisk != "" {
-			bypassRisk = seccompOperator.BypassRisk
+
+		// Detect issues
+		var soIssues []string
+		if seccompOperator.Status != "Running" && seccompOperator.Status != "Healthy" {
+			soIssues = append(soIssues, "Not running")
 		}
+		if seccompOperator.PodsRunning < seccompOperator.TotalPods {
+			soIssues = append(soIssues, "Not all pods running")
+		}
+		if !seccompOperator.ImageVerified {
+			soIssues = append(soIssues, "Image not verified")
+		}
+		soIssuesStr := "<NONE>"
+		if len(soIssues) > 0 {
+			soIssuesStr = strings.Join(soIssues, "; ")
+		}
+
 		runtimeSecurityToolsRows = append(runtimeSecurityToolsRows, []string{
-			seccompOperator.Name,
 			seccompOperator.Namespace,
+			seccompOperator.Name,
 			seccompOperator.Status,
 			fmt.Sprintf("%d", seccompOperator.PodsRunning),
 			fmt.Sprintf("%d", seccompOperator.TotalPods),
 			imageVerified,
-			bypassRisk,
+			soIssuesStr,
 		})
 	}
 
@@ -549,18 +772,31 @@ func ListRuntimeAdmission(cmd *cobra.Command, args []string) {
 		if falco.ImageVerified {
 			imageVerified = "Yes"
 		}
-		bypassRisk := "-"
-		if falco.BypassRisk != "" {
-			bypassRisk = falco.BypassRisk
+
+		// Detect issues
+		var falcoIssues []string
+		if falco.Status != "Running" && falco.Status != "Healthy" {
+			falcoIssues = append(falcoIssues, "Not running")
 		}
+		if falco.PodsRunning < falco.TotalPods {
+			falcoIssues = append(falcoIssues, "Not all pods running")
+		}
+		if !falco.ImageVerified {
+			falcoIssues = append(falcoIssues, "Image not verified")
+		}
+		falcoIssuesStr := "<NONE>"
+		if len(falcoIssues) > 0 {
+			falcoIssuesStr = strings.Join(falcoIssues, "; ")
+		}
+
 		runtimeSecurityToolsRows = append(runtimeSecurityToolsRows, []string{
-			falco.Name,
 			falco.Namespace,
+			falco.Name,
 			falco.Status,
 			fmt.Sprintf("%d", falco.PodsRunning),
 			fmt.Sprintf("%d", falco.TotalPods),
 			imageVerified,
-			bypassRisk,
+			falcoIssuesStr,
 		})
 	}
 
@@ -569,18 +805,31 @@ func ListRuntimeAdmission(cmd *cobra.Command, args []string) {
 		if tracee.ImageVerified {
 			imageVerified = "Yes"
 		}
-		bypassRisk := "-"
-		if tracee.BypassRisk != "" {
-			bypassRisk = tracee.BypassRisk
+
+		// Detect issues
+		var traceeIssues []string
+		if tracee.Status != "Running" && tracee.Status != "Healthy" {
+			traceeIssues = append(traceeIssues, "Not running")
 		}
+		if tracee.PodsRunning < tracee.TotalPods {
+			traceeIssues = append(traceeIssues, "Not all pods running")
+		}
+		if !tracee.ImageVerified {
+			traceeIssues = append(traceeIssues, "Image not verified")
+		}
+		traceeIssuesStr := "<NONE>"
+		if len(traceeIssues) > 0 {
+			traceeIssuesStr = strings.Join(traceeIssues, "; ")
+		}
+
 		runtimeSecurityToolsRows = append(runtimeSecurityToolsRows, []string{
-			tracee.Name,
 			tracee.Namespace,
+			tracee.Name,
 			tracee.Status,
 			fmt.Sprintf("%d", tracee.PodsRunning),
 			fmt.Sprintf("%d", tracee.TotalPods),
 			imageVerified,
-			bypassRisk,
+			traceeIssuesStr,
 		})
 	}
 
@@ -602,9 +851,18 @@ func ListRuntimeAdmission(cmd *cobra.Command, args []string) {
 		if pss.EnforceVersion != "" {
 			enforceVersion = pss.EnforceVersion
 		}
-		bypassRisk := "-"
-		if pss.BypassRisk != "" {
-			bypassRisk = pss.BypassRisk
+
+		// Detect issues
+		var pssIssues []string
+		if pss.EnforceLevel == "" || pss.EnforceLevel == "privileged" {
+			pssIssues = append(pssIssues, "No PSS enforcement")
+		}
+		if pss.EnforceLevel == "baseline" {
+			pssIssues = append(pssIssues, "Only baseline enforcement")
+		}
+		pssIssuesStr := "<NONE>"
+		if len(pssIssues) > 0 {
+			pssIssuesStr = strings.Join(pssIssues, "; ")
 		}
 
 		pssRows = append(pssRows, []string{
@@ -613,7 +871,7 @@ func ListRuntimeAdmission(cmd *cobra.Command, args []string) {
 			auditLevel,
 			warnLevel,
 			enforceVersion,
-			bypassRisk,
+			pssIssuesStr,
 		})
 	}
 
@@ -623,58 +881,70 @@ func ListRuntimeAdmission(cmd *cobra.Command, args []string) {
 	// Build output tables
 	var tables []internal.TableFile
 
+	// Always show: summary + unified policies
 	tables = append(tables, internal.TableFile{
 		Name:   "Runtime-Admission-Summary",
 		Header: summaryHeader,
 		Body:   summaryRows,
 	})
 
-	if len(runtimeClassRows) > 0 {
+	if len(policiesRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Runtime-Admission-RuntimeClasses",
-			Header: runtimeClassHeader,
-			Body:   runtimeClassRows,
+			Name:   "Runtime-Admission-Policies",
+			Header: policiesHeader,
+			Body:   policiesRows,
 		})
 	}
 
-	if len(seccompProfileRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Runtime-Admission-Seccomp-Profiles",
-			Header: seccompProfileHeader,
-			Body:   seccompProfileRows,
-		})
-	}
+	// Detailed tables: per-tool breakdowns (only with --detailed)
+	if detailed {
+		if len(runtimeClassRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Runtime-Admission-RuntimeClasses",
+				Header: runtimeClassHeader,
+				Body:   runtimeClassRows,
+			})
+		}
 
-	if len(appArmorProfileRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Runtime-Admission-AppArmor-Profiles",
-			Header: appArmorProfileHeader,
-			Body:   appArmorProfileRows,
-		})
-	}
+		if len(seccompProfileRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Runtime-Admission-Seccomp-Profiles",
+				Header: seccompProfileHeader,
+				Body:   seccompProfileRows,
+			})
+		}
 
-	if len(unsandboxedPodRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Runtime-Admission-HighRisk-Pods",
-			Header: unsandboxedPodHeader,
-			Body:   unsandboxedPodRows,
-		})
-	}
+		if len(appArmorProfileRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Runtime-Admission-AppArmor-Profiles",
+				Header: appArmorProfileHeader,
+				Body:   appArmorProfileRows,
+			})
+		}
 
-	if len(runtimeSecurityToolsRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Runtime-Admission-Security-Tools",
-			Header: runtimeSecurityToolsHeader,
-			Body:   runtimeSecurityToolsRows,
-		})
-	}
+		if len(unsandboxedPodRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Runtime-Admission-Unsandboxed-Pods",
+				Header: unsandboxedPodHeader,
+				Body:   unsandboxedPodRows,
+			})
+		}
 
-	if len(pssRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Runtime-Admission-Pod-Security-Standards",
-			Header: pssHeader,
-			Body:   pssRows,
-		})
+		if len(runtimeSecurityToolsRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Runtime-Admission-Security-Tools",
+				Header: runtimeSecurityToolsHeader,
+				Body:   runtimeSecurityToolsRows,
+			})
+		}
+
+		if len(pssRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Runtime-Admission-Pod-Security-Standards",
+				Header: pssHeader,
+				Body:   pssRows,
+			})
+		}
 	}
 
 	output := RuntimeAdmissionOutput{
@@ -770,13 +1040,6 @@ func analyzeRuntimeClasses(ctx context.Context, clientset kubernetes.Interface) 
 		// Check overhead
 		if rc.Overhead != nil {
 			info.Overhead = rc.Overhead
-		}
-
-		// Bypass risk analysis
-		if !info.IsSandboxed {
-			info.BypassRisk = "Standard runtime - no sandbox isolation"
-		} else if len(info.NodeSelector) == 0 {
-			info.BypassRisk = "No node selector - may not run on sandboxed nodes"
 		}
 
 		runtimeClasses = append(runtimeClasses, info)
@@ -893,13 +1156,10 @@ func analyzeSeccompProfiles(ctx context.Context, clientset kubernetes.Interface,
 	if operator.Name != "" {
 		if !operator.ImageVerified {
 			operator.Status = "unverified"
-			operator.BypassRisk = "Detection based on labels only - verify manually"
 		} else if operator.PodsRunning == 0 {
 			operator.Status = "not-running"
-			operator.BypassRisk = "Operator not running - profiles may not be applied"
 		} else if operator.PodsRunning < operator.TotalPods {
 			operator.Status = "degraded"
-			operator.BypassRisk = fmt.Sprintf("Only %d/%d pods running", operator.PodsRunning, operator.TotalPods)
 		} else {
 			operator.Status = "active"
 		}
@@ -988,10 +1248,6 @@ func parseAppArmorProfile(obj map[string]interface{}) AppArmorProfileInfo {
 		profile.Status = "Unknown"
 	}
 
-	if !profile.Enforced {
-		profile.BypassRisk = "Profile not enforced"
-	}
-
 	return profile
 }
 
@@ -1003,11 +1259,11 @@ func analyzeRuntimeFalco(ctx context.Context, clientset kubernetes.Interface) Ru
 	info := RuntimeFalcoInfo{}
 
 	// Use SDK for expected namespaces and label selectors
-	namespaces := GetExpectedNamespaces("falco")
+	namespaces := admission.GetExpectedNamespaces("falco")
 	if len(namespaces) == 0 {
 		namespaces = []string{"falco", "falco-system", "security", "monitoring", "kube-system"}
 	}
-	labelSelectors := GetEngineLabelSelectors("falco")
+	labelSelectors := admission.GetEngineLabelSelectors("falco")
 	if len(labelSelectors) == 0 {
 		labelSelectors = []string{"app=falco", "app.kubernetes.io/name=falco"}
 	}
@@ -1023,7 +1279,7 @@ func analyzeRuntimeFalco(ctx context.Context, clientset kubernetes.Interface) Ru
 			for _, pod := range pods.Items {
 				imageVerified := false
 				for _, container := range pod.Spec.Containers {
-					if VerifyControllerImage(container.Image, "falco") {
+					if admission.VerifyControllerImage(container.Image, "falco") {
 						imageVerified = true
 						info.ImageVerified = true
 						break
@@ -1059,7 +1315,7 @@ func analyzeRuntimeFalco(ctx context.Context, clientset kubernetes.Interface) Ru
 
 			for _, ds := range dsList.Items {
 				for _, container := range ds.Spec.Template.Spec.Containers {
-					if VerifyControllerImage(container.Image, "falco") {
+					if admission.VerifyControllerImage(container.Image, "falco") {
 						info.Name = "Falco"
 						info.Namespace = ns
 						info.ImageVerified = true
@@ -1082,13 +1338,10 @@ func analyzeRuntimeFalco(ctx context.Context, clientset kubernetes.Interface) Ru
 	if info.Name != "" {
 		if !info.ImageVerified {
 			info.Status = "unverified"
-			info.BypassRisk = "Detection based on labels only - verify manually"
 		} else if info.PodsRunning == 0 {
 			info.Status = "not-running"
-			info.BypassRisk = "Falco pods not running - no runtime detection"
 		} else if info.PodsRunning < info.TotalPods {
 			info.Status = "degraded"
-			info.BypassRisk = fmt.Sprintf("Only %d/%d pods running - partial coverage", info.PodsRunning, info.TotalPods)
 		} else {
 			info.Status = "active"
 		}
@@ -1105,11 +1358,11 @@ func analyzeRuntimeTracee(ctx context.Context, clientset kubernetes.Interface) R
 	info := RuntimeTraceeInfo{}
 
 	// Use SDK for expected namespaces and label selectors
-	namespaces := GetExpectedNamespaces("tracee")
+	namespaces := admission.GetExpectedNamespaces("tracee")
 	if len(namespaces) == 0 {
 		namespaces = []string{"tracee", "tracee-system", "security", "aqua", "kube-system"}
 	}
-	labelSelectors := GetEngineLabelSelectors("tracee")
+	labelSelectors := admission.GetEngineLabelSelectors("tracee")
 	if len(labelSelectors) == 0 {
 		labelSelectors = []string{"app=tracee", "app.kubernetes.io/name=tracee"}
 	}
@@ -1125,7 +1378,7 @@ func analyzeRuntimeTracee(ctx context.Context, clientset kubernetes.Interface) R
 			for _, pod := range pods.Items {
 				imageVerified := false
 				for _, container := range pod.Spec.Containers {
-					if VerifyControllerImage(container.Image, "tracee") {
+					if admission.VerifyControllerImage(container.Image, "tracee") {
 						imageVerified = true
 						info.ImageVerified = true
 						break
@@ -1161,7 +1414,7 @@ func analyzeRuntimeTracee(ctx context.Context, clientset kubernetes.Interface) R
 
 			for _, ds := range dsList.Items {
 				for _, container := range ds.Spec.Template.Spec.Containers {
-					if VerifyControllerImage(container.Image, "tracee") {
+					if admission.VerifyControllerImage(container.Image, "tracee") {
 						info.Name = "Tracee"
 						info.Namespace = ns
 						info.ImageVerified = true
@@ -1184,13 +1437,10 @@ func analyzeRuntimeTracee(ctx context.Context, clientset kubernetes.Interface) R
 	if info.Name != "" {
 		if !info.ImageVerified {
 			info.Status = "unverified"
-			info.BypassRisk = "Detection based on labels only - verify manually"
 		} else if info.PodsRunning == 0 {
 			info.Status = "not-running"
-			info.BypassRisk = "Tracee pods not running - no eBPF detection"
 		} else if info.PodsRunning < info.TotalPods {
 			info.Status = "degraded"
-			info.BypassRisk = fmt.Sprintf("Only %d/%d pods running - partial coverage", info.PodsRunning, info.TotalPods)
 		} else {
 			info.Status = "active"
 		}
@@ -1235,17 +1485,6 @@ func analyzeRuntimePSS(ctx context.Context, clientset kubernetes.Interface) []Ru
 			if level, ok := ns.Labels["pod-security.kubernetes.io/warn"]; ok {
 				info.WarnLevel = level
 			}
-		}
-
-		// Calculate bypass risk
-		if info.EnforceLevel == "" && info.AuditLevel == "" && info.WarnLevel == "" {
-			info.BypassRisk = "No PSS configured - privileged pods allowed"
-		} else if info.EnforceLevel == "privileged" {
-			info.BypassRisk = "Privileged level - no restrictions"
-		} else if info.EnforceLevel == "" && (info.AuditLevel != "" || info.WarnLevel != "") {
-			info.BypassRisk = "Audit/warn only - no enforcement"
-		} else if info.EnforceLevel == "baseline" {
-			info.BypassRisk = "Baseline - some privileged operations allowed"
 		}
 
 		// Only include namespaces with PSS configured or system namespaces
@@ -1413,55 +1652,6 @@ func analyzePodsRuntimeSecurity(ctx context.Context, clientset kubernetes.Interf
 			finding.SandboxedPods++
 		} else {
 			finding.UnsandboxedPods++
-
-			// Calculate risk for unsandboxed pods
-			var riskReasons []string
-			riskScore := 0
-
-			if isPrivileged {
-				riskReasons = append(riskReasons, "privileged")
-				riskScore += 50
-			}
-			if hasHostPID {
-				riskReasons = append(riskReasons, "hostPID")
-				riskScore += 30
-			}
-			if hasHostNetwork {
-				riskReasons = append(riskReasons, "hostNetwork")
-				riskScore += 20
-			}
-			if hasHostIPC {
-				riskReasons = append(riskReasons, "hostIPC")
-				riskScore += 15
-			}
-			if seccompProfile == "Unconfined" || seccompProfile == "<none>" {
-				riskReasons = append(riskReasons, "no seccomp")
-				riskScore += 15
-			}
-			if appArmorProfile == "unconfined" || appArmorProfile == "<none>" {
-				riskReasons = append(riskReasons, "no apparmor")
-				riskScore += 10
-			}
-			for _, cap := range capabilities {
-				capUpper := strings.ToUpper(cap)
-				if capUpper == "SYS_ADMIN" || capUpper == "SYS_PTRACE" || capUpper == "NET_ADMIN" || capUpper == "ALL" {
-					riskReasons = append(riskReasons, fmt.Sprintf("cap:%s", cap))
-					riskScore += 20
-				}
-			}
-
-			podInfo.RiskReasons = riskReasons
-
-			if riskScore >= 50 {
-				podInfo.RiskLevel = "CRITICAL"
-			} else if riskScore >= 30 {
-				podInfo.RiskLevel = "HIGH"
-			} else if riskScore >= 15 {
-				podInfo.RiskLevel = "MEDIUM"
-			} else {
-				podInfo.RiskLevel = "LOW"
-			}
-
 			unsandboxedPods = append(unsandboxedPods, podInfo)
 		}
 	}
@@ -1479,9 +1669,6 @@ func analyzePodsRuntimeSecurity(ctx context.Context, clientset kubernetes.Interf
 			finding.AppArmorCoverage = "N/A"
 			finding.SELinuxCoverage = "N/A"
 		}
-
-		// Calculate risk level
-		finding.RiskLevel = calculateRuntimeRiskLevel(finding)
 
 		// Add security issues
 		if finding.PrivilegedPods > 0 {
@@ -1505,10 +1692,12 @@ func analyzePodsRuntimeSecurity(ctx context.Context, clientset kubernetes.Interf
 		return findings[i].Namespace < findings[j].Namespace
 	})
 
-	// Sort unsandboxed pods by risk level
+	// Sort unsandboxed pods by namespace
 	sort.Slice(unsandboxedPods, func(i, j int) bool {
-		riskOrder := map[string]int{"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
-		return riskOrder[unsandboxedPods[i].RiskLevel] < riskOrder[unsandboxedPods[j].RiskLevel]
+		if unsandboxedPods[i].Namespace != unsandboxedPods[j].Namespace {
+			return unsandboxedPods[i].Namespace < unsandboxedPods[j].Namespace
+		}
+		return unsandboxedPods[i].Name < unsandboxedPods[j].Name
 	})
 
 	return findings, unsandboxedPods
@@ -1573,48 +1762,6 @@ func getAppArmorProfileForPod(annotations map[string]string) string {
 	return "<none>"
 }
 
-func calculateRuntimeRiskLevel(finding *RuntimeAdmissionFinding) string {
-	if finding.TotalPods == 0 {
-		return "INFO"
-	}
-
-	score := 0
-
-	// Privileged pods
-	score += finding.PrivilegedPods * 30
-
-	// Host namespace access
-	score += finding.HostPIDPods * 20
-	score += finding.HostNetworkPods * 10
-	score += finding.HostIPCPods * 10
-
-	// Lack of seccomp
-	if finding.TotalPods > 0 && float64(finding.SeccompDisabled)/float64(finding.TotalPods) > 0.5 {
-		score += 20
-	}
-
-	// Lack of AppArmor
-	if finding.TotalPods > 0 && float64(finding.AppArmorDisabled)/float64(finding.TotalPods) > 0.5 {
-		score += 15
-	}
-
-	// No sandboxed runtime
-	if finding.SandboxedPods == 0 && finding.TotalPods > 5 {
-		score += 10
-	}
-
-	if score >= 50 {
-		return "CRITICAL"
-	} else if score >= 30 {
-		return "HIGH"
-	} else if score >= 15 {
-		return "MEDIUM"
-	} else if score > 0 {
-		return "LOW"
-	}
-	return "INFO"
-}
-
 func runtimeAdmissionContainsString(slice []string, s string) bool {
 	for _, item := range slice {
 		if item == s {
@@ -1639,9 +1786,9 @@ func generateRuntimeAdmissionLoot(loot *shared.LootBuilder,
 	tracee RuntimeTraceeInfo,
 	pssResults []RuntimePSSInfo) {
 
-	// Summary
-	loot.Section("Summary").Add("# Runtime Security Summary")
-	loot.Section("Summary").Add("#")
+	s := loot.Section("runtime-admission")
+	s.Add("# Runtime Security Summary")
+	s.Add("#")
 
 	// RuntimeClasses summary
 	sandboxedRCs := 0
@@ -1650,7 +1797,7 @@ func generateRuntimeAdmissionLoot(loot *shared.LootBuilder,
 			sandboxedRCs++
 		}
 	}
-	loot.Section("Summary").Add(fmt.Sprintf("# RuntimeClasses: %d total, %d sandboxed", len(runtimeClasses), sandboxedRCs))
+	s.Add(fmt.Sprintf("# RuntimeClasses: %d total, %d sandboxed", len(runtimeClasses), sandboxedRCs))
 
 	// Seccomp summary
 	if seccompOperator.Name != "" {
@@ -1658,35 +1805,39 @@ func generateRuntimeAdmissionLoot(loot *shared.LootBuilder,
 		if seccompOperator.ImageVerified {
 			status += " (verified)"
 		}
-		loot.Section("Summary").Add(fmt.Sprintf("# Security Profiles Operator: %s (%d profiles)", status, seccompOperator.Profiles))
+		s.Add(fmt.Sprintf("# Security Profiles Operator: %s (%d profiles)", status, seccompOperator.Profiles))
 	} else {
-		loot.Section("Summary").Add("# Security Profiles Operator: Not installed")
+		s.Add("# Security Profiles Operator: Not installed")
 	}
 
-	// Falco summary
+	// Runtime detection tools
+	type toolStatus struct {
+		name   string
+		status string
+		detail string
+	}
+	var detected []toolStatus
+
 	if falco.Name != "" {
-		status := falco.Status
-		if falco.ImageVerified {
-			status += " (verified)"
-		}
-		loot.Section("Summary").Add(fmt.Sprintf("# Falco: %s (%d/%d pods)", status, falco.PodsRunning, falco.TotalPods))
-	} else {
-		loot.Section("Summary").Add("# Falco: Not installed")
+		detail := fmt.Sprintf("%d/%d pods", falco.PodsRunning, falco.TotalPods)
+		detected = append(detected, toolStatus{"Falco", falco.Status, detail})
+	}
+	if tracee.Name != "" {
+		detail := fmt.Sprintf("%d/%d pods", tracee.PodsRunning, tracee.TotalPods)
+		detected = append(detected, toolStatus{"Tracee", tracee.Status, detail})
 	}
 
-	// Tracee summary
-	if tracee.Name != "" {
-		status := tracee.Status
-		if tracee.ImageVerified {
-			status += " (verified)"
+	if len(detected) > 0 {
+		s.Add("#")
+		s.Add("# Runtime Detection Tools:")
+		for _, t := range detected {
+			s.Addf("#   %s: %s (%s)", t.name, strings.ToUpper(t.status), t.detail)
 		}
-		loot.Section("Summary").Add(fmt.Sprintf("# Tracee: %s (%d/%d pods)", status, tracee.PodsRunning, tracee.TotalPods))
-	} else {
-		loot.Section("Summary").Add("# Tracee: Not installed")
 	}
 
 	// AppArmor summary
-	loot.Section("Summary").Add(fmt.Sprintf("# AppArmor Profiles: %d", len(appArmorProfiles)))
+	s.Add("#")
+	s.Add(fmt.Sprintf("# AppArmor Profiles: %d", len(appArmorProfiles)))
 
 	// PSS summary
 	pssRestricted := 0
@@ -1702,165 +1853,52 @@ func generateRuntimeAdmissionLoot(loot *shared.LootBuilder,
 			pssPrivileged++
 		}
 	}
-	loot.Section("Summary").Add(fmt.Sprintf("# Pod Security Standards: %d restricted, %d baseline, %d privileged", pssRestricted, pssBaseline, pssPrivileged))
+	s.Add(fmt.Sprintf("# Pod Security Standards: %d restricted, %d baseline, %d privileged", pssRestricted, pssBaseline, pssPrivileged))
 
-	loot.Section("Summary").Add("#")
-
-	// High-risk pods
-	loot.Section("HighRiskPods").Add("# High-Risk Pods Without Runtime Protection")
-	loot.Section("HighRiskPods").Add("#")
-
-	criticalCount := 0
-	for _, pod := range unsandboxedPods {
-		if pod.RiskLevel == "CRITICAL" {
-			criticalCount++
-			if criticalCount <= 20 {
-				loot.Section("HighRiskPods").Add(fmt.Sprintf("# %s/%s - %s", pod.Namespace, pod.Name, strings.Join(pod.RiskReasons, ", ")))
-				loot.Section("HighRiskPods").Add(fmt.Sprintf("kubectl get pod %s -n %s -o yaml | grep -A5 securityContext", pod.Name, pod.Namespace))
-			}
-		}
+	// Unsandboxed pods
+	if len(unsandboxedPods) > 0 {
+		s.Add("#")
+		s.Add(fmt.Sprintf("# Unsandboxed Pods: %d total", len(unsandboxedPods)))
 	}
 
-	if criticalCount == 0 {
-		loot.Section("HighRiskPods").Add("# No critical risk pods found")
-	} else if criticalCount > 20 {
-		loot.Section("HighRiskPods").Add(fmt.Sprintf("# ... and %d more critical pods", criticalCount-20))
+	// Commands section - only for detected tools
+	s.Add("#")
+	s.Add("# Commands")
+	s.Add("#")
+
+	if len(runtimeClasses) > 0 {
+		s.Add("# List RuntimeClasses:")
+		s.Add("kubectl get runtimeclasses")
+		s.Add("#")
 	}
 
-	// RuntimeClass recommendations
-	loot.Section("RuntimeClasses").Add("# RuntimeClass Analysis")
-	loot.Section("RuntimeClasses").Add("#")
-
-	if len(runtimeClasses) == 0 {
-		loot.Section("RuntimeClasses").Add("# WARNING: No RuntimeClasses defined")
-		loot.Section("RuntimeClasses").Add("# Consider deploying gVisor or Kata Containers for sensitive workloads")
-		loot.Section("RuntimeClasses").Add("#")
-		loot.Section("RuntimeClasses").Add("# Example gVisor RuntimeClass:")
-		loot.Section("RuntimeClasses").Add("# apiVersion: node.k8s.io/v1")
-		loot.Section("RuntimeClasses").Add("# kind: RuntimeClass")
-		loot.Section("RuntimeClasses").Add("# metadata:")
-		loot.Section("RuntimeClasses").Add("#   name: gvisor")
-		loot.Section("RuntimeClasses").Add("# handler: runsc")
-	} else {
-		for _, rc := range runtimeClasses {
-			if rc.IsSandboxed {
-				loot.Section("RuntimeClasses").Add(fmt.Sprintf("# %s (%s): Sandboxed, used by %d pods", rc.Name, rc.HandlerType, rc.UsedByPods))
-			} else {
-				loot.Section("RuntimeClasses").Add(fmt.Sprintf("# %s (%s): NOT sandboxed, used by %d pods", rc.Name, rc.HandlerType, rc.UsedByPods))
-			}
-		}
+	if seccompOperator.Name != "" {
+		s.Add("# Check Seccomp profiles:")
+		s.Add("kubectl get seccompprofiles -A")
+		s.Add("#")
 	}
 
-	// Seccomp recommendations
-	loot.Section("Seccomp").Add("# Seccomp Analysis")
-	loot.Section("Seccomp").Add("#")
-
-	totalPods := 0
-	seccompDisabled := 0
-	for _, f := range findings {
-		totalPods += f.TotalPods
-		seccompDisabled += f.SeccompDisabled
+	if len(appArmorProfiles) > 0 {
+		s.Add("# Check AppArmor profiles:")
+		s.Add("kubectl get apparmorprofiles -A")
+		s.Add("#")
 	}
 
-	if totalPods > 0 {
-		disabledPercent := float64(seccompDisabled) / float64(totalPods) * 100
-		loot.Section("Seccomp").Add(fmt.Sprintf("# %.0f%% of pods lack seccomp profiles (%d/%d)", disabledPercent, seccompDisabled, totalPods))
-	}
-
-	if seccompOperator.Name == "" {
-		loot.Section("Seccomp").Add("#")
-		loot.Section("Seccomp").Add("# Consider installing Security Profiles Operator:")
-		loot.Section("Seccomp").Add("# kubectl apply -f https://github.com/kubernetes-sigs/security-profiles-operator/releases/latest/download/install.yaml")
-	}
-
-	// Falco section
-	loot.Section("Falco").Add("# Falco Runtime Detection")
-	loot.Section("Falco").Add("#")
 	if falco.Name != "" {
-		loot.Section("Falco").Add(fmt.Sprintf("# Status: %s", falco.Status))
-		if falco.ImageVerified {
-			loot.Section("Falco").Add("# Image: Verified")
-		} else {
-			loot.Section("Falco").Add("# WARNING: Image not verified - detection based on labels only")
-		}
-		loot.Section("Falco").Add(fmt.Sprintf("# Pods: %d/%d running", falco.PodsRunning, falco.TotalPods))
-		if falco.BypassRisk != "" {
-			loot.Section("Falco").Add(fmt.Sprintf("# Bypass Risk: %s", falco.BypassRisk))
-		}
-		loot.Section("Falco").Add("#")
-		loot.Section("Falco").Add("# Check Falco logs:")
-		loot.Section("Falco").Add(fmt.Sprintf("kubectl logs -n %s -l app=falco --tail=100", falco.Namespace))
-	} else {
-		loot.Section("Falco").Add("# Falco not detected")
-		loot.Section("Falco").Add("# Consider installing Falco for runtime threat detection:")
-		loot.Section("Falco").Add("# helm repo add falcosecurity https://falcosecurity.github.io/charts")
-		loot.Section("Falco").Add("# helm install falco falcosecurity/falco -n falco --create-namespace")
+		s.Add("# Check Falco logs:")
+		s.Addf("kubectl logs -n %s -l app=falco --tail=100", falco.Namespace)
+		s.Add("#")
 	}
 
-	// Tracee section
-	loot.Section("Tracee").Add("# Tracee eBPF Security")
-	loot.Section("Tracee").Add("#")
 	if tracee.Name != "" {
-		loot.Section("Tracee").Add(fmt.Sprintf("# Status: %s", tracee.Status))
-		if tracee.ImageVerified {
-			loot.Section("Tracee").Add("# Image: Verified")
-		} else {
-			loot.Section("Tracee").Add("# WARNING: Image not verified - detection based on labels only")
-		}
-		loot.Section("Tracee").Add(fmt.Sprintf("# Pods: %d/%d running", tracee.PodsRunning, tracee.TotalPods))
-		if tracee.BypassRisk != "" {
-			loot.Section("Tracee").Add(fmt.Sprintf("# Bypass Risk: %s", tracee.BypassRisk))
-		}
-		loot.Section("Tracee").Add("#")
-		loot.Section("Tracee").Add("# Check Tracee logs:")
-		loot.Section("Tracee").Add(fmt.Sprintf("kubectl logs -n %s -l app=tracee --tail=100", tracee.Namespace))
-	} else {
-		loot.Section("Tracee").Add("# Tracee not detected")
-		loot.Section("Tracee").Add("# Consider installing Tracee for eBPF-based security monitoring:")
-		loot.Section("Tracee").Add("# helm repo add aqua https://aquasecurity.github.io/helm-charts/")
-		loot.Section("Tracee").Add("# helm install tracee aqua/tracee -n tracee --create-namespace")
+		s.Add("# Check Tracee logs:")
+		s.Addf("kubectl logs -n %s -l app=tracee --tail=100", tracee.Namespace)
+		s.Add("#")
 	}
 
-	// PSS section
-	loot.Section("PSS").Add("# Pod Security Standards Analysis")
-	loot.Section("PSS").Add("#")
-	noPSS := 0
-	privilegedPSS := 0
-	for _, pss := range pssResults {
-		if pss.EnforceLevel == "" {
-			noPSS++
-		} else if pss.EnforceLevel == "privileged" {
-			privilegedPSS++
-		}
-	}
-	if noPSS > 0 {
-		loot.Section("PSS").Add(fmt.Sprintf("# WARNING: %d namespaces have no PSS enforcement", noPSS))
-	}
-	if privilegedPSS > 0 {
-		loot.Section("PSS").Add(fmt.Sprintf("# WARNING: %d namespaces allow privileged pods", privilegedPSS))
-	}
-	loot.Section("PSS").Add("#")
-	loot.Section("PSS").Add("# Apply restricted PSS to a namespace:")
-	loot.Section("PSS").Add("kubectl label namespace <ns> pod-security.kubernetes.io/enforce=restricted")
-	loot.Section("PSS").Add("#")
-	loot.Section("PSS").Add("# Check namespace PSS labels:")
-	loot.Section("PSS").Add("kubectl get namespaces -o jsonpath='{range .items[*]}{.metadata.name}: enforce={.metadata.labels.pod-security\\.kubernetes\\.io/enforce}{\"\\n\"}{end}'")
-
-	// Commands
-	loot.Section("Commands").Add("# Useful Commands")
-	loot.Section("Commands").Add("#")
-	loot.Section("Commands").Add("# List RuntimeClasses:")
-	loot.Section("Commands").Add("kubectl get runtimeclasses")
-	loot.Section("Commands").Add("#")
-	loot.Section("Commands").Add("# Find privileged pods:")
-	loot.Section("Commands").Add("kubectl get pods -A -o json | jq '.items[] | select(.spec.containers[].securityContext.privileged==true) | .metadata.namespace + \"/\" + .metadata.name'")
-	loot.Section("Commands").Add("#")
-	loot.Section("Commands").Add("# Find pods without seccomp:")
-	loot.Section("Commands").Add("kubectl get pods -A -o json | jq '.items[] | select(.spec.securityContext.seccompProfile == null) | .metadata.namespace + \"/\" + .metadata.name'")
-	loot.Section("Commands").Add("#")
-	loot.Section("Commands").Add("# Check Seccomp profiles:")
-	loot.Section("Commands").Add("kubectl get seccompprofiles -A")
-	loot.Section("Commands").Add("#")
-	loot.Section("Commands").Add("# Check AppArmor profiles:")
-	loot.Section("Commands").Add("kubectl get apparmorprofiles -A")
+	s.Add("# Find privileged pods:")
+	s.Add("kubectl get pods -A -o json | jq '.items[] | select(.spec.containers[].securityContext.privileged==true) | .metadata.namespace + \"/\" + .metadata.name'")
+	s.Add("#")
+	s.Add("# Find pods without seccomp:")
+	s.Add("kubectl get pods -A -o json | jq '.items[] | select(.spec.securityContext.seccompProfile == null) | .metadata.namespace + \"/\" + .metadata.name'")
 }

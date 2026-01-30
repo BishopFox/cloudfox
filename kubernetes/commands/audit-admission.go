@@ -11,6 +11,7 @@ import (
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/BishopFox/cloudfox/kubernetes/sdk"
 	"github.com/BishopFox/cloudfox/kubernetes/shared"
+	"github.com/BishopFox/cloudfox/kubernetes/shared/admission"
 	"github.com/spf13/cobra"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -27,16 +28,41 @@ var AuditAdmissionCmd = &cobra.Command{
 	Short:   "Analyze runtime security monitoring and audit configurations",
 	Long: `
 Analyze all cluster runtime security monitoring configurations including:
+
+Runtime Security Tools:
   - Falco (DaemonSet, FalcoRules)
   - Tetragon (TracingPolicy CRDs)
   - KubeArmor (KubeArmorPolicy CRDs)
   - Tracee (Aqua)
   - Sysdig Secure Runtime
-  - Kubernetes Audit Policy
+  - CrowdStrike Falcon
+  - Aqua Security, Prisma Cloud, NeuVector, StackRox/RHACS
+
+Kubernetes Audit:
+  - Audit Policy analysis
   - Coverage gap analysis
   - Detection bypass vectors
 
-  cloudfox kubernetes audit-admission`,
+Cloud-Specific Logging/Monitoring (in-cluster detection):
+  Detects cloud logging agents from DaemonSets and pods.
+  No --cloud-provider flag required - reads pods/daemonsets directly.
+
+  AWS:
+    - AWS CloudWatch Agent / Fluent Bit for CloudWatch
+    - AWS GuardDuty EKS Runtime Monitoring
+
+  GCP:
+    - Google Cloud Logging agent (fluentd/fluent-bit stackdriver)
+    - GKE Cloud Operations integration
+
+  Azure:
+    - Azure Monitor Container Insights
+    - OMSAgent for Azure Log Analytics
+    - Azure Defender for Containers
+
+Examples:
+  cloudfox kubernetes audit-admission
+  cloudfox kubernetes audit-admission --detailed`,
 	Run: ListAuditAdmission,
 }
 
@@ -74,7 +100,7 @@ type AuditAdmissionFinding struct {
 	UnmonitoredPods     int
 
 	// Risk Analysis
-	RiskLevel      string
+
 	SecurityIssues []string
 	BypassVectors  []string
 }
@@ -90,7 +116,7 @@ type FalcoInfo struct {
 	OutputChannels   []string
 	RulesCount       int
 	CustomRulesCount int
-	BypassRisk       string
+
 	SecurityIssues   []string
 	ImageVerified    bool // True if Falco image was verified
 }
@@ -105,7 +131,7 @@ type FalcoRuleInfo struct {
 	Output         string
 	Tags           []string
 	Condition      string
-	BypassRisk     string
+
 }
 
 // TetragonInfo represents Tetragon deployment status
@@ -116,7 +142,7 @@ type TetragonInfo struct {
 	PodsRunning   int
 	TotalPods     int
 	Policies      int
-	BypassRisk    string
+
 	ImageVerified bool // True if Tetragon image was verified
 }
 
@@ -130,7 +156,7 @@ type TracingPolicyInfo struct {
 	Tracepoints  int
 	UprobesCount int
 	Actions      []string
-	BypassRisk   string
+
 }
 
 // KubeArmorInfo represents KubeArmor deployment status
@@ -143,7 +169,7 @@ type KubeArmorInfo struct {
 	Policies       int
 	HostPolicies   int
 	DefaultPosture string // audit, block
-	BypassRisk     string
+
 	ImageVerified  bool // True if KubeArmor image was verified
 }
 
@@ -159,7 +185,7 @@ type KubeArmorPolicyInfo struct {
 	NetRules   int
 	CapRules   int
 	SyscallRules int
-	BypassRisk string
+
 }
 
 // TraceeInfo represents Tracee deployment status
@@ -170,7 +196,7 @@ type TraceeInfo struct {
 	PodsRunning   int
 	TotalPods     int
 	Policies      int
-	BypassRisk    string
+
 	ImageVerified bool // True if Tracee image was verified
 }
 
@@ -182,7 +208,7 @@ type SysdigInfo struct {
 	PodsRunning   int
 	TotalPods     int
 	Policies      int
-	BypassRisk    string
+
 	ImageVerified bool // True if Sysdig agent image was verified
 }
 
@@ -195,7 +221,7 @@ type K8sAuditPolicyInfo struct {
 	LogDestination  string
 	PolicyRules     int
 	OmitStages      []string
-	BypassRisk      string
+
 }
 
 // PrismaCloudInfo represents Prisma Cloud/Twistlock status
@@ -206,7 +232,7 @@ type PrismaCloudInfo struct {
 	PodsRunning   int
 	TotalPods     int
 	Defenders     int
-	BypassRisk    string
+
 	ImageVerified bool // True if Prisma Cloud defender image was verified
 }
 
@@ -218,7 +244,7 @@ type AquaInfo struct {
 	PodsRunning   int
 	TotalPods     int
 	Enforcers     int
-	BypassRisk    string
+
 	ImageVerified bool // True if Aqua enforcer image was verified
 }
 
@@ -231,7 +257,7 @@ type StackRoxInfo struct {
 	TotalPods     int
 	CentralActive bool
 	SensorActive  bool
-	BypassRisk    string
+
 	ImageVerified bool // True if StackRox image was verified
 }
 
@@ -244,7 +270,7 @@ type NeuVectorInfo struct {
 	TotalPods     int
 	Controllers   int
 	Enforcers     int
-	BypassRisk    string
+
 	ImageVerified bool // True if NeuVector image was verified
 }
 
@@ -255,7 +281,7 @@ type CrowdStrikeInfo struct {
 	Status        string
 	PodsRunning   int
 	TotalPods     int
-	BypassRisk    string
+
 	ImageVerified bool // True if CrowdStrike Falcon image was verified
 }
 
@@ -266,7 +292,7 @@ type KubescapeRuntimeInfo struct {
 	Status        string
 	PodsRunning   int
 	TotalPods     int
-	BypassRisk    string
+
 	ImageVerified bool // True if Kubescape image was verified
 }
 
@@ -277,7 +303,7 @@ type DeepfenceInfo struct {
 	Status        string
 	PodsRunning   int
 	TotalPods     int
-	BypassRisk    string
+
 	ImageVerified bool // True if Deepfence image was verified
 }
 
@@ -288,7 +314,7 @@ type WizRuntimeInfo struct {
 	Status        string
 	PodsRunning   int
 	TotalPods     int
-	BypassRisk    string
+
 	ImageVerified bool // True if Wiz sensor image was verified
 }
 
@@ -299,7 +325,7 @@ type LaceworkInfo struct {
 	Status        string
 	PodsRunning   int
 	TotalPods     int
-	BypassRisk    string
+
 	ImageVerified bool // True if Lacework agent image was verified
 }
 
@@ -313,13 +339,13 @@ type AuditLogDestinationInfo struct {
 	PodsRunning int
 	TotalPods   int
 	Configured  bool
-	BypassRisk  string
+
 }
 
 // verifyAuditEngineImage checks if an image matches known patterns for the specified engine
 // Now uses the shared admission SDK for centralized engine detection
 func verifyAuditEngineImage(image string, engine string) bool {
-	return VerifyControllerImage(image, engine)
+	return admission.VerifyControllerImage(image, engine)
 }
 
 func ListAuditAdmission(cmd *cobra.Command, args []string) {
@@ -424,6 +450,25 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 	logger.InfoM("Analyzing audit log destinations...", K8S_AUDIT_ADMISSION_MODULE_NAME)
 	auditLogDestinations := analyzeAuditLogDestinations(allDaemonSets, allPods)
 
+	// Analyze Cloud-Specific Logging
+	logger.InfoM("Analyzing AWS CloudWatch...", K8S_AUDIT_ADMISSION_MODULE_NAME)
+	awsCloudWatch := analyzeAWSCloudWatch(allDaemonSets, allPods)
+	if awsCloudWatch.Name != "" {
+		logger.InfoM(fmt.Sprintf("Found %s: %s (%d/%d pods)", awsCloudWatch.Name, awsCloudWatch.Status, awsCloudWatch.PodsRunning, awsCloudWatch.TotalPods), K8S_AUDIT_ADMISSION_MODULE_NAME)
+	}
+
+	logger.InfoM("Analyzing GCP Cloud Logging...", K8S_AUDIT_ADMISSION_MODULE_NAME)
+	gcpCloudLogging := analyzeGCPCloudLogging(allDaemonSets, allPods)
+	if gcpCloudLogging.Name != "" {
+		logger.InfoM(fmt.Sprintf("Found %s: %s (%d/%d pods)", gcpCloudLogging.Name, gcpCloudLogging.Status, gcpCloudLogging.PodsRunning, gcpCloudLogging.TotalPods), K8S_AUDIT_ADMISSION_MODULE_NAME)
+	}
+
+	logger.InfoM("Analyzing Azure Monitor...", K8S_AUDIT_ADMISSION_MODULE_NAME)
+	azureMonitor := analyzeAzureMonitor(allDaemonSets, allPods)
+	if azureMonitor.Name != "" {
+		logger.InfoM(fmt.Sprintf("Found %s: %s (%d/%d pods)", azureMonitor.Name, azureMonitor.Status, azureMonitor.PodsRunning, azureMonitor.TotalPods), K8S_AUDIT_ADMISSION_MODULE_NAME)
+	}
+
 	// Build findings per namespace
 	findings := buildAuditAdmissionFindings(allPods, falco, tetragon, kubearmor, tracee, sysdig, prismaCloud, aquaSecurity, stackrox, neuvector, crowdstrike, kubescape, deepfence, wizRuntime, lacework, kubeArmorPolicies)
 
@@ -437,7 +482,6 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 		"Sysdig",
 		"Coverage",
 		"Detection Tools",
-		"Risk Level",
 		"Issues",
 	}
 
@@ -449,7 +493,7 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 		"Rules Count",
 		"Custom Rules",
 		"Output Channels",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	falcoRulesHeader := []string{
@@ -459,7 +503,7 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 		"Priority",
 		"Enabled",
 		"Tags",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	tetragonHeader := []string{
@@ -467,7 +511,7 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 		"Status",
 		"Pods Running",
 		"Policies",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	tracingPolicyHeader := []string{
@@ -478,7 +522,7 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 		"Kprobes",
 		"Tracepoints",
 		"Actions",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	kubeArmorHeader := []string{
@@ -488,7 +532,7 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 		"Policies",
 		"Host Policies",
 		"Default Posture",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	kubeArmorPolicyHeader := []string{
@@ -500,7 +544,7 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 		"File Rules",
 		"Process Rules",
 		"Network Rules",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	auditLogDestHeader := []string{
@@ -510,7 +554,7 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 		"Status",
 		"Destination",
 		"Pods Running",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	var summaryRows [][]string
@@ -574,7 +618,6 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 			sysdigStatus,
 			finding.CoverageLevel,
 			detectionTools,
-			finding.RiskLevel,
 			issues,
 		})
 	}
@@ -586,6 +629,25 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 			outputChannels = strings.Join(falco.OutputChannels, ", ")
 		}
 
+		// Detect issues
+		var falcoIssues []string
+		if falco.Status != "Running" && falco.Status != "Healthy" {
+			falcoIssues = append(falcoIssues, "Not running")
+		}
+		if falco.PodsRunning < falco.TotalPods {
+			falcoIssues = append(falcoIssues, "Not all pods running")
+		}
+		if falco.RulesCount == 0 {
+			falcoIssues = append(falcoIssues, "No rules loaded")
+		}
+		if len(falco.OutputChannels) == 0 {
+			falcoIssues = append(falcoIssues, "No output channels")
+		}
+		issuesStr := "<NONE>"
+		if len(falcoIssues) > 0 {
+			issuesStr = strings.Join(falcoIssues, "; ")
+		}
+
 		falcoRows = append(falcoRows, []string{
 			falco.Namespace,
 			falco.Status,
@@ -594,7 +656,7 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 			fmt.Sprintf("%d", falco.RulesCount),
 			fmt.Sprintf("%d", falco.CustomRulesCount),
 			outputChannels,
-			falco.BypassRisk,
+			issuesStr,
 		})
 	}
 
@@ -614,6 +676,19 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 			}
 		}
 
+		// Detect issues
+		var ruleIssues []string
+		if !rule.Enabled {
+			ruleIssues = append(ruleIssues, "Rule disabled")
+		}
+		if rule.Priority == "DEBUG" || rule.Priority == "INFORMATIONAL" {
+			ruleIssues = append(ruleIssues, "Low priority")
+		}
+		ruleIssuesStr := "<NONE>"
+		if len(ruleIssues) > 0 {
+			ruleIssuesStr = strings.Join(ruleIssues, "; ")
+		}
+
 		falcoRulesRows = append(falcoRulesRows, []string{
 			rule.Name,
 			rule.Namespace,
@@ -621,18 +696,34 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 			rule.Priority,
 			enabled,
 			tags,
-			rule.BypassRisk,
+			ruleIssuesStr,
 		})
 	}
 
 	// Build Tetragon rows
 	if tetragon.Name != "" {
+		// Detect issues
+		var tetragonIssues []string
+		if tetragon.Status != "Running" && tetragon.Status != "Healthy" {
+			tetragonIssues = append(tetragonIssues, "Not running")
+		}
+		if tetragon.PodsRunning < tetragon.TotalPods {
+			tetragonIssues = append(tetragonIssues, "Not all pods running")
+		}
+		if tetragon.Policies == 0 {
+			tetragonIssues = append(tetragonIssues, "No policies")
+		}
+		issuesStr := "<NONE>"
+		if len(tetragonIssues) > 0 {
+			issuesStr = strings.Join(tetragonIssues, "; ")
+		}
+
 		tetragonRows = append(tetragonRows, []string{
 			tetragon.Namespace,
 			tetragon.Status,
 			fmt.Sprintf("%d/%d", tetragon.PodsRunning, tetragon.TotalPods),
 			fmt.Sprintf("%d", tetragon.Policies),
-			tetragon.BypassRisk,
+			issuesStr,
 		})
 	}
 
@@ -659,6 +750,19 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 			actions = strings.Join(tp.Actions, ", ")
 		}
 
+		// Detect issues
+		var tpIssues []string
+		if tp.Kprobes == 0 && tp.Tracepoints == 0 {
+			tpIssues = append(tpIssues, "No kprobes or tracepoints")
+		}
+		if len(tp.Selectors) == 0 {
+			tpIssues = append(tpIssues, "No selectors")
+		}
+		tpIssuesStr := "<NONE>"
+		if len(tpIssues) > 0 {
+			tpIssuesStr = strings.Join(tpIssues, "; ")
+		}
+
 		tracingPolicyRows = append(tracingPolicyRows, []string{
 			tp.Name,
 			ns,
@@ -667,12 +771,31 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 			fmt.Sprintf("%d", tp.Kprobes),
 			fmt.Sprintf("%d", tp.Tracepoints),
 			actions,
-			tp.BypassRisk,
+			tpIssuesStr,
 		})
 	}
 
 	// Build KubeArmor rows
 	if kubearmor.Name != "" {
+		// Detect issues
+		var kaIssues []string
+		if kubearmor.Status != "Running" && kubearmor.Status != "Healthy" {
+			kaIssues = append(kaIssues, "Not running")
+		}
+		if kubearmor.PodsRunning < kubearmor.TotalPods {
+			kaIssues = append(kaIssues, "Not all pods running")
+		}
+		if kubearmor.Policies == 0 {
+			kaIssues = append(kaIssues, "No policies")
+		}
+		if kubearmor.DefaultPosture == "allow" || kubearmor.DefaultPosture == "audit" {
+			kaIssues = append(kaIssues, "Permissive posture")
+		}
+		issuesStr := "<NONE>"
+		if len(kaIssues) > 0 {
+			issuesStr = strings.Join(kaIssues, "; ")
+		}
+
 		kubeArmorRows = append(kubeArmorRows, []string{
 			kubearmor.Namespace,
 			kubearmor.Status,
@@ -680,7 +803,7 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 			fmt.Sprintf("%d", kubearmor.Policies),
 			fmt.Sprintf("%d", kubearmor.HostPolicies),
 			kubearmor.DefaultPosture,
-			kubearmor.BypassRisk,
+			issuesStr,
 		})
 	}
 
@@ -689,6 +812,19 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 		policyType := "Pod"
 		if kp.IsHost {
 			policyType = "Host"
+		}
+
+		// Detect issues
+		var kpIssues []string
+		if kp.Action == "Allow" || kp.Action == "Audit" {
+			kpIssues = append(kpIssues, "Permissive action")
+		}
+		if kp.FileRules == 0 && kp.ProcRules == 0 && kp.NetRules == 0 {
+			kpIssues = append(kpIssues, "No rules defined")
+		}
+		kpIssuesStr := "<NONE>"
+		if len(kpIssues) > 0 {
+			kpIssuesStr = strings.Join(kpIssues, "; ")
 		}
 
 		kubeArmorPolicyRows = append(kubeArmorPolicyRows, []string{
@@ -700,7 +836,7 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 			fmt.Sprintf("%d", kp.FileRules),
 			fmt.Sprintf("%d", kp.ProcRules),
 			fmt.Sprintf("%d", kp.NetRules),
-			kp.BypassRisk,
+			kpIssuesStr,
 		})
 	}
 
@@ -716,9 +852,20 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 			destination = dest.Destination
 		}
 
-		bypassRisk := "-"
-		if dest.BypassRisk != "" {
-			bypassRisk = dest.BypassRisk
+		// Detect issues
+		var destIssues []string
+		if dest.Status != "Running" && dest.Status != "Healthy" && dest.Status != "Ready" {
+			destIssues = append(destIssues, "Not running")
+		}
+		if dest.PodsRunning < dest.TotalPods && dest.TotalPods > 0 {
+			destIssues = append(destIssues, "Not all pods running")
+		}
+		if dest.Destination == "" || dest.Destination == "-" {
+			destIssues = append(destIssues, "No destination configured")
+		}
+		destIssuesStr := "<NONE>"
+		if len(destIssues) > 0 {
+			destIssuesStr = strings.Join(destIssues, "; ")
 		}
 
 		auditLogDestRows = append(auditLogDestRows, []string{
@@ -728,7 +875,7 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 			dest.Status,
 			destination,
 			podsRunning,
-			bypassRisk,
+			destIssuesStr,
 		})
 	}
 
@@ -915,10 +1062,8 @@ func analyzeFalco(ctx context.Context, allDaemonSets []appsv1.DaemonSet, allPods
 	// Set status
 	if info.PodsRunning == 0 {
 		info.Status = "not-running"
-		info.BypassRisk = "Falco pods not running - no runtime detection"
 	} else if info.PodsRunning < info.TotalPods {
 		info.Status = "degraded"
-		info.BypassRisk = fmt.Sprintf("Only %d/%d Falco pods running", info.PodsRunning, info.TotalPods)
 	} else {
 		info.Status = "active"
 	}
@@ -1013,7 +1158,6 @@ func parseFalcoRule(obj map[string]interface{}) FalcoRuleInfo {
 	}
 
 	if !rule.Enabled {
-		rule.BypassRisk = "Rule disabled"
 	}
 
 	return rule
@@ -1083,10 +1227,8 @@ func analyzeTetragon(ctx context.Context, allDaemonSets []appsv1.DaemonSet, allP
 	// Set status
 	if info.PodsRunning == 0 {
 		info.Status = "not-running"
-		info.BypassRisk = "Tetragon pods not running"
 	} else if info.PodsRunning < info.TotalPods {
 		info.Status = "degraded"
-		info.BypassRisk = fmt.Sprintf("Only %d/%d Tetragon pods running", info.PodsRunning, info.TotalPods)
 	} else {
 		info.Status = "active"
 	}
@@ -1191,7 +1333,6 @@ func parseTracingPolicy(obj map[string]interface{}, isCluster bool) TracingPolic
 	}
 
 	if policy.Kprobes == 0 && policy.Tracepoints == 0 && policy.UprobesCount == 0 {
-		policy.BypassRisk = "No probes defined"
 	}
 
 	return policy
@@ -1261,10 +1402,8 @@ func analyzeKubeArmor(ctx context.Context, allDaemonSets []appsv1.DaemonSet, all
 	// Set status
 	if info.PodsRunning == 0 {
 		info.Status = "not-running"
-		info.BypassRisk = "KubeArmor pods not running"
 	} else if info.PodsRunning < info.TotalPods {
 		info.Status = "degraded"
-		info.BypassRisk = fmt.Sprintf("Only %d/%d KubeArmor pods running", info.PodsRunning, info.TotalPods)
 	} else {
 		info.Status = "active"
 	}
@@ -1307,7 +1446,6 @@ func analyzeKubeArmor(ctx context.Context, allDaemonSets []appsv1.DaemonSet, all
 	// The default posture is set to "audit" above which is the KubeArmor default
 
 	if info.DefaultPosture == "audit" {
-		info.BypassRisk = "Default posture is audit - violations are logged but not blocked"
 	}
 
 	return info, policies
@@ -1387,7 +1525,6 @@ func parseKubeArmorPolicy(obj map[string]interface{}, isHost bool) KubeArmorPoli
 	}
 
 	if policy.Action == "Audit" {
-		policy.BypassRisk = "Audit-only - violations not blocked"
 	}
 
 	return policy
@@ -1456,10 +1593,8 @@ func analyzeTracee(ctx context.Context, allDaemonSets []appsv1.DaemonSet, allPod
 	// Set status
 	if info.PodsRunning == 0 {
 		info.Status = "not-running"
-		info.BypassRisk = "Tracee pods not running"
 	} else if info.PodsRunning < info.TotalPods {
 		info.Status = "degraded"
-		info.BypassRisk = fmt.Sprintf("Only %d/%d Tracee pods running", info.PodsRunning, info.TotalPods)
 	} else {
 		info.Status = "active"
 	}
@@ -1530,10 +1665,8 @@ func analyzeSysdig(ctx context.Context, allDaemonSets []appsv1.DaemonSet, allPod
 	// Set status
 	if info.PodsRunning == 0 {
 		info.Status = "not-running"
-		info.BypassRisk = "Sysdig pods not running"
 	} else if info.PodsRunning < info.TotalPods {
 		info.Status = "degraded"
-		info.BypassRisk = fmt.Sprintf("Only %d/%d Sysdig pods running", info.PodsRunning, info.TotalPods)
 	} else {
 		info.Status = "active"
 	}
@@ -1575,7 +1708,6 @@ func analyzeK8sAuditPolicy(ctx context.Context, allPods []corev1.Pod, allConfigM
 						info.AuditLevel = "Metadata"
 					} else if strings.Contains(data, "level: None") {
 						info.AuditLevel = "None"
-						info.BypassRisk = "Audit level None - no audit logging"
 					}
 
 					// Check for omitStages
@@ -1630,11 +1762,8 @@ func analyzeK8sAuditPolicy(ctx context.Context, allPods []corev1.Pod, allConfigM
 
 	// Assess risk
 	if !info.Detected {
-		info.BypassRisk = "No audit policy detected"
 	} else if info.AuditLevel == "None" || info.AuditLevel == "" {
-		info.BypassRisk = "Audit logging may not capture events"
 	} else if len(info.OmitStages) > 0 {
-		info.BypassRisk = fmt.Sprintf("Omitting stages: %s", strings.Join(info.OmitStages, ", "))
 	}
 
 	return info
@@ -1684,10 +1813,8 @@ func auditAnalyzePrismaCloud(allDaemonSets []appsv1.DaemonSet) PrismaCloudInfo {
 	// Set status
 	if info.PodsRunning == 0 {
 		info.Status = "not-running"
-		info.BypassRisk = "Prisma Cloud defenders not running"
 	} else if info.PodsRunning < info.TotalPods {
 		info.Status = "degraded"
-		info.BypassRisk = fmt.Sprintf("Only %d/%d defenders running", info.PodsRunning, info.TotalPods)
 	} else {
 		info.Status = "active"
 	}
@@ -1739,10 +1866,8 @@ func auditAnalyzeAquaSecurity(allDaemonSets []appsv1.DaemonSet) AquaInfo {
 	// Set status
 	if info.PodsRunning == 0 {
 		info.Status = "not-running"
-		info.BypassRisk = "Aqua enforcers not running"
 	} else if info.PodsRunning < info.TotalPods {
 		info.Status = "degraded"
-		info.BypassRisk = fmt.Sprintf("Only %d/%d enforcers running", info.PodsRunning, info.TotalPods)
 	} else {
 		info.Status = "active"
 	}
@@ -1826,13 +1951,10 @@ func auditAnalyzeStackRox(allDaemonSets []appsv1.DaemonSet, allDeployments []app
 		} else if info.CentralActive || info.SensorActive {
 			info.Status = "degraded"
 			if !info.CentralActive {
-				info.BypassRisk = "Central not running - no policy enforcement"
 			} else {
-				info.BypassRisk = "Sensor not running - no runtime visibility"
 			}
 		} else {
 			info.Status = "not-running"
-			info.BypassRisk = "StackRox components not running"
 		}
 	}
 
@@ -1905,14 +2027,11 @@ func auditAnalyzeNeuVector(allDaemonSets []appsv1.DaemonSet, allDeployments []ap
 		info.Status = "active"
 		if info.PodsRunning < info.TotalPods {
 			info.Status = "degraded"
-			info.BypassRisk = fmt.Sprintf("Only %d/%d enforcers running", info.PodsRunning, info.TotalPods)
 		}
 	} else if info.Controllers > 0 {
 		info.Status = "degraded"
-		info.BypassRisk = "Enforcers not running - no runtime protection"
 	} else {
 		info.Status = "not-running"
-		info.BypassRisk = "NeuVector components not running"
 	}
 
 	return info
@@ -1926,7 +2045,7 @@ func auditAnalyzeCrowdStrike(allDaemonSets []appsv1.DaemonSet, allPods []corev1.
 	info := CrowdStrikeInfo{}
 
 	// Check for CrowdStrike Falcon using SDK expected namespaces
-	expectedNs := GetExpectedNamespaces("crowdstrike")
+	expectedNs := admission.GetExpectedNamespaces("crowdstrike")
 	namespaces := make(map[string]bool)
 	if len(expectedNs) == 0 {
 		namespaces = map[string]bool{"falcon-system": true, "crowdstrike": true, "kube-system": true}
@@ -1967,11 +2086,9 @@ func auditAnalyzeCrowdStrike(allDaemonSets []appsv1.DaemonSet, allPods []corev1.
 		info.Status = "active"
 		if info.PodsRunning < info.TotalPods {
 			info.Status = "degraded"
-			info.BypassRisk = fmt.Sprintf("Only %d/%d Falcon sensors running", info.PodsRunning, info.TotalPods)
 		}
 	} else {
 		info.Status = "not-running"
-		info.BypassRisk = "CrowdStrike Falcon sensors not running"
 	}
 
 	return info
@@ -1985,7 +2102,7 @@ func auditAnalyzeKubescape(allDaemonSets []appsv1.DaemonSet, allPods []corev1.Po
 	info := KubescapeRuntimeInfo{}
 
 	// Check for Kubescape using SDK expected namespaces
-	expectedNs := GetExpectedNamespaces("kubescape-runtime")
+	expectedNs := admission.GetExpectedNamespaces("kubescape-runtime")
 	namespaces := make(map[string]bool)
 	if len(expectedNs) == 0 {
 		namespaces = map[string]bool{"kubescape": true, "armo-system": true, "kube-system": true}
@@ -2028,11 +2145,9 @@ func auditAnalyzeKubescape(allDaemonSets []appsv1.DaemonSet, allPods []corev1.Po
 		info.Status = "active"
 		if info.PodsRunning < info.TotalPods {
 			info.Status = "degraded"
-			info.BypassRisk = fmt.Sprintf("Only %d/%d Kubescape pods running", info.PodsRunning, info.TotalPods)
 		}
 	} else {
 		info.Status = "not-running"
-		info.BypassRisk = "Kubescape not running"
 	}
 
 	return info
@@ -2046,7 +2161,7 @@ func auditAnalyzeDeepfence(allDaemonSets []appsv1.DaemonSet, allPods []corev1.Po
 	info := DeepfenceInfo{}
 
 	// Check for Deepfence using SDK expected namespaces
-	expectedNs := GetExpectedNamespaces("deepfence")
+	expectedNs := admission.GetExpectedNamespaces("deepfence")
 	namespaces := make(map[string]bool)
 	if len(expectedNs) == 0 {
 		namespaces = map[string]bool{"deepfence": true, "kube-system": true}
@@ -2087,11 +2202,9 @@ func auditAnalyzeDeepfence(allDaemonSets []appsv1.DaemonSet, allPods []corev1.Po
 		info.Status = "active"
 		if info.PodsRunning < info.TotalPods {
 			info.Status = "degraded"
-			info.BypassRisk = fmt.Sprintf("Only %d/%d Deepfence agents running", info.PodsRunning, info.TotalPods)
 		}
 	} else {
 		info.Status = "not-running"
-		info.BypassRisk = "Deepfence agents not running"
 	}
 
 	return info
@@ -2105,7 +2218,7 @@ func auditAnalyzeWiz(allDaemonSets []appsv1.DaemonSet, allPods []corev1.Pod) Wiz
 	info := WizRuntimeInfo{}
 
 	// Check for Wiz using SDK expected namespaces
-	expectedNs := GetExpectedNamespaces("wiz-runtime")
+	expectedNs := admission.GetExpectedNamespaces("wiz-runtime")
 	namespaces := make(map[string]bool)
 	if len(expectedNs) == 0 {
 		namespaces = map[string]bool{"wiz": true, "kube-system": true}
@@ -2146,11 +2259,9 @@ func auditAnalyzeWiz(allDaemonSets []appsv1.DaemonSet, allPods []corev1.Pod) Wiz
 		info.Status = "active"
 		if info.PodsRunning < info.TotalPods {
 			info.Status = "degraded"
-			info.BypassRisk = fmt.Sprintf("Only %d/%d Wiz sensors running", info.PodsRunning, info.TotalPods)
 		}
 	} else {
 		info.Status = "not-running"
-		info.BypassRisk = "Wiz sensors not running"
 	}
 
 	return info
@@ -2164,7 +2275,7 @@ func auditAnalyzeLacework(allDaemonSets []appsv1.DaemonSet, allPods []corev1.Pod
 	info := LaceworkInfo{}
 
 	// Check for Lacework using SDK expected namespaces
-	expectedNs := GetExpectedNamespaces("lacework")
+	expectedNs := admission.GetExpectedNamespaces("lacework")
 	namespaces := make(map[string]bool)
 	if len(expectedNs) == 0 {
 		namespaces = map[string]bool{"lacework": true, "kube-system": true}
@@ -2205,11 +2316,9 @@ func auditAnalyzeLacework(allDaemonSets []appsv1.DaemonSet, allPods []corev1.Pod
 		info.Status = "active"
 		if info.PodsRunning < info.TotalPods {
 			info.Status = "degraded"
-			info.BypassRisk = fmt.Sprintf("Only %d/%d Lacework agents running", info.PodsRunning, info.TotalPods)
 		}
 	} else {
 		info.Status = "not-running"
-		info.BypassRisk = "Lacework agents not running"
 	}
 
 	return info
@@ -2356,12 +2465,9 @@ func buildAuditAdmissionFindings(allPods []corev1.Pod,
 
 		// Calculate risk level
 		if !finding.HasRuntimeDetection {
-			finding.RiskLevel = "CRITICAL"
 			finding.SecurityIssues = append(finding.SecurityIssues, "No runtime detection")
 		} else if finding.CoverageLevel == "Partial" {
-			finding.RiskLevel = "MEDIUM"
 		} else {
-			finding.RiskLevel = "LOW"
 		}
 
 		// Add tool-specific issues
@@ -2498,10 +2604,10 @@ func generateAuditAdmissionLoot(loot *shared.LootBuilder,
 	loot.Section("BypassVectors").Add("#")
 
 	if falco.Status == "degraded" {
-		loot.Section("BypassVectors").Add(fmt.Sprintf("# Falco: %s", falco.BypassRisk))
+		loot.Section("BypassVectors").Add("# Falco: degraded - partial or no coverage")
 	}
 	if tetragon.Status == "degraded" {
-		loot.Section("BypassVectors").Add(fmt.Sprintf("# Tetragon: %s", tetragon.BypassRisk))
+		loot.Section("BypassVectors").Add("# Tetragon: degraded - partial or no coverage")
 	}
 	if kubearmor.DefaultPosture == "audit" {
 		loot.Section("BypassVectors").Add("# KubeArmor: Default posture is audit - violations logged but not blocked")
@@ -2573,7 +2679,6 @@ func analyzeAuditLogDestinations(allDaemonSets []appsv1.DaemonSet, allPods []cor
 
 					if destInfo.PodsRunning < destInfo.TotalPods {
 						destInfo.Status = "degraded"
-						destInfo.BypassRisk = fmt.Sprintf("Only %d/%d pods running", destInfo.PodsRunning, destInfo.TotalPods)
 					}
 
 					// Check for audit log volume mounts
@@ -2618,7 +2723,6 @@ func analyzeAuditLogDestinations(allDaemonSets []appsv1.DaemonSet, allPods []cor
 
 				if destInfo.PodsRunning < destInfo.TotalPods {
 					destInfo.Status = "degraded"
-					destInfo.BypassRisk = fmt.Sprintf("Only %d/%d pods running", destInfo.PodsRunning, destInfo.TotalPods)
 				}
 
 				destinations = append(destinations, destInfo)
@@ -2649,7 +2753,6 @@ func analyzeAuditLogDestinations(allDaemonSets []appsv1.DaemonSet, allPods []cor
 
 				if destInfo.PodsRunning < destInfo.TotalPods {
 					destInfo.Status = "degraded"
-					destInfo.BypassRisk = fmt.Sprintf("Only %d/%d pods running", destInfo.PodsRunning, destInfo.TotalPods)
 				}
 
 				destinations = append(destinations, destInfo)
@@ -2680,7 +2783,6 @@ func analyzeAuditLogDestinations(allDaemonSets []appsv1.DaemonSet, allPods []cor
 
 				if destInfo.PodsRunning < destInfo.TotalPods {
 					destInfo.Status = "degraded"
-					destInfo.BypassRisk = fmt.Sprintf("Only %d/%d pods running", destInfo.PodsRunning, destInfo.TotalPods)
 				}
 
 				destinations = append(destinations, destInfo)
@@ -2710,7 +2812,6 @@ func analyzeAuditLogDestinations(allDaemonSets []appsv1.DaemonSet, allPods []cor
 
 				if destInfo.PodsRunning < destInfo.TotalPods {
 					destInfo.Status = "degraded"
-					destInfo.BypassRisk = fmt.Sprintf("Only %d/%d pods running", destInfo.PodsRunning, destInfo.TotalPods)
 				}
 
 				destinations = append(destinations, destInfo)
@@ -2746,9 +2847,215 @@ func analyzeAuditLogDestinations(allDaemonSets []appsv1.DaemonSet, allPods []cor
 			Name:       "No audit log forwarding detected",
 			Namespace:  "-",
 			Status:     "not-configured",
-			BypassRisk: "Audit logs may not be forwarded to SIEM",
 		})
 	}
 
 	return destinations
+}
+
+// ============================================================================
+// Cloud-Specific Logging Analysis
+// ============================================================================
+
+// AWSCloudWatchInfo represents AWS CloudWatch agent detection
+type AWSCloudWatchInfo struct {
+	Name           string
+	Namespace      string
+	Status         string
+	PodsRunning    int
+	TotalPods      int
+	LogGroups      []string
+	FluentBitUsed  bool
+	ImageVerified  bool
+}
+
+// GCPCloudLoggingInfo represents GCP Cloud Logging agent detection
+type GCPCloudLoggingInfo struct {
+	Name          string
+	Namespace     string
+	Status        string
+	PodsRunning   int
+	TotalPods     int
+	FluentdUsed   bool
+	FluentBitUsed bool
+	ImageVerified bool
+}
+
+// AzureMonitorInfo represents Azure Monitor Container Insights detection
+type AzureMonitorInfo struct {
+	Name          string
+	Namespace     string
+	Status        string
+	PodsRunning   int
+	TotalPods     int
+	OMSAgentUsed  bool
+	AMALogsUsed   bool
+	ImageVerified bool
+}
+
+// analyzeAWSCloudWatch detects AWS CloudWatch agent and Fluent Bit for CloudWatch
+func analyzeAWSCloudWatch(allDaemonSets []appsv1.DaemonSet, allPods []corev1.Pod) AWSCloudWatchInfo {
+	info := AWSCloudWatchInfo{}
+
+	// Check for CloudWatch agent or Fluent Bit for CloudWatch
+	cloudwatchNs := map[string]bool{"amazon-cloudwatch": true, "kube-system": true, "logging": true, "aws-observability": true}
+
+	for _, ds := range allDaemonSets {
+		if !cloudwatchNs[ds.Namespace] {
+			continue
+		}
+		for _, container := range ds.Spec.Template.Spec.Containers {
+			imageLower := strings.ToLower(container.Image)
+			if strings.Contains(imageLower, "cloudwatch-agent") ||
+				strings.Contains(imageLower, "amazon/cloudwatch") {
+				info.Name = "AWS CloudWatch Agent"
+				info.Namespace = ds.Namespace
+				info.TotalPods = int(ds.Status.DesiredNumberScheduled)
+				info.PodsRunning = int(ds.Status.NumberReady)
+				info.ImageVerified = verifyAuditEngineImage(container.Image, "aws-cloudwatch")
+				break
+			}
+			if strings.Contains(imageLower, "aws-for-fluent-bit") ||
+				(strings.Contains(imageLower, "fluent-bit") && strings.Contains(imageLower, "aws")) {
+				info.Name = "AWS Fluent Bit"
+				info.Namespace = ds.Namespace
+				info.TotalPods = int(ds.Status.DesiredNumberScheduled)
+				info.PodsRunning = int(ds.Status.NumberReady)
+				info.FluentBitUsed = true
+				info.ImageVerified = verifyAuditEngineImage(container.Image, "aws-cloudwatch")
+				break
+			}
+		}
+		if info.Name != "" {
+			break
+		}
+	}
+
+	if info.Name == "" {
+		return info
+	}
+
+	// Set status
+	if info.PodsRunning > 0 {
+		info.Status = "active"
+		if info.PodsRunning < info.TotalPods {
+			info.Status = "degraded"
+		}
+	} else {
+		info.Status = "not-running"
+	}
+
+	return info
+}
+
+// analyzeGCPCloudLogging detects GCP Cloud Logging agents
+func analyzeGCPCloudLogging(allDaemonSets []appsv1.DaemonSet, allPods []corev1.Pod) GCPCloudLoggingInfo {
+	info := GCPCloudLoggingInfo{}
+
+	// Check for GCP logging agents
+	gkeNs := map[string]bool{"kube-system": true, "gke-system": true}
+
+	for _, ds := range allDaemonSets {
+		if !gkeNs[ds.Namespace] {
+			continue
+		}
+		for _, container := range ds.Spec.Template.Spec.Containers {
+			imageLower := strings.ToLower(container.Image)
+			if strings.Contains(imageLower, "stackdriver-logging") ||
+				strings.Contains(imageLower, "fluentd-gcp") ||
+				strings.Contains(imageLower, "gke-logging") {
+				info.Name = "GCP Cloud Logging"
+				info.Namespace = ds.Namespace
+				info.TotalPods = int(ds.Status.DesiredNumberScheduled)
+				info.PodsRunning = int(ds.Status.NumberReady)
+				info.FluentdUsed = strings.Contains(imageLower, "fluentd")
+				info.ImageVerified = verifyAuditEngineImage(container.Image, "gcp-cloud-logging")
+				break
+			}
+			if strings.Contains(imageLower, "fluent-bit-gke") {
+				info.Name = "GCP Cloud Logging (Fluent Bit)"
+				info.Namespace = ds.Namespace
+				info.TotalPods = int(ds.Status.DesiredNumberScheduled)
+				info.PodsRunning = int(ds.Status.NumberReady)
+				info.FluentBitUsed = true
+				info.ImageVerified = verifyAuditEngineImage(container.Image, "gcp-cloud-logging")
+				break
+			}
+		}
+		if info.Name != "" {
+			break
+		}
+	}
+
+	if info.Name == "" {
+		return info
+	}
+
+	// Set status
+	if info.PodsRunning > 0 {
+		info.Status = "active"
+		if info.PodsRunning < info.TotalPods {
+			info.Status = "degraded"
+		}
+	} else {
+		info.Status = "not-running"
+	}
+
+	return info
+}
+
+// analyzeAzureMonitor detects Azure Monitor Container Insights
+func analyzeAzureMonitor(allDaemonSets []appsv1.DaemonSet, allPods []corev1.Pod) AzureMonitorInfo {
+	info := AzureMonitorInfo{}
+
+	// Check for Azure Monitor agents
+	aksNs := map[string]bool{"kube-system": true, "azure-monitor": true}
+
+	for _, ds := range allDaemonSets {
+		if !aksNs[ds.Namespace] {
+			continue
+		}
+		for _, container := range ds.Spec.Template.Spec.Containers {
+			imageLower := strings.ToLower(container.Image)
+			if strings.Contains(imageLower, "omsagent") ||
+				strings.Contains(imageLower, "oms-agent") {
+				info.Name = "Azure Monitor (OMS Agent)"
+				info.Namespace = ds.Namespace
+				info.TotalPods = int(ds.Status.DesiredNumberScheduled)
+				info.PodsRunning = int(ds.Status.NumberReady)
+				info.OMSAgentUsed = true
+				info.ImageVerified = verifyAuditEngineImage(container.Image, "azure-monitor")
+				break
+			}
+			if strings.Contains(imageLower, "ama-logs") ||
+				strings.Contains(imageLower, "azure-monitor-agent") {
+				info.Name = "Azure Monitor Agent"
+				info.Namespace = ds.Namespace
+				info.TotalPods = int(ds.Status.DesiredNumberScheduled)
+				info.PodsRunning = int(ds.Status.NumberReady)
+				info.AMALogsUsed = true
+				info.ImageVerified = verifyAuditEngineImage(container.Image, "azure-monitor")
+				break
+			}
+		}
+		if info.Name != "" {
+			break
+		}
+	}
+
+	if info.Name == "" {
+		return info
+	}
+
+	// Set status
+	if info.PodsRunning > 0 {
+		info.Status = "active"
+		if info.PodsRunning < info.TotalPods {
+			info.Status = "degraded"
+		}
+	} else {
+		info.Status = "not-running"
+	}
+
+	return info
 }

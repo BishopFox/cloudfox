@@ -250,4 +250,68 @@ func (r *EngineRegistry) registerMeshEngines() {
 		LabelSelectors:     []string{"app.kubernetes.io/name=flomesh.io", "app=fsm-controller"},
 		RequireImageVerification: true,
 	})
+
+	// GCP Traffic Director / Anthos Service Mesh
+	r.register(&Engine{
+		ID:       "gcp-traffic-director",
+		Name:     "GCP Traffic Director",
+		Category: CategoryMesh,
+		TrustedRegistries: []string{
+			"gcr.io/gke-release/",
+			"gke.gcr.io/",
+		},
+		ImagePatterns: []string{
+			"gke.gcr.io/asm/",
+			"traffic-director-proxyv2",
+			"td-grpc-bootstrap",
+			"gcp-traffic-director",
+		},
+		DeploymentPatterns: []string{"traffic-director"},
+		ExpectedNamespaces: []string{"kube-system", "gke-system", "asm-system"},
+		CRDGroups:          []string{"networking.gke.io", "hub.gke.io"},
+		LabelSelectors:     []string{"app=traffic-director"},
+		RequireImageVerification: true,
+	})
+
+	// GCP Anthos Service Mesh
+	r.register(&Engine{
+		ID:       "anthos-service-mesh",
+		Name:     "Anthos Service Mesh",
+		Category: CategoryMesh,
+		TrustedRegistries: []string{
+			"gcr.io/gke-release/",
+			"gke.gcr.io/",
+		},
+		ImagePatterns: []string{
+			"gke.gcr.io/asm/",
+			"asm/proxyv2",
+			"asm/pilot",
+			"managed-cni",
+		},
+		DeploymentPatterns: []string{"istiod-asm", "canonical-service-controller"},
+		ExpectedNamespaces: []string{"asm-system", "istio-system", "gke-managed-cni"},
+		WebhookPatterns:    []string{"istiod-asm"},
+		CRDGroups:          []string{"security.istio.io", "networking.istio.io", "mesh.cloud.google.com"},
+		LabelSelectors:     []string{"app=istiod", "istio.io/rev"},
+		RequireImageVerification: true,
+	})
+
+	// Azure Application Gateway Ingress Controller (AGIC)
+	r.register(&Engine{
+		ID:       "azure-agic",
+		Name:     "Azure Application Gateway Ingress",
+		Category: CategoryMesh,
+		TrustedRegistries: []string{
+			"mcr.microsoft.com/",
+		},
+		ImagePatterns: []string{
+			"azure-application-gateway-kubernetes-ingress",
+			"application-gateway-kubernetes-ingress",
+		},
+		DeploymentPatterns: []string{"ingress-appgw-deployment", "ingress-azure"},
+		ExpectedNamespaces: []string{"kube-system", "azure-agic"},
+		CRDGroups:          []string{"appgw.ingress.k8s.io"},
+		LabelSelectors:     []string{"app=ingress-azure"},
+		RequireImageVerification: true,
+	})
 }

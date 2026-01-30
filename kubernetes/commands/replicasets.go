@@ -101,10 +101,8 @@ type ReplicaSetFinding struct {
 	ContainerEscapeP []string
 
 	// Security Analysis
-	RiskLevel      string
-	RiskScore      int
-	BlastRadius    int
 	SecurityIssues []string
+	RiskScore      int // Internal score for prioritization (0-100)
 
 	// Pod Template Security Context
 	Privileged             bool
@@ -241,9 +239,6 @@ func ListReplicaSets(cmd *cobra.Command, args []string) {
 	var containerRows [][]string
 	var volumeRows [][]string
 	var findings []ReplicaSetFinding
-
-	// Risk counters
-	riskCounts := shared.NewRiskCounts()
 
 	// Loot content will be generated after processing all replicasets
 	// We'll use findings to generate consolidated loot
@@ -591,16 +586,12 @@ func ListReplicaSets(cmd *cobra.Command, args []string) {
 			// Security Issues Summary
 			finding.SecurityIssues = generateTemplateSecurityIssues(&finding)
 
-			// Calculate risk score and level
-			finding.RiskLevel, finding.RiskScore = calculateReplicaSetRiskScore(&finding)
-
-			// Calculate blast radius (risk score × replica count)
-			finding.BlastRadius = finding.RiskScore * int(finding.ReplicaCount)
-
 			// Impact summary
 			finding.ImpactSummary = generateImpactSummary(&finding)
 
-			riskCounts.Add(finding.RiskLevel)
+			// Calculate risk score for prioritization
+			finding.RiskScore = calculateReplicaSetRiskScore(&finding)
+
 			findings = append(findings, finding)
 
 			// Build Security Context column (pod-level only)
@@ -735,7 +726,7 @@ func ListReplicaSets(cmd *cobra.Command, args []string) {
 	volumeTable := internal.TableFile{Name: "ReplicaSet-Volumes", Header: volumeHeaders, Body: volumeRows}
 
 	// Generate consolidated loot files
-	lootFiles := generateReplicaSetLoot(findings, riskCounts)
+	lootFiles := generateReplicaSetLoot(findings)
 
 	err = internal.HandleOutput(
 		"Kubernetes",
@@ -758,15 +749,6 @@ func ListReplicaSets(cmd *cobra.Command, args []string) {
 
 	if len(summaryRows) > 0 {
 		logger.InfoM(fmt.Sprintf("%d replicasets found", len(summaryRows)), globals.K8S_REPLICASETS_MODULE_NAME)
-		logger.InfoM(fmt.Sprintf("Risk Summary: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
-			riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low), globals.K8S_REPLICASETS_MODULE_NAME)
-
-		if riskCounts.Critical > 0 {
-			logger.InfoM(fmt.Sprintf("⚠️  %d CRITICAL risk replicasets detected!", riskCounts.Critical), globals.K8S_REPLICASETS_MODULE_NAME)
-		}
-		if riskCounts.High > 0 {
-			logger.InfoM(fmt.Sprintf("⚠️  %d HIGH risk replicasets detected!", riskCounts.High), globals.K8S_REPLICASETS_MODULE_NAME)
-		}
 	} else {
 		logger.InfoM("No replicasets found, skipping output file creation", globals.K8S_REPLICASETS_MODULE_NAME)
 	}
@@ -1285,118 +1267,10 @@ func generateTemplateSecurityIssues(finding *ReplicaSetFinding) []string {
 	return issues
 }
 
-func calculateReplicaSetRiskScore(finding *ReplicaSetFinding) (string, int) {
-	score := 0
-
-	// CRITICAL factors
-	if finding.Privileged {
-		score += 90
-		if finding.HostPID || finding.HostNetwork || finding.HostIPC {
-			return "CRITICAL", 100
-		}
-	}
-
-	// Host namespace access
-	if finding.HostPID {
-		score += 70
-	}
-	if finding.HostNetwork {
-		score += 60
-	}
-	if finding.HostIPC {
-		score += 50
-	}
-
-	// Sensitive host paths
-	for _, hp := range finding.SensitiveHostPaths {
-		if strings.Contains(hp, "docker.sock") || strings.Contains(hp, "containerd") {
-			score += 95
-		} else if strings.Contains(hp, "/etc/kubernetes") || strings.Contains(hp, "kubelet") {
-			score += 85
-		} else if strings.Contains(hp, " / ") || strings.Contains(hp, "/etc ") {
-			score += 80
-		} else {
-			score += 30
-		}
-	}
-
-	score += finding.WritableHostPaths * 25
-
-	// Dangerous capabilities
-	for _, cap := range finding.DangerousCaps {
-		switch cap {
-		case "SYS_ADMIN", "SYS_MODULE":
-			score += 80
-		case "SYS_PTRACE", "SYS_RAWIO":
-			score += 60
-		case "NET_ADMIN", "DAC_READ_SEARCH", "DAC_OVERRIDE":
-			score += 40
-		default:
-			score += 20
-		}
-	}
-
-	// Security context weaknesses
-	if finding.RunAsRoot {
-		score += 15
-	}
-	if finding.AllowPrivEsc {
-		score += 20
-	}
-	if !finding.ReadOnlyRootFilesystem {
-		score += 10
-	}
-	if finding.SeccompUnconfined {
-		score += 25
-	}
-	if finding.AppArmorUndefined {
-		score += 15
-	}
-	if finding.ProcMountUnmasked {
-		score += 30
-	}
-
-	score += finding.TotalSecretsExposed * 10
-
-	if finding.NoLimits {
-		score += 20
-		if finding.HighReplicaCount {
-			score += 30 // Extra penalty for high replica count without limits
-		}
-	}
-
-	if finding.LatestTag {
-		score += 10
-	}
-	if finding.UnverifiedImage {
-		score += 5
-	}
-
-	if finding.CloudRole != "" {
-		score += 30
-	}
-
-	score += finding.BaselineViolations * 5
-	score += finding.RestrictedViolations * 2
-
-	// Determine risk level
-	if score >= 80 {
-		return "CRITICAL", score
-	} else if score >= 50 {
-		return "HIGH", score
-	} else if score >= 25 {
-		return "MEDIUM", score
-	}
-	return "LOW", score
-}
 
 func generateImpactSummary(finding *ReplicaSetFinding) string {
 	if finding.ReplicaCount == 0 {
 		return "Inactive (0 replicas)"
-	}
-
-	if finding.RiskLevel == "CRITICAL" || finding.RiskLevel == "HIGH" {
-		return fmt.Sprintf("Will create %d %s risk pods", finding.ReplicaCount, finding.RiskLevel)
 	}
 
 	if finding.IsOrphaned {
@@ -1410,42 +1284,6 @@ func generateImpactSummary(finding *ReplicaSetFinding) string {
 	return fmt.Sprintf("%d replicas", finding.ReplicaCount)
 }
 
-func generateReplicaSetTableRow(finding *ReplicaSetFinding) []string {
-	return []string{
-		finding.RiskLevel,
-		fmt.Sprintf("%d", finding.BlastRadius),
-		finding.Namespace,
-		finding.Name,
-		k8sinternal.NonEmpty(finding.DeploymentName),
-		fmt.Sprintf("%v", finding.IsOrphaned),
-		fmt.Sprintf("%d/%d/%d", finding.DesiredReplicas, finding.CurrentReplicas, finding.ReadyReplicas),
-		k8sinternal.NonEmpty(finding.ServiceAccount),
-		fmt.Sprintf("%v", finding.HostPID),
-		fmt.Sprintf("%v", finding.HostIPC),
-		fmt.Sprintf("%v", finding.HostNetwork),
-		fmt.Sprintf("%v", finding.Privileged),
-		fmt.Sprintf("%v", finding.RunAsRoot),
-		fmt.Sprintf("%v", finding.AllowPrivEsc),
-		fmt.Sprintf("%v", finding.ReadOnlyRootFilesystem),
-		finding.SELinuxContext,
-		finding.AppArmorProfile,
-		finding.SeccompProfile,
-		stringListOrNoneRS(finding.Capabilities),
-		stringListOrNoneRS(finding.DangerousCaps),
-		stringListOrNoneRS(finding.HostPaths),
-		stringListOrNoneRS(finding.SensitiveHostPaths),
-		stringListOrNoneRS(finding.SecretVolumes),
-		stringListOrNoneRS(finding.SecretEnvVars),
-		stringListOrNoneRS(finding.ImageTagTypes),
-		fmt.Sprintf("%v", finding.LatestTag),
-		stringListOrNoneRS(finding.ResourceLimits),
-		stringListOrNoneRS(finding.ResourceRequests),
-		finding.PSSCompliance,
-		fmt.Sprintf("%d violations", len(finding.PSSViolations)),
-		stringListOrNoneRS(finding.SecurityIssues),
-		finding.ImpactSummary,
-	}
-}
 
 func stringListOrNoneRS(list []string) string {
 	if len(list) == 0 {
@@ -1454,55 +1292,150 @@ func stringListOrNoneRS(list []string) string {
 	return strings.Join(list, ", ")
 }
 
+// calculateReplicaSetRiskScore returns an internal score (0-100) for prioritization
+func calculateReplicaSetRiskScore(finding *ReplicaSetFinding) int {
+	score := 0
+
+	// Critical patterns (50+ points)
+	if len(finding.ReverseShells) > 0 {
+		score += 50
+	}
+	if len(finding.CryptoMiners) > 0 {
+		score += 45
+	}
+	if len(finding.DataExfiltration) > 0 {
+		score += 45
+	}
+	if len(finding.ContainerEscapeP) > 0 {
+		score += 50
+	}
+
+	// Privileged access (30-40 points)
+	if finding.Privileged {
+		score += 40
+	}
+	if finding.HostPID {
+		score += 35
+	}
+	if finding.HostIPC {
+		score += 30
+	}
+	if finding.HostNetwork {
+		score += 30
+	}
+
+	// Sensitive access (20-30 points)
+	if len(finding.SensitiveHostPaths) > 0 {
+		score += 25
+	}
+	if finding.WritableHostPaths > 0 {
+		score += 20
+	}
+
+	// Dangerous capabilities (15-25 points each)
+	for _, cap := range finding.DangerousCaps {
+		switch cap {
+		case "SYS_ADMIN":
+			score += 25
+		case "SYS_MODULE", "SYS_RAWIO", "SYS_PTRACE":
+			score += 20
+		case "DAC_READ_SEARCH", "NET_ADMIN":
+			score += 15
+		}
+	}
+
+	// Medium risk factors (10-15 points)
+	if finding.RunAsRoot {
+		score += 15
+	}
+	if finding.AllowPrivEsc {
+		score += 10
+	}
+	if finding.NoLimits {
+		score += 10
+	}
+	if finding.LatestTag {
+		score += 5
+	}
+
+	// High replica count amplifies risk
+	if finding.HighReplicaCount {
+		score += 10
+	}
+
+	// Orphaned ReplicaSet (potential persistence)
+	if finding.IsOrphaned && finding.ReplicaCount > 0 {
+		score += 15
+	}
+
+	// Cloud role adds value
+	if finding.CloudRole != "" {
+		score += 15
+	}
+
+	// Cap at 100
+	if score > 100 {
+		score = 100
+	}
+
+	return score
+}
+
 // generateReplicaSetLoot generates consolidated loot files for replicasets
-func generateReplicaSetLoot(findings []ReplicaSetFinding, riskCounts *shared.RiskCounts) []internal.LootFile {
+func generateReplicaSetLoot(findings []ReplicaSetFinding) []internal.LootFile {
+	// Sort findings by RiskScore descending for prioritization
+	sort.Slice(findings, func(i, j int) bool {
+		return findings[i].RiskScore > findings[j].RiskScore
+	})
+
 	var lootContent []string
 	var entrypointsContent []string
+	var suspiciousContent []string
 
 	// Header for ReplicaSet-Loot.txt
-	lootContent = append(lootContent, "#####################################")
-	lootContent = append(lootContent, "##### ReplicaSet Loot - Actionable Commands")
-	lootContent = append(lootContent, "#####################################")
-	lootContent = append(lootContent, "#")
-	lootContent = append(lootContent, fmt.Sprintf("# Risk Summary: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
-		riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low))
+	lootContent = append(lootContent, "########################################")
+	lootContent = append(lootContent, "##### ReplicaSet Commands")
+	lootContent = append(lootContent, "########################################")
 	lootContent = append(lootContent, "#")
 	lootContent = append(lootContent, "")
 
 	// Header for ReplicaSet-Entrypoints.txt
-	entrypointsContent = append(entrypointsContent, "#####################################")
+	entrypointsContent = append(entrypointsContent, "########################################")
 	entrypointsContent = append(entrypointsContent, "##### ReplicaSet Container Entrypoints")
-	entrypointsContent = append(entrypointsContent, "#####################################")
+	entrypointsContent = append(entrypointsContent, "########################################")
 	entrypointsContent = append(entrypointsContent, "#")
 	entrypointsContent = append(entrypointsContent, "# Container startup commands (entrypoint/cmd) and arguments")
 	entrypointsContent = append(entrypointsContent, "# Only containers with non-empty commands/args are listed")
 	entrypointsContent = append(entrypointsContent, "#")
 	entrypointsContent = append(entrypointsContent, "")
 
-	// Sort findings by risk score (highest first)
-	sort.Slice(findings, func(i, j int) bool {
-		return findings[i].RiskScore > findings[j].RiskScore
-	})
+	// Header for Suspicious ReplicaSets
+	suspiciousContent = append(suspiciousContent, "########################################")
+	suspiciousContent = append(suspiciousContent, "##### Suspicious ReplicaSets")
+	suspiciousContent = append(suspiciousContent, "########################################")
+	suspiciousContent = append(suspiciousContent, "#")
+	suspiciousContent = append(suspiciousContent, "")
 
 	// Section: ENUMERATION
 	lootContent = append(lootContent, "")
-	lootContent = append(lootContent, "### ENUMERATION - Describe and inspect replicasets")
+	lootContent = append(lootContent, "=== ENUMERATION ===")
 	lootContent = append(lootContent, "")
 	for _, f := range findings {
-		lootContent = append(lootContent, fmt.Sprintf("# [%s] %s/%s (Replicas: %d)", f.RiskLevel, f.Namespace, f.Name, f.ReplicaCount))
+		lootContent = append(lootContent, fmt.Sprintf("# %s/%s (Replicas: %d)", f.Namespace, f.Name, f.ReplicaCount))
 		lootContent = append(lootContent, fmt.Sprintf("kubectl describe replicaset -n %s %s", f.Namespace, f.Name))
 		lootContent = append(lootContent, fmt.Sprintf("kubectl get replicaset -n %s %s -o yaml", f.Namespace, f.Name))
 		lootContent = append(lootContent, "")
 	}
 
-	// Section: HIGH RISK - Critical and high risk replicasets
+	// Section: SUSPICIOUS REPLICASETS
 	lootContent = append(lootContent, "")
-	lootContent = append(lootContent, "### HIGH RISK - Critical and high risk replicasets")
+	lootContent = append(lootContent, "=== SUSPICIOUS REPLICASETS ===")
 	lootContent = append(lootContent, "")
 	for _, f := range findings {
-		if f.RiskLevel == "CRITICAL" || f.RiskLevel == "HIGH" {
-			lootContent = append(lootContent, fmt.Sprintf("# [%s] %s/%s - Blast Radius: %d", f.RiskLevel, f.Namespace, f.Name, f.BlastRadius))
-			lootContent = append(lootContent, fmt.Sprintf("# Security Issues: %s", strings.Join(f.SecurityIssues, ", ")))
+		if f.Privileged || f.HostPID || f.HostIPC || f.HostNetwork || len(f.BackdoorPatterns) > 0 || len(f.DangerousCaps) > 0 || len(f.SensitiveHostPaths) > 0 {
+			issues := f.SecurityIssues
+			lootEntry := shared.FormatSuspiciousEntry(f.Namespace, f.Name, issues)
+			lootContent = append(lootContent, lootEntry...)
 			lootContent = append(lootContent, fmt.Sprintf("# Replicas: %d pods with these vulnerabilities", f.ReplicaCount))
 			if !f.IsOrphaned && f.DeploymentName != "" {
 				lootContent = append(lootContent, fmt.Sprintf("kubectl edit deployment -n %s %s", f.Namespace, f.DeploymentName))
@@ -1510,16 +1443,20 @@ func generateReplicaSetLoot(findings []ReplicaSetFinding, riskCounts *shared.Ris
 				lootContent = append(lootContent, fmt.Sprintf("kubectl edit replicaset -n %s %s", f.Namespace, f.Name))
 			}
 			lootContent = append(lootContent, "")
+
+			// Also add to suspicious content
+			suspiciousContent = append(suspiciousContent, lootEntry...)
+			suspiciousContent = append(suspiciousContent, "")
 		}
 	}
 
 	// Section: EXPLOITATION - Pods from vulnerable templates
 	lootContent = append(lootContent, "")
-	lootContent = append(lootContent, "### EXPLOITATION - Access pods from high-risk replicasets")
+	lootContent = append(lootContent, "=== EXPLOITATION ===")
 	lootContent = append(lootContent, "")
 	for _, f := range findings {
 		if f.Privileged || len(f.DangerousCaps) > 0 || len(f.SensitiveHostPaths) > 0 {
-			lootContent = append(lootContent, fmt.Sprintf("# [%s] %s/%s - %d vulnerable pods", f.RiskLevel, f.Namespace, f.Name, f.ReplicaCount))
+			lootContent = append(lootContent, fmt.Sprintf("# %s/%s - %d vulnerable pods", f.Namespace, f.Name, f.ReplicaCount))
 			lootContent = append(lootContent, fmt.Sprintf("# Get pod names: kubectl get pods -n %s -l app=%s", f.Namespace, f.Name))
 			if f.Privileged {
 				lootContent = append(lootContent, "# Privileged template - all pods can escape to host")
@@ -1533,11 +1470,11 @@ func generateReplicaSetLoot(findings []ReplicaSetFinding, riskCounts *shared.Ris
 
 	// Section: SECRETS ACCESS
 	lootContent = append(lootContent, "")
-	lootContent = append(lootContent, "### SECRETS ACCESS - Templates exposing secrets")
+	lootContent = append(lootContent, "=== SECRETS ACCESS ===")
 	lootContent = append(lootContent, "")
 	for _, f := range findings {
 		if f.TotalSecretsExposed > 0 {
-			lootContent = append(lootContent, fmt.Sprintf("# [%s] %s/%s (%d secrets × %d replicas)", f.RiskLevel, f.Namespace, f.Name, f.TotalSecretsExposed, f.ReplicaCount))
+			lootContent = append(lootContent, fmt.Sprintf("# %s/%s (%d secrets × %d replicas)", f.Namespace, f.Name, f.TotalSecretsExposed, f.ReplicaCount))
 			if len(f.SecretVolumes) > 0 {
 				lootContent = append(lootContent, fmt.Sprintf("# Secrets: %s", strings.Join(f.SecretVolumes, ", ")))
 			}
@@ -1547,11 +1484,11 @@ func generateReplicaSetLoot(findings []ReplicaSetFinding, riskCounts *shared.Ris
 
 	// Section: PERSISTENCE - Orphaned replicasets
 	lootContent = append(lootContent, "")
-	lootContent = append(lootContent, "### PERSISTENCE - Orphaned replicasets (no deployment owner)")
+	lootContent = append(lootContent, "=== PERSISTENCE ===")
 	lootContent = append(lootContent, "")
 	for _, f := range findings {
 		if f.IsOrphaned {
-			lootContent = append(lootContent, fmt.Sprintf("# [%s] %s/%s - Orphaned (%d replicas)", f.RiskLevel, f.Namespace, f.Name, f.ReplicaCount))
+			lootContent = append(lootContent, fmt.Sprintf("# %s/%s - Orphaned (%d replicas)", f.Namespace, f.Name, f.ReplicaCount))
 			lootContent = append(lootContent, "# May indicate attacker persistence or forgotten test resource")
 			lootContent = append(lootContent, fmt.Sprintf("kubectl delete replicaset -n %s %s", f.Namespace, f.Name))
 			lootContent = append(lootContent, "")
@@ -1583,5 +1520,6 @@ func generateReplicaSetLoot(findings []ReplicaSetFinding, riskCounts *shared.Ris
 	return []internal.LootFile{
 		{Name: "ReplicaSet-Loot", Contents: strings.Join(lootContent, "\n")},
 		{Name: "ReplicaSet-Entrypoints", Contents: strings.Join(entrypointsContent, "\n")},
+		{Name: "ReplicaSet-Suspicious", Contents: strings.Join(suspiciousContent, "\n")},
 	}
 }

@@ -10,12 +10,22 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/BishopFox/cloudfox/kubernetes/shared"
+	"github.com/BishopFox/cloudfox/kubernetes/shared/admission"
 	"github.com/spf13/cobra"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+
+	// Cloud SDK imports for DNS policy enumeration
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/dnsresolver/armdnsresolver"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/privatedns/armprivatedns"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/route53resolver"
+	"google.golang.org/api/dns/v1"
+	"google.golang.org/api/option"
 )
 
 const K8S_DNS_ADMISSION_MODULE_NAME = "dns-admission"
@@ -26,18 +36,56 @@ var DNSAdmissionCmd = &cobra.Command{
 	Short:   "Analyze DNS security configurations and policies",
 	Long: `
 Analyze all DNS security configurations including:
-  - CoreDNS configuration analysis
-  - CoreDNS security plugins (log, errors, cache, health)
-  - NodeLocalDNS detection
-  - external-dns configuration
-  - Pod DNS policies (Default, ClusterFirst, None)
-  - Cilium DNS policies
-  - Calico DNS policies
+
+In-Cluster Analysis:
+  - CoreDNS configuration and security plugins
+  - NodeLocalDNS and external-dns detection
+  - Pod DNS policies (Default, ClusterFirst, ClusterFirstWithHostNet, None)
+  - Cilium and Calico DNS policies
+  - Kyverno and Gatekeeper DNS constraints
+  - EKS Admin Network Policies (FQDN egress)
+  - Kubernetes NetworkPolicy DNS rules (port 53)
+  - Istio ServiceEntry DNS routing
+  - ExternalName services and headless services
   - DNS exfiltration risks
 
-  cloudfox kubernetes dns-admission`,
+Cloud Provider DNS Policies (requires --cloud-provider flag):
+  Use --cloud-provider to enable cloud API enumeration for DNS security policies.
+
+  AWS (--cloud-provider aws):
+    - Route 53 DNS Firewall rule groups and domain lists
+    - VPC DNS Firewall associations
+    - Uses AWS credentials from --aws-profile or default credential chain
+
+  GCP (--cloud-provider gcp):
+    - Cloud DNS Response Policies and rules
+    - Uses GCP credentials with --gcp-project or discovers accessible projects
+
+  Azure (--cloud-provider azure):
+    - DNS Private Resolver configurations
+    - DNS Forwarding Rulesets
+    - Private DNS Zones
+    - Uses Azure credentials with --azure-subscription or discovers subscriptions
+
+Examples:
+  # Basic cluster analysis
+  cloudfox kubernetes dns-admission
+
+  # With AWS DNS Firewall enumeration
+  cloudfox kubernetes dns-admission --cloud-provider aws --aws-profile myprofile
+
+  # With GCP Response Policies enumeration
+  cloudfox kubernetes dns-admission --cloud-provider gcp --gcp-project my-project
+
+  # With Azure DNS Private Resolver enumeration
+  cloudfox kubernetes dns-admission --cloud-provider azure --azure-subscription sub-id
+
+  # Multiple cloud providers
+  cloudfox kubernetes dns-admission --cloud-provider aws,gcp,azure`,
 	Run: ListDNSAdmission,
 }
+
+// init() removed - detailed flag is now a global persistent flag in cli/kubernetes.go
 
 type DNSAdmissionOutput struct {
 	Table []internal.TableFile
@@ -46,6 +94,16 @@ type DNSAdmissionOutput struct {
 
 func (t DNSAdmissionOutput) TableFiles() []internal.TableFile { return t.Table }
 func (t DNSAdmissionOutput) LootFiles() []internal.LootFile   { return t.Loot }
+
+// DNSEnumeratedPolicy represents a unified DNS policy entry
+type DNSEnumeratedPolicy struct {
+	Namespace string
+	Tool      string
+	Name      string
+	Scope     string
+	Type      string
+	Details   string
+}
 
 // DNSAdmissionFinding represents DNS security for a namespace
 type DNSAdmissionFinding struct {
@@ -56,11 +114,14 @@ type DNSAdmissionFinding struct {
 	CustomDNS     bool
 	DNSConfig     string
 
-	// DNS Policies
-	HasCiliumDNSPolicy bool
-	HasCalicoDNSPolicy bool
-	CiliumPolicies     int
-	CalicoPolicies     int
+	// DNS Policies by tool
+	CiliumPolicies      int
+	CalicoPolicies      int
+	KyvernoPolicies     int
+	GatekeeperPolicies  int
+	EKSAdminPolicies    int // AWS EKS AdminNetworkPolicy/ClusterNetworkPolicy
+	K8sNetPolDNS        int // Native K8s NetworkPolicy with DNS rules
+	IstioServiceEntries int // Istio ServiceEntry for DNS
 
 	// Pod Analysis
 	TotalPods          int
@@ -68,8 +129,6 @@ type DNSAdmissionFinding struct {
 	PodsWithCustomDNS  int
 	PodsWithNoDNS      int
 
-	// Risk Analysis
-	RiskLevel      string
 	SecurityIssues []string
 }
 
@@ -86,11 +145,10 @@ type CoreDNSInfo struct {
 	CacheEnabled    bool
 	LoggingEnabled  bool
 	HealthEnabled   bool
-	DNSSECEnabled   bool   // True if DNSSEC validation/signing is enabled
-	DoTEnabled      bool   // True if DNS over TLS forwarding is configured
-	DoHEnabled      bool   // True if DNS over HTTPS forwarding is configured
-	ACLEnabled      bool   // True if access control lists are configured
-	BypassRisk      string
+	DNSSECEnabled   bool // True if DNSSEC validation/signing is enabled
+	DoTEnabled      bool // True if DNS over TLS forwarding is configured
+	DoHEnabled      bool // True if DNS over HTTPS forwarding is configured
+	ACLEnabled      bool // True if access control lists are configured
 	ImageVerified   bool // True if CoreDNS image was verified
 }
 
@@ -104,10 +162,9 @@ type CoreDNSConfigInfo struct {
 	NegativeCacheTTL int
 	ForwardTo        []string
 	StubDomains      map[string][]string
-	DNSSECEnabled    bool   // True if dnssec plugin is enabled for this zone
-	DoTForwarding    bool   // True if forwarding uses tls:// protocol
-	DoHForwarding    bool   // True if forwarding uses https:// protocol
-	BypassRisk       string
+	DNSSECEnabled    bool // True if dnssec plugin is enabled for this zone
+	DoTForwarding    bool // True if forwarding uses tls:// protocol
+	DoHForwarding    bool // True if forwarding uses https:// protocol
 }
 
 // NodeLocalDNSInfo represents NodeLocalDNS deployment status
@@ -118,7 +175,6 @@ type NodeLocalDNSInfo struct {
 	PodsRunning   int
 	TotalPods     int
 	LocalIP       string
-	BypassRisk    string
 	ImageVerified bool // True if NodeLocalDNS image was verified
 }
 
@@ -133,42 +189,38 @@ type ExternalDNSInfo struct {
 	Sources       []string
 	Policy        string // upsert-only, sync
 	Registry      string
-	BypassRisk    string
 	ImageVerified bool // True if external-dns image was verified
 }
 
 // CiliumDNSPolicyInfo represents a Cilium DNS policy
 type CiliumDNSPolicyInfo struct {
-	Name        string
-	Namespace   string
-	IsCluster   bool
-	DNSRules    int
-	MatchFQDNs  []string
+	Name          string
+	Namespace     string
+	IsCluster     bool
+	DNSRules      int
+	MatchFQDNs    []string
 	MatchPatterns []string
-	Action      string
-	BypassRisk  string
+	Action        string
 }
 
 // CalicoDNSPolicyInfo represents a Calico DNS policy
 type CalicoDNSPolicyInfo struct {
-	Name        string
-	Namespace   string
-	IsGlobal    bool
-	DNSRules    int
-	Domains     []string
-	Action      string
-	BypassRisk  string
+	Name      string
+	Namespace string
+	IsGlobal  bool
+	DNSRules  int
+	Domains   []string
+	Action    string
 }
 
 // PodDNSInfo represents DNS configuration for pods
 type PodDNSInfo struct {
-	Name        string
-	Namespace   string
-	DNSPolicy   string
+	Name         string
+	Namespace    string
+	DNSPolicy    string
 	HasCustomDNS bool
-	Nameservers []string
-	Searches    []string
-	BypassRisk  string
+	Nameservers  []string
+	Searches     []string
 }
 
 // IstioDNSInfo represents Istio DNS proxy configuration
@@ -180,7 +232,6 @@ type IstioDNSInfo struct {
 	TotalPods           int
 	DNSCaptureEnabled   bool
 	AutoAllocateEnabled bool
-	BypassRisk          string
 	ImageVerified       bool // True if Istio image was verified
 }
 
@@ -193,8 +244,257 @@ type CloudDNSInfo struct {
 	Type          string // Route53, CloudDNS, AzureDNS
 	PodsRunning   int
 	TotalPods     int
-	BypassRisk    string
 	ImageVerified bool // True if cloud DNS controller image was verified
+}
+
+// ExternalNameServiceInfo represents a service with ExternalName type (DNS CNAME to external)
+type ExternalNameServiceInfo struct {
+	Name         string
+	Namespace    string
+	ExternalName string   // The external DNS name this service points to
+	Notes        []string // Factual observations about the service
+}
+
+// HeadlessServiceInfo represents a headless service (clusterIP: None) that exposes pod IPs via DNS
+type HeadlessServiceInfo struct {
+	Name      string
+	Namespace string
+	Selector  map[string]string
+	PodCount  int
+	Ports     []string
+	Notes     []string // Factual observations about the headless service
+}
+
+// DNSExfiltrationRisk represents a pod/namespace with DNS exfiltration risk
+type DNSExfiltrationRisk struct {
+	Namespace       string
+	PodName         string
+	DNSPolicy       string   // DNS policy configured on pod
+	Notes           []string // Factual observations about DNS configuration
+	ExternalDNS     []string // External nameservers configured
+	HasEgressPolicy bool
+}
+
+// CoreDNSSecurityAnalysis represents deep security analysis of CoreDNS configuration
+type CoreDNSSecurityAnalysis struct {
+	// Security plugins status
+	ACLEnabled          bool
+	ACLRules            []string
+	RRLEnabled          bool // Response Rate Limiting
+	RRLConfig           string
+	DNSTapEnabled       bool
+	DNSTapEndpoint      string
+	FirewallEnabled     bool
+	FirewallRules       []string
+	// Security concerns
+	SecurityIssues      []string
+	Recommendations     []string
+}
+
+// KyvernoDNSPolicyInfo represents a Kyverno policy related to DNS
+type KyvernoDNSPolicyInfo struct {
+	Name       string
+	Namespace  string
+	IsCluster  bool
+	Type       string // validate, mutate, generate
+	Target     string // Pod, Service, etc.
+	DNSRule    string // What DNS aspect it controls
+	Action     string // enforce, audit
+}
+
+// GatekeeperDNSConstraintInfo represents a Gatekeeper constraint related to DNS
+type GatekeeperDNSConstraintInfo struct {
+	Name           string
+	Kind           string // The constraint kind
+	TemplateName   string
+	EnforcementAction string
+	Target         string
+	DNSRule        string
+}
+
+// ConsulDNSInfo represents Consul Connect DNS configuration
+type ConsulDNSInfo struct {
+	Name          string
+	Namespace     string
+	Status        string
+	PodsRunning   int
+	TotalPods     int
+	DNSDomain     string
+	ImageVerified bool
+}
+
+// EKSAdminNetworkPolicyInfo represents AWS EKS Admin Network Policy (ClusterNetworkPolicy/AdminNetworkPolicy)
+type EKSAdminNetworkPolicyInfo struct {
+	Name       string
+	Kind       string // AdminNetworkPolicy or ClusterNetworkPolicy
+	Priority   int
+	Subject    string // What the policy applies to
+	DNSRules   []string
+	IsCluster  bool
+}
+
+// K8sNetworkPolicyDNSInfo represents native Kubernetes NetworkPolicy with DNS port rules
+type K8sNetworkPolicyDNSInfo struct {
+	Name            string
+	Namespace       string
+	HasDNSEgress    bool     // Has egress rule for port 53
+	DNSEgressAction string   // Allow or Deny (based on policy structure)
+	PodSelector     string
+	Notes           []string
+}
+
+// IstioServiceEntryInfo represents Istio ServiceEntry for DNS routing
+type IstioServiceEntryInfo struct {
+	Name       string
+	Namespace  string
+	Hosts      []string
+	Location   string // MESH_INTERNAL or MESH_EXTERNAL
+	Resolution string // STATIC, DNS, NONE
+	Ports      []string
+	IsCluster  bool // If exported to all namespaces
+}
+
+// AWSRoute53DNSFirewallInfo represents AWS Route 53 DNS Firewall configuration
+// Note: Full enumeration requires AWS API access with --aws-profile flag
+type AWSRoute53DNSFirewallInfo struct {
+	Name                string
+	Namespace           string
+	VPCAssociation      bool   // If associated with cluster VPC
+	RuleGroupCount      int    // Number of rule groups
+	DomainListCount     int    // Number of domain lists
+	Notes               []string
+	RequiresCloudAccess bool // Indicates cloud API needed for full details
+}
+
+// GCPResponsePolicyInfo represents GCP Cloud DNS Response Policy
+// Note: Full enumeration requires GCP API access with --gcp-project flag
+type GCPResponsePolicyInfo struct {
+	Name                string
+	Namespace           string
+	ClusterScope        bool // If bound to GKE cluster
+	RuleCount           int
+	Notes               []string
+	RequiresCloudAccess bool
+}
+
+// AzureDNSPrivateResolverInfo represents Azure DNS Private Resolver
+// Note: Full enumeration requires Azure API access with --azure-subscription flag
+type AzureDNSPrivateResolverInfo struct {
+	Name                string
+	Namespace           string
+	LinkedVNET          bool
+	InboundEndpoints    int
+	OutboundEndpoints   int
+	ForwardingRuleSets  int
+	Notes               []string
+	RequiresCloudAccess bool
+}
+
+// DNSCloudClients holds cloud provider clients for DNS policy enumeration
+type DNSCloudClients struct {
+	// AWS Route 53 Resolver
+	AWSRoute53ResolverClient *route53resolver.Client
+	AWSRegion                string
+
+	// GCP Cloud DNS
+	GCPDNSService *dns.Service
+	GCPProjects   []string
+
+	// Azure DNS
+	AzureCredential    *azidentity.DefaultAzureCredential
+	AzureSubscriptions []string
+}
+
+// containsDNSProvider checks if a provider is in the list
+func containsDNSProvider(providers []string, provider string) bool {
+	for _, p := range providers {
+		if p == provider {
+			return true
+		}
+	}
+	return false
+}
+
+// initDNSCloudClients attempts to initialize cloud provider clients for DNS policy enumeration
+// All errors are suppressed since cloud correlation is optional
+// Only initializes clients for providers specified in globals.K8sCloudProviders
+func initDNSCloudClients(logger internal.Logger) *DNSCloudClients {
+	// If no cloud providers specified, skip cloud correlation entirely
+	if len(globals.K8sCloudProviders) == 0 {
+		logger.InfoM("DNS cloud correlation disabled (use --cloud-provider to enable)", K8S_DNS_ADMISSION_MODULE_NAME)
+		return nil
+	}
+
+	clients := &DNSCloudClients{}
+	cloudEnabled := false
+
+	// Try AWS Route 53 Resolver - only if "aws" is in the provider list
+	if containsDNSProvider(globals.K8sCloudProviders, "aws") {
+		var awsCfg aws.Config
+		var err error
+		if globals.K8sAWSProfile != "" {
+			awsCfg, err = awsconfig.LoadDefaultConfig(context.Background(),
+				awsconfig.WithSharedConfigProfile(globals.K8sAWSProfile))
+		} else {
+			awsCfg, err = awsconfig.LoadDefaultConfig(context.Background())
+		}
+		if err == nil {
+			clients.AWSRoute53ResolverClient = route53resolver.NewFromConfig(awsCfg)
+			clients.AWSRegion = awsCfg.Region
+			if awsCfg.Region != "" {
+				logger.InfoM(fmt.Sprintf("AWS DNS correlation enabled (region: %s)", awsCfg.Region), K8S_DNS_ADMISSION_MODULE_NAME)
+				cloudEnabled = true
+			}
+		} else {
+			logger.InfoM(fmt.Sprintf("AWS DNS correlation failed: %v", err), K8S_DNS_ADMISSION_MODULE_NAME)
+		}
+	}
+
+	// Try GCP Cloud DNS - only if "gcp" is in the provider list
+	if containsDNSProvider(globals.K8sCloudProviders, "gcp") {
+		gcpSvc, err := dns.NewService(context.Background(), option.WithScopes(dns.CloudPlatformReadOnlyScope))
+		if err == nil {
+			clients.GCPDNSService = gcpSvc
+
+			// Use projects from flag if provided
+			if len(globals.K8sGCPProjects) > 0 {
+				clients.GCPProjects = globals.K8sGCPProjects
+				logger.InfoM(fmt.Sprintf("GCP DNS correlation enabled (%d projects)", len(globals.K8sGCPProjects)), K8S_DNS_ADMISSION_MODULE_NAME)
+				cloudEnabled = true
+			} else {
+				logger.InfoM("GCP DNS correlation enabled (no projects specified, will try to discover)", K8S_DNS_ADMISSION_MODULE_NAME)
+				cloudEnabled = true
+			}
+		} else {
+			logger.InfoM(fmt.Sprintf("GCP DNS correlation failed: %v", err), K8S_DNS_ADMISSION_MODULE_NAME)
+		}
+	}
+
+	// Try Azure DNS - only if "azure" is in the provider list
+	if containsDNSProvider(globals.K8sCloudProviders, "azure") {
+		azCred, err := azidentity.NewDefaultAzureCredential(nil)
+		if err == nil {
+			clients.AzureCredential = azCred
+
+			// Use subscriptions from flag if provided
+			if len(globals.K8sAzureSubscriptions) > 0 {
+				clients.AzureSubscriptions = globals.K8sAzureSubscriptions
+				logger.InfoM(fmt.Sprintf("Azure DNS correlation enabled (%d subscriptions)", len(globals.K8sAzureSubscriptions)), K8S_DNS_ADMISSION_MODULE_NAME)
+				cloudEnabled = true
+			} else {
+				logger.InfoM("Azure DNS correlation enabled (no subscriptions specified, will try to discover)", K8S_DNS_ADMISSION_MODULE_NAME)
+				cloudEnabled = true
+			}
+		} else {
+			logger.InfoM(fmt.Sprintf("Azure DNS correlation failed: %v", err), K8S_DNS_ADMISSION_MODULE_NAME)
+		}
+	}
+
+	if !cloudEnabled {
+		return nil
+	}
+
+	return clients
 }
 
 func ListDNSAdmission(cmd *cobra.Command, args []string) {
@@ -206,6 +506,7 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 	verbosity, _ := parentCmd.PersistentFlags().GetInt("verbosity")
 	wrap, _ := parentCmd.PersistentFlags().GetBool("wrap")
 	outputDir, _ := parentCmd.PersistentFlags().GetString("outdir")
+	detailed := globals.K8sDetailed
 
 	logger.InfoM(fmt.Sprintf("Analyzing DNS security for %s", globals.ClusterName), K8S_DNS_ADMISSION_MODULE_NAME)
 
@@ -244,8 +545,85 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 	logger.InfoM("Analyzing cloud provider DNS...", K8S_DNS_ADMISSION_MODULE_NAME)
 	cloudDNS := analyzeCloudDNS(ctx, clientset)
 
+	// Analyze ExternalName services
+	logger.InfoM("Analyzing ExternalName services...", K8S_DNS_ADMISSION_MODULE_NAME)
+	externalNameSvcs := analyzeExternalNameServices(ctx, clientset)
+
+	// Analyze Headless services
+	logger.InfoM("Analyzing Headless services...", K8S_DNS_ADMISSION_MODULE_NAME)
+	headlessSvcs := analyzeHeadlessServices(ctx, clientset)
+
+	// Analyze DNS exfiltration risks
+	logger.InfoM("Analyzing DNS exfiltration risks...", K8S_DNS_ADMISSION_MODULE_NAME)
+	exfilRisks := analyzeDNSExfiltrationRisks(ctx, clientset, podDNS, ciliumDNS, calicoDNS)
+
+	// Analyze Kyverno DNS policies
+	logger.InfoM("Analyzing Kyverno DNS policies...", K8S_DNS_ADMISSION_MODULE_NAME)
+	kyvernoDNS := analyzeKyvernoDNSPolicies(ctx, dynClient)
+
+	// Analyze Gatekeeper DNS constraints
+	logger.InfoM("Analyzing Gatekeeper DNS constraints...", K8S_DNS_ADMISSION_MODULE_NAME)
+	gatekeeperDNS := analyzeGatekeeperDNSConstraints(ctx, dynClient)
+
+	// Analyze Consul DNS
+	logger.InfoM("Analyzing Consul DNS...", K8S_DNS_ADMISSION_MODULE_NAME)
+	consulDNS := analyzeConsulDNS(ctx, clientset)
+
+	// Analyze EKS Admin Network Policies
+	logger.InfoM("Analyzing EKS Admin Network Policies...", K8S_DNS_ADMISSION_MODULE_NAME)
+	eksAdminPolicies := analyzeEKSAdminNetworkPolicies(ctx, dynClient)
+
+	// Analyze native Kubernetes NetworkPolicy DNS rules
+	logger.InfoM("Analyzing Kubernetes NetworkPolicy DNS rules...", K8S_DNS_ADMISSION_MODULE_NAME)
+	k8sNetPolDNS := analyzeK8sNetworkPolicyDNS(ctx, clientset)
+
+	// Analyze Istio ServiceEntry for DNS
+	logger.InfoM("Analyzing Istio ServiceEntry DNS...", K8S_DNS_ADMISSION_MODULE_NAME)
+	istioServiceEntries := analyzeIstioServiceEntries(ctx, dynClient)
+
+	// Analyze Antrea FQDN policies
+	logger.InfoM("Analyzing Antrea FQDN policies...", K8S_DNS_ADMISSION_MODULE_NAME)
+	antreaFQDNPolicies := analyzeAntreaFQDNPolicies(ctx, dynClient)
+	if len(antreaFQDNPolicies) > 0 {
+		logger.InfoM(fmt.Sprintf("Found %d Antrea FQDN policies", len(antreaFQDNPolicies)), K8S_DNS_ADMISSION_MODULE_NAME)
+	}
+
+	// Analyze Consul DNS forwarding
+	logger.InfoM("Analyzing Consul DNS forwarding...", K8S_DNS_ADMISSION_MODULE_NAME)
+	consulDNSForwarding := analyzeConsulDNSForwarding(ctx, dynClient, clientset)
+	if len(consulDNSForwarding) > 0 {
+		logger.InfoM(fmt.Sprintf("Found %d Consul DNS forwarding configurations", len(consulDNSForwarding)), K8S_DNS_ADMISSION_MODULE_NAME)
+	}
+
+	// Analyze Kubewarden DNS policies
+	logger.InfoM("Analyzing Kubewarden DNS policies...", K8S_DNS_ADMISSION_MODULE_NAME)
+	kubewardenDNSPolicies := analyzeKubewardenDNSPolicies(ctx, dynClient)
+	if len(kubewardenDNSPolicies) > 0 {
+		logger.InfoM(fmt.Sprintf("Found %d Kubewarden DNS policies", len(kubewardenDNSPolicies)), K8S_DNS_ADMISSION_MODULE_NAME)
+	}
+
+	// Initialize cloud clients for DNS policy enumeration (if cloud providers specified)
+	dnsCloudClients := initDNSCloudClients(logger)
+
+	// Analyze cloud provider DNS policies (in-cluster detection + cloud API if available)
+	logger.InfoM("Analyzing cloud provider DNS policies...", K8S_DNS_ADMISSION_MODULE_NAME)
+	awsDNSFirewall := analyzeAWSRoute53DNSFirewall(ctx, clientset, cloudDNS, dnsCloudClients, logger)
+	gcpResponsePolicies := analyzeGCPResponsePolicies(ctx, clientset, cloudDNS, dnsCloudClients, logger)
+	azureDNSResolver := analyzeAzureDNSPrivateResolver(ctx, clientset, cloudDNS, dnsCloudClients, logger)
+
+	// Log detected cloud provider DNS configurations
+	if awsDNSFirewall.Name != "" {
+		logger.InfoM(fmt.Sprintf("Detected AWS DNS: %s (%d rule groups, %d domain lists)", awsDNSFirewall.Name, awsDNSFirewall.RuleGroupCount, awsDNSFirewall.DomainListCount), K8S_DNS_ADMISSION_MODULE_NAME)
+	}
+	if gcpResponsePolicies.Name != "" {
+		logger.InfoM(fmt.Sprintf("Detected GCP DNS: %s (%d rules)", gcpResponsePolicies.Name, gcpResponsePolicies.RuleCount), K8S_DNS_ADMISSION_MODULE_NAME)
+	}
+	if azureDNSResolver.Name != "" {
+		logger.InfoM(fmt.Sprintf("Detected Azure DNS: %s (%d inbound, %d outbound, %d rulesets)", azureDNSResolver.Name, azureDNSResolver.InboundEndpoints, azureDNSResolver.OutboundEndpoints, azureDNSResolver.ForwardingRuleSets), K8S_DNS_ADMISSION_MODULE_NAME)
+	}
+
 	// Build findings per namespace
-	findings := buildDNSAdmissionFindings(coredns, ciliumDNS, calicoDNS, podDNS)
+	findings := buildDNSAdmissionFindings(coredns, ciliumDNS, calicoDNS, kyvernoDNS, gatekeeperDNS, eksAdminPolicies, k8sNetPolDNS, istioServiceEntries, podDNS)
 
 	// Generate tables
 	summaryHeader := []string{
@@ -254,10 +632,24 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 		"Default DNS",
 		"Custom DNS",
 		"No DNS",
-		"Cilium Policies",
-		"Calico Policies",
-		"Risk Level",
+		"Cilium",
+		"Calico",
+		"Kyverno",
+		"Gatekeeper",
+		"EKS",
+		"NetPol",
+		"Istio",
 		"Issues",
+	}
+
+	// Unified policies table header
+	policiesHeader := []string{
+		"Namespace",
+		"Tool",
+		"Name",
+		"Scope",
+		"Type",
+		"Details",
 	}
 
 	corednsHeader := []string{
@@ -268,7 +660,7 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 		"Caching",
 		"Logging",
 		"Health",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	corednsConfigHeader := []string{
@@ -277,7 +669,7 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 		"Upstreams",
 		"Forward To",
 		"Cache TTL",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	nodeLocalDNSHeader := []string{
@@ -285,7 +677,7 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 		"Status",
 		"Pods Running",
 		"Local IP",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	externalDNSHeader := []string{
@@ -294,38 +686,38 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 		"Provider",
 		"Sources",
 		"Policy",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	ciliumDNSHeader := []string{
-		"Name",
 		"Namespace",
+		"Name",
 		"Scope",
 		"DNS Rules",
 		"Match FQDNs",
 		"Match Patterns",
 		"Action",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	calicoDNSHeader := []string{
-		"Name",
 		"Namespace",
+		"Name",
 		"Scope",
 		"DNS Rules",
 		"Domains",
 		"Action",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	podDNSHeader := []string{
-		"Name",
 		"Namespace",
+		"Name",
 		"DNS Policy",
 		"Custom DNS",
 		"Nameservers",
 		"Searches",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	istioDNSHeader := []string{
@@ -334,20 +726,155 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 		"Pods Running",
 		"DNS Capture",
 		"Auto Allocate",
-		"Bypass Risk",
+		"Issues",
 	}
 
 	cloudDNSHeader := []string{
+		"Namespace",
 		"Provider",
 		"Name",
-		"Namespace",
 		"Status",
 		"Type",
 		"Pods Running",
-		"Bypass Risk",
+		"Issues",
+	}
+
+	externalNameHeader := []string{
+		"Namespace",
+		"Name",
+		"External Name",
+		"Observations",
+		"Issues",
+	}
+
+	headlessHeader := []string{
+		"Namespace",
+		"Name",
+		"Pod Count",
+		"Ports",
+		"Observations",
+		"Issues",
+	}
+
+	exfilRiskHeader := []string{
+		"Namespace",
+		"Pod",
+		"DNS Policy",
+		"Egress Policy",
+		"External DNS",
+		"Observations",
+		"Issues",
+	}
+
+	kyvernoHeader := []string{
+		"Namespace",
+		"Name",
+		"Scope",
+		"Type",
+		"Target",
+		"DNS Rule",
+		"Action",
+		"Issues",
+	}
+
+	gatekeeperHeader := []string{
+		"Name",
+		"Template",
+		"Enforcement",
+		"Target",
+		"DNS Rule",
+		"Issues",
+	}
+
+	consulHeader := []string{
+		"Namespace",
+		"Name",
+		"Status",
+		"Pods Running",
+		"DNS Domain",
+		"Issues",
+	}
+
+	// K8s NetworkPolicy DNS detail table
+	k8sNetPolDNSHeader := []string{
+		"Name",
+		"Namespace",
+		"Has DNS Egress",
+		"DNS Egress Action",
+		"Pod Selector",
+		"Notes",
+		"Issues",
+	}
+
+	// Consul DNS Forwarding detail table
+	consulDNSForwardingHeader := []string{
+		"Name",
+		"Namespace",
+		"DNS Domain",
+		"Recursors",
+		"Forwarding Rules",
+		"DNS Proxy Enabled",
+		"Issues",
+	}
+
+	// Kubewarden DNS Policies detail table
+	kubewardenDNSHeader := []string{
+		"Name",
+		"Namespace",
+		"Policy Server",
+		"Mode",
+		"Module",
+		"DNS Rules",
+		"Issues",
+	}
+
+	// AWS DNS Firewall detail table
+	awsDNSFirewallHeader := []string{
+		"Name",
+		"Namespace",
+		"VPC Associated",
+		"Rule Groups",
+		"Domain Lists",
+		"Notes",
+		"Issues",
+	}
+
+	// GCP Response Policies detail table
+	gcpResponsePolicyHeader := []string{
+		"Name",
+		"Namespace",
+		"Cluster Scope",
+		"Rule Count",
+		"Notes",
+		"Issues",
+	}
+
+	// Azure DNS Private Resolver detail table
+	azureDNSResolverHeader := []string{
+		"Name",
+		"Namespace",
+		"Linked VNET",
+		"Inbound Endpoints",
+		"Outbound Endpoints",
+		"Forwarding Rule Sets",
+		"Notes",
+		"Issues",
+	}
+
+	// Istio ServiceEntry detail table
+	istioServiceEntryHeader := []string{
+		"Name",
+		"Namespace",
+		"Hosts",
+		"Location",
+		"Resolution",
+		"Ports",
+		"Is Cluster Wide",
+		"Issues",
 	}
 
 	var summaryRows [][]string
+	var policiesRows [][]string
 	var corednsRows [][]string
 	var corednsConfigRows [][]string
 	var nodeLocalDNSRows [][]string
@@ -357,6 +884,19 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 	var podDNSRows [][]string
 	var istioDNSRows [][]string
 	var cloudDNSRows [][]string
+	var externalNameRows [][]string
+	var headlessRows [][]string
+	var exfilRiskRows [][]string
+	var kyvernoRows [][]string
+	var gatekeeperRows [][]string
+	var consulRows [][]string
+	var k8sNetPolDNSRows [][]string
+	var consulDNSForwardingRows [][]string
+	var kubewardenDNSRows [][]string
+	var awsDNSFirewallRows [][]string
+	var gcpResponsePolicyRows [][]string
+	var azureDNSResolverRows [][]string
+	var istioServiceEntryRows [][]string
 
 	loot := shared.NewLootBuilder()
 
@@ -379,7 +919,11 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 			fmt.Sprintf("%d", finding.PodsWithNoDNS),
 			fmt.Sprintf("%d", finding.CiliumPolicies),
 			fmt.Sprintf("%d", finding.CalicoPolicies),
-			finding.RiskLevel,
+			fmt.Sprintf("%d", finding.KyvernoPolicies),
+			fmt.Sprintf("%d", finding.GatekeeperPolicies),
+			fmt.Sprintf("%d", finding.EKSAdminPolicies),
+			fmt.Sprintf("%d", finding.K8sNetPolDNS),
+			fmt.Sprintf("%d", finding.IstioServiceEntries),
 			issues,
 		})
 	}
@@ -399,6 +943,28 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 			health = "Yes"
 		}
 
+		// Detect issues
+		var corednsIssues []string
+		if !coredns.CacheEnabled {
+			corednsIssues = append(corednsIssues, "Caching disabled")
+		}
+		if !coredns.LoggingEnabled {
+			corednsIssues = append(corednsIssues, "Logging disabled")
+		}
+		if !coredns.HealthEnabled {
+			corednsIssues = append(corednsIssues, "Health checks disabled")
+		}
+		if coredns.Status != "Running" && coredns.Status != "Healthy" {
+			corednsIssues = append(corednsIssues, "Not running")
+		}
+		if coredns.PodsRunning < coredns.TotalPods {
+			corednsIssues = append(corednsIssues, "Some pods not running")
+		}
+		corednsIssuesStr := "<NONE>"
+		if len(corednsIssues) > 0 {
+			corednsIssuesStr = strings.Join(corednsIssues, "; ")
+		}
+
 		corednsRows = append(corednsRows, []string{
 			coredns.Namespace,
 			coredns.Status,
@@ -407,7 +973,17 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 			caching,
 			logging,
 			health,
-			coredns.BypassRisk,
+			corednsIssuesStr,
+		})
+
+		// Add to unified policies table
+		policiesRows = append(policiesRows, []string{
+			coredns.Namespace,
+			"CoreDNS",
+			coredns.Name,
+			"Cluster",
+			"DNS Server",
+			fmt.Sprintf("Status: %s, Pods: %d/%d, Version: %s", coredns.Status, coredns.PodsRunning, coredns.TotalPods, coredns.Version),
 		})
 	}
 
@@ -437,24 +1013,81 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 			cacheTTL = fmt.Sprintf("%ds", cfg.CacheTTL)
 		}
 
+		// Detect issues
+		var cfgIssues []string
+		if !cfg.Caching {
+			cfgIssues = append(cfgIssues, "No caching configured")
+		}
+		if len(cfg.ForwardTo) == 0 && len(cfg.Upstreams) == 0 {
+			cfgIssues = append(cfgIssues, "No upstreams configured")
+		}
+		cfgIssuesStr := "<NONE>"
+		if len(cfgIssues) > 0 {
+			cfgIssuesStr = strings.Join(cfgIssues, "; ")
+		}
+
 		corednsConfigRows = append(corednsConfigRows, []string{
 			cfg.Zone,
 			plugins,
 			upstreams,
 			forwardTo,
 			cacheTTL,
-			cfg.BypassRisk,
+			cfgIssuesStr,
+		})
+
+		// Add to unified policies table
+		details := fmt.Sprintf("Plugins: %s", plugins)
+		if forwardTo != "-" {
+			details += fmt.Sprintf(", Forward: %s", forwardTo)
+		}
+		if cacheTTL != "-" {
+			details += fmt.Sprintf(", Cache TTL: %s", cacheTTL)
+		}
+
+		policiesRows = append(policiesRows, []string{
+			coredns.Namespace,
+			"CoreDNS Config",
+			cfg.Zone,
+			"Cluster",
+			"Zone Config",
+			details,
 		})
 	}
 
 	// Build NodeLocalDNS rows
 	if nodeLocalDNS.Name != "" {
+		// Detect issues
+		var nodeLocalIssues []string
+		if nodeLocalDNS.Status != "Running" && nodeLocalDNS.Status != "Healthy" {
+			nodeLocalIssues = append(nodeLocalIssues, "Not running")
+		}
+		if nodeLocalDNS.PodsRunning < nodeLocalDNS.TotalPods {
+			nodeLocalIssues = append(nodeLocalIssues, "Some pods not running")
+		}
+		if nodeLocalDNS.LocalIP == "" {
+			nodeLocalIssues = append(nodeLocalIssues, "No local IP configured")
+		}
+		nodeLocalIssuesStr := "<NONE>"
+		if len(nodeLocalIssues) > 0 {
+			nodeLocalIssuesStr = strings.Join(nodeLocalIssues, "; ")
+		}
+
 		nodeLocalDNSRows = append(nodeLocalDNSRows, []string{
 			nodeLocalDNS.Namespace,
 			nodeLocalDNS.Status,
 			fmt.Sprintf("%d/%d", nodeLocalDNS.PodsRunning, nodeLocalDNS.TotalPods),
 			nodeLocalDNS.LocalIP,
-			nodeLocalDNS.BypassRisk,
+			nodeLocalIssuesStr,
+		})
+
+		// Add to unified policies table
+		policiesRows = append(policiesRows, []string{
+			nodeLocalDNS.Namespace,
+			"NodeLocalDNS",
+			nodeLocalDNS.Name,
+			"Node",
+			"DNS Cache",
+			fmt.Sprintf("Status: %s, Pods: %d/%d, Local IP: %s", nodeLocalDNS.Status, nodeLocalDNS.PodsRunning, nodeLocalDNS.TotalPods, nodeLocalDNS.LocalIP),
 		})
 	}
 
@@ -465,13 +1098,39 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 			sources = strings.Join(externalDNS.Sources, ", ")
 		}
 
+		// Detect issues
+		var extDNSIssues []string
+		if externalDNS.Status != "Running" && externalDNS.Status != "Healthy" {
+			extDNSIssues = append(extDNSIssues, "Not running")
+		}
+		if externalDNS.Policy == "sync" {
+			extDNSIssues = append(extDNSIssues, "Sync policy (deletes records)")
+		}
+		if len(externalDNS.Sources) == 0 {
+			extDNSIssues = append(extDNSIssues, "No sources configured")
+		}
+		extDNSIssuesStr := "<NONE>"
+		if len(extDNSIssues) > 0 {
+			extDNSIssuesStr = strings.Join(extDNSIssues, "; ")
+		}
+
 		externalDNSRows = append(externalDNSRows, []string{
 			externalDNS.Namespace,
 			externalDNS.Status,
 			externalDNS.Provider,
 			sources,
 			externalDNS.Policy,
-			externalDNS.BypassRisk,
+			extDNSIssuesStr,
+		})
+
+		// Add to unified policies table
+		policiesRows = append(policiesRows, []string{
+			externalDNS.Namespace,
+			"external-dns",
+			externalDNS.Name,
+			"Cluster",
+			"External DNS",
+			fmt.Sprintf("Provider: %s, Policy: %s, Sources: %s", externalDNS.Provider, externalDNS.Policy, sources),
 		})
 	}
 
@@ -502,15 +1161,54 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 			}
 		}
 
+		// Detect issues
+		var ciliumIssues []string
+		if cdns.DNSRules == 0 {
+			ciliumIssues = append(ciliumIssues, "No DNS rules defined")
+		}
+		if cdns.Action == "allow" || cdns.Action == "Allow" {
+			ciliumIssues = append(ciliumIssues, "Allows DNS traffic")
+		}
+		if len(cdns.MatchPatterns) > 0 {
+			for _, p := range cdns.MatchPatterns {
+				if p == "*" || p == ".*" {
+					ciliumIssues = append(ciliumIssues, "Wildcard pattern")
+					break
+				}
+			}
+		}
+		ciliumIssuesStr := "<NONE>"
+		if len(ciliumIssues) > 0 {
+			ciliumIssuesStr = strings.Join(ciliumIssues, "; ")
+		}
+
 		ciliumDNSRows = append(ciliumDNSRows, []string{
-			cdns.Name,
 			ns,
+			cdns.Name,
 			scope,
 			fmt.Sprintf("%d", cdns.DNSRules),
 			fqdns,
 			patterns,
 			cdns.Action,
-			cdns.BypassRisk,
+			ciliumIssuesStr,
+		})
+
+		// Add to unified policies table
+		details := fmt.Sprintf("DNS Rules: %d, Action: %s", cdns.DNSRules, cdns.Action)
+		if fqdns != "-" {
+			details += fmt.Sprintf(", FQDNs: %s", fqdns)
+		}
+		if patterns != "-" {
+			details += fmt.Sprintf(", Patterns: %s", patterns)
+		}
+
+		policiesRows = append(policiesRows, []string{
+			ns,
+			"Cilium DNS Policy",
+			cdns.Name,
+			scope,
+			"Network Policy",
+			details,
 		})
 	}
 
@@ -532,20 +1230,56 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 			}
 		}
 
+		// Detect issues
+		var calicoIssues []string
+		if cal.DNSRules == 0 {
+			calicoIssues = append(calicoIssues, "No DNS rules defined")
+		}
+		if cal.Action == "Allow" || cal.Action == "allow" {
+			calicoIssues = append(calicoIssues, "Allows DNS traffic")
+		}
+		if len(cal.Domains) > 0 {
+			for _, d := range cal.Domains {
+				if d == "*" || d == ".*" {
+					calicoIssues = append(calicoIssues, "Wildcard domain")
+					break
+				}
+			}
+		}
+		calicoIssuesStr := "<NONE>"
+		if len(calicoIssues) > 0 {
+			calicoIssuesStr = strings.Join(calicoIssues, "; ")
+		}
+
 		calicoDNSRows = append(calicoDNSRows, []string{
-			cal.Name,
 			ns,
+			cal.Name,
 			scope,
 			fmt.Sprintf("%d", cal.DNSRules),
 			domains,
 			cal.Action,
-			cal.BypassRisk,
+			calicoIssuesStr,
+		})
+
+		// Add to unified policies table
+		details := fmt.Sprintf("DNS Rules: %d, Action: %s", cal.DNSRules, cal.Action)
+		if domains != "-" {
+			details += fmt.Sprintf(", Domains: %s", domains)
+		}
+
+		policiesRows = append(policiesRows, []string{
+			ns,
+			"Calico DNS Policy",
+			cal.Name,
+			scope,
+			"Network Policy",
+			details,
 		})
 	}
 
 	// Build pod DNS rows (only show interesting ones)
 	for _, p := range podDNS {
-		if p.DNSPolicy == "None" || p.HasCustomDNS || p.BypassRisk != "" {
+		if p.DNSPolicy == "None" || p.HasCustomDNS {
 			customDNS := "No"
 			if p.HasCustomDNS {
 				customDNS = "Yes"
@@ -565,14 +1299,48 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 				}
 			}
 
+			// Detect issues
+			var podDNSIssues []string
+			if p.DNSPolicy == "None" {
+				podDNSIssues = append(podDNSIssues, "DNS policy None (external DNS)")
+			}
+			if p.HasCustomDNS {
+				podDNSIssues = append(podDNSIssues, "Custom DNS configured")
+			}
+			for _, ns := range p.Nameservers {
+				if !strings.HasPrefix(ns, "10.") && !strings.HasPrefix(ns, "172.") && !strings.HasPrefix(ns, "192.168.") {
+					podDNSIssues = append(podDNSIssues, "External nameserver")
+					break
+				}
+			}
+			podDNSIssuesStr := "<NONE>"
+			if len(podDNSIssues) > 0 {
+				podDNSIssuesStr = strings.Join(podDNSIssues, "; ")
+			}
+
 			podDNSRows = append(podDNSRows, []string{
-				p.Name,
 				p.Namespace,
+				p.Name,
 				p.DNSPolicy,
 				customDNS,
 				nameservers,
 				searches,
-				p.BypassRisk,
+				podDNSIssuesStr,
+			})
+
+			// Add to unified policies table
+			details := fmt.Sprintf("DNS Policy: %s, Custom DNS: %s", p.DNSPolicy, customDNS)
+			if nameservers != "-" {
+				details += fmt.Sprintf(", Nameservers: %s", nameservers)
+			}
+
+			policiesRows = append(policiesRows, []string{
+				p.Namespace,
+				"Pod DNS Config",
+				p.Name,
+				"Pod",
+				"DNS Override",
+				details,
 			})
 		}
 	}
@@ -587,9 +1355,21 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 		if istioDNS.AutoAllocateEnabled {
 			autoAllocate = "Yes"
 		}
-		bypassRisk := "-"
-		if istioDNS.BypassRisk != "" {
-			bypassRisk = istioDNS.BypassRisk
+
+		// Detect issues
+		var istioDNSIssues []string
+		if istioDNS.Status != "Running" && istioDNS.Status != "Healthy" {
+			istioDNSIssues = append(istioDNSIssues, "Not running")
+		}
+		if istioDNS.PodsRunning < istioDNS.TotalPods {
+			istioDNSIssues = append(istioDNSIssues, "Some pods not running")
+		}
+		if !istioDNS.DNSCaptureEnabled {
+			istioDNSIssues = append(istioDNSIssues, "DNS capture disabled")
+		}
+		istioDNSIssuesStr := "<NONE>"
+		if len(istioDNSIssues) > 0 {
+			istioDNSIssuesStr = strings.Join(istioDNSIssues, "; ")
 		}
 
 		istioDNSRows = append(istioDNSRows, []string{
@@ -598,30 +1378,549 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 			fmt.Sprintf("%d/%d", istioDNS.PodsRunning, istioDNS.TotalPods),
 			dnsCapture,
 			autoAllocate,
-			bypassRisk,
+			istioDNSIssuesStr,
+		})
+
+		// Add to unified policies table
+		policiesRows = append(policiesRows, []string{
+			istioDNS.Namespace,
+			"Istio DNS",
+			istioDNS.Name,
+			"Service Mesh",
+			"DNS Proxy",
+			fmt.Sprintf("Status: %s, DNS Capture: %s, Auto Allocate: %s", istioDNS.Status, dnsCapture, autoAllocate),
 		})
 	}
 
 	// Build cloud DNS rows
 	for _, cloud := range cloudDNS {
-		bypassRisk := "-"
-		if cloud.BypassRisk != "" {
-			bypassRisk = cloud.BypassRisk
+		// Detect issues
+		var cloudIssues []string
+		if cloud.Status != "Running" && cloud.Status != "Healthy" {
+			cloudIssues = append(cloudIssues, "Not running")
+		}
+		if cloud.PodsRunning < cloud.TotalPods {
+			cloudIssues = append(cloudIssues, "Some pods not running")
+		}
+		cloudIssuesStr := "<NONE>"
+		if len(cloudIssues) > 0 {
+			cloudIssuesStr = strings.Join(cloudIssues, "; ")
 		}
 
 		cloudDNSRows = append(cloudDNSRows, []string{
+			cloud.Namespace,
 			cloud.Provider,
 			cloud.Name,
-			cloud.Namespace,
 			cloud.Status,
 			cloud.Type,
 			fmt.Sprintf("%d/%d", cloud.PodsRunning, cloud.TotalPods),
-			bypassRisk,
+			cloudIssuesStr,
+		})
+
+		// Add to unified policies table
+		policiesRows = append(policiesRows, []string{
+			cloud.Namespace,
+			"Cloud DNS",
+			cloud.Name,
+			"Cloud",
+			cloud.Type,
+			fmt.Sprintf("Provider: %s, Status: %s, Pods: %d/%d", cloud.Provider, cloud.Status, cloud.PodsRunning, cloud.TotalPods),
+		})
+	}
+
+	// Build ExternalName service rows
+	for _, svc := range externalNameSvcs {
+		notes := "-"
+		if len(svc.Notes) > 0 {
+			notes = strings.Join(svc.Notes, "; ")
+		}
+
+		// Detect issues
+		var extNameIssues []string
+		if strings.Contains(svc.ExternalName, "internal") {
+			extNameIssues = append(extNameIssues, "Points to internal service")
+		}
+		if !strings.Contains(svc.ExternalName, ".") {
+			extNameIssues = append(extNameIssues, "Not a valid FQDN")
+		}
+		extNameIssuesStr := "<NONE>"
+		if len(extNameIssues) > 0 {
+			extNameIssuesStr = strings.Join(extNameIssues, "; ")
+		}
+
+		externalNameRows = append(externalNameRows, []string{
+			svc.Namespace,
+			svc.Name,
+			svc.ExternalName,
+			notes,
+			extNameIssuesStr,
+		})
+
+		// Add to unified policies table
+		policiesRows = append(policiesRows, []string{
+			svc.Namespace,
+			"ExternalName Service",
+			svc.Name,
+			"Service",
+			notes,
+			fmt.Sprintf("Points to: %s", svc.ExternalName),
+		})
+	}
+
+	// Build Headless service rows
+	for _, svc := range headlessSvcs {
+		ports := "-"
+		if len(svc.Ports) > 0 {
+			ports = strings.Join(svc.Ports, ", ")
+		}
+		notes := "-"
+		if len(svc.Notes) > 0 {
+			notes = strings.Join(svc.Notes, "; ")
+		}
+
+		// Detect issues
+		var headlessIssues []string
+		if svc.PodCount == 0 {
+			headlessIssues = append(headlessIssues, "No backing pods")
+		}
+		if len(svc.Ports) == 0 {
+			headlessIssues = append(headlessIssues, "No ports defined")
+		}
+		headlessIssuesStr := "<NONE>"
+		if len(headlessIssues) > 0 {
+			headlessIssuesStr = strings.Join(headlessIssues, "; ")
+		}
+
+		headlessRows = append(headlessRows, []string{
+			svc.Namespace,
+			svc.Name,
+			fmt.Sprintf("%d", svc.PodCount),
+			ports,
+			notes,
+			headlessIssuesStr,
+		})
+	}
+
+	// Build DNS configuration rows (show pods with notable DNS config)
+	for _, info := range exfilRisks {
+		// Skip pods with no notable findings
+		if len(info.Notes) == 0 {
+			continue
+		}
+		hasPolicy := "No"
+		if info.HasEgressPolicy {
+			hasPolicy = "Yes"
+		}
+		externalDNS := "-"
+		if len(info.ExternalDNS) > 0 {
+			externalDNS = strings.Join(info.ExternalDNS, ", ")
+		}
+		dnsPolicy := info.DNSPolicy
+		if dnsPolicy == "" {
+			dnsPolicy = "ClusterFirst"
+		}
+		// Filter notes to remove redundant info now shown in columns
+		var filteredNotes []string
+		for _, note := range info.Notes {
+			if !strings.Contains(note, "DNSPolicy=") && !strings.Contains(note, "External nameservers:") {
+				filteredNotes = append(filteredNotes, note)
+			}
+		}
+		notesStr := "-"
+		if len(filteredNotes) > 0 {
+			notesStr = strings.Join(filteredNotes, "; ")
+		}
+
+		// Detect issues
+		var exfilIssues []string
+		if !info.HasEgressPolicy {
+			exfilIssues = append(exfilIssues, "No egress policy")
+		}
+		if dnsPolicy == "None" {
+			exfilIssues = append(exfilIssues, "DNS policy None")
+		}
+		if len(info.ExternalDNS) > 0 {
+			exfilIssues = append(exfilIssues, "External DNS configured")
+		}
+		exfilIssuesStr := "<NONE>"
+		if len(exfilIssues) > 0 {
+			exfilIssuesStr = strings.Join(exfilIssues, "; ")
+		}
+
+		exfilRiskRows = append(exfilRiskRows, []string{
+			info.Namespace,
+			info.PodName,
+			dnsPolicy,
+			hasPolicy,
+			externalDNS,
+			notesStr,
+			exfilIssuesStr,
+		})
+	}
+
+	// Build Kyverno DNS policy rows
+	for _, policy := range kyvernoDNS {
+		scope := "Namespace"
+		ns := policy.Namespace
+		if policy.IsCluster {
+			scope = "Cluster"
+			ns = "<CLUSTER>"
+		}
+
+		// Detect issues
+		var kyvernoIssues []string
+		if policy.Action == "audit" || policy.Action == "Audit" {
+			kyvernoIssues = append(kyvernoIssues, "Audit mode only")
+		}
+		if policy.DNSRule == "" {
+			kyvernoIssues = append(kyvernoIssues, "No DNS rule defined")
+		}
+		kyvernoIssuesStr := "<NONE>"
+		if len(kyvernoIssues) > 0 {
+			kyvernoIssuesStr = strings.Join(kyvernoIssues, "; ")
+		}
+
+		kyvernoRows = append(kyvernoRows, []string{
+			ns,
+			policy.Name,
+			scope,
+			policy.Type,
+			policy.Target,
+			policy.DNSRule,
+			policy.Action,
+			kyvernoIssuesStr,
+		})
+
+		// Add to unified policies table
+		policiesRows = append(policiesRows, []string{
+			ns,
+			"Kyverno DNS Policy",
+			policy.Name,
+			scope,
+			policy.Type,
+			fmt.Sprintf("Target: %s, Rule: %s", policy.Target, policy.DNSRule),
+		})
+	}
+
+	// Build Gatekeeper DNS constraint rows
+	for _, constraint := range gatekeeperDNS {
+		// Detect issues
+		var gkIssues []string
+		if constraint.EnforcementAction == "dryrun" || constraint.EnforcementAction == "warn" {
+			gkIssues = append(gkIssues, "Not enforcing")
+		}
+		if constraint.DNSRule == "" {
+			gkIssues = append(gkIssues, "No DNS rule defined")
+		}
+		gkIssuesStr := "<NONE>"
+		if len(gkIssues) > 0 {
+			gkIssuesStr = strings.Join(gkIssues, "; ")
+		}
+
+		gatekeeperRows = append(gatekeeperRows, []string{
+			constraint.Name,
+			constraint.TemplateName,
+			constraint.EnforcementAction,
+			constraint.Target,
+			constraint.DNSRule,
+			gkIssuesStr,
+		})
+
+		// Add to unified policies table
+		policiesRows = append(policiesRows, []string{
+			"<CLUSTER>",
+			"Gatekeeper DNS Constraint",
+			constraint.Name,
+			"Cluster",
+			constraint.EnforcementAction,
+			fmt.Sprintf("Template: %s, Target: %s", constraint.TemplateName, constraint.Target),
+		})
+	}
+
+	// Build Consul DNS rows
+	if consulDNS.Name != "" {
+		// Detect issues
+		var consulIssues []string
+		if consulDNS.Status != "Running" && consulDNS.Status != "Healthy" {
+			consulIssues = append(consulIssues, "Not running")
+		}
+		if consulDNS.PodsRunning < consulDNS.TotalPods {
+			consulIssues = append(consulIssues, "Some pods not running")
+		}
+		if consulDNS.DNSDomain == "" {
+			consulIssues = append(consulIssues, "No DNS domain configured")
+		}
+		consulIssuesStr := "<NONE>"
+		if len(consulIssues) > 0 {
+			consulIssuesStr = strings.Join(consulIssues, "; ")
+		}
+
+		consulRows = append(consulRows, []string{
+			consulDNS.Namespace,
+			consulDNS.Name,
+			consulDNS.Status,
+			fmt.Sprintf("%d/%d", consulDNS.PodsRunning, consulDNS.TotalPods),
+			consulDNS.DNSDomain,
+			consulIssuesStr,
+		})
+
+		// Add to unified policies table
+		policiesRows = append(policiesRows, []string{
+			consulDNS.Namespace,
+			"Consul DNS",
+			consulDNS.Name,
+			"Service Mesh",
+			"Service Discovery",
+			fmt.Sprintf("Status: %s, Domain: %s", consulDNS.Status, consulDNS.DNSDomain),
+		})
+	}
+
+	// Build K8s NetworkPolicy DNS rows
+	for _, p := range k8sNetPolDNS {
+		notes := "<NONE>"
+		if len(p.Notes) > 0 {
+			notes = strings.Join(p.Notes, "; ")
+		}
+
+		// Detect issues
+		var k8sNetPolIssues []string
+		if !p.HasDNSEgress {
+			k8sNetPolIssues = append(k8sNetPolIssues, "No DNS egress rules")
+		}
+		if p.DNSEgressAction == "allow" || p.DNSEgressAction == "" {
+			k8sNetPolIssues = append(k8sNetPolIssues, "DNS egress allowed")
+		}
+		if p.PodSelector == "" || p.PodSelector == "*" {
+			k8sNetPolIssues = append(k8sNetPolIssues, "Broad pod selector")
+		}
+		issuesStr := "<NONE>"
+		if len(k8sNetPolIssues) > 0 {
+			issuesStr = strings.Join(k8sNetPolIssues, "; ")
+		}
+
+		k8sNetPolDNSRows = append(k8sNetPolDNSRows, []string{
+			p.Name,
+			p.Namespace,
+			shared.FormatBool(p.HasDNSEgress),
+			p.DNSEgressAction,
+			p.PodSelector,
+			notes,
+			issuesStr,
+		})
+	}
+
+	// Build Consul DNS Forwarding rows
+	for _, c := range consulDNSForwarding {
+		recursors := "<NONE>"
+		if len(c.Recursors) > 0 {
+			recursors = strings.Join(c.Recursors, ", ")
+		}
+		forwardingRules := "<NONE>"
+		if len(c.ForwardingRules) > 0 {
+			forwardingRules = strings.Join(c.ForwardingRules, ", ")
+		}
+
+		// Detect issues
+		var consulDNSIssues []string
+		if !c.EnableDNSProxy {
+			consulDNSIssues = append(consulDNSIssues, "DNS proxy disabled")
+		}
+		if len(c.Recursors) == 0 {
+			consulDNSIssues = append(consulDNSIssues, "No recursors configured")
+		}
+		if len(c.ForwardingRules) == 0 {
+			consulDNSIssues = append(consulDNSIssues, "No forwarding rules")
+		}
+		issuesStr := "<NONE>"
+		if len(consulDNSIssues) > 0 {
+			issuesStr = strings.Join(consulDNSIssues, "; ")
+		}
+
+		consulDNSForwardingRows = append(consulDNSForwardingRows, []string{
+			c.Name,
+			c.Namespace,
+			c.DNSDomain,
+			recursors,
+			forwardingRules,
+			shared.FormatBool(c.EnableDNSProxy),
+			issuesStr,
+		})
+	}
+
+	// Build Kubewarden DNS Policy rows
+	for _, p := range kubewardenDNSPolicies {
+		dnsRules := "<NONE>"
+		if len(p.DNSRules) > 0 {
+			dnsRules = strings.Join(p.DNSRules, ", ")
+		}
+
+		// Detect issues
+		var kubewardenDNSIssues []string
+		if p.Mode == "monitor" || p.Mode == "audit" {
+			kubewardenDNSIssues = append(kubewardenDNSIssues, "Not enforcing")
+		}
+		if len(p.DNSRules) == 0 {
+			kubewardenDNSIssues = append(kubewardenDNSIssues, "No DNS rules defined")
+		}
+		issuesStr := "<NONE>"
+		if len(kubewardenDNSIssues) > 0 {
+			issuesStr = strings.Join(kubewardenDNSIssues, "; ")
+		}
+
+		kubewardenDNSRows = append(kubewardenDNSRows, []string{
+			p.Name,
+			p.Namespace,
+			p.PolicyServer,
+			p.Mode,
+			p.Module,
+			dnsRules,
+			issuesStr,
+		})
+	}
+
+	// Build AWS DNS Firewall rows
+	if awsDNSFirewall.Name != "" {
+		notes := "<NONE>"
+		if len(awsDNSFirewall.Notes) > 0 {
+			notes = strings.Join(awsDNSFirewall.Notes, "; ")
+		}
+
+		// Detect issues
+		var awsDNSIssues []string
+		if !awsDNSFirewall.VPCAssociation {
+			awsDNSIssues = append(awsDNSIssues, "VPC not associated")
+		}
+		if awsDNSFirewall.RuleGroupCount == 0 {
+			awsDNSIssues = append(awsDNSIssues, "No rule groups")
+		}
+		if awsDNSFirewall.DomainListCount == 0 {
+			awsDNSIssues = append(awsDNSIssues, "No domain lists")
+		}
+		issuesStr := "<NONE>"
+		if len(awsDNSIssues) > 0 {
+			issuesStr = strings.Join(awsDNSIssues, "; ")
+		}
+
+		awsDNSFirewallRows = append(awsDNSFirewallRows, []string{
+			awsDNSFirewall.Name,
+			awsDNSFirewall.Namespace,
+			shared.FormatBool(awsDNSFirewall.VPCAssociation),
+			fmt.Sprintf("%d", awsDNSFirewall.RuleGroupCount),
+			fmt.Sprintf("%d", awsDNSFirewall.DomainListCount),
+			notes,
+			issuesStr,
+		})
+	}
+
+	// Build GCP Response Policy rows
+	if gcpResponsePolicies.Name != "" {
+		notes := "<NONE>"
+		if len(gcpResponsePolicies.Notes) > 0 {
+			notes = strings.Join(gcpResponsePolicies.Notes, "; ")
+		}
+
+		// Detect issues
+		var gcpRespIssues []string
+		if !gcpResponsePolicies.ClusterScope {
+			gcpRespIssues = append(gcpRespIssues, "Limited scope")
+		}
+		if gcpResponsePolicies.RuleCount == 0 {
+			gcpRespIssues = append(gcpRespIssues, "No rules defined")
+		}
+		issuesStr := "<NONE>"
+		if len(gcpRespIssues) > 0 {
+			issuesStr = strings.Join(gcpRespIssues, "; ")
+		}
+
+		gcpResponsePolicyRows = append(gcpResponsePolicyRows, []string{
+			gcpResponsePolicies.Name,
+			gcpResponsePolicies.Namespace,
+			shared.FormatBool(gcpResponsePolicies.ClusterScope),
+			fmt.Sprintf("%d", gcpResponsePolicies.RuleCount),
+			notes,
+			issuesStr,
+		})
+	}
+
+	// Build Azure DNS Private Resolver rows
+	if azureDNSResolver.Name != "" {
+		notes := "<NONE>"
+		if len(azureDNSResolver.Notes) > 0 {
+			notes = strings.Join(azureDNSResolver.Notes, "; ")
+		}
+
+		// Detect issues
+		var azureDNSIssues []string
+		if !azureDNSResolver.LinkedVNET {
+			azureDNSIssues = append(azureDNSIssues, "VNET not linked")
+		}
+		if azureDNSResolver.InboundEndpoints == 0 {
+			azureDNSIssues = append(azureDNSIssues, "No inbound endpoints")
+		}
+		if azureDNSResolver.ForwardingRuleSets == 0 {
+			azureDNSIssues = append(azureDNSIssues, "No forwarding rules")
+		}
+		issuesStr := "<NONE>"
+		if len(azureDNSIssues) > 0 {
+			issuesStr = strings.Join(azureDNSIssues, "; ")
+		}
+
+		azureDNSResolverRows = append(azureDNSResolverRows, []string{
+			azureDNSResolver.Name,
+			azureDNSResolver.Namespace,
+			shared.FormatBool(azureDNSResolver.LinkedVNET),
+			fmt.Sprintf("%d", azureDNSResolver.InboundEndpoints),
+			fmt.Sprintf("%d", azureDNSResolver.OutboundEndpoints),
+			fmt.Sprintf("%d", azureDNSResolver.ForwardingRuleSets),
+			notes,
+			issuesStr,
+		})
+	}
+
+	// Build Istio ServiceEntry rows
+	for _, s := range istioServiceEntries {
+		hosts := "<NONE>"
+		if len(s.Hosts) > 0 {
+			hosts = strings.Join(s.Hosts, ", ")
+		}
+		ports := "<NONE>"
+		if len(s.Ports) > 0 {
+			ports = strings.Join(s.Ports, ", ")
+		}
+
+		// Detect issues
+		var istioSEIssues []string
+		if s.Location == "MESH_EXTERNAL" {
+			istioSEIssues = append(istioSEIssues, "External mesh access")
+		}
+		for _, h := range s.Hosts {
+			if h == "*" || strings.HasPrefix(h, "*.") {
+				istioSEIssues = append(istioSEIssues, "Wildcard host")
+				break
+			}
+		}
+		if s.IsCluster {
+			istioSEIssues = append(istioSEIssues, "Cluster-wide scope")
+		}
+		issuesStr := "<NONE>"
+		if len(istioSEIssues) > 0 {
+			issuesStr = strings.Join(istioSEIssues, "; ")
+		}
+
+		istioServiceEntryRows = append(istioServiceEntryRows, []string{
+			s.Name,
+			s.Namespace,
+			hosts,
+			s.Location,
+			s.Resolution,
+			ports,
+			shared.FormatBool(s.IsCluster),
+			issuesStr,
 		})
 	}
 
 	// Generate loot
-	generateDNSAdmissionLoot(loot, findings, coredns, corednsConfig, nodeLocalDNS, externalDNS, ciliumDNS, calicoDNS, podDNS)
+	generateDNSAdmissionLoot(loot, coredns, nodeLocalDNS, externalDNS, ciliumDNS, calicoDNS, externalNameSvcs, exfilRisks)
 
 	// Build output tables
 	var tables []internal.TableFile
@@ -632,76 +1931,193 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 		Body:   summaryRows,
 	})
 
-	if len(corednsRows) > 0 {
+	// Always add unified policies table
+	if len(policiesRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "DNS-Admission-CoreDNS",
-			Header: corednsHeader,
-			Body:   corednsRows,
+			Name:   "DNS-Admission-Policies",
+			Header: policiesHeader,
+			Body:   policiesRows,
 		})
 	}
 
-	if len(corednsConfigRows) > 0 {
+	// Always show security-critical tables
+	if len(externalNameRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "DNS-Admission-CoreDNS-Config",
-			Header: corednsConfigHeader,
-			Body:   corednsConfigRows,
+			Name:   "DNS-Admission-ExternalName-Services",
+			Header: externalNameHeader,
+			Body:   externalNameRows,
 		})
 	}
 
-	if len(nodeLocalDNSRows) > 0 {
+	if len(exfilRiskRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "DNS-Admission-NodeLocalDNS",
-			Header: nodeLocalDNSHeader,
-			Body:   nodeLocalDNSRows,
+			Name:   "DNS-Admission-Exfiltration-Risks",
+			Header: exfilRiskHeader,
+			Body:   exfilRiskRows,
 		})
 	}
 
-	if len(externalDNSRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "DNS-Admission-ExternalDNS",
-			Header: externalDNSHeader,
-			Body:   externalDNSRows,
-		})
-	}
+	// Detailed tables only if --detailed flag is set
+	if detailed {
+		if len(corednsRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "DNS-Admission-CoreDNS",
+				Header: corednsHeader,
+				Body:   corednsRows,
+			})
+		}
 
-	if len(ciliumDNSRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "DNS-Admission-Cilium-DNS-Policies",
-			Header: ciliumDNSHeader,
-			Body:   ciliumDNSRows,
-		})
-	}
+		if len(corednsConfigRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "DNS-Admission-CoreDNS-Config",
+				Header: corednsConfigHeader,
+				Body:   corednsConfigRows,
+			})
+		}
 
-	if len(calicoDNSRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "DNS-Admission-Calico-DNS-Policies",
-			Header: calicoDNSHeader,
-			Body:   calicoDNSRows,
-		})
-	}
+		if len(nodeLocalDNSRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "DNS-Admission-NodeLocalDNS",
+				Header: nodeLocalDNSHeader,
+				Body:   nodeLocalDNSRows,
+			})
+		}
 
-	if len(podDNSRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "DNS-Admission-Pod-DNS-Config",
-			Header: podDNSHeader,
-			Body:   podDNSRows,
-		})
-	}
+		if len(externalDNSRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "DNS-Admission-ExternalDNS",
+				Header: externalDNSHeader,
+				Body:   externalDNSRows,
+			})
+		}
 
-	if len(istioDNSRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "DNS-Admission-Istio-DNS",
-			Header: istioDNSHeader,
-			Body:   istioDNSRows,
-		})
-	}
+		if len(ciliumDNSRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "DNS-Admission-Cilium-DNS-Policies",
+				Header: ciliumDNSHeader,
+				Body:   ciliumDNSRows,
+			})
+		}
 
-	if len(cloudDNSRows) > 0 {
-		tables = append(tables, internal.TableFile{
-			Name:   "DNS-Admission-Cloud-DNS",
-			Header: cloudDNSHeader,
-			Body:   cloudDNSRows,
-		})
+		if len(calicoDNSRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "DNS-Admission-Calico-DNS-Policies",
+				Header: calicoDNSHeader,
+				Body:   calicoDNSRows,
+			})
+		}
+
+		if len(podDNSRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "DNS-Admission-Pod-DNS-Config",
+				Header: podDNSHeader,
+				Body:   podDNSRows,
+			})
+		}
+
+		if len(istioDNSRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "DNS-Admission-Istio-DNS",
+				Header: istioDNSHeader,
+				Body:   istioDNSRows,
+			})
+		}
+
+		if len(cloudDNSRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "DNS-Admission-Cloud-DNS",
+				Header: cloudDNSHeader,
+				Body:   cloudDNSRows,
+			})
+		}
+
+		if len(headlessRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "DNS-Admission-Headless-Services",
+				Header: headlessHeader,
+				Body:   headlessRows,
+			})
+		}
+
+		if len(kyvernoRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "DNS-Admission-Kyverno-Policies",
+				Header: kyvernoHeader,
+				Body:   kyvernoRows,
+			})
+		}
+
+		if len(gatekeeperRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "DNS-Admission-Gatekeeper-Constraints",
+				Header: gatekeeperHeader,
+				Body:   gatekeeperRows,
+			})
+		}
+
+		if len(consulRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "DNS-Admission-Consul",
+				Header: consulHeader,
+				Body:   consulRows,
+			})
+		}
+
+		if len(k8sNetPolDNSRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "DNS-Admission-K8s-NetworkPolicy",
+				Header: k8sNetPolDNSHeader,
+				Body:   k8sNetPolDNSRows,
+			})
+		}
+
+		if len(consulDNSForwardingRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "DNS-Admission-Consul-Forwarding",
+				Header: consulDNSForwardingHeader,
+				Body:   consulDNSForwardingRows,
+			})
+		}
+
+		if len(kubewardenDNSRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "DNS-Admission-Kubewarden",
+				Header: kubewardenDNSHeader,
+				Body:   kubewardenDNSRows,
+			})
+		}
+
+		if len(awsDNSFirewallRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "DNS-Admission-AWS-Firewall",
+				Header: awsDNSFirewallHeader,
+				Body:   awsDNSFirewallRows,
+			})
+		}
+
+		if len(gcpResponsePolicyRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "DNS-Admission-GCP-ResponsePolicy",
+				Header: gcpResponsePolicyHeader,
+				Body:   gcpResponsePolicyRows,
+			})
+		}
+
+		if len(azureDNSResolverRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "DNS-Admission-Azure-PrivateResolver",
+				Header: azureDNSResolverHeader,
+				Body:   azureDNSResolverRows,
+			})
+		}
+
+		if len(istioServiceEntryRows) > 0 {
+			tables = append(tables, internal.TableFile{
+				Name:   "DNS-Admission-Istio-ServiceEntry",
+				Header: istioServiceEntryHeader,
+				Body:   istioServiceEntryRows,
+			})
+		}
 	}
 
 	output := DNSAdmissionOutput{
@@ -750,7 +2166,7 @@ func analyzeCoreDNS(ctx context.Context, clientset kubernetes.Interface) (CoreDN
 
 				// Get version from image and verify using SDK
 				for _, container := range dep.Spec.Template.Spec.Containers {
-					if VerifyControllerImage(container.Image, "coredns") {
+					if admission.VerifyControllerImage(container.Image, "coredns") {
 						info.ImageVerified = true
 						parts := strings.Split(container.Image, ":")
 						if len(parts) > 1 {
@@ -761,7 +2177,6 @@ func analyzeCoreDNS(ctx context.Context, clientset kubernetes.Interface) (CoreDN
 
 				if dep.Status.ReadyReplicas < dep.Status.Replicas {
 					info.Status = "degraded"
-					info.BypassRisk = fmt.Sprintf("Only %d/%d CoreDNS pods running", dep.Status.ReadyReplicas, dep.Status.Replicas)
 				}
 				info.TotalPods = int(dep.Status.Replicas)
 				info.PodsRunning = int(dep.Status.ReadyReplicas)
@@ -819,14 +2234,6 @@ func analyzeCoreDNS(ctx context.Context, clientset kubernetes.Interface) (CoreDN
 				}
 			}
 		}
-	}
-
-	// Assess risk
-	if !info.LoggingEnabled {
-		if info.BypassRisk != "" {
-			info.BypassRisk += "; "
-		}
-		info.BypassRisk += "DNS logging disabled"
 	}
 
 	return info, configs
@@ -917,16 +2324,6 @@ func parseCorefile(corefile string) []CoreDNSConfigInfo {
 		}
 	}
 
-	// Assess risks
-	for i := range configs {
-		// Check for external DNS forwarding
-		for _, fwd := range configs[i].ForwardTo {
-			if fwd == "8.8.8.8" || fwd == "8.8.4.4" || fwd == "1.1.1.1" || strings.Contains(fwd, "dns.google") {
-				configs[i].BypassRisk = "Forwards to public DNS"
-			}
-		}
-	}
-
 	return configs
 }
 
@@ -955,7 +2352,7 @@ func analyzeNodeLocalDNS(ctx context.Context, clientset kubernetes.Interface) No
 		// Verify by image using SDK to reduce false positives
 		imageVerified := false
 		for _, container := range ds.Spec.Template.Spec.Containers {
-			if VerifyControllerImage(container.Image, "nodelocaldns") {
+			if admission.VerifyControllerImage(container.Image, "nodelocaldns") {
 				imageVerified = true
 				break
 			}
@@ -986,7 +2383,6 @@ func analyzeNodeLocalDNS(ctx context.Context, clientset kubernetes.Interface) No
 
 		if info.PodsRunning < info.TotalPods {
 			info.Status = "degraded"
-			info.BypassRisk = fmt.Sprintf("Only %d/%d NodeLocalDNS pods running", info.PodsRunning, info.TotalPods)
 		}
 
 		break
@@ -1018,7 +2414,7 @@ func analyzeExternalDNS(ctx context.Context, clientset kubernetes.Interface) Ext
 			// Verify by image using SDK to reduce false positives
 			imageVerified := false
 			for _, container := range dep.Spec.Template.Spec.Containers {
-				if VerifyControllerImage(container.Image, "external-dns") {
+				if admission.VerifyControllerImage(container.Image, "external-dns") {
 					imageVerified = true
 					break
 				}
@@ -1035,7 +2431,6 @@ func analyzeExternalDNS(ctx context.Context, clientset kubernetes.Interface) Ext
 
 			if dep.Status.ReadyReplicas < dep.Status.Replicas {
 				info.Status = "degraded"
-				info.BypassRisk = fmt.Sprintf("Only %d/%d external-dns pods running", dep.Status.ReadyReplicas, dep.Status.Replicas)
 			}
 			info.TotalPods = int(dep.Status.Replicas)
 			info.PodsRunning = int(dep.Status.ReadyReplicas)
@@ -1056,11 +2451,6 @@ func analyzeExternalDNS(ctx context.Context, clientset kubernetes.Interface) Ext
 						info.Registry = strings.TrimPrefix(arg, "--registry=")
 					}
 				}
-			}
-
-			// Assess risk
-			if info.Policy == "sync" {
-				info.BypassRisk = "Sync policy may delete DNS records"
 			}
 
 			break
@@ -1293,26 +2683,6 @@ func analyzePodDNS(ctx context.Context, clientset kubernetes.Interface) []PodDNS
 				info.Searches = pod.Spec.DNSConfig.Searches
 			}
 
-			// Assess risk
-			if info.DNSPolicy == string(corev1.DNSNone) {
-				info.BypassRisk = "DNS policy is None - may bypass cluster DNS"
-			} else if info.DNSPolicy == string(corev1.DNSDefault) {
-				info.BypassRisk = "Uses node DNS directly"
-			}
-
-			if info.HasCustomDNS {
-				for _, ns := range info.Nameservers {
-					// Check for external DNS servers
-					if !strings.HasPrefix(ns, "10.") && !strings.HasPrefix(ns, "172.") && !strings.HasPrefix(ns, "192.168.") {
-						if info.BypassRisk != "" {
-							info.BypassRisk += "; "
-						}
-						info.BypassRisk += "External DNS servers configured"
-						break
-					}
-				}
-			}
-
 			podDNS = append(podDNS, info)
 		}
 	}
@@ -1328,6 +2698,11 @@ func buildDNSAdmissionFindings(
 	coredns CoreDNSInfo,
 	ciliumDNS []CiliumDNSPolicyInfo,
 	calicoDNS []CalicoDNSPolicyInfo,
+	kyvernoDNS []KyvernoDNSPolicyInfo,
+	gatekeeperDNS []GatekeeperDNSConstraintInfo,
+	eksAdminPolicies []EKSAdminNetworkPolicyInfo,
+	k8sNetPolDNS []K8sNetworkPolicyDNSInfo,
+	istioServiceEntries []IstioServiceEntryInfo,
 	podDNS []PodDNSInfo) []DNSAdmissionFinding {
 
 	// Initialize findings per namespace
@@ -1342,13 +2717,11 @@ func buildDNSAdmissionFindings(
 	for _, p := range ciliumDNS {
 		if !p.IsCluster {
 			if finding, ok := namespaceData[p.Namespace]; ok {
-				finding.HasCiliumDNSPolicy = true
 				finding.CiliumPolicies++
 			}
 		} else {
 			// Cluster-wide policies apply to all
 			for _, finding := range namespaceData {
-				finding.HasCiliumDNSPolicy = true
 				finding.CiliumPolicies++
 			}
 		}
@@ -1358,14 +2731,69 @@ func buildDNSAdmissionFindings(
 	for _, p := range calicoDNS {
 		if !p.IsGlobal {
 			if finding, ok := namespaceData[p.Namespace]; ok {
-				finding.HasCalicoDNSPolicy = true
 				finding.CalicoPolicies++
 			}
 		} else {
 			// Global policies apply to all
 			for _, finding := range namespaceData {
-				finding.HasCalicoDNSPolicy = true
 				finding.CalicoPolicies++
+			}
+		}
+	}
+
+	// Count Kyverno DNS policies per namespace
+	for _, p := range kyvernoDNS {
+		if !p.IsCluster {
+			if finding, ok := namespaceData[p.Namespace]; ok {
+				finding.KyvernoPolicies++
+			}
+		} else {
+			// Cluster-wide policies apply to all
+			for _, finding := range namespaceData {
+				finding.KyvernoPolicies++
+			}
+		}
+	}
+
+	// Count Gatekeeper DNS constraints per namespace
+	for range gatekeeperDNS {
+		// Gatekeeper constraints are typically cluster-wide
+		for _, finding := range namespaceData {
+			finding.GatekeeperPolicies++
+		}
+	}
+
+	// Count EKS Admin Network Policies per namespace
+	for _, p := range eksAdminPolicies {
+		if !p.IsCluster {
+			if finding, ok := namespaceData[p.Subject]; ok {
+				finding.EKSAdminPolicies++
+			}
+		} else {
+			// Cluster-wide policies apply to all
+			for _, finding := range namespaceData {
+				finding.EKSAdminPolicies++
+			}
+		}
+	}
+
+	// Count K8s NetworkPolicy DNS rules per namespace
+	for _, p := range k8sNetPolDNS {
+		if finding, ok := namespaceData[p.Namespace]; ok {
+			finding.K8sNetPolDNS++
+		}
+	}
+
+	// Count Istio ServiceEntry per namespace
+	for _, se := range istioServiceEntries {
+		if !se.IsCluster {
+			if finding, ok := namespaceData[se.Namespace]; ok {
+				finding.IstioServiceEntries++
+			}
+		} else {
+			// Exported to all namespaces
+			for _, finding := range namespaceData {
+				finding.IstioServiceEntries++
 			}
 		}
 	}
@@ -1392,41 +2820,25 @@ func buildDNSAdmissionFindings(
 	// Build findings list
 	var findings []DNSAdmissionFinding
 	for _, finding := range namespaceData {
-		// Calculate risk
-		riskScore := 0
-
+		// Identify security issues
 		if finding.PodsWithNoDNS > 0 {
-			riskScore += 3
 			finding.SecurityIssues = append(finding.SecurityIssues, fmt.Sprintf("%d pods with DNS=None", finding.PodsWithNoDNS))
 		}
 
 		if finding.PodsWithCustomDNS > 0 {
-			riskScore += 1
 			finding.SecurityIssues = append(finding.SecurityIssues, fmt.Sprintf("%d pods with custom DNS", finding.PodsWithCustomDNS))
 		}
 
-		if !finding.HasCiliumDNSPolicy && !finding.HasCalicoDNSPolicy && finding.TotalPods > 0 {
-			riskScore += 1
+		hasDNSPolicy := finding.CiliumPolicies > 0 || finding.CalicoPolicies > 0 || finding.KyvernoPolicies > 0 || finding.GatekeeperPolicies > 0 || finding.EKSAdminPolicies > 0 || finding.K8sNetPolDNS > 0
+		if !hasDNSPolicy && finding.TotalPods > 0 {
 			finding.SecurityIssues = append(finding.SecurityIssues, "No DNS egress policy")
-		}
-
-		if riskScore >= 3 {
-			finding.RiskLevel = "HIGH"
-		} else if riskScore >= 1 {
-			finding.RiskLevel = "MEDIUM"
-		} else {
-			finding.RiskLevel = "LOW"
 		}
 
 		findings = append(findings, *finding)
 	}
 
-	// Sort by risk level then namespace
+	// Sort by namespace
 	sort.Slice(findings, func(i, j int) bool {
-		riskOrder := map[string]int{"HIGH": 0, "MEDIUM": 1, "LOW": 2}
-		if riskOrder[findings[i].RiskLevel] != riskOrder[findings[j].RiskLevel] {
-			return riskOrder[findings[i].RiskLevel] < riskOrder[findings[j].RiskLevel]
-		}
 		return findings[i].Namespace < findings[j].Namespace
 	})
 
@@ -1438,132 +2850,161 @@ func buildDNSAdmissionFindings(
 // ============================================================================
 
 func generateDNSAdmissionLoot(loot *shared.LootBuilder,
-	findings []DNSAdmissionFinding,
-	coredns CoreDNSInfo, corednsConfig []CoreDNSConfigInfo,
+	coredns CoreDNSInfo,
 	nodeLocalDNS NodeLocalDNSInfo,
 	externalDNS ExternalDNSInfo,
 	ciliumDNS []CiliumDNSPolicyInfo,
 	calicoDNS []CalicoDNSPolicyInfo,
-	podDNS []PodDNSInfo) {
+	externalNameSvcs []ExternalNameServiceInfo,
+	exfilRisks []DNSExfiltrationRisk) {
 
-	// Summary
-	loot.Section("Summary").Add("# DNS Security Summary")
-	loot.Section("Summary").Add("#")
+	// Unified dns-admission section
+	loot.Section("dns-admission").Add("# DNS Admission Analysis")
+	loot.Section("dns-admission").Add("#")
+
+	// Detected tools
+	detectedTools := []string{}
 
 	if coredns.Name != "" {
 		plugins := "none"
 		if len(coredns.SecurityPlugins) > 0 {
 			plugins = strings.Join(coredns.SecurityPlugins, ", ")
 		}
-		loot.Section("Summary").Add(fmt.Sprintf("# CoreDNS: %s (version: %s, security plugins: %s)", coredns.Status, coredns.Version, plugins))
-	} else {
-		loot.Section("Summary").Add("# CoreDNS: NOT FOUND")
+		loot.Section("dns-admission").Add(fmt.Sprintf("# CoreDNS: %s (version: %s, security plugins: %s)", coredns.Status, coredns.Version, plugins))
+		detectedTools = append(detectedTools, "coredns")
 	}
 
 	if nodeLocalDNS.Name != "" {
-		loot.Section("Summary").Add(fmt.Sprintf("# NodeLocalDNS: %s (local IP: %s)", nodeLocalDNS.Status, nodeLocalDNS.LocalIP))
+		loot.Section("dns-admission").Add(fmt.Sprintf("# NodeLocalDNS: %s (local IP: %s)", nodeLocalDNS.Status, nodeLocalDNS.LocalIP))
+		detectedTools = append(detectedTools, "nodelocaldns")
 	}
 
 	if externalDNS.Name != "" {
-		loot.Section("Summary").Add(fmt.Sprintf("# external-dns: %s (provider: %s, policy: %s)", externalDNS.Status, externalDNS.Provider, externalDNS.Policy))
+		loot.Section("dns-admission").Add(fmt.Sprintf("# external-dns: %s (provider: %s, policy: %s)", externalDNS.Status, externalDNS.Provider, externalDNS.Policy))
+		detectedTools = append(detectedTools, "external-dns")
 	}
 
-	loot.Section("Summary").Add(fmt.Sprintf("# Cilium DNS policies: %d", len(ciliumDNS)))
-	loot.Section("Summary").Add(fmt.Sprintf("# Calico DNS policies: %d", len(calicoDNS)))
-	loot.Section("Summary").Add("#")
-
-	// DNS Exfiltration Risks
-	loot.Section("ExfiltrationRisks").Add("# DNS Exfiltration Risk Analysis")
-	loot.Section("ExfiltrationRisks").Add("#")
-
-	noDNSPods := 0
-	customDNSPods := 0
-	for _, p := range podDNS {
-		if p.DNSPolicy == "None" {
-			noDNSPods++
-		}
-		if p.HasCustomDNS {
-			customDNSPods++
-		}
+	if len(ciliumDNS) > 0 {
+		loot.Section("dns-admission").Add(fmt.Sprintf("# Cilium DNS policies: %d", len(ciliumDNS)))
+		detectedTools = append(detectedTools, "cilium")
 	}
 
-	if noDNSPods > 0 {
-		loot.Section("ExfiltrationRisks").Add(fmt.Sprintf("# HIGH: %d pods with DNS policy=None (can use arbitrary DNS)", noDNSPods))
-	}
-	if customDNSPods > 0 {
-		loot.Section("ExfiltrationRisks").Add(fmt.Sprintf("# MEDIUM: %d pods with custom DNS configuration", customDNSPods))
-	}
-	if len(ciliumDNS) == 0 && len(calicoDNS) == 0 {
-		loot.Section("ExfiltrationRisks").Add("# MEDIUM: No DNS egress policies detected - all DNS queries allowed")
+	if len(calicoDNS) > 0 {
+		loot.Section("dns-admission").Add(fmt.Sprintf("# Calico DNS policies: %d", len(calicoDNS)))
+		detectedTools = append(detectedTools, "calico")
 	}
 
-	loot.Section("ExfiltrationRisks").Add("#")
+	loot.Section("dns-admission").Add("#")
 
-	// Pods with DNS bypass
-	if noDNSPods > 0 || customDNSPods > 0 {
-		loot.Section("DNSBypassPods").Add("# Pods with DNS Configuration Bypass")
-		loot.Section("DNSBypassPods").Add("#")
-		for _, p := range podDNS {
-			if p.BypassRisk != "" {
-				loot.Section("DNSBypassPods").Add(fmt.Sprintf("# %s/%s: %s", p.Namespace, p.Name, p.BypassRisk))
+	// Security findings section
+	hasSecurityFindings := len(externalNameSvcs) > 0 || len(exfilRisks) > 0
+
+	if hasSecurityFindings {
+		loot.Section("dns-admission").Add("# === SECURITY FINDINGS ===")
+		loot.Section("dns-admission").Add("#")
+	}
+
+	// ExternalName services - potential network policy bypass
+	if len(externalNameSvcs) > 0 {
+		loot.Section("dns-admission").Add("# ExternalName Services (potential network policy bypass):")
+		for _, svc := range externalNameSvcs {
+			lines := shared.FormatSuspiciousEntry(svc.Namespace, svc.Name, append([]string{fmt.Sprintf("Points to: %s", svc.ExternalName)}, svc.Notes...))
+			for _, line := range lines {
+				loot.Section("dns-admission").Add(line)
 			}
 		}
-		loot.Section("DNSBypassPods").Add("#")
+		loot.Section("dns-admission").Add("#")
+		loot.Section("dns-admission").Add("# Investigate ExternalName services:")
+		for _, svc := range externalNameSvcs {
+			loot.Section("dns-admission").Add(fmt.Sprintf("kubectl get svc %s -n %s -o yaml", svc.Name, svc.Namespace))
+		}
+		loot.Section("dns-admission").Add("#")
 	}
 
-	// Bypass vectors
-	loot.Section("BypassVectors").Add("# DNS Security Bypass Vectors")
-	loot.Section("BypassVectors").Add("#")
-
-	if coredns.BypassRisk != "" {
-		loot.Section("BypassVectors").Add(fmt.Sprintf("# CoreDNS: %s", coredns.BypassRisk))
+	// Pods with notable DNS configuration
+	if len(exfilRisks) > 0 {
+		loot.Section("dns-admission").Add("# Pods with Notable DNS Configuration:")
+		for _, info := range exfilRisks {
+			lines := shared.FormatSuspiciousEntry(info.Namespace, info.PodName, info.Notes)
+			for _, line := range lines {
+				loot.Section("dns-admission").Add(line)
+			}
+		}
+		loot.Section("dns-admission").Add("#")
+		loot.Section("dns-admission").Add("# Investigate pods with custom DNS configuration:")
+		for _, info := range exfilRisks {
+			loot.Section("dns-admission").Add(fmt.Sprintf("kubectl get pod %s -n %s -o yaml | grep -A10 dnsConfig", info.PodName, info.Namespace))
+		}
+		loot.Section("dns-admission").Add("#")
 	}
 
-	for _, cfg := range corednsConfig {
-		if cfg.BypassRisk != "" {
-			loot.Section("BypassVectors").Add(fmt.Sprintf("# CoreDNS zone %s: %s", cfg.Zone, cfg.BypassRisk))
+	// Commands only for detected tools
+	if len(detectedTools) > 0 {
+		loot.Section("dns-admission").Add("# === ENUMERATION COMMANDS ===")
+		loot.Section("dns-admission").Add("#")
+
+		for _, tool := range detectedTools {
+			switch tool {
+			case "coredns":
+				loot.Section("dns-admission").Add("# Check CoreDNS config:")
+				loot.Section("dns-admission").Add("kubectl get configmap coredns -n kube-system -o yaml")
+				loot.Section("dns-admission").Add("#")
+				loot.Section("dns-admission").Add("# Check CoreDNS logs:")
+				loot.Section("dns-admission").Add("kubectl logs -l k8s-app=kube-dns -n kube-system")
+				loot.Section("dns-admission").Add("#")
+			case "nodelocaldns":
+				loot.Section("dns-admission").Add("# Check NodeLocalDNS logs:")
+				loot.Section("dns-admission").Add("kubectl logs -l k8s-app=node-local-dns -n kube-system")
+				loot.Section("dns-admission").Add("#")
+			case "external-dns":
+				loot.Section("dns-admission").Add("# Check external-dns logs:")
+				loot.Section("dns-admission").Add("kubectl logs -l app=external-dns -n kube-system")
+				loot.Section("dns-admission").Add("#")
+			case "cilium":
+				loot.Section("dns-admission").Add("# List Cilium DNS policies:")
+				loot.Section("dns-admission").Add("kubectl get ciliumnetworkpolicies -A")
+				loot.Section("dns-admission").Add("#")
+			case "calico":
+				loot.Section("dns-admission").Add("# List Calico DNS policies:")
+				loot.Section("dns-admission").Add("kubectl get networkpolicies.crd.projectcalico.org -A")
+				loot.Section("dns-admission").Add("#")
+			}
 		}
 	}
 
-	if externalDNS.BypassRisk != "" {
-		loot.Section("BypassVectors").Add(fmt.Sprintf("# external-dns: %s", externalDNS.BypassRisk))
-	}
-
-	loot.Section("BypassVectors").Add("#")
-
-	// Recommendations
-	loot.Section("Recommendations").Add("# Recommendations")
-	loot.Section("Recommendations").Add("#")
-
-	if !coredns.LoggingEnabled {
-		loot.Section("Recommendations").Add("# 1. Enable CoreDNS logging for visibility into DNS queries")
-	}
-
-	if len(ciliumDNS) == 0 && len(calicoDNS) == 0 {
-		loot.Section("Recommendations").Add("# 2. Implement DNS egress policies to control DNS resolution")
-		loot.Section("Recommendations").Add("#    Example Cilium DNS policy:")
-		loot.Section("Recommendations").Add("#    toFQDNs:")
-		loot.Section("Recommendations").Add("#    - matchPattern: \"*.example.com\"")
-	}
-
-	if noDNSPods > 0 {
-		loot.Section("Recommendations").Add(fmt.Sprintf("# 3. Review %d pods with DNS policy=None for necessity", noDNSPods))
-	}
-
-	// Commands
-	loot.Section("Commands").Add("# Useful Commands")
-	loot.Section("Commands").Add("#")
-	loot.Section("Commands").Add("# Check CoreDNS config:")
-	loot.Section("Commands").Add("kubectl get configmap coredns -n kube-system -o yaml")
-	loot.Section("Commands").Add("#")
-	loot.Section("Commands").Add("# Check CoreDNS logs:")
-	loot.Section("Commands").Add("kubectl logs -l k8s-app=kube-dns -n kube-system")
-	loot.Section("Commands").Add("#")
-	loot.Section("Commands").Add("# Check pods with custom DNS:")
-	loot.Section("Commands").Add("kubectl get pods -A -o jsonpath='{range .items[?(@.spec.dnsPolicy==\"None\")]}{.metadata.namespace}/{.metadata.name}{\"\\n\"}{end}'")
-	loot.Section("Commands").Add("#")
-	loot.Section("Commands").Add("# List Cilium DNS policies:")
-	loot.Section("Commands").Add("kubectl get ciliumnetworkpolicies -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{\"\\n\"}{end}' | xargs -I {} kubectl get cnp {} -o yaml | grep -A5 toFQDNs")
+	// General DNS investigation commands
+	loot.Section("dns-admission").Add("# === GENERAL DNS INVESTIGATION ===")
+	loot.Section("dns-admission").Add("#")
+	loot.Section("dns-admission").Add("# List all ExternalName services:")
+	loot.Section("dns-admission").Add("kubectl get svc -A -o json | jq '.items[] | select(.spec.type==\"ExternalName\") | {namespace:.metadata.namespace, name:.metadata.name, externalName:.spec.externalName}'")
+	loot.Section("dns-admission").Add("#")
+	loot.Section("dns-admission").Add("# Find pods with custom DNS config:")
+	loot.Section("dns-admission").Add("kubectl get pods -A -o json | jq '.items[] | select(.spec.dnsConfig != null) | {namespace:.metadata.namespace, name:.metadata.name, dnsConfig:.spec.dnsConfig}'")
+	loot.Section("dns-admission").Add("#")
+	loot.Section("dns-admission").Add("# Find pods with DNSPolicy=None:")
+	loot.Section("dns-admission").Add("kubectl get pods -A -o json | jq '.items[] | select(.spec.dnsPolicy==\"None\") | {namespace:.metadata.namespace, name:.metadata.name}'")
+	loot.Section("dns-admission").Add("#")
+	loot.Section("dns-admission").Add("# Test DNS resolution from a pod:")
+	loot.Section("dns-admission").Add("kubectl run dns-test --rm -it --restart=Never --image=busybox -- nslookup kubernetes.default")
+	loot.Section("dns-admission").Add("#")
+	loot.Section("dns-admission").Add("# === CLOUD PROVIDER DNS POLICIES ===")
+	loot.Section("dns-admission").Add("#")
+	loot.Section("dns-admission").Add("# AWS Route 53 DNS Firewall (requires AWS CLI):")
+	loot.Section("dns-admission").Add("# aws route53resolver list-firewall-rule-groups")
+	loot.Section("dns-admission").Add("# aws route53resolver list-firewall-rules --firewall-rule-group-id <group-id>")
+	loot.Section("dns-admission").Add("# aws route53resolver list-firewall-domain-lists")
+	loot.Section("dns-admission").Add("# aws route53resolver list-resolver-endpoints")
+	loot.Section("dns-admission").Add("#")
+	loot.Section("dns-admission").Add("# GCP Cloud DNS Response Policies (requires gcloud CLI):")
+	loot.Section("dns-admission").Add("# gcloud dns response-policies list")
+	loot.Section("dns-admission").Add("# gcloud dns response-policies rules list --response-policy=<policy-name>")
+	loot.Section("dns-admission").Add("# gcloud dns managed-zones list")
+	loot.Section("dns-admission").Add("#")
+	loot.Section("dns-admission").Add("# Azure DNS Private Resolver (requires az CLI):")
+	loot.Section("dns-admission").Add("# az dns-resolver list --resource-group <rg>")
+	loot.Section("dns-admission").Add("# az dns-resolver forwarding-ruleset list --resource-group <rg>")
+	loot.Section("dns-admission").Add("# az dns-resolver forwarding-rule list --dns-forwarding-ruleset-name <ruleset> --resource-group <rg>")
+	loot.Section("dns-admission").Add("# az network private-dns zone list")
 }
 
 // ============================================================================
@@ -1616,7 +3057,6 @@ func analyzeIstioDNS(ctx context.Context, clientset kubernetes.Interface) IstioD
 
 			if info.PodsRunning < info.TotalPods {
 				info.Status = "degraded"
-				info.BypassRisk = fmt.Sprintf("Only %d/%d Istiod pods running", info.PodsRunning, info.TotalPods)
 			}
 
 			// Check for DNS proxy configuration in mesh config
@@ -1676,7 +3116,6 @@ func analyzeCloudDNS(ctx context.Context, clientset kubernetes.Interface) []Clou
 
 						if info.PodsRunning < info.TotalPods {
 							info.Status = "degraded"
-							info.BypassRisk = fmt.Sprintf("Only %d/%d pods running", info.PodsRunning, info.TotalPods)
 						}
 
 						cloudDNS = append(cloudDNS, info)
@@ -1714,7 +3153,6 @@ func analyzeCloudDNS(ctx context.Context, clientset kubernetes.Interface) []Clou
 
 						if info.PodsRunning < info.TotalPods {
 							info.Status = "degraded"
-							info.BypassRisk = fmt.Sprintf("Only %d/%d pods running", info.PodsRunning, info.TotalPods)
 						}
 
 						cloudDNS = append(cloudDNS, info)
@@ -1752,7 +3190,6 @@ func analyzeCloudDNS(ctx context.Context, clientset kubernetes.Interface) []Clou
 
 						if info.PodsRunning < info.TotalPods {
 							info.Status = "degraded"
-							info.BypassRisk = fmt.Sprintf("Only %d/%d pods running", info.PodsRunning, info.TotalPods)
 						}
 
 						cloudDNS = append(cloudDNS, info)
@@ -1764,4 +3201,1593 @@ func analyzeCloudDNS(ctx context.Context, clientset kubernetes.Interface) []Clou
 	}
 
 	return cloudDNS
+}
+
+// ============================================================================
+// ExternalName Service Analysis
+// ============================================================================
+
+func analyzeExternalNameServices(ctx context.Context, clientset kubernetes.Interface) []ExternalNameServiceInfo {
+	var services []ExternalNameServiceInfo
+
+	for _, ns := range globals.K8sNamespaces {
+		svcList, err := clientset.CoreV1().Services(ns).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			continue
+		}
+
+		for _, svc := range svcList.Items {
+			if svc.Spec.Type != "ExternalName" {
+				continue
+			}
+
+			info := ExternalNameServiceInfo{
+				Name:         svc.Name,
+				Namespace:    svc.Namespace,
+				ExternalName: svc.Spec.ExternalName,
+			}
+
+			// Collect factual observations about the external name
+			extName := strings.ToLower(svc.Spec.ExternalName)
+
+			// Check for metadata services
+			if strings.Contains(extName, "metadata") ||
+				strings.Contains(extName, "169.254.169.254") ||
+				strings.Contains(extName, "metadata.google.internal") {
+				info.Notes = append(info.Notes, "Points to cloud metadata service")
+			}
+
+			// Check for cloud provider internal services
+			if strings.Contains(extName, ".internal") ||
+				strings.Contains(extName, ".amazonaws.com") ||
+				strings.Contains(extName, ".azure.com") ||
+				strings.Contains(extName, ".googleapis.com") {
+				info.Notes = append(info.Notes, "Points to cloud provider internal service")
+			}
+
+			// Check for external domains
+			if !strings.Contains(extName, ".svc.cluster.local") &&
+				!strings.Contains(extName, ".cluster.local") {
+				info.Notes = append(info.Notes, "External domain - bypasses network policies")
+			}
+
+			// Check for specific TLDs
+			specificTLDs := []string{".onion", ".bit", ".i2p", ".xyz", ".top", ".tk", ".ml", ".ga", ".cf"}
+			for _, tld := range specificTLDs {
+				if strings.HasSuffix(extName, tld) {
+					info.Notes = append(info.Notes, fmt.Sprintf("TLD: %s", tld))
+				}
+			}
+
+			services = append(services, info)
+		}
+	}
+
+	return services
+}
+
+// ============================================================================
+// Headless Service Analysis
+// ============================================================================
+
+func analyzeHeadlessServices(ctx context.Context, clientset kubernetes.Interface) []HeadlessServiceInfo {
+	var services []HeadlessServiceInfo
+
+	for _, ns := range globals.K8sNamespaces {
+		svcList, err := clientset.CoreV1().Services(ns).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			continue
+		}
+
+		for _, svc := range svcList.Items {
+			// Headless service has ClusterIP = None
+			if svc.Spec.ClusterIP != "None" {
+				continue
+			}
+
+			info := HeadlessServiceInfo{
+				Name:      svc.Name,
+				Namespace: svc.Namespace,
+				Selector:  svc.Spec.Selector,
+			}
+
+			// Get port information
+			for _, port := range svc.Spec.Ports {
+				info.Ports = append(info.Ports, fmt.Sprintf("%d/%s", port.Port, port.Protocol))
+			}
+
+			// Count matching pods
+			if len(svc.Spec.Selector) > 0 {
+				labelSelector := metav1.LabelSelector{MatchLabels: svc.Spec.Selector}
+				selector, _ := metav1.LabelSelectorAsSelector(&labelSelector)
+				pods, err := clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{
+					LabelSelector: selector.String(),
+				})
+				if err == nil {
+					info.PodCount = len(pods.Items)
+				}
+			}
+
+			// Note if exposing many pods
+			if info.PodCount > 10 {
+				info.Notes = append(info.Notes, fmt.Sprintf("Exposes %d pod IPs via DNS", info.PodCount))
+			}
+
+			// Note sensitive ports
+			sensitivePorts := map[int32]string{
+				22: "SSH", 3306: "MySQL", 5432: "PostgreSQL", 6379: "Redis",
+				27017: "MongoDB", 9200: "Elasticsearch", 8500: "Consul",
+			}
+			for _, port := range svc.Spec.Ports {
+				if name, ok := sensitivePorts[port.Port]; ok {
+					info.Notes = append(info.Notes, fmt.Sprintf("Exposes %s port (%d)", name, port.Port))
+				}
+			}
+
+			services = append(services, info)
+		}
+	}
+
+	return services
+}
+
+// ============================================================================
+// DNS Exfiltration Risk Analysis
+// ============================================================================
+
+func analyzeDNSExfiltrationRisks(ctx context.Context, clientset kubernetes.Interface, podDNS []PodDNSInfo, ciliumDNS []CiliumDNSPolicyInfo, calicoDNS []CalicoDNSPolicyInfo) []DNSExfiltrationRisk {
+	var risks []DNSExfiltrationRisk
+
+	// Build a map of namespaces with DNS egress policies
+	nsWithPolicy := make(map[string]bool)
+	for _, p := range ciliumDNS {
+		if p.IsCluster {
+			// Cluster-wide policy covers all
+			for _, ns := range globals.K8sNamespaces {
+				nsWithPolicy[ns] = true
+			}
+		} else {
+			nsWithPolicy[p.Namespace] = true
+		}
+	}
+	for _, p := range calicoDNS {
+		if p.IsGlobal {
+			for _, ns := range globals.K8sNamespaces {
+				nsWithPolicy[ns] = true
+			}
+		} else {
+			nsWithPolicy[p.Namespace] = true
+		}
+	}
+
+	// Analyze each pod
+	for _, pod := range podDNS {
+		info := DNSExfiltrationRisk{
+			Namespace:       pod.Namespace,
+			PodName:         pod.Name,
+			DNSPolicy:       pod.DNSPolicy,
+			HasEgressPolicy: nsWithPolicy[pod.Namespace],
+		}
+
+		// Check for external nameservers
+		for _, ns := range pod.Nameservers {
+			// Check if nameserver is external (not cluster DNS)
+			if !strings.HasPrefix(ns, "10.") && !strings.HasPrefix(ns, "172.") && !strings.HasPrefix(ns, "192.168.") {
+				info.ExternalDNS = append(info.ExternalDNS, ns)
+			}
+		}
+
+		// Collect factual observations
+		if pod.DNSPolicy == "None" {
+			info.Notes = append(info.Notes, "DNSPolicy=None (no cluster DNS)")
+		}
+
+		if len(info.ExternalDNS) > 0 {
+			info.Notes = append(info.Notes, fmt.Sprintf("External nameservers: %s", strings.Join(info.ExternalDNS, ", ")))
+		}
+
+		if !info.HasEgressPolicy {
+			info.Notes = append(info.Notes, "No DNS egress policy")
+		}
+
+		if pod.HasCustomDNS {
+			info.Notes = append(info.Notes, "Custom DNS configuration")
+		}
+
+		// Only include pods with notable DNS configuration
+		if len(info.Notes) > 0 {
+			risks = append(risks, info)
+		}
+	}
+
+	// Sort alphabetically by namespace then pod name
+	sort.Slice(risks, func(i, j int) bool {
+		if risks[i].Namespace != risks[j].Namespace {
+			return risks[i].Namespace < risks[j].Namespace
+		}
+		return risks[i].PodName < risks[j].PodName
+	})
+
+	return risks
+}
+
+// ============================================================================
+// CoreDNS Security Deep Analysis
+// ============================================================================
+
+func analyzeCoreDNSSecurity(corednsConfig []CoreDNSConfigInfo, corefile string) CoreDNSSecurityAnalysis {
+	analysis := CoreDNSSecurityAnalysis{}
+
+	// Check for security plugins in configuration
+	for _, cfg := range corednsConfig {
+		for _, plugin := range cfg.Plugins {
+			switch plugin {
+			case "acl":
+				analysis.ACLEnabled = true
+			case "rrl":
+				analysis.RRLEnabled = true
+			case "dnstap":
+				analysis.DNSTapEnabled = true
+			case "firewall":
+				analysis.FirewallEnabled = true
+			}
+		}
+	}
+
+	// Parse corefile for detailed security config
+	if corefile != "" {
+		lines := strings.Split(corefile, "\n")
+		inACL := false
+		inFirewall := false
+
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+
+			// ACL rules
+			if strings.HasPrefix(line, "acl") {
+				inACL = true
+				continue
+			}
+			if inACL {
+				if strings.Contains(line, "}") {
+					inACL = false
+				} else if strings.Contains(line, "allow") || strings.Contains(line, "deny") || strings.Contains(line, "block") {
+					analysis.ACLRules = append(analysis.ACLRules, line)
+				}
+			}
+
+			// Firewall rules
+			if strings.HasPrefix(line, "firewall") {
+				inFirewall = true
+				continue
+			}
+			if inFirewall {
+				if strings.Contains(line, "}") {
+					inFirewall = false
+				} else if line != "" && !strings.HasPrefix(line, "#") {
+					analysis.FirewallRules = append(analysis.FirewallRules, line)
+				}
+			}
+
+			// RRL config
+			if strings.HasPrefix(line, "rrl") {
+				analysis.RRLConfig = line
+			}
+
+			// DNSTap endpoint
+			if strings.HasPrefix(line, "dnstap") {
+				parts := strings.Fields(line)
+				if len(parts) > 1 {
+					analysis.DNSTapEndpoint = parts[1]
+				}
+			}
+		}
+	}
+
+	// Security issues and recommendations
+	if !analysis.ACLEnabled {
+		analysis.SecurityIssues = append(analysis.SecurityIssues, "No ACL plugin - DNS queries not restricted by source")
+		analysis.Recommendations = append(analysis.Recommendations, "Enable 'acl' plugin to restrict DNS query sources")
+	}
+
+	if !analysis.RRLEnabled {
+		analysis.SecurityIssues = append(analysis.SecurityIssues, "No RRL plugin - vulnerable to DNS amplification attacks")
+		analysis.Recommendations = append(analysis.Recommendations, "Enable 'rrl' plugin for response rate limiting")
+	}
+
+	if !analysis.DNSTapEnabled {
+		analysis.SecurityIssues = append(analysis.SecurityIssues, "No DNSTap - limited DNS query visibility")
+		analysis.Recommendations = append(analysis.Recommendations, "Enable 'dnstap' plugin for DNS query logging")
+	}
+
+	return analysis
+}
+
+// ============================================================================
+// Kyverno DNS Policy Analysis
+// ============================================================================
+
+func analyzeKyvernoDNSPolicies(ctx context.Context, dynClient dynamic.Interface) []KyvernoDNSPolicyInfo {
+	var policies []KyvernoDNSPolicyInfo
+
+	// ClusterPolicy
+	cpGVR := schema.GroupVersionResource{
+		Group:    "kyverno.io",
+		Version:  "v1",
+		Resource: "clusterpolicies",
+	}
+
+	cpList, err := dynClient.Resource(cpGVR).List(ctx, metav1.ListOptions{})
+	if err == nil {
+		for _, item := range cpList.Items {
+			policy := parseKyvernoDNSPolicy(item.Object, true)
+			if policy.DNSRule != "" {
+				policies = append(policies, policy)
+			}
+		}
+	}
+
+	// Policy (namespaced)
+	pGVR := schema.GroupVersionResource{
+		Group:    "kyverno.io",
+		Version:  "v1",
+		Resource: "policies",
+	}
+
+	pList, err := dynClient.Resource(pGVR).Namespace("").List(ctx, metav1.ListOptions{})
+	if err == nil {
+		for _, item := range pList.Items {
+			policy := parseKyvernoDNSPolicy(item.Object, false)
+			if policy.DNSRule != "" {
+				policies = append(policies, policy)
+			}
+		}
+	}
+
+	return policies
+}
+
+func parseKyvernoDNSPolicy(obj map[string]interface{}, isCluster bool) KyvernoDNSPolicyInfo {
+	policy := KyvernoDNSPolicyInfo{
+		IsCluster: isCluster,
+	}
+
+	if metadata, ok := obj["metadata"].(map[string]interface{}); ok {
+		policy.Name, _ = metadata["name"].(string)
+		if !isCluster {
+			policy.Namespace, _ = metadata["namespace"].(string)
+		}
+	}
+
+	if spec, ok := obj["spec"].(map[string]interface{}); ok {
+		// Check validation action
+		if validationFailureAction, ok := spec["validationFailureAction"].(string); ok {
+			policy.Action = validationFailureAction
+		}
+
+		// Check rules for DNS-related patterns
+		if rules, ok := spec["rules"].([]interface{}); ok {
+			for _, rule := range rules {
+				if ruleMap, ok := rule.(map[string]interface{}); ok {
+					ruleName, _ := ruleMap["name"].(string)
+
+					// Check if rule matches pods/services
+					if match, ok := ruleMap["match"].(map[string]interface{}); ok {
+						if resources, ok := match["resources"].(map[string]interface{}); ok {
+							if kinds, ok := resources["kinds"].([]interface{}); ok {
+								for _, k := range kinds {
+									if kStr, ok := k.(string); ok {
+										if kStr == "Pod" || kStr == "Service" {
+											policy.Target = kStr
+										}
+									}
+								}
+							}
+						}
+					}
+
+					// Check for DNS-related validation
+					if validate, ok := ruleMap["validate"].(map[string]interface{}); ok {
+						validateStr := fmt.Sprintf("%v", validate)
+						if strings.Contains(strings.ToLower(validateStr), "dnsconfig") ||
+							strings.Contains(strings.ToLower(validateStr), "dnspolicy") ||
+							strings.Contains(strings.ToLower(validateStr), "nameserver") ||
+							strings.Contains(strings.ToLower(validateStr), "externalname") {
+							policy.Type = "validate"
+							policy.DNSRule = ruleName
+						}
+					}
+
+					// Check for DNS-related mutation
+					if mutate, ok := ruleMap["mutate"].(map[string]interface{}); ok {
+						mutateStr := fmt.Sprintf("%v", mutate)
+						if strings.Contains(strings.ToLower(mutateStr), "dnsconfig") ||
+							strings.Contains(strings.ToLower(mutateStr), "dnspolicy") {
+							policy.Type = "mutate"
+							policy.DNSRule = ruleName
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return policy
+}
+
+// ============================================================================
+// Gatekeeper DNS Constraint Analysis
+// ============================================================================
+
+func analyzeGatekeeperDNSConstraints(ctx context.Context, dynClient dynamic.Interface) []GatekeeperDNSConstraintInfo {
+	var constraints []GatekeeperDNSConstraintInfo
+
+	// First, list all ConstraintTemplates to find DNS-related ones
+	ctGVR := schema.GroupVersionResource{
+		Group:    "templates.gatekeeper.sh",
+		Version:  "v1",
+		Resource: "constrainttemplates",
+	}
+
+	ctList, err := dynClient.Resource(ctGVR).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return constraints
+	}
+
+	// Find DNS-related templates
+	dnsTemplates := []string{}
+	for _, item := range ctList.Items {
+		name, _, _ := getUnstructuredField(item.Object, "metadata", "name")
+		nameStr, _ := name.(string)
+
+		// Check if template is DNS-related
+		specStr := fmt.Sprintf("%v", item.Object)
+		if strings.Contains(strings.ToLower(nameStr), "dns") ||
+			strings.Contains(strings.ToLower(specStr), "dnspolicy") ||
+			strings.Contains(strings.ToLower(specStr), "dnsconfig") ||
+			strings.Contains(strings.ToLower(specStr), "externalname") {
+			dnsTemplates = append(dnsTemplates, strings.ToLower(nameStr))
+		}
+	}
+
+	// For each DNS template, find constraints
+	for _, templateName := range dnsTemplates {
+		constraintGVR := schema.GroupVersionResource{
+			Group:    "constraints.gatekeeper.sh",
+			Version:  "v1beta1",
+			Resource: templateName,
+		}
+
+		constraintList, err := dynClient.Resource(constraintGVR).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			continue
+		}
+
+		for _, item := range constraintList.Items {
+			info := GatekeeperDNSConstraintInfo{
+				TemplateName: templateName,
+				Kind:         templateName,
+			}
+
+			if metadata, ok := item.Object["metadata"].(map[string]interface{}); ok {
+				info.Name, _ = metadata["name"].(string)
+			}
+
+			if spec, ok := item.Object["spec"].(map[string]interface{}); ok {
+				if enforcement, ok := spec["enforcementAction"].(string); ok {
+					info.EnforcementAction = enforcement
+				} else {
+					info.EnforcementAction = "deny" // default
+				}
+
+				if match, ok := spec["match"].(map[string]interface{}); ok {
+					if kinds, ok := match["kinds"].([]interface{}); ok {
+						var targets []string
+						for _, k := range kinds {
+							if kMap, ok := k.(map[string]interface{}); ok {
+								if apiKinds, ok := kMap["kinds"].([]interface{}); ok {
+									for _, ak := range apiKinds {
+										if akStr, ok := ak.(string); ok {
+											targets = append(targets, akStr)
+										}
+									}
+								}
+							}
+						}
+						info.Target = strings.Join(targets, ", ")
+					}
+				}
+			}
+
+			info.DNSRule = fmt.Sprintf("Enforces %s constraint", templateName)
+			constraints = append(constraints, info)
+		}
+	}
+
+	return constraints
+}
+
+// Helper function to get nested field from unstructured object
+func getUnstructuredField(obj map[string]interface{}, fields ...string) (interface{}, bool, error) {
+	current := obj
+	for i, field := range fields {
+		if i == len(fields)-1 {
+			val, ok := current[field]
+			return val, ok, nil
+		}
+		next, ok := current[field].(map[string]interface{})
+		if !ok {
+			return nil, false, nil
+		}
+		current = next
+	}
+	return nil, false, nil
+}
+
+// ============================================================================
+// Consul DNS Analysis
+// ============================================================================
+
+func analyzeConsulDNS(ctx context.Context, clientset kubernetes.Interface) ConsulDNSInfo {
+	info := ConsulDNSInfo{}
+
+	// Check for Consul deployment
+	namespaces := []string{"consul", "hashicorp", "default", "kube-system"}
+	for _, ns := range namespaces {
+		deployments, err := clientset.AppsV1().Deployments(ns).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			continue
+		}
+
+		for _, dep := range deployments.Items {
+			if !strings.Contains(strings.ToLower(dep.Name), "consul") {
+				continue
+			}
+
+			// Verify by image
+			imageVerified := false
+			for _, container := range dep.Spec.Template.Spec.Containers {
+				if strings.Contains(strings.ToLower(container.Image), "consul") ||
+					strings.Contains(strings.ToLower(container.Image), "hashicorp/consul") {
+					imageVerified = true
+					break
+				}
+			}
+
+			if !imageVerified {
+				continue
+			}
+
+			info.Name = dep.Name
+			info.Namespace = ns
+			info.Status = "active"
+			info.TotalPods = int(dep.Status.Replicas)
+			info.PodsRunning = int(dep.Status.ReadyReplicas)
+			info.ImageVerified = true
+			info.DNSDomain = "consul" // default
+
+			if info.PodsRunning < info.TotalPods {
+				info.Status = "degraded"
+			}
+
+			// Try to get DNS domain from ConfigMap or args
+			for _, container := range dep.Spec.Template.Spec.Containers {
+				for _, arg := range container.Args {
+					if strings.Contains(arg, "-domain=") {
+						info.DNSDomain = strings.TrimPrefix(arg, "-domain=")
+					}
+				}
+			}
+
+			return info
+		}
+	}
+
+	return info
+}
+
+// ============================================================================
+// EKS Admin Network Policy Analysis
+// ============================================================================
+
+func analyzeEKSAdminNetworkPolicies(ctx context.Context, dynClient dynamic.Interface) []EKSAdminNetworkPolicyInfo {
+	var policies []EKSAdminNetworkPolicyInfo
+
+	// AdminNetworkPolicy (policy.networking.k8s.io/v1alpha1)
+	gvr := schema.GroupVersionResource{
+		Group:    "policy.networking.k8s.io",
+		Version:  "v1alpha1",
+		Resource: "adminnetworkpolicies",
+	}
+
+	list, err := dynClient.Resource(gvr).List(ctx, metav1.ListOptions{})
+	if err == nil {
+		for _, item := range list.Items {
+			policy := parseEKSAdminNetworkPolicy(item.Object, "AdminNetworkPolicy", true)
+			if len(policy.DNSRules) > 0 {
+				policies = append(policies, policy)
+			}
+		}
+	}
+
+	// ClusterNetworkPolicy (policy.networking.k8s.io/v1alpha1) - EKS specific
+	gvr2 := schema.GroupVersionResource{
+		Group:    "policy.networking.k8s.io",
+		Version:  "v1alpha1",
+		Resource: "clusternetworkpolicies",
+	}
+
+	list2, err := dynClient.Resource(gvr2).List(ctx, metav1.ListOptions{})
+	if err == nil {
+		for _, item := range list2.Items {
+			policy := parseEKSAdminNetworkPolicy(item.Object, "ClusterNetworkPolicy", true)
+			if len(policy.DNSRules) > 0 {
+				policies = append(policies, policy)
+			}
+		}
+	}
+
+	// BaselineAdminNetworkPolicy
+	gvr3 := schema.GroupVersionResource{
+		Group:    "policy.networking.k8s.io",
+		Version:  "v1alpha1",
+		Resource: "baselineadminnetworkpolicies",
+	}
+
+	list3, err := dynClient.Resource(gvr3).List(ctx, metav1.ListOptions{})
+	if err == nil {
+		for _, item := range list3.Items {
+			policy := parseEKSAdminNetworkPolicy(item.Object, "BaselineAdminNetworkPolicy", true)
+			if len(policy.DNSRules) > 0 {
+				policies = append(policies, policy)
+			}
+		}
+	}
+
+	return policies
+}
+
+func parseEKSAdminNetworkPolicy(obj map[string]interface{}, kind string, isCluster bool) EKSAdminNetworkPolicyInfo {
+	policy := EKSAdminNetworkPolicyInfo{
+		Kind:      kind,
+		IsCluster: isCluster,
+	}
+
+	if metadata, ok := obj["metadata"].(map[string]interface{}); ok {
+		if name, ok := metadata["name"].(string); ok {
+			policy.Name = name
+		}
+	}
+
+	if spec, ok := obj["spec"].(map[string]interface{}); ok {
+		// Get priority
+		if priority, ok := spec["priority"].(float64); ok {
+			policy.Priority = int(priority)
+		}
+
+		// Get subject
+		if subject, ok := spec["subject"].(map[string]interface{}); ok {
+			if namespaces, ok := subject["namespaces"].(map[string]interface{}); ok {
+				if matchLabels, ok := namespaces["matchLabels"].(map[string]interface{}); ok {
+					var labels []string
+					for k, v := range matchLabels {
+						labels = append(labels, fmt.Sprintf("%s=%v", k, v))
+					}
+					policy.Subject = strings.Join(labels, ",")
+				}
+			}
+		}
+
+		// Check egress rules for DNS
+		if egress, ok := spec["egress"].([]interface{}); ok {
+			for _, rule := range egress {
+				if ruleMap, ok := rule.(map[string]interface{}); ok {
+					// Check for DNS-based rules (FQDN)
+					if to, ok := ruleMap["to"].([]interface{}); ok {
+						for _, peer := range to {
+							if peerMap, ok := peer.(map[string]interface{}); ok {
+								// Check for networks with DNS names
+								if networks, ok := peerMap["networks"].([]interface{}); ok {
+									for _, network := range networks {
+										if netStr, ok := network.(string); ok {
+											if strings.Contains(netStr, ".") && !strings.Contains(netStr, "/") {
+												policy.DNSRules = append(policy.DNSRules, netStr)
+											}
+										}
+									}
+								}
+								// Check for FQDN field (EKS specific)
+								if fqdn, ok := peerMap["fqdn"].(string); ok {
+									policy.DNSRules = append(policy.DNSRules, fqdn)
+								}
+								if fqdns, ok := peerMap["fqdns"].([]interface{}); ok {
+									for _, f := range fqdns {
+										if fStr, ok := f.(string); ok {
+											policy.DNSRules = append(policy.DNSRules, fStr)
+										}
+									}
+								}
+							}
+						}
+					}
+
+					// Check for ports containing DNS (53)
+					if ports, ok := ruleMap["ports"].([]interface{}); ok {
+						for _, port := range ports {
+							if portMap, ok := port.(map[string]interface{}); ok {
+								if portNum, ok := portMap["port"].(float64); ok {
+									if int(portNum) == 53 {
+										action := "Allow"
+										if a, ok := ruleMap["action"].(string); ok {
+											action = a
+										}
+										policy.DNSRules = append(policy.DNSRules, fmt.Sprintf("Port 53 %s", action))
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return policy
+}
+
+// ============================================================================
+// Native Kubernetes NetworkPolicy DNS Analysis
+// ============================================================================
+
+func analyzeK8sNetworkPolicyDNS(ctx context.Context, clientset kubernetes.Interface) []K8sNetworkPolicyDNSInfo {
+	var policies []K8sNetworkPolicyDNSInfo
+
+	for _, ns := range globals.K8sNamespaces {
+		netpols, err := clientset.NetworkingV1().NetworkPolicies(ns).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			continue
+		}
+
+		for _, np := range netpols.Items {
+			info := K8sNetworkPolicyDNSInfo{
+				Name:      np.Name,
+				Namespace: np.Namespace,
+			}
+
+			// Get pod selector
+			if len(np.Spec.PodSelector.MatchLabels) > 0 {
+				var labels []string
+				for k, v := range np.Spec.PodSelector.MatchLabels {
+					labels = append(labels, fmt.Sprintf("%s=%s", k, v))
+				}
+				info.PodSelector = strings.Join(labels, ",")
+			} else {
+				info.PodSelector = "<all pods>"
+			}
+
+			// Check if there are egress rules
+			hasEgressRules := false
+			for _, policyType := range np.Spec.PolicyTypes {
+				if policyType == "Egress" {
+					hasEgressRules = true
+					break
+				}
+			}
+
+			if !hasEgressRules {
+				continue // Skip policies without egress rules
+			}
+
+			// Check egress rules for DNS port (53)
+			for _, egress := range np.Spec.Egress {
+				for _, port := range egress.Ports {
+					if port.Port != nil {
+						portNum := port.Port.IntValue()
+						if portNum == 53 {
+							info.HasDNSEgress = true
+							info.DNSEgressAction = "Allow"
+
+							// Check what it's allowed to
+							if len(egress.To) == 0 {
+								info.Notes = append(info.Notes, "DNS allowed to any destination")
+							} else {
+								for _, to := range egress.To {
+									if to.NamespaceSelector != nil {
+										info.Notes = append(info.Notes, "DNS allowed to specific namespaces")
+									}
+									if to.PodSelector != nil {
+										info.Notes = append(info.Notes, "DNS allowed to specific pods")
+									}
+									if to.IPBlock != nil {
+										info.Notes = append(info.Notes, fmt.Sprintf("DNS allowed to CIDR: %s", to.IPBlock.CIDR))
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+
+			// If egress is defined but DNS port not explicitly allowed, DNS is blocked
+			if hasEgressRules && !info.HasDNSEgress && len(np.Spec.Egress) > 0 {
+				// Check if there's a catch-all rule that would allow DNS
+				for _, egress := range np.Spec.Egress {
+					if len(egress.Ports) == 0 && len(egress.To) == 0 {
+						// Empty egress rule allows all
+						info.HasDNSEgress = true
+						info.DNSEgressAction = "Allow (implicit)"
+						info.Notes = append(info.Notes, "All egress allowed")
+						break
+					}
+				}
+			}
+
+			// Only include if there's DNS-related configuration
+			if info.HasDNSEgress || hasEgressRules {
+				if !info.HasDNSEgress && hasEgressRules {
+					info.DNSEgressAction = "Blocked (not in allow list)"
+					info.Notes = append(info.Notes, "DNS port 53 not in egress allow list")
+				}
+				policies = append(policies, info)
+			}
+		}
+	}
+
+	return policies
+}
+
+// ============================================================================
+// Istio ServiceEntry DNS Analysis
+// ============================================================================
+
+func analyzeIstioServiceEntries(ctx context.Context, dynClient dynamic.Interface) []IstioServiceEntryInfo {
+	var entries []IstioServiceEntryInfo
+
+	// ServiceEntry (networking.istio.io/v1beta1 or v1alpha3)
+	versions := []string{"v1beta1", "v1alpha3", "v1"}
+
+	for _, version := range versions {
+		gvr := schema.GroupVersionResource{
+			Group:    "networking.istio.io",
+			Version:  version,
+			Resource: "serviceentries",
+		}
+
+		list, err := dynClient.Resource(gvr).Namespace("").List(ctx, metav1.ListOptions{})
+		if err != nil {
+			continue
+		}
+
+		for _, item := range list.Items {
+			entry := parseIstioServiceEntry(item.Object)
+			// Only include entries that have DNS resolution
+			if entry.Resolution == "DNS" || entry.Resolution == "DNS_ROUND_ROBIN" || len(entry.Hosts) > 0 {
+				entries = append(entries, entry)
+			}
+		}
+
+		if len(entries) > 0 {
+			break // Found entries in this version, don't check others
+		}
+	}
+
+	return entries
+}
+
+func parseIstioServiceEntry(obj map[string]interface{}) IstioServiceEntryInfo {
+	entry := IstioServiceEntryInfo{}
+
+	if metadata, ok := obj["metadata"].(map[string]interface{}); ok {
+		if name, ok := metadata["name"].(string); ok {
+			entry.Name = name
+		}
+		if namespace, ok := metadata["namespace"].(string); ok {
+			entry.Namespace = namespace
+		}
+	}
+
+	if spec, ok := obj["spec"].(map[string]interface{}); ok {
+		// Get hosts
+		if hosts, ok := spec["hosts"].([]interface{}); ok {
+			for _, h := range hosts {
+				if hStr, ok := h.(string); ok {
+					entry.Hosts = append(entry.Hosts, hStr)
+				}
+			}
+		}
+
+		// Get location
+		if location, ok := spec["location"].(string); ok {
+			entry.Location = location
+		}
+
+		// Get resolution
+		if resolution, ok := spec["resolution"].(string); ok {
+			entry.Resolution = resolution
+		}
+
+		// Get ports
+		if ports, ok := spec["ports"].([]interface{}); ok {
+			for _, p := range ports {
+				if pMap, ok := p.(map[string]interface{}); ok {
+					var portStr string
+					if number, ok := pMap["number"].(float64); ok {
+						portStr = fmt.Sprintf("%d", int(number))
+					}
+					if protocol, ok := pMap["protocol"].(string); ok {
+						portStr = fmt.Sprintf("%s/%s", portStr, protocol)
+					}
+					if portStr != "" {
+						entry.Ports = append(entry.Ports, portStr)
+					}
+				}
+			}
+		}
+
+		// Check exportTo for cluster-wide scope
+		if exportTo, ok := spec["exportTo"].([]interface{}); ok {
+			for _, e := range exportTo {
+				if eStr, ok := e.(string); ok {
+					if eStr == "*" {
+						entry.IsCluster = true
+						break
+					}
+				}
+			}
+		} else {
+			// Default is exported to all namespaces
+			entry.IsCluster = true
+		}
+	}
+
+	return entry
+}
+
+// ============================================================================
+// Cloud Provider DNS Policy Analysis
+// ============================================================================
+
+// analyzeAWSRoute53DNSFirewall detects AWS Route 53 DNS Firewall configuration
+// Uses AWS API if cloud clients are available, otherwise falls back to in-cluster detection
+func analyzeAWSRoute53DNSFirewall(ctx context.Context, clientset kubernetes.Interface, cloudDNS []CloudDNSInfo, dnsClients *DNSCloudClients, logger internal.Logger) AWSRoute53DNSFirewallInfo {
+	info := AWSRoute53DNSFirewallInfo{
+		RequiresCloudAccess: true,
+	}
+
+	// Check if we detected AWS DNS components
+	for _, dns := range cloudDNS {
+		if dns.Provider == "AWS" {
+			info.VPCAssociation = true
+			info.Notes = append(info.Notes, fmt.Sprintf("AWS DNS component detected: %s", dns.Name))
+		}
+	}
+
+	// Check for AWS VPC CNI which indicates EKS
+	namespaces := []string{"kube-system", "aws-system"}
+	for _, ns := range namespaces {
+		deployments, err := clientset.AppsV1().Deployments(ns).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			continue
+		}
+
+		for _, dep := range deployments.Items {
+			// Check for aws-vpc-cni or AWS components
+			if strings.Contains(strings.ToLower(dep.Name), "aws-node") ||
+				strings.Contains(strings.ToLower(dep.Name), "vpc-cni") {
+				info.Name = "AWS Route 53 DNS Firewall"
+				info.Namespace = ns
+				info.Notes = append(info.Notes, "EKS cluster detected - DNS Firewall may be configured at VPC level")
+			}
+		}
+	}
+
+	// Check for Route53 Resolver endpoints (indicated by service endpoints)
+	configmaps, err := clientset.CoreV1().ConfigMaps("kube-system").List(ctx, metav1.ListOptions{})
+	if err == nil {
+		for _, cm := range configmaps.Items {
+			if strings.Contains(strings.ToLower(cm.Name), "coredns") {
+				// Check for forward to Route53 Resolver
+				if data, ok := cm.Data["Corefile"]; ok {
+					if strings.Contains(data, "forward") && (strings.Contains(data, "169.254") || strings.Contains(data, "AmazonProvidedDNS")) {
+						info.Notes = append(info.Notes, "CoreDNS forwards to AWS VPC DNS - DNS Firewall rules apply")
+					}
+				}
+			}
+		}
+	}
+
+	// If AWS cloud client is available, enumerate DNS Firewall via API
+	if dnsClients != nil && dnsClients.AWSRoute53ResolverClient != nil {
+		info.RequiresCloudAccess = false
+
+		// List Firewall Rule Groups
+		ruleGroupsOutput, err := dnsClients.AWSRoute53ResolverClient.ListFirewallRuleGroups(ctx, &route53resolver.ListFirewallRuleGroupsInput{})
+		if err == nil {
+			info.RuleGroupCount = len(ruleGroupsOutput.FirewallRuleGroups)
+			for _, rg := range ruleGroupsOutput.FirewallRuleGroups {
+				if rg.Name != nil {
+					info.Notes = append(info.Notes, fmt.Sprintf("Firewall Rule Group: %s (ShareStatus: %s)", *rg.Name, rg.ShareStatus))
+				}
+			}
+		} else {
+			logger.InfoM(fmt.Sprintf("Failed to list AWS DNS Firewall rule groups: %v", err), K8S_DNS_ADMISSION_MODULE_NAME)
+		}
+
+		// List Firewall Domain Lists
+		domainListsOutput, err := dnsClients.AWSRoute53ResolverClient.ListFirewallDomainLists(ctx, &route53resolver.ListFirewallDomainListsInput{})
+		if err == nil {
+			info.DomainListCount = len(domainListsOutput.FirewallDomainLists)
+			for _, dl := range domainListsOutput.FirewallDomainLists {
+				if dl.Name != nil {
+					owner := "user"
+					if dl.ManagedOwnerName != nil {
+						owner = *dl.ManagedOwnerName
+					}
+					info.Notes = append(info.Notes, fmt.Sprintf("Domain List: %s (Owner: %s)", *dl.Name, owner))
+				}
+			}
+		} else {
+			logger.InfoM(fmt.Sprintf("Failed to list AWS DNS Firewall domain lists: %v", err), K8S_DNS_ADMISSION_MODULE_NAME)
+		}
+
+		// List Firewall Rule Group Associations (VPC associations)
+		assocOutput, err := dnsClients.AWSRoute53ResolverClient.ListFirewallRuleGroupAssociations(ctx, &route53resolver.ListFirewallRuleGroupAssociationsInput{})
+		if err == nil && len(assocOutput.FirewallRuleGroupAssociations) > 0 {
+			info.VPCAssociation = true
+			for _, assoc := range assocOutput.FirewallRuleGroupAssociations {
+				if assoc.Name != nil && assoc.VpcId != nil {
+					info.Notes = append(info.Notes, fmt.Sprintf("VPC Association: %s -> %s", *assoc.Name, *assoc.VpcId))
+				}
+			}
+		}
+
+		if info.RuleGroupCount > 0 || info.DomainListCount > 0 {
+			info.Name = "AWS Route 53 DNS Firewall"
+		}
+	}
+
+	return info
+}
+
+// analyzeGCPResponsePolicies detects GCP Cloud DNS Response Policies
+// Uses GCP API if cloud clients are available, otherwise falls back to in-cluster detection
+func analyzeGCPResponsePolicies(ctx context.Context, clientset kubernetes.Interface, cloudDNS []CloudDNSInfo, dnsClients *DNSCloudClients, logger internal.Logger) GCPResponsePolicyInfo {
+	info := GCPResponsePolicyInfo{
+		RequiresCloudAccess: true,
+	}
+
+	// Check if we detected GCP DNS components
+	for _, dns := range cloudDNS {
+		if dns.Provider == "GCP" {
+			info.ClusterScope = true
+			info.Notes = append(info.Notes, fmt.Sprintf("GCP DNS component detected: %s", dns.Name))
+		}
+	}
+
+	// Check for GKE-specific components
+	namespaces := []string{"kube-system", "gke-system", "gke-managed-system"}
+	for _, ns := range namespaces {
+		deployments, err := clientset.AppsV1().Deployments(ns).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			continue
+		}
+
+		for _, dep := range deployments.Items {
+			// Check for GKE DNS components
+			if strings.Contains(strings.ToLower(dep.Name), "kube-dns") ||
+				strings.Contains(strings.ToLower(dep.Name), "gke-dns") {
+				info.Name = "GCP Cloud DNS Response Policies"
+				info.Namespace = ns
+				info.Notes = append(info.Notes, "GKE cluster detected - Response Policies may be bound to cluster")
+			}
+		}
+	}
+
+	// Check node labels for GKE
+	nodes, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err == nil && len(nodes.Items) > 0 {
+		for k := range nodes.Items[0].Labels {
+			if strings.Contains(k, "cloud.google.com") || strings.Contains(k, "gke") {
+				if info.Name == "" {
+					info.Name = "GCP Cloud DNS Response Policies"
+				}
+				info.Notes = append(info.Notes, "GKE node detected - Cloud DNS Response Policies may apply")
+				break
+			}
+		}
+	}
+
+	// If GCP cloud client is available, enumerate Response Policies via API
+	if dnsClients != nil && dnsClients.GCPDNSService != nil && len(dnsClients.GCPProjects) > 0 {
+		info.RequiresCloudAccess = false
+
+		for _, project := range dnsClients.GCPProjects {
+			// List Response Policies
+			policiesCall := dnsClients.GCPDNSService.ResponsePolicies.List(project)
+			policies, err := policiesCall.Do()
+			if err == nil && policies.ResponsePolicies != nil {
+				for _, rp := range policies.ResponsePolicies {
+					info.Name = "GCP Cloud DNS Response Policies"
+					info.Notes = append(info.Notes, fmt.Sprintf("Response Policy: %s (Project: %s)", rp.ResponsePolicyName, project))
+
+					// List rules for each response policy
+					rulesCall := dnsClients.GCPDNSService.ResponsePolicyRules.List(project, rp.ResponsePolicyName)
+					rules, err := rulesCall.Do()
+					if err == nil && rules.ResponsePolicyRules != nil {
+						info.RuleCount += len(rules.ResponsePolicyRules)
+						for _, rule := range rules.ResponsePolicyRules {
+							if rule.DnsName != "" {
+								info.Notes = append(info.Notes, fmt.Sprintf("  Rule: %s -> %s", rule.RuleName, rule.DnsName))
+							}
+						}
+					}
+				}
+			} else if err != nil {
+				logger.InfoM(fmt.Sprintf("Failed to list GCP DNS Response Policies for project %s: %v", project, err), K8S_DNS_ADMISSION_MODULE_NAME)
+			}
+		}
+	}
+
+	return info
+}
+
+// analyzeAzureDNSPrivateResolver detects Azure DNS Private Resolver
+// Uses Azure API if cloud clients are available, otherwise falls back to in-cluster detection
+func analyzeAzureDNSPrivateResolver(ctx context.Context, clientset kubernetes.Interface, cloudDNS []CloudDNSInfo, dnsClients *DNSCloudClients, logger internal.Logger) AzureDNSPrivateResolverInfo {
+	info := AzureDNSPrivateResolverInfo{
+		RequiresCloudAccess: true,
+	}
+
+	// Check if we detected Azure DNS components
+	for _, dnsInfo := range cloudDNS {
+		if dnsInfo.Provider == "Azure" {
+			info.LinkedVNET = true
+			info.Notes = append(info.Notes, fmt.Sprintf("Azure DNS component detected: %s", dnsInfo.Name))
+		}
+	}
+
+	// Check for AKS-specific components
+	namespaces := []string{"kube-system", "azure-system", "aks-system"}
+	for _, ns := range namespaces {
+		deployments, err := clientset.AppsV1().Deployments(ns).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			continue
+		}
+
+		for _, dep := range deployments.Items {
+			// Check for Azure CNI or AKS components
+			if strings.Contains(strings.ToLower(dep.Name), "azure-cni") ||
+				strings.Contains(strings.ToLower(dep.Name), "aks") {
+				info.Name = "Azure DNS Private Resolver"
+				info.Namespace = ns
+				info.Notes = append(info.Notes, "AKS cluster detected - Private Resolver may be linked to VNET")
+			}
+		}
+	}
+
+	// Check node labels for AKS
+	nodes, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err == nil && len(nodes.Items) > 0 {
+		for k := range nodes.Items[0].Labels {
+			if strings.Contains(k, "kubernetes.azure.com") || strings.Contains(k, "node.kubernetes.io/instance-type") {
+				// Check if it's Azure
+				if strings.Contains(nodes.Items[0].Spec.ProviderID, "azure") {
+					if info.Name == "" {
+						info.Name = "Azure DNS Private Resolver"
+					}
+					info.Notes = append(info.Notes, "AKS node detected - Azure DNS Private Resolver may apply")
+					break
+				}
+			}
+		}
+	}
+
+	// If Azure cloud client is available, enumerate DNS Resolver and Private DNS via API
+	if dnsClients != nil && dnsClients.AzureCredential != nil && len(dnsClients.AzureSubscriptions) > 0 {
+		info.RequiresCloudAccess = false
+
+		for _, subscriptionID := range dnsClients.AzureSubscriptions {
+			// Create DNS Resolver client
+			resolverClient, err := armdnsresolver.NewDNSResolversClient(subscriptionID, dnsClients.AzureCredential, nil)
+			if err != nil {
+				logger.InfoM(fmt.Sprintf("Failed to create Azure DNS Resolver client: %v", err), K8S_DNS_ADMISSION_MODULE_NAME)
+				continue
+			}
+
+			// List DNS Resolvers in the subscription
+			pager := resolverClient.NewListPager(nil)
+			for pager.More() {
+				page, err := pager.NextPage(ctx)
+				if err != nil {
+					logger.InfoM(fmt.Sprintf("Failed to list Azure DNS Resolvers: %v", err), K8S_DNS_ADMISSION_MODULE_NAME)
+					break
+				}
+
+				for _, resolver := range page.Value {
+					if resolver.Name != nil {
+						info.Name = "Azure DNS Private Resolver"
+						state := "Unknown"
+						if resolver.Properties != nil && resolver.Properties.ProvisioningState != nil {
+							state = string(*resolver.Properties.ProvisioningState)
+						}
+						info.Notes = append(info.Notes, fmt.Sprintf("DNS Resolver: %s (State: %s)", *resolver.Name, state))
+					}
+				}
+			}
+
+			// Create Forwarding Rulesets client
+			forwardingClient, err := armdnsresolver.NewDNSForwardingRulesetsClient(subscriptionID, dnsClients.AzureCredential, nil)
+			if err == nil {
+				// List Forwarding Rulesets
+				rulesetPager := forwardingClient.NewListPager(nil)
+				for rulesetPager.More() {
+					page, err := rulesetPager.NextPage(ctx)
+					if err != nil {
+						break
+					}
+					info.ForwardingRuleSets += len(page.Value)
+					for _, ruleset := range page.Value {
+						if ruleset.Name != nil {
+							info.Notes = append(info.Notes, fmt.Sprintf("Forwarding Ruleset: %s", *ruleset.Name))
+						}
+					}
+				}
+			}
+
+			// Create Private DNS Zones client to check for private zones
+			privateDNSClient, err := armprivatedns.NewPrivateZonesClient(subscriptionID, dnsClients.AzureCredential, nil)
+			if err == nil {
+				// List Private DNS Zones
+				zonePager := privateDNSClient.NewListPager(nil)
+				for zonePager.More() {
+					page, err := zonePager.NextPage(ctx)
+					if err != nil {
+						break
+					}
+					for _, zone := range page.Value {
+						if zone.Name != nil {
+							info.Notes = append(info.Notes, fmt.Sprintf("Private DNS Zone: %s", *zone.Name))
+						}
+					}
+				}
+			}
+
+			// Create Inbound Endpoints client
+			inboundClient, err := armdnsresolver.NewInboundEndpointsClient(subscriptionID, dnsClients.AzureCredential, nil)
+			if err == nil {
+				// We need resolver name and resource group to list inbound endpoints
+				// For now, just note that we have the capability
+				_ = inboundClient
+			}
+
+			// Create Outbound Endpoints client
+			outboundClient, err := armdnsresolver.NewOutboundEndpointsClient(subscriptionID, dnsClients.AzureCredential, nil)
+			if err == nil {
+				_ = outboundClient
+			}
+		}
+
+		if info.Name != "" || info.ForwardingRuleSets > 0 {
+			info.Name = "Azure DNS Private Resolver"
+		}
+	}
+
+	return info
+}
+
+// ============================================================================
+// Antrea FQDN Policy Analysis
+// ============================================================================
+
+// AntreaFQDNPolicyInfo represents Antrea policies with FQDN rules
+type AntreaFQDNPolicyInfo struct {
+	Name           string
+	Namespace      string
+	IsCluster      bool
+	FQDNRules      []string // FQDN patterns in egress rules
+	Action         string   // Allow, Drop
+	Priority       int
+	AppliedTo      string
+}
+
+// analyzeAntreaFQDNPolicies finds Antrea policies with FQDN-based egress rules
+func analyzeAntreaFQDNPolicies(ctx context.Context, dynClient dynamic.Interface) []AntreaFQDNPolicyInfo {
+	var policies []AntreaFQDNPolicyInfo
+
+	// ClusterNetworkPolicy
+	cnpGVR := schema.GroupVersionResource{
+		Group:    "crd.antrea.io",
+		Version:  "v1beta1",
+		Resource: "clusternetworkpolicies",
+	}
+
+	cnpList, err := dynClient.Resource(cnpGVR).List(ctx, metav1.ListOptions{})
+	if err == nil {
+		for _, cnp := range cnpList.Items {
+			info := parseAntreaFQDNPolicy(cnp.Object, cnp.GetName(), "", true)
+			if len(info.FQDNRules) > 0 {
+				policies = append(policies, info)
+			}
+		}
+	}
+
+	// NetworkPolicy (namespaced)
+	npGVR := schema.GroupVersionResource{
+		Group:    "crd.antrea.io",
+		Version:  "v1beta1",
+		Resource: "networkpolicies",
+	}
+
+	npList, err := dynClient.Resource(npGVR).Namespace("").List(ctx, metav1.ListOptions{})
+	if err == nil {
+		for _, np := range npList.Items {
+			info := parseAntreaFQDNPolicy(np.Object, np.GetName(), np.GetNamespace(), false)
+			if len(info.FQDNRules) > 0 {
+				policies = append(policies, info)
+			}
+		}
+	}
+
+	return policies
+}
+
+func parseAntreaFQDNPolicy(obj map[string]interface{}, name, namespace string, isCluster bool) AntreaFQDNPolicyInfo {
+	info := AntreaFQDNPolicyInfo{
+		Name:      name,
+		Namespace: namespace,
+		IsCluster: isCluster,
+	}
+
+	if spec, ok := obj["spec"].(map[string]interface{}); ok {
+		// Get priority
+		if priority, ok := spec["priority"].(float64); ok {
+			info.Priority = int(priority)
+		}
+
+		// Get appliedTo
+		if appliedTo, ok := spec["appliedTo"].([]interface{}); ok {
+			var targets []string
+			for _, at := range appliedTo {
+				if atMap, ok := at.(map[string]interface{}); ok {
+					if podSelector, ok := atMap["podSelector"].(map[string]interface{}); ok {
+						if matchLabels, ok := podSelector["matchLabels"].(map[string]interface{}); ok {
+							for k, v := range matchLabels {
+								targets = append(targets, fmt.Sprintf("%s=%v", k, v))
+							}
+						}
+					}
+				}
+			}
+			if len(targets) > 0 {
+				info.AppliedTo = strings.Join(targets, ",")
+			} else {
+				info.AppliedTo = "<all>"
+			}
+		}
+
+		// Check egress rules for FQDN
+		if egress, ok := spec["egress"].([]interface{}); ok {
+			for _, e := range egress {
+				if eMap, ok := e.(map[string]interface{}); ok {
+					// Get action
+					if action, ok := eMap["action"].(string); ok {
+						info.Action = action
+					}
+
+					// Check for FQDN in to field
+					if to, ok := eMap["to"].([]interface{}); ok {
+						for _, t := range to {
+							if tMap, ok := t.(map[string]interface{}); ok {
+								if fqdn, ok := tMap["fqdn"].(string); ok {
+									info.FQDNRules = append(info.FQDNRules, fqdn)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return info
+}
+
+// ============================================================================
+// Consul DNS Policy Analysis
+// ============================================================================
+
+// ConsulDNSForwardingInfo represents Consul DNS forwarding configuration
+type ConsulDNSForwardingInfo struct {
+	Name            string
+	Namespace       string
+	DNSDomain       string // e.g., "consul"
+	Recursors       []string
+	ForwardingRules []string
+	EnableDNSProxy  bool
+}
+
+// analyzeConsulDNSForwarding analyzes Consul DNS forwarding configuration
+func analyzeConsulDNSForwarding(ctx context.Context, dynClient dynamic.Interface, clientset kubernetes.Interface) []ConsulDNSForwardingInfo {
+	var configs []ConsulDNSForwardingInfo
+
+	// Check ProxyDefaults CRD for DNS settings
+	pdGVR := schema.GroupVersionResource{
+		Group:    "consul.hashicorp.com",
+		Version:  "v1alpha1",
+		Resource: "proxydefaults",
+	}
+
+	pdList, err := dynClient.Resource(pdGVR).List(ctx, metav1.ListOptions{})
+	if err == nil {
+		for _, pd := range pdList.Items {
+			info := ConsulDNSForwardingInfo{
+				Name:      pd.GetName(),
+				Namespace: pd.GetNamespace(),
+			}
+
+			if spec, ok := pd.Object["spec"].(map[string]interface{}); ok {
+				if transparentProxy, ok := spec["transparentProxy"].(map[string]interface{}); ok {
+					if outboundListenerPort, ok := transparentProxy["outboundListenerPort"].(float64); ok && outboundListenerPort > 0 {
+						info.EnableDNSProxy = true
+					}
+				}
+				if meshGateway, ok := spec["meshGateway"].(map[string]interface{}); ok {
+					if mode, ok := meshGateway["mode"].(string); ok {
+						info.ForwardingRules = append(info.ForwardingRules, "meshGateway:"+mode)
+					}
+				}
+			}
+
+			if info.EnableDNSProxy || len(info.ForwardingRules) > 0 {
+				configs = append(configs, info)
+			}
+		}
+	}
+
+	// Check Consul server ConfigMap for DNS configuration
+	configMaps, err := clientset.CoreV1().ConfigMaps("").List(ctx, metav1.ListOptions{
+		LabelSelector: "app=consul,component=server",
+	})
+	if err == nil {
+		for _, cm := range configMaps.Items {
+			if config, ok := cm.Data["server.json"]; ok {
+				info := ConsulDNSForwardingInfo{
+					Name:      cm.Name,
+					Namespace: cm.Namespace,
+				}
+
+				// Parse recursors from config
+				if strings.Contains(config, "recursors") {
+					info.Recursors = append(info.Recursors, "configured")
+				}
+
+				// Check for DNS domain
+				if strings.Contains(config, "domain") {
+					info.DNSDomain = "consul" // default
+				}
+
+				configs = append(configs, info)
+			}
+		}
+	}
+
+	return configs
+}
+
+// ============================================================================
+// Kubewarden DNS Policy Analysis
+// ============================================================================
+
+// KubewardenDNSPolicyInfo represents Kubewarden policies related to DNS
+type KubewardenDNSPolicyInfo struct {
+	Name         string
+	Namespace    string
+	PolicyServer string
+	Mode         string // protect, monitor
+	Module       string
+	DNSRules     []string
+}
+
+// analyzeKubewardenDNSPolicies finds Kubewarden policies related to DNS resources
+func analyzeKubewardenDNSPolicies(ctx context.Context, dynClient dynamic.Interface) []KubewardenDNSPolicyInfo {
+	var policies []KubewardenDNSPolicyInfo
+
+	// DNS-related module patterns
+	dnsModules := []string{
+		"dns", "coredns", "external-dns", "service",
+	}
+
+	// ClusterAdmissionPolicy
+	capGVR := schema.GroupVersionResource{
+		Group:    "policies.kubewarden.io",
+		Version:  "v1",
+		Resource: "clusteradmissionpolicies",
+	}
+
+	capList, err := dynClient.Resource(capGVR).List(ctx, metav1.ListOptions{})
+	if err == nil {
+		for _, cap := range capList.Items {
+			info := parseKubewardenDNSPolicy(cap.Object, cap.GetName(), "", dnsModules)
+			if len(info.DNSRules) > 0 || info.Module != "" {
+				policies = append(policies, info)
+			}
+		}
+	}
+
+	// AdmissionPolicy (namespaced)
+	apGVR := schema.GroupVersionResource{
+		Group:    "policies.kubewarden.io",
+		Version:  "v1",
+		Resource: "admissionpolicies",
+	}
+
+	apList, err := dynClient.Resource(apGVR).Namespace("").List(ctx, metav1.ListOptions{})
+	if err == nil {
+		for _, ap := range apList.Items {
+			info := parseKubewardenDNSPolicy(ap.Object, ap.GetName(), ap.GetNamespace(), dnsModules)
+			if len(info.DNSRules) > 0 || info.Module != "" {
+				policies = append(policies, info)
+			}
+		}
+	}
+
+	return policies
+}
+
+func parseKubewardenDNSPolicy(obj map[string]interface{}, name, namespace string, dnsModules []string) KubewardenDNSPolicyInfo {
+	info := KubewardenDNSPolicyInfo{
+		Name:      name,
+		Namespace: namespace,
+	}
+
+	isDNSRelated := false
+
+	if spec, ok := obj["spec"].(map[string]interface{}); ok {
+		if module, ok := spec["module"].(string); ok {
+			info.Module = module
+			for _, pattern := range dnsModules {
+				if strings.Contains(strings.ToLower(module), pattern) {
+					isDNSRelated = true
+					break
+				}
+			}
+		}
+
+		if mode, ok := spec["mode"].(string); ok {
+			info.Mode = mode
+		}
+
+		if policyServer, ok := spec["policyServer"].(string); ok {
+			info.PolicyServer = policyServer
+		}
+
+		// Check rules for DNS-related resources
+		if rules, ok := spec["rules"].([]interface{}); ok {
+			for _, r := range rules {
+				if rMap, ok := r.(map[string]interface{}); ok {
+					if resources, ok := rMap["resources"].([]interface{}); ok {
+						for _, res := range resources {
+							if resStr, ok := res.(string); ok {
+								// Check for services (which include ExternalName)
+								if strings.Contains(resStr, "services") {
+									isDNSRelated = true
+									info.DNSRules = append(info.DNSRules, resStr)
+								}
+								// Check for ConfigMaps (CoreDNS config)
+								if strings.Contains(resStr, "configmaps") {
+									info.DNSRules = append(info.DNSRules, resStr)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if !isDNSRelated {
+		info.Module = "" // Clear module if not DNS related
+	}
+
+	return info
 }

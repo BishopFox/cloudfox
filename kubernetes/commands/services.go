@@ -254,9 +254,6 @@ func ListServices(cmd *cobra.Command, args []string) {
 	var outputRows [][]string
 	var findings []ServiceFinding
 
-	// Risk counters using shared type
-	riskCounts := shared.NewRiskCounts()
-
 	// Loot builder using shared pattern
 	loot := shared.NewLootBuilder()
 
@@ -556,7 +553,6 @@ func ListServices(cmd *cobra.Command, args []string) {
 				"CRITICAL: Externally exposed with unrestricted internal access")
 		}
 
-		riskCounts.Add(finding.RiskLevel)
 		findings = append(findings, finding)
 
 		// Generate output row
@@ -612,13 +608,6 @@ func ListServices(cmd *cobra.Command, args []string) {
 		return findings[i].AttackSurface > findings[j].AttackSurface
 	})
 
-	// Add risk summary to key sections
-	if riskCounts.Critical > 0 || riskCounts.High > 0 {
-		summary := shared.RiskSummaryLoot(riskCounts)
-		loot.Section("Services-ExternalExposure").SetSummary(summary)
-		loot.Section("Services-AttackSurface").SetSummary(summary)
-	}
-
 	table := internal.TableFile{
 		Name:   "Services",
 		Header: headers,
@@ -648,10 +637,7 @@ func ListServices(cmd *cobra.Command, args []string) {
 	}
 
 	if len(outputRows) > 0 {
-		logger.InfoM(fmt.Sprintf("%d services found | Risk: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
-			len(outputRows),
-			riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low),
-			globals.K8S_SERVICES_MODULE_NAME)
+		logger.InfoM(fmt.Sprintf("%d services found", len(outputRows)), globals.K8S_SERVICES_MODULE_NAME)
 	} else {
 		logger.InfoM("No services found, skipping output file creation", globals.K8S_SERVICES_MODULE_NAME)
 	}

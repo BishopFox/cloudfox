@@ -45,6 +45,9 @@ var (
 	// Admission controller filtering for lazy CRD discovery
 	K8sAdmissionControllers string // Comma-separated list or "all"
 
+	// Detailed output flag
+	K8sDetailed bool
+
 	// logger
 	logger = internal.NewLogger()
 
@@ -158,6 +161,9 @@ var (
 
 				// Set timeout
 				globals.K8sTimeout = K8sTimeout
+
+				// Set detailed output flag
+				globals.K8sDetailed = K8sDetailed
 
 				// Parse --admission-controllers flag
 				if K8sAdmissionControllers != "" {
@@ -283,6 +289,9 @@ func init() {
 			"  Secrets: vault, external-secrets, sealed-secrets\n"+
 			"  Certs: cert-manager, venafi\n"+
 			"  Other: coredns, opa")
+
+	// Detailed output flag
+	K8sCommands.PersistentFlags().BoolVarP(&K8sDetailed, "detailed", "d", false, "Show detailed output for modules that support it (admission modules, crds)")
 
 	// Add subcommands
 	K8sCommands.AddCommand(

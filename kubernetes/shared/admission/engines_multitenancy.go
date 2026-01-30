@@ -210,4 +210,161 @@ func (r *EngineRegistry) registerMultitenancyEngines() {
 		LabelSelectors:     []string{"app.kubernetes.io/name=multicluster-scheduler"},
 		RequireImageVerification: true,
 	})
+
+	// =============================================================================
+	// Policy Engines with Multitenancy Capabilities
+	// =============================================================================
+
+	// OPA Gatekeeper - Can enforce namespace isolation and tenant constraints
+	r.register(&Engine{
+		ID:       "gatekeeper",
+		Name:     "OPA Gatekeeper",
+		Category: CategoryMultitenancy,
+		TrustedRegistries: []string{
+			"openpolicyagent/",
+			"quay.io/gatekeeper/",
+			"docker.io/openpolicyagent/",
+		},
+		ImagePatterns: []string{
+			"openpolicyagent/gatekeeper",
+			"gatekeeper",
+		},
+		DeploymentPatterns: []string{"gatekeeper-controller-manager", "gatekeeper-audit"},
+		ExpectedNamespaces: []string{"gatekeeper-system", "kube-system"},
+		WebhookPatterns:    []string{"gatekeeper-validating", "gatekeeper-mutating"},
+		CRDGroups:          []string{"constraints.gatekeeper.sh", "templates.gatekeeper.sh"},
+		LabelSelectors:     []string{"control-plane=controller-manager", "gatekeeper.sh/system=yes"},
+		RequireImageVerification: true,
+	})
+
+	// Kyverno - Can enforce namespace policies and tenant isolation
+	r.register(&Engine{
+		ID:       "kyverno",
+		Name:     "Kyverno",
+		Category: CategoryMultitenancy,
+		TrustedRegistries: []string{
+			"ghcr.io/kyverno/",
+			"nirmata/",
+			"docker.io/nirmata/",
+		},
+		ImagePatterns: []string{
+			"kyverno/kyverno",
+			"kyverno",
+			"nirmata/kyverno",
+		},
+		DeploymentPatterns: []string{"kyverno", "kyverno-admission-controller"},
+		ExpectedNamespaces: []string{"kyverno", "kube-system"},
+		WebhookPatterns:    []string{"kyverno-resource-validating", "kyverno-resource-mutating"},
+		CRDGroups:          []string{"kyverno.io"},
+		LabelSelectors:     []string{"app.kubernetes.io/name=kyverno", "app=kyverno"},
+		RequireImageVerification: true,
+	})
+
+	// Kubewarden - Can enforce multitenancy policies
+	r.register(&Engine{
+		ID:       "kubewarden",
+		Name:     "Kubewarden",
+		Category: CategoryMultitenancy,
+		TrustedRegistries: []string{
+			"ghcr.io/kubewarden/",
+		},
+		ImagePatterns: []string{
+			"kubewarden/policy-server",
+			"kubewarden/kubewarden-controller",
+		},
+		DeploymentPatterns: []string{"kubewarden-controller", "policy-server"},
+		ExpectedNamespaces: []string{"kubewarden", "kubewarden-system"},
+		WebhookPatterns:    []string{"kubewarden"},
+		CRDGroups:          []string{"policies.kubewarden.io"},
+		LabelSelectors:     []string{"app=kubewarden-policy-server", "app.kubernetes.io/name=kubewarden-controller"},
+		RequireImageVerification: true,
+	})
+
+	// =============================================================================
+	// Cloud-Specific Resource Management
+	// =============================================================================
+
+	// AWS Controllers for Kubernetes (ACK)
+	r.register(&Engine{
+		ID:       "aws-ack",
+		Name:     "AWS Controllers for Kubernetes",
+		Category: CategoryMultitenancy,
+		TrustedRegistries: []string{
+			"public.ecr.aws/aws-controllers-k8s/",
+		},
+		ImagePatterns: []string{
+			"aws-controllers-k8s/",
+			"ack-",
+		},
+		DeploymentPatterns: []string{"ack-", "-controller"},
+		ExpectedNamespaces: []string{"ack-system", "kube-system"},
+		CRDGroups:          []string{"services.k8s.aws"},
+		LabelSelectors:     []string{"app.kubernetes.io/name=ack"},
+		RequireImageVerification: true,
+	})
+
+	// GCP Config Connector
+	r.register(&Engine{
+		ID:       "gcp-config-connector",
+		Name:     "GCP Config Connector",
+		Category: CategoryMultitenancy,
+		TrustedRegistries: []string{
+			"gcr.io/cnrm-eap/",
+			"gcr.io/gke-release/",
+		},
+		ImagePatterns: []string{
+			"cnrm-controller-manager",
+			"cnrm-webhook-manager",
+			"cnrm-deletiondefender",
+			"cnrm-resource-stats-recorder",
+		},
+		DeploymentPatterns: []string{"cnrm-controller-manager", "cnrm-webhook-manager"},
+		ExpectedNamespaces: []string{"cnrm-system", "configconnector-operator-system"},
+		WebhookPatterns:    []string{"cnrm-validating", "cnrm-mutating"},
+		CRDGroups:          []string{"core.cnrm.cloud.google.com", "iam.cnrm.cloud.google.com"},
+		LabelSelectors:     []string{"cnrm.cloud.google.com/component=cnrm-controller-manager"},
+		RequireImageVerification: true,
+	})
+
+	// Azure Service Operator
+	r.register(&Engine{
+		ID:       "azure-service-operator",
+		Name:     "Azure Service Operator",
+		Category: CategoryMultitenancy,
+		TrustedRegistries: []string{
+			"mcr.microsoft.com/",
+		},
+		ImagePatterns: []string{
+			"azure-service-operator",
+			"aso-controller",
+		},
+		DeploymentPatterns: []string{"azureserviceoperator-controller-manager"},
+		ExpectedNamespaces: []string{"azureserviceoperator-system", "kube-system"},
+		WebhookPatterns:    []string{"azureserviceoperator-validating", "azureserviceoperator-mutating"},
+		CRDGroups:          []string{"resources.azure.com", "containerservice.azure.com"},
+		LabelSelectors:     []string{"control-plane=controller-manager"},
+		RequireImageVerification: true,
+	})
+
+	// Crossplane (multi-cloud resource management)
+	r.register(&Engine{
+		ID:       "crossplane",
+		Name:     "Crossplane",
+		Category: CategoryMultitenancy,
+		TrustedRegistries: []string{
+			"crossplane/",
+			"xpkg.upbound.io/",
+		},
+		ImagePatterns: []string{
+			"crossplane/crossplane",
+			"crossplane-runtime",
+			"provider-",
+		},
+		DeploymentPatterns: []string{"crossplane", "crossplane-rbac-manager"},
+		ExpectedNamespaces: []string{"crossplane-system", "upbound-system"},
+		WebhookPatterns:    []string{"crossplane"},
+		CRDGroups:          []string{"pkg.crossplane.io", "apiextensions.crossplane.io"},
+		LabelSelectors:     []string{"app=crossplane", "app.kubernetes.io/name=crossplane"},
+		RequireImageVerification: true,
+	})
 }

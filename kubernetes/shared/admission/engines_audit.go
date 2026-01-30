@@ -307,4 +307,182 @@ func (r *EngineRegistry) registerAuditEngines() {
 		LabelSelectors:     []string{"app=kubescape"},
 		RequireImageVerification: true,
 	})
+
+	// AWS CloudWatch Agent / Fluent Bit for CloudWatch
+	r.register(&Engine{
+		ID:       "aws-cloudwatch",
+		Name:     "AWS CloudWatch Agent",
+		Category: CategoryAudit,
+		TrustedRegistries: []string{
+			"amazon/",
+			"public.ecr.aws/",
+		},
+		ImagePatterns: []string{
+			"cloudwatch-agent",
+			"amazon/cloudwatch-agent",
+			"aws-for-fluent-bit",
+			"fluent-bit",
+		},
+		DeploymentPatterns: []string{"cloudwatch-agent", "fluent-bit"},
+		ExpectedNamespaces: []string{"amazon-cloudwatch", "kube-system", "logging"},
+		LabelSelectors:     []string{"app.kubernetes.io/name=cloudwatch-agent", "k8s-app=fluent-bit"},
+		RequireImageVerification: true,
+	})
+
+	// AWS GuardDuty EKS Runtime Monitoring
+	r.register(&Engine{
+		ID:       "aws-guardduty",
+		Name:     "AWS GuardDuty EKS",
+		Category: CategoryAudit,
+		TrustedRegistries: []string{
+			"amazon/",
+			"public.ecr.aws/",
+		},
+		ImagePatterns: []string{
+			"guardduty-agent",
+			"eks-guardduty",
+		},
+		DeploymentPatterns: []string{"guardduty-agent"},
+		ExpectedNamespaces: []string{"amazon-guardduty", "kube-system"},
+		LabelSelectors:     []string{"app.kubernetes.io/name=guardduty-agent"},
+		RequireImageVerification: true,
+	})
+
+	// GCP Cloud Logging Agent (Stackdriver)
+	r.register(&Engine{
+		ID:       "gcp-cloud-logging",
+		Name:     "GCP Cloud Logging",
+		Category: CategoryAudit,
+		TrustedRegistries: []string{
+			"gcr.io/",
+			"gke.gcr.io/",
+		},
+		ImagePatterns: []string{
+			"stackdriver-logging-agent",
+			"fluentd-gcp",
+			"fluent-bit-gke-exporter",
+			"gke-logging-agent",
+		},
+		DeploymentPatterns: []string{"fluentd-gcp", "stackdriver-log-aggregator"},
+		ExpectedNamespaces: []string{"kube-system", "gke-system"},
+		LabelSelectors:     []string{"k8s-app=fluentd-gcp", "component=fluentd-gcp"},
+		RequireImageVerification: true,
+	})
+
+	// GCP Security Command Center
+	r.register(&Engine{
+		ID:       "gcp-scc",
+		Name:     "GCP Security Command Center",
+		Category: CategoryAudit,
+		TrustedRegistries: []string{
+			"gcr.io/",
+		},
+		ImagePatterns: []string{
+			"scc-agent",
+			"container-threat-detection",
+		},
+		ExpectedNamespaces: []string{"gke-system", "kube-system"},
+		RequireImageVerification: true,
+	})
+
+	// Azure Monitor Container Insights
+	r.register(&Engine{
+		ID:       "azure-monitor",
+		Name:     "Azure Monitor Container Insights",
+		Category: CategoryAudit,
+		TrustedRegistries: []string{
+			"mcr.microsoft.com/",
+		},
+		ImagePatterns: []string{
+			"azuremonitor/containerinsights",
+			"oms-agent",
+			"omsagent",
+			"ama-logs",
+			"azure-monitor-agent",
+		},
+		DeploymentPatterns: []string{"omsagent", "ama-logs"},
+		ExpectedNamespaces: []string{"kube-system", "azure-monitor"},
+		LabelSelectors:     []string{"component=oms-agent", "rsName=omsagent"},
+		RequireImageVerification: true,
+	})
+
+	// Azure Defender for Kubernetes
+	r.register(&Engine{
+		ID:       "azure-defender",
+		Name:     "Azure Defender for Kubernetes",
+		Category: CategoryAudit,
+		TrustedRegistries: []string{
+			"mcr.microsoft.com/",
+		},
+		ImagePatterns: []string{
+			"azuredefender/",
+			"azure-defender",
+			"microsoft-defender",
+		},
+		DeploymentPatterns: []string{"azure-defender", "defender-publisher"},
+		ExpectedNamespaces: []string{"kube-system", "microsoft-defender"},
+		LabelSelectors:     []string{"app=defender-publisher"},
+		RequireImageVerification: true,
+	})
+
+	// Datadog Agent
+	r.register(&Engine{
+		ID:       "datadog",
+		Name:     "Datadog Agent",
+		Category: CategoryAudit,
+		TrustedRegistries: []string{
+			"datadog/",
+			"gcr.io/datadoghq/",
+		},
+		ImagePatterns: []string{
+			"datadog/agent",
+			"datadog-agent",
+			"datadog/cluster-agent",
+		},
+		DeploymentPatterns: []string{"datadog-agent", "datadog-cluster-agent"},
+		ExpectedNamespaces: []string{"datadog", "kube-system"},
+		CRDGroups:          []string{"datadoghq.com"},
+		LabelSelectors:     []string{"app=datadog-agent", "app.kubernetes.io/name=datadog-agent-deployment"},
+		RequireImageVerification: true,
+	})
+
+	// Splunk Connect for Kubernetes
+	r.register(&Engine{
+		ID:       "splunk",
+		Name:     "Splunk Connect",
+		Category: CategoryAudit,
+		TrustedRegistries: []string{
+			"docker.io/splunk/",
+			"splunk/",
+		},
+		ImagePatterns: []string{
+			"splunk/fluentd-hec",
+			"splunk/splunk-otel-collector",
+			"splunk-otel-collector-k8s",
+		},
+		DeploymentPatterns: []string{"splunk-otel-collector"},
+		ExpectedNamespaces: []string{"splunk", "kube-system"},
+		LabelSelectors:     []string{"app=splunk-otel-collector"},
+		RequireImageVerification: true,
+	})
+
+	// Elastic Agent / Filebeat
+	r.register(&Engine{
+		ID:       "elastic",
+		Name:     "Elastic Agent",
+		Category: CategoryAudit,
+		TrustedRegistries: []string{
+			"docker.elastic.co/",
+		},
+		ImagePatterns: []string{
+			"elastic-agent",
+			"filebeat",
+			"metricbeat",
+		},
+		DeploymentPatterns: []string{"elastic-agent", "filebeat"},
+		ExpectedNamespaces: []string{"elastic-system", "kube-system"},
+		CRDGroups:          []string{"agent.k8s.elastic.co"},
+		LabelSelectors:     []string{"app=elastic-agent"},
+		RequireImageVerification: true,
+	})
 }

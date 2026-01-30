@@ -233,15 +233,15 @@ const (
 	CategoryAttackChains = "AttackChains"
 )
 
-// RiskSummaryLoot generates a standard risk summary for loot files
-func RiskSummaryLoot(counts *RiskCounts) string {
-	return fmt.Sprintf(`
-# SUMMARY: Risk Distribution
-# CRITICAL: %d findings
-# HIGH: %d findings
-# MEDIUM: %d findings
-# LOW: %d findings
-#
-# Focus on CRITICAL and HIGH risk items first.
-`, counts.Critical, counts.High, counts.Medium, counts.Low)
+// FormatSuspiciousEntry formats a suspicious finding with its issues for loot output.
+// Resource identifier on first line, issues indented below for clear visual separation.
+// Returns lines to append to loot content.
+func FormatSuspiciousEntry(namespace, name string, issues []string) []string {
+	var lines []string
+	lines = append(lines, fmt.Sprintf("# %s/%s", namespace, name))
+	for _, issue := range issues {
+		lines = append(lines, fmt.Sprintf("#     - %s", issue))
+	}
+	return lines
 }
+

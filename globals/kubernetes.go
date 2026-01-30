@@ -72,4 +72,7 @@ var (
 	//                    neuvector, crowdstrike, trivy, harbor, notary, cosign, istio, linkerd,
 	//                    cert-manager, vault, external-secrets, calico, cilium, coredns, etc.
 	K8sAdmissionControllers []string // List of admission controllers to check for (empty = all)
+
+	// Detailed output flag
+	K8sDetailed bool // Show detailed output for modules that support it
 )

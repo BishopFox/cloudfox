@@ -25,7 +25,6 @@ var JobsCmd = &cobra.Command{
 	Short:   "Enumerate jobs with comprehensive security analysis",
 	Long: `
 Enumerate all jobs in the cluster with comprehensive security analysis including:
-  - Risk-based scoring (CRITICAL/HIGH/MEDIUM/LOW)
   - Security context analysis (privileged, capabilities, runAsRoot)
   - Secret and credential exposure detection
   - Image security validation (tags, registries, pull policies)
@@ -91,8 +90,8 @@ type JobFinding struct {
 	Duration       string
 
 	// Security analysis
-	RiskLevel      string // CRITICAL/HIGH/MEDIUM/LOW
 	SecurityIssues []string
+	RiskScore      int // Internal score for prioritization (0-100)
 
 	// Suspicious pattern detection
 	BackdoorPatterns []string
@@ -219,13 +218,10 @@ func ListJobs(cmd *cobra.Command, args []string) {
 	var volumeRows [][]string
 	var findings []JobFinding
 
-	// Risk counters
-	riskCounts := shared.NewRiskCounts()
-
 	for _, job := range allJobs {
 		finding := analyzeJob(ctx, clientset, &job)
+		finding.RiskScore = calculateJobRiskScore(&finding)
 		findings = append(findings, finding)
-		riskCounts.Add(finding.RiskLevel)
 
 		// Build Security Context column (pod-level only)
 		var secContextParts []string
@@ -328,7 +324,7 @@ func ListJobs(cmd *cobra.Command, args []string) {
 	}
 
 	// Generate loot files
-	lootFiles := generateJobLoot(findings, globals.KubeContext, riskCounts)
+	lootFiles := generateJobLoot(findings, globals.KubeContext)
 
 	// Create all three tables
 	summaryTable := internal.TableFile{Name: "Jobs", Header: summaryHeaders, Body: summaryRows}
@@ -355,15 +351,6 @@ func ListJobs(cmd *cobra.Command, args []string) {
 
 	if len(summaryRows) > 0 {
 		logger.InfoM(fmt.Sprintf("%d jobs found", len(summaryRows)), globals.K8S_JOBS_MODULE_NAME)
-		logger.InfoM(fmt.Sprintf("Risk Summary: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
-			riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low), globals.K8S_JOBS_MODULE_NAME)
-
-		if riskCounts.Critical > 0 {
-			logger.InfoM(fmt.Sprintf("⚠️  %d CRITICAL risk jobs detected!", riskCounts.Critical), globals.K8S_JOBS_MODULE_NAME)
-		}
-		if riskCounts.High > 0 {
-			logger.InfoM(fmt.Sprintf("⚠️  %d HIGH risk jobs detected!", riskCounts.High), globals.K8S_JOBS_MODULE_NAME)
-		}
 	} else {
 		logger.InfoM("No jobs found, skipping output file creation", globals.K8S_JOBS_MODULE_NAME)
 	}
@@ -612,9 +599,6 @@ func analyzeJob(ctx context.Context, clientset *kubernetes.Clientset, job *batch
 
 	// Security issues analysis
 	finding.SecurityIssues = analyzeJobSecurityIssues(finding)
-
-	// Calculate risk level
-	finding.RiskLevel = calculateJobRiskLevel(finding)
 
 	return finding
 }
@@ -913,76 +897,104 @@ func analyzeJobSecurityIssues(finding JobFinding) []string {
 	return issues
 }
 
-func calculateJobRiskLevel(finding JobFinding) string {
-	// CRITICAL: Active backdoors, reverse shells, crypto miners
+// calculateJobRiskScore returns an internal score (0-100) for prioritization
+func calculateJobRiskScore(finding *JobFinding) int {
+	score := 0
+
+	// Critical patterns (50+ points)
 	if len(finding.ReverseShells) > 0 {
-		return shared.RiskCritical
+		score += 50
 	}
 	if len(finding.CryptoMiners) > 0 {
-		return shared.RiskCritical
+		score += 45
+	}
+	if len(finding.DataExfiltration) > 0 {
+		score += 45
 	}
 	if len(finding.ContainerEscape) > 0 {
-		return shared.RiskCritical
-	}
-	// Privileged job with hostPath to runtime sockets
-	if finding.Privileged && len(finding.HostPaths) > 0 {
-		for _, hp := range finding.HostPaths {
-			if strings.Contains(hp, "docker.sock") || strings.Contains(hp, "containerd.sock") ||
-				hp == "/" || strings.HasPrefix(hp, "/:") {
-				return shared.RiskCritical
-			}
-		}
+		score += 50
 	}
 
-	// HIGH: Data exfiltration, privileged + host access
-	if len(finding.DataExfiltration) > 0 {
-		return shared.RiskHigh
-	}
-	if finding.Privileged && (finding.HostPID || finding.HostIPC) {
-		return shared.RiskHigh
-	}
-	// Check for dangerous capabilities
-	dangerousCaps := []string{"SYS_ADMIN", "SYS_MODULE", "SYS_RAWIO", "SYS_PTRACE", "DAC_READ_SEARCH", "NET_ADMIN"}
-	for _, cap := range finding.Capabilities {
-		for _, dangerousCap := range dangerousCaps {
-			if strings.EqualFold(cap, dangerousCap) {
-				return shared.RiskHigh
-			}
-		}
-	}
-
-	// MEDIUM: HostNetwork, cloud roles, privileged alone
-	if finding.HostNetwork {
-		return shared.RiskMedium
-	}
-	if finding.CloudRole != "" && finding.CloudRole != "<NONE>" {
-		return shared.RiskMedium
-	}
+	// Privileged access (30-40 points)
 	if finding.Privileged {
-		return shared.RiskMedium
+		score += 40
 	}
-	if finding.HostPID || finding.HostIPC {
-		return shared.RiskMedium
+	if finding.HostPID {
+		score += 35
+	}
+	if finding.HostIPC {
+		score += 30
+	}
+	if finding.HostNetwork {
+		score += 30
 	}
 
-	// LOW: Standard job
-	return shared.RiskLow
+	// Sensitive access (20-30 points)
+	if len(finding.SensitiveHostPaths) > 0 {
+		score += 25
+	}
+	if finding.WritableHostPaths > 0 {
+		score += 20
+	}
+
+	// Dangerous capabilities (15-25 points each)
+	dangerousCaps := map[string]int{
+		"SYS_ADMIN":       25,
+		"SYS_MODULE":      20,
+		"SYS_RAWIO":       20,
+		"SYS_PTRACE":      20,
+		"DAC_READ_SEARCH": 15,
+		"NET_ADMIN":       15,
+	}
+	for _, cap := range finding.Capabilities {
+		if points, ok := dangerousCaps[cap]; ok {
+			score += points
+		}
+	}
+
+	// Medium risk factors (10-15 points)
+	if finding.RunAsUser == "root" || finding.RunAsUser == "0" {
+		score += 15
+	}
+	if !finding.HasResourceLimits {
+		score += 10
+	}
+	if finding.ServiceAccount == "default" && finding.AutomountSAToken {
+		score += 10
+	}
+
+	// Job-specific risks
+	if finding.FailureRate > 0.5 && finding.Failed > 0 {
+		score += 10
+	}
+	if finding.Status == "Backoff" {
+		score += 5
+	}
+
+	// Cloud role adds value
+	if finding.CloudRole != "" {
+		score += 15
+	}
+
+	// Cap at 100
+	if score > 100 {
+		score = 100
+	}
+
+	return score
 }
 
 // ====================
 // Loot File Builders
 // ====================
 
-func generateJobLoot(findings []JobFinding, kubeContext string, riskCounts *shared.RiskCounts) []internal.LootFile {
+func generateJobLoot(findings []JobFinding, kubeContext string) []internal.LootFile {
 	var lootContent []string
 	var entrypointsContent []string
 
-	// Sort findings by namespace/name
+	// Sort findings by RiskScore descending for prioritization
 	sort.Slice(findings, func(i, j int) bool {
-		if findings[i].Namespace != findings[j].Namespace {
-			return findings[i].Namespace < findings[j].Namespace
-		}
-		return findings[i].Name < findings[j].Name
+		return findings[i].RiskScore > findings[j].RiskScore
 	})
 
 	// ========================================
@@ -1014,23 +1026,50 @@ func generateJobLoot(findings []JobFinding, kubeContext string, riskCounts *shar
 	lootContent = append(lootContent, "kubectl get jobs -A -o json | jq -r '.items[] | select(.status.failed > 0) | \"\\(.metadata.namespace)/\\(.metadata.name) - Failed: \\(.status.failed)\"'")
 	lootContent = append(lootContent, "")
 
-	// === HIGH RISK ===
-	var hasHighRisk bool
+	// === SUSPICIOUS JOBS ===
+	var hasSuspicious bool
 	for _, f := range findings {
-		if f.RiskLevel == shared.RiskCritical || f.RiskLevel == shared.RiskHigh {
-			if !hasHighRisk {
-				lootContent = append(lootContent, "=== HIGH RISK ===")
+		// Detect suspicious patterns
+		isSuspicious := f.Privileged || f.HostPID || f.HostIPC || f.HostNetwork ||
+			len(f.BackdoorPatterns) > 0 || len(f.ReverseShells) > 0 ||
+			len(f.CryptoMiners) > 0 || len(f.DataExfiltration) > 0 ||
+			len(f.ContainerEscape) > 0 || len(f.SensitiveHostPaths) > 0
+
+		if isSuspicious {
+			if !hasSuspicious {
+				lootContent = append(lootContent, "=== SUSPICIOUS JOBS ===")
 				lootContent = append(lootContent, "")
-				hasHighRisk = true
+				hasSuspicious = true
 			}
-			lootContent = append(lootContent, fmt.Sprintf("# [%s] %s/%s", f.RiskLevel, f.Namespace, f.Name))
-			lootContent = append(lootContent, fmt.Sprintf("kubectl get job %s -n %s -o yaml", f.Name, f.Namespace))
-			lootContent = append(lootContent, fmt.Sprintf("kubectl describe job %s -n %s", f.Name, f.Namespace))
+
+			var issues []string
+			if f.Privileged {
+				issues = append(issues, "Privileged")
+			}
+			if f.HostPID {
+				issues = append(issues, "HostPID")
+			}
+			if f.HostIPC {
+				issues = append(issues, "HostIPC")
+			}
+			if f.HostNetwork {
+				issues = append(issues, "HostNetwork")
+			}
+			if len(f.BackdoorPatterns) > 0 {
+				issues = append(issues, fmt.Sprintf("BackdoorPatterns(%d)", len(f.BackdoorPatterns)))
+			}
+			if len(f.SensitiveHostPaths) > 0 {
+				issues = append(issues, fmt.Sprintf("SensitiveHostPaths(%d)", len(f.SensitiveHostPaths)))
+			}
+
+			lootContent = append(lootContent, shared.FormatSuspiciousEntry(f.Namespace, f.Name, issues)...)
 			if len(f.SecurityIssues) > 0 {
 				for _, issue := range f.SecurityIssues {
 					lootContent = append(lootContent, fmt.Sprintf("#   - %s", issue))
 				}
 			}
+			lootContent = append(lootContent, fmt.Sprintf("kubectl get job %s -n %s -o yaml", f.Name, f.Namespace))
+			lootContent = append(lootContent, fmt.Sprintf("kubectl describe job %s -n %s", f.Name, f.Namespace))
 			lootContent = append(lootContent, "")
 		}
 	}
@@ -1065,7 +1104,7 @@ func generateJobLoot(findings []JobFinding, kubeContext string, riskCounts *shar
 		for cronJob, jobs := range cronJobMap {
 			lootContent = append(lootContent, fmt.Sprintf("# CronJob: %s - Job Count: %d", cronJob, len(jobs)))
 			for _, job := range jobs {
-				lootContent = append(lootContent, fmt.Sprintf("#   - [%s] %s/%s (Status: %s)", job.RiskLevel, job.Namespace, job.Name, job.Status))
+				lootContent = append(lootContent, fmt.Sprintf("#   - %s/%s (Status: %s)", job.Namespace, job.Name, job.Status))
 			}
 			if len(jobs) > 0 {
 				ns := jobs[0].Namespace

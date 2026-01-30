@@ -94,7 +94,7 @@ type PodFinding struct {
 	DataExfiltration []string
 	ContainerEscape  []string
 
-	// Security Analysis
+	// Security Analysis (internal use only - not displayed)
 	RiskLevel      string
 	RiskScore      int
 	SecurityIssues []string
@@ -282,9 +282,6 @@ func ListPods(cmd *cobra.Command, args []string) {
 	var containerRows [][]string
 	var volumeRows [][]string
 	var findings []PodFinding
-
-	// Risk counters
-	riskCounts := shared.NewRiskCounts()
 
 	// Loot content will be generated after processing all pods
 	// We'll use findings to generate consolidated loot
@@ -641,10 +638,9 @@ func ListPods(cmd *cobra.Command, args []string) {
 			// Security Issues Summary
 			finding.SecurityIssues = generateSecurityIssues(&finding)
 
-			// Calculate risk score and level
+			// Calculate risk score and level (internal use only for prioritization)
 			finding.RiskLevel, finding.RiskScore = calculatePodRiskScore(&finding)
 
-			riskCounts.Add(finding.RiskLevel)
 			findings = append(findings, finding)
 
 			// Build Security Context column (pod-level only)
@@ -791,7 +787,7 @@ func ListPods(cmd *cobra.Command, args []string) {
 	volumeTable := internal.TableFile{Name: "Pod-Volumes", Header: volumeHeaders, Body: volumeRows}
 
 	// Generate consolidated loot files
-	lootFiles := generatePodLoot(findings, riskCounts)
+	lootFiles := generatePodLoot(findings)
 
 	err = internal.HandleOutput(
 		"Kubernetes",
@@ -814,15 +810,6 @@ func ListPods(cmd *cobra.Command, args []string) {
 
 	if len(summaryRows) > 0 {
 		logger.InfoM(fmt.Sprintf("Enumerated %d pods across %d namespaces (processed: %d)", totalPodsEnumerated, len(namespaces), len(summaryRows)), globals.K8S_PODS_MODULE_NAME)
-		logger.InfoM(fmt.Sprintf("Risk Summary: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
-			riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low), globals.K8S_PODS_MODULE_NAME)
-
-		if riskCounts.Critical > 0 {
-			logger.InfoM(fmt.Sprintf("⚠️  %d CRITICAL risk pods detected!", riskCounts.Critical), globals.K8S_PODS_MODULE_NAME)
-		}
-		if riskCounts.High > 0 {
-			logger.InfoM(fmt.Sprintf("⚠️  %d HIGH risk pods detected!", riskCounts.High), globals.K8S_PODS_MODULE_NAME)
-		}
 	} else {
 		logger.InfoM("No pods found, skipping output file creation", globals.K8S_PODS_MODULE_NAME)
 	}
@@ -1451,7 +1438,7 @@ func generateSecurityIssues(finding *PodFinding) []string {
 	return issues
 }
 
-// calculatePodRiskScore calculates comprehensive risk score
+// calculatePodRiskScore calculates comprehensive risk score (internal use only for prioritization)
 func calculatePodRiskScore(finding *PodFinding) (string, int) {
 	score := 0
 
@@ -1560,49 +1547,6 @@ func calculatePodRiskScore(finding *PodFinding) (string, int) {
 	return "LOW", score
 }
 
-// generateTableRow creates table row for pod finding
-func generateTableRow(finding *PodFinding) []string {
-	return []string{
-		finding.RiskLevel,
-		fmt.Sprintf("%d", finding.RiskScore),
-		finding.Namespace,
-		finding.Name,
-		k8sinternal.NonEmpty(finding.PodIP),
-		finding.Phase,
-		k8sinternal.NonEmpty(finding.ServiceAccount),
-		k8sinternal.NonEmpty(finding.Node),
-		finding.ControllerType,
-		k8sinternal.NonEmpty(finding.ControllerName),
-		fmt.Sprintf("%v", finding.HostPID),
-		fmt.Sprintf("%v", finding.HostIPC),
-		fmt.Sprintf("%v", finding.HostNetwork),
-		fmt.Sprintf("%v", finding.Privileged),
-		fmt.Sprintf("%v", finding.RunAsRoot),
-		fmt.Sprintf("%v", finding.AllowPrivEsc),
-		fmt.Sprintf("%v", finding.ReadOnlyRootFilesystem),
-		finding.SELinuxContext,
-		finding.AppArmorProfile,
-		finding.SeccompProfile,
-		stringListOrNone(finding.Capabilities),
-		stringListOrNone(finding.DangerousCaps),
-		stringListOrNone(finding.HostPaths),
-		stringListOrNone(finding.SensitiveHostPaths),
-		stringListOrNone(finding.SecretVolumes),
-		stringListOrNone(finding.SecretEnvVars),
-		stringListOrNone(finding.ConfigMapVolumes),
-		stringListOrNone(finding.ImageTagTypes),
-		stringListOrNone(finding.ImagePullPolicy),
-		stringListOrNone(finding.ResourceLimits),
-		stringListOrNone(finding.ResourceRequests),
-		k8sinternal.NonEmpty(finding.QoSClass),
-		finding.PSSCompliance,
-		fmt.Sprintf("%d violations", len(finding.PSSViolations)),
-		k8sinternal.NonEmpty(finding.CloudProvider),
-		k8sinternal.NonEmpty(finding.CloudRole),
-		stringListOrNone(finding.SecurityIssues),
-	}
-}
-
 // stringListOrNone returns comma-separated list or <NONE>
 func stringListOrNone(list []string) string {
 	if len(list) == 0 {
@@ -1612,53 +1556,77 @@ func stringListOrNone(list []string) string {
 }
 
 // generatePodLoot generates consolidated loot files for pods
-func generatePodLoot(findings []PodFinding, riskCounts *shared.RiskCounts) []internal.LootFile {
+func generatePodLoot(findings []PodFinding) []internal.LootFile {
 	var lootContent []string
 	var entrypointsContent []string
+	var suspiciousContent []string
+
+	// Sort findings by risk score (highest first) for prioritization
+	sort.Slice(findings, func(i, j int) bool {
+		return findings[i].RiskScore > findings[j].RiskScore
+	})
 
 	// Header for Pod-Loot.txt
-	lootContent = append(lootContent, "#####################################")
-	lootContent = append(lootContent, "##### Pod Loot - Actionable Commands")
-	lootContent = append(lootContent, "#####################################")
-	lootContent = append(lootContent, "#")
-	lootContent = append(lootContent, fmt.Sprintf("# Risk Summary: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
-		riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low))
+	lootContent = append(lootContent, "########################################")
+	lootContent = append(lootContent, "##### Pod Commands")
+	lootContent = append(lootContent, "########################################")
 	lootContent = append(lootContent, "#")
 	lootContent = append(lootContent, "")
 
 	// Header for Pod-Entrypoints.txt
-	entrypointsContent = append(entrypointsContent, "#####################################")
+	entrypointsContent = append(entrypointsContent, "########################################")
 	entrypointsContent = append(entrypointsContent, "##### Pod Container Entrypoints")
-	entrypointsContent = append(entrypointsContent, "#####################################")
+	entrypointsContent = append(entrypointsContent, "########################################")
 	entrypointsContent = append(entrypointsContent, "#")
 	entrypointsContent = append(entrypointsContent, "# Container startup commands (entrypoint/cmd) and arguments")
 	entrypointsContent = append(entrypointsContent, "# Only containers with non-empty commands/args are listed")
 	entrypointsContent = append(entrypointsContent, "#")
 	entrypointsContent = append(entrypointsContent, "")
 
-	// Sort findings by risk score (highest first)
-	sort.Slice(findings, func(i, j int) bool {
-		return findings[i].RiskScore > findings[j].RiskScore
-	})
-
 	// Section: ENUMERATION
 	lootContent = append(lootContent, "")
-	lootContent = append(lootContent, "### ENUMERATION - Describe and inspect pods")
+	lootContent = append(lootContent, "=== ENUMERATION ===")
 	lootContent = append(lootContent, "")
 	for _, f := range findings {
-		lootContent = append(lootContent, fmt.Sprintf("# [%s] %s/%s", f.RiskLevel, f.Namespace, f.Name))
+		lootContent = append(lootContent, fmt.Sprintf("# %s/%s", f.Namespace, f.Name))
 		lootContent = append(lootContent, fmt.Sprintf("kubectl describe pod -n %s %s", f.Namespace, f.Name))
 		lootContent = append(lootContent, fmt.Sprintf("kubectl get pod -n %s %s -o yaml", f.Namespace, f.Name))
 		lootContent = append(lootContent, "")
 	}
 
-	// Section: HIGH RISK - Critical and high risk pods
+	// Section: SUSPICIOUS PODS - Pattern-based detection
 	lootContent = append(lootContent, "")
-	lootContent = append(lootContent, "### HIGH RISK - Critical and high risk pods for exploitation")
+	lootContent = append(lootContent, "=== SUSPICIOUS PODS ===")
+	lootContent = append(lootContent, "")
 	lootContent = append(lootContent, "")
 	for _, f := range findings {
-		if f.RiskLevel == "CRITICAL" || f.RiskLevel == "HIGH" {
-			lootContent = append(lootContent, fmt.Sprintf("# [%s] %s/%s - Score: %d", f.RiskLevel, f.Namespace, f.Name, f.RiskScore))
+		if f.Privileged || f.HostPID || f.HostIPC || f.HostNetwork || len(f.BackdoorPatterns) > 0 || len(f.DangerousCaps) > 0 || len(f.SensitiveHostPaths) > 0 {
+			var issues []string
+			if f.Privileged {
+				issues = append(issues, "Privileged")
+			}
+			if f.HostPID {
+				issues = append(issues, "HostPID")
+			}
+			if f.HostIPC {
+				issues = append(issues, "HostIPC")
+			}
+			if f.HostNetwork {
+				issues = append(issues, "HostNetwork")
+			}
+			if len(f.BackdoorPatterns) > 0 {
+				issues = append(issues, fmt.Sprintf("BackdoorPatterns(%d)", len(f.BackdoorPatterns)))
+			}
+			if len(f.DangerousCaps) > 0 {
+				issues = append(issues, fmt.Sprintf("DangerousCaps(%s)", strings.Join(f.DangerousCaps, ",")))
+			}
+			if len(f.SensitiveHostPaths) > 0 {
+				issues = append(issues, fmt.Sprintf("SensitiveHostPaths(%d)", len(f.SensitiveHostPaths)))
+			}
+
+			suspiciousContent = append(suspiciousContent, shared.FormatSuspiciousEntry(f.Namespace, f.Name, issues)...)
+
+			lootContent = append(lootContent, fmt.Sprintf("# %s/%s", f.Namespace, f.Name))
 			lootContent = append(lootContent, fmt.Sprintf("# Security Issues: %s", strings.Join(f.SecurityIssues, ", ")))
 			if f.CloudProvider != "" && f.CloudRole != "" {
 				lootContent = append(lootContent, fmt.Sprintf("# Cloud Role: %s (%s)", f.CloudRole, f.CloudProvider))
@@ -1670,11 +1638,11 @@ func generatePodLoot(findings []PodFinding, riskCounts *shared.RiskCounts) []int
 
 	// Section: EXPLOITATION - Container escape and privilege escalation
 	lootContent = append(lootContent, "")
-	lootContent = append(lootContent, "### EXPLOITATION - Container escape and privilege escalation")
+	lootContent = append(lootContent, "=== EXPLOITATION ===")
 	lootContent = append(lootContent, "")
 	for _, f := range findings {
 		if f.Privileged || len(f.DangerousCaps) > 0 || len(f.SensitiveHostPaths) > 0 {
-			lootContent = append(lootContent, fmt.Sprintf("# [%s] %s/%s", f.RiskLevel, f.Namespace, f.Name))
+			lootContent = append(lootContent, fmt.Sprintf("# %s/%s", f.Namespace, f.Name))
 			if f.Privileged && (f.HostPID || f.HostNetwork || f.HostIPC) {
 				lootContent = append(lootContent, "# CRITICAL: Privileged + Host Namespaces - Guaranteed escape")
 				lootContent = append(lootContent, fmt.Sprintf("kubectl exec -it -n %s %s -- nsenter --target 1 --mount --uts --ipc --net --pid -- bash", f.Namespace, f.Name))
@@ -1697,11 +1665,11 @@ func generatePodLoot(findings []PodFinding, riskCounts *shared.RiskCounts) []int
 
 	// Section: SECRETS ACCESS - Extract secrets and tokens
 	lootContent = append(lootContent, "")
-	lootContent = append(lootContent, "### SECRETS ACCESS - Extract secrets and service account tokens")
+	lootContent = append(lootContent, "=== SECRETS ACCESS ===")
 	lootContent = append(lootContent, "")
 	for _, f := range findings {
 		if f.TotalSecretsExposed > 0 || f.AutomountSAToken {
-			lootContent = append(lootContent, fmt.Sprintf("# [%s] %s/%s (SA: %s)", f.RiskLevel, f.Namespace, f.Name, f.ServiceAccount))
+			lootContent = append(lootContent, fmt.Sprintf("# %s/%s (SA: %s)", f.Namespace, f.Name, f.ServiceAccount))
 			if f.TotalSecretsExposed > 0 {
 				lootContent = append(lootContent, fmt.Sprintf("# Secrets exposed: %d", f.TotalSecretsExposed))
 			}
@@ -1712,11 +1680,11 @@ func generatePodLoot(findings []PodFinding, riskCounts *shared.RiskCounts) []int
 
 	// Section: LATERAL MOVEMENT - Network-based attacks
 	lootContent = append(lootContent, "")
-	lootContent = append(lootContent, "### LATERAL MOVEMENT - Network and cloud-based attacks")
+	lootContent = append(lootContent, "=== LATERAL MOVEMENT ===")
 	lootContent = append(lootContent, "")
 	for _, f := range findings {
 		if f.HostNetwork || (f.CloudProvider != "" && f.CloudRole != "") {
-			lootContent = append(lootContent, fmt.Sprintf("# [%s] %s/%s", f.RiskLevel, f.Namespace, f.Name))
+			lootContent = append(lootContent, fmt.Sprintf("# %s/%s", f.Namespace, f.Name))
 			if f.HostNetwork {
 				lootContent = append(lootContent, "# Host network - can access node services:")
 				lootContent = append(lootContent, fmt.Sprintf("kubectl exec -n %s %s -- curl -s http://localhost:10250/pods", f.Namespace, f.Name))
@@ -1750,8 +1718,18 @@ func generatePodLoot(findings []PodFinding, riskCounts *shared.RiskCounts) []int
 		}
 	}
 
-	return []internal.LootFile{
+	lootFiles := []internal.LootFile{
 		{Name: "Pod-Loot", Contents: strings.Join(lootContent, "\n")},
 		{Name: "Pod-Entrypoints", Contents: strings.Join(entrypointsContent, "\n")},
 	}
+
+	// Add Suspicious-Pods loot file if there are any suspicious pods
+	if len(suspiciousContent) > 0 {
+		lootFiles = append(lootFiles, internal.LootFile{
+			Name:     "Suspicious-Pods",
+			Contents: strings.Join(suspiciousContent, "\n"),
+		})
+	}
+
+	return lootFiles
 }
