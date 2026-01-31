@@ -1593,18 +1593,45 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 		"Issues",
 	}
 
-	findingHeaders := []string{
+	// Uniform header for all detailed policy tables
+	uniformPolicyHeader := []string{
 		"Namespace",
-		"Controller",
-		"Policy",
+		"Name",
 		"Scope",
-		"Repository/Pattern",
-		"Action",
-		"Signature",
-		"Attestation",
-		"Vuln Policy",
+		"Target",
+		"Type",
+		"Configuration",
+		"Details",
 		"Issues",
 	}
+
+	// All detailed tables use uniform schema
+	findingHeaders := uniformPolicyHeader
+	allowedImagesHeaders := uniformPolicyHeader
+	blockedImagesHeaders := uniformPolicyHeader
+	cloudPolicyHeaders := uniformPolicyHeader
+	gcpAttestorHeaders := uniformPolicyHeader
+	awsScanConfigHeaders := uniformPolicyHeader
+	awsSignerProfileHeaders := uniformPolicyHeader
+	aquaHeaders := uniformPolicyHeader
+	prismaHeaders := uniformPolicyHeader
+	sysdigHeaders := uniformPolicyHeader
+	neuvectorHeaders := uniformPolicyHeader
+	stackroxHeaders := uniformPolicyHeader
+	snykHeaders := uniformPolicyHeader
+	anchoreHeaders := uniformPolicyHeader
+	trivyHeaders := uniformPolicyHeader
+	notationHeaders := uniformPolicyHeader
+	harborHeaders := uniformPolicyHeader
+	clairHeaders := uniformPolicyHeader
+	wizHeaders := uniformPolicyHeader
+	laceworkHeaders := uniformPolicyHeader
+	cosignHeaders := uniformPolicyHeader
+	fluxImageHeaders := uniformPolicyHeader
+	xrayHeaders := uniformPolicyHeader
+	deepfenceHeaders := uniformPolicyHeader
+	qualysHeaders := uniformPolicyHeader
+	dockerScoutHeaders := uniformPolicyHeader
 
 	imagesHeaders := []string{
 		"Namespace",
@@ -1619,28 +1646,6 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 		"Issues",
 	}
 
-	allowedImagesHeaders := []string{
-		"Controller",
-		"Policy",
-		"Scope",
-		"Namespaces",
-		"Allowed Pattern",
-		"Signature Req",
-		"Conditions",
-		"Issues",
-	}
-
-	blockedImagesHeaders := []string{
-		"Controller",
-		"Policy",
-		"Scope",
-		"Namespaces",
-		"Blocked Pattern",
-		"Reason",
-		"Effect",
-		"Issues",
-	}
-
 	unifiedPoliciesHeaders := []string{
 		"Namespace",
 		"Tool",
@@ -1648,256 +1653,6 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 		"Scope",
 		"Type",
 		"Details",
-	}
-
-	cloudPolicyHeaders := []string{
-		"Provider",
-		"Policy Type",
-		"Name",
-		"Blocks Deploy",
-		"Enforcement",
-		"Default Action",
-		"Bypass Patterns",
-		"Allowed Registries",
-		"Details",
-		"Issues",
-	}
-
-	gcpAttestorHeaders := []string{
-		"Project",
-		"Attestor Name",
-		"Description",
-		"Keys",
-		"Algorithm",
-		"Updated",
-		"Issues",
-	}
-
-	awsScanConfigHeaders := []string{
-		"Repository",
-		"Registry ID",
-		"Scan on Push",
-		"Detects Malicious",
-		"Scan Frequency",
-		"Issues",
-	}
-
-	awsSignerProfileHeaders := []string{
-		"Profile Name",
-		"Version",
-		"Platform",
-		"Status",
-		"Enforced",
-		"Issues",
-	}
-
-	// Aqua Security policies detail table
-	aquaHeaders := []string{
-		"Name",
-		"Namespace",
-		"Enabled",
-		"Block Unregistered",
-		"Block Malware",
-		"CVSS Threshold",
-		"Allowed Registries",
-		"Issues",
-	}
-
-	// Prisma Cloud policies detail table
-	prismaHeaders := []string{
-		"Name",
-		"Enabled",
-		"Block Threshold",
-		"Grace Period Days",
-		"Block Malware",
-		"Trusted Registries",
-		"Issues",
-	}
-
-	// Sysdig Secure policies detail table
-	sysdigHeaders := []string{
-		"Name",
-		"Enabled",
-		"Scanning Enabled",
-		"Block On Failure",
-		"CVSS Threshold",
-		"Allowed Registries",
-		"Issues",
-	}
-
-	// NeuVector policies detail table
-	neuvectorHeaders := []string{
-		"Name",
-		"Namespace",
-		"Enabled",
-		"Mode",
-		"Block High CVE",
-		"Allowed Registries",
-		"Denied Registries",
-		"Issues",
-	}
-
-	// StackRox policies detail table
-	stackroxHeaders := []string{
-		"Name",
-		"Enabled",
-		"Enforcement Action",
-		"Severity",
-		"Categories",
-		"Image Criteria",
-		"Issues",
-	}
-
-	// Snyk Container policies detail table
-	snykHeaders := []string{
-		"Name",
-		"Enabled",
-		"Severity Threshold",
-		"Auto Fix",
-		"Block On Failure",
-		"Monitored Projects",
-		"Issues",
-	}
-
-	// Anchore policies detail table
-	anchoreHeaders := []string{
-		"Name",
-		"Enabled",
-		"Policy Bundle ID",
-		"Fail On Policy Eval",
-		"Mode",
-		"Allowed Registries",
-		"Issues",
-	}
-
-	// Trivy Operator policies detail table
-	trivyHeaders := []string{
-		"Name",
-		"Namespace",
-		"Scan Jobs Enabled",
-		"Vuln Reports",
-		"Config Audit Reports",
-		"SBOM Enabled",
-		"Severity Threshold",
-		"Issues",
-	}
-
-	// Notation policies detail table
-	notationHeaders := []string{
-		"Name",
-		"Enabled",
-		"Trust Policy Name",
-		"Trust Stores",
-		"Signature Format",
-		"Verification Level",
-		"Issues",
-	}
-
-	// Harbor policies detail table
-	harborHeaders := []string{
-		"Name",
-		"Enabled",
-		"Prevent Vuln Images",
-		"Severity Threshold",
-		"Auto Scan",
-		"Content Trust",
-		"Cosign Enabled",
-		"Issues",
-	}
-
-	// Clair policies detail table
-	clairHeaders := []string{
-		"Name",
-		"Enabled",
-		"Severity Threshold",
-		"Fixable Only",
-		"Allow List",
-		"Issues",
-	}
-
-	// Wiz policies detail table
-	wizHeaders := []string{
-		"Name",
-		"Enabled",
-		"Scanning Enabled",
-		"Block Vulnerabilities",
-		"Severity Threshold",
-		"Allowed Registries",
-		"Issues",
-	}
-
-	// Lacework policies detail table
-	laceworkHeaders := []string{
-		"Name",
-		"Enabled",
-		"Scanning Enabled",
-		"Block On Failure",
-		"Severity Threshold",
-		"Integration ID",
-		"Issues",
-	}
-
-	// Cosign Standalone policies detail table
-	cosignHeaders := []string{
-		"Name",
-		"Enabled",
-		"Key Refs",
-		"Keyless Enabled",
-		"Verify Attestations",
-		"Transparency Log",
-		"Issues",
-	}
-
-	// Flux Image policies detail table
-	fluxImageHeaders := []string{
-		"Name",
-		"Namespace",
-		"Image Repository",
-		"Filter Tags",
-		"Policy",
-		"Range",
-		"Issues",
-	}
-
-	// JFrog Xray policies detail table
-	xrayHeaders := []string{
-		"Name",
-		"Enabled",
-		"Severity Threshold",
-		"Block Downloads",
-		"Watch Names",
-		"Policy Rules",
-		"Issues",
-	}
-
-	// Deepfence policies detail table
-	deepfenceHeaders := []string{
-		"Name",
-		"Enabled",
-		"Scanning Enabled",
-		"Severity Threshold",
-		"Block Malware",
-		"Issues",
-	}
-
-	// Qualys policies detail table
-	qualysHeaders := []string{
-		"Name",
-		"Enabled",
-		"Scanning Enabled",
-		"Severity Threshold",
-		"Block On Critical",
-		"Issues",
-	}
-
-	// Docker Scout policies detail table
-	dockerScoutHeaders := []string{
-		"Name",
-		"Enabled",
-		"SBOM Enabled",
-		"Policy Check",
-		"Severity Threshold",
-		"Issues",
 	}
 
 	var controllerRows [][]string
@@ -2005,16 +1760,20 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			findIssuesStr = strings.Join(findIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		findingTarget := repo
+		findingType := f.Controller
+		findingConfig := fmt.Sprintf("Action: %s", f.Policy)
+		findingDetails := fmt.Sprintf("Signature: %s, Attestation: %s, Vuln: %s", f.SignatureReq, attestation, vulnPolicy)
+
 		findingRows = append(findingRows, []string{
 			ns,
-			f.Controller,
 			f.PolicyName,
 			f.Scope,
-			repo,
-			f.Policy,
-			f.SignatureReq,
-			attestation,
-			vulnPolicy,
+			findingTarget,
+			findingType,
+			findingConfig,
+			findingDetails,
 			findIssuesStr,
 		})
 	}
@@ -2115,16 +1874,28 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			cpIssuesStr = strings.Join(cpIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		cpNs := cp.Provider
+		cpScope := "Cluster"
+		cpTarget := allowedRegs
+		if cpTarget == "<NONE>" {
+			cpTarget = "All registries"
+		}
+		cpType := cp.PolicyType
+		cpConfig := fmt.Sprintf("Enforcement: %s, Default: %s, Blocks: %s", cp.EnforcementMode, cp.DefaultAction, blocksDeployment)
+		cpDetails := cp.Details
+		if bypassPatterns != "<NONE>" {
+			cpDetails = fmt.Sprintf("%s, Bypass: %s", cpDetails, bypassPatterns)
+		}
+
 		cloudPolicyRows = append(cloudPolicyRows, []string{
-			cp.Provider,
-			cp.PolicyType,
+			cpNs,
 			cp.Name,
-			blocksDeployment,
-			cp.EnforcementMode,
-			cp.DefaultAction,
-			bypassPatterns,
-			allowedRegs,
-			cp.Details,
+			cpScope,
+			cpTarget,
+			cpType,
+			cpConfig,
+			cpDetails,
 			cpIssuesStr,
 		})
 	}
@@ -2144,13 +1915,27 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			attIssuesStr = strings.Join(attIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		attNs := att.Project
+		attScope := "Project"
+		attTarget := "Container images"
+		attType := "GCP Attestor"
+		attConfig := fmt.Sprintf("Keys: %d, Algorithm: %s", att.KeyCount, att.KeyAlgorithm)
+		attDetails := att.Description
+		if attDetails == "" {
+			attDetails = fmt.Sprintf("Updated: %s", att.UpdateTime)
+		} else {
+			attDetails = fmt.Sprintf("%s, Updated: %s", attDetails, att.UpdateTime)
+		}
+
 		gcpAttestorRows = append(gcpAttestorRows, []string{
-			att.Project,
+			attNs,
 			att.Name,
-			att.Description,
-			fmt.Sprintf("%d", att.KeyCount),
-			att.KeyAlgorithm,
-			att.UpdateTime,
+			attScope,
+			attTarget,
+			attType,
+			attConfig,
+			attDetails,
 			attIssuesStr,
 		})
 	}
@@ -2180,12 +1965,22 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			scanIssuesStr = strings.Join(scanIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		scanNs := cfg.RegistryID
+		scanScope := "Repository"
+		scanTarget := cfg.RepositoryName
+		scanType := "AWS ECR Scan"
+		scanConfig := fmt.Sprintf("Scan on Push: %s, Frequency: %s", scanOnPush, cfg.ScanFrequency)
+		scanDetails := fmt.Sprintf("Malware Detection: %s", detectsMalicious)
+
 		awsScanConfigRows = append(awsScanConfigRows, []string{
+			scanNs,
 			cfg.RepositoryName,
-			cfg.RegistryID,
-			scanOnPush,
-			detectsMalicious,
-			cfg.ScanFrequency,
+			scanScope,
+			scanTarget,
+			scanType,
+			scanConfig,
+			scanDetails,
 			scanIssuesStr,
 		})
 	}
@@ -2203,12 +1998,22 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 		}
 		signerIssuesStr := strings.Join(signerIssues, "; ")
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		signerNs := "AWS"
+		signerScope := "Account"
+		signerTarget := profile.PlatformID
+		signerType := "AWS Signer Profile"
+		signerConfig := fmt.Sprintf("Status: %s, Enforced: %s", profile.Status, enforced)
+		signerDetails := fmt.Sprintf("Version: %s", profile.ProfileVersion)
+
 		awsSignerProfileRows = append(awsSignerProfileRows, []string{
+			signerNs,
 			profile.ProfileName,
-			profile.ProfileVersion,
-			profile.PlatformID,
-			profile.Status,
-			enforced,
+			signerScope,
+			signerTarget,
+			signerType,
+			signerConfig,
+			signerDetails,
 			signerIssuesStr,
 		})
 	}
@@ -2239,14 +2044,28 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(aquaIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		aquaNs := p.Namespace
+		if aquaNs == "" {
+			aquaNs = "<CLUSTER>"
+		}
+		aquaScope := "Namespace"
+		aquaTarget := allowedRegs
+		if aquaTarget == "<NONE>" {
+			aquaTarget = "All registries"
+		}
+		aquaType := "Aqua Security"
+		aquaConfig := fmt.Sprintf("Enabled: %s, CVSS: %.1f", shared.FormatBool(p.Enabled), p.CVSSThreshold)
+		aquaDetails := fmt.Sprintf("Block Unregistered: %s, Block Malware: %s", shared.FormatBool(p.BlockUnregistered), shared.FormatBool(p.BlockMalware))
+
 		aquaRows = append(aquaRows, []string{
+			aquaNs,
 			p.Name,
-			p.Namespace,
-			shared.FormatBool(p.Enabled),
-			shared.FormatBool(p.BlockUnregistered),
-			shared.FormatBool(p.BlockMalware),
-			fmt.Sprintf("%.1f", p.CVSSThreshold),
-			allowedRegs,
+			aquaScope,
+			aquaTarget,
+			aquaType,
+			aquaConfig,
+			aquaDetails,
 			issuesStr,
 		})
 	}
@@ -2277,13 +2096,25 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(prismaIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		prismaNs := "<CLUSTER>"
+		prismaScope := "Cluster"
+		prismaTarget := trustedRegs
+		if prismaTarget == "<NONE>" {
+			prismaTarget = "All registries"
+		}
+		prismaType := "Prisma Cloud"
+		prismaConfig := fmt.Sprintf("Enabled: %s, Threshold: %s", shared.FormatBool(p.Enabled), p.BlockThreshold)
+		prismaDetails := fmt.Sprintf("Grace Period: %d days, Block Malware: %s", p.GracePeriodDays, shared.FormatBool(p.BlockMalware))
+
 		prismaRows = append(prismaRows, []string{
+			prismaNs,
 			p.Name,
-			shared.FormatBool(p.Enabled),
-			p.BlockThreshold,
-			fmt.Sprintf("%d", p.GracePeriodDays),
-			shared.FormatBool(p.BlockMalware),
-			trustedRegs,
+			prismaScope,
+			prismaTarget,
+			prismaType,
+			prismaConfig,
+			prismaDetails,
 			issuesStr,
 		})
 	}
@@ -2314,13 +2145,25 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(sysdigIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		sysdigNs := "<CLUSTER>"
+		sysdigScope := "Cluster"
+		sysdigTarget := allowedRegs
+		if sysdigTarget == "<NONE>" {
+			sysdigTarget = "All registries"
+		}
+		sysdigType := "Sysdig Secure"
+		sysdigConfig := fmt.Sprintf("Enabled: %s, CVSS: %.1f", shared.FormatBool(p.Enabled), p.CVSSThreshold)
+		sysdigDetails := fmt.Sprintf("Scanning: %s, Block on Failure: %s", shared.FormatBool(p.ScanningEnabled), shared.FormatBool(p.BlockOnFailure))
+
 		sysdigRows = append(sysdigRows, []string{
+			sysdigNs,
 			p.Name,
-			shared.FormatBool(p.Enabled),
-			shared.FormatBool(p.ScanningEnabled),
-			shared.FormatBool(p.BlockOnFailure),
-			fmt.Sprintf("%.1f", p.CVSSThreshold),
-			allowedRegs,
+			sysdigScope,
+			sysdigTarget,
+			sysdigType,
+			sysdigConfig,
+			sysdigDetails,
 			issuesStr,
 		})
 	}
@@ -2352,14 +2195,28 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(neuvectorIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		neuvectorNs := p.Namespace
+		if neuvectorNs == "" {
+			neuvectorNs = "<CLUSTER>"
+		}
+		neuvectorScope := "Namespace"
+		neuvectorTarget := allowedRegs
+		if neuvectorTarget == "<NONE>" {
+			neuvectorTarget = "All registries"
+		}
+		neuvectorType := "NeuVector"
+		neuvectorConfig := fmt.Sprintf("Enabled: %s, Mode: %s", shared.FormatBool(p.Enabled), p.Mode)
+		neuvectorDetails := fmt.Sprintf("Block High CVE: %s, Denied: %s", shared.FormatBool(p.BlockHighCVE), deniedRegs)
+
 		neuvectorRows = append(neuvectorRows, []string{
+			neuvectorNs,
 			p.Name,
-			p.Namespace,
-			shared.FormatBool(p.Enabled),
-			p.Mode,
-			shared.FormatBool(p.BlockHighCVE),
-			allowedRegs,
-			deniedRegs,
+			neuvectorScope,
+			neuvectorTarget,
+			neuvectorType,
+			neuvectorConfig,
+			neuvectorDetails,
 			issuesStr,
 		})
 	}
@@ -2388,13 +2245,25 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(stackroxIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		stackroxNs := "<CLUSTER>"
+		stackroxScope := "Cluster"
+		stackroxTarget := imageCriteria
+		if stackroxTarget == "<NONE>" {
+			stackroxTarget = "All images"
+		}
+		stackroxType := "StackRox"
+		stackroxConfig := fmt.Sprintf("Enabled: %s, Action: %s", shared.FormatBool(p.Enabled), p.EnforcementAction)
+		stackroxDetails := fmt.Sprintf("Severity: %s, Categories: %s", p.Severity, categories)
+
 		stackroxRows = append(stackroxRows, []string{
+			stackroxNs,
 			p.Name,
-			shared.FormatBool(p.Enabled),
-			p.EnforcementAction,
-			p.Severity,
-			categories,
-			imageCriteria,
+			stackroxScope,
+			stackroxTarget,
+			stackroxType,
+			stackroxConfig,
+			stackroxDetails,
 			issuesStr,
 		})
 	}
@@ -2422,13 +2291,25 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(snykIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		snykNs := "<CLUSTER>"
+		snykScope := "Cluster"
+		snykTarget := projects
+		if snykTarget == "<NONE>" {
+			snykTarget = "All projects"
+		}
+		snykType := "Snyk Container"
+		snykConfig := fmt.Sprintf("Enabled: %s, Threshold: %s", shared.FormatBool(p.Enabled), p.SeverityThreshold)
+		snykDetails := fmt.Sprintf("Auto Fix: %s, Block on Failure: %s", shared.FormatBool(p.AutoFix), shared.FormatBool(p.BlockOnFailure))
+
 		snykRows = append(snykRows, []string{
+			snykNs,
 			p.Name,
-			shared.FormatBool(p.Enabled),
-			p.SeverityThreshold,
-			shared.FormatBool(p.AutoFix),
-			shared.FormatBool(p.BlockOnFailure),
-			projects,
+			snykScope,
+			snykTarget,
+			snykType,
+			snykConfig,
+			snykDetails,
 			issuesStr,
 		})
 	}
@@ -2456,13 +2337,25 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(anchoreIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		anchoreNs := "<CLUSTER>"
+		anchoreScope := "Cluster"
+		anchoreTarget := allowedRegs
+		if anchoreTarget == "<NONE>" {
+			anchoreTarget = "All registries"
+		}
+		anchoreType := "Anchore"
+		anchoreConfig := fmt.Sprintf("Enabled: %s, Mode: %s", shared.FormatBool(p.Enabled), p.Mode)
+		anchoreDetails := fmt.Sprintf("Bundle: %s, Fail on Eval: %s", p.PolicyBundleID, shared.FormatBool(p.FailOnPolicyEval))
+
 		anchoreRows = append(anchoreRows, []string{
+			anchoreNs,
 			p.Name,
-			shared.FormatBool(p.Enabled),
-			p.PolicyBundleID,
-			shared.FormatBool(p.FailOnPolicyEval),
-			p.Mode,
-			allowedRegs,
+			anchoreScope,
+			anchoreTarget,
+			anchoreType,
+			anchoreConfig,
+			anchoreDetails,
 			issuesStr,
 		})
 	}
@@ -2488,14 +2381,25 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(trivyIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		trivyNs := p.Namespace
+		if trivyNs == "" {
+			trivyNs = "<CLUSTER>"
+		}
+		trivyScope := "Namespace"
+		trivyTarget := "Container images"
+		trivyType := "Trivy Operator"
+		trivyConfig := fmt.Sprintf("Scan Jobs: %s, Threshold: %s", shared.FormatBool(p.ScanJobsEnabled), p.SeverityThreshold)
+		trivyDetails := fmt.Sprintf("Vuln Reports: %s, Config Audit: %s, SBOM: %s", shared.FormatBool(p.VulnerabilityReports), shared.FormatBool(p.ConfigAuditReports), shared.FormatBool(p.SBOMEnabled))
+
 		trivyRows = append(trivyRows, []string{
+			trivyNs,
 			p.Name,
-			p.Namespace,
-			shared.FormatBool(p.ScanJobsEnabled),
-			shared.FormatBool(p.VulnerabilityReports),
-			shared.FormatBool(p.ConfigAuditReports),
-			shared.FormatBool(p.SBOMEnabled),
-			p.SeverityThreshold,
+			trivyScope,
+			trivyTarget,
+			trivyType,
+			trivyConfig,
+			trivyDetails,
 			issuesStr,
 		})
 	}
@@ -2523,13 +2427,25 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(notationIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		notationNs := "<CLUSTER>"
+		notationScope := "Cluster"
+		notationTarget := trustStores
+		if notationTarget == "<NONE>" {
+			notationTarget = "All images"
+		}
+		notationType := "Notation"
+		notationConfig := fmt.Sprintf("Enabled: %s, Level: %s", shared.FormatBool(p.Enabled), p.VerificationLevel)
+		notationDetails := fmt.Sprintf("Policy: %s, Format: %s", p.TrustPolicyName, p.SignatureFormat)
+
 		notationRows = append(notationRows, []string{
+			notationNs,
 			p.Name,
-			shared.FormatBool(p.Enabled),
-			p.TrustPolicyName,
-			trustStores,
-			p.SignatureFormat,
-			p.VerificationLevel,
+			notationScope,
+			notationTarget,
+			notationType,
+			notationConfig,
+			notationDetails,
 			issuesStr,
 		})
 	}
@@ -2555,14 +2471,22 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(harborIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		harborNs := "<CLUSTER>"
+		harborScope := "Registry"
+		harborTarget := "Container images"
+		harborType := "Harbor"
+		harborConfig := fmt.Sprintf("Enabled: %s, Threshold: %s", shared.FormatBool(p.Enabled), p.SeverityThreshold)
+		harborDetails := fmt.Sprintf("Prevent Vuln: %s, Auto Scan: %s, Content Trust: %s, Cosign: %s", shared.FormatBool(p.PreventVulnImages), shared.FormatBool(p.AutoScan), shared.FormatBool(p.ContentTrustEnabled), shared.FormatBool(p.CosignEnabled))
+
 		harborRows = append(harborRows, []string{
+			harborNs,
 			p.Name,
-			shared.FormatBool(p.Enabled),
-			shared.FormatBool(p.PreventVulnImages),
-			p.SeverityThreshold,
-			shared.FormatBool(p.AutoScan),
-			shared.FormatBool(p.ContentTrustEnabled),
-			shared.FormatBool(p.CosignEnabled),
+			harborScope,
+			harborTarget,
+			harborType,
+			harborConfig,
+			harborDetails,
 			issuesStr,
 		})
 	}
@@ -2590,12 +2514,22 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(clairIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		clairNs := "<CLUSTER>"
+		clairScope := "Cluster"
+		clairTarget := "Container images"
+		clairType := "Clair"
+		clairConfig := fmt.Sprintf("Enabled: %s, Threshold: %s", shared.FormatBool(p.Enabled), p.SeverityThreshold)
+		clairDetails := fmt.Sprintf("Fixable Only: %s, Allow List: %s", shared.FormatBool(p.FixableOnly), allowList)
+
 		clairRows = append(clairRows, []string{
+			clairNs,
 			p.Name,
-			shared.FormatBool(p.Enabled),
-			p.SeverityThreshold,
-			shared.FormatBool(p.FixableOnly),
-			allowList,
+			clairScope,
+			clairTarget,
+			clairType,
+			clairConfig,
+			clairDetails,
 			issuesStr,
 		})
 	}
@@ -2623,13 +2557,25 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(wizIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		wizNs := "<CLUSTER>"
+		wizScope := "Cluster"
+		wizTarget := allowedRegs
+		if wizTarget == "<NONE>" {
+			wizTarget = "All registries"
+		}
+		wizType := "Wiz"
+		wizConfig := fmt.Sprintf("Enabled: %s, Threshold: %s", shared.FormatBool(p.Enabled), p.SeverityThreshold)
+		wizDetails := fmt.Sprintf("Scanning: %s, Block Vulns: %s", shared.FormatBool(p.ScanningEnabled), shared.FormatBool(p.BlockVulnerabilities))
+
 		wizRows = append(wizRows, []string{
+			wizNs,
 			p.Name,
-			shared.FormatBool(p.Enabled),
-			shared.FormatBool(p.ScanningEnabled),
-			shared.FormatBool(p.BlockVulnerabilities),
-			p.SeverityThreshold,
-			allowedRegs,
+			wizScope,
+			wizTarget,
+			wizType,
+			wizConfig,
+			wizDetails,
 			issuesStr,
 		})
 	}
@@ -2652,13 +2598,22 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(laceworkIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		laceworkNs := "<CLUSTER>"
+		laceworkScope := "Cluster"
+		laceworkTarget := "Container images"
+		laceworkType := "Lacework"
+		laceworkConfig := fmt.Sprintf("Enabled: %s, Threshold: %s", shared.FormatBool(p.Enabled), p.SeverityThreshold)
+		laceworkDetails := fmt.Sprintf("Scanning: %s, Block on Failure: %s, Integration: %s", shared.FormatBool(p.ScanningEnabled), shared.FormatBool(p.BlockOnFailure), p.IntegrationID)
+
 		laceworkRows = append(laceworkRows, []string{
+			laceworkNs,
 			p.Name,
-			shared.FormatBool(p.Enabled),
-			shared.FormatBool(p.ScanningEnabled),
-			shared.FormatBool(p.BlockOnFailure),
-			p.SeverityThreshold,
-			p.IntegrationID,
+			laceworkScope,
+			laceworkTarget,
+			laceworkType,
+			laceworkConfig,
+			laceworkDetails,
 			issuesStr,
 		})
 	}
@@ -2686,13 +2641,25 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(cosignIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		cosignNs := "<CLUSTER>"
+		cosignScope := "Cluster"
+		cosignTarget := keyRefs
+		if cosignTarget == "<NONE>" {
+			cosignTarget = "All images"
+		}
+		cosignType := "Cosign"
+		cosignConfig := fmt.Sprintf("Enabled: %s, Keyless: %s", shared.FormatBool(p.Enabled), shared.FormatBool(p.KeylessEnabled))
+		cosignDetails := fmt.Sprintf("Verify Attestations: %s, Transparency Log: %s", shared.FormatBool(p.VerifyAttestations), shared.FormatBool(p.TransparencyLog))
+
 		cosignRows = append(cosignRows, []string{
+			cosignNs,
 			p.Name,
-			shared.FormatBool(p.Enabled),
-			keyRefs,
-			shared.FormatBool(p.KeylessEnabled),
-			shared.FormatBool(p.VerifyAttestations),
-			shared.FormatBool(p.TransparencyLog),
+			cosignScope,
+			cosignTarget,
+			cosignType,
+			cosignConfig,
+			cosignDetails,
 			issuesStr,
 		})
 	}
@@ -2712,13 +2679,25 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(fluxIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		fluxNs := p.Namespace
+		if fluxNs == "" {
+			fluxNs = "<CLUSTER>"
+		}
+		fluxScope := "Namespace"
+		fluxTarget := p.ImageRepository
+		fluxType := "Flux Image Policy"
+		fluxConfig := fmt.Sprintf("Policy: %s, Range: %s", p.Policy, p.Range)
+		fluxDetails := fmt.Sprintf("Filter Tags: %s", p.FilterTags)
+
 		fluxImageRows = append(fluxImageRows, []string{
+			fluxNs,
 			p.Name,
-			p.Namespace,
-			p.ImageRepository,
-			p.FilterTags,
-			p.Policy,
-			p.Range,
+			fluxScope,
+			fluxTarget,
+			fluxType,
+			fluxConfig,
+			fluxDetails,
 			issuesStr,
 		})
 	}
@@ -2750,13 +2729,25 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(xrayIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		xrayNs := "<CLUSTER>"
+		xrayScope := "Repository"
+		xrayTarget := watchNames
+		if xrayTarget == "<NONE>" {
+			xrayTarget = "All artifacts"
+		}
+		xrayType := "JFrog Xray"
+		xrayConfig := fmt.Sprintf("Enabled: %s, Threshold: %s", shared.FormatBool(p.Enabled), p.SeverityThreshold)
+		xrayDetails := fmt.Sprintf("Block Downloads: %s, Rules: %s", shared.FormatBool(p.BlockDownloads), policyRules)
+
 		xrayRows = append(xrayRows, []string{
+			xrayNs,
 			p.Name,
-			shared.FormatBool(p.Enabled),
-			p.SeverityThreshold,
-			shared.FormatBool(p.BlockDownloads),
-			watchNames,
-			policyRules,
+			xrayScope,
+			xrayTarget,
+			xrayType,
+			xrayConfig,
+			xrayDetails,
 			issuesStr,
 		})
 	}
@@ -2779,12 +2770,22 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(deepfenceIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		deepfenceNs := "<CLUSTER>"
+		deepfenceScope := "Cluster"
+		deepfenceTarget := "Container images"
+		deepfenceType := "Deepfence"
+		deepfenceConfig := fmt.Sprintf("Enabled: %s, Threshold: %s", shared.FormatBool(p.Enabled), p.SeverityThreshold)
+		deepfenceDetails := fmt.Sprintf("Scanning: %s, Block Malware: %s", shared.FormatBool(p.ScanningEnabled), shared.FormatBool(p.BlockMalware))
+
 		deepfenceRows = append(deepfenceRows, []string{
+			deepfenceNs,
 			p.Name,
-			shared.FormatBool(p.Enabled),
-			shared.FormatBool(p.ScanningEnabled),
-			p.SeverityThreshold,
-			shared.FormatBool(p.BlockMalware),
+			deepfenceScope,
+			deepfenceTarget,
+			deepfenceType,
+			deepfenceConfig,
+			deepfenceDetails,
 			issuesStr,
 		})
 	}
@@ -2807,12 +2808,22 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(qualysIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		qualysNs := "<CLUSTER>"
+		qualysScope := "Cluster"
+		qualysTarget := "Container images"
+		qualysType := "Qualys"
+		qualysConfig := fmt.Sprintf("Enabled: %s, Threshold: %s", shared.FormatBool(p.Enabled), p.SeverityThreshold)
+		qualysDetails := fmt.Sprintf("Scanning: %s, Block on Critical: %s", shared.FormatBool(p.ScanningEnabled), shared.FormatBool(p.BlockOnCritical))
+
 		qualysRows = append(qualysRows, []string{
+			qualysNs,
 			p.Name,
-			shared.FormatBool(p.Enabled),
-			shared.FormatBool(p.ScanningEnabled),
-			p.SeverityThreshold,
-			shared.FormatBool(p.BlockOnCritical),
+			qualysScope,
+			qualysTarget,
+			qualysType,
+			qualysConfig,
+			qualysDetails,
 			issuesStr,
 		})
 	}
@@ -2835,12 +2846,22 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(dockerScoutIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		dockerScoutNs := "<CLUSTER>"
+		dockerScoutScope := "Cluster"
+		dockerScoutTarget := "Container images"
+		dockerScoutType := "Docker Scout"
+		dockerScoutConfig := fmt.Sprintf("Enabled: %s, Threshold: %s", shared.FormatBool(p.Enabled), p.SeverityThreshold)
+		dockerScoutDetails := fmt.Sprintf("SBOM: %s, Policy Check: %s", shared.FormatBool(p.SBOMEnabled), shared.FormatBool(p.PolicyCheck))
+
 		dockerScoutRows = append(dockerScoutRows, []string{
+			dockerScoutNs,
 			p.Name,
-			shared.FormatBool(p.Enabled),
-			shared.FormatBool(p.SBOMEnabled),
-			shared.FormatBool(p.PolicyCheck),
-			p.SeverityThreshold,
+			dockerScoutScope,
+			dockerScoutTarget,
+			dockerScoutType,
+			dockerScoutConfig,
+			dockerScoutDetails,
 			issuesStr,
 		})
 	}
@@ -2881,14 +2902,24 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			allowIssuesStr = strings.Join(allowIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		allowedNs := namespaces
+		if allowedNs == "<ALL>" {
+			allowedNs = "<CLUSTER>"
+		}
+		allowedTarget := entry.AllowedPattern
+		allowedType := entry.Controller
+		allowedConfig := fmt.Sprintf("Signature: %s", sigReq)
+		allowedDetails := fmt.Sprintf("Conditions: %s", conditions)
+
 		allowedImagesRows = append(allowedImagesRows, []string{
-			entry.Controller,
+			allowedNs,
 			entry.PolicyName,
 			entry.Scope,
-			namespaces,
-			entry.AllowedPattern,
-			sigReq,
-			conditions,
+			allowedTarget,
+			allowedType,
+			allowedConfig,
+			allowedDetails,
 			allowIssuesStr,
 		})
 	}
@@ -2920,14 +2951,24 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 			blockIssuesStr = strings.Join(blockIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		blockedNs := namespaces
+		if blockedNs == "<ALL>" {
+			blockedNs = "<CLUSTER>"
+		}
+		blockedTarget := entry.BlockedPattern
+		blockedType := entry.Controller
+		blockedConfig := fmt.Sprintf("Effect: %s", effect)
+		blockedDetails := fmt.Sprintf("Reason: %s", reason)
+
 		blockedImagesRows = append(blockedImagesRows, []string{
-			entry.Controller,
+			blockedNs,
 			entry.PolicyName,
 			entry.Scope,
-			namespaces,
-			entry.BlockedPattern,
-			reason,
-			effect,
+			blockedTarget,
+			blockedType,
+			blockedConfig,
+			blockedDetails,
 			blockIssuesStr,
 		})
 	}
@@ -3195,7 +3236,7 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 	// Add unified policies table (always shown)
 	if len(unifiedPoliciesRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Image-Admission-Policies",
+			Name:   "Image-Admission-Policy-Overview",
 			Header: unifiedPoliciesHeaders,
 			Body:   unifiedPoliciesRows,
 		})

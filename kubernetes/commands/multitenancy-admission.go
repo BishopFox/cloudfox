@@ -331,126 +331,31 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 		"Issues",
 	}
 
-	hncHeader := []string{
+	// Uniform header for all detailed policy tables
+	uniformPolicyHeader := []string{
 		"Namespace",
-		"Status",
-		"Pods Running",
-		"Hierarchies",
-		"Issues",
-	}
-
-	hncHierarchyHeader := []string{
-		"Namespace",
-		"Parent",
-		"Children",
-		"Depth",
-		"Propagated Roles",
-		"Issues",
-	}
-
-	capsuleHeader := []string{
-		"Namespace",
-		"Status",
-		"Pods Running",
-		"Tenants",
-		"Issues",
-	}
-
-	capsuleTenantHeader := []string{
-		"Namespace",
-		"Tenant",
-		"Namespaces",
-		"Namespace Quota",
-		"Owners",
-		"Limit Ranges",
-		"Resource Quotas",
-		"Network Policies",
-		"Issues",
-	}
-
-	vclusterHeader := []string{
-		"Namespace",
-		"Name",
-		"Status",
-		"Syncer Running",
-		"K8s Version",
-		"Host Role",
-		"Issues",
-	}
-
-	isolationHeader := []string{
-		"Namespace",
-		"Tenant Label",
-		"Network Policy",
-		"Default Deny Ingress",
-		"Default Deny Egress",
-		"Resource Quota",
-		"Limit Range",
-		"Pod Security Std",
-		"Issues",
-	}
-
-	crossTenantHeader := []string{
-		"Namespace",
-		"Type",
 		"Name",
 		"Scope",
-		"Affected Tenants",
-		"Description",
+		"Target",
+		"Type",
+		"Configuration",
+		"Details",
 		"Issues",
 	}
 
-	opaGatekeeperHeader := []string{
-		"Namespace",
-		"Status",
-		"Pods Running",
-		"Image Verified",
-		"Constraint Templates",
-		"Constraints",
-		"Tenant Policies",
-		"Issues",
-	}
-
-	// Detailed OPA Gatekeeper headers
-	opaTemplatesHeader := []string{
-		"Name",
-		"Kind",
-		"Description",
-		"Targets",
-		"Rego (first line)",
-		"Issues",
-	}
-
-	opaConstraintsHeader := []string{
-		"Name",
-		"Kind",
-		"Enforcement",
-		"Match",
-		"Parameters",
-		"Violations",
-		"Tenant Policy",
-		"Issues",
-	}
-
-	// Loft Space detail header
-	loftSpaceHeader := []string{
-		"Namespace",
-		"Space Name",
-		"User",
-		"Team",
-		"Sleep After",
-		"Delete After",
-		"Issues",
-	}
-
-	// Kiosk Account detail header
-	kioskAccountHeader := []string{
-		"Account Name",
-		"Subjects",
-		"Spaces (Used/Limit)",
-		"Default Cluster",
-		"Issues",
-	}
+	// All detailed tables use uniform schema
+	hncHeader := uniformPolicyHeader
+	hncHierarchyHeader := uniformPolicyHeader
+	capsuleHeader := uniformPolicyHeader
+	capsuleTenantHeader := uniformPolicyHeader
+	vclusterHeader := uniformPolicyHeader
+	isolationHeader := uniformPolicyHeader
+	crossTenantHeader := uniformPolicyHeader
+	opaGatekeeperHeader := uniformPolicyHeader
+	opaTemplatesHeader := uniformPolicyHeader
+	opaConstraintsHeader := uniformPolicyHeader
+	loftSpaceHeader := uniformPolicyHeader
+	kioskAccountHeader := uniformPolicyHeader
 
 	policiesHeader := []string{
 		"Namespace",
@@ -549,11 +454,21 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 			hncIssuesStr = strings.Join(hncIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		hncScope := "Cluster"
+		hncTarget := "Namespaces"
+		hncType := "HNC Controller"
+		hncConfig := fmt.Sprintf("Hierarchies: %d", hnc.Hierarchies)
+		hncDetails := fmt.Sprintf("Status: %s, Pods: %d/%d", hnc.Status, hnc.PodsRunning, hnc.TotalPods)
+
 		hncRows = append(hncRows, []string{
 			hnc.Namespace,
-			hnc.Status,
-			fmt.Sprintf("%d/%d", hnc.PodsRunning, hnc.TotalPods),
-			fmt.Sprintf("%d", hnc.Hierarchies),
+			hnc.Name,
+			hncScope,
+			hncTarget,
+			hncType,
+			hncConfig,
+			hncDetails,
 			hncIssuesStr,
 		})
 	}
@@ -590,12 +505,25 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 			hierIssuesStr = strings.Join(hierIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		hierName := h.Namespace
+		hierScope := "Namespace"
+		hierTarget := children
+		if hierTarget == "-" {
+			hierTarget = "No children"
+		}
+		hierType := "HNC Hierarchy"
+		hierConfig := fmt.Sprintf("Parent: %s, Depth: %d", parent, h.DepthFromRoot)
+		hierDetails := fmt.Sprintf("Propagated Roles: %d", h.PropagatedRoles)
+
 		hncHierarchyRows = append(hncHierarchyRows, []string{
 			h.Namespace,
-			parent,
-			children,
-			fmt.Sprintf("%d", h.DepthFromRoot),
-			fmt.Sprintf("%d", h.PropagatedRoles),
+			hierName,
+			hierScope,
+			hierTarget,
+			hierType,
+			hierConfig,
+			hierDetails,
 			hierIssuesStr,
 		})
 	}
@@ -621,11 +549,21 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 			capsuleIssuesStr = strings.Join(capsuleIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		capsuleScope := "Cluster"
+		capsuleTarget := "Tenants"
+		capsuleType := "Capsule Controller"
+		capsuleConfig := fmt.Sprintf("Tenants: %d", capsule.Tenants)
+		capsuleDetails := fmt.Sprintf("Status: %s, Pods: %d/%d", capsule.Status, capsule.PodsRunning, capsule.TotalPods)
+
 		capsuleRows = append(capsuleRows, []string{
 			capsule.Namespace,
-			capsule.Status,
-			fmt.Sprintf("%d/%d", capsule.PodsRunning, capsule.TotalPods),
-			fmt.Sprintf("%d", capsule.Tenants),
+			capsule.Name,
+			capsuleScope,
+			capsuleTarget,
+			capsuleType,
+			capsuleConfig,
+			capsuleDetails,
 			capsuleIssuesStr,
 		})
 	}
@@ -690,15 +628,21 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 			tenantIssuesStr = strings.Join(tenantIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		tenantScope := "Tenant"
+		tenantTarget := namespaces
+		tenantType := "Capsule Tenant"
+		tenantConfig := fmt.Sprintf("Quota: %d, LimitRanges: %s, ResourceQuotas: %s", t.NamespaceQuota, limitRanges, resourceQuotas)
+		tenantDetails := fmt.Sprintf("Owners: %s, NetworkPolicies: %s", owners, networkPolicies)
+
 		capsuleTenantRows = append(capsuleTenantRows, []string{
 			namespace,
 			t.Name,
-			namespaces,
-			fmt.Sprintf("%d", t.NamespaceQuota),
-			owners,
-			limitRanges,
-			resourceQuotas,
-			networkPolicies,
+			tenantScope,
+			tenantTarget,
+			tenantType,
+			tenantConfig,
+			tenantDetails,
 			tenantIssuesStr,
 		})
 	}
@@ -729,13 +673,21 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 			vclusterIssuesStr = strings.Join(vclusterIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		vclusterScope := "Namespace"
+		vclusterTarget := "Virtual cluster"
+		vclusterType := "vCluster"
+		vclusterConfig := fmt.Sprintf("Syncer: %s, Host Role: %s", syncer, v.HostClusterRole)
+		vclusterDetails := fmt.Sprintf("K8s: %s, Status: %s", v.K8sVersion, v.Status)
+
 		vclusterRows = append(vclusterRows, []string{
 			v.Namespace,
 			v.Name,
-			v.Status,
-			syncer,
-			v.K8sVersion,
-			v.HostClusterRole,
+			vclusterScope,
+			vclusterTarget,
+			vclusterType,
+			vclusterConfig,
+			vclusterDetails,
 			vclusterIssuesStr,
 		})
 	}
@@ -775,13 +727,21 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 			spaceIssuesStr = strings.Join(spaceIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		spaceScope := "Namespace"
+		spaceTarget := "Team/User workspace"
+		spaceType := "Loft Space"
+		spaceConfig := fmt.Sprintf("Sleep: %s, Delete: %s", sleepAfter, deleteAfter)
+		spaceDetails := fmt.Sprintf("User: %s, Team: %s", user, team)
+
 		loftSpaceRows = append(loftSpaceRows, []string{
 			space.Namespace,
 			space.Name,
-			user,
-			team,
-			sleepAfter,
-			deleteAfter,
+			spaceScope,
+			spaceTarget,
+			spaceType,
+			spaceConfig,
+			spaceDetails,
 			spaceIssuesStr,
 		})
 	}
@@ -817,11 +777,22 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 			acctIssuesStr = strings.Join(acctIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		acctNs := "<CLUSTER>"
+		acctScope := "Account"
+		acctTarget := subjects
+		acctType := "Kiosk Account"
+		acctConfig := fmt.Sprintf("Spaces: %d/%d, Cluster: %s", acct.SpacesUsed, acct.SpaceLimit, defaultCluster)
+		acctDetails := fmt.Sprintf("Subjects: %s", subjects)
+
 		kioskAccountRows = append(kioskAccountRows, []string{
+			acctNs,
 			acct.Name,
-			subjects,
-			fmt.Sprintf("%d/%d", acct.SpacesUsed, acct.SpaceLimit),
-			defaultCluster,
+			acctScope,
+			acctTarget,
+			acctType,
+			acctConfig,
+			acctDetails,
 			acctIssuesStr,
 		})
 	}
@@ -886,15 +857,22 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 			isoIssuesStr = strings.Join(isoIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		isoName := iso.Namespace
+		isoScope := "Namespace"
+		isoTarget := tenantLabel
+		isoType := "Namespace Isolation"
+		isoConfig := fmt.Sprintf("NetPol: %s, DenyIngress: %s, DenyEgress: %s", netpol, denyIngress, denyEgress)
+		isoDetails := fmt.Sprintf("Quota: %s, LimitRange: %s, PodSec: %s", quota, limitRange, podSecStd)
+
 		isolationRows = append(isolationRows, []string{
 			iso.Namespace,
-			tenantLabel,
-			netpol,
-			denyIngress,
-			denyEgress,
-			quota,
-			limitRange,
-			podSecStd,
+			isoName,
+			isoScope,
+			isoTarget,
+			isoType,
+			isoConfig,
+			isoDetails,
 			isoIssuesStr,
 		})
 	}
@@ -932,13 +910,19 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 			ctrIssuesStr = strings.Join(ctrIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		ctrTarget := affectedTenants
+		ctrConfig := fmt.Sprintf("Scope: %s", ctr.Scope)
+		ctrDetails := ctr.Description
+
 		crossTenantRows = append(crossTenantRows, []string{
 			namespace,
-			ctr.Type,
 			ctr.Name,
 			ctr.Scope,
-			affectedTenants,
-			ctr.Description,
+			ctrTarget,
+			ctr.Type,
+			ctrConfig,
+			ctrDetails,
 			ctrIssuesStr,
 		})
 	}
@@ -972,14 +956,21 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 			opaIssuesStr = strings.Join(opaIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		opaScope := "Cluster"
+		opaTarget := "All resources"
+		opaType := "OPA Gatekeeper"
+		opaConfig := fmt.Sprintf("Templates: %d, Constraints: %d, Tenant Policies: %d", opaGatekeeper.ConstraintTemplates, opaGatekeeper.Constraints, opaGatekeeper.TenantIsolationPolicies)
+		opaDetails := fmt.Sprintf("Status: %s, Pods: %d/%d, Verified: %s", opaGatekeeper.Status, opaGatekeeper.PodsRunning, opaGatekeeper.TotalPods, imageVerified)
+
 		opaGatekeeperRows = append(opaGatekeeperRows, []string{
 			opaGatekeeper.Namespace,
-			opaGatekeeper.Status,
-			fmt.Sprintf("%d/%d", opaGatekeeper.PodsRunning, opaGatekeeper.TotalPods),
-			imageVerified,
-			fmt.Sprintf("%d", opaGatekeeper.ConstraintTemplates),
-			fmt.Sprintf("%d", opaGatekeeper.Constraints),
-			fmt.Sprintf("%d", opaGatekeeper.TenantIsolationPolicies),
+			opaGatekeeper.Name,
+			opaScope,
+			opaTarget,
+			opaType,
+			opaConfig,
+			opaDetails,
 			opaIssuesStr,
 		})
 	}
@@ -1015,12 +1006,22 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 			tmplIssuesStr = strings.Join(tmplIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		tmplNs := "<CLUSTER>"
+		tmplScope := "Cluster"
+		tmplTarget := targets
+		tmplType := "ConstraintTemplate"
+		tmplConfig := fmt.Sprintf("Kind: %s", tmpl.Kind)
+		tmplDetails := fmt.Sprintf("Desc: %s, Rego: %s", desc, rego)
+
 		opaTemplatesRows = append(opaTemplatesRows, []string{
+			tmplNs,
 			tmpl.Name,
-			tmpl.Kind,
-			desc,
-			targets,
-			rego,
+			tmplScope,
+			tmplTarget,
+			tmplType,
+			tmplConfig,
+			tmplDetails,
 			tmplIssuesStr,
 		})
 	}
@@ -1052,14 +1053,22 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 			constIssuesStr = strings.Join(constIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		constNs := "<CLUSTER>"
+		constScope := "Cluster"
+		constTarget := c.Match
+		constType := "OPA Constraint"
+		constConfig := fmt.Sprintf("Kind: %s, Enforcement: %s, Tenant: %s", c.Kind, c.EnforcementAction, isTenant)
+		constDetails := fmt.Sprintf("Params: %s, Violations: %s", c.Parameters, violations)
+
 		opaConstraintsRows = append(opaConstraintsRows, []string{
+			constNs,
 			c.Name,
-			c.Kind,
-			c.EnforcementAction,
-			c.Match,
-			c.Parameters,
-			violations,
-			isTenant,
+			constScope,
+			constTarget,
+			constType,
+			constConfig,
+			constDetails,
 			constIssuesStr,
 		})
 	}
@@ -1242,7 +1251,7 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 	// Always show unified policies table
 	if len(policiesRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Multitenancy-Admission-Policies",
+			Name:   "Multitenancy-Admission-Policy-Overview",
 			Header: policiesHeader,
 			Body:   policiesRows,
 		})

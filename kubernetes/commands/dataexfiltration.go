@@ -372,9 +372,15 @@ func (m *DataExfiltrationModule) generateExfilLoot() []internal.LootFile {
 	}
 	lootContent = append(lootContent, "")
 
-	// Build playbook content
-	methodGroups := groupExfilByMethod(m.AllPaths)
-	playbookContent := m.generateExfilPlaybook(methodGroups)
+	// Build playbook content using centralized attackpathService function
+	clusterHeader := fmt.Sprintf("Cluster: %s", globals.ClusterName)
+	playbookContent := attackpathservice.GenerateExfilPlaybook(m.AllPaths, clusterHeader)
+
+	// Fallback to legacy playbook if centralized returns empty
+	if playbookContent == "" {
+		methodGroups := groupExfilByMethod(m.AllPaths)
+		playbookContent = m.generateExfilPlaybook(methodGroups)
+	}
 
 	return []internal.LootFile{
 		{

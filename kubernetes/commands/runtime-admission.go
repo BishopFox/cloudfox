@@ -890,7 +890,7 @@ func ListRuntimeAdmission(cmd *cobra.Command, args []string) {
 
 	if len(policiesRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Runtime-Admission-Policies",
+			Name:   "Runtime-Admission-Policy-Overview",
 			Header: policiesHeader,
 			Body:   policiesRows,
 		})

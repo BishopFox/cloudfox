@@ -337,127 +337,33 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 		"Issues",
 	}
 
-	// Vault Agent Injector detail table
-	vaultInjectorHeader := []string{
+	// Uniform header for all detailed policy tables
+	// Schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
+	uniformPolicyHeader := []string{
 		"Namespace",
-		"Status",
-		"Pods Running",
-		"Auth Method",
-		"Vault Address",
-		"TLS Enabled",
-		"Failure Policy",
-		"Issues",
-	}
-
-	// Vault Secrets Operator detail table
-	vaultOperatorHeader := []string{
-		"Namespace",
-		"Status",
-		"Pods Running",
-		"VaultAuth CRDs",
-		"Static Secrets",
-		"Dynamic Secrets",
-		"PKI Secrets",
-		"Issues",
-	}
-
-	// VaultAuth detail table
-	vaultAuthHeader := []string{
 		"Name",
-		"Namespace",
-		"Method",
-		"Mount",
-		"Service Account",
-		"Role",
-		"Allowed Namespaces",
-		"Issues",
-	}
-
-	// VaultStaticSecret detail table
-	vaultStaticHeader := []string{
-		"Name",
-		"Namespace",
-		"Auth Ref",
-		"Mount",
-		"Path",
-		"Type",
-		"Destination",
-		"Sync Status",
-		"Issues",
-	}
-
-	// External Secrets Operator detail table
-	esoControllerHeader := []string{
-		"Namespace",
-		"Status",
-		"Pods Running",
-		"SecretStores",
-		"ClusterSecretStores",
-		"ExternalSecrets",
-		"Issues",
-	}
-
-	// SecretStore detail table
-	secretStoreHeader := []string{
-		"Name",
-		"Namespace",
 		"Scope",
-		"Provider",
-		"Auth Method",
-		"Status",
-		"Referenced By",
-		"Issues",
-	}
-
-	// ExternalSecret detail table
-	externalSecretHeader := []string{
-		"Name",
-		"Namespace",
-		"Store Ref",
-		"Provider",
-		"Refresh Interval",
-		"Target Name",
-		"Data Keys",
-		"Sync Status",
-		"Issues",
-	}
-
-	// Sealed Secrets detail table
-	sealedSecretsHeader := []string{
-		"Name",
-		"Namespace",
-		"Scope",
-		"Encrypted Keys",
-		"Target Name",
-		"Status",
-		"Issues",
-	}
-
-	// SecretProviderClass detail table
-	secretProviderClassHeader := []string{
-		"Name",
-		"Namespace",
-		"Provider",
-		"Secret Objects",
-		"Used By Pods",
-		"Status",
-		"Issues",
-	}
-
-	// Unmanaged Secrets detail table
-	unmanagedSecretsHeader := []string{
-		"Name",
-		"Namespace",
+		"Target",
 		"Type",
-		"Data Keys",
-		"Age",
-		"Sensitive",
+		"Configuration",
 		"Details",
-		"Mounted In Pods",
 		"Issues",
 	}
+
+	// All detailed tables use uniform schema
+	vaultInjectorHeader := uniformPolicyHeader
+	vaultOperatorHeader := uniformPolicyHeader
+	vaultAuthHeader := uniformPolicyHeader
+	vaultStaticHeader := uniformPolicyHeader
+	esoControllerHeader := uniformPolicyHeader
+	secretStoreHeader := uniformPolicyHeader
+	externalSecretHeader := uniformPolicyHeader
+	sealedSecretsHeader := uniformPolicyHeader
+	secretProviderClassHeader := uniformPolicyHeader
+	unmanagedSecretsHeader := uniformPolicyHeader
 
 	var summaryRows [][]string
+	var policyOverviewRows [][]string
 	var vaultInjectorRows [][]string
 	var vaultOperatorRows [][]string
 	var vaultAuthRows [][]string
@@ -468,6 +374,19 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 	var sealedSecretsRows [][]string
 	var secretProviderClassRows [][]string
 	var unmanagedSecretsRows [][]string
+
+	// Uniform header for policy overview table
+	// Schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
+	policyOverviewHeader := []string{
+		"Namespace",
+		"Name",
+		"Scope",
+		"Target",
+		"Type",
+		"Configuration",
+		"Details",
+		"Issues",
+	}
 
 	loot := shared.NewLootBuilder()
 
@@ -544,7 +463,7 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 			vaultInjIssues = append(vaultInjIssues, "TLS disabled")
 		}
 		if vaultInjector.FailurePolicy == "Ignore" {
-			vaultInjIssues = append(vaultInjIssues, "Failure policy set to Ignore")
+			vaultInjIssues = append(vaultInjIssues, "Failure policy Ignore (bypassable)")
 		}
 		if vaultInjector.PodsRunning < vaultInjector.TotalPods {
 			vaultInjIssues = append(vaultInjIssues, "Not all pods running")
@@ -554,14 +473,17 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(vaultInjIssues, "; ")
 		}
 
+		configStr := fmt.Sprintf("Auth: %s, Failure: %s, TLS: %s", vaultInjector.AuthMethod, vaultInjector.FailurePolicy, tlsEnabled)
+		details := fmt.Sprintf("Vault: %s, Pods: %d/%d", vaultInjector.VaultAddr, vaultInjector.PodsRunning, vaultInjector.TotalPods)
+
 		vaultInjectorRows = append(vaultInjectorRows, []string{
 			vaultInjector.Namespace,
-			vaultInjector.Status,
-			fmt.Sprintf("%d/%d", vaultInjector.PodsRunning, vaultInjector.TotalPods),
-			vaultInjector.AuthMethod,
-			vaultInjector.VaultAddr,
-			tlsEnabled,
-			vaultInjector.FailurePolicy,
+			vaultInjector.Name,
+			"Cluster",
+			"Annotated pods",
+			"VaultAgentInjector",
+			configStr,
+			details,
 			issuesStr,
 		})
 	}
@@ -581,14 +503,17 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(vaultOpIssues, "; ")
 		}
 
+		configStr := fmt.Sprintf("Status: %s, Pods: %d, VaultAuths: %d", vaultOperator.Status, vaultOperator.PodsRunning, vaultOperator.VaultAuthCount)
+		details := fmt.Sprintf("Static: %d, Dynamic: %d, PKI: %d", vaultOperator.StaticSecrets, vaultOperator.DynamicSecrets, vaultOperator.PKISecrets)
+
 		vaultOperatorRows = append(vaultOperatorRows, []string{
 			vaultOperator.Namespace,
-			vaultOperator.Status,
-			fmt.Sprintf("%d", vaultOperator.PodsRunning),
-			fmt.Sprintf("%d", vaultOperator.VaultAuthCount),
-			fmt.Sprintf("%d", vaultOperator.StaticSecrets),
-			fmt.Sprintf("%d", vaultOperator.DynamicSecrets),
-			fmt.Sprintf("%d", vaultOperator.PKISecrets),
+			vaultOperator.Name,
+			"Cluster",
+			"VaultSecret CRDs",
+			"VaultSecretsOperator",
+			configStr,
+			details,
 			issuesStr,
 		})
 	}
@@ -616,14 +541,17 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(vaultAuthIssues, "; ")
 		}
 
+		configStr := fmt.Sprintf("Method: %s, Mount: %s, Role: %s", va.Method, va.Mount, va.Role)
+		details := fmt.Sprintf("SA: %s, AllowedNS: %s", va.ServiceAccount, allowedNS)
+
 		vaultAuthRows = append(vaultAuthRows, []string{
-			va.Name,
 			va.Namespace,
-			va.Method,
-			va.Mount,
-			va.ServiceAccount,
-			va.Role,
-			allowedNS,
+			va.Name,
+			"Namespace",
+			"VaultStaticSecrets",
+			"VaultAuth",
+			configStr,
+			details,
 			issuesStr,
 		})
 	}
@@ -643,15 +571,17 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(vaultStaticIssues, "; ")
 		}
 
+		configStr := fmt.Sprintf("AuthRef: %s, Mount: %s, Path: %s", vs.VaultAuthRef, vs.Mount, vs.Path)
+		details := fmt.Sprintf("Type: %s, Dest: %s, Status: %s", vs.Type, vs.DestinationName, vs.SyncStatus)
+
 		vaultStaticRows = append(vaultStaticRows, []string{
-			vs.Name,
 			vs.Namespace,
-			vs.VaultAuthRef,
-			vs.Mount,
-			vs.Path,
-			vs.Type,
+			vs.Name,
+			"Namespace",
 			vs.DestinationName,
-			vs.SyncStatus,
+			"VaultStaticSecret",
+			configStr,
+			details,
 			issuesStr,
 		})
 	}
@@ -671,22 +601,23 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(esoIssues, "; ")
 		}
 
+		configStr := fmt.Sprintf("Status: %s, Pods: %d", esoController.Status, esoController.PodsRunning)
+		details := fmt.Sprintf("SecretStores: %d, ClusterStores: %d, ExternalSecrets: %d", len(secretStores), len(clusterSecretStores), len(externalSecrets))
+
 		esoControllerRows = append(esoControllerRows, []string{
 			esoController.Namespace,
-			esoController.Status,
-			fmt.Sprintf("%d", esoController.PodsRunning),
-			fmt.Sprintf("%d", len(secretStores)),
-			fmt.Sprintf("%d", len(clusterSecretStores)),
-			fmt.Sprintf("%d", len(externalSecrets)),
+			esoController.Name,
+			"Cluster",
+			"ExternalSecret CRDs",
+			"ExternalSecretsOperator",
+			configStr,
+			details,
 			issuesStr,
 		})
 	}
 
 	// Build SecretStore rows (both namespace and cluster-scoped)
 	for _, ss := range secretStores {
-		scope := "Namespace"
-		ns := ss.Namespace
-
 		// Detect issues
 		var ssIssues []string
 		if ss.Status != "Valid" && ss.Status != "Ready" && ss.Status != "" {
@@ -700,14 +631,17 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(ssIssues, "; ")
 		}
 
+		configStr := fmt.Sprintf("Provider: %s, Auth: %s", ss.Provider, ss.AuthMethod)
+		details := fmt.Sprintf("Status: %s, ReferencedBy: %d", ss.Status, ss.ReferencedBy)
+
 		secretStoreRows = append(secretStoreRows, []string{
+			ss.Namespace,
 			ss.Name,
-			ns,
-			scope,
-			ss.Provider,
-			ss.AuthMethod,
-			ss.Status,
-			fmt.Sprintf("%d", ss.ReferencedBy),
+			"Namespace",
+			"ExternalSecrets",
+			"SecretStore",
+			configStr,
+			details,
 			issuesStr,
 		})
 	}
@@ -725,14 +659,17 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(cssIssues, "; ")
 		}
 
+		configStr := fmt.Sprintf("Provider: %s, Auth: %s", css.Provider, css.AuthMethod)
+		details := fmt.Sprintf("Status: %s, ReferencedBy: %d", css.Status, css.ReferencedBy)
+
 		secretStoreRows = append(secretStoreRows, []string{
-			css.Name,
 			"<CLUSTER>",
+			css.Name,
 			"Cluster",
-			css.Provider,
-			css.AuthMethod,
-			css.Status,
-			fmt.Sprintf("%d", css.ReferencedBy),
+			"ExternalSecrets",
+			"ClusterSecretStore",
+			configStr,
+			details,
 			issuesStr,
 		})
 	}
@@ -752,15 +689,17 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(esIssues, "; ")
 		}
 
+		configStr := fmt.Sprintf("Store: %s, Provider: %s, Refresh: %s", es.SecretStoreRef, es.Provider, es.RefreshInterval)
+		details := fmt.Sprintf("Target: %s, Keys: %d, Status: %s", es.TargetName, es.DataKeys, es.SyncStatus)
+
 		externalSecretRows = append(externalSecretRows, []string{
-			es.Name,
 			es.Namespace,
-			es.SecretStoreRef,
-			es.Provider,
-			es.RefreshInterval,
+			es.Name,
+			"Namespace",
 			es.TargetName,
-			fmt.Sprintf("%d", es.DataKeys),
-			es.SyncStatus,
+			"ExternalSecret",
+			configStr,
+			details,
 			issuesStr,
 		})
 	}
@@ -782,20 +721,24 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 			sealedIssues = append(sealedIssues, "Status: "+ss.Status)
 		}
 		if ss.Scope == "cluster-wide" {
-			sealedIssues = append(sealedIssues, "Cluster-wide scope")
+			sealedIssues = append(sealedIssues, "Cluster-wide scope (risky)")
 		}
 		issuesStr := "<NONE>"
 		if len(sealedIssues) > 0 {
 			issuesStr = strings.Join(sealedIssues, "; ")
 		}
 
+		configStr := fmt.Sprintf("Scope: %s, Status: %s", ss.Scope, ss.Status)
+		details := fmt.Sprintf("Target: %s, EncryptedKeys: %s", ss.TargetName, encryptedKeys)
+
 		sealedSecretsRows = append(sealedSecretsRows, []string{
-			ss.Name,
 			ss.Namespace,
-			ss.Scope,
-			encryptedKeys,
+			ss.Name,
+			"Namespace",
 			ss.TargetName,
-			ss.Status,
+			"SealedSecret",
+			configStr,
+			details,
 			issuesStr,
 		})
 	}
@@ -815,23 +758,23 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(spcIssues, "; ")
 		}
 
+		configStr := fmt.Sprintf("Provider: %s, SecretObjects: %d", spc.Provider, spc.SecretObjects)
+		details := fmt.Sprintf("Status: %s, UsedByPods: %d", spc.Status, spc.UsedByPods)
+
 		secretProviderClassRows = append(secretProviderClassRows, []string{
-			spc.Name,
 			spc.Namespace,
-			spc.Provider,
-			fmt.Sprintf("%d", spc.SecretObjects),
-			fmt.Sprintf("%d", spc.UsedByPods),
-			spc.Status,
+			spc.Name,
+			"Namespace",
+			"CSI volumes",
+			"SecretProviderClass",
+			configStr,
+			details,
 			issuesStr,
 		})
 	}
 
 	// Build Unmanaged Secrets rows
 	for _, us := range unmanagedSecrets {
-		highRisk := "No"
-		if us.IsHighRisk {
-			highRisk = "Yes"
-		}
 		dataKeys := "-"
 		if len(us.DataKeys) > 0 {
 			if len(us.DataKeys) > 3 {
@@ -847,7 +790,7 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 			unmanagedIssues = append(unmanagedIssues, "High risk secret")
 		}
 		if us.MountedInPods > 0 {
-			unmanagedIssues = append(unmanagedIssues, "Mounted in pods")
+			unmanagedIssues = append(unmanagedIssues, fmt.Sprintf("Mounted in %d pods", us.MountedInPods))
 		}
 		if us.Type == "Opaque" {
 			unmanagedIssues = append(unmanagedIssues, "Opaque type")
@@ -857,18 +800,233 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(unmanagedIssues, "; ")
 		}
 
+		configStr := fmt.Sprintf("Type: %s, Age: %s", us.Type, us.Age)
+		details := fmt.Sprintf("Keys: %s, Risk: %s", dataKeys, us.RiskReason)
+
 		unmanagedSecretsRows = append(unmanagedSecretsRows, []string{
-			us.Name,
 			us.Namespace,
-			us.Type,
-			dataKeys,
-			us.Age,
-			highRisk,
-			us.RiskReason,
-			fmt.Sprintf("%d", us.MountedInPods),
+			us.Name,
+			"Namespace",
+			"Not managed",
+			"UnmanagedSecret",
+			configStr,
+			details,
 			issuesStr,
 		})
 	}
+
+	// Build Policy Overview rows - unified view of all secret management policies
+	// Add VaultStaticSecrets to overview
+	for _, vs := range vaultStaticSecrets {
+		var issues []string
+		if vs.SyncStatus != "Synced" && vs.SyncStatus != "Ready" && vs.SyncStatus != "" {
+			issues = append(issues, "Sync issue: "+vs.SyncStatus)
+		}
+		if vs.VaultAuthRef == "" {
+			issues = append(issues, "No auth ref")
+		}
+		issuesStr := "<NONE>"
+		if len(issues) > 0 {
+			issuesStr = strings.Join(issues, "; ")
+		}
+
+		configStr := fmt.Sprintf("AuthRef: %s, Status: %s", vs.VaultAuthRef, vs.SyncStatus)
+		details := fmt.Sprintf("Mount: %s, Path: %s, Type: %s", vs.Mount, vs.Path, vs.Type)
+
+		policyOverviewRows = append(policyOverviewRows, []string{
+			vs.Namespace,
+			vs.Name,
+			"Namespace",
+			vs.DestinationName,
+			"VaultStaticSecret",
+			configStr,
+			details,
+			issuesStr,
+		})
+	}
+
+	// Add VaultDynamicSecrets to overview
+	for _, vd := range vaultDynamicSecrets {
+		var issues []string
+		if vd.SyncStatus != "Synced" && vd.SyncStatus != "Ready" && vd.SyncStatus != "" {
+			issues = append(issues, "Sync issue: "+vd.SyncStatus)
+		}
+		issuesStr := "<NONE>"
+		if len(issues) > 0 {
+			issuesStr = strings.Join(issues, "; ")
+		}
+
+		configStr := fmt.Sprintf("Role: %s, TTL: %s, Status: %s", vd.Role, vd.TTL, vd.SyncStatus)
+		details := fmt.Sprintf("Mount: %s, Path: %s", vd.Mount, vd.Path)
+
+		policyOverviewRows = append(policyOverviewRows, []string{
+			vd.Namespace,
+			vd.Name,
+			"Namespace",
+			vd.DestinationName,
+			"VaultDynamicSecret",
+			configStr,
+			details,
+			issuesStr,
+		})
+	}
+
+	// Add SecretStores to overview
+	for _, ss := range secretStores {
+		var issues []string
+		if ss.Status != "Valid" && ss.Status != "Ready" && ss.Status != "" {
+			issues = append(issues, "Status: "+ss.Status)
+		}
+		if ss.ReferencedBy == 0 {
+			issues = append(issues, "Not referenced")
+		}
+		issuesStr := "<NONE>"
+		if len(issues) > 0 {
+			issuesStr = strings.Join(issues, "; ")
+		}
+
+		configStr := fmt.Sprintf("Provider: %s, Auth: %s", ss.Provider, ss.AuthMethod)
+		details := fmt.Sprintf("Status: %s, ReferencedBy: %d", ss.Status, ss.ReferencedBy)
+
+		policyOverviewRows = append(policyOverviewRows, []string{
+			ss.Namespace,
+			ss.Name,
+			"Namespace",
+			"ExternalSecrets",
+			"SecretStore",
+			configStr,
+			details,
+			issuesStr,
+		})
+	}
+
+	// Add ClusterSecretStores to overview
+	for _, css := range clusterSecretStores {
+		var issues []string
+		if css.Status != "Valid" && css.Status != "Ready" && css.Status != "" {
+			issues = append(issues, "Status: "+css.Status)
+		}
+		if css.ReferencedBy == 0 {
+			issues = append(issues, "Not referenced")
+		}
+		issuesStr := "<NONE>"
+		if len(issues) > 0 {
+			issuesStr = strings.Join(issues, "; ")
+		}
+
+		configStr := fmt.Sprintf("Provider: %s, Auth: %s", css.Provider, css.AuthMethod)
+		details := fmt.Sprintf("Status: %s, ReferencedBy: %d", css.Status, css.ReferencedBy)
+
+		policyOverviewRows = append(policyOverviewRows, []string{
+			"<CLUSTER>",
+			css.Name,
+			"Cluster",
+			"ExternalSecrets",
+			"ClusterSecretStore",
+			configStr,
+			details,
+			issuesStr,
+		})
+	}
+
+	// Add ExternalSecrets to overview
+	for _, es := range externalSecrets {
+		var issues []string
+		if es.SyncStatus != "SecretSynced" && es.SyncStatus != "Ready" && es.SyncStatus != "" {
+			issues = append(issues, "Sync issue: "+es.SyncStatus)
+		}
+		if es.RefreshInterval == "0" || es.RefreshInterval == "0s" {
+			issues = append(issues, "No refresh configured")
+		}
+		issuesStr := "<NONE>"
+		if len(issues) > 0 {
+			issuesStr = strings.Join(issues, "; ")
+		}
+
+		configStr := fmt.Sprintf("Store: %s, Provider: %s, Refresh: %s", es.SecretStoreRef, es.Provider, es.RefreshInterval)
+		details := fmt.Sprintf("Keys: %d, Status: %s", es.DataKeys, es.SyncStatus)
+
+		policyOverviewRows = append(policyOverviewRows, []string{
+			es.Namespace,
+			es.Name,
+			"Namespace",
+			es.TargetName,
+			"ExternalSecret",
+			configStr,
+			details,
+			issuesStr,
+		})
+	}
+
+	// Add SealedSecrets to overview
+	for _, ss := range sealedSecrets {
+		var issues []string
+		if ss.Status != "Ready" && ss.Status != "Synced" && ss.Status != "" {
+			issues = append(issues, "Status: "+ss.Status)
+		}
+		if ss.Scope == "cluster-wide" {
+			issues = append(issues, "Cluster-wide scope (risky)")
+		}
+		issuesStr := "<NONE>"
+		if len(issues) > 0 {
+			issuesStr = strings.Join(issues, "; ")
+		}
+
+		keyCount := len(ss.EncryptedKeys)
+		configStr := fmt.Sprintf("Scope: %s, Status: %s", ss.Scope, ss.Status)
+		details := fmt.Sprintf("Encrypted keys: %d", keyCount)
+
+		policyOverviewRows = append(policyOverviewRows, []string{
+			ss.Namespace,
+			ss.Name,
+			"Namespace",
+			ss.TargetName,
+			"SealedSecret",
+			configStr,
+			details,
+			issuesStr,
+		})
+	}
+
+	// Add SecretProviderClasses to overview
+	for _, spc := range secretProviderClasses {
+		var issues []string
+		if spc.Status != "Ready" && spc.Status != "" {
+			issues = append(issues, "Status: "+spc.Status)
+		}
+		if spc.UsedByPods == 0 {
+			issues = append(issues, "Not used by any pods")
+		}
+		issuesStr := "<NONE>"
+		if len(issues) > 0 {
+			issuesStr = strings.Join(issues, "; ")
+		}
+
+		configStr := fmt.Sprintf("Provider: %s, SecretObjects: %d", spc.Provider, spc.SecretObjects)
+		details := fmt.Sprintf("Status: %s, UsedByPods: %d", spc.Status, spc.UsedByPods)
+
+		policyOverviewRows = append(policyOverviewRows, []string{
+			spc.Namespace,
+			spc.Name,
+			"Namespace",
+			"CSI volumes",
+			"SecretProviderClass",
+			configStr,
+			details,
+			issuesStr,
+		})
+	}
+
+	// Sort overview rows by namespace, then type (index 4), then name
+	sort.SliceStable(policyOverviewRows, func(i, j int) bool {
+		if policyOverviewRows[i][0] != policyOverviewRows[j][0] {
+			return policyOverviewRows[i][0] < policyOverviewRows[j][0]
+		}
+		if policyOverviewRows[i][4] != policyOverviewRows[j][4] {
+			return policyOverviewRows[i][4] < policyOverviewRows[j][4]
+		}
+		return policyOverviewRows[i][1] < policyOverviewRows[j][1]
+	})
 
 	// Generate loot
 	generateSecretAdmissionLoot(loot, findings, vaultInjector, vaultOperator, vaultAuths, vaultStaticSecrets, vaultDynamicSecrets,
@@ -885,6 +1043,15 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 		Header: summaryHeader,
 		Body:   summaryRows,
 	})
+
+	// Add unified policy overview table (always shown)
+	if len(policyOverviewRows) > 0 {
+		tables = append(tables, internal.TableFile{
+			Name:   "Secret-Admission-Policy-Overview",
+			Header: policyOverviewHeader,
+			Body:   policyOverviewRows,
+		})
+	}
 
 	if len(vaultInjectorRows) > 0 {
 		tables = append(tables, internal.TableFile{

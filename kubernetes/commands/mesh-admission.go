@@ -355,130 +355,31 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 		"Details",
 	}
 
-	istioHeader := []string{
-		"Namespace",
-		"Version",
-		"Status",
-		"Global mTLS",
-		"Auto Injection",
-		"Issues",
-	}
-
-	peerAuthHeader := []string{
+	// Uniform header for all detailed policy tables
+	uniformPolicyHeader := []string{
 		"Namespace",
 		"Name",
 		"Scope",
-		"mTLS Mode",
-		"Selector",
-		"Port-Specific",
-		"Issues",
-	}
-
-	reqAuthHeader := []string{
-		"Namespace",
-		"Name",
-		"Selector",
-		"JWT Rules",
-		"Issuers",
-		"Audiences",
-		"Issues",
-	}
-
-	linkerdHeader := []string{
-		"Namespace",
-		"Version",
-		"Status",
-		"mTLS Enabled",
-		"Auto Injection",
-		"Identity Issuer",
-		"Issues",
-	}
-
-	linkerdAuthHeader := []string{
-		"Namespace",
-		"Name",
+		"Target",
 		"Type",
-		"mTLS Mode",
-		"Identities",
-		"Networks",
+		"Configuration",
+		"Details",
 		"Issues",
 	}
 
-	injectionHeader := []string{
-		"Namespace",
-		"Mesh Provider",
-		"Injection Enabled",
-		"Label",
-		"With Sidecar",
-		"Without Sidecar",
-		"Coverage %",
-		"Issues",
-	}
-
-	// Cilium Mesh detail table
-	ciliumMeshHeader := []string{
-		"Name",
-		"Namespace",
-		"Status",
-		"mTLS Enabled",
-		"mTLS Mode",
-		"Envoy Enabled",
-		"Issues",
-	}
-
-	// Consul Connect detail table
-	consulConnectHeader := []string{
-		"Name",
-		"Namespace",
-		"Status",
-		"mTLS Enabled",
-		"Auto Injection",
-		"Intentions",
-		"Issues",
-	}
-
-	// OSM detail table
-	osmHeader := []string{
-		"Name",
-		"Namespace",
-		"Status",
-		"mTLS Enabled",
-		"Permissive Mode",
-		"Issues",
-	}
-
-	// FSM detail table
-	fsmHeader := []string{
-		"Name",
-		"Namespace",
-		"Status",
-		"mTLS Enabled",
-		"Permissive Mode",
-		"Issues",
-	}
-
-	// Kuma Mesh detail table
-	kumaHeader := []string{
-		"Name",
-		"Namespace",
-		"Status",
-		"mTLS Enabled",
-		"mTLS Mode",
-		"Issues",
-	}
-
-	// AWS App Mesh detail table
-	awsAppMeshHeader := []string{
-		"Name",
-		"Namespace",
-		"Status",
-		"Pods Running",
-		"mTLS Enabled",
-		"Auto Injection",
-		"Virtual Nodes",
-		"Virtual Services",
-		"Issues",
-	}
+	// All detailed tables use uniform schema
+	istioHeader := uniformPolicyHeader
+	peerAuthHeader := uniformPolicyHeader
+	reqAuthHeader := uniformPolicyHeader
+	linkerdHeader := uniformPolicyHeader
+	linkerdAuthHeader := uniformPolicyHeader
+	injectionHeader := uniformPolicyHeader
+	ciliumMeshHeader := uniformPolicyHeader
+	consulConnectHeader := uniformPolicyHeader
+	osmHeader := uniformPolicyHeader
+	fsmHeader := uniformPolicyHeader
+	kumaHeader := uniformPolicyHeader
+	awsAppMeshHeader := uniformPolicyHeader
 
 	var summaryRows [][]string
 	var policiesRows [][]string
@@ -566,12 +467,21 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 			istioIssuesStr = strings.Join(istioIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		istioScope := "Cluster"
+		istioTarget := "All workloads"
+		istioType := "Istio Control Plane"
+		istioConfig := fmt.Sprintf("mTLS: %s, Auto Inject: %v", istio.GlobalMTLSMode, istio.AutoInjection)
+		istioDetails := fmt.Sprintf("Version: %s, Status: %s", istio.Version, istio.Status)
+
 		istioRows = append(istioRows, []string{
 			istio.Namespace,
-			istio.Version,
-			istio.Status,
-			istio.GlobalMTLSMode,
-			fmt.Sprintf("%v", istio.AutoInjection),
+			istio.Name,
+			istioScope,
+			istioTarget,
+			istioType,
+			istioConfig,
+			istioDetails,
 			istioIssuesStr,
 		})
 	}
@@ -608,13 +518,25 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 			paIssuesStr = strings.Join(paIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		paTarget := selector
+		paType := "PeerAuthentication"
+		paConfig := fmt.Sprintf("mTLS: %s", pa.MTLSMode)
+		paDetails := portMTLS
+		if paDetails == "-" {
+			paDetails = "No port-specific settings"
+		} else {
+			paDetails = fmt.Sprintf("Ports: %s", paDetails)
+		}
+
 		peerAuthRows = append(peerAuthRows, []string{
 			pa.Namespace,
 			pa.Name,
 			pa.Scope,
-			pa.MTLSMode,
-			selector,
-			portMTLS,
+			paTarget,
+			paType,
+			paConfig,
+			paDetails,
 			paIssuesStr,
 		})
 	}
@@ -656,13 +578,24 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 			raIssuesStr = strings.Join(raIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		raScope := "NAMESPACE"
+		if selector != "*" {
+			raScope = "WORKLOAD"
+		}
+		raTarget := selector
+		raType := "RequestAuthentication"
+		raConfig := fmt.Sprintf("JWT Rules: %d", ra.JWTRules)
+		raDetails := fmt.Sprintf("Issuers: %s, Audiences: %s", issuers, audiences)
+
 		reqAuthRows = append(reqAuthRows, []string{
 			ra.Namespace,
 			ra.Name,
-			selector,
-			fmt.Sprintf("%d", ra.JWTRules),
-			issuers,
-			audiences,
+			raScope,
+			raTarget,
+			raType,
+			raConfig,
+			raDetails,
 			raIssuesStr,
 		})
 	}
@@ -688,13 +621,21 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 			linkerdIssuesStr = strings.Join(linkerdIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		linkerdScope := "Cluster"
+		linkerdTarget := "All workloads"
+		linkerdType := "Linkerd Control Plane"
+		linkerdConfig := fmt.Sprintf("mTLS: %v, Auto Inject: %v", linkerd.MTLSEnabled, linkerd.AutoInjection)
+		linkerdDetails := fmt.Sprintf("Version: %s, Status: %s, Issuer: %s", linkerd.Version, linkerd.Status, linkerd.IdentityIssuer)
+
 		linkerdRows = append(linkerdRows, []string{
 			linkerd.Namespace,
-			linkerd.Version,
-			linkerd.Status,
-			fmt.Sprintf("%v", linkerd.MTLSEnabled),
-			fmt.Sprintf("%v", linkerd.AutoInjection),
-			linkerd.IdentityIssuer,
+			linkerd.Name,
+			linkerdScope,
+			linkerdTarget,
+			linkerdType,
+			linkerdConfig,
+			linkerdDetails,
 			linkerdIssuesStr,
 		})
 	}
@@ -728,13 +669,23 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 			laIssuesStr = strings.Join(laIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		laScope := "NAMESPACE"
+		laTarget := identities
+		if laTarget == "-" {
+			laTarget = "All identities"
+		}
+		laConfig := fmt.Sprintf("mTLS: %s", la.MTLSMode)
+		laDetails := fmt.Sprintf("Networks: %s", networks)
+
 		linkerdAuthRows = append(linkerdAuthRows, []string{
 			la.Namespace,
 			la.Name,
+			laScope,
+			laTarget,
 			la.Type,
-			la.MTLSMode,
-			identities,
-			networks,
+			laConfig,
+			laDetails,
 			laIssuesStr,
 		})
 	}
@@ -767,14 +718,25 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 			injIssuesStr = strings.Join(injIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		injName := fmt.Sprintf("%s-injection", strings.ToLower(is.MeshProvider))
+		if is.MeshProvider == "-" {
+			injName = "no-mesh"
+		}
+		injScope := "Namespace"
+		injTarget := fmt.Sprintf("%d pods", is.TotalPods)
+		injType := "Sidecar Injection"
+		injConfig := fmt.Sprintf("Enabled: %s, Label: %s", enabled, label)
+		injDetails := fmt.Sprintf("With Sidecar: %d, Without: %d, Coverage: %.1f%%", is.PodsWithSidecar, is.PodsWithoutSidecar, is.CoveragePercent)
+
 		injectionRows = append(injectionRows, []string{
 			is.Namespace,
-			is.MeshProvider,
-			enabled,
-			label,
-			fmt.Sprintf("%d", is.PodsWithSidecar),
-			fmt.Sprintf("%d", is.PodsWithoutSidecar),
-			fmt.Sprintf("%.1f%%", is.CoveragePercent),
+			injName,
+			injScope,
+			injTarget,
+			injType,
+			injConfig,
+			injDetails,
 			injIssuesStr,
 		})
 	}
@@ -797,13 +759,21 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(ciliumIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		ciliumScope := "Cluster"
+		ciliumTarget := "All workloads"
+		ciliumType := "Cilium Service Mesh"
+		ciliumConfig := fmt.Sprintf("mTLS: %s, Mode: %s", shared.FormatBool(ciliumMesh.MTLSEnabled), ciliumMesh.MTLSMode)
+		ciliumDetails := fmt.Sprintf("Status: %s, Envoy: %s", ciliumMesh.Status, shared.FormatBool(ciliumMesh.EnvoyEnabled))
+
 		ciliumMeshRows = append(ciliumMeshRows, []string{
-			ciliumMesh.Name,
 			ciliumMesh.Namespace,
-			ciliumMesh.Status,
-			shared.FormatBool(ciliumMesh.MTLSEnabled),
-			ciliumMesh.MTLSMode,
-			shared.FormatBool(ciliumMesh.EnvoyEnabled),
+			ciliumMesh.Name,
+			ciliumScope,
+			ciliumTarget,
+			ciliumType,
+			ciliumConfig,
+			ciliumDetails,
 			issuesStr,
 		})
 	}
@@ -826,13 +796,21 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(consulIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		consulScope := "Cluster"
+		consulTarget := "All workloads"
+		consulType := "Consul Connect"
+		consulConfig := fmt.Sprintf("mTLS: %s, Auto Inject: %s", shared.FormatBool(consul.MTLSEnabled), shared.FormatBool(consul.AutoInjection))
+		consulDetails := fmt.Sprintf("Status: %s, Intentions: %d", consul.Status, consul.Intentions)
+
 		consulConnectRows = append(consulConnectRows, []string{
-			consul.Name,
 			consul.Namespace,
-			consul.Status,
-			shared.FormatBool(consul.MTLSEnabled),
-			shared.FormatBool(consul.AutoInjection),
-			fmt.Sprintf("%d", consul.Intentions),
+			consul.Name,
+			consulScope,
+			consulTarget,
+			consulType,
+			consulConfig,
+			consulDetails,
 			issuesStr,
 		})
 	}
@@ -852,12 +830,21 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(osmIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		osmScope := "Cluster"
+		osmTarget := "All workloads"
+		osmType := "Open Service Mesh"
+		osmConfig := fmt.Sprintf("mTLS: %s, Permissive: %s", shared.FormatBool(osm.MTLSEnabled), shared.FormatBool(osm.PermissiveMode))
+		osmDetails := fmt.Sprintf("Status: %s", osm.Status)
+
 		osmRows = append(osmRows, []string{
-			osm.Name,
 			osm.Namespace,
-			osm.Status,
-			shared.FormatBool(osm.MTLSEnabled),
-			shared.FormatBool(osm.PermissiveMode),
+			osm.Name,
+			osmScope,
+			osmTarget,
+			osmType,
+			osmConfig,
+			osmDetails,
 			issuesStr,
 		})
 	}
@@ -877,12 +864,21 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(fsmIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		fsmScope := "Cluster"
+		fsmTarget := "All workloads"
+		fsmType := "Flomesh Service Mesh"
+		fsmConfig := fmt.Sprintf("mTLS: %s, Permissive: %s", shared.FormatBool(fsm.MTLSEnabled), shared.FormatBool(fsm.PermissiveMode))
+		fsmDetails := fmt.Sprintf("Status: %s", fsm.Status)
+
 		fsmRows = append(fsmRows, []string{
-			fsm.Name,
 			fsm.Namespace,
-			fsm.Status,
-			shared.FormatBool(fsm.MTLSEnabled),
-			shared.FormatBool(fsm.PermissiveMode),
+			fsm.Name,
+			fsmScope,
+			fsmTarget,
+			fsmType,
+			fsmConfig,
+			fsmDetails,
 			issuesStr,
 		})
 	}
@@ -902,12 +898,21 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(kumaIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		kumaScope := "Cluster"
+		kumaTarget := "All workloads"
+		kumaType := "Kuma Mesh"
+		kumaConfig := fmt.Sprintf("mTLS: %s, Mode: %s", shared.FormatBool(kuma.MTLSEnabled), kuma.MTLSMode)
+		kumaDetails := fmt.Sprintf("Status: %s", kuma.Status)
+
 		kumaRows = append(kumaRows, []string{
-			kuma.Name,
 			kuma.Namespace,
-			kuma.Status,
-			shared.FormatBool(kuma.MTLSEnabled),
-			kuma.MTLSMode,
+			kuma.Name,
+			kumaScope,
+			kumaTarget,
+			kumaType,
+			kumaConfig,
+			kumaDetails,
 			issuesStr,
 		})
 	}
@@ -933,15 +938,21 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(appMeshIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		appMeshScope := "Cluster"
+		appMeshTarget := fmt.Sprintf("Nodes: %d, Services: %d", awsAppMesh.VirtualNodes, awsAppMesh.VirtualServices)
+		appMeshType := "AWS App Mesh"
+		appMeshConfig := fmt.Sprintf("mTLS: %s, Auto Inject: %s", shared.FormatBool(awsAppMesh.MTLSEnabled), shared.FormatBool(awsAppMesh.AutoInjection))
+		appMeshDetails := fmt.Sprintf("Status: %s, Pods: %d/%d running", awsAppMesh.Status, awsAppMesh.PodsRunning, awsAppMesh.TotalPods)
+
 		awsAppMeshRows = append(awsAppMeshRows, []string{
-			awsAppMesh.Name,
 			awsAppMesh.Namespace,
-			awsAppMesh.Status,
-			fmt.Sprintf("%d/%d", awsAppMesh.PodsRunning, awsAppMesh.TotalPods),
-			shared.FormatBool(awsAppMesh.MTLSEnabled),
-			shared.FormatBool(awsAppMesh.AutoInjection),
-			fmt.Sprintf("%d", awsAppMesh.VirtualNodes),
-			fmt.Sprintf("%d", awsAppMesh.VirtualServices),
+			awsAppMesh.Name,
+			appMeshScope,
+			appMeshTarget,
+			appMeshType,
+			appMeshConfig,
+			appMeshDetails,
 			issuesStr,
 		})
 	}
@@ -961,7 +972,7 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 
 	if len(policiesRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Mesh-Admission-Policies",
+			Name:   "Mesh-Admission-Policy-Overview",
 			Header: policiesHeader,
 			Body:   policiesRows,
 		})

@@ -166,12 +166,15 @@ type PodSecurityFinding struct {
 
 // PodEnumeratedPolicy represents a unified policy entry across all tools
 type PodEnumeratedPolicy struct {
-	Namespace string
-	Tool      string
-	Name      string
-	Scope     string
-	Type      string
-	Details   string
+	Namespace     string
+	Tool          string
+	Name          string
+	Scope         string
+	Target        string
+	Type          string
+	Configuration string
+	Details       string
+	Issues        string
 }
 
 // WebhookInfo represents webhook configuration details
@@ -725,185 +728,36 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		"Age",
 	}
 
-	// Webhooks detail table
-	webhookHeaders := []string{
-		"Webhook Name",
+	// Uniform header for all detailed policy tables
+	// Schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
+	uniformPolicyHeader := []string{
+		"Namespace",
+		"Name",
+		"Scope",
+		"Target",
 		"Type",
-		"Failure Policy",
-		"Timeout",
-		"Namespace Selector",
-		"Side Effects",
+		"Configuration",
+		"Details",
 		"Issues",
 	}
 
-	// PSP detail table
-	pspHeaders := []string{
-		"PSP Name",
-		"Privileged",
-		"HostNetwork",
-		"HostPID",
-		"HostIPC",
-		"HostPath",
-		"Dangerous Caps",
-		"Run As Root",
-		"Issues",
-	}
-
-	// ValidatingAdmissionPolicy detail table
-	vapHeaders := []string{
-		"Policy Name",
-		"Failure Policy",
-		"Validations",
-		"Param Kind",
-		"Bindings",
-		"Issues",
-	}
-
-	// Gatekeeper Constraints detail table
-	gatekeeperHeaders := []string{
-		"Constraint Name",
-		"Template Kind",
-		"Enforcement",
-		"Match",
-		"Violations",
-		"Issues",
-	}
-
-	// Kyverno Policies detail table
-	kyvernoHeaders := []string{
-		"Namespace",
-		"Policy Name",
-		"Scope",
-		"Failure Action",
-		"Rules",
-		"Background",
-		"Issues",
-	}
-
-	// Kyverno Exceptions detail table (bypass vectors!)
-	kyvernoExceptionHeaders := []string{
-		"Namespace",
-		"Exception Name",
-		"Exempted Policies",
-		"Exempted Rules",
-		"Match",
-		"Issues",
-	}
-
-	// Kubewarden Policies detail table
-	kubewardenHeaders := []string{
-		"Namespace",
-		"Policy Name",
-		"Scope",
-		"Module",
-		"Mode",
-		"Mutating",
-		"Rules",
-		"Issues",
-	}
-
-	// jsPolicy Policies detail table
-	jsPolicyHeaders := []string{
-		"Namespace",
-		"Policy Name",
-		"Scope",
-		"Type",
-		"Operations",
-		"Resources",
-		"Violation Policy",
-		"Issues",
-	}
-
-	// Gatekeeper Exclusions detail table (bypass vectors!)
-	gatekeeperExclusionHeaders := []string{
-		"Excluded Namespace",
-		"Reason",
-		"Issues",
-	}
-
-	// Polaris detail table
-	polarisHeaders := []string{
-		"Namespace",
-		"ConfigMap",
-		"Webhook Enabled",
-		"Checks",
-		"Exemptions",
-		"Privileged Check",
-		"HostNetwork Check",
-		"HostPID Check",
-		"HostIPC Check",
-		"RunAsRoot Check",
-		"Issues",
-	}
-
-	// Datree detail table
-	datreeHeaders := []string{
-		"Webhook Name",
-		"Webhook Enabled",
-		"Privileged Check",
-		"HostNetwork Check",
-		"HostPID Check",
-		"HostIPC Check",
-		"RunAsRoot Check",
-		"Issues",
-	}
-
-	// AWS Pod Identity detail table
-	awsPodIdentityHeaders := []string{
-		"Name",
-		"Namespace",
-		"Service Account",
-		"Role ARN",
-		"Has Wildcard",
-		"Issues",
-	}
-
-	// GCP Workload Identity detail table
-	gcpWorkloadIdentityHeaders := []string{
-		"Name",
-		"Namespace",
-		"K8s Service Account",
-		"GCP Service Account",
-		"Annotation Present",
-		"Issues",
-	}
-
-	// Azure Workload Identity detail table
-	azureWorkloadIdentityHeaders := []string{
-		"Name",
-		"Namespace",
-		"Kind",
-		"Client ID",
-		"Tenant ID",
-		"Selector",
-		"Has Federated",
-		"Issues",
-	}
-
-	// Capsule Tenant Pod Policy detail table
-	capsuleTenantPodHeaders := []string{
-		"Tenant Name",
-		"Namespace",
-		"Pod Security Standard",
-		"Allowed Runtime Classes",
-		"Allowed Priority Classes",
-		"Container Registries",
-		"Has Resource Quotas",
-		"Has Limit Ranges",
-		"Issues",
-	}
-
-	// Rancher Project Pod Policy detail table
-	rancherProjectPodHeaders := []string{
-		"Project Name",
-		"Project ID",
-		"Namespace",
-		"PSP Template ID",
-		"Container Resource Limit",
-		"Namespace Resource Quota",
-		"Has Pod Security Policy",
-		"Issues",
-	}
+	// All detailed tables use uniform schema
+	webhookHeaders := uniformPolicyHeader
+	pspHeaders := uniformPolicyHeader
+	vapHeaders := uniformPolicyHeader
+	gatekeeperHeaders := uniformPolicyHeader
+	kyvernoHeaders := uniformPolicyHeader
+	kyvernoExceptionHeaders := uniformPolicyHeader
+	kubewardenHeaders := uniformPolicyHeader
+	jsPolicyHeaders := uniformPolicyHeader
+	gatekeeperExclusionHeaders := uniformPolicyHeader
+	polarisHeaders := uniformPolicyHeader
+	datreeHeaders := uniformPolicyHeader
+	awsPodIdentityHeaders := uniformPolicyHeader
+	gcpWorkloadIdentityHeaders := uniformPolicyHeader
+	azureWorkloadIdentityHeaders := uniformPolicyHeader
+	capsuleTenantPodHeaders := uniformPolicyHeader
+	rancherProjectPodHeaders := uniformPolicyHeader
 
 	var outputRows [][]string
 	var webhookRows [][]string
@@ -1111,18 +965,22 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 	}
 
 	// Generate webhook detail rows
+	// Generate webhook detail rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, wh := range mutatingWebhooks {
-		timeoutStr := "<NONE>"
-		if wh.TimeoutSeconds > 0 {
-			timeoutStr = fmt.Sprintf("%ds", wh.TimeoutSeconds)
-		}
-		nsSelector := "No"
-		if wh.HasExclusions {
-			nsSelector = "Yes"
-		}
+		// Type
+		policyType := "MutatingWebhook"
+
+		// Configuration
+		configStr := fmt.Sprintf("Failure: %s, Timeout: %ds", wh.FailurePolicy, wh.TimeoutSeconds)
+
+		// Details
 		sideEffects := wh.SideEffects
 		if sideEffects == "" {
-			sideEffects = "<NONE>"
+			sideEffects = "Unknown"
+		}
+		details := fmt.Sprintf("SideEffects: %s", sideEffects)
+		if wh.HasExclusions {
+			details += ", Has exclusions"
 		}
 
 		// Detect issues
@@ -1145,28 +1003,32 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		}
 
 		webhookRows = append(webhookRows, []string{
+			"<CLUSTER>",
 			wh.Name,
-			"Mutating",
-			wh.FailurePolicy,
-			timeoutStr,
-			nsSelector,
-			sideEffects,
+			"Cluster",
+			"All pods",
+			policyType,
+			configStr,
+			details,
 			whIssuesStr,
 		})
 	}
 
 	for _, wh := range validatingWebhooks {
-		timeoutStr := "<NONE>"
-		if wh.TimeoutSeconds > 0 {
-			timeoutStr = fmt.Sprintf("%ds", wh.TimeoutSeconds)
-		}
-		nsSelector := "No"
-		if wh.HasExclusions {
-			nsSelector = "Yes"
-		}
+		// Type
+		policyType := "ValidatingWebhook"
+
+		// Configuration
+		configStr := fmt.Sprintf("Failure: %s, Timeout: %ds", wh.FailurePolicy, wh.TimeoutSeconds)
+
+		// Details
 		sideEffects := wh.SideEffects
 		if sideEffects == "" {
-			sideEffects = "<NONE>"
+			sideEffects = "Unknown"
+		}
+		details := fmt.Sprintf("SideEffects: %s", sideEffects)
+		if wh.HasExclusions {
+			details += ", Has exclusions"
 		}
 
 		// Detect issues
@@ -1189,30 +1051,59 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		}
 
 		webhookRows = append(webhookRows, []string{
+			"<CLUSTER>",
 			wh.Name,
-			"Validating",
-			wh.FailurePolicy,
-			timeoutStr,
-			nsSelector,
-			sideEffects,
+			"Cluster",
+			"All pods",
+			policyType,
+			configStr,
+			details,
 			whIssuesStr,
 		})
 	}
 
-	// Generate PSP detail rows
+	// Generate PSP detail rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, psp := range pspAnalyses {
-		hostPathStr := "<NONE>"
-		if psp.AllowsHostPath {
-			if len(psp.AllowedHostPaths) > 0 {
-				hostPathStr = strings.Join(psp.AllowedHostPaths, ", ")
-			} else {
-				hostPathStr = "Yes (any path)"
-			}
+		// Type
+		policyType := "PodSecurityPolicy"
+
+		// Configuration
+		var config []string
+		if psp.AllowsPrivileged {
+			config = append(config, "Privileged: yes")
+		}
+		if psp.AllowsHostNetwork {
+			config = append(config, "HostNetwork: yes")
+		}
+		if psp.AllowsHostPID {
+			config = append(config, "HostPID: yes")
+		}
+		configStr := strings.Join(config, ", ")
+		if configStr == "" {
+			configStr = "Restricted"
 		}
 
-		capsStr := "<NONE>"
+		// Details
+		var detailParts []string
+		if psp.AllowsHostIPC {
+			detailParts = append(detailParts, "HostIPC: yes")
+		}
+		if psp.AllowsHostPath {
+			if len(psp.AllowedHostPaths) > 0 {
+				detailParts = append(detailParts, fmt.Sprintf("HostPaths: %s", strings.Join(psp.AllowedHostPaths, ", ")))
+			} else {
+				detailParts = append(detailParts, "HostPath: any")
+			}
+		}
 		if len(psp.AllowedCapabilities) > 0 {
-			capsStr = strings.Join(psp.AllowedCapabilities, ", ")
+			detailParts = append(detailParts, fmt.Sprintf("Caps: %s", strings.Join(psp.AllowedCapabilities, ", ")))
+		}
+		if psp.AllowsRunAsRoot {
+			detailParts = append(detailParts, "RunAsRoot: yes")
+		}
+		details := strings.Join(detailParts, ", ")
+		if details == "" {
+			details = "-"
 		}
 
 		// Detect issues
@@ -1244,33 +1135,40 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		}
 
 		pspRows = append(pspRows, []string{
+			"<CLUSTER>",
 			psp.Name,
-			shared.FormatBool(psp.AllowsPrivileged),
-			shared.FormatBool(psp.AllowsHostNetwork),
-			shared.FormatBool(psp.AllowsHostPID),
-			shared.FormatBool(psp.AllowsHostIPC),
-			hostPathStr,
-			capsStr,
-			shared.FormatBool(psp.AllowsRunAsRoot),
+			"Cluster",
+			"All pods",
+			policyType,
+			configStr,
+			details,
 			pspIssuesStr,
 		})
 	}
 
-	// Generate VAP detail rows
+	// Generate VAP detail rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, vap := range vapPolicies {
-		bindingsStr := "<NONE>"
-		if len(vap.Bindings) > 0 {
-			bindingsStr = strings.Join(vap.Bindings, ", ")
-		}
+		// Type
+		policyType := "ValidatingAdmissionPolicy"
 
+		// Configuration
 		failurePolicy := vap.FailurePolicy
 		if failurePolicy == "" {
 			failurePolicy = "Fail"
 		}
+		configStr := fmt.Sprintf("Failure: %s, Validations: %d", failurePolicy, vap.Validations)
 
-		paramKind := vap.ParamKind
-		if paramKind == "" {
-			paramKind = "<NONE>"
+		// Details
+		var detailParts []string
+		if vap.ParamKind != "" {
+			detailParts = append(detailParts, fmt.Sprintf("ParamKind: %s", vap.ParamKind))
+		}
+		if len(vap.Bindings) > 0 {
+			detailParts = append(detailParts, fmt.Sprintf("Bindings: %s", strings.Join(vap.Bindings, ", ")))
+		}
+		details := strings.Join(detailParts, ", ")
+		if details == "" {
+			details = "-"
 		}
 
 		// Detect issues
@@ -1290,20 +1188,33 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		}
 
 		vapRows = append(vapRows, []string{
+			"<CLUSTER>",
 			vap.Name,
-			failurePolicy,
-			fmt.Sprintf("%d", vap.Validations),
-			paramKind,
-			bindingsStr,
+			"Cluster",
+			"All pods",
+			policyType,
+			configStr,
+			details,
 			vapIssuesStr,
 		})
 	}
 
-	// Generate Gatekeeper detail rows
+	// Generate Gatekeeper detail rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, constraint := range gatekeeperConstraints {
+		// Type
+		policyType := constraint.Kind
+
+		// Configuration
+		configStr := fmt.Sprintf("Enforcement: %s", constraint.EnforcementAction)
+
+		// Details
 		matchStr := constraint.Match
 		if matchStr == "" {
-			matchStr = "<NONE>"
+			matchStr = "All"
+		}
+		details := fmt.Sprintf("Match: %s", matchStr)
+		if constraint.Violations > 0 {
+			details += fmt.Sprintf(", Violations: %d", constraint.Violations)
 		}
 
 		// Detect issues
@@ -1320,27 +1231,42 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		}
 
 		gatekeeperRows = append(gatekeeperRows, []string{
+			"<CLUSTER>",
 			constraint.Name,
-			constraint.Kind,
-			constraint.EnforcementAction,
-			matchStr,
-			fmt.Sprintf("%d", constraint.Violations),
+			"Cluster",
+			"All pods",
+			policyType,
+			configStr,
+			details,
 			gkIssuesStr,
 		})
 	}
 
-	// Generate Kyverno policy detail rows
+	// Generate Kyverno policy detail rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, policy := range kyvernoPolicies {
 		scope := "Cluster"
-		ns := "<NONE>"
+		ns := "<CLUSTER>"
+		policyType := "ClusterPolicy"
 		if !policy.IsClusterPolicy {
 			scope = "Namespace"
 			ns = policy.Namespace
+			policyType = "Policy"
 		}
 
 		failureAction := policy.ValidationFailure
 		if failureAction == "" {
 			failureAction = "Audit"
+		}
+
+		// Configuration
+		configStr := fmt.Sprintf("Failure: %s, Rules: %d", failureAction, policy.Rules)
+
+		// Details
+		details := "-"
+		if policy.Background {
+			details = "Background: enabled"
+		} else {
+			details = "Background: disabled"
 		}
 
 		// Detect issues
@@ -1363,28 +1289,37 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 			ns,
 			policy.Name,
 			scope,
-			failureAction,
-			fmt.Sprintf("%d", policy.Rules),
-			shared.FormatBool(policy.Background),
+			"All pods",
+			policyType,
+			configStr,
+			details,
 			kyIssuesStr,
 		})
 	}
 
-	// Generate Kyverno exception detail rows (bypass vectors!)
+	// Generate Kyverno exception detail rows (bypass vectors!) - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, exception := range kyvernoExceptions {
-		policiesStr := "<NONE>"
+		// Type
+		policyType := "PolicyException"
+
+		// Configuration
+		policiesStr := "-"
 		if len(exception.Policies) > 0 {
 			policiesStr = strings.Join(exception.Policies, ", ")
 		}
+		configStr := fmt.Sprintf("Exempts: %s", policiesStr)
 
-		rulesStr := "<NONE>"
+		// Details
+		var detailParts []string
 		if len(exception.Rules) > 0 {
-			rulesStr = strings.Join(exception.Rules, ", ")
+			detailParts = append(detailParts, fmt.Sprintf("Rules: %s", strings.Join(exception.Rules, ", ")))
 		}
-
-		matchStr := exception.Match
-		if matchStr == "" {
-			matchStr = "<NONE>"
+		if exception.Match != "" {
+			detailParts = append(detailParts, fmt.Sprintf("Match: %s", exception.Match))
+		}
+		details := strings.Join(detailParts, ", ")
+		if details == "" {
+			details = "-"
 		}
 
 		// Detect issues (all exceptions are potential bypass vectors)
@@ -1398,30 +1333,40 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		kyvernoExceptionRows = append(kyvernoExceptionRows, []string{
 			exception.Namespace,
 			exception.Name,
-			policiesStr,
-			rulesStr,
-			matchStr,
+			"Namespace",
+			"Matching pods",
+			policyType,
+			configStr,
+			details,
 			exIssuesStr,
 		})
 	}
 
-	// Generate Kubewarden detail rows
+	// Generate Kubewarden detail rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, policy := range kubewardenPolicies {
 		scope := "Cluster"
-		ns := "<NONE>"
+		ns := "<CLUSTER>"
+		policyType := "ClusterAdmissionPolicy"
 		if !policy.IsClusterPolicy {
 			scope = "Namespace"
 			ns = policy.Namespace
+			policyType = "AdmissionPolicy"
 		}
 
+		// Configuration
+		configStr := fmt.Sprintf("Mode: %s, Mutating: %s", policy.Mode, shared.FormatBool(policy.Mutating))
+
+		// Details
 		module := policy.Module
 		if module == "" {
 			module = "<NONE>"
 		}
-
-		rulesStr := policy.Rules
-		if rulesStr == "" {
-			rulesStr = "<NONE>"
+		if len(module) > 40 {
+			module = module[:40] + "..."
+		}
+		details := fmt.Sprintf("Module: %s", module)
+		if policy.Rules != "" {
+			details += fmt.Sprintf(", Rules: %s", policy.Rules)
 		}
 
 		// Detect issues
@@ -1429,7 +1374,7 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		if policy.Mode == "monitor" {
 			kwIssues = append(kwIssues, "Monitor mode (not enforcing)")
 		}
-		if module == "" || module == "<NONE>" {
+		if policy.Module == "" {
 			kwIssues = append(kwIssues, "No module specified")
 		}
 		kwIssuesStr := "<NONE>"
@@ -1441,36 +1386,47 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 			ns,
 			policy.Name,
 			scope,
-			module,
-			policy.Mode,
-			shared.FormatBool(policy.Mutating),
-			rulesStr,
+			"All pods",
+			policyType,
+			configStr,
+			details,
 			kwIssuesStr,
 		})
 	}
 
-	// Generate jsPolicy detail rows
+	// Generate jsPolicy detail rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, policy := range jsPolicies {
 		scope := "Cluster"
-		ns := "<NONE>"
+		ns := "<CLUSTER>"
 		if !policy.IsClusterPolicy {
 			scope = "Namespace"
 			ns = policy.Namespace
 		}
 
-		opsStr := "<NONE>"
-		if len(policy.Operations) > 0 {
-			opsStr = strings.Join(policy.Operations, ", ")
+		// Type
+		policyType := policy.Type
+		if policyType == "" {
+			policyType = "JsPolicy"
 		}
 
-		resStr := "<NONE>"
-		if len(policy.Resources) > 0 {
-			resStr = strings.Join(policy.Resources, ", ")
-		}
-
+		// Configuration
 		violationPolicy := policy.ViolationPolicy
 		if violationPolicy == "" {
 			violationPolicy = "deny"
+		}
+		configStr := fmt.Sprintf("ViolationPolicy: %s", violationPolicy)
+
+		// Details
+		var detailParts []string
+		if len(policy.Operations) > 0 {
+			detailParts = append(detailParts, fmt.Sprintf("Ops: %s", strings.Join(policy.Operations, ", ")))
+		}
+		if len(policy.Resources) > 0 {
+			detailParts = append(detailParts, fmt.Sprintf("Resources: %s", strings.Join(policy.Resources, ", ")))
+		}
+		details := strings.Join(detailParts, ", ")
+		if details == "" {
+			details = "-"
 		}
 
 		// Detect issues
@@ -1493,26 +1449,48 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 			ns,
 			policy.Name,
 			scope,
-			policy.Type,
-			opsStr,
-			resStr,
-			violationPolicy,
+			"All pods",
+			policyType,
+			configStr,
+			details,
 			jsIssuesStr,
 		})
 	}
 
-	// Generate Gatekeeper exclusion rows (bypass vectors!)
+	// Generate Gatekeeper exclusion rows (bypass vectors!) - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, excludedNs := range gatekeeperConfig.ExcludedNamespaces {
 		// All exclusions are potential bypass vectors
 		gatekeeperExclusionRows = append(gatekeeperExclusionRows, []string{
 			excludedNs,
+			"GatekeeperExclusion",
+			"Namespace",
+			excludedNs,
+			"NamespaceExclusion",
 			"Config.spec.match.excludedNamespaces",
+			"Namespace excluded from Gatekeeper",
 			"Policy bypass vector",
 		})
 	}
 
-	// Generate Polaris detail rows
+	// Generate Polaris detail rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	if polarisConfig.WebhookEnabled || polarisConfig.ConfigMap != "" {
+		// Type
+		policyType := "PolarisConfig"
+
+		// Configuration
+		var config []string
+		config = append(config, fmt.Sprintf("Webhook: %s", shared.FormatBool(polarisConfig.WebhookEnabled)))
+		config = append(config, fmt.Sprintf("Checks: %d", polarisConfig.Checks))
+		configStr := strings.Join(config, ", ")
+
+		// Details
+		var detailParts []string
+		detailParts = append(detailParts, fmt.Sprintf("Privileged: %s", shared.FormatBool(polarisConfig.PrivilegedCheckEnabled)))
+		detailParts = append(detailParts, fmt.Sprintf("HostNetwork: %s", shared.FormatBool(polarisConfig.HostNetworkCheckEnabled)))
+		detailParts = append(detailParts, fmt.Sprintf("HostPID: %s", shared.FormatBool(polarisConfig.HostPIDCheckEnabled)))
+		detailParts = append(detailParts, fmt.Sprintf("RunAsRoot: %s", shared.FormatBool(polarisConfig.RunAsRootCheckEnabled)))
+		details := strings.Join(detailParts, ", ")
+
 		var polarisIssues []string
 		if !polarisConfig.WebhookEnabled {
 			polarisIssues = append(polarisIssues, "Webhook disabled")
@@ -1539,20 +1517,31 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		polarisRows = append(polarisRows, []string{
 			polarisConfig.Namespace,
 			polarisConfig.ConfigMap,
-			shared.FormatBool(polarisConfig.WebhookEnabled),
-			fmt.Sprintf("%d", polarisConfig.Checks),
-			fmt.Sprintf("%d", polarisConfig.Exemptions),
-			shared.FormatBool(polarisConfig.PrivilegedCheckEnabled),
-			shared.FormatBool(polarisConfig.HostNetworkCheckEnabled),
-			shared.FormatBool(polarisConfig.HostPIDCheckEnabled),
-			shared.FormatBool(polarisConfig.HostIPCCheckEnabled),
-			shared.FormatBool(polarisConfig.RunAsRootCheckEnabled),
+			"Cluster",
+			"All pods",
+			policyType,
+			configStr,
+			details,
 			issuesStr,
 		})
 	}
 
-	// Generate Datree detail rows
+	// Generate Datree detail rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	if datreeConfig.WebhookEnabled {
+		// Type
+		policyType := "DatreeConfig"
+
+		// Configuration
+		configStr := fmt.Sprintf("Webhook: %s", shared.FormatBool(datreeConfig.WebhookEnabled))
+
+		// Details
+		var detailParts []string
+		detailParts = append(detailParts, fmt.Sprintf("Privileged: %s", shared.FormatBool(datreeConfig.PrivilegedCheckEnabled)))
+		detailParts = append(detailParts, fmt.Sprintf("HostNetwork: %s", shared.FormatBool(datreeConfig.HostNetworkCheckEnabled)))
+		detailParts = append(detailParts, fmt.Sprintf("HostPID: %s", shared.FormatBool(datreeConfig.HostPIDCheckEnabled)))
+		detailParts = append(detailParts, fmt.Sprintf("RunAsRoot: %s", shared.FormatBool(datreeConfig.RunAsRootCheckEnabled)))
+		details := strings.Join(detailParts, ", ")
+
 		var datreeIssues []string
 		if !datreeConfig.PrivilegedCheckEnabled {
 			datreeIssues = append(datreeIssues, "Privileged check disabled")
@@ -1571,19 +1560,31 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(datreeIssues, "; ")
 		}
 		datreeRows = append(datreeRows, []string{
+			"<CLUSTER>",
 			datreeConfig.WebhookName,
-			shared.FormatBool(datreeConfig.WebhookEnabled),
-			shared.FormatBool(datreeConfig.PrivilegedCheckEnabled),
-			shared.FormatBool(datreeConfig.HostNetworkCheckEnabled),
-			shared.FormatBool(datreeConfig.HostPIDCheckEnabled),
-			shared.FormatBool(datreeConfig.HostIPCCheckEnabled),
-			shared.FormatBool(datreeConfig.RunAsRootCheckEnabled),
+			"Cluster",
+			"All pods",
+			policyType,
+			configStr,
+			details,
 			issuesStr,
 		})
 	}
 
-	// Generate AWS Pod Identity detail rows
+	// Generate AWS Pod Identity detail rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, identity := range awsPodIdentities {
+		// Type
+		policyType := "PodIdentityAssociation"
+
+		// Configuration
+		configStr := fmt.Sprintf("SA: %s", identity.ServiceAccount)
+		if identity.HasWildcard {
+			configStr += ", Wildcard: yes"
+		}
+
+		// Details
+		details := fmt.Sprintf("Role: %s", identity.RoleARN)
+
 		var awsIssues []string
 		if identity.HasWildcard {
 			awsIssues = append(awsIssues, "Wildcard SA binding (overly permissive)")
@@ -1596,17 +1597,31 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(awsIssues, "; ")
 		}
 		awsPodIdentityRows = append(awsPodIdentityRows, []string{
-			identity.Name,
 			identity.Namespace,
+			identity.Name,
+			"Namespace",
 			identity.ServiceAccount,
-			identity.RoleARN,
-			shared.FormatBool(identity.HasWildcard),
+			policyType,
+			configStr,
+			details,
 			issuesStr,
 		})
 	}
 
-	// Generate GCP Workload Identity detail rows
+	// Generate GCP Workload Identity detail rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, identity := range gcpWorkloadIdentities {
+		// Type
+		policyType := "WorkloadIdentity"
+
+		// Configuration
+		configStr := fmt.Sprintf("KSA: %s", identity.KSAName)
+		if identity.AnnotationPresent {
+			configStr += ", Annotation: present"
+		}
+
+		// Details
+		details := fmt.Sprintf("GSA: %s", identity.GSAEmail)
+
 		var gcpIssues []string
 		if !identity.AnnotationPresent {
 			gcpIssues = append(gcpIssues, "Missing annotation")
@@ -1619,17 +1634,31 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(gcpIssues, "; ")
 		}
 		gcpWorkloadIdentityRows = append(gcpWorkloadIdentityRows, []string{
-			identity.Name,
 			identity.Namespace,
+			identity.Name,
+			"Namespace",
 			identity.KSAName,
-			identity.GSAEmail,
-			shared.FormatBool(identity.AnnotationPresent),
+			policyType,
+			configStr,
+			details,
 			issuesStr,
 		})
 	}
 
-	// Generate Azure Workload Identity detail rows
+	// Generate Azure Workload Identity detail rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, identity := range azureWorkloadIdentities {
+		// Type
+		policyType := identity.Kind
+
+		// Configuration
+		configStr := fmt.Sprintf("Selector: %s", identity.Selector)
+		if identity.HasFederated {
+			configStr += ", Federated: yes"
+		}
+
+		// Details
+		details := fmt.Sprintf("ClientID: %s, TenantID: %s", identity.ClientID, identity.TenantID)
+
 		var azureIssues []string
 		if !identity.HasFederated {
 			azureIssues = append(azureIssues, "Using legacy AAD Pod Identity")
@@ -1642,34 +1671,46 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(azureIssues, "; ")
 		}
 		azureWorkloadIdentityRows = append(azureWorkloadIdentityRows, []string{
-			identity.Name,
 			identity.Namespace,
-			identity.Kind,
-			identity.ClientID,
-			identity.TenantID,
+			identity.Name,
+			"Namespace",
 			identity.Selector,
-			shared.FormatBool(identity.HasFederated),
+			policyType,
+			configStr,
+			details,
 			issuesStr,
 		})
 	}
 
-	// Generate Capsule Tenant Pod Policy detail rows
+	// Generate Capsule Tenant Pod Policy detail rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, policy := range capsuleTenantPodPolicies {
-		runtimeClasses := "<NONE>"
-		if len(policy.AllowedRuntimeClasses) > 0 {
-			runtimeClasses = strings.Join(policy.AllowedRuntimeClasses, ", ")
-		}
-		priorityClasses := "<NONE>"
-		if len(policy.AllowedPriorityClasses) > 0 {
-			priorityClasses = strings.Join(policy.AllowedPriorityClasses, ", ")
-		}
-		containerRegistries := "<NONE>"
-		if len(policy.ContainerRegistries) > 0 {
-			containerRegistries = strings.Join(policy.ContainerRegistries, ", ")
-		}
+		// Type
+		policyType := "TenantPodPolicy"
+
+		// Configuration
 		pss := policy.PodSecurityStandard
 		if pss == "" {
-			pss = "<NONE>"
+			pss = "none"
+		}
+		configStr := fmt.Sprintf("PSS: %s, Quotas: %s, Limits: %s",
+			pss,
+			shared.FormatBool(policy.HasResourceQuotas),
+			shared.FormatBool(policy.HasLimitRanges))
+
+		// Details
+		var detailParts []string
+		if len(policy.AllowedRuntimeClasses) > 0 {
+			detailParts = append(detailParts, fmt.Sprintf("RuntimeClasses: %s", strings.Join(policy.AllowedRuntimeClasses, ", ")))
+		}
+		if len(policy.AllowedPriorityClasses) > 0 {
+			detailParts = append(detailParts, fmt.Sprintf("PriorityClasses: %s", strings.Join(policy.AllowedPriorityClasses, ", ")))
+		}
+		if len(policy.ContainerRegistries) > 0 {
+			detailParts = append(detailParts, fmt.Sprintf("Registries: %s", strings.Join(policy.ContainerRegistries, ", ")))
+		}
+		details := strings.Join(detailParts, ", ")
+		if details == "" {
+			details = "-"
 		}
 
 		var capsuleIssues []string
@@ -1691,24 +1732,34 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		}
 
 		capsuleTenantPodRows = append(capsuleTenantPodRows, []string{
-			policy.TenantName,
 			policy.Namespace,
-			pss,
-			runtimeClasses,
-			priorityClasses,
-			containerRegistries,
-			shared.FormatBool(policy.HasResourceQuotas),
-			shared.FormatBool(policy.HasLimitRanges),
+			policy.TenantName,
+			"Tenant",
+			"Tenant pods",
+			policyType,
+			configStr,
+			details,
 			issuesStr,
 		})
 	}
 
-	// Generate Rancher Project Pod Policy detail rows
+	// Generate Rancher Project Pod Policy detail rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, policy := range rancherProjectPodPolicies {
+		// Type
+		policyType := "ProjectPodPolicy"
+
+		// Configuration
+		configStr := fmt.Sprintf("PSP: %s, Limits: %s, Quota: %s",
+			shared.FormatBool(policy.HasPodSecurityPolicy),
+			shared.FormatBool(policy.ContainerResourceLimit),
+			shared.FormatBool(policy.NamespaceResourceQuota))
+
+		// Details
 		pspTemplate := policy.PSPTemplateID
 		if pspTemplate == "" {
-			pspTemplate = "<NONE>"
+			pspTemplate = "none"
 		}
+		details := fmt.Sprintf("PSP Template: %s, Project ID: %s", pspTemplate, policy.ProjectID)
 
 		var rancherIssues []string
 		if !policy.HasPodSecurityPolicy {
@@ -1726,13 +1777,13 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		}
 
 		rancherProjectPodRows = append(rancherProjectPodRows, []string{
-			policy.ProjectName,
-			policy.ProjectID,
 			policy.Namespace,
-			pspTemplate,
-			shared.FormatBool(policy.ContainerResourceLimit),
-			shared.FormatBool(policy.NamespaceResourceQuota),
-			shared.FormatBool(policy.HasPodSecurityPolicy),
+			policy.ProjectName,
+			"Project",
+			"Project pods",
+			policyType,
+			configStr,
+			details,
 			issuesStr,
 		})
 	}
@@ -1743,109 +1794,156 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 	// Add PSS policies from findings
 	for _, finding := range findings {
 		if finding.PSSEnforceLevel != "" {
-			details := fmt.Sprintf("Enforce: %s", finding.PSSEnforceLevel)
+			configStr := fmt.Sprintf("Level: %s", finding.PSSEnforceLevel)
+			details := "-"
 			if finding.PSSEnforceVersion != "" {
-				details += fmt.Sprintf(" (v%s)", finding.PSSEnforceVersion)
+				details = fmt.Sprintf("Version: %s", finding.PSSEnforceVersion)
+			}
+			issuesStr := "<NONE>"
+			if finding.PSSEnforceLevel == "privileged" {
+				issuesStr = "Privileged level (no restrictions)"
 			}
 			unifiedPolicies = append(unifiedPolicies, PodEnumeratedPolicy{
-				Namespace: finding.Namespace,
-				Tool:      "PSS",
-				Name:      "pod-security.kubernetes.io/enforce",
-				Scope:     "Namespace",
-				Type:      "Enforce",
-				Details:   details,
+				Namespace:     finding.Namespace,
+				Tool:          "PSS",
+				Name:          "pod-security.kubernetes.io/enforce",
+				Scope:         "Namespace",
+				Target:        "All pods",
+				Type:          "Enforce",
+				Configuration: configStr,
+				Details:       details,
+				Issues:        issuesStr,
 			})
 		}
 		if finding.PSSWarnLevel != "" {
-			details := fmt.Sprintf("Warn: %s", finding.PSSWarnLevel)
+			configStr := fmt.Sprintf("Level: %s", finding.PSSWarnLevel)
+			details := "-"
 			if finding.PSSWarnVersion != "" {
-				details += fmt.Sprintf(" (v%s)", finding.PSSWarnVersion)
+				details = fmt.Sprintf("Version: %s", finding.PSSWarnVersion)
 			}
 			unifiedPolicies = append(unifiedPolicies, PodEnumeratedPolicy{
-				Namespace: finding.Namespace,
-				Tool:      "PSS",
-				Name:      "pod-security.kubernetes.io/warn",
-				Scope:     "Namespace",
-				Type:      "Warn",
-				Details:   details,
+				Namespace:     finding.Namespace,
+				Tool:          "PSS",
+				Name:          "pod-security.kubernetes.io/warn",
+				Scope:         "Namespace",
+				Target:        "All pods",
+				Type:          "Warn",
+				Configuration: configStr,
+				Details:       details,
+				Issues:        "<NONE>",
 			})
 		}
 		if finding.PSSAuditLevel != "" {
-			details := fmt.Sprintf("Audit: %s", finding.PSSAuditLevel)
+			configStr := fmt.Sprintf("Level: %s", finding.PSSAuditLevel)
+			details := "-"
 			if finding.PSSAuditVersion != "" {
-				details += fmt.Sprintf(" (v%s)", finding.PSSAuditVersion)
+				details = fmt.Sprintf("Version: %s", finding.PSSAuditVersion)
 			}
 			unifiedPolicies = append(unifiedPolicies, PodEnumeratedPolicy{
-				Namespace: finding.Namespace,
-				Tool:      "PSS",
-				Name:      "pod-security.kubernetes.io/audit",
-				Scope:     "Namespace",
-				Type:      "Audit",
-				Details:   details,
+				Namespace:     finding.Namespace,
+				Tool:          "PSS",
+				Name:          "pod-security.kubernetes.io/audit",
+				Scope:         "Namespace",
+				Target:        "All pods",
+				Type:          "Audit",
+				Configuration: configStr,
+				Details:       details,
+				Issues:        "<NONE>",
 			})
 		}
 	}
 
 	// Add PSP policies
 	for _, psp := range pspAnalyses {
-		details := []string{}
+		var config []string
 		if psp.AllowsPrivileged {
-			details = append(details, "Privileged")
+			config = append(config, "Privileged")
 		}
 		if psp.AllowsHostNetwork {
-			details = append(details, "HostNetwork")
+			config = append(config, "HostNetwork")
 		}
 		if psp.AllowsHostPID {
-			details = append(details, "HostPID")
+			config = append(config, "HostPID")
 		}
+		configStr := strings.Join(config, ", ")
+		if configStr == "" {
+			configStr = "Restricted"
+		}
+
+		var detailParts []string
 		if psp.AllowsHostPath {
-			details = append(details, "HostPath")
+			detailParts = append(detailParts, "HostPath")
 		}
 		if len(psp.AllowedCapabilities) > 0 {
-			details = append(details, fmt.Sprintf("Caps: %s", strings.Join(psp.AllowedCapabilities, ",")))
+			detailParts = append(detailParts, fmt.Sprintf("Caps: %s", strings.Join(psp.AllowedCapabilities, ",")))
 		}
-		detailStr := "<NONE>"
-		if len(details) > 0 {
-			detailStr = strings.Join(details, ", ")
+		details := strings.Join(detailParts, ", ")
+		if details == "" {
+			details = "-"
+		}
+
+		var issues []string
+		if psp.AllowsPrivileged {
+			issues = append(issues, "Allows privileged")
+		}
+		if psp.AllowsHostNetwork {
+			issues = append(issues, "Allows hostNetwork")
+		}
+		issuesStr := "<NONE>"
+		if len(issues) > 0 {
+			issuesStr = strings.Join(issues, "; ")
 		}
 
 		unifiedPolicies = append(unifiedPolicies, PodEnumeratedPolicy{
-			Namespace: "<ALL>",
-			Tool:      "PSP",
-			Name:      psp.Name,
-			Scope:     "Cluster",
-			Type:      "PodSecurityPolicy",
-			Details:   detailStr,
+			Namespace:     "<CLUSTER>",
+			Tool:          "PSP",
+			Name:          psp.Name,
+			Scope:         "Cluster",
+			Target:        "All pods",
+			Type:          "PodSecurityPolicy",
+			Configuration: configStr,
+			Details:       details,
+			Issues:        issuesStr,
 		})
 	}
 
 	// Add Webhook policies
 	for _, wh := range mutatingWebhooks {
-		details := fmt.Sprintf("FailurePolicy: %s", wh.FailurePolicy)
-		if wh.TimeoutSeconds > 0 {
-			details += fmt.Sprintf(", Timeout: %ds", wh.TimeoutSeconds)
+		configStr := fmt.Sprintf("Failure: %s, Timeout: %ds", wh.FailurePolicy, wh.TimeoutSeconds)
+		details := fmt.Sprintf("SideEffects: %s", wh.SideEffects)
+		issuesStr := "<NONE>"
+		if wh.FailurePolicy == "Ignore" {
+			issuesStr = "Failure policy Ignore (bypassable)"
 		}
 		unifiedPolicies = append(unifiedPolicies, PodEnumeratedPolicy{
-			Namespace: "<ALL>",
-			Tool:      "Webhook",
-			Name:      wh.Name,
-			Scope:     "Cluster",
-			Type:      "Mutating",
-			Details:   details,
+			Namespace:     "<CLUSTER>",
+			Tool:          "Webhook",
+			Name:          wh.Name,
+			Scope:         "Cluster",
+			Target:        "All pods",
+			Type:          "Mutating",
+			Configuration: configStr,
+			Details:       details,
+			Issues:        issuesStr,
 		})
 	}
 	for _, wh := range validatingWebhooks {
-		details := fmt.Sprintf("FailurePolicy: %s", wh.FailurePolicy)
-		if wh.TimeoutSeconds > 0 {
-			details += fmt.Sprintf(", Timeout: %ds", wh.TimeoutSeconds)
+		configStr := fmt.Sprintf("Failure: %s, Timeout: %ds", wh.FailurePolicy, wh.TimeoutSeconds)
+		details := fmt.Sprintf("SideEffects: %s", wh.SideEffects)
+		issuesStr := "<NONE>"
+		if wh.FailurePolicy == "Ignore" {
+			issuesStr = "Failure policy Ignore (bypassable)"
 		}
 		unifiedPolicies = append(unifiedPolicies, PodEnumeratedPolicy{
-			Namespace: "<ALL>",
-			Tool:      "Webhook",
-			Name:      wh.Name,
-			Scope:     "Cluster",
-			Type:      "Validating",
-			Details:   details,
+			Namespace:     "<CLUSTER>",
+			Tool:          "Webhook",
+			Name:          wh.Name,
+			Scope:         "Cluster",
+			Target:        "All pods",
+			Type:          "Validating",
+			Configuration: configStr,
+			Details:       details,
+			Issues:        issuesStr,
 		})
 	}
 
@@ -1855,33 +1953,56 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		if failurePolicy == "" {
 			failurePolicy = "Fail"
 		}
-		details := fmt.Sprintf("FailurePolicy: %s, Validations: %d", failurePolicy, vap.Validations)
+		configStr := fmt.Sprintf("Failure: %s, Validations: %d", failurePolicy, vap.Validations)
+		details := "CEL-based validation"
 		if vap.ParamKind != "" {
-			details += fmt.Sprintf(", ParamKind: %s", vap.ParamKind)
+			details = fmt.Sprintf("ParamKind: %s", vap.ParamKind)
+		}
+		issuesStr := "<NONE>"
+		if failurePolicy == "Ignore" {
+			issuesStr = "Failure policy Ignore (bypassable)"
 		}
 		unifiedPolicies = append(unifiedPolicies, PodEnumeratedPolicy{
-			Namespace: "<ALL>",
-			Tool:      "VAP",
-			Name:      vap.Name,
-			Scope:     "Cluster",
-			Type:      "ValidatingAdmissionPolicy",
-			Details:   details,
+			Namespace:     "<ALL>",
+			Tool:          "VAP",
+			Name:          vap.Name,
+			Scope:         "Cluster",
+			Target:        "Matched resources",
+			Type:          "ValidatingAdmissionPolicy",
+			Configuration: configStr,
+			Details:       details,
+			Issues:        issuesStr,
 		})
 	}
 
 	// Add Gatekeeper constraints
 	for _, constraint := range gatekeeperConstraints {
-		details := fmt.Sprintf("Enforcement: %s", constraint.EnforcementAction)
+		configStr := fmt.Sprintf("Enforcement: %s", constraint.EnforcementAction)
+		details := fmt.Sprintf("Kind: %s", constraint.Kind)
 		if constraint.Violations > 0 {
 			details += fmt.Sprintf(", Violations: %d", constraint.Violations)
 		}
+		issuesStr := "<NONE>"
+		if constraint.EnforcementAction == "warn" || constraint.EnforcementAction == "dryrun" {
+			issuesStr = fmt.Sprintf("Non-blocking enforcement (%s)", constraint.EnforcementAction)
+		}
+		if constraint.Violations > 0 {
+			if issuesStr == "<NONE>" {
+				issuesStr = fmt.Sprintf("%d violations", constraint.Violations)
+			} else {
+				issuesStr += fmt.Sprintf("; %d violations", constraint.Violations)
+			}
+		}
 		unifiedPolicies = append(unifiedPolicies, PodEnumeratedPolicy{
-			Namespace: "<ALL>",
-			Tool:      "Gatekeeper",
-			Name:      constraint.Name,
-			Scope:     "Cluster",
-			Type:      constraint.Kind,
-			Details:   details,
+			Namespace:     "<ALL>",
+			Tool:          "Gatekeeper",
+			Name:          constraint.Name,
+			Scope:         "Cluster",
+			Target:        "Matched resources",
+			Type:          "Constraint",
+			Configuration: configStr,
+			Details:       details,
+			Issues:        issuesStr,
 		})
 	}
 
@@ -1897,15 +2018,27 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		if failureAction == "" {
 			failureAction = "Audit"
 		}
-		details := fmt.Sprintf("FailureAction: %s, Rules: %d", failureAction, policy.Rules)
+		policyType := "ClusterPolicy"
+		if !policy.IsClusterPolicy {
+			policyType = "Policy"
+		}
+		configStr := fmt.Sprintf("FailureAction: %s, Rules: %d", failureAction, policy.Rules)
+		details := fmt.Sprintf("Background: %t", policy.Background)
+		issuesStr := "<NONE>"
+		if failureAction == "Audit" {
+			issuesStr = "Non-blocking (Audit mode)"
+		}
 
 		unifiedPolicies = append(unifiedPolicies, PodEnumeratedPolicy{
-			Namespace: ns,
-			Tool:      "Kyverno",
-			Name:      policy.Name,
-			Scope:     scope,
-			Type:      "Policy",
-			Details:   details,
+			Namespace:     ns,
+			Tool:          "Kyverno",
+			Name:          policy.Name,
+			Scope:         scope,
+			Target:        "Matched resources",
+			Type:          policyType,
+			Configuration: configStr,
+			Details:       details,
+			Issues:        issuesStr,
 		})
 	}
 
@@ -1915,15 +2048,20 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		if len(exception.Policies) > 0 {
 			policiesStr = strings.Join(exception.Policies, ", ")
 		}
-		details := fmt.Sprintf("Exempts: %s", policiesStr)
+		configStr := fmt.Sprintf("Exempts %d policies", len(exception.Policies))
+		details := fmt.Sprintf("Policies: %s", policiesStr)
+		issuesStr := "Policy bypass configured"
 
 		unifiedPolicies = append(unifiedPolicies, PodEnumeratedPolicy{
-			Namespace: exception.Namespace,
-			Tool:      "Kyverno",
-			Name:      exception.Name,
-			Scope:     "Namespace",
-			Type:      "PolicyException",
-			Details:   details,
+			Namespace:     exception.Namespace,
+			Tool:          "Kyverno",
+			Name:          exception.Name,
+			Scope:         "Namespace",
+			Target:        "Exception subjects",
+			Type:          "PolicyException",
+			Configuration: configStr,
+			Details:       details,
+			Issues:        issuesStr,
 		})
 	}
 
@@ -1931,22 +2069,33 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 	for _, policy := range kubewardenPolicies {
 		scope := "Cluster"
 		ns := "<ALL>"
+		policyType := "ClusterAdmissionPolicy"
 		if !policy.IsClusterPolicy {
 			scope = "Namespace"
 			ns = policy.Namespace
+			policyType = "AdmissionPolicy"
 		}
-		details := fmt.Sprintf("Mode: %s", policy.Mode)
+		mutatingStr := "Validating"
 		if policy.Mutating {
-			details += ", Mutating: true"
+			mutatingStr = "Mutating"
+		}
+		configStr := fmt.Sprintf("Mode: %s, %s", policy.Mode, mutatingStr)
+		details := fmt.Sprintf("Module: %s", policy.Module)
+		issuesStr := "<NONE>"
+		if policy.Mode == "monitor" {
+			issuesStr = "Non-blocking (monitor mode)"
 		}
 
 		unifiedPolicies = append(unifiedPolicies, PodEnumeratedPolicy{
-			Namespace: ns,
-			Tool:      "Kubewarden",
-			Name:      policy.Name,
-			Scope:     scope,
-			Type:      "AdmissionPolicy",
-			Details:   details,
+			Namespace:     ns,
+			Tool:          "Kubewarden",
+			Name:          policy.Name,
+			Scope:         scope,
+			Target:        "Matched resources",
+			Type:          policyType,
+			Configuration: configStr,
+			Details:       details,
+			Issues:        issuesStr,
 		})
 	}
 
@@ -1958,41 +2107,57 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 			scope = "Namespace"
 			ns = policy.Namespace
 		}
-		details := fmt.Sprintf("Type: %s", policy.Type)
-		if policy.ViolationPolicy != "" {
-			details += fmt.Sprintf(", ViolationPolicy: %s", policy.ViolationPolicy)
+		violationPolicy := policy.ViolationPolicy
+		if violationPolicy == "" {
+			violationPolicy = "deny"
+		}
+		configStr := fmt.Sprintf("Type: %s, Violation: %s", policy.Type, violationPolicy)
+		details := "JavaScript-based policy"
+		issuesStr := "<NONE>"
+		if violationPolicy == "warn" {
+			issuesStr = "Non-blocking (warn mode)"
 		}
 
 		unifiedPolicies = append(unifiedPolicies, PodEnumeratedPolicy{
-			Namespace: ns,
-			Tool:      "jsPolicy",
-			Name:      policy.Name,
-			Scope:     scope,
-			Type:      policy.Type,
-			Details:   details,
+			Namespace:     ns,
+			Tool:          "jsPolicy",
+			Name:          policy.Name,
+			Scope:         scope,
+			Target:        "Matched resources",
+			Type:          policy.Type,
+			Configuration: configStr,
+			Details:       details,
+			Issues:        issuesStr,
 		})
 	}
 
 	// Add Gatekeeper exclusions
 	for _, excludedNs := range gatekeeperConfig.ExcludedNamespaces {
 		unifiedPolicies = append(unifiedPolicies, PodEnumeratedPolicy{
-			Namespace: excludedNs,
-			Tool:      "Gatekeeper",
-			Name:      "Config.spec.match.excludedNamespaces",
-			Scope:     "Cluster",
-			Type:      "Exclusion",
-			Details:   "Namespace excluded from Gatekeeper enforcement",
+			Namespace:     excludedNs,
+			Tool:          "Gatekeeper",
+			Name:          "Config.spec.match.excludedNamespaces",
+			Scope:         "Cluster",
+			Target:        excludedNs,
+			Type:          "Exclusion",
+			Configuration: "Namespace excluded",
+			Details:       "No Gatekeeper enforcement in this namespace",
+			Issues:        "Policy bypass for namespace",
 		})
 	}
 
 	// Build unified policies table rows
+	// Schema: Namespace | Tool | Name | Scope | Target | Type | Configuration | Details | Issues
 	unifiedPoliciesHeaders := []string{
 		"Namespace",
 		"Tool",
 		"Name",
 		"Scope",
+		"Target",
 		"Type",
+		"Configuration",
 		"Details",
+		"Issues",
 	}
 	var unifiedPoliciesRows [][]string
 	for _, policy := range unifiedPolicies {
@@ -2001,8 +2166,11 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 			policy.Tool,
 			policy.Name,
 			policy.Scope,
+			policy.Target,
 			policy.Type,
+			policy.Configuration,
 			policy.Details,
+			policy.Issues,
 		})
 	}
 
@@ -2503,7 +2671,7 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 	// Add unified policies table if any policies exist
 	if len(unifiedPoliciesRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Pod-Admission-Policies",
+			Name:   "Pod-Admission-Policy-Overview",
 			Header: unifiedPoliciesHeaders,
 			Body:   unifiedPoliciesRows,
 		})

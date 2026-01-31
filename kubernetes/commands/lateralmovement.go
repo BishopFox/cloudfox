@@ -278,9 +278,15 @@ func (m *LateralMovementModule) generateLateralLoot() []internal.LootFile {
 		}
 	}
 
-	// Build playbook content
-	methodGroups := groupLateralByMethod(m.AllPaths)
-	playbookContent := m.generateLateralPlaybook(methodGroups)
+	// Build playbook content using centralized attackpathService function
+	clusterHeader := fmt.Sprintf("Cluster: %s", globals.ClusterName)
+	playbookContent := attackpathservice.GenerateLateralPlaybook(m.AllPaths, clusterHeader)
+
+	// Fallback to legacy playbook if centralized returns empty
+	if playbookContent == "" {
+		methodGroups := groupLateralByMethod(m.AllPaths)
+		playbookContent = m.generateLateralPlaybook(methodGroups)
+	}
 
 	return []internal.LootFile{
 		{

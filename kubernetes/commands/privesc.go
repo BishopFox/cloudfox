@@ -284,8 +284,14 @@ func (m *PrivescModule) generateLoot() []internal.LootFile {
 		lootContent = append(lootContent, "")
 	}
 
-	// Build playbook content
-	playbookContent := m.generatePlaybook(methodGroups)
+	// Build playbook content using centralized attackpathService function
+	clusterHeader := fmt.Sprintf("Cluster: %s", globals.ClusterName)
+	playbookContent := attackpathservice.GeneratePrivescPlaybook(m.AllPaths, clusterHeader)
+
+	// Fallback to legacy playbook if centralized returns empty
+	if playbookContent == "" {
+		playbookContent = m.generatePlaybook(methodGroups)
+	}
 
 	return []internal.LootFile{
 		{

@@ -892,262 +892,42 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 	}
 
 	// K8s NetworkPolicy detail table
-	k8sNetPolHeaders := []string{
-		"Namespace",
-		"Name",
-		"Pod Selector",
-		"Ingress Rules",
-		"Egress Rules",
-		"Default Deny",
-		"Internet In",
-		"Internet Out",
-		"Cross-NS",
-		"Metadata",
-		"Covered Pods",
-		"Issues",
-	}
-
-	// Calico policy detail table
-	calicoHeaders := []string{
+	// Uniform header for all detailed policy tables
+	// Schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
+	uniformPolicyHeader := []string{
 		"Namespace",
 		"Name",
 		"Scope",
-		"Selector",
-		"Order",
-		"Ingress Rules",
-		"Egress Rules",
-		"Default Deny",
-		"Internet In",
-		"Internet Out",
-		"Issues",
-	}
-
-	// Cilium policy detail table
-	ciliumHeaders := []string{
-		"Namespace",
-		"Name",
-		"Scope",
-		"Endpoint Selector",
-		"Ingress Rules",
-		"Egress Rules",
-		"L7 Rules",
-		"Default Deny",
-		"Internet In",
-		"Internet Out",
-		"Issues",
-	}
-
-	// Antrea policy detail table
-	antreaHeaders := []string{
-		"Namespace",
-		"Name",
-		"Scope",
-		"Tier",
-		"Priority",
-		"Applied To",
-		"Ingress Rules",
-		"Egress Rules",
-		"Action",
-		"Issues",
-	}
-
-	// Istio policy detail table
-	istioHeaders := []string{
-		"Namespace",
-		"Name",
-		"Action",
-		"Selector",
-		"Rules",
-		"mTLS",
-		"Issues",
-	}
-
-	// Linkerd policy detail table
-	linkerdHeaders := []string{
-		"Namespace",
-		"Name",
-		"Kind",
-		"Selector",
-		"Issues",
-	}
-
-	// AWS SecurityGroupPolicy detail table
-	awsSGHeaders := []string{
-		"Namespace",
-		"Name",
-		"Pod Selector",
-		"Security Groups",
-		"Allows All",
-		"Issues",
-	}
-
-	// OpenShift EgressFirewall detail table
-	openshiftEgressHeaders := []string{
-		"Namespace",
-		"Name",
-		"Kind",
-		"Rules",
-		"Allows Internet",
-		"Denies Metadata",
-		"Issues",
-	}
-
-	// Consul Connect detail table
-	consulHeaders := []string{
-		"Namespace",
-		"Name",
-		"Destination",
-		"Action",
-		"Sources",
-		"Allows All",
-		"Issues",
-	}
-
-	// Kuma Mesh detail table
-	kumaHeaders := []string{
-		"Namespace",
-		"Name",
-		"Kind",
 		"Target",
-		"Action",
-		"Rules",
+		"Type",
+		"Configuration",
+		"Details",
 		"Issues",
 	}
 
-	// SMI detail table
-	smiHeaders := []string{
-		"Namespace",
-		"Name",
-		"Kind",
-		"Provider",
-		"Destination",
-		"Allows All",
-		"Issues",
-	}
-
-	// Gloo Mesh detail table
-	glooHeaders := []string{
-		"Namespace",
-		"Name",
-		"Kind",
-		"Apply To",
-		"Action",
-		"Rules",
-		"Issues",
-	}
-
-	// NSX-T detail table
-	nsxtHeaders := []string{
-		"Namespace",
-		"Name",
-		"Applied To",
-		"Priority",
-		"Rules",
-		"Default Action",
-		"Issues",
-	}
-
-	// GCP Backend Policy detail table
-	gcpHeaders := []string{
-		"Namespace",
-		"Name",
-		"Kind",
-		"Target",
-		"Cloud Armor",
-		"IAP Enabled",
-		"Issues",
-	}
-
-	// Azure Network Policy detail table
-	azureHeaders := []string{
-		"Namespace",
-		"Name",
-		"Kind",
-		"Target",
-		"Managed Identity",
-		"Issues",
-	}
-
-	// Gatekeeper Network Constraints detail table
-	gatekeeperNetworkHeaders := []string{
-		"Name",
-		"Kind",
-		"Enforcement",
-		"Match Namespaces",
-		"Exclude Namespaces",
-		"Network Rules",
-		"Violations",
-		"Issues",
-	}
-
-	// Kyverno Network Policies detail table
-	kyvernoNetworkHeaders := []string{
-		"Namespace",
-		"Name",
-		"Scope",
-		"Action",
-		"Background",
-		"Rules",
-		"Network Rules",
-		"Issues",
-	}
-
-	// Kubewarden Network Policies detail table
-	kubewardenNetworkHeaders := []string{
-		"Namespace",
-		"Name",
-		"Policy Server",
-		"Mode",
-		"Module",
-		"Network Rules",
-		"Issues",
-	}
-
-	// CNAPP Network Policies detail table (Aqua, Prisma, Sysdig, StackRox, NeuVector)
-	cnappNetworkHeaders := []string{
-		"Platform",
-		"Name",
-		"Namespace",
-		"Scope",
-		"Mode",
-		"Ingress Rules",
-		"Egress Rules",
-		"Has Default Deny",
-		"Issues",
-	}
-
-	// Capsule Network Policies detail table
-	capsuleNetworkHeaders := []string{
-		"Tenant Name",
-		"Namespace",
-		"Network Policies",
-		"Allowed External IPs",
-		"Ingress Classes",
-		"Has Network Isolation",
-		"Issues",
-	}
-
-	// Rancher Network Policies detail table
-	rancherNetworkHeaders := []string{
-		"Project Name",
-		"Project ID",
-		"Namespace",
-		"Network Policy",
-		"PSP Template",
-		"Has Isolation",
-		"Issues",
-	}
-
-	// Polaris Network Checks detail table
-	polarisNetworkHeaders := []string{
-		"Namespace",
-		"Check ID",
-		"Check Name",
-		"Severity",
-		"Category",
-		"Has Network Policy",
-		"Issues",
-	}
+	// Use uniform headers for all policy types
+	k8sNetPolHeaders := uniformPolicyHeader
+	calicoHeaders := uniformPolicyHeader
+	ciliumHeaders := uniformPolicyHeader
+	antreaHeaders := uniformPolicyHeader
+	istioHeaders := uniformPolicyHeader
+	linkerdHeaders := uniformPolicyHeader
+	awsSGHeaders := uniformPolicyHeader
+	openshiftEgressHeaders := uniformPolicyHeader
+	consulHeaders := uniformPolicyHeader
+	kumaHeaders := uniformPolicyHeader
+	smiHeaders := uniformPolicyHeader
+	glooHeaders := uniformPolicyHeader
+	nsxtHeaders := uniformPolicyHeader
+	gcpHeaders := uniformPolicyHeader
+	azureHeaders := uniformPolicyHeader
+	gatekeeperNetworkHeaders := uniformPolicyHeader
+	kyvernoNetworkHeaders := uniformPolicyHeader
+	kubewardenNetworkHeaders := uniformPolicyHeader
+	cnappNetworkHeaders := uniformPolicyHeader
+	capsuleNetworkHeaders := uniformPolicyHeader
+	rancherNetworkHeaders := uniformPolicyHeader
+	polarisNetworkHeaders := uniformPolicyHeader
 
 	var outputRows [][]string
 	var k8sNetPolRows [][]string
@@ -1176,7 +956,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 	loot := shared.NewLootBuilder()
 
 	// Initialize single loot section
-	loot.Section("network-admission").SetHeader(`#####################################
+	loot.Section("Network-Admission-Commands").SetHeader(`#####################################
 ##### Network Admission Enumeration
 #####################################
 #
@@ -1185,7 +965,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 #`)
 
 	if globals.KubeContext != "" {
-		loot.Section("network-admission").Addf("kubectl config use-context %s\n", globals.KubeContext)
+		loot.Section("Network-Admission-Commands").Addf("kubectl config use-context %s\n", globals.KubeContext)
 	}
 
 	for _, finding := range findings {
@@ -1252,45 +1032,49 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		}
 
 		// Internet In column
-		internetInStr := "Yes"
+		internetInStr := "Unrestricted"
 		if finding.PolicyEngineBlocks.InternetIngressBlocked {
-			internetInStr = "Blocked by " + strings.Join(finding.PolicyEngineBlocks.InternetIngressBlockedBy, ", ")
+			internetInStr = "Blocked (" + strings.Join(finding.PolicyEngineBlocks.InternetIngressBlockedBy, ", ") + ")"
 		} else if finding.HasDefaultDenyIngress {
 			internetInStr = "Blocked (default-deny)"
 		}
 
 		// Internet Out column
-		internetOutStr := "Yes"
+		internetOutStr := "Unrestricted"
 		if finding.PolicyEngineBlocks.InternetEgressBlocked {
-			internetOutStr = "Blocked by " + strings.Join(finding.PolicyEngineBlocks.InternetEgressBlockedBy, ", ")
+			internetOutStr = "Blocked (" + strings.Join(finding.PolicyEngineBlocks.InternetEgressBlockedBy, ", ") + ")"
 		} else if finding.HasDefaultDenyEgress {
 			internetOutStr = "Blocked (default-deny)"
 		}
 
 		// Metadata API column
-		metadataStr := "Yes"
+		metadataStr := "Unrestricted"
 		if finding.PolicyEngineBlocks.MetadataAPIBlocked {
-			metadataStr = "Blocked by " + strings.Join(finding.PolicyEngineBlocks.MetadataAPIBlockedBy, ", ")
+			metadataStr = "Blocked (" + strings.Join(finding.PolicyEngineBlocks.MetadataAPIBlockedBy, ", ") + ")"
 		} else if finding.HasDefaultDenyEgress {
 			metadataStr = "Blocked (default-deny)"
 		}
 
 		// Cross-NS column
-		crossNSStr := "Yes"
+		crossNSStr := "Unrestricted"
 		if finding.PolicyEngineBlocks.CrossNSIngressBlocked && finding.PolicyEngineBlocks.CrossNSEgressBlocked {
 			crossNSStr = "Blocked (In+Out)"
 		} else if finding.PolicyEngineBlocks.CrossNSIngressBlocked {
-			crossNSStr = "Blocked (In)"
+			crossNSStr = "Partial (In blocked)"
 		} else if finding.PolicyEngineBlocks.CrossNSEgressBlocked {
-			crossNSStr = "Blocked (Out)"
+			crossNSStr = "Partial (Out blocked)"
 		} else if finding.HasDefaultDenyIngress && finding.HasDefaultDenyEgress {
 			crossNSStr = "Blocked (default-deny)"
+		} else if finding.HasDefaultDenyIngress {
+			crossNSStr = "Partial (In blocked)"
+		} else if finding.HasDefaultDenyEgress {
+			crossNSStr = "Partial (Out blocked)"
 		}
 
 		// Kube API column
-		kubeAPIStr := "Yes"
+		kubeAPIStr := "Unrestricted"
 		if finding.PolicyEngineBlocks.KubeAPIEgressBlocked {
-			kubeAPIStr = "Blocked by " + strings.Join(finding.PolicyEngineBlocks.KubeAPIEgressBlockedBy, ", ")
+			kubeAPIStr = "Blocked (" + strings.Join(finding.PolicyEngineBlocks.KubeAPIEgressBlockedBy, ", ") + ")"
 		} else if finding.HasDefaultDenyEgress {
 			kubeAPIStr = "Blocked (default-deny)"
 		}
@@ -1322,16 +1106,42 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 	}
 
 	// Generate detail rows for each policy type
+	// Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, policies := range allK8sNetPolicies {
 		for _, p := range policies {
-			defaultDenyStr := "No"
-			if p.DefaultDenyIngress && p.DefaultDenyEgress {
-				defaultDenyStr = "Yes (In+Out)"
-			} else if p.DefaultDenyIngress {
-				defaultDenyStr = "Ingress"
-			} else if p.DefaultDenyEgress {
-				defaultDenyStr = "Egress"
+			// Type: direction type
+			policyType := strings.Join(p.PolicyTypes, "/")
+			if policyType == "" {
+				policyType = "Ingress"
 			}
+
+			// Configuration: rules summary
+			var config []string
+			if p.DefaultDenyIngress {
+				config = append(config, "Default deny ingress")
+			}
+			if p.DefaultDenyEgress {
+				config = append(config, "Default deny egress")
+			}
+			if p.AllowsInternetIngress {
+				config = append(config, "Allows internet in")
+			}
+			if p.AllowsInternetEgress {
+				config = append(config, "Allows internet out")
+			}
+			if p.AllowsCrossNS {
+				config = append(config, "Allows cross-NS")
+			}
+			if p.AllowsMetadataAPI {
+				config = append(config, "Allows metadata API")
+			}
+			configStr := strings.Join(config, "; ")
+			if configStr == "" {
+				configStr = "-"
+			}
+
+			// Details
+			details := fmt.Sprintf("Pods covered: %d", p.CoveredPods)
 
 			// Detect issues
 			var npIssues []string
@@ -1358,21 +1168,17 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			k8sNetPolRows = append(k8sNetPolRows, []string{
 				p.Namespace,
 				p.Name,
+				"Namespace",
 				p.PodSelector,
-				fmt.Sprintf("%d", p.IngressRuleCount),
-				fmt.Sprintf("%d", p.EgressRuleCount),
-				defaultDenyStr,
-				shared.FormatBool(p.AllowsInternetIngress),
-				shared.FormatBool(p.AllowsInternetEgress),
-				shared.FormatBool(p.AllowsCrossNS),
-				shared.FormatBool(p.AllowsMetadataAPI),
-				fmt.Sprintf("%d", p.CoveredPods),
+				policyType,
+				configStr,
+				details,
 				npIssuesStr,
 			})
 		}
 	}
 
-	// Calico rows
+	// Calico rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, policies := range allCalicoPolicies {
 		for _, p := range policies {
 			scope := "Namespace"
@@ -1381,6 +1187,31 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 				scope = "Global"
 				ns = "<CLUSTER>"
 			}
+
+			// Type: policy type/direction
+			policyType := strings.Join(p.Types, "/")
+			if policyType == "" {
+				policyType = "Both"
+			}
+
+			// Configuration: rules summary
+			var config []string
+			if p.IsDefaultDeny {
+				config = append(config, "Default deny")
+			}
+			if p.AllowsInternetIngress {
+				config = append(config, "Allows internet in")
+			}
+			if p.AllowsInternetEgress {
+				config = append(config, "Allows internet out")
+			}
+			configStr := strings.Join(config, "; ")
+			if configStr == "" {
+				configStr = fmt.Sprintf("Action: %s", p.Action)
+			}
+
+			// Details
+			details := fmt.Sprintf("Order: %.0f", p.Order)
 
 			// Detect issues
 			var calicoIssues []string
@@ -1403,17 +1234,39 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 				p.Name,
 				scope,
 				p.Selector,
-				fmt.Sprintf("%.0f", p.Order),
-				fmt.Sprintf("%d", p.IngressRuleCount),
-				fmt.Sprintf("%d", p.EgressRuleCount),
-				shared.FormatBool(p.IsDefaultDeny),
-				shared.FormatBool(p.AllowsInternetIngress),
-				shared.FormatBool(p.AllowsInternetEgress),
+				policyType,
+				configStr,
+				details,
 				calicoIssuesStr,
 			})
 		}
 	}
 	for _, p := range calicoGlobalPolicies {
+		// Type: policy type/direction
+		policyType := strings.Join(p.Types, "/")
+		if policyType == "" {
+			policyType = "Both"
+		}
+
+		// Configuration: rules summary
+		var config []string
+		if p.IsDefaultDeny {
+			config = append(config, "Default deny")
+		}
+		if p.AllowsInternetIngress {
+			config = append(config, "Allows internet in")
+		}
+		if p.AllowsInternetEgress {
+			config = append(config, "Allows internet out")
+		}
+		configStr := strings.Join(config, "; ")
+		if configStr == "" {
+			configStr = fmt.Sprintf("Action: %s", p.Action)
+		}
+
+		// Details
+		details := fmt.Sprintf("Order: %.0f", p.Order)
+
 		// Detect issues for global policies
 		var calicoGlobalIssues []string
 		if !p.IsDefaultDeny {
@@ -1435,17 +1288,14 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			p.Name,
 			"Global",
 			p.Selector,
-			fmt.Sprintf("%.0f", p.Order),
-			fmt.Sprintf("%d", p.IngressRuleCount),
-			fmt.Sprintf("%d", p.EgressRuleCount),
-			shared.FormatBool(p.IsDefaultDeny),
-			shared.FormatBool(p.AllowsInternetIngress),
-			shared.FormatBool(p.AllowsInternetEgress),
+			policyType,
+			configStr,
+			details,
 			calicoGlobalIssuesStr,
 		})
 	}
 
-	// Cilium rows
+	// Cilium rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, policies := range allCiliumPolicies {
 		for _, p := range policies {
 			scope := "Namespace"
@@ -1454,9 +1304,35 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 				scope = "Clusterwide"
 				ns = "<CLUSTER>"
 			}
-			l7Str := "-"
+
+			// Type: direction type
+			policyType := "Both"
+			if p.IngressRuleCount > 0 && p.EgressRuleCount == 0 {
+				policyType = "Ingress"
+			} else if p.EgressRuleCount > 0 && p.IngressRuleCount == 0 {
+				policyType = "Egress"
+			}
+
+			// Configuration: rules summary
+			var config []string
+			if p.IsDefaultDeny {
+				config = append(config, "Default deny")
+			}
+			if p.AllowsInternetIngress {
+				config = append(config, "Allows internet in")
+			}
+			if p.AllowsInternetEgress {
+				config = append(config, "Allows internet out")
+			}
+			configStr := strings.Join(config, "; ")
+			if configStr == "" {
+				configStr = "-"
+			}
+
+			// Details (L7 info)
+			details := "-"
 			if p.HasL7Rules {
-				l7Str = strings.Join(p.L7Protocols, ",")
+				details = fmt.Sprintf("L7: %s", strings.Join(p.L7Protocols, ", "))
 			}
 
 			// Detect issues
@@ -1480,20 +1356,42 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 				p.Name,
 				scope,
 				p.EndpointSelector,
-				fmt.Sprintf("%d", p.IngressRuleCount),
-				fmt.Sprintf("%d", p.EgressRuleCount),
-				l7Str,
-				shared.FormatBool(p.IsDefaultDeny),
-				shared.FormatBool(p.AllowsInternetIngress),
-				shared.FormatBool(p.AllowsInternetEgress),
+				policyType,
+				configStr,
+				details,
 				ciliumIssuesStr,
 			})
 		}
 	}
 	for _, p := range ciliumClusterwidePolicies {
-		l7Str := "-"
+		// Type: direction type
+		policyType := "Both"
+		if p.IngressRuleCount > 0 && p.EgressRuleCount == 0 {
+			policyType = "Ingress"
+		} else if p.EgressRuleCount > 0 && p.IngressRuleCount == 0 {
+			policyType = "Egress"
+		}
+
+		// Configuration: rules summary
+		var config []string
+		if p.IsDefaultDeny {
+			config = append(config, "Default deny")
+		}
+		if p.AllowsInternetIngress {
+			config = append(config, "Allows internet in")
+		}
+		if p.AllowsInternetEgress {
+			config = append(config, "Allows internet out")
+		}
+		configStr := strings.Join(config, "; ")
+		if configStr == "" {
+			configStr = "-"
+		}
+
+		// Details (L7 info)
+		details := "-"
 		if p.HasL7Rules {
-			l7Str = strings.Join(p.L7Protocols, ",")
+			details = fmt.Sprintf("L7: %s", strings.Join(p.L7Protocols, ", "))
 		}
 
 		// Detect issues for clusterwide policies
@@ -1517,17 +1415,14 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			p.Name,
 			"Clusterwide",
 			p.EndpointSelector,
-			fmt.Sprintf("%d", p.IngressRuleCount),
-			fmt.Sprintf("%d", p.EgressRuleCount),
-			l7Str,
-			shared.FormatBool(p.IsDefaultDeny),
-			shared.FormatBool(p.AllowsInternetIngress),
-			shared.FormatBool(p.AllowsInternetEgress),
+			policyType,
+			configStr,
+			details,
 			ciliumCWIssuesStr,
 		})
 	}
 
-	// Antrea rows
+	// Antrea rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, policies := range allAntreaPolicies {
 		for _, p := range policies {
 			scope := "Namespace"
@@ -1536,6 +1431,20 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 				scope = "Cluster"
 				ns = "<CLUSTER>"
 			}
+
+			// Type: direction type
+			policyType := "Both"
+			if p.IngressRuleCount > 0 && p.EgressRuleCount == 0 {
+				policyType = "Ingress"
+			} else if p.EgressRuleCount > 0 && p.IngressRuleCount == 0 {
+				policyType = "Egress"
+			}
+
+			// Configuration: rules summary
+			configStr := fmt.Sprintf("Action: %s", p.Action)
+
+			// Details
+			details := fmt.Sprintf("Tier: %s, Priority: %.0f", p.Tier, p.Priority)
 
 			// Detect issues
 			var antreaIssues []string
@@ -1554,17 +1463,29 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 				ns,
 				p.Name,
 				scope,
-				p.Tier,
-				fmt.Sprintf("%.0f", p.Priority),
 				p.AppliedTo,
-				fmt.Sprintf("%d", p.IngressRuleCount),
-				fmt.Sprintf("%d", p.EgressRuleCount),
-				p.Action,
+				policyType,
+				configStr,
+				details,
 				antreaIssuesStr,
 			})
 		}
 	}
 	for _, p := range antreaClusterPolicies {
+		// Type: direction type
+		policyType := "Both"
+		if p.IngressRuleCount > 0 && p.EgressRuleCount == 0 {
+			policyType = "Ingress"
+		} else if p.EgressRuleCount > 0 && p.IngressRuleCount == 0 {
+			policyType = "Egress"
+		}
+
+		// Configuration: rules summary
+		configStr := fmt.Sprintf("Action: %s", p.Action)
+
+		// Details
+		details := fmt.Sprintf("Tier: %s, Priority: %.0f", p.Tier, p.Priority)
+
 		// Detect issues for cluster policies
 		var antreaCPIssues []string
 		if p.Action == "Allow" {
@@ -1582,19 +1503,32 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			"<CLUSTER>",
 			p.Name,
 			"Cluster",
-			p.Tier,
-			fmt.Sprintf("%.0f", p.Priority),
 			p.AppliedTo,
-			fmt.Sprintf("%d", p.IngressRuleCount),
-			fmt.Sprintf("%d", p.EgressRuleCount),
-			p.Action,
+			policyType,
+			configStr,
+			details,
 			antreaCPIssuesStr,
 		})
 	}
 
-	// Istio rows
+	// Istio rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, policies := range allIstioPolicies {
 		for _, p := range policies {
+			// Type: authorization policy type
+			policyType := "AuthorizationPolicy"
+
+			// Configuration: rules summary
+			configStr := fmt.Sprintf("Action: %s", p.Action)
+
+			// Details
+			var detailParts []string
+			if p.HasMTLS {
+				detailParts = append(detailParts, "mTLS: enabled")
+			} else {
+				detailParts = append(detailParts, "mTLS: disabled")
+			}
+			details := strings.Join(detailParts, ", ")
+
 			// Detect issues
 			var istioIssues []string
 			if p.Action == "ALLOW" {
@@ -1614,16 +1548,17 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			istioRows = append(istioRows, []string{
 				p.Namespace,
 				p.Name,
-				p.Action,
+				"Namespace",
 				p.Selector,
-				fmt.Sprintf("%d", p.Rules),
-				shared.FormatBool(p.HasMTLS),
+				policyType,
+				configStr,
+				details,
 				istioIssuesStr,
 			})
 		}
 	}
 
-	// Linkerd rows
+	// Linkerd rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, policies := range allLinkerdPolicies {
 		for _, p := range policies {
 			// Detect issues
@@ -1639,16 +1574,34 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			linkerdRows = append(linkerdRows, []string{
 				p.Namespace,
 				p.Name,
-				p.Kind,
+				"Namespace",
 				p.Selector,
+				p.Kind,
+				"-",
+				fmt.Sprintf("Kind: %s", p.Kind),
 				linkerdIssuesStr,
 			})
 		}
 	}
 
-	// AWS SecurityGroupPolicy rows
+	// AWS SecurityGroupPolicy rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, policies := range allAWSSecurityGroupPolicies {
 		for _, p := range policies {
+			// Type: security group policy
+			policyType := "SecurityGroupPolicy"
+
+			// Configuration: traffic rules
+			configStr := "-"
+			if p.AllowsAllTraffic {
+				configStr = "Allows all traffic"
+			}
+
+			// Details - security group IDs
+			details := strings.Join(p.SecurityGroupIDs, ", ")
+			if details == "" {
+				details = "No security groups"
+			}
+
 			// Detect issues
 			var awsSGIssues []string
 			if p.AllowsAllTraffic {
@@ -1665,17 +1618,38 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			awsSGRows = append(awsSGRows, []string{
 				p.Namespace,
 				p.Name,
+				"Namespace",
 				p.PodSelector,
-				strings.Join(p.SecurityGroupIDs, ", "),
-				shared.FormatBool(p.AllowsAllTraffic),
+				policyType,
+				configStr,
+				details,
 				awsSGIssuesStr,
 			})
 		}
 	}
 
-	// OpenShift EgressFirewall rows
+	// OpenShift EgressFirewall rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, policies := range allOpenShiftEgressPolicies {
 		for _, p := range policies {
+			// Type: egress firewall type
+			policyType := "Egress"
+
+			// Configuration: rules summary
+			var config []string
+			if p.AllowsInternet {
+				config = append(config, "Allows internet")
+			}
+			if p.DeniesMetadataAPI {
+				config = append(config, "Denies metadata API")
+			}
+			configStr := strings.Join(config, "; ")
+			if configStr == "" {
+				configStr = "-"
+			}
+
+			// Details
+			details := fmt.Sprintf("Kind: %s", p.Kind)
+
 			// Detect issues
 			var ocpIssues []string
 			if p.AllowsInternet {
@@ -1695,18 +1669,31 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			openshiftEgressRows = append(openshiftEgressRows, []string{
 				p.Namespace,
 				p.Name,
-				p.Kind,
-				fmt.Sprintf("%d", p.RuleCount),
-				shared.FormatBool(p.AllowsInternet),
-				shared.FormatBool(p.DeniesMetadataAPI),
+				"Namespace",
+				"All pods",
+				policyType,
+				configStr,
+				details,
 				ocpIssuesStr,
 			})
 		}
 	}
 
-	// Consul Connect rows
+	// Consul Connect rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, policies := range allConsulConnectPolicies {
 		for _, p := range policies {
+			// Type: service intentions
+			policyType := "ServiceIntentions"
+
+			// Configuration: rules summary
+			configStr := fmt.Sprintf("Action: %s", p.Action)
+			if p.AllowsAllSources {
+				configStr += "; Allows all sources"
+			}
+
+			// Details
+			details := fmt.Sprintf("Destination: %s", p.Destination)
+
 			// Detect issues
 			var consulIssues []string
 			if p.AllowsAllSources {
@@ -1723,18 +1710,28 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			consulRows = append(consulRows, []string{
 				p.Namespace,
 				p.Name,
+				"Namespace",
 				p.Destination,
-				p.Action,
-				fmt.Sprintf("%d", p.SourceCount),
-				shared.FormatBool(p.AllowsAllSources),
+				policyType,
+				configStr,
+				details,
 				consulIssuesStr,
 			})
 		}
 	}
 
-	// Kuma Mesh rows
+	// Kuma Mesh rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, policies := range allKumaMeshPolicies {
 		for _, p := range policies {
+			// Type: mesh policy kind
+			policyType := p.Kind
+
+			// Configuration: rules summary
+			configStr := fmt.Sprintf("Action: %s", p.Action)
+
+			// Details
+			details := fmt.Sprintf("Kind: %s", p.Kind)
+
 			// Detect issues
 			var kumaIssues []string
 			if p.Action == "Allow" || p.Action == "allow" {
@@ -1751,18 +1748,31 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			kumaRows = append(kumaRows, []string{
 				p.Namespace,
 				p.Name,
-				p.Kind,
+				"Namespace",
 				p.TargetRef,
-				p.Action,
-				fmt.Sprintf("%d", p.RuleCount),
+				policyType,
+				configStr,
+				details,
 				kumaIssuesStr,
 			})
 		}
 	}
 
-	// SMI rows
+	// SMI rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, policies := range allSMIPolicies {
 		for _, p := range policies {
+			// Type: SMI policy kind
+			policyType := p.Kind
+
+			// Configuration: rules summary
+			configStr := "-"
+			if p.AllowsAllSources {
+				configStr = "Allows all sources"
+			}
+
+			// Details
+			details := fmt.Sprintf("Kind: %s, Provider: %s", p.Kind, p.MeshProvider)
+
 			// Detect issues
 			var smiIssues []string
 			if p.AllowsAllSources {
@@ -1776,18 +1786,28 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			smiRows = append(smiRows, []string{
 				p.Namespace,
 				p.Name,
-				p.Kind,
-				p.MeshProvider,
+				"Namespace",
 				p.DestinationService,
-				shared.FormatBool(p.AllowsAllSources),
+				policyType,
+				configStr,
+				details,
 				smiIssuesStr,
 			})
 		}
 	}
 
-	// Gloo Mesh rows
+	// Gloo Mesh rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, policies := range allGlooMeshPolicies {
 		for _, p := range policies {
+			// Type: gloo mesh policy kind
+			policyType := p.Kind
+
+			// Configuration: rules summary
+			configStr := fmt.Sprintf("Action: %s", p.Action)
+
+			// Details
+			details := fmt.Sprintf("Kind: %s", p.Kind)
+
 			// Detect issues
 			var glooIssues []string
 			if p.Action == "ALLOW" || p.Action == "allow" {
@@ -1804,18 +1824,28 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			glooRows = append(glooRows, []string{
 				p.Namespace,
 				p.Name,
-				p.Kind,
+				"Namespace",
 				p.ApplyToRefs,
-				p.Action,
-				fmt.Sprintf("%d", p.RuleCount),
+				policyType,
+				configStr,
+				details,
 				glooIssuesStr,
 			})
 		}
 	}
 
-	// NSX-T rows
+	// NSX-T rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, policies := range allNSXTPolicies {
 		for _, p := range policies {
+			// Type: security policy
+			policyType := "SecurityPolicy"
+
+			// Configuration: rules summary
+			configStr := fmt.Sprintf("Default: %s", p.DefaultAction)
+
+			// Details
+			details := fmt.Sprintf("Priority: %d", p.Priority)
+
 			// Detect issues
 			var nsxtIssues []string
 			if p.DefaultAction == "ALLOW" || p.DefaultAction == "allow" {
@@ -1832,18 +1862,38 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			nsxtRows = append(nsxtRows, []string{
 				p.Namespace,
 				p.Name,
+				"Namespace",
 				p.AppliedTo,
-				fmt.Sprintf("%d", p.Priority),
-				fmt.Sprintf("%d", p.RuleCount),
-				p.DefaultAction,
+				policyType,
+				configStr,
+				details,
 				nsxtIssuesStr,
 			})
 		}
 	}
 
-	// GCP Backend Policy rows
+	// GCP Backend Policy rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, policies := range allGCPBackendPolicies {
 		for _, p := range policies {
+			// Type: backend policy kind
+			policyType := p.Kind
+
+			// Configuration: rules summary
+			var config []string
+			if p.CloudArmorPolicy != "" {
+				config = append(config, fmt.Sprintf("Cloud Armor: %s", p.CloudArmorPolicy))
+			}
+			if p.HasIAP {
+				config = append(config, "IAP: enabled")
+			}
+			configStr := strings.Join(config, "; ")
+			if configStr == "" {
+				configStr = "-"
+			}
+
+			// Details
+			details := fmt.Sprintf("Kind: %s", p.Kind)
+
 			// Detect issues
 			var gcpIssues []string
 			if p.CloudArmorPolicy == "" {
@@ -1860,18 +1910,31 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			gcpRows = append(gcpRows, []string{
 				p.Namespace,
 				p.Name,
-				p.Kind,
+				"Namespace",
 				p.TargetRef,
-				p.CloudArmorPolicy,
-				shared.FormatBool(p.HasIAP),
+				policyType,
+				configStr,
+				details,
 				gcpIssuesStr,
 			})
 		}
 	}
 
-	// Azure Network Policy rows
+	// Azure Network Policy rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, policies := range allAzureNetworkPolicies {
 		for _, p := range policies {
+			// Type: azure policy kind
+			policyType := p.Kind
+
+			// Configuration: rules summary
+			configStr := "-"
+			if p.HasManagedIdentity {
+				configStr = "Managed Identity: enabled"
+			}
+
+			// Details
+			details := fmt.Sprintf("Kind: %s", p.Kind)
+
 			// Detect issues
 			var azureIssues []string
 			if !p.HasManagedIdentity {
@@ -1885,40 +1948,49 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			azureRows = append(azureRows, []string{
 				p.Namespace,
 				p.Name,
-				p.Kind,
+				"Namespace",
 				p.TargetService,
-				shared.FormatBool(p.HasManagedIdentity),
+				policyType,
+				configStr,
+				details,
 				azureIssuesStr,
 			})
 		}
 	}
 
-	// Gatekeeper Network Constraint rows
+	// Gatekeeper Network Constraint rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, c := range allGatekeeperNetworkConstraints {
-		matchNs := "-"
+		// Type: constraint kind
+		policyType := c.Kind
+
+		// Target namespaces
+		target := "-"
 		if len(c.MatchNamespaces) > 0 {
 			if len(c.MatchNamespaces) > 3 {
-				matchNs = strings.Join(c.MatchNamespaces[:3], ", ") + "..."
+				target = strings.Join(c.MatchNamespaces[:3], ", ") + "..."
 			} else {
-				matchNs = strings.Join(c.MatchNamespaces, ", ")
+				target = strings.Join(c.MatchNamespaces, ", ")
 			}
 		}
-		excludeNs := "-"
-		if len(c.ExcludeNamespaces) > 0 {
-			if len(c.ExcludeNamespaces) > 3 {
-				excludeNs = strings.Join(c.ExcludeNamespaces[:3], ", ") + "..."
-			} else {
-				excludeNs = strings.Join(c.ExcludeNamespaces, ", ")
-			}
-		}
-		networkRules := "-"
+
+		// Configuration: rules summary
+		configStr := "-"
 		if len(c.NetworkRules) > 0 {
 			if len(c.NetworkRules) > 2 {
-				networkRules = strings.Join(c.NetworkRules[:2], "; ") + "..."
+				configStr = strings.Join(c.NetworkRules[:2], "; ") + "..."
 			} else {
-				networkRules = strings.Join(c.NetworkRules, "; ")
+				configStr = strings.Join(c.NetworkRules, "; ")
 			}
 		}
+
+		// Details
+		var detailParts []string
+		detailParts = append(detailParts, fmt.Sprintf("Kind: %s", c.Kind))
+		detailParts = append(detailParts, fmt.Sprintf("Enforcement: %s", c.EnforcementAction))
+		if c.ViolationCount > 0 {
+			detailParts = append(detailParts, fmt.Sprintf("Violations: %d", c.ViolationCount))
+		}
+		details := strings.Join(detailParts, ", ")
 
 		// Detect issues
 		var gkNetIssues []string
@@ -1940,31 +2012,49 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		}
 
 		gatekeeperNetworkRows = append(gatekeeperNetworkRows, []string{
+			"<CLUSTER>",
 			c.Name,
-			c.Kind,
-			c.EnforcementAction,
-			matchNs,
-			excludeNs,
-			networkRules,
-			fmt.Sprintf("%d", c.ViolationCount),
+			"Cluster",
+			target,
+			policyType,
+			configStr,
+			details,
 			gkNetIssuesStr,
 		})
 	}
 
-	// Kyverno Network Policy rows
+	// Kyverno Network Policy rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, p := range allKyvernoNetworkPolicies {
 		scope := "Namespace"
+		ns := p.Namespace
 		if p.IsClusterPolicy {
 			scope = "Cluster"
+			ns = "<CLUSTER>"
 		}
-		networkRules := "-"
+
+		// Type: kyverno policy type
+		policyType := "NetworkPolicy"
+		if p.IsClusterPolicy {
+			policyType = "ClusterPolicy"
+		}
+
+		// Configuration: rules summary
+		configStr := "-"
 		if len(p.NetworkRules) > 0 {
 			if len(p.NetworkRules) > 2 {
-				networkRules = strings.Join(p.NetworkRules[:2], "; ") + "..."
+				configStr = strings.Join(p.NetworkRules[:2], "; ") + "..."
 			} else {
-				networkRules = strings.Join(p.NetworkRules, "; ")
+				configStr = strings.Join(p.NetworkRules, "; ")
 			}
 		}
+
+		// Details
+		var detailParts []string
+		detailParts = append(detailParts, fmt.Sprintf("Action: %s", p.ValidationAction))
+		if p.Background {
+			detailParts = append(detailParts, "Background: enabled")
+		}
+		details := strings.Join(detailParts, ", ")
 
 		// Detect issues
 		var kyNetIssues []string
@@ -1986,35 +2076,43 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		}
 
 		kyvernoNetworkRows = append(kyvernoNetworkRows, []string{
-			p.Namespace,
+			ns,
 			p.Name,
 			scope,
-			p.ValidationAction,
-			shared.FormatBool(p.Background),
-			fmt.Sprintf("%d", p.RuleCount),
-			networkRules,
+			"All matching",
+			policyType,
+			configStr,
+			details,
 			kyNetIssuesStr,
 		})
 	}
 
-	// Kubewarden Network Policy rows
+	// Kubewarden Network Policy rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, p := range allKubewardenNetworkPolicies {
 		ns := p.Namespace
 		if ns == "" {
-			ns = "-"
+			ns = "<CLUSTER>"
 		}
+
+		// Type: admission policy
+		policyType := "AdmissionPolicy"
+
+		// Configuration: rules summary
+		configStr := "-"
+		if len(p.NetworkRules) > 0 {
+			if len(p.NetworkRules) > 2 {
+				configStr = strings.Join(p.NetworkRules[:2], "; ") + "..."
+			} else {
+				configStr = strings.Join(p.NetworkRules, "; ")
+			}
+		}
+
+		// Details
 		module := p.Module
 		if len(module) > 40 {
 			module = module[:40] + "..."
 		}
-		networkRules := "-"
-		if len(p.NetworkRules) > 0 {
-			if len(p.NetworkRules) > 2 {
-				networkRules = strings.Join(p.NetworkRules[:2], "; ") + "..."
-			} else {
-				networkRules = strings.Join(p.NetworkRules, "; ")
-			}
-		}
+		details := fmt.Sprintf("Mode: %s, Server: %s, Module: %s", p.Mode, p.PolicyServer, module)
 
 		// Detect issues
 		var kwNetIssues []string
@@ -2035,15 +2133,17 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		kubewardenNetworkRows = append(kubewardenNetworkRows, []string{
 			ns,
 			p.Name,
-			p.PolicyServer,
-			p.Mode,
-			module,
-			networkRules,
+			"Namespace",
+			"All matching",
+			policyType,
+			configStr,
+			details,
 			kwNetIssuesStr,
 		})
 	}
 
 	// Build CNAPP Network Policy rows (Aqua, Prisma, Sysdig, StackRox, NeuVector)
+	// Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	allCNAPPPolicies := append(allAquaNetworkPolicies, allPrismaNetworkPolicies...)
 	allCNAPPPolicies = append(allCNAPPPolicies, allSysdigNetworkPolicies...)
 	allCNAPPPolicies = append(allCNAPPPolicies, allStackRoxNetworkPolicies...)
@@ -2052,12 +2152,38 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 	for _, p := range allCNAPPPolicies {
 		scope := p.Scope
 		if scope == "" {
-			scope = "namespace"
+			scope = "Namespace"
 		}
+		ns := p.Namespace
+		if scope == "cluster-wide" || scope == "*" {
+			ns = "<CLUSTER>"
+			scope = "Cluster"
+		}
+
+		// Type: direction type
+		policyType := "Both"
+		if p.IngressRules > 0 && p.EgressRules == 0 {
+			policyType = "Ingress"
+		} else if p.EgressRules > 0 && p.IngressRules == 0 {
+			policyType = "Egress"
+		}
+
+		// Configuration: rules summary
+		var config []string
+		if p.HasDefaultDeny {
+			config = append(config, "Default deny")
+		}
+		configStr := strings.Join(config, "; ")
+		if configStr == "" {
+			configStr = "-"
+		}
+
+		// Details
 		mode := p.Mode
 		if mode == "" {
-			mode = "<NONE>"
+			mode = "enforce"
 		}
+		details := fmt.Sprintf("Platform: %s, Mode: %s", p.Platform, mode)
 
 		// Detect issues
 		var cnappIssues []string
@@ -2070,40 +2196,52 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		if mode == "audit" || mode == "monitor" || mode == "learn" {
 			cnappIssues = append(cnappIssues, "Not enforcing")
 		}
-		if scope == "cluster-wide" || scope == "*" {
-			cnappIssues = append(cnappIssues, "Overly broad scope")
-		}
 		issuesStr := "<NONE>"
 		if len(cnappIssues) > 0 {
 			issuesStr = strings.Join(cnappIssues, "; ")
 		}
 
 		cnappNetworkRows = append(cnappNetworkRows, []string{
-			p.Platform,
+			ns,
 			p.Name,
-			p.Namespace,
 			scope,
-			mode,
-			fmt.Sprintf("%d", p.IngressRules),
-			fmt.Sprintf("%d", p.EgressRules),
-			shared.FormatBool(p.HasDefaultDeny),
+			"All matching",
+			policyType,
+			configStr,
+			details,
 			issuesStr,
 		})
 	}
 
-	// Build Capsule Network Policy rows
+	// Build Capsule Network Policy rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, p := range allCapsuleNetworkPolicies {
-		networkPolicies := "<NONE>"
+		// Type: tenant policy
+		policyType := "TenantPolicy"
+
+		// Configuration: rules summary
+		var config []string
+		if p.HasNetworkIsolation {
+			config = append(config, "Network isolation enabled")
+		}
 		if len(p.NetworkPolicies) > 0 {
-			networkPolicies = strings.Join(p.NetworkPolicies, ", ")
+			config = append(config, fmt.Sprintf("Policies: %s", strings.Join(p.NetworkPolicies, ", ")))
 		}
-		externalIPs := "<NONE>"
+		configStr := strings.Join(config, "; ")
+		if configStr == "" {
+			configStr = "-"
+		}
+
+		// Details
+		var detailParts []string
 		if len(p.AllowedExternalIPs) > 0 {
-			externalIPs = strings.Join(p.AllowedExternalIPs, ", ")
+			detailParts = append(detailParts, fmt.Sprintf("External IPs: %s", strings.Join(p.AllowedExternalIPs, ", ")))
 		}
-		ingressClasses := "<NONE>"
 		if len(p.IngressClasses) > 0 {
-			ingressClasses = strings.Join(p.IngressClasses, ", ")
+			detailParts = append(detailParts, fmt.Sprintf("Ingress: %s", strings.Join(p.IngressClasses, ", ")))
+		}
+		details := strings.Join(detailParts, ", ")
+		if details == "" {
+			details = "-"
 		}
 
 		// Detect issues
@@ -2126,25 +2264,39 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		}
 
 		capsuleNetworkRows = append(capsuleNetworkRows, []string{
-			p.TenantName,
 			p.Namespace,
-			networkPolicies,
-			externalIPs,
-			ingressClasses,
-			shared.FormatBool(p.HasNetworkIsolation),
+			p.TenantName,
+			"Tenant",
+			"All tenant pods",
+			policyType,
+			configStr,
+			details,
 			issuesStr,
 		})
 	}
 
-	// Build Rancher Network Policy rows
+	// Build Rancher Network Policy rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, p := range allRancherNetworkPolicies {
-		netPolicy := p.NetworkPolicy
-		if netPolicy == "" {
-			netPolicy = "<NONE>"
+		// Type: project policy
+		policyType := "ProjectPolicy"
+
+		// Configuration: rules summary
+		var config []string
+		if p.HasIsolation {
+			config = append(config, "Network isolation enabled")
 		}
-		pspTemplate := p.PSPTemplate
-		if pspTemplate == "" {
-			pspTemplate = "<NONE>"
+		if p.NetworkPolicy != "" {
+			config = append(config, fmt.Sprintf("Policy: %s", p.NetworkPolicy))
+		}
+		configStr := strings.Join(config, "; ")
+		if configStr == "" {
+			configStr = "-"
+		}
+
+		// Details
+		details := fmt.Sprintf("Project: %s (%s)", p.ProjectName, p.ProjectID)
+		if p.PSPTemplate != "" {
+			details += fmt.Sprintf(", PSP: %s", p.PSPTemplate)
 		}
 
 		// Detect issues
@@ -2164,41 +2316,39 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		}
 
 		rancherNetworkRows = append(rancherNetworkRows, []string{
-			p.ProjectName,
-			p.ProjectID,
 			p.Namespace,
-			netPolicy,
-			pspTemplate,
-			shared.FormatBool(p.HasIsolation),
+			p.ProjectName,
+			"Project",
+			"All project pods",
+			policyType,
+			configStr,
+			details,
 			issuesStr,
 		})
 	}
 
-	// Build Polaris Network Check rows
+	// Build Polaris Network Check rows - Uniform schema: Namespace | Name | Scope | Target | Type | Configuration | Details | Issues
 	for _, p := range allPolarisNetworkChecks {
-		checkID := p.CheckID
-		if checkID == "" {
-			checkID = "<NONE>"
+		// Type: polaris check
+		policyType := "PolarisCheck"
+
+		// Configuration: rules summary
+		configStr := "-"
+		if p.HasNetworkPolicy {
+			configStr = "Network policy present"
+		} else {
+			configStr = "No network policy"
 		}
-		checkName := p.CheckName
-		if checkName == "" {
-			checkName = "<NONE>"
-		}
-		severity := p.Severity
-		if severity == "" {
-			severity = "<NONE>"
-		}
-		category := p.Category
-		if category == "" {
-			category = "<NONE>"
-		}
+
+		// Details
+		details := fmt.Sprintf("Check: %s, Severity: %s, Category: %s", p.CheckName, p.Severity, p.Category)
 
 		// Detect issues
 		var polarisNetIssues []string
 		if !p.HasNetworkPolicy {
 			polarisNetIssues = append(polarisNetIssues, "No network policy")
 		}
-		if severity == "danger" || severity == "critical" || severity == "high" {
+		if p.Severity == "danger" || p.Severity == "critical" || p.Severity == "high" {
 			polarisNetIssues = append(polarisNetIssues, "High severity finding")
 		}
 		issuesStr := "<NONE>"
@@ -2208,34 +2358,57 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 
 		polarisNetworkRows = append(polarisNetworkRows, []string{
 			p.Namespace,
-			checkID,
-			checkName,
-			severity,
-			category,
-			shared.FormatBool(p.HasNetworkPolicy),
+			p.CheckID,
+			"Namespace",
+			"All pods",
+			policyType,
+			configStr,
+			details,
 			issuesStr,
 		})
 	}
 
 	// Create unified policies table (merging all policy types)
+	// Uniform schema: Namespace | Tool | Name | Scope | Type | Configuration | Details | Issues
 	var unifiedPolicyRows [][]string
-	unifiedPolicyHeaders := []string{"Namespace", "Tool", "Name", "Scope", "Type", "Details"}
+	unifiedPolicyHeaders := []string{"Namespace", "Tool", "Name", "Scope", "Type", "Configuration", "Details", "Issues"}
 
 	// K8s NetworkPolicies
 	for _, policies := range allK8sNetPolicies {
 		for _, p := range policies {
-			details := fmt.Sprintf("Ingress:%d, Egress:%d", p.IngressRuleCount, p.EgressRuleCount)
-			if p.IsDefaultDeny {
-				details += ", Default-Deny"
-			}
 			policyType := strings.Join(p.PolicyTypes, ",")
+			if policyType == "" {
+				policyType = "Ingress"
+			}
+			var config []string
+			if p.DefaultDenyIngress || p.DefaultDenyEgress {
+				config = append(config, "Default-Deny")
+			}
+			configStr := strings.Join(config, "; ")
+			if configStr == "" {
+				configStr = "-"
+			}
+			details := fmt.Sprintf("Ingress rules: %d, Egress rules: %d", p.IngressRuleCount, p.EgressRuleCount)
+			var issues []string
+			if !p.DefaultDenyIngress && !p.DefaultDenyEgress {
+				issues = append(issues, "No default deny")
+			}
+			if p.AllowsInternetIngress {
+				issues = append(issues, "Allows internet ingress")
+			}
+			issuesStr := "<NONE>"
+			if len(issues) > 0 {
+				issuesStr = strings.Join(issues, "; ")
+			}
 			unifiedPolicyRows = append(unifiedPolicyRows, []string{
 				p.Namespace,
 				"K8s NetworkPolicy",
 				p.Name,
 				"Namespace",
 				policyType,
+				configStr,
 				details,
+				issuesStr,
 			})
 		}
 	}
@@ -2249,28 +2422,52 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 				scope = "Global"
 				ns = "<CLUSTER>"
 			}
-			details := fmt.Sprintf("Ingress:%d, Egress:%d, Action:%s", p.IngressRuleCount, p.EgressRuleCount, p.Action)
 			policyType := strings.Join(p.Types, ",")
+			if policyType == "" {
+				policyType = "Both"
+			}
+			configStr := fmt.Sprintf("Action: %s", p.Action)
+			details := fmt.Sprintf("Ingress rules: %d, Egress rules: %d", p.IngressRuleCount, p.EgressRuleCount)
+			var issues []string
+			if !p.IsDefaultDeny {
+				issues = append(issues, "No default deny")
+			}
+			issuesStr := "<NONE>"
+			if len(issues) > 0 {
+				issuesStr = strings.Join(issues, "; ")
+			}
 			unifiedPolicyRows = append(unifiedPolicyRows, []string{
 				ns,
 				"Calico",
 				p.Name,
 				scope,
 				policyType,
+				configStr,
 				details,
+				issuesStr,
 			})
 		}
 	}
 	for _, p := range calicoGlobalPolicies {
-		details := fmt.Sprintf("Ingress:%d, Egress:%d, Action:%s", p.IngressRuleCount, p.EgressRuleCount, p.Action)
 		policyType := strings.Join(p.Types, ",")
+		if policyType == "" {
+			policyType = "Both"
+		}
+		configStr := fmt.Sprintf("Action: %s", p.Action)
+		details := fmt.Sprintf("Ingress rules: %d, Egress rules: %d", p.IngressRuleCount, p.EgressRuleCount)
+		issuesStr := "<NONE>"
+		if !p.IsDefaultDeny {
+			issuesStr = "No default deny"
+		}
 		unifiedPolicyRows = append(unifiedPolicyRows, []string{
 			"<CLUSTER>",
 			"Calico",
 			p.Name,
 			"Global",
 			policyType,
+			configStr,
 			details,
+			issuesStr,
 		})
 	}
 
@@ -2283,24 +2480,43 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 				scope = "Clusterwide"
 				ns = "<CLUSTER>"
 			}
-			details := fmt.Sprintf("Ingress:%d, Egress:%d", p.IngressRuleCount, p.EgressRuleCount)
+			policyType := "NetworkPolicy"
+			configStr := "-"
+			if p.IsDefaultDeny {
+				configStr = "Default deny"
+			}
+			details := fmt.Sprintf("Ingress rules: %d, Egress rules: %d", p.IngressRuleCount, p.EgressRuleCount)
 			if p.HasL7Rules {
-				details += fmt.Sprintf(", L7:%s", strings.Join(p.L7Protocols, ","))
+				details += fmt.Sprintf(", L7: %s", strings.Join(p.L7Protocols, ", "))
+			}
+			issuesStr := "<NONE>"
+			if !p.IsDefaultDeny {
+				issuesStr = "No default deny"
 			}
 			unifiedPolicyRows = append(unifiedPolicyRows, []string{
 				ns,
 				"Cilium",
 				p.Name,
 				scope,
-				"NetworkPolicy",
+				policyType,
+				configStr,
 				details,
+				issuesStr,
 			})
 		}
 	}
 	for _, p := range ciliumClusterwidePolicies {
-		details := fmt.Sprintf("Ingress:%d, Egress:%d", p.IngressRuleCount, p.EgressRuleCount)
+		configStr := "-"
+		if p.IsDefaultDeny {
+			configStr = "Default deny"
+		}
+		details := fmt.Sprintf("Ingress rules: %d, Egress rules: %d", p.IngressRuleCount, p.EgressRuleCount)
 		if p.HasL7Rules {
-			details += fmt.Sprintf(", L7:%s", strings.Join(p.L7Protocols, ","))
+			details += fmt.Sprintf(", L7: %s", strings.Join(p.L7Protocols, ", "))
+		}
+		issuesStr := "<NONE>"
+		if !p.IsDefaultDeny {
+			issuesStr = "No default deny"
 		}
 		unifiedPolicyRows = append(unifiedPolicyRows, []string{
 			"<CLUSTER>",
@@ -2308,7 +2524,9 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			p.Name,
 			"Clusterwide",
 			"NetworkPolicy",
+			configStr,
 			details,
+			issuesStr,
 		})
 	}
 
@@ -2321,35 +2539,61 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 				scope = "Cluster"
 				ns = "<CLUSTER>"
 			}
-			details := fmt.Sprintf("Ingress:%d, Egress:%d, Action:%s, Tier:%s", p.IngressRuleCount, p.EgressRuleCount, p.Action, p.Tier)
+			configStr := fmt.Sprintf("Action: %s, Tier: %s", p.Action, p.Tier)
+			details := fmt.Sprintf("Ingress rules: %d, Egress rules: %d", p.IngressRuleCount, p.EgressRuleCount)
+			issuesStr := "<NONE>"
+			if p.Action == "Allow" {
+				issuesStr = "Allow action (permissive)"
+			}
 			unifiedPolicyRows = append(unifiedPolicyRows, []string{
 				ns,
 				"Antrea",
 				p.Name,
 				scope,
 				"NetworkPolicy",
+				configStr,
 				details,
+				issuesStr,
 			})
 		}
 	}
 	for _, p := range antreaClusterPolicies {
-		details := fmt.Sprintf("Ingress:%d, Egress:%d, Action:%s, Tier:%s", p.IngressRuleCount, p.EgressRuleCount, p.Action, p.Tier)
+		configStr := fmt.Sprintf("Action: %s, Tier: %s", p.Action, p.Tier)
+		details := fmt.Sprintf("Ingress rules: %d, Egress rules: %d", p.IngressRuleCount, p.EgressRuleCount)
+		issuesStr := "<NONE>"
+		if p.Action == "Allow" {
+			issuesStr = "Allow action (permissive)"
+		}
 		unifiedPolicyRows = append(unifiedPolicyRows, []string{
 			"<CLUSTER>",
 			"Antrea",
 			p.Name,
 			"Cluster",
 			"NetworkPolicy",
+			configStr,
 			details,
+			issuesStr,
 		})
 	}
 
 	// Istio policies
 	for _, policies := range allIstioPolicies {
 		for _, p := range policies {
-			details := fmt.Sprintf("Rules:%d, Action:%s", p.Rules, p.Action)
+			configStr := fmt.Sprintf("Action: %s", p.Action)
 			if p.HasMTLS {
-				details += ", mTLS"
+				configStr += ", mTLS: enabled"
+			}
+			details := fmt.Sprintf("Rules: %d", p.Rules)
+			var issues []string
+			if p.Action == "ALLOW" {
+				issues = append(issues, "Allow action")
+			}
+			if !p.HasMTLS {
+				issues = append(issues, "No mTLS")
+			}
+			issuesStr := "<NONE>"
+			if len(issues) > 0 {
+				issuesStr = strings.Join(issues, "; ")
 			}
 			unifiedPolicyRows = append(unifiedPolicyRows, []string{
 				p.Namespace,
@@ -2357,7 +2601,9 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 				p.Name,
 				"Namespace",
 				"AuthorizationPolicy",
+				configStr,
 				details,
+				issuesStr,
 			})
 		}
 	}
@@ -2365,6 +2611,10 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 	// Linkerd policies
 	for _, policies := range allLinkerdPolicies {
 		for _, p := range policies {
+			issuesStr := "<NONE>"
+			if p.Selector == "" || p.Selector == "*" {
+				issuesStr = "Broad selector"
+			}
 			unifiedPolicyRows = append(unifiedPolicyRows, []string{
 				p.Namespace,
 				"Linkerd",
@@ -2372,6 +2622,8 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 				"Namespace",
 				p.Kind,
 				"-",
+				fmt.Sprintf("Kind: %s", p.Kind),
+				issuesStr,
 			})
 		}
 	}
@@ -2379,14 +2631,24 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 	// AWS SecurityGroupPolicy
 	for _, policies := range allAWSSecurityGroupPolicies {
 		for _, p := range policies {
-			details := fmt.Sprintf("SGs:%s", strings.Join(p.SecurityGroupIDs, ","))
+			configStr := "-"
+			if p.AllowsAllTraffic {
+				configStr = "Allows all traffic"
+			}
+			details := fmt.Sprintf("Security Groups: %s", strings.Join(p.SecurityGroupIDs, ", "))
+			issuesStr := "<NONE>"
+			if p.AllowsAllTraffic {
+				issuesStr = "Allows all traffic"
+			}
 			unifiedPolicyRows = append(unifiedPolicyRows, []string{
 				p.Namespace,
 				"AWS VPC CNI",
 				p.Name,
 				"Namespace",
 				"SecurityGroupPolicy",
+				configStr,
 				details,
+				issuesStr,
 			})
 		}
 	}
@@ -2394,14 +2656,24 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 	// OpenShift EgressFirewall
 	for _, policies := range allOpenShiftEgressPolicies {
 		for _, p := range policies {
-			details := fmt.Sprintf("Rules:%d", p.RuleCount)
+			configStr := "-"
+			if p.AllowsInternet {
+				configStr = "Allows internet"
+			}
+			details := fmt.Sprintf("Rules: %d", p.RuleCount)
+			issuesStr := "<NONE>"
+			if p.AllowsInternet {
+				issuesStr = "Allows internet egress"
+			}
 			unifiedPolicyRows = append(unifiedPolicyRows, []string{
 				p.Namespace,
 				"OpenShift",
 				p.Name,
 				"Namespace",
 				p.Kind,
+				configStr,
 				details,
+				issuesStr,
 			})
 		}
 	}
@@ -2409,14 +2681,21 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 	// Consul Connect
 	for _, policies := range allConsulConnectPolicies {
 		for _, p := range policies {
-			details := fmt.Sprintf("Sources:%d, Action:%s", p.SourceCount, p.Action)
+			configStr := fmt.Sprintf("Action: %s", p.Action)
+			details := fmt.Sprintf("Sources: %d", p.SourceCount)
+			issuesStr := "<NONE>"
+			if p.AllowsAllSources {
+				issuesStr = "Allows all sources"
+			}
 			unifiedPolicyRows = append(unifiedPolicyRows, []string{
 				p.Namespace,
 				"Consul Connect",
 				p.Name,
 				"Namespace",
 				"ServiceIntentions",
+				configStr,
 				details,
+				issuesStr,
 			})
 		}
 	}
@@ -2424,14 +2703,21 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 	// Kuma Mesh
 	for _, policies := range allKumaMeshPolicies {
 		for _, p := range policies {
-			details := fmt.Sprintf("Rules:%d, Action:%s", p.RuleCount, p.Action)
+			configStr := fmt.Sprintf("Action: %s", p.Action)
+			details := fmt.Sprintf("Rules: %d", p.RuleCount)
+			issuesStr := "<NONE>"
+			if p.Action == "Allow" || p.Action == "allow" {
+				issuesStr = "Allow action"
+			}
 			unifiedPolicyRows = append(unifiedPolicyRows, []string{
 				p.Namespace,
 				"Kuma/Kong Mesh",
 				p.Name,
 				"Namespace",
 				p.Kind,
+				configStr,
 				details,
+				issuesStr,
 			})
 		}
 	}
@@ -2439,14 +2725,24 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 	// SMI policies
 	for _, policies := range allSMIPolicies {
 		for _, p := range policies {
-			details := fmt.Sprintf("Provider:%s", p.MeshProvider)
+			configStr := "-"
+			if p.AllowsAllSources {
+				configStr = "Allows all sources"
+			}
+			details := fmt.Sprintf("Provider: %s", p.MeshProvider)
+			issuesStr := "<NONE>"
+			if p.AllowsAllSources {
+				issuesStr = "Allows all sources"
+			}
 			unifiedPolicyRows = append(unifiedPolicyRows, []string{
 				p.Namespace,
 				"SMI",
 				p.Name,
 				"Namespace",
 				p.Kind,
+				configStr,
 				details,
+				issuesStr,
 			})
 		}
 	}
@@ -2454,14 +2750,21 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 	// Gloo Mesh
 	for _, policies := range allGlooMeshPolicies {
 		for _, p := range policies {
-			details := fmt.Sprintf("Rules:%d, Action:%s", p.RuleCount, p.Action)
+			configStr := fmt.Sprintf("Action: %s", p.Action)
+			details := fmt.Sprintf("Rules: %d", p.RuleCount)
+			issuesStr := "<NONE>"
+			if p.Action == "ALLOW" || p.Action == "allow" {
+				issuesStr = "Allow action"
+			}
 			unifiedPolicyRows = append(unifiedPolicyRows, []string{
 				p.Namespace,
 				"Gloo Mesh",
 				p.Name,
 				"Namespace",
 				p.Kind,
+				configStr,
 				details,
+				issuesStr,
 			})
 		}
 	}
@@ -2469,14 +2772,21 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 	// NSX-T
 	for _, policies := range allNSXTPolicies {
 		for _, p := range policies {
-			details := fmt.Sprintf("Rules:%d, Priority:%d, DefaultAction:%s", p.RuleCount, p.Priority, p.DefaultAction)
+			configStr := fmt.Sprintf("Default: %s", p.DefaultAction)
+			details := fmt.Sprintf("Rules: %d, Priority: %d", p.RuleCount, p.Priority)
+			issuesStr := "<NONE>"
+			if p.DefaultAction == "ALLOW" || p.DefaultAction == "allow" {
+				issuesStr = "Default allow action"
+			}
 			unifiedPolicyRows = append(unifiedPolicyRows, []string{
 				p.Namespace,
 				"VMware NSX-T",
 				p.Name,
 				"Namespace",
 				"SecurityPolicy",
+				configStr,
 				details,
+				issuesStr,
 			})
 		}
 	}
@@ -2484,9 +2794,25 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 	// GCP Backend Policy
 	for _, policies := range allGCPBackendPolicies {
 		for _, p := range policies {
-			details := fmt.Sprintf("CloudArmor:%s", p.CloudArmorPolicy)
+			var config []string
+			if p.CloudArmorPolicy != "" {
+				config = append(config, fmt.Sprintf("Cloud Armor: %s", p.CloudArmorPolicy))
+			}
 			if p.HasIAP {
-				details += ", IAP"
+				config = append(config, "IAP: enabled")
+			}
+			configStr := strings.Join(config, ", ")
+			if configStr == "" {
+				configStr = "-"
+			}
+			details := fmt.Sprintf("Kind: %s", p.Kind)
+			var issues []string
+			if p.CloudArmorPolicy == "" {
+				issues = append(issues, "No Cloud Armor")
+			}
+			issuesStr := "<NONE>"
+			if len(issues) > 0 {
+				issuesStr = strings.Join(issues, "; ")
 			}
 			unifiedPolicyRows = append(unifiedPolicyRows, []string{
 				p.Namespace,
@@ -2494,7 +2820,9 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 				p.Name,
 				"Namespace",
 				p.Kind,
+				configStr,
 				details,
+				issuesStr,
 			})
 		}
 	}
@@ -2502,9 +2830,14 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 	// Azure Network Policy
 	for _, policies := range allAzureNetworkPolicies {
 		for _, p := range policies {
-			details := p.Kind
+			configStr := "-"
 			if p.HasManagedIdentity {
-				details += ", ManagedIdentity"
+				configStr = "Managed Identity: enabled"
+			}
+			details := fmt.Sprintf("Kind: %s", p.Kind)
+			issuesStr := "<NONE>"
+			if !p.HasManagedIdentity {
+				issuesStr = "No managed identity"
 			}
 			unifiedPolicyRows = append(unifiedPolicyRows, []string{
 				p.Namespace,
@@ -2512,19 +2845,30 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 				p.Name,
 				"Namespace",
 				p.Kind,
+				configStr,
 				details,
+				issuesStr,
 			})
 		}
 	}
 
 	// Gatekeeper Network Constraints
 	for _, c := range allGatekeeperNetworkConstraints {
-		details := fmt.Sprintf("Enforcement:%s", c.EnforcementAction)
-		if c.ViolationCount > 0 {
-			details += fmt.Sprintf(", Violations:%d", c.ViolationCount)
-		}
+		configStr := fmt.Sprintf("Enforcement: %s", c.EnforcementAction)
+		details := "-"
 		if len(c.MatchNamespaces) > 0 {
-			details += fmt.Sprintf(", Match:%d ns", len(c.MatchNamespaces))
+			details = fmt.Sprintf("Match: %d namespaces", len(c.MatchNamespaces))
+		}
+		var issues []string
+		if c.EnforcementAction == "dryrun" || c.EnforcementAction == "warn" {
+			issues = append(issues, "Not enforcing")
+		}
+		if c.ViolationCount > 0 {
+			issues = append(issues, fmt.Sprintf("%d violations", c.ViolationCount))
+		}
+		issuesStr := "<NONE>"
+		if len(issues) > 0 {
+			issuesStr = strings.Join(issues, "; ")
 		}
 		unifiedPolicyRows = append(unifiedPolicyRows, []string{
 			"<CLUSTER>",
@@ -2532,7 +2876,9 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			c.Name,
 			"Cluster",
 			c.Kind,
+			configStr,
 			details,
+			issuesStr,
 		})
 	}
 
@@ -2544,9 +2890,14 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			scope = "Cluster"
 			ns = "<CLUSTER>"
 		}
-		details := fmt.Sprintf("Action:%s, Rules:%d", p.ValidationAction, p.RuleCount)
+		configStr := fmt.Sprintf("Action: %s", p.ValidationAction)
 		if p.Background {
-			details += ", Background"
+			configStr += ", Background: enabled"
+		}
+		details := fmt.Sprintf("Rules: %d", p.RuleCount)
+		issuesStr := "<NONE>"
+		if p.ValidationAction == "Audit" || p.ValidationAction == "audit" {
+			issuesStr = "Audit mode (not enforcing)"
 		}
 		unifiedPolicyRows = append(unifiedPolicyRows, []string{
 			ns,
@@ -2554,7 +2905,9 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			p.Name,
 			scope,
 			"NetworkPolicy",
+			configStr,
 			details,
+			issuesStr,
 		})
 	}
 
@@ -2564,14 +2917,19 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		if ns == "" {
 			ns = "<CLUSTER>"
 		}
-		details := fmt.Sprintf("Mode:%s", p.Mode)
-		if p.Module != "" {
-			// Shorten long module names
-			module := p.Module
-			if len(module) > 30 {
-				module = module[:30] + "..."
-			}
-			details += fmt.Sprintf(", Module:%s", module)
+		configStr := fmt.Sprintf("Mode: %s", p.Mode)
+		// Shorten long module names
+		module := p.Module
+		if len(module) > 30 {
+			module = module[:30] + "..."
+		}
+		details := "-"
+		if module != "" {
+			details = fmt.Sprintf("Module: %s", module)
+		}
+		issuesStr := "<NONE>"
+		if p.Mode == "monitor" {
+			issuesStr = "Monitor mode (not enforcing)"
 		}
 		unifiedPolicyRows = append(unifiedPolicyRows, []string{
 			ns,
@@ -2579,7 +2937,9 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			p.Name,
 			"Namespace",
 			"AdmissionPolicy",
+			configStr,
 			details,
+			issuesStr,
 		})
 	}
 
@@ -2608,7 +2968,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 	// Add unified policies table (always shown)
 	if len(unifiedPolicyRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Network-Admission-Policies",
+			Name:   "Network-Admission-Policy-Overview",
 			Header: unifiedPolicyHeaders,
 			Body:   unifiedPolicyRows,
 		})
@@ -4557,7 +4917,7 @@ func appendUnique(slice []string, item string) []string {
 func generateNetworkAdmissionLoot(finding *NetworkAdmissionFinding, loot *shared.LootBuilder) {
 	// No policies - critical finding
 	if !finding.HasNetworkPolicy {
-		loot.Section("network-admission").
+		loot.Section("Network-Admission-Commands").
 			Addf("\n# [CRITICAL] Namespace: %s - NO network policies", finding.Namespace).
 			Addf("kubectl get pods -n %s", finding.Namespace).
 			AddBlank()
@@ -4565,55 +4925,55 @@ func generateNetworkAdmissionLoot(finding *NetworkAdmissionFinding, loot *shared
 	}
 
 	// Enum section
-	loot.Section("network-admission").
+	loot.Section("Network-Admission-Commands").
 		Addf("\n# Namespace: %s (%d policies)", finding.Namespace, finding.PolicyCount)
 
 	if finding.K8sNetworkPolicyCount > 0 {
-		loot.Section("network-admission").Addf("kubectl get networkpolicies -n %s", finding.Namespace)
+		loot.Section("Network-Admission-Commands").Addf("kubectl get networkpolicies -n %s", finding.Namespace)
 	}
 	if finding.CalicoCount > 0 {
-		loot.Section("network-admission").Addf("kubectl get networkpolicies.projectcalico.org -n %s", finding.Namespace)
+		loot.Section("Network-Admission-Commands").Addf("kubectl get networkpolicies.projectcalico.org -n %s", finding.Namespace)
 	}
 	if finding.CiliumCount > 0 {
-		loot.Section("network-admission").Addf("kubectl get ciliumnetworkpolicies -n %s", finding.Namespace)
+		loot.Section("Network-Admission-Commands").Addf("kubectl get ciliumnetworkpolicies -n %s", finding.Namespace)
 	}
 	if finding.AntreaCount > 0 {
-		loot.Section("network-admission").Addf("kubectl get networkpolicies.crd.antrea.io -n %s", finding.Namespace)
+		loot.Section("Network-Admission-Commands").Addf("kubectl get networkpolicies.crd.antrea.io -n %s", finding.Namespace)
 	}
 	if finding.IstioCount > 0 {
-		loot.Section("network-admission").Addf("kubectl get authorizationpolicies.security.istio.io -n %s", finding.Namespace)
+		loot.Section("Network-Admission-Commands").Addf("kubectl get authorizationpolicies.security.istio.io -n %s", finding.Namespace)
 	}
 	if finding.AWSSecurityGroupCount > 0 {
-		loot.Section("network-admission").Addf("kubectl get securitygrouppolicies.vpcresources.k8s.aws -n %s", finding.Namespace)
+		loot.Section("Network-Admission-Commands").Addf("kubectl get securitygrouppolicies.vpcresources.k8s.aws -n %s", finding.Namespace)
 	}
 	if finding.OpenShiftEgressCount > 0 {
-		loot.Section("network-admission").Addf("kubectl get egressfirewalls.k8s.ovn.org -n %s", finding.Namespace)
-		loot.Section("network-admission").Addf("kubectl get egressnetworkpolicies.network.openshift.io -n %s", finding.Namespace)
+		loot.Section("Network-Admission-Commands").Addf("kubectl get egressfirewalls.k8s.ovn.org -n %s", finding.Namespace)
+		loot.Section("Network-Admission-Commands").Addf("kubectl get egressnetworkpolicies.network.openshift.io -n %s", finding.Namespace)
 	}
 	if finding.ConsulConnectCount > 0 {
-		loot.Section("network-admission").Addf("kubectl get serviceintentions.consul.hashicorp.com -n %s", finding.Namespace)
+		loot.Section("Network-Admission-Commands").Addf("kubectl get serviceintentions.consul.hashicorp.com -n %s", finding.Namespace)
 	}
 	if finding.KumaMeshCount > 0 {
-		loot.Section("network-admission").Addf("kubectl get meshtrafficpermissions.kuma.io -n %s", finding.Namespace)
+		loot.Section("Network-Admission-Commands").Addf("kubectl get meshtrafficpermissions.kuma.io -n %s", finding.Namespace)
 	}
 	if finding.SMICount > 0 {
-		loot.Section("network-admission").Addf("kubectl get traffictargets.access.smi-spec.io -n %s", finding.Namespace)
+		loot.Section("Network-Admission-Commands").Addf("kubectl get traffictargets.access.smi-spec.io -n %s", finding.Namespace)
 	}
 	if finding.GlooMeshCount > 0 {
-		loot.Section("network-admission").Addf("kubectl get accesspolicies.security.policy.gloo.solo.io -n %s", finding.Namespace)
+		loot.Section("Network-Admission-Commands").Addf("kubectl get accesspolicies.security.policy.gloo.solo.io -n %s", finding.Namespace)
 	}
 	if finding.NSXTCount > 0 {
-		loot.Section("network-admission").Addf("kubectl get securitypolicies.nsx.vmware.com -n %s", finding.Namespace)
+		loot.Section("Network-Admission-Commands").Addf("kubectl get securitypolicies.nsx.vmware.com -n %s", finding.Namespace)
 	}
 	if finding.GCPBackendCount > 0 {
-		loot.Section("network-admission").Addf("kubectl get gcpbackendpolicies.networking.gke.io -n %s", finding.Namespace)
+		loot.Section("Network-Admission-Commands").Addf("kubectl get gcpbackendpolicies.networking.gke.io -n %s", finding.Namespace)
 	}
 	if finding.AzureNetworkCount > 0 {
-		loot.Section("network-admission").Addf("kubectl get azureingressprohibitedtargets.appgw.ingress.k8s.io -n %s", finding.Namespace)
-		loot.Section("network-admission").Addf("kubectl get azureidentitybindings.aadpodidentity.k8s.io -n %s", finding.Namespace)
+		loot.Section("Network-Admission-Commands").Addf("kubectl get azureingressprohibitedtargets.appgw.ingress.k8s.io -n %s", finding.Namespace)
+		loot.Section("Network-Admission-Commands").Addf("kubectl get azureidentitybindings.aadpodidentity.k8s.io -n %s", finding.Namespace)
 	}
 
-	loot.Section("network-admission").AddBlank()
+	loot.Section("Network-Admission-Commands").AddBlank()
 }
 
 // Image verification helper functions
@@ -4816,71 +5176,71 @@ func generateNetworkPolicyEnumerationLoot(findings []NetworkAdmissionFinding, lo
 	}
 
 	// Only add commands for detected policy engines
-	loot.Section("network-admission").Add("\n# Cluster-wide policy enumeration (detected tools only)")
+	loot.Section("Network-Admission-Commands").Add("\n# Cluster-wide policy enumeration (detected tools only)")
 
 	if hasK8sNetworkPolicy {
-		loot.Section("network-admission").Add("\n# K8s NetworkPolicy")
-		loot.Section("network-admission").Add("kubectl get networkpolicies -A -o wide")
+		loot.Section("Network-Admission-Commands").Add("\n# K8s NetworkPolicy")
+		loot.Section("Network-Admission-Commands").Add("kubectl get networkpolicies -A -o wide")
 	}
 	if hasCalico {
-		loot.Section("network-admission").Add("\n# Calico")
-		loot.Section("network-admission").Add("kubectl get networkpolicies.crd.projectcalico.org -A -o wide")
-		loot.Section("network-admission").Add("kubectl get globalnetworkpolicies.crd.projectcalico.org -o wide")
+		loot.Section("Network-Admission-Commands").Add("\n# Calico")
+		loot.Section("Network-Admission-Commands").Add("kubectl get networkpolicies.crd.projectcalico.org -A -o wide")
+		loot.Section("Network-Admission-Commands").Add("kubectl get globalnetworkpolicies.crd.projectcalico.org -o wide")
 	}
 	if hasCilium {
-		loot.Section("network-admission").Add("\n# Cilium")
-		loot.Section("network-admission").Add("kubectl get ciliumnetworkpolicies -A -o wide")
-		loot.Section("network-admission").Add("kubectl get ciliumclusterwidenetworkpolicies -o wide")
+		loot.Section("Network-Admission-Commands").Add("\n# Cilium")
+		loot.Section("Network-Admission-Commands").Add("kubectl get ciliumnetworkpolicies -A -o wide")
+		loot.Section("Network-Admission-Commands").Add("kubectl get ciliumclusterwidenetworkpolicies -o wide")
 	}
 	if hasAntrea {
-		loot.Section("network-admission").Add("\n# Antrea")
-		loot.Section("network-admission").Add("kubectl get networkpolicies.crd.antrea.io -A -o wide")
-		loot.Section("network-admission").Add("kubectl get clusternetworkpolicies.crd.antrea.io -o wide")
+		loot.Section("Network-Admission-Commands").Add("\n# Antrea")
+		loot.Section("Network-Admission-Commands").Add("kubectl get networkpolicies.crd.antrea.io -A -o wide")
+		loot.Section("Network-Admission-Commands").Add("kubectl get clusternetworkpolicies.crd.antrea.io -o wide")
 	}
 	if hasIstio {
-		loot.Section("network-admission").Add("\n# Istio")
-		loot.Section("network-admission").Add("kubectl get authorizationpolicies.security.istio.io -A -o wide")
+		loot.Section("Network-Admission-Commands").Add("\n# Istio")
+		loot.Section("Network-Admission-Commands").Add("kubectl get authorizationpolicies.security.istio.io -A -o wide")
 	}
 	if hasLinkerd {
-		loot.Section("network-admission").Add("\n# Linkerd")
-		loot.Section("network-admission").Add("kubectl get servers.policy.linkerd.io -A -o wide")
-		loot.Section("network-admission").Add("kubectl get serverauthorizations.policy.linkerd.io -A -o wide")
+		loot.Section("Network-Admission-Commands").Add("\n# Linkerd")
+		loot.Section("Network-Admission-Commands").Add("kubectl get servers.policy.linkerd.io -A -o wide")
+		loot.Section("Network-Admission-Commands").Add("kubectl get serverauthorizations.policy.linkerd.io -A -o wide")
 	}
 	if hasAWSSecurityGroup {
-		loot.Section("network-admission").Add("\n# AWS SecurityGroupPolicy")
-		loot.Section("network-admission").Add("kubectl get securitygrouppolicies.vpcresources.k8s.aws -A -o wide")
+		loot.Section("Network-Admission-Commands").Add("\n# AWS SecurityGroupPolicy")
+		loot.Section("Network-Admission-Commands").Add("kubectl get securitygrouppolicies.vpcresources.k8s.aws -A -o wide")
 	}
 	if hasOpenShiftEgress {
-		loot.Section("network-admission").Add("\n# OpenShift EgressFirewall")
-		loot.Section("network-admission").Add("kubectl get egressfirewalls.k8s.ovn.org -A -o wide")
+		loot.Section("Network-Admission-Commands").Add("\n# OpenShift EgressFirewall")
+		loot.Section("Network-Admission-Commands").Add("kubectl get egressfirewalls.k8s.ovn.org -A -o wide")
 	}
 	if hasConsulConnect {
-		loot.Section("network-admission").Add("\n# Consul Connect")
-		loot.Section("network-admission").Add("kubectl get serviceintentions.consul.hashicorp.com -A -o wide")
+		loot.Section("Network-Admission-Commands").Add("\n# Consul Connect")
+		loot.Section("Network-Admission-Commands").Add("kubectl get serviceintentions.consul.hashicorp.com -A -o wide")
 	}
 	if hasKumaMesh {
-		loot.Section("network-admission").Add("\n# Kuma/Kong Mesh")
-		loot.Section("network-admission").Add("kubectl get meshtrafficpermissions.kuma.io -A -o wide")
+		loot.Section("Network-Admission-Commands").Add("\n# Kuma/Kong Mesh")
+		loot.Section("Network-Admission-Commands").Add("kubectl get meshtrafficpermissions.kuma.io -A -o wide")
 	}
 	if hasSMI {
-		loot.Section("network-admission").Add("\n# SMI")
-		loot.Section("network-admission").Add("kubectl get traffictargets.access.smi-spec.io -A -o wide")
+		loot.Section("Network-Admission-Commands").Add("\n# SMI")
+		loot.Section("Network-Admission-Commands").Add("kubectl get traffictargets.access.smi-spec.io -A -o wide")
 	}
 	if hasGlooMesh {
-		loot.Section("network-admission").Add("\n# Gloo Mesh")
-		loot.Section("network-admission").Add("kubectl get accesspolicies.security.policy.gloo.solo.io -A -o wide")
+		loot.Section("Network-Admission-Commands").Add("\n# Gloo Mesh")
+		loot.Section("Network-Admission-Commands").Add("kubectl get accesspolicies.security.policy.gloo.solo.io -A -o wide")
 	}
 	if hasNSXT {
-		loot.Section("network-admission").Add("\n# VMware NSX-T")
-		loot.Section("network-admission").Add("kubectl get securitypolicies.nsx.vmware.com -A -o wide")
+		loot.Section("Network-Admission-Commands").Add("\n# VMware NSX-T")
+		loot.Section("Network-Admission-Commands").Add("kubectl get securitypolicies.nsx.vmware.com -A -o wide")
 	}
 	if hasGCPBackend {
-		loot.Section("network-admission").Add("\n# GCP/GKE")
-		loot.Section("network-admission").Add("kubectl get gcpbackendpolicies.networking.gke.io -A -o wide")
+		loot.Section("Network-Admission-Commands").Add("\n# GCP/GKE")
+		loot.Section("Network-Admission-Commands").Add("kubectl get gcpbackendpolicies.networking.gke.io -A -o wide")
 	}
 	if hasAzureNetwork {
-		loot.Section("network-admission").Add("\n# Azure/AKS")
-		loot.Section("network-admission").Add("kubectl get azureingressprohibitedtargets.appgw.ingress.k8s.io -A -o wide")
+		loot.Section("Network-Admission-Commands").Add("\n# Azure/AKS")
+		loot.Section("Network-Admission-Commands").Add("kubectl get azureingressprohibitedtargets.appgw.ingress.k8s.io -A -o wide")
 	}
 }
 

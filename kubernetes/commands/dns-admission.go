@@ -689,37 +689,36 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 		"Issues",
 	}
 
-	ciliumDNSHeader := []string{
+	// Uniform header for detailed policy tables (consistent across all admission modules)
+	uniformPolicyHeader := []string{
 		"Namespace",
 		"Name",
 		"Scope",
-		"DNS Rules",
-		"Match FQDNs",
-		"Match Patterns",
-		"Action",
+		"Target",
+		"Type",
+		"Rules",
+		"Details",
 		"Issues",
 	}
 
-	calicoDNSHeader := []string{
-		"Namespace",
-		"Name",
-		"Scope",
-		"DNS Rules",
-		"Domains",
-		"Action",
-		"Issues",
-	}
+	// Use uniform headers for detailed policy tables
+	ciliumDNSHeader := uniformPolicyHeader
+	calicoDNSHeader := uniformPolicyHeader
+	kyvernoHeader := uniformPolicyHeader
+	gatekeeperHeader := uniformPolicyHeader
+	k8sNetPolDNSHeader := uniformPolicyHeader
+	consulDNSForwardingHeader := uniformPolicyHeader
+	kubewardenDNSHeader := uniformPolicyHeader
+	awsDNSFirewallHeader := uniformPolicyHeader
+	gcpResponsePolicyHeader := uniformPolicyHeader
+	azureDNSResolverHeader := uniformPolicyHeader
+	istioServiceEntryHeader := uniformPolicyHeader
+	podDNSHeader := uniformPolicyHeader
+	externalNameHeader := uniformPolicyHeader
+	headlessHeader := uniformPolicyHeader
+	exfilRiskHeader := uniformPolicyHeader
 
-	podDNSHeader := []string{
-		"Namespace",
-		"Name",
-		"DNS Policy",
-		"Custom DNS",
-		"Nameservers",
-		"Searches",
-		"Issues",
-	}
-
+	// Deployment status tables keep their specific headers
 	istioDNSHeader := []string{
 		"Namespace",
 		"Status",
@@ -739,137 +738,12 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 		"Issues",
 	}
 
-	externalNameHeader := []string{
-		"Namespace",
-		"Name",
-		"External Name",
-		"Observations",
-		"Issues",
-	}
-
-	headlessHeader := []string{
-		"Namespace",
-		"Name",
-		"Pod Count",
-		"Ports",
-		"Observations",
-		"Issues",
-	}
-
-	exfilRiskHeader := []string{
-		"Namespace",
-		"Pod",
-		"DNS Policy",
-		"Egress Policy",
-		"External DNS",
-		"Observations",
-		"Issues",
-	}
-
-	kyvernoHeader := []string{
-		"Namespace",
-		"Name",
-		"Scope",
-		"Type",
-		"Target",
-		"DNS Rule",
-		"Action",
-		"Issues",
-	}
-
-	gatekeeperHeader := []string{
-		"Name",
-		"Template",
-		"Enforcement",
-		"Target",
-		"DNS Rule",
-		"Issues",
-	}
-
 	consulHeader := []string{
 		"Namespace",
 		"Name",
 		"Status",
 		"Pods Running",
 		"DNS Domain",
-		"Issues",
-	}
-
-	// K8s NetworkPolicy DNS detail table
-	k8sNetPolDNSHeader := []string{
-		"Name",
-		"Namespace",
-		"Has DNS Egress",
-		"DNS Egress Action",
-		"Pod Selector",
-		"Notes",
-		"Issues",
-	}
-
-	// Consul DNS Forwarding detail table
-	consulDNSForwardingHeader := []string{
-		"Name",
-		"Namespace",
-		"DNS Domain",
-		"Recursors",
-		"Forwarding Rules",
-		"DNS Proxy Enabled",
-		"Issues",
-	}
-
-	// Kubewarden DNS Policies detail table
-	kubewardenDNSHeader := []string{
-		"Name",
-		"Namespace",
-		"Policy Server",
-		"Mode",
-		"Module",
-		"DNS Rules",
-		"Issues",
-	}
-
-	// AWS DNS Firewall detail table
-	awsDNSFirewallHeader := []string{
-		"Name",
-		"Namespace",
-		"VPC Associated",
-		"Rule Groups",
-		"Domain Lists",
-		"Notes",
-		"Issues",
-	}
-
-	// GCP Response Policies detail table
-	gcpResponsePolicyHeader := []string{
-		"Name",
-		"Namespace",
-		"Cluster Scope",
-		"Rule Count",
-		"Notes",
-		"Issues",
-	}
-
-	// Azure DNS Private Resolver detail table
-	azureDNSResolverHeader := []string{
-		"Name",
-		"Namespace",
-		"Linked VNET",
-		"Inbound Endpoints",
-		"Outbound Endpoints",
-		"Forwarding Rule Sets",
-		"Notes",
-		"Issues",
-	}
-
-	// Istio ServiceEntry detail table
-	istioServiceEntryHeader := []string{
-		"Name",
-		"Namespace",
-		"Hosts",
-		"Location",
-		"Resolution",
-		"Ports",
-		"Is Cluster Wide",
 		"Issues",
 	}
 
@@ -1143,23 +1017,37 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 			ns = "<CLUSTER>"
 		}
 
-		fqdns := "-"
+		// Target - FQDNs or patterns being matched
+		target := "-"
 		if len(cdns.MatchFQDNs) > 0 {
 			if len(cdns.MatchFQDNs) > 2 {
-				fqdns = strings.Join(cdns.MatchFQDNs[:2], ", ") + "..."
+				target = strings.Join(cdns.MatchFQDNs[:2], ", ") + "..."
 			} else {
-				fqdns = strings.Join(cdns.MatchFQDNs, ", ")
+				target = strings.Join(cdns.MatchFQDNs, ", ")
+			}
+		} else if len(cdns.MatchPatterns) > 0 {
+			if len(cdns.MatchPatterns) > 2 {
+				target = strings.Join(cdns.MatchPatterns[:2], ", ") + "..."
+			} else {
+				target = strings.Join(cdns.MatchPatterns, ", ")
 			}
 		}
 
-		patterns := "-"
-		if len(cdns.MatchPatterns) > 0 {
-			if len(cdns.MatchPatterns) > 2 {
-				patterns = strings.Join(cdns.MatchPatterns[:2], ", ") + "..."
-			} else {
-				patterns = strings.Join(cdns.MatchPatterns, ", ")
-			}
+		// Rules description
+		var rulesParts []string
+		if len(cdns.MatchFQDNs) > 0 {
+			rulesParts = append(rulesParts, fmt.Sprintf("FQDNs (%d)", len(cdns.MatchFQDNs)))
 		}
+		if len(cdns.MatchPatterns) > 0 {
+			rulesParts = append(rulesParts, fmt.Sprintf("Patterns (%d)", len(cdns.MatchPatterns)))
+		}
+		rules := "None"
+		if len(rulesParts) > 0 {
+			rules = strings.Join(rulesParts, ", ")
+		}
+
+		// Details
+		details := fmt.Sprintf("Action: %s, DNS Rules: %d", cdns.Action, cdns.DNSRules)
 
 		// Detect issues
 		var ciliumIssues []string
@@ -1186,20 +1074,17 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 			ns,
 			cdns.Name,
 			scope,
-			fmt.Sprintf("%d", cdns.DNSRules),
-			fqdns,
-			patterns,
-			cdns.Action,
+			target,
+			"Cilium DNS Policy",
+			rules,
+			details,
 			ciliumIssuesStr,
 		})
 
 		// Add to unified policies table
-		details := fmt.Sprintf("DNS Rules: %d, Action: %s", cdns.DNSRules, cdns.Action)
-		if fqdns != "-" {
-			details += fmt.Sprintf(", FQDNs: %s", fqdns)
-		}
-		if patterns != "-" {
-			details += fmt.Sprintf(", Patterns: %s", patterns)
+		policyDetails := fmt.Sprintf("DNS Rules: %d, Action: %s", cdns.DNSRules, cdns.Action)
+		if target != "-" {
+			policyDetails += fmt.Sprintf(", Target: %s", target)
 		}
 
 		policiesRows = append(policiesRows, []string{
@@ -1208,11 +1093,11 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 			cdns.Name,
 			scope,
 			"Network Policy",
-			details,
+			policyDetails,
 		})
 	}
 
-	// Build Calico DNS policy rows
+	// Build Calico DNS policy rows (uniform schema: Namespace, Name, Scope, Target, Type, Rules, Details, Issues)
 	for _, cal := range calicoDNS {
 		scope := "Namespace"
 		ns := cal.Namespace
@@ -1221,14 +1106,24 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 			ns = "<GLOBAL>"
 		}
 
-		domains := "-"
+		// Target - domains being matched
+		target := "-"
 		if len(cal.Domains) > 0 {
 			if len(cal.Domains) > 2 {
-				domains = strings.Join(cal.Domains[:2], ", ") + "..."
+				target = strings.Join(cal.Domains[:2], ", ") + "..."
 			} else {
-				domains = strings.Join(cal.Domains, ", ")
+				target = strings.Join(cal.Domains, ", ")
 			}
 		}
+
+		// Rules description
+		rules := fmt.Sprintf("Domains (%d)", len(cal.Domains))
+		if len(cal.Domains) == 0 {
+			rules = "None"
+		}
+
+		// Details
+		details := fmt.Sprintf("Action: %s, DNS Rules: %d", cal.Action, cal.DNSRules)
 
 		// Detect issues
 		var calicoIssues []string
@@ -1255,16 +1150,17 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 			ns,
 			cal.Name,
 			scope,
-			fmt.Sprintf("%d", cal.DNSRules),
-			domains,
-			cal.Action,
+			target,
+			"Calico DNS Policy",
+			rules,
+			details,
 			calicoIssuesStr,
 		})
 
 		// Add to unified policies table
-		details := fmt.Sprintf("DNS Rules: %d, Action: %s", cal.DNSRules, cal.Action)
-		if domains != "-" {
-			details += fmt.Sprintf(", Domains: %s", domains)
+		policyDetails := fmt.Sprintf("DNS Rules: %d, Action: %s", cal.DNSRules, cal.Action)
+		if target != "-" {
+			policyDetails += fmt.Sprintf(", Domains: %s", target)
 		}
 
 		policiesRows = append(policiesRows, []string{
@@ -1273,30 +1169,37 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 			cal.Name,
 			scope,
 			"Network Policy",
-			details,
+			policyDetails,
 		})
 	}
 
-	// Build pod DNS rows (only show interesting ones)
+	// Build pod DNS rows (uniform schema: Namespace, Name, Scope, Target, Type, Rules, Details, Issues)
 	for _, p := range podDNS {
 		if p.DNSPolicy == "None" || p.HasCustomDNS {
-			customDNS := "No"
-			if p.HasCustomDNS {
-				customDNS = "Yes"
-			}
-
-			nameservers := "-"
+			// Target - nameservers
+			target := "-"
 			if len(p.Nameservers) > 0 {
-				nameservers = strings.Join(p.Nameservers, ", ")
+				target = strings.Join(p.Nameservers, ", ")
 			}
 
-			searches := "-"
+			// Rules - DNS policy setting
+			rules := fmt.Sprintf("Policy: %s", p.DNSPolicy)
+			if p.HasCustomDNS {
+				rules += ", Custom: Yes"
+			}
+
+			// Details - searches and additional info
+			var detailParts []string
 			if len(p.Searches) > 0 {
 				if len(p.Searches) > 2 {
-					searches = strings.Join(p.Searches[:2], ", ") + "..."
+					detailParts = append(detailParts, fmt.Sprintf("Searches: %s...", strings.Join(p.Searches[:2], ", ")))
 				} else {
-					searches = strings.Join(p.Searches, ", ")
+					detailParts = append(detailParts, fmt.Sprintf("Searches: %s", strings.Join(p.Searches, ", ")))
 				}
+			}
+			details := strings.Join(detailParts, ", ")
+			if details == "" {
+				details = "-"
 			}
 
 			// Detect issues
@@ -1321,17 +1224,21 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 			podDNSRows = append(podDNSRows, []string{
 				p.Namespace,
 				p.Name,
-				p.DNSPolicy,
-				customDNS,
-				nameservers,
-				searches,
+				"Pod",
+				target,
+				"Pod DNS Config",
+				rules,
+				details,
 				podDNSIssuesStr,
 			})
 
 			// Add to unified policies table
-			details := fmt.Sprintf("DNS Policy: %s, Custom DNS: %s", p.DNSPolicy, customDNS)
-			if nameservers != "-" {
-				details += fmt.Sprintf(", Nameservers: %s", nameservers)
+			policyDetails := fmt.Sprintf("DNS Policy: %s", p.DNSPolicy)
+			if p.HasCustomDNS {
+				policyDetails += ", Custom: Yes"
+			}
+			if target != "-" {
+				policyDetails += fmt.Sprintf(", Nameservers: %s", target)
 			}
 
 			policiesRows = append(policiesRows, []string{
@@ -1340,7 +1247,7 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 				p.Name,
 				"Pod",
 				"DNS Override",
-				details,
+				policyDetails,
 			})
 		}
 	}
@@ -1428,7 +1335,7 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 		})
 	}
 
-	// Build ExternalName service rows
+	// Build ExternalName service rows (uniform schema: Namespace, Name, Scope, Target, Type, Rules, Details, Issues)
 	for _, svc := range externalNameSvcs {
 		notes := "-"
 		if len(svc.Notes) > 0 {
@@ -1451,7 +1358,10 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 		externalNameRows = append(externalNameRows, []string{
 			svc.Namespace,
 			svc.Name,
+			"Namespace",
 			svc.ExternalName,
+			"ExternalName Service",
+			"DNS CNAME",
 			notes,
 			extNameIssuesStr,
 		})
@@ -1467,7 +1377,7 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 		})
 	}
 
-	// Build Headless service rows
+	// Build Headless service rows (uniform schema: Namespace, Name, Scope, Target, Type, Rules, Details, Issues)
 	for _, svc := range headlessSvcs {
 		ports := "-"
 		if len(svc.Ports) > 0 {
@@ -1491,17 +1401,25 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 			headlessIssuesStr = strings.Join(headlessIssues, "; ")
 		}
 
+		// Target - pods backing the service
+		target := fmt.Sprintf("%d pods", svc.PodCount)
+
+		// Rules - ports configuration
+		rules := fmt.Sprintf("Ports: %s", ports)
+
 		headlessRows = append(headlessRows, []string{
 			svc.Namespace,
 			svc.Name,
-			fmt.Sprintf("%d", svc.PodCount),
-			ports,
+			"Namespace",
+			target,
+			"Headless Service",
+			rules,
 			notes,
 			headlessIssuesStr,
 		})
 	}
 
-	// Build DNS configuration rows (show pods with notable DNS config)
+	// Build DNS configuration rows (uniform schema: Namespace, Name, Scope, Target, Type, Rules, Details, Issues)
 	for _, info := range exfilRisks {
 		// Skip pods with no notable findings
 		if len(info.Notes) == 0 {
@@ -1547,18 +1465,28 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 			exfilIssuesStr = strings.Join(exfilIssues, "; ")
 		}
 
+		// Target - external DNS servers if any
+		target := "Cluster DNS"
+		if externalDNS != "-" {
+			target = externalDNS
+		}
+
+		// Rules - DNS policy and egress policy status
+		rules := fmt.Sprintf("DNS: %s, Egress Policy: %s", dnsPolicy, hasPolicy)
+
 		exfilRiskRows = append(exfilRiskRows, []string{
 			info.Namespace,
 			info.PodName,
-			dnsPolicy,
-			hasPolicy,
-			externalDNS,
+			"Pod",
+			target,
+			"DNS Exfil Risk",
+			rules,
 			notesStr,
 			exfilIssuesStr,
 		})
 	}
 
-	// Build Kyverno DNS policy rows
+	// Build Kyverno DNS policy rows (uniform schema: Namespace, Name, Scope, Target, Type, Rules, Details, Issues)
 	for _, policy := range kyvernoDNS {
 		scope := "Namespace"
 		ns := policy.Namespace
@@ -1580,14 +1508,23 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 			kyvernoIssuesStr = strings.Join(kyvernoIssues, "; ")
 		}
 
+		// Rules description
+		rules := policy.DNSRule
+		if rules == "" {
+			rules = "None"
+		}
+
+		// Details
+		details := fmt.Sprintf("Action: %s, Type: %s", policy.Action, policy.Type)
+
 		kyvernoRows = append(kyvernoRows, []string{
 			ns,
 			policy.Name,
 			scope,
-			policy.Type,
 			policy.Target,
-			policy.DNSRule,
-			policy.Action,
+			"Kyverno DNS Policy",
+			rules,
+			details,
 			kyvernoIssuesStr,
 		})
 
@@ -1602,7 +1539,7 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 		})
 	}
 
-	// Build Gatekeeper DNS constraint rows
+	// Build Gatekeeper DNS constraint rows (uniform schema: Namespace, Name, Scope, Target, Type, Rules, Details, Issues)
 	for _, constraint := range gatekeeperDNS {
 		// Detect issues
 		var gkIssues []string
@@ -1617,12 +1554,23 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 			gkIssuesStr = strings.Join(gkIssues, "; ")
 		}
 
+		// Rules description
+		rules := constraint.DNSRule
+		if rules == "" {
+			rules = "None"
+		}
+
+		// Details
+		details := fmt.Sprintf("Template: %s, Enforcement: %s", constraint.TemplateName, constraint.EnforcementAction)
+
 		gatekeeperRows = append(gatekeeperRows, []string{
+			"<CLUSTER>",
 			constraint.Name,
-			constraint.TemplateName,
-			constraint.EnforcementAction,
+			"Cluster",
 			constraint.Target,
-			constraint.DNSRule,
+			"Gatekeeper DNS Constraint",
+			rules,
+			details,
 			gkIssuesStr,
 		})
 
@@ -1675,9 +1623,9 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 		})
 	}
 
-	// Build K8s NetworkPolicy DNS rows
+	// Build K8s NetworkPolicy DNS rows (uniform schema: Namespace, Name, Scope, Target, Type, Rules, Details, Issues)
 	for _, p := range k8sNetPolDNS {
-		notes := "<NONE>"
+		notes := "-"
 		if len(p.Notes) > 0 {
 			notes = strings.Join(p.Notes, "; ")
 		}
@@ -1698,24 +1646,38 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(k8sNetPolIssues, "; ")
 		}
 
+		// Target - pod selector
+		target := p.PodSelector
+		if target == "" {
+			target = "All pods"
+		}
+
+		// Rules - DNS egress configuration
+		hasDNS := "No"
+		if p.HasDNSEgress {
+			hasDNS = "Yes"
+		}
+		rules := fmt.Sprintf("DNS Egress: %s, Action: %s", hasDNS, p.DNSEgressAction)
+
 		k8sNetPolDNSRows = append(k8sNetPolDNSRows, []string{
-			p.Name,
 			p.Namespace,
-			shared.FormatBool(p.HasDNSEgress),
-			p.DNSEgressAction,
-			p.PodSelector,
+			p.Name,
+			"Namespace",
+			target,
+			"K8s NetworkPolicy DNS",
+			rules,
 			notes,
 			issuesStr,
 		})
 	}
 
-	// Build Consul DNS Forwarding rows
+	// Build Consul DNS Forwarding rows (uniform schema: Namespace, Name, Scope, Target, Type, Rules, Details, Issues)
 	for _, c := range consulDNSForwarding {
-		recursors := "<NONE>"
+		recursors := "-"
 		if len(c.Recursors) > 0 {
 			recursors = strings.Join(c.Recursors, ", ")
 		}
-		forwardingRules := "<NONE>"
+		forwardingRules := "-"
 		if len(c.ForwardingRules) > 0 {
 			forwardingRules = strings.Join(c.ForwardingRules, ", ")
 		}
@@ -1736,24 +1698,36 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(consulDNSIssues, "; ")
 		}
 
+		// Target - DNS domain
+		target := c.DNSDomain
+		if target == "" {
+			target = "Default"
+		}
+
+		// Rules - forwarding configuration
+		rules := fmt.Sprintf("Recursors: %s", recursors)
+
+		// Details
+		proxyEnabled := "No"
+		if c.EnableDNSProxy {
+			proxyEnabled = "Yes"
+		}
+		details := fmt.Sprintf("DNS Proxy: %s, Forwarding: %s", proxyEnabled, forwardingRules)
+
 		consulDNSForwardingRows = append(consulDNSForwardingRows, []string{
-			c.Name,
 			c.Namespace,
-			c.DNSDomain,
-			recursors,
-			forwardingRules,
-			shared.FormatBool(c.EnableDNSProxy),
+			c.Name,
+			"Namespace",
+			target,
+			"Consul DNS Forwarding",
+			rules,
+			details,
 			issuesStr,
 		})
 	}
 
-	// Build Kubewarden DNS Policy rows
+	// Build Kubewarden DNS Policy rows (uniform schema: Namespace, Name, Scope, Target, Type, Rules, Details, Issues)
 	for _, p := range kubewardenDNSPolicies {
-		dnsRules := "<NONE>"
-		if len(p.DNSRules) > 0 {
-			dnsRules = strings.Join(p.DNSRules, ", ")
-		}
-
 		// Detect issues
 		var kubewardenDNSIssues []string
 		if p.Mode == "monitor" || p.Mode == "audit" {
@@ -1767,20 +1741,33 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(kubewardenDNSIssues, "; ")
 		}
 
+		// Target - affected resources
+		target := "All pods"
+
+		// Rules description
+		rules := fmt.Sprintf("DNS Rules (%d)", len(p.DNSRules))
+		if len(p.DNSRules) == 0 {
+			rules = "None"
+		}
+
+		// Details
+		details := fmt.Sprintf("Mode: %s, Server: %s, Module: %s", p.Mode, p.PolicyServer, p.Module)
+
 		kubewardenDNSRows = append(kubewardenDNSRows, []string{
-			p.Name,
 			p.Namespace,
-			p.PolicyServer,
-			p.Mode,
-			p.Module,
-			dnsRules,
+			p.Name,
+			"Namespace",
+			target,
+			"Kubewarden DNS Policy",
+			rules,
+			details,
 			issuesStr,
 		})
 	}
 
-	// Build AWS DNS Firewall rows
+	// Build AWS DNS Firewall rows (uniform schema: Namespace, Name, Scope, Target, Type, Rules, Details, Issues)
 	if awsDNSFirewall.Name != "" {
-		notes := "<NONE>"
+		notes := "-"
 		if len(awsDNSFirewall.Notes) > 0 {
 			notes = strings.Join(awsDNSFirewall.Notes, "; ")
 		}
@@ -1801,20 +1788,37 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(awsDNSIssues, "; ")
 		}
 
+		// Target - VPC
+		target := "VPC"
+		if !awsDNSFirewall.VPCAssociation {
+			target = "VPC (not associated)"
+		}
+
+		// Rules description
+		rules := fmt.Sprintf("Rule Groups: %d, Domain Lists: %d", awsDNSFirewall.RuleGroupCount, awsDNSFirewall.DomainListCount)
+
+		// Details
+		vpcAssoc := "No"
+		if awsDNSFirewall.VPCAssociation {
+			vpcAssoc = "Yes"
+		}
+		details := fmt.Sprintf("VPC Associated: %s, %s", vpcAssoc, notes)
+
 		awsDNSFirewallRows = append(awsDNSFirewallRows, []string{
-			awsDNSFirewall.Name,
 			awsDNSFirewall.Namespace,
-			shared.FormatBool(awsDNSFirewall.VPCAssociation),
-			fmt.Sprintf("%d", awsDNSFirewall.RuleGroupCount),
-			fmt.Sprintf("%d", awsDNSFirewall.DomainListCount),
-			notes,
+			awsDNSFirewall.Name,
+			"Cloud",
+			target,
+			"AWS DNS Firewall",
+			rules,
+			details,
 			issuesStr,
 		})
 	}
 
-	// Build GCP Response Policy rows
+	// Build GCP Response Policy rows (uniform schema: Namespace, Name, Scope, Target, Type, Rules, Details, Issues)
 	if gcpResponsePolicies.Name != "" {
-		notes := "<NONE>"
+		notes := "-"
 		if len(gcpResponsePolicies.Notes) > 0 {
 			notes = strings.Join(gcpResponsePolicies.Notes, "; ")
 		}
@@ -1832,19 +1836,36 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(gcpRespIssues, "; ")
 		}
 
+		// Scope
+		scope := "Limited"
+		if gcpResponsePolicies.ClusterScope {
+			scope = "Cluster"
+		}
+
+		// Target
+		target := "DNS queries"
+
+		// Rules description
+		rules := fmt.Sprintf("Response Rules: %d", gcpResponsePolicies.RuleCount)
+
+		// Details
+		details := notes
+
 		gcpResponsePolicyRows = append(gcpResponsePolicyRows, []string{
-			gcpResponsePolicies.Name,
 			gcpResponsePolicies.Namespace,
-			shared.FormatBool(gcpResponsePolicies.ClusterScope),
-			fmt.Sprintf("%d", gcpResponsePolicies.RuleCount),
-			notes,
+			gcpResponsePolicies.Name,
+			scope,
+			target,
+			"GCP Response Policy",
+			rules,
+			details,
 			issuesStr,
 		})
 	}
 
-	// Build Azure DNS Private Resolver rows
+	// Build Azure DNS Private Resolver rows (uniform schema: Namespace, Name, Scope, Target, Type, Rules, Details, Issues)
 	if azureDNSResolver.Name != "" {
-		notes := "<NONE>"
+		notes := "-"
 		if len(azureDNSResolver.Notes) > 0 {
 			notes = strings.Join(azureDNSResolver.Notes, "; ")
 		}
@@ -1865,27 +1886,53 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(azureDNSIssues, "; ")
 		}
 
+		// Target - VNET
+		target := "VNET"
+		if !azureDNSResolver.LinkedVNET {
+			target = "VNET (not linked)"
+		}
+
+		// Rules description
+		rules := fmt.Sprintf("Inbound: %d, Outbound: %d, Forwarding: %d", azureDNSResolver.InboundEndpoints, azureDNSResolver.OutboundEndpoints, azureDNSResolver.ForwardingRuleSets)
+
+		// Details
+		vnetLinked := "No"
+		if azureDNSResolver.LinkedVNET {
+			vnetLinked = "Yes"
+		}
+		details := fmt.Sprintf("VNET Linked: %s, %s", vnetLinked, notes)
+
 		azureDNSResolverRows = append(azureDNSResolverRows, []string{
-			azureDNSResolver.Name,
 			azureDNSResolver.Namespace,
-			shared.FormatBool(azureDNSResolver.LinkedVNET),
-			fmt.Sprintf("%d", azureDNSResolver.InboundEndpoints),
-			fmt.Sprintf("%d", azureDNSResolver.OutboundEndpoints),
-			fmt.Sprintf("%d", azureDNSResolver.ForwardingRuleSets),
-			notes,
+			azureDNSResolver.Name,
+			"Cloud",
+			target,
+			"Azure DNS Resolver",
+			rules,
+			details,
 			issuesStr,
 		})
 	}
 
-	// Build Istio ServiceEntry rows
+	// Build Istio ServiceEntry rows (uniform schema: Namespace, Name, Scope, Target, Type, Rules, Details, Issues)
 	for _, s := range istioServiceEntries {
-		hosts := "<NONE>"
+		// Target - hosts
+		target := "-"
 		if len(s.Hosts) > 0 {
-			hosts = strings.Join(s.Hosts, ", ")
+			if len(s.Hosts) > 2 {
+				target = strings.Join(s.Hosts[:2], ", ") + "..."
+			} else {
+				target = strings.Join(s.Hosts, ", ")
+			}
 		}
-		ports := "<NONE>"
+
+		ports := "-"
 		if len(s.Ports) > 0 {
-			ports = strings.Join(s.Ports, ", ")
+			if len(s.Ports) > 3 {
+				ports = strings.Join(s.Ports[:3], ", ") + "..."
+			} else {
+				ports = strings.Join(s.Ports, ", ")
+			}
 		}
 
 		// Detect issues
@@ -1907,14 +1954,28 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 			issuesStr = strings.Join(istioSEIssues, "; ")
 		}
 
+		// Scope
+		scope := "Namespace"
+		ns := s.Namespace
+		if s.IsCluster {
+			scope = "Cluster"
+			ns = "<CLUSTER>"
+		}
+
+		// Rules - location and resolution
+		rules := fmt.Sprintf("Location: %s, Resolution: %s", s.Location, s.Resolution)
+
+		// Details - ports
+		details := fmt.Sprintf("Ports: %s", ports)
+
 		istioServiceEntryRows = append(istioServiceEntryRows, []string{
+			ns,
 			s.Name,
-			s.Namespace,
-			hosts,
-			s.Location,
-			s.Resolution,
-			ports,
-			shared.FormatBool(s.IsCluster),
+			scope,
+			target,
+			"Istio ServiceEntry",
+			rules,
+			details,
 			issuesStr,
 		})
 	}
@@ -1934,7 +1995,7 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 	// Always add unified policies table
 	if len(policiesRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "DNS-Admission-Policies",
+			Name:   "DNS-Admission-Policy-Overview",
 			Header: policiesHeader,
 			Body:   policiesRows,
 		})

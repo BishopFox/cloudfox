@@ -496,13 +496,15 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 		"Issues",
 	}
 
-	falcoRulesHeader := []string{
-		"Name",
+	// Uniform header for detailed policy tables (consistent across all admission modules)
+	uniformPolicyHeader := []string{
 		"Namespace",
-		"Source",
-		"Priority",
-		"Enabled",
-		"Tags",
+		"Name",
+		"Scope",
+		"Target",
+		"Monitoring",
+		"Rules",
+		"Details",
 		"Issues",
 	}
 
@@ -511,17 +513,6 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 		"Status",
 		"Pods Running",
 		"Policies",
-		"Issues",
-	}
-
-	tracingPolicyHeader := []string{
-		"Name",
-		"Namespace",
-		"Scope",
-		"Selectors",
-		"Kprobes",
-		"Tracepoints",
-		"Actions",
 		"Issues",
 	}
 
@@ -535,17 +526,10 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 		"Issues",
 	}
 
-	kubeArmorPolicyHeader := []string{
-		"Name",
-		"Namespace",
-		"Type",
-		"Selector",
-		"Action",
-		"File Rules",
-		"Process Rules",
-		"Network Rules",
-		"Issues",
-	}
+	// Use uniform headers for detailed policy tables
+	falcoRulesHeader := uniformPolicyHeader
+	tracingPolicyHeader := uniformPolicyHeader
+	kubeArmorPolicyHeader := uniformPolicyHeader
 
 	auditLogDestHeader := []string{
 		"Type",
@@ -558,6 +542,7 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 	}
 
 	var summaryRows [][]string
+	var policyOverviewRows [][]string
 	var falcoRows [][]string
 	var falcoRulesRows [][]string
 	var tetragonRows [][]string
@@ -565,6 +550,18 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 	var kubeArmorRows [][]string
 	var kubeArmorPolicyRows [][]string
 	var auditLogDestRows [][]string
+
+	// Uniform header for policy overview table
+	policyOverviewHeader := []string{
+		"Namespace",
+		"Name",
+		"Scope",
+		"Tool",
+		"Target",
+		"Status",
+		"Details",
+		"Issues",
+	}
 
 	loot := shared.NewLootBuilder()
 
@@ -660,11 +657,11 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 		})
 	}
 
-	// Build Falco Rules rows
+	// Build Falco Rules rows (uniform schema: Namespace, Name, Scope, Target, Monitoring, Rules, Details, Issues)
 	for _, rule := range falcoRules {
-		enabled := "No"
+		enabled := "Disabled"
 		if rule.Enabled {
-			enabled = "Yes"
+			enabled = "Enabled"
 		}
 
 		tags := "-"
@@ -689,13 +686,18 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 			ruleIssuesStr = strings.Join(ruleIssues, "; ")
 		}
 
+		// Build uniform row
+		rulesDesc := fmt.Sprintf("Priority: %s, Source: %s", rule.Priority, rule.Source)
+		details := fmt.Sprintf("Status: %s, Tags: %s", enabled, tags)
+
 		falcoRulesRows = append(falcoRulesRows, []string{
-			rule.Name,
 			rule.Namespace,
-			rule.Source,
-			rule.Priority,
-			enabled,
-			tags,
+			rule.Name,
+			"Namespace",
+			"All pods",
+			"Syscall monitoring",
+			rulesDesc,
+			details,
 			ruleIssuesStr,
 		})
 	}
@@ -727,7 +729,7 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 		})
 	}
 
-	// Build TracingPolicy rows
+	// Build TracingPolicy rows (uniform schema: Namespace, Name, Scope, Target, Monitoring, Rules, Details, Issues)
 	for _, tp := range tracingPolicies {
 		scope := "Namespace"
 		ns := tp.Namespace
@@ -736,12 +738,12 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 			ns = "<CLUSTER>"
 		}
 
-		selectors := "-"
+		target := "All pods"
 		if len(tp.Selectors) > 0 {
 			if len(tp.Selectors) > 2 {
-				selectors = strings.Join(tp.Selectors[:2], ", ") + "..."
+				target = strings.Join(tp.Selectors[:2], ", ") + "..."
 			} else {
-				selectors = strings.Join(tp.Selectors, ", ")
+				target = strings.Join(tp.Selectors, ", ")
 			}
 		}
 
@@ -763,14 +765,33 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 			tpIssuesStr = strings.Join(tpIssues, "; ")
 		}
 
+		// Build monitoring type description
+		var monitoringTypes []string
+		if tp.Kprobes > 0 {
+			monitoringTypes = append(monitoringTypes, fmt.Sprintf("Kprobes (%d)", tp.Kprobes))
+		}
+		if tp.Tracepoints > 0 {
+			monitoringTypes = append(monitoringTypes, fmt.Sprintf("Tracepoints (%d)", tp.Tracepoints))
+		}
+		if tp.UprobesCount > 0 {
+			monitoringTypes = append(monitoringTypes, fmt.Sprintf("Uprobes (%d)", tp.UprobesCount))
+		}
+		monitoring := "None"
+		if len(monitoringTypes) > 0 {
+			monitoring = strings.Join(monitoringTypes, ", ")
+		}
+
+		rulesDesc := fmt.Sprintf("Actions: %s", actions)
+		details := fmt.Sprintf("Tetragon TracingPolicy")
+
 		tracingPolicyRows = append(tracingPolicyRows, []string{
-			tp.Name,
 			ns,
+			tp.Name,
 			scope,
-			selectors,
-			fmt.Sprintf("%d", tp.Kprobes),
-			fmt.Sprintf("%d", tp.Tracepoints),
-			actions,
+			target,
+			monitoring,
+			rulesDesc,
+			details,
 			tpIssuesStr,
 		})
 	}
@@ -807,11 +828,13 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 		})
 	}
 
-	// Build KubeArmor Policy rows
+	// Build KubeArmor Policy rows (uniform schema: Namespace, Name, Scope, Target, Monitoring, Rules, Details, Issues)
 	for _, kp := range kubeArmorPolicies {
 		policyType := "Pod"
+		scope := "Namespace"
 		if kp.IsHost {
 			policyType = "Host"
+			scope = "Host"
 		}
 
 		// Detect issues
@@ -827,15 +850,44 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 			kpIssuesStr = strings.Join(kpIssues, "; ")
 		}
 
+		// Build monitoring type description
+		var monitoringTypes []string
+		if kp.FileRules > 0 {
+			monitoringTypes = append(monitoringTypes, fmt.Sprintf("File (%d)", kp.FileRules))
+		}
+		if kp.ProcRules > 0 {
+			monitoringTypes = append(monitoringTypes, fmt.Sprintf("Process (%d)", kp.ProcRules))
+		}
+		if kp.NetRules > 0 {
+			monitoringTypes = append(monitoringTypes, fmt.Sprintf("Network (%d)", kp.NetRules))
+		}
+		if kp.CapRules > 0 {
+			monitoringTypes = append(monitoringTypes, fmt.Sprintf("Capabilities (%d)", kp.CapRules))
+		}
+		if kp.SyscallRules > 0 {
+			monitoringTypes = append(monitoringTypes, fmt.Sprintf("Syscalls (%d)", kp.SyscallRules))
+		}
+		monitoring := "None"
+		if len(monitoringTypes) > 0 {
+			monitoring = strings.Join(monitoringTypes, ", ")
+		}
+
+		target := kp.Selector
+		if target == "" {
+			target = "All pods"
+		}
+
+		rulesDesc := fmt.Sprintf("Action: %s", kp.Action)
+		details := fmt.Sprintf("Type: %s, KubeArmor Policy", policyType)
+
 		kubeArmorPolicyRows = append(kubeArmorPolicyRows, []string{
-			kp.Name,
 			kp.Namespace,
-			policyType,
-			kp.Selector,
-			kp.Action,
-			fmt.Sprintf("%d", kp.FileRules),
-			fmt.Sprintf("%d", kp.ProcRules),
-			fmt.Sprintf("%d", kp.NetRules),
+			kp.Name,
+			scope,
+			target,
+			monitoring,
+			rulesDesc,
+			details,
 			kpIssuesStr,
 		})
 	}
@@ -879,6 +931,143 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 		})
 	}
 
+	// Build Policy Overview rows - unified view of all runtime security policies
+	// Add Falco Rules to overview
+	for _, rule := range falcoRules {
+		var issues []string
+		if !rule.Enabled {
+			issues = append(issues, "Rule disabled")
+		}
+		if rule.Priority == "DEBUG" || rule.Priority == "INFORMATIONAL" {
+			issues = append(issues, "Low priority")
+		}
+		issuesStr := "<NONE>"
+		if len(issues) > 0 {
+			issuesStr = strings.Join(issues, "; ")
+		}
+
+		status := "Enabled"
+		if !rule.Enabled {
+			status = "Disabled"
+		}
+
+		tags := "-"
+		if len(rule.Tags) > 0 {
+			if len(rule.Tags) > 3 {
+				tags = strings.Join(rule.Tags[:3], ", ") + "..."
+			} else {
+				tags = strings.Join(rule.Tags, ", ")
+			}
+		}
+
+		details := fmt.Sprintf("Source: %s, Priority: %s, Tags: %s", rule.Source, rule.Priority, tags)
+
+		policyOverviewRows = append(policyOverviewRows, []string{
+			rule.Namespace,
+			rule.Name,
+			"Namespace",
+			"Falco",
+			"All pods",
+			status,
+			details,
+			issuesStr,
+		})
+	}
+
+	// Add Tetragon TracingPolicies to overview
+	for _, tp := range tracingPolicies {
+		scope := "Namespace"
+		ns := tp.Namespace
+		if tp.IsCluster {
+			scope = "Cluster"
+			ns = "<CLUSTER>"
+		}
+
+		var issues []string
+		if tp.Kprobes == 0 && tp.Tracepoints == 0 {
+			issues = append(issues, "No kprobes or tracepoints")
+		}
+		if len(tp.Selectors) == 0 {
+			issues = append(issues, "No selectors")
+		}
+		issuesStr := "<NONE>"
+		if len(issues) > 0 {
+			issuesStr = strings.Join(issues, "; ")
+		}
+
+		target := "All pods"
+		if len(tp.Selectors) > 0 {
+			if len(tp.Selectors) > 2 {
+				target = strings.Join(tp.Selectors[:2], ", ") + "..."
+			} else {
+				target = strings.Join(tp.Selectors, ", ")
+			}
+		}
+
+		actions := "-"
+		if len(tp.Actions) > 0 {
+			actions = strings.Join(tp.Actions, ", ")
+		}
+
+		details := fmt.Sprintf("Kprobes: %d, Tracepoints: %d, Actions: %s", tp.Kprobes, tp.Tracepoints, actions)
+
+		policyOverviewRows = append(policyOverviewRows, []string{
+			ns,
+			tp.Name,
+			scope,
+			"Tetragon",
+			target,
+			"Active",
+			details,
+			issuesStr,
+		})
+	}
+
+	// Add KubeArmor Policies to overview
+	for _, kp := range kubeArmorPolicies {
+		var issues []string
+		if kp.Action == "Allow" || kp.Action == "Audit" {
+			issues = append(issues, "Permissive action")
+		}
+		if kp.FileRules == 0 && kp.ProcRules == 0 && kp.NetRules == 0 {
+			issues = append(issues, "No rules defined")
+		}
+		issuesStr := "<NONE>"
+		if len(issues) > 0 {
+			issuesStr = strings.Join(issues, "; ")
+		}
+
+		policyType := "Pod"
+		if kp.IsHost {
+			policyType = "Host"
+		}
+
+		details := fmt.Sprintf("Type: %s, Action: %s, File: %d, Proc: %d, Net: %d",
+			policyType, kp.Action, kp.FileRules, kp.ProcRules, kp.NetRules)
+
+		policyOverviewRows = append(policyOverviewRows, []string{
+			kp.Namespace,
+			kp.Name,
+			"Namespace",
+			"KubeArmor",
+			kp.Selector,
+			"Active",
+			details,
+			issuesStr,
+		})
+	}
+
+	// Sort overview rows by namespace, then tool, then name
+	sort.SliceStable(policyOverviewRows, func(i, j int) bool {
+		if policyOverviewRows[i][0] != policyOverviewRows[j][0] {
+			return policyOverviewRows[i][0] < policyOverviewRows[j][0]
+		}
+		if policyOverviewRows[i][3] != policyOverviewRows[j][3] {
+			return policyOverviewRows[i][3] < policyOverviewRows[j][3]
+		}
+		return policyOverviewRows[i][1] < policyOverviewRows[j][1]
+	})
+
 	// Generate loot
 	generateAuditAdmissionLoot(loot, findings, falco, falcoRules, tetragon, tracingPolicies, kubearmor, kubeArmorPolicies, tracee, sysdig, k8sAuditPolicy, prismaCloud, aquaSecurity, stackrox, neuvector, auditLogDestinations)
 
@@ -890,6 +1079,15 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 		Header: summaryHeader,
 		Body:   summaryRows,
 	})
+
+	// Add unified policy overview table (always shown)
+	if len(policyOverviewRows) > 0 {
+		tables = append(tables, internal.TableFile{
+			Name:   "Audit-Admission-Policy-Overview",
+			Header: policyOverviewHeader,
+			Body:   policyOverviewRows,
+		})
+	}
 
 	if len(falcoRows) > 0 {
 		tables = append(tables, internal.TableFile{

@@ -337,6 +337,18 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 		"Details",
 	}
 
+	// Uniform header for detailed policy tables (consistent across all admission modules)
+	uniformPolicyHeader := []string{
+		"Namespace",
+		"Name",
+		"Scope",
+		"Target",
+		"Type",
+		"Configuration",
+		"Details",
+		"Issues",
+	}
+
 	certManagerHeader := []string{
 		"Namespace",
 		"Version",
@@ -346,106 +358,19 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 		"Issues",
 	}
 
-	issuerHeader := []string{
-		"Namespace",
-		"Name",
-		"Scope",
-		"Type",
-		"Ready",
-		"Details",
-		"Issues",
-	}
+	// Use uniform headers for detailed policy tables
+	issuerHeader := uniformPolicyHeader
+	certificateHeader := uniformPolicyHeader
+	certRequestHeader := uniformPolicyHeader
+	csrHeader := uniformPolicyHeader
+	csrApproverHeader := uniformPolicyHeader
+	awsACMHeader := uniformPolicyHeader
+	azureKeyVaultHeader := uniformPolicyHeader
 
-	certificateHeader := []string{
-		"Namespace",
-		"Name",
-		"Secret",
-		"Issuer",
-		"DNS Names",
-		"Ready",
-		"Expires",
-		"Days Left",
-		"Issues",
-	}
-
-	certRequestHeader := []string{
-		"Namespace",
-		"Name",
-		"Issuer",
-		"Approved",
-		"Denied",
-		"Ready",
-		"Issues",
-	}
-
-	csrHeader := []string{
-		"Name",
-		"Signer",
-		"Requested By",
-		"Usages",
-		"Approved",
-		"Issued",
-		"Issues",
-	}
-
-	csrApproverHeader := []string{
-		"Namespace",
-		"Name",
-		"Type",
-		"Signer Names",
-		"Auto Approve",
-		"Issues",
-	}
-
-	venafiHeader := []string{
-		"Namespace",
-		"Status",
-		"Pods Running",
-		"TPP URL",
-		"Cloud URL",
-		"Zone",
-		"Issues",
-	}
-
-	spiffeHeader := []string{
-		"Namespace",
-		"Status",
-		"Server Running",
-		"Agents Running",
-		"Trust Domain",
-		"Registrations",
-		"Issues",
-	}
-
-	istioCertHeader := []string{
-		"Namespace",
-		"Status",
-		"Workload Cert TTL",
-		"External CA",
-		"Rotation Enabled",
-		"Issues",
-	}
-
-	// Cloud certificate headers
-	awsACMHeader := []string{
-		"ARN",
-		"Domain",
-		"Status",
-		"Type",
-		"Expires",
-		"In Use",
-		"Issues",
-	}
-
-	azureKeyVaultHeader := []string{
-		"Vault Name",
-		"Certificate Name",
-		"Status",
-		"ID",
-		"Expires",
-		"Days Left",
-		"Issues",
-	}
+	// Deployment status tables also use uniform schema
+	venafiHeader := uniformPolicyHeader
+	spiffeHeader := uniformPolicyHeader
+	istioCertHeader := uniformPolicyHeader
 
 	var summaryRows [][]string
 	var policiesRows [][]string
@@ -522,7 +447,7 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 		})
 	}
 
-	// Build issuer rows and policies
+	// Build issuer rows and policies (uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues)
 	for _, issuer := range issuers {
 		scope := "Namespace"
 		ns := issuer.Namespace
@@ -531,22 +456,31 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 			ns = "<CLUSTER>"
 		}
 
-		ready := "No"
+		ready := "Not Ready"
 		if issuer.Ready {
-			ready = "Yes"
+			ready = "Ready"
 		}
 
+		// Build configuration summary
+		config := fmt.Sprintf("Status: %s", ready)
+
+		// Build details based on issuer type
 		details := "-"
 		switch issuer.Type {
 		case "ACME":
-			details = issuer.ACMEServer
+			details = fmt.Sprintf("Server: %s", issuer.ACMEServer)
 		case "Vault":
-			details = issuer.VaultPath
+			details = fmt.Sprintf("Path: %s", issuer.VaultPath)
 		case "Venafi":
-			details = issuer.VenafiZone
+			details = fmt.Sprintf("Zone: %s", issuer.VenafiZone)
 		case "CA":
-			details = fmt.Sprintf("secret: %s", issuer.CASecretName)
+			details = fmt.Sprintf("CA Secret: %s", issuer.CASecretName)
+		case "SelfSigned":
+			details = "Self-signed certificate issuer"
 		}
+
+		// Target - what certificates this issuer can sign
+		target := "All certificates in scope"
 
 		// Detect issues
 		var issuerIssues []string
@@ -565,8 +499,9 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 			ns,
 			issuer.Name,
 			scope,
+			target,
 			issuer.Type,
-			ready,
+			config,
 			details,
 			issuerIssuesStr,
 		})
@@ -582,34 +517,40 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 		})
 	}
 
-	// Build certificate rows
+	// Build certificate rows (uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues)
 	for _, cert := range certificates {
-		ready := "No"
+		ready := "Not Ready"
 		if cert.Ready {
-			ready = "Yes"
+			ready = "Ready"
 		}
 
-		dnsNames := "-"
+		// Target - DNS names or common name
+		target := "-"
 		if len(cert.DNSNames) > 0 {
 			if len(cert.DNSNames) > 2 {
-				dnsNames = strings.Join(cert.DNSNames[:2], ", ") + "..."
+				target = strings.Join(cert.DNSNames[:2], ", ") + "..."
 			} else {
-				dnsNames = strings.Join(cert.DNSNames, ", ")
+				target = strings.Join(cert.DNSNames, ", ")
+			}
+		} else if cert.CommonName != "" {
+			target = cert.CommonName
+		}
+
+		// Configuration - issuer and secret info
+		config := fmt.Sprintf("Issuer: %s/%s, Secret: %s", cert.IssuerKind, cert.IssuerRef, cert.SecretName)
+
+		// Details - expiration info
+		var detailParts []string
+		detailParts = append(detailParts, fmt.Sprintf("Status: %s", ready))
+		if !cert.NotAfter.IsZero() {
+			detailParts = append(detailParts, fmt.Sprintf("Expires: %s", cert.NotAfter.Format("2006-01-02")))
+			if cert.IsExpired {
+				detailParts = append(detailParts, "EXPIRED")
+			} else if cert.DaysUntilExpiry >= 0 {
+				detailParts = append(detailParts, fmt.Sprintf("%d days left", cert.DaysUntilExpiry))
 			}
 		}
-
-		expires := "-"
-		if !cert.NotAfter.IsZero() {
-			expires = cert.NotAfter.Format("2006-01-02")
-		}
-
-		daysLeft := "-"
-		if cert.DaysUntilExpiry >= 0 {
-			daysLeft = fmt.Sprintf("%d", cert.DaysUntilExpiry)
-		}
-		if cert.IsExpired {
-			daysLeft = "EXPIRED"
-		}
+		details := strings.Join(detailParts, ", ")
 
 		// Detect issues
 		var certIssues []string
@@ -629,20 +570,19 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 		certificateRows = append(certificateRows, []string{
 			cert.Namespace,
 			cert.Name,
-			cert.SecretName,
-			fmt.Sprintf("%s/%s", cert.IssuerKind, cert.IssuerRef),
-			dnsNames,
-			ready,
-			expires,
-			daysLeft,
+			"Namespace",
+			target,
+			"Certificate",
+			config,
+			details,
 			certIssuesStr,
 		})
 
 		// Add to unified policies table with expiration details
 		var certDetailParts []string
 		certDetailParts = append(certDetailParts, fmt.Sprintf("Issuer: %s/%s", cert.IssuerKind, cert.IssuerRef))
-		if expires != "-" {
-			certDetailParts = append(certDetailParts, fmt.Sprintf("Expires: %s", expires))
+		if !cert.NotAfter.IsZero() {
+			certDetailParts = append(certDetailParts, fmt.Sprintf("Expires: %s", cert.NotAfter.Format("2006-01-02")))
 		}
 		if cert.IsExpired {
 			certDetailParts = append(certDetailParts, "EXPIRED")
@@ -674,20 +614,25 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 		})
 	}
 
-	// Build certificate request rows
+	// Build certificate request rows (uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues)
 	for _, cr := range certRequests {
-		ready := "No"
-		if cr.Ready {
-			ready = "Yes"
-		}
-		approved := "No"
+		// Configuration - issuer info
+		config := fmt.Sprintf("Issuer: %s", cr.IssuerRef)
+
+		// Details - approval status
+		var detailParts []string
 		if cr.Approved {
-			approved = "Yes"
+			detailParts = append(detailParts, "Approved: Yes")
+		} else {
+			detailParts = append(detailParts, "Approved: No")
 		}
-		denied := "No"
 		if cr.Denied {
-			denied = "Yes"
+			detailParts = append(detailParts, "Denied: Yes")
 		}
+		if cr.Ready {
+			detailParts = append(detailParts, "Ready: Yes")
+		}
+		details := strings.Join(detailParts, ", ")
 
 		// Detect issues
 		var crIssues []string
@@ -708,15 +653,20 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 		certRequestRows = append(certRequestRows, []string{
 			cr.Namespace,
 			cr.Name,
-			cr.IssuerRef,
-			approved,
-			denied,
-			ready,
+			"Namespace",
+			"Certificate signing",
+			"CertificateRequest",
+			config,
+			details,
 			crIssuesStr,
 		})
 
 		// Add to unified policies table
-		crDetails := fmt.Sprintf("Issuer: %s, Approved: %s", cr.IssuerRef, approved)
+		approvedStr := "No"
+		if cr.Approved {
+			approvedStr = "Yes"
+		}
+		crDetails := fmt.Sprintf("Issuer: %s, Approved: %s", cr.IssuerRef, approvedStr)
 		policiesRows = append(policiesRows, []string{
 			cr.Namespace,
 			"cert-manager",
@@ -727,21 +677,35 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 		})
 	}
 
-	// Build CSR rows
+	// Build CSR rows (uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues)
 	for _, csr := range csrs {
-		approved := "No"
-		if csr.Approved {
-			approved = "Yes"
-		}
-		issued := "No"
-		if csr.Issued {
-			issued = "Yes"
-		}
-
+		// Usages as target
 		usages := "-"
 		if len(csr.Usages) > 0 {
-			usages = strings.Join(csr.Usages, ", ")
+			if len(csr.Usages) > 3 {
+				usages = strings.Join(csr.Usages[:3], ", ") + "..."
+			} else {
+				usages = strings.Join(csr.Usages, ", ")
+			}
 		}
+
+		// Configuration - signer info
+		config := fmt.Sprintf("Signer: %s", csr.SignerName)
+
+		// Details - approval and issuance status
+		var detailParts []string
+		detailParts = append(detailParts, fmt.Sprintf("Requested by: %s", csr.RequestedBy))
+		if csr.Approved {
+			detailParts = append(detailParts, "Approved: Yes")
+		} else {
+			detailParts = append(detailParts, "Approved: No")
+		}
+		if csr.Issued {
+			detailParts = append(detailParts, "Issued: Yes")
+		} else {
+			detailParts = append(detailParts, "Issued: No")
+		}
+		details := strings.Join(detailParts, ", ")
 
 		// Detect issues
 		var csrIssues []string
@@ -757,17 +721,26 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 		}
 
 		csrRows = append(csrRows, []string{
+			"<CLUSTER>",
 			csr.Name,
-			csr.SignerName,
-			csr.RequestedBy,
+			"Cluster",
 			usages,
-			approved,
-			issued,
+			"CSR",
+			config,
+			details,
 			csrIssuesStr,
 		})
 
 		// Add to unified policies table
-		csrDetails := fmt.Sprintf("Signer: %s, Approved: %s, Issued: %s", csr.SignerName, approved, issued)
+		csrApprovedStr := "No"
+		if csr.Approved {
+			csrApprovedStr = "Yes"
+		}
+		csrIssuedStr := "No"
+		if csr.Issued {
+			csrIssuedStr = "Yes"
+		}
+		csrDetails := fmt.Sprintf("Signer: %s, Approved: %s, Issued: %s", csr.SignerName, csrApprovedStr, csrIssuedStr)
 		policiesRows = append(policiesRows, []string{
 			"<CLUSTER>", // CSRs are cluster-scoped
 			"k8s-csr",
@@ -778,16 +751,34 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 		})
 	}
 
-	// Build CSR approver rows
+	// Build CSR approver rows (uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues)
 	for _, approver := range csrApprovers {
-		autoApprove := "No"
+		autoApprove := "Disabled"
 		if approver.AutoApprove {
-			autoApprove = "Yes"
+			autoApprove = "Enabled"
 		}
 
+		// Target - signer names
 		signers := "-"
 		if len(approver.SignerNames) > 0 {
-			signers = strings.Join(approver.SignerNames, ", ")
+			if len(approver.SignerNames) > 2 {
+				signers = strings.Join(approver.SignerNames[:2], ", ") + "..."
+			} else {
+				signers = strings.Join(approver.SignerNames, ", ")
+			}
+		}
+
+		// Configuration - auto-approve setting
+		config := fmt.Sprintf("Auto-approve: %s", autoApprove)
+
+		// Details - full signer list
+		var detailParts []string
+		if len(approver.SignerNames) > 0 {
+			detailParts = append(detailParts, fmt.Sprintf("Signers: %s", strings.Join(approver.SignerNames, ", ")))
+		}
+		details := strings.Join(detailParts, ", ")
+		if details == "" {
+			details = "-"
 		}
 
 		// Detect issues
@@ -809,9 +800,11 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 		csrApproverRows = append(csrApproverRows, []string{
 			approver.Namespace,
 			approver.Name,
-			approver.Type,
+			"Namespace",
 			signers,
-			autoApprove,
+			approver.Type,
+			config,
+			details,
 			approverIssuesStr,
 		})
 
@@ -858,13 +851,26 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 			venafiIssuesStr = strings.Join(venafiIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		venafiScope := "Namespace"
+		venafiTarget := fmt.Sprintf("Pods: %d/%d running", venafi.PodsRunning, venafi.TotalPods)
+		venafiType := "Venafi Enhanced Issuer"
+		venafiConfig := fmt.Sprintf("Zone: %s", zone)
+		if tppUrl != "-" {
+			venafiConfig = fmt.Sprintf("TPP: %s, Zone: %s", tppUrl, zone)
+		} else if cloudUrl != "-" {
+			venafiConfig = fmt.Sprintf("Cloud: %s, Zone: %s", cloudUrl, zone)
+		}
+		venafiDetailsStr := fmt.Sprintf("Status: %s", venafi.Status)
+
 		venafiRows = append(venafiRows, []string{
 			venafi.Namespace,
-			venafi.Status,
-			fmt.Sprintf("%d/%d", venafi.PodsRunning, venafi.TotalPods),
-			tppUrl,
-			cloudUrl,
-			zone,
+			venafi.Name,
+			venafiScope,
+			venafiTarget,
+			venafiType,
+			venafiConfig,
+			venafiDetailsStr,
 			venafiIssuesStr,
 		})
 
@@ -907,13 +913,21 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 			spiffeIssuesStr = strings.Join(spiffeIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		spiffeScope := "Namespace"
+		spiffeTarget := fmt.Sprintf("Agents: %d/%d running", spiffe.AgentsRunning, spiffe.TotalAgents)
+		spiffeType := "SPIFFE/SPIRE"
+		spiffeConfig := fmt.Sprintf("Trust Domain: %s", trustDomain)
+		spiffeDetailsStr := fmt.Sprintf("Server: %s, Registrations: %d", serverRunning, spiffe.Registrations)
+
 		spiffeRows = append(spiffeRows, []string{
 			spiffe.Namespace,
-			spiffe.Status,
-			serverRunning,
-			fmt.Sprintf("%d/%d", spiffe.AgentsRunning, spiffe.TotalAgents),
-			trustDomain,
-			fmt.Sprintf("%d", spiffe.Registrations),
+			spiffe.Name,
+			spiffeScope,
+			spiffeTarget,
+			spiffeType,
+			spiffeConfig,
+			spiffeDetailsStr,
 			spiffeIssuesStr,
 		})
 
@@ -957,12 +971,21 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 			istioCertIssuesStr = strings.Join(istioCertIssues, "; ")
 		}
 
+		// Uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues
+		istioScope := "Namespace"
+		istioTarget := "Workload certificates"
+		istioType := "Istio Certificates"
+		istioConfig := fmt.Sprintf("TTL: %s, External CA: %s", certTTL, externalCA)
+		istioDetailsStr := fmt.Sprintf("Rotation: %s, Status: %s", rotationEnabled, istioCerts.Status)
+
 		istioCertRows = append(istioCertRows, []string{
 			istioCerts.Namespace,
-			istioCerts.Status,
-			certTTL,
-			externalCA,
-			rotationEnabled,
+			istioCerts.Name,
+			istioScope,
+			istioTarget,
+			istioType,
+			istioConfig,
+			istioDetailsStr,
 			istioCertIssuesStr,
 		})
 
@@ -978,16 +1001,26 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 		})
 	}
 
-	// Build AWS ACM certificate rows
+	// Build AWS ACM certificate rows (uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues)
 	for _, cert := range awsACMCerts {
-		inUse := "No"
+		inUse := "Not in use"
 		if len(cert.InUseBy) > 0 {
-			inUse = fmt.Sprintf("Yes (%d)", len(cert.InUseBy))
+			inUse = fmt.Sprintf("In use by %d resources", len(cert.InUseBy))
 		}
-		expires := "-"
+
+		// Configuration - cert type and status
+		config := fmt.Sprintf("Type: %s, Status: %s", cert.Type, cert.Status)
+
+		// Details - expiration and usage
+		var detailParts []string
 		if !cert.NotAfter.IsZero() {
-			expires = cert.NotAfter.Format("2006-01-02")
+			detailParts = append(detailParts, fmt.Sprintf("Expires: %s", cert.NotAfter.Format("2006-01-02")))
+			if cert.DaysUntilExpiry > 0 {
+				detailParts = append(detailParts, fmt.Sprintf("%d days left", cert.DaysUntilExpiry))
+			}
 		}
+		detailParts = append(detailParts, inUse)
+		details := strings.Join(detailParts, ", ")
 
 		// Detect issues
 		var acmIssues []string
@@ -1003,17 +1036,22 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 		}
 
 		awsACMRows = append(awsACMRows, []string{
-			cert.ARN,
+			"<AWS>",
 			cert.DomainName,
-			cert.Status,
-			cert.Type,
-			expires,
-			inUse,
+			"Cloud",
+			cert.DomainName,
+			"AWS ACM Certificate",
+			config,
+			details,
 			acmIssuesStr,
 		})
 
 		// Add to unified policies table
-		acmDetails := fmt.Sprintf("Domain: %s, Status: %s, Type: %s, Expires: %s", cert.DomainName, cert.Status, cert.Type, expires)
+		acmExpires := "-"
+		if !cert.NotAfter.IsZero() {
+			acmExpires = cert.NotAfter.Format("2006-01-02")
+		}
+		acmDetails := fmt.Sprintf("Domain: %s, Status: %s, Type: %s, Expires: %s", cert.DomainName, cert.Status, cert.Type, acmExpires)
 		policiesRows = append(policiesRows, []string{
 			"<AWS>",
 			"aws-acm",
@@ -1024,15 +1062,29 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 		})
 	}
 
-	// Build Azure Key Vault certificate rows
+	// Build Azure Key Vault certificate rows (uniform schema: Namespace, Name, Scope, Target, Type, Configuration, Details, Issues)
 	for _, cert := range azureKeyVaultCerts {
 		status := "Disabled"
 		if cert.Enabled {
 			status = "Enabled"
 		}
-		expires := "-"
+
+		// Configuration - vault and status
+		config := fmt.Sprintf("Vault: %s, Status: %s", cert.VaultName, status)
+
+		// Details - expiration info
+		var detailParts []string
 		if !cert.Expires.IsZero() {
-			expires = cert.Expires.Format("2006-01-02")
+			detailParts = append(detailParts, fmt.Sprintf("Expires: %s", cert.Expires.Format("2006-01-02")))
+			if cert.DaysUntilExpiry > 0 {
+				detailParts = append(detailParts, fmt.Sprintf("%d days left", cert.DaysUntilExpiry))
+			} else if cert.DaysUntilExpiry <= 0 {
+				detailParts = append(detailParts, "EXPIRED")
+			}
+		}
+		details := strings.Join(detailParts, ", ")
+		if details == "" {
+			details = "-"
 		}
 
 		// Detect issues
@@ -1052,17 +1104,22 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 		}
 
 		azureKeyVaultRows = append(azureKeyVaultRows, []string{
-			cert.VaultName,
+			"<AZURE>",
 			cert.CertificateName,
-			status,
-			cert.VaultURI,
-			expires,
-			fmt.Sprintf("%d", cert.DaysUntilExpiry),
+			"Cloud",
+			cert.CertificateName,
+			"Azure KeyVault Certificate",
+			config,
+			details,
 			akvIssuesStr,
 		})
 
 		// Add to unified policies table
-		akvDetails := fmt.Sprintf("Vault: %s, Status: %s, Expires: %s", cert.VaultName, status, expires)
+		akvExpires := "-"
+		if !cert.Expires.IsZero() {
+			akvExpires = cert.Expires.Format("2006-01-02")
+		}
+		akvDetails := fmt.Sprintf("Vault: %s, Status: %s, Expires: %s", cert.VaultName, status, akvExpires)
 		policiesRows = append(policiesRows, []string{
 			"<AZURE>",
 			"azure-keyvault",
@@ -1089,7 +1146,7 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 	// Always include unified policies table
 	if len(policiesRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Cert-Admission-Policies",
+			Name:   "Cert-Admission-Policy-Overview",
 			Header: policiesHeader,
 			Body:   policiesRows,
 		})

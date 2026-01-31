@@ -8,6 +8,7 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/BishopFox/cloudfox/kubernetes/sdk"
+	attackpathservice "github.com/BishopFox/cloudfox/kubernetes/services/attackpathService"
 	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -89,136 +90,18 @@ func appendUniqueHA(slice []string, item string) []string {
 	return append(slice, item)
 }
 
-// containsHA checks if a slice contains an item (hidden-admins specific)
-func containsHA(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
-}
 
 // isIAMRelatedRule checks if a rule grants IAM/RBAC escalation permissions
 // This is specific to hidden-admins and excludes privesc paths like pod creation, secrets, etc.
+// Uses the centralized attackpathService for detection.
 func isIAMRelatedRule(rule rbacv1.PolicyRule) bool {
-	// IAM/RBAC resources only
-	rbacResources := []string{"roles", "rolebindings", "clusterroles", "clusterrolebindings"}
-	impersonationResources := []string{"users", "groups", "serviceaccounts"}
-	certResources := []string{"certificatesigningrequests", "certificatesigningrequests/approval"}
-
-	modifyVerbs := []string{"create", "update", "patch", "delete", "*"}
-	rbacSpecialVerbs := []string{"bind", "escalate"}
-
-	for _, verb := range rule.Verbs {
-		verbLower := strings.ToLower(verb)
-
-		for _, res := range rule.Resources {
-			resLower := strings.ToLower(res)
-
-			// Wildcard on RBAC API group = dangerous
-			if resLower == "*" {
-				for _, apiGroup := range rule.APIGroups {
-					if apiGroup == "rbac.authorization.k8s.io" || apiGroup == "*" {
-						return true
-					}
-				}
-			}
-
-			// RBAC modification (roles, rolebindings, clusterroles, clusterrolebindings)
-			if containsHA(rbacResources, resLower) && containsHA(modifyVerbs, verbLower) {
-				return true
-			}
-
-			// RBAC special verbs (bind, escalate)
-			if containsHA(rbacResources, resLower) && containsHA(rbacSpecialVerbs, verbLower) {
-				return true
-			}
-
-			// Impersonation
-			if verbLower == "impersonate" && containsHA(impersonationResources, resLower) {
-				return true
-			}
-
-			// Certificate approval (creating new cluster identities)
-			if containsHA(certResources, resLower) {
-				if verbLower == "create" || verbLower == "update" || verbLower == "approve" || verbLower == "*" {
-					return true
-				}
-			}
-		}
-	}
-
-	return false
+	return attackpathservice.IsHiddenAdminRule(rule)
 }
 
 // getIAMRiskDescription returns a human-readable description of IAM/RBAC risks
+// Uses the centralized attackpathService for detection.
 func getIAMRiskDescription(rule rbacv1.PolicyRule) string {
-	var descriptions []string
-
-	rbacResources := []string{"roles", "rolebindings", "clusterroles", "clusterrolebindings"}
-	impersonationResources := []string{"users", "groups", "serviceaccounts"}
-	certResources := []string{"certificatesigningrequests", "certificatesigningrequests/approval"}
-
-	modifyVerbs := []string{"create", "update", "patch", "delete"}
-	rbacSpecialVerbs := []string{"bind", "escalate"}
-
-	for _, verb := range rule.Verbs {
-		verbLower := strings.ToLower(verb)
-
-		// Wildcard verb on RBAC
-		if verbLower == "*" {
-			for _, res := range rule.Resources {
-				resLower := strings.ToLower(res)
-				if containsHA(rbacResources, resLower) {
-					descriptions = append(descriptions, fmt.Sprintf("wildcard verbs on %s", res))
-				}
-			}
-		}
-
-		for _, res := range rule.Resources {
-			resLower := strings.ToLower(res)
-
-			// Wildcard resources on RBAC API group
-			if resLower == "*" {
-				for _, apiGroup := range rule.APIGroups {
-					if apiGroup == "rbac.authorization.k8s.io" {
-						descriptions = append(descriptions, "wildcard resources on rbac.authorization.k8s.io")
-					}
-					if apiGroup == "*" {
-						descriptions = append(descriptions, "wildcard API groups (includes RBAC)")
-					}
-				}
-			}
-
-			// RBAC modification
-			if containsHA(rbacResources, resLower) && containsHA(modifyVerbs, verbLower) {
-				descriptions = append(descriptions, fmt.Sprintf("can %s %s (RBAC modification)", verb, res))
-			}
-
-			// RBAC special verbs
-			if containsHA(rbacResources, resLower) && containsHA(rbacSpecialVerbs, verbLower) {
-				descriptions = append(descriptions, fmt.Sprintf("can %s %s (RBAC escalation)", verb, res))
-			}
-
-			// Impersonation
-			if verbLower == "impersonate" && containsHA(impersonationResources, resLower) {
-				descriptions = append(descriptions, fmt.Sprintf("can impersonate %s", res))
-			}
-
-			// Certificate approval
-			if containsHA(certResources, resLower) {
-				if verbLower == "create" || verbLower == "update" || verbLower == "approve" || verbLower == "*" {
-					descriptions = append(descriptions, fmt.Sprintf("can %s certificates (create new identities)", verb))
-				}
-			}
-		}
-	}
-
-	if len(descriptions) == 0 {
-		return ""
-	}
-	return strings.Join(descriptions, "; ")
+	return attackpathservice.GetHiddenAdminRiskDescription(rule)
 }
 
 func (h HiddenAdminsOutput) LootFiles() []internal.LootFile {
@@ -290,9 +173,18 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 
 	clientset := config.GetClientOrExit()
 
+	// Use centralized attackpathService for hidden admin analysis
+	attackPathSvc := attackpathservice.NewWithClientset(clientset)
+	attackPathSvc.SetModuleName(globals.K8S_HIDDEN_ADMINS_MODULE_NAME)
+
+	hiddenAdminData, err := attackPathSvc.AnalyzeHiddenAdmins(ctx)
+	if err != nil {
+		logger.ErrorM(fmt.Sprintf("Error analyzing hidden admins: %v", err), globals.K8S_HIDDEN_ADMINS_MODULE_NAME)
+		return
+	}
+
 	headers := []string{"Namespace", "Entity", "Type", "Scope", "Dangerous Permissions", "Cloud IAM", "Active Pods", "Flags", "Source"}
 	var tableRows [][]string
-	var attackPaths []AttackPath
 
 	// Loot builder
 	loot := shared.NewLootBuilder()
@@ -306,6 +198,9 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 		AggregationRoles    []string // Uses RBAC aggregation
 	}
 	permTracking := &PermissionTracking{}
+
+	// Also track legacy attack paths for backwards compatibility
+	var attackPaths []AttackPath
 
 	// Query all ServiceAccounts to detect cloud IAM annotations using cache
 	serviceAccountCloudIAM := make(map[string]map[string]string) // namespace -> sa name -> cloud IAM
@@ -961,6 +856,16 @@ rules:
 EOF`)
 	} else {
 		lootPlaybookSection.Add("# No aggregation roles found")
+	}
+
+	// ============================================
+	// LOOT FILE 4: Centralized Playbook from attackpathService
+	// ============================================
+	if hiddenAdminData != nil && len(hiddenAdminData.AllFindings) > 0 {
+		clusterHeader := fmt.Sprintf("Cluster: %s", globals.ClusterName)
+		if centralizedPlaybook := attackpathservice.GenerateHiddenAdminsPlaybook(hiddenAdminData, clusterHeader); centralizedPlaybook != "" {
+			loot.Section("Hidden-Admins-Centralized-Playbook").SetHeader("").Add(centralizedPlaybook)
+		}
 	}
 
 	// Output section

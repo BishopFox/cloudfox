@@ -11,6 +11,7 @@ import (
 	k8sinternal "github.com/BishopFox/cloudfox/internal/kubernetes"
 	"github.com/BishopFox/cloudfox/kubernetes/config"
 	"github.com/BishopFox/cloudfox/kubernetes/sdk"
+	attackpathservice "github.com/BishopFox/cloudfox/kubernetes/services/attackpathService"
 	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -119,6 +120,20 @@ type NamespaceFinding struct {
 	Finalizers  []string
 }
 
+// RBACBindingDetail contains detailed RBAC binding information for ServiceAccounts
+type RBACBindingDetail struct {
+	Namespace      string
+	ServiceAccount string   // ServiceAccount name
+	BindingName    string
+	BindingKind    string   // RoleBinding or ClusterRoleBinding
+	RoleRefName    string
+	RoleRefKind    string   // Role or ClusterRole
+	IsAdmin        bool
+	AttackPaths    []string // List of attack path types: "Privesc", "Exfil", "Lateral", "Hidden Admin"
+	ActivePods     int      // Number of pods using this SA
+	Nodes          []string // Nodes where pods using this SA are running
+}
+
 func ListNamespaces(cmd *cobra.Command, args []string) {
 	ctx, cancel := shared.ContextWithCancel()
 	defer cancel()
@@ -159,6 +174,7 @@ func ListNamespaces(cmd *cobra.Command, args []string) {
 		"Ingresses",
 		"Secrets",
 		"ConfigMaps",
+		"Service Accounts",
 		"PSS Enforce",
 		"Net Policies",
 		"Isolation",
@@ -257,6 +273,7 @@ func ListNamespaces(cmd *cobra.Command, args []string) {
 			fmt.Sprintf("%d", finding.IngressCount),
 			fmt.Sprintf("%d", finding.SecretCount),
 			fmt.Sprintf("%d", finding.ConfigMapCount),
+			fmt.Sprintf("%d", finding.ServiceAccountCount),
 			k8sinternal.NonEmpty(finding.PSSEnforce),
 			netPoliciesStr,
 			finding.IsolationLevel,
@@ -278,6 +295,96 @@ func ListNamespaces(cmd *cobra.Command, args []string) {
 		Body:   outputRows,
 	}
 
+	// Build detailed RBAC table - ServiceAccounts with attack paths
+	rbacDetails := collectDetailedRBACBindings(ctx, clientset, namespaces)
+	rbacDetailHeaders := []string{
+		"Namespace",
+		"Service Account",
+		"Binding",
+		"Role/ClusterRole",
+		"Admin",
+		"Attack Paths",
+		"Active Pods",
+		"Nodes",
+	}
+
+	var rbacDetailRows [][]string
+	for _, detail := range rbacDetails {
+		isAdminStr := ""
+		if detail.IsAdmin {
+			isAdminStr = "Yes"
+		}
+
+		attackPathsStr := strings.Join(detail.AttackPaths, ", ")
+		if attackPathsStr == "" {
+			attackPathsStr = "-"
+		}
+
+		nodesStr := "-"
+		if len(detail.Nodes) > 0 {
+			nodesStr = strings.Join(detail.Nodes, ", ")
+		}
+
+		rbacDetailRows = append(rbacDetailRows, []string{
+			detail.Namespace,
+			detail.ServiceAccount,
+			fmt.Sprintf("%s/%s", detail.BindingKind, detail.BindingName),
+			fmt.Sprintf("%s/%s", detail.RoleRefKind, detail.RoleRefName),
+			isAdminStr,
+			attackPathsStr,
+			fmt.Sprintf("%d", detail.ActivePods),
+			nodesStr,
+		})
+	}
+
+	rbacDetailTable := internal.TableFile{
+		Name:   "Namespace-RBAC-Details",
+		Header: rbacDetailHeaders,
+		Body:   rbacDetailRows,
+	}
+
+	// Generate attack path playbooks using the centralized attackpathService
+	attackPathSvc := attackpathservice.NewWithClientset(clientset)
+	attackPathSvc.SetModuleName(globals.K8S_NAMESPACES_MODULE_NAME)
+
+	clusterHeader := fmt.Sprintf("Cluster: %s", globals.ClusterName)
+
+	// Analyze all attack paths (privesc, lateral, exfil)
+	attackPathData, err := attackPathSvc.CombinedAnalysis(ctx, "all")
+	if err == nil && attackPathData != nil && len(attackPathData.AllPaths) > 0 {
+		// Generate playbooks
+		privescPaths := filterPathsByType(attackPathData.AllPaths, "privesc")
+		exfilPaths := filterPathsByType(attackPathData.AllPaths, "exfil")
+		lateralPaths := filterPathsByType(attackPathData.AllPaths, "lateral")
+
+		// Add privesc playbook (prefixed with module name to avoid conflicts)
+		if privescPlaybook := attackpathservice.GeneratePrivescPlaybook(privescPaths, clusterHeader); privescPlaybook != "" {
+			loot.Section("Namespaces-Privesc-Playbook").SetHeader("").Add(privescPlaybook)
+		}
+
+		// Add exfil playbook
+		if exfilPlaybook := attackpathservice.GenerateExfilPlaybook(exfilPaths, clusterHeader); exfilPlaybook != "" {
+			loot.Section("Namespaces-Exfil-Playbook").SetHeader("").Add(exfilPlaybook)
+		}
+
+		// Add lateral movement playbook
+		if lateralPlaybook := attackpathservice.GenerateLateralPlaybook(lateralPaths, clusterHeader); lateralPlaybook != "" {
+			loot.Section("Namespaces-Lateral-Playbook").SetHeader("").Add(lateralPlaybook)
+		}
+
+		logger.InfoM(fmt.Sprintf("Attack path analysis complete: %d privesc, %d exfil, %d lateral paths identified",
+			len(privescPaths), len(exfilPaths), len(lateralPaths)), globals.K8S_NAMESPACES_MODULE_NAME)
+	}
+
+	// Analyze hidden admins
+	hiddenAdminData, err := attackPathSvc.AnalyzeHiddenAdmins(ctx)
+	if err == nil && hiddenAdminData != nil && len(hiddenAdminData.AllFindings) > 0 {
+		if hiddenAdminsPlaybook := attackpathservice.GenerateHiddenAdminsPlaybook(hiddenAdminData, clusterHeader); hiddenAdminsPlaybook != "" {
+			loot.Section("Namespaces-HiddenAdmins-Playbook").SetHeader("").Add(hiddenAdminsPlaybook)
+		}
+		logger.InfoM(fmt.Sprintf("Hidden admins analysis complete: %d findings identified", len(hiddenAdminData.AllFindings)), globals.K8S_NAMESPACES_MODULE_NAME)
+	}
+
 	lootFiles := loot.Build()
 
 	err = internal.HandleOutput(
@@ -290,7 +397,7 @@ func ListNamespaces(cmd *cobra.Command, args []string) {
 		globals.ClusterName,
 		"results",
 		NamespacesOutput{
-			Table: []internal.TableFile{table},
+			Table: []internal.TableFile{table, rbacDetailTable},
 			Loot:  lootFiles,
 		},
 	)
@@ -300,9 +407,10 @@ func ListNamespaces(cmd *cobra.Command, args []string) {
 	}
 
 	if len(outputRows) > 0 {
-		logger.InfoM(fmt.Sprintf("%d namespaces found | Risk: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d",
+		logger.InfoM(fmt.Sprintf("%d namespaces found | Risk: CRITICAL=%d, HIGH=%d, MEDIUM=%d, LOW=%d | %d RBAC bindings analyzed",
 			len(outputRows),
-			riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low),
+			riskCounts.Critical, riskCounts.High, riskCounts.Medium, riskCounts.Low,
+			len(rbacDetailRows)),
 			globals.K8S_NAMESPACES_MODULE_NAME)
 	} else {
 		logger.InfoM("No namespaces found, skipping output file creation", globals.K8S_NAMESPACES_MODULE_NAME)
@@ -692,32 +800,275 @@ func analyzeRBAC(ctx context.Context, clientset *kubernetes.Clientset, namespace
 	return roleBindingCount, clusterRoleBindingCount, serviceAccountCount, adminBindings, dangerousBindings, excessiveAccess
 }
 
+// hasDangerousPermissions checks if rules contain dangerous permissions
+// Uses the centralized attackpathService for detection.
 func hasDangerousPermissions(rules []rbacv1.PolicyRule) bool {
-	dangerousVerbs := []string{"*", "create", "update", "patch", "delete"}
-	dangerousResources := []string{"*", "secrets", "pods/exec", "pods/portforward"}
+	return attackpathservice.HasDangerousPermissions(rules)
+}
+
+// collectDetailedRBACBindings collects detailed RBAC binding information for ServiceAccounts only
+// Includes pod count and node information for targeting privileged entities
+func collectDetailedRBACBindings(ctx context.Context, clientset *kubernetes.Clientset, namespaces []corev1.Namespace) []RBACBindingDetail {
+	var details []RBACBindingDetail
+
+	// Build a map of ServiceAccount -> (pod count, nodes) across all namespaces
+	// Key: "namespace/saName"
+	type saInfo struct {
+		podCount int
+		nodes    map[string]bool
+	}
+	saInfoMap := make(map[string]*saInfo)
+
+	// Get all pods to build SA -> pods -> nodes mapping
+	allPods, _ := clientset.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	if allPods != nil {
+		for _, pod := range allPods.Items {
+			saName := pod.Spec.ServiceAccountName
+			if saName == "" {
+				saName = "default"
+			}
+			key := fmt.Sprintf("%s/%s", pod.Namespace, saName)
+
+			if saInfoMap[key] == nil {
+				saInfoMap[key] = &saInfo{nodes: make(map[string]bool)}
+			}
+			saInfoMap[key].podCount++
+			if pod.Spec.NodeName != "" {
+				saInfoMap[key].nodes[pod.Spec.NodeName] = true
+			}
+		}
+	}
+
+	// Get all ClusterRoles for permission analysis
+	clusterRoles, _ := clientset.RbacV1().ClusterRoles().List(ctx, metav1.ListOptions{})
+	clusterRoleMap := make(map[string]*rbacv1.ClusterRole)
+	if clusterRoles != nil {
+		for i := range clusterRoles.Items {
+			clusterRoleMap[clusterRoles.Items[i].Name] = &clusterRoles.Items[i]
+		}
+	}
+
+	// Helper to get nodes as sorted slice
+	getNodeSlice := func(nodeMap map[string]bool) []string {
+		if len(nodeMap) == 0 {
+			return nil
+		}
+		nodes := make([]string, 0, len(nodeMap))
+		for node := range nodeMap {
+			nodes = append(nodes, node)
+		}
+		return nodes
+	}
+
+	for _, ns := range namespaces {
+		namespace := ns.Name
+
+		// Get Roles in namespace
+		roles, _ := clientset.RbacV1().Roles(namespace).List(ctx, metav1.ListOptions{})
+		roleMap := make(map[string]*rbacv1.Role)
+		if roles != nil {
+			for i := range roles.Items {
+				roleMap[roles.Items[i].Name] = &roles.Items[i]
+			}
+		}
+
+		// Process RoleBindings - only ServiceAccounts
+		roleBindings, err := clientset.RbacV1().RoleBindings(namespace).List(ctx, metav1.ListOptions{})
+		if err == nil {
+			for _, rb := range roleBindings.Items {
+				// Get the rules for this binding
+				var rules []rbacv1.PolicyRule
+				if rb.RoleRef.Kind == "Role" {
+					if role, exists := roleMap[rb.RoleRef.Name]; exists {
+						rules = role.Rules
+					}
+				} else if rb.RoleRef.Kind == "ClusterRole" {
+					if clusterRole, exists := clusterRoleMap[rb.RoleRef.Name]; exists {
+						rules = clusterRole.Rules
+					}
+				}
+
+				// Check permissions
+				isAdmin := rb.RoleRef.Name == "admin" || rb.RoleRef.Name == "cluster-admin"
+				attackPaths := getAttackPathTypes(rules)
+
+				// Only include ServiceAccounts with attack paths or admin access
+				for _, subject := range rb.Subjects {
+					if subject.Kind != "ServiceAccount" {
+						continue // Skip Users and Groups
+					}
+
+					// Skip if no attack paths and not admin
+					if len(attackPaths) == 0 && !isAdmin {
+						continue
+					}
+
+					// Get SA info (pods and nodes)
+					saKey := fmt.Sprintf("%s/%s", namespace, subject.Name)
+					if subject.Namespace != "" {
+						saKey = fmt.Sprintf("%s/%s", subject.Namespace, subject.Name)
+					}
+					info := saInfoMap[saKey]
+					var podCount int
+					var nodes []string
+					if info != nil {
+						podCount = info.podCount
+						nodes = getNodeSlice(info.nodes)
+					}
+
+					detail := RBACBindingDetail{
+						Namespace:      namespace,
+						ServiceAccount: subject.Name,
+						BindingName:    rb.Name,
+						BindingKind:    "RoleBinding",
+						RoleRefName:    rb.RoleRef.Name,
+						RoleRefKind:    rb.RoleRef.Kind,
+						IsAdmin:        isAdmin,
+						AttackPaths:    attackPaths,
+						ActivePods:     podCount,
+						Nodes:          nodes,
+					}
+					details = append(details, detail)
+				}
+			}
+		}
+
+		// Process ClusterRoleBindings that reference ServiceAccounts in this namespace
+		clusterRoleBindings, err := clientset.RbacV1().ClusterRoleBindings().List(ctx, metav1.ListOptions{})
+		if err == nil {
+			for _, crb := range clusterRoleBindings.Items {
+				// Get the rules for this binding
+				var rules []rbacv1.PolicyRule
+				if clusterRole, exists := clusterRoleMap[crb.RoleRef.Name]; exists {
+					rules = clusterRole.Rules
+				}
+
+				// Check permissions
+				isAdmin := crb.RoleRef.Name == "admin" || crb.RoleRef.Name == "cluster-admin"
+				attackPaths := getAttackPathTypes(rules)
+
+				for _, subject := range crb.Subjects {
+					// Only include ServiceAccounts in this namespace
+					if subject.Kind != "ServiceAccount" {
+						continue
+					}
+					if subject.Namespace != namespace {
+						continue
+					}
+
+					// Skip if no attack paths and not admin
+					if len(attackPaths) == 0 && !isAdmin {
+						continue
+					}
+
+					// Get SA info (pods and nodes)
+					saKey := fmt.Sprintf("%s/%s", subject.Namespace, subject.Name)
+					info := saInfoMap[saKey]
+					var podCount int
+					var nodes []string
+					if info != nil {
+						podCount = info.podCount
+						nodes = getNodeSlice(info.nodes)
+					}
+
+					detail := RBACBindingDetail{
+						Namespace:      subject.Namespace,
+						ServiceAccount: subject.Name,
+						BindingName:    crb.Name,
+						BindingKind:    "ClusterRoleBinding",
+						RoleRefName:    crb.RoleRef.Name,
+						RoleRefKind:    "ClusterRole",
+						IsAdmin:        isAdmin,
+						AttackPaths:    attackPaths,
+						ActivePods:     podCount,
+						Nodes:          nodes,
+					}
+					details = append(details, detail)
+				}
+			}
+		}
+	}
+
+	return details
+}
+
+// checkPrivilegeEscalation checks if the rules allow privilege escalation
+// Uses the centralized attackpathService for detection.
+func checkPrivilegeEscalation(rules []rbacv1.PolicyRule) (bool, []string) {
+	return attackpathservice.CheckPrivilegeEscalation(rules)
+}
+
+// getAttackPathTypes returns a list of attack path types that the given rules enable.
+// Uses the centralized attackpathService for detection.
+// Returns a slice containing any combination of: "Privesc", "Exfil", "Lateral", "Hidden Admin"
+func getAttackPathTypes(rules []rbacv1.PolicyRule) []string {
+	var attackPaths []string
+	hasPrivesc := false
+	hasExfil := false
+	hasLateral := false
+	hasHiddenAdmin := false
 
 	for _, rule := range rules {
-		for _, resource := range rule.Resources {
-			for _, verb := range rule.Verbs {
-				// Wildcard on both
-				if resource == "*" && verb == "*" {
-					return true
+		for _, verb := range rule.Verbs {
+			for _, resource := range rule.Resources {
+				apiGroups := rule.APIGroups
+				if len(apiGroups) == 0 {
+					apiGroups = []string{""}
 				}
-				// Dangerous resource with dangerous verb
-				for _, dangerousRes := range dangerousResources {
-					if resource == dangerousRes {
-						for _, dangerousVerb := range dangerousVerbs {
-							if verb == dangerousVerb {
-								return true
-							}
-						}
+				for _, apiGroup := range apiGroups {
+					// Check for privilege escalation
+					if !hasPrivesc && len(attackpathservice.FindMatchingPrivescPermissions(verb, resource, apiGroup)) > 0 {
+						hasPrivesc = true
+					}
+					// Check for data exfiltration
+					if !hasExfil && len(attackpathservice.FindMatchingExfilPermissions(verb, resource, apiGroup)) > 0 {
+						hasExfil = true
+					}
+					// Check for lateral movement
+					if !hasLateral && len(attackpathservice.FindMatchingLateralPermissions(verb, resource, apiGroup)) > 0 {
+						hasLateral = true
+					}
+					// Check for hidden admin (IAM/RBAC escalation)
+					if !hasHiddenAdmin && len(attackpathservice.FindMatchingHiddenAdminPermissions(verb, resource, apiGroup)) > 0 {
+						hasHiddenAdmin = true
 					}
 				}
 			}
 		}
 	}
 
-	return false
+	// Build the list in order of severity
+	if hasPrivesc {
+		attackPaths = append(attackPaths, "Privesc")
+	}
+	if hasHiddenAdmin {
+		attackPaths = append(attackPaths, "Hidden Admin")
+	}
+	if hasExfil {
+		attackPaths = append(attackPaths, "Exfil")
+	}
+	if hasLateral {
+		attackPaths = append(attackPaths, "Lateral")
+	}
+
+	return attackPaths
+}
+
+// getDangerousPermissionsList returns a list of dangerous permissions in the rules
+// Uses the centralized attackpathService for detection.
+func getDangerousPermissionsList(rules []rbacv1.PolicyRule) []string {
+	return attackpathservice.GetDangerousPermissionsList(rules)
+}
+
+// filterPathsByType filters attack paths by their PathType field
+func filterPathsByType(paths []attackpathservice.AttackPath, pathType string) []attackpathservice.AttackPath {
+	var filtered []attackpathservice.AttackPath
+	for _, path := range paths {
+		if path.PathType == pathType {
+			filtered = append(filtered, path)
+		}
+	}
+	return filtered
 }
 
 func analyzeNamespaceSecurity(finding NamespaceFinding) []string {
