@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/BishopFox/cloudfox/globals"
@@ -49,7 +50,22 @@ This command analyzes:
 - Ingress resources
 - Backend workload security
 - Dangerous port detection (SSH, RDP, databases, Kubelet API, etc.)
-- Attack path visualization`,
+- Attack path visualization
+
+Cloud Provider Correlation:
+Use --cloud-provider to correlate Kubernetes services with cloud load balancers:
+  cloudfox kubernetes network-exposure --cloud-provider aws
+  cloudfox kubernetes network-exposure --cloud-provider gcp
+  cloudfox kubernetes network-exposure --cloud-provider azure
+  cloudfox kubernetes network-exposure --cloud-provider aws,gcp,azure
+
+When enabled, the command will:
+- Correlate LoadBalancer services with cloud load balancer resources
+- Identify VPC/VNet and subnet information
+- Show cloud-specific load balancer types (NLB, ALB, etc.)
+- Provide cloud load balancer ARNs/IDs for further investigation
+
+Note: Cloud correlation requires appropriate cloud credentials configured.`,
 	Run: NetworkExposure,
 }
 
@@ -141,6 +157,8 @@ type CloudNetworkInfo struct {
 	VPCID     string // VPC ID (AWS/GCP) or VNet ID (Azure)
 	Subnets   []string
 	PublicIPs []string
+	Hostname  string // Cloud load balancer DNS hostname
+	Ports     []int32 // Cloud load balancer ports
 	Region    string
 	LBType    string // NLB, ALB, Classic, Internal, etc.
 	LBName    string // Cloud load balancer name
@@ -262,6 +280,7 @@ func analyzePort(port int32) (bool, string, string, string) {
 }
 
 // detectInternetFacing determines if a service is internet-facing
+// Uses isPrivateIP from endpoints.go for private IP detection
 func detectInternetFacing(svc *corev1.Service) (bool, string) {
 	// LoadBalancer services are typically internet-facing unless explicitly internal
 	if svc.Spec.Type == corev1.ServiceTypeLoadBalancer {
@@ -294,14 +313,40 @@ func detectInternetFacing(svc *corev1.Service) (bool, string) {
 			}
 		}
 
-		// If no internal annotation found, likely internet-facing
+		// Check if all assigned LoadBalancer IPs are private
+		// If all IPs are private, it's an internal load balancer
+		if len(svc.Status.LoadBalancer.Ingress) > 0 {
+			allPrivate := true
+			for _, ingress := range svc.Status.LoadBalancer.Ingress {
+				if ingress.IP != "" && !isPrivateIP(ingress.IP) {
+					allPrivate = false
+					break
+				}
+				// Hostname-based ingress (like AWS ELB) - check if it contains "internal"
+				if ingress.Hostname != "" && !strings.Contains(strings.ToLower(ingress.Hostname), "internal") {
+					allPrivate = false
+					break
+				}
+			}
+			if allPrivate {
+				provider := detectCloudProvider(svc)
+				return false, provider
+			}
+		}
+
+		// If no internal annotation found and IPs are public, likely internet-facing
 		provider := detectCloudProvider(svc)
 		return true, provider
 	}
 
-	// ExternalIPs can be internet-facing
+	// ExternalIPs can be internet-facing - but check if they're actually public
 	if len(svc.Spec.ExternalIPs) > 0 {
-		return true, "ExternalIP"
+		for _, ip := range svc.Spec.ExternalIPs {
+			if !isPrivateIP(ip) {
+				return true, "ExternalIP"
+			}
+		}
+		return false, "ExternalIP-Internal"
 	}
 
 	// NodePort with public nodes can be internet-facing
@@ -776,6 +821,61 @@ func calculateNetworkExposureRisk(finding NetworkExposureFinding) string {
 	return shared.RiskLow
 }
 
+// generateNetworkExposureAttackPaths creates an attack paths string for the Attack Paths column
+// Returns attack categories: Hidden Admin, PrivEsc, Data Exfil, Lateral Movement
+func generateNetworkExposureAttackPaths(finding NetworkExposureFinding) string {
+	var paths []string
+
+	// Hidden Admin - admin panels, Kubernetes control plane, management interfaces
+	if finding.PortCategory == "Admin" || finding.PortCategory == "Kubernetes" {
+		paths = append(paths, "Hidden Admin")
+	}
+	if strings.Contains(finding.PortDescription, "admin") || strings.Contains(strings.ToLower(finding.PortDescription), "management") {
+		if !networkExposureContains(paths, "Hidden Admin") {
+			paths = append(paths, "Hidden Admin")
+		}
+	}
+
+	// PrivEsc - privileged containers, hostNetwork, dangerous capabilities
+	if finding.BackendPrivileged {
+		paths = append(paths, "PrivEsc")
+	}
+	if finding.BackendHostNetwork && !networkExposureContains(paths, "PrivEsc") {
+		paths = append(paths, "PrivEsc")
+	}
+	// etcd or kubelet access = cluster-level privesc
+	if finding.Port == 10250 || finding.Port == 2379 || finding.Port == 2380 || finding.Port == 6443 {
+		if !networkExposureContains(paths, "PrivEsc") {
+			paths = append(paths, "PrivEsc")
+		}
+	}
+
+	// Data Exfil - databases, storage, secrets access
+	if finding.PortCategory == "Database" {
+		paths = append(paths, "Data Exfil")
+	}
+	if finding.DataExposureRisk == "Database" || finding.DataExposureRisk == "Cluster Secrets" {
+		if !networkExposureContains(paths, "Data Exfil") {
+			paths = append(paths, "Data Exfil")
+		}
+	}
+
+	// Lateral Movement - SSH/RDP access, network discovery, service mesh
+	if finding.PortCategory == "SSH" || finding.PortCategory == "RDP" || finding.PortCategory == "VNC" || finding.PortCategory == "Telnet" {
+		paths = append(paths, "Lateral Movement")
+	}
+	// hostNetwork can enable lateral movement to other pods/services
+	if finding.BackendHostNetwork && !networkExposureContains(paths, "Lateral Movement") {
+		paths = append(paths, "Lateral Movement")
+	}
+
+	if len(paths) == 0 {
+		return ""
+	}
+
+	return strings.Join(paths, ", ")
+}
+
 // determineDataExposureRisk identifies what kind of sensitive data might be exposed
 func determineDataExposureRisk(finding NetworkExposureFinding) string {
 	switch finding.PortCategory {
@@ -1029,6 +1129,7 @@ func lookupAWSLoadBalancer(ctx context.Context, clients *CloudClients, hostname 
 		if lb.DNSName != nil && *lb.DNSName == hostname {
 			info := &CloudNetworkInfo{
 				Provider: "AWS",
+				Hostname: hostname,
 				LBName:   safeString(lb.LoadBalancerName),
 				LBArn:    safeString(lb.LoadBalancerArn),
 				LBType:   string(lb.Type),
@@ -1058,11 +1159,56 @@ func lookupAWSLoadBalancer(ctx context.Context, clients *CloudClients, hostname 
 				}
 			}
 
+			// Get listener ports
+			if lb.LoadBalancerArn != nil {
+				listeners, err := clients.AWSELBv2Client.DescribeListeners(ctx, &elasticloadbalancingv2.DescribeListenersInput{
+					LoadBalancerArn: lb.LoadBalancerArn,
+				})
+				if err == nil && listeners != nil {
+					for _, listener := range listeners.Listeners {
+						if listener.Port != nil {
+							info.Ports = append(info.Ports, int32(*listener.Port))
+						}
+					}
+				}
+			}
+
 			return info
 		}
 	}
 
 	return nil
+}
+
+// parseGCPPortRange parses GCP port range string (e.g., "80" or "80-443") into port list
+func parseGCPPortRange(portRange string) []int32 {
+	var ports []int32
+	if portRange == "" {
+		return ports
+	}
+
+	// Check if it's a range (e.g., "80-443")
+	if strings.Contains(portRange, "-") {
+		parts := strings.Split(portRange, "-")
+		if len(parts) == 2 {
+			start, err1 := strconv.ParseInt(parts[0], 10, 32)
+			end, err2 := strconv.ParseInt(parts[1], 10, 32)
+			if err1 == nil && err2 == nil {
+				// For ranges, just return start and end to avoid huge lists
+				ports = append(ports, int32(start))
+				if start != end {
+					ports = append(ports, int32(end))
+				}
+			}
+		}
+	} else {
+		// Single port
+		port, err := strconv.ParseInt(portRange, 10, 32)
+		if err == nil {
+			ports = append(ports, int32(port))
+		}
+	}
+	return ports
 }
 
 // lookupGCPForwardingRule looks up GCP forwarding rule details by IP across all configured projects
@@ -1082,11 +1228,7 @@ func lookupGCPForwardingRule(ctx context.Context, clients *CloudClients, ipAddre
 			}
 		} else if globalRules != nil {
 			if logger != nil && len(globalRules.Items) > 0 {
-				var ips []string
-				for _, r := range globalRules.Items {
-					ips = append(ips, fmt.Sprintf("%s=%s", r.Name, r.IPAddress))
-				}
-				logger.InfoM(fmt.Sprintf("GCP: found %d global forwarding rules in %s: %s", len(globalRules.Items), project, strings.Join(ips, ", ")), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+				logger.InfoM(fmt.Sprintf("GCP: found %d global forwarding rules in %s", len(globalRules.Items), project), globals.K8S_NETWORK_PORTS_MODULE_NAME)
 			}
 			for _, rule := range globalRules.Items {
 				if rule.IPAddress == ipAddress {
@@ -1097,6 +1239,11 @@ func lookupGCPForwardingRule(ctx context.Context, clients *CloudClients, ipAddre
 						Region:   "global",
 					}
 					info.PublicIPs = append(info.PublicIPs, rule.IPAddress)
+
+					// Extract ports from PortRange (e.g., "80" or "80-443")
+					if rule.PortRange != "" {
+						info.Ports = parseGCPPortRange(rule.PortRange)
+					}
 
 					// Extract network from target if available
 					if rule.Network != "" {
@@ -1117,19 +1264,16 @@ func lookupGCPForwardingRule(ctx context.Context, clients *CloudClients, ipAddre
 				logger.InfoM(fmt.Sprintf("GCP: failed to list regional forwarding rules in %s: %v", project, err), globals.K8S_NETWORK_PORTS_MODULE_NAME)
 			}
 		} else if aggregatedList != nil {
-			// Count and log regional forwarding rules
+			// Count regional forwarding rules
 			if logger != nil {
-				var regionalIPs []string
+				var ruleCount int
 				for _, scopedList := range aggregatedList.Items {
-					if scopedList.ForwardingRules == nil {
-						continue
-					}
-					for _, r := range scopedList.ForwardingRules {
-						regionalIPs = append(regionalIPs, fmt.Sprintf("%s=%s", r.Name, r.IPAddress))
+					if scopedList.ForwardingRules != nil {
+						ruleCount += len(scopedList.ForwardingRules)
 					}
 				}
-				if len(regionalIPs) > 0 {
-					logger.InfoM(fmt.Sprintf("GCP: found %d regional forwarding rules in %s: %s", len(regionalIPs), project, strings.Join(regionalIPs, ", ")), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+				if ruleCount > 0 {
+					logger.InfoM(fmt.Sprintf("GCP: found %d regional forwarding rules in %s", ruleCount, project), globals.K8S_NETWORK_PORTS_MODULE_NAME)
 				}
 			}
 
@@ -1151,6 +1295,11 @@ func lookupGCPForwardingRule(ctx context.Context, clients *CloudClients, ipAddre
 							info.Region = region
 						}
 						info.PublicIPs = append(info.PublicIPs, rule.IPAddress)
+
+						// Extract ports from PortRange
+						if rule.PortRange != "" {
+							info.Ports = parseGCPPortRange(rule.PortRange)
+						}
 
 						if rule.Network != "" {
 							parts := strings.Split(rule.Network, "/")
@@ -1253,7 +1402,7 @@ func lookupGCPNEG(ctx context.Context, clients *CloudClients, namespace, service
 				}
 			}
 			if len(allNEGs) > 0 {
-				logger.InfoM(fmt.Sprintf("GCP: %d NEGs in %s (none matched %s): %s", len(allNEGs), project, searchPattern, strings.Join(allNEGs, ", ")), globals.K8S_NETWORK_PORTS_MODULE_NAME)
+				logger.InfoM(fmt.Sprintf("GCP: %d NEGs in %s (none matched pattern %s)", len(allNEGs), project, searchPattern), globals.K8S_NETWORK_PORTS_MODULE_NAME)
 			}
 		}
 	}
@@ -2138,29 +2287,41 @@ func NetworkExposure(cmd *cobra.Command, args []string) {
 	// Restore stderr now that K8s API calls are done
 	restoreStderr()
 
-	// ---- Build Table
-	// Column order: Identity -> Exposure -> Target -> Security -> Backend -> Cloud
+	// ---- Build Tables
+	detailed := globals.K8sDetailed
+
+	// Primary table: Attack-focused information for network-based attacks
+	// Columns: Identity -> Exposure -> Target -> Cloud -> Compromised Attack Paths
 	headers := []string{
 		"Namespace",
 		"Name",
 		"Type",
 		"Exposure",
 		"Internet",
-		"IP Address",
+		"K8s IPs",
 		"Hostname",
 		"Port",
 		"Protocol",
 		"TLS",
+		"Cloud IPs",
+		"Cloud Hostname",
+		"Cloud Port",
+		"Compromised Attack Paths",
+	}
+
+	// Detailed table: Network architecture for diagram analysis
+	detailedHeaders := []string{
+		"Namespace",
+		"Name",
 		"Net Policy",
 		"Backend SA",
 		"Backend Workloads",
-		"Privileged",
 		"Host Network",
-		"Cloud IPs",
 		"Cloud Network",
 	}
 
 	var rows [][]string
+	var detailedRows [][]string
 	for _, f := range findings {
 		ipAddr := k8sinternal.NonEmpty(f.IPAddress)
 		hostname := k8sinternal.NonEmpty(f.Hostname)
@@ -2181,6 +2342,50 @@ func NetworkExposure(cmd *cobra.Command, args []string) {
 			}
 		}
 
+		// Attack Paths - show attack vectors for this exposure
+		attackPathsStr := generateNetworkExposureAttackPaths(f)
+
+		// Cloud IPs - show public IPs from cloud correlation
+		cloudIPsStr := ""
+		if f.CloudNetwork != nil && len(f.CloudNetwork.PublicIPs) > 0 {
+			cloudIPsStr = strings.Join(f.CloudNetwork.PublicIPs, ", ")
+		}
+
+		// Cloud Hostname - show cloud load balancer DNS hostname
+		cloudHostnameStr := ""
+		if f.CloudNetwork != nil && f.CloudNetwork.Hostname != "" {
+			cloudHostnameStr = f.CloudNetwork.Hostname
+		}
+
+		// Cloud Port - show cloud load balancer ports
+		cloudPortStr := ""
+		if f.CloudNetwork != nil && len(f.CloudNetwork.Ports) > 0 {
+			var portStrs []string
+			for _, p := range f.CloudNetwork.Ports {
+				portStrs = append(portStrs, fmt.Sprintf("%d", p))
+			}
+			cloudPortStr = strings.Join(portStrs, ", ")
+		}
+
+		// Primary table row: Attack-focused columns
+		rows = append(rows, []string{
+			k8sinternal.NonEmpty(f.Namespace),
+			k8sinternal.NonEmpty(f.ResourceName),
+			k8sinternal.NonEmpty(f.ResourceType),
+			k8sinternal.NonEmpty(f.ExposureType),
+			internetFacing,
+			ipAddr,
+			hostname,
+			fmt.Sprintf("%d", f.Port),
+			k8sinternal.NonEmpty(f.Protocol),
+			tlsStr,
+			cloudIPsStr,
+			cloudHostnameStr,
+			cloudPortStr,
+			attackPathsStr,
+		})
+
+		// Detailed table row: Network architecture columns
 		// Net Policy - show policy names or None
 		netPolicyStr := "None"
 		if f.HasNetworkPolicy && len(f.NetworkPolicies) > 0 {
@@ -2212,60 +2417,46 @@ func NetworkExposure(cmd *cobra.Command, args []string) {
 			backendWorkloadsStr = fmt.Sprintf("%d pods", f.BackendPods)
 		}
 
-		// Privileged - show container names or empty
-		privilegedStr := ""
-		if f.BackendPrivileged {
-			// Extract container names from security issues
-			privilegedStr = extractPrivilegedContainers(f.BackendSecurityIssues)
-			if privilegedStr == "" {
-				privilegedStr = "Yes"
-			}
-		}
-
 		// Host Network
 		hostNetworkStr := ""
 		if f.BackendHostNetwork {
 			hostNetworkStr = "Yes"
 		}
 
-		// Cloud IPs - show public IPs from cloud correlation
-		cloudIPsStr := ""
-		if f.CloudNetwork != nil && len(f.CloudNetwork.PublicIPs) > 0 {
-			cloudIPsStr = strings.Join(f.CloudNetwork.PublicIPs, ", ")
-		}
-
 		// Cloud Network
 		cloudNetworkStr := formatCloudNetwork(f.CloudNetwork)
 
-		rows = append(rows, []string{
+		detailedRows = append(detailedRows, []string{
 			k8sinternal.NonEmpty(f.Namespace),
 			k8sinternal.NonEmpty(f.ResourceName),
-			k8sinternal.NonEmpty(f.ResourceType),
-			k8sinternal.NonEmpty(f.ExposureType),
-			internetFacing,
-			ipAddr,
-			hostname,
-			fmt.Sprintf("%d", f.Port),
-			k8sinternal.NonEmpty(f.Protocol),
-			tlsStr,
 			netPolicyStr,
 			backendSA,
 			backendWorkloadsStr,
-			privilegedStr,
 			hostNetworkStr,
-			cloudIPsStr,
 			cloudNetworkStr,
 		})
 	}
 
 	// ---- Build Loot Files (consolidated)
 	loot := shared.NewLootBuilder()
-	buildNetworkExposureCommandsLoot(loot, findings, lootNmapCommands)
+	buildNetworkExposureCommandsLoot(loot, findings)
 
-	table := internal.TableFile{
-		Name:   "Network-Exposure",
-		Header: headers,
-		Body:   rows,
+	// Build tables
+	tables := []internal.TableFile{
+		{
+			Name:   "Network-Exposure",
+			Header: headers,
+			Body:   rows,
+		},
+	}
+
+	// Add detailed table for network architecture if --detailed flag is set
+	if detailed && len(detailedRows) > 0 {
+		tables = append(tables, internal.TableFile{
+			Name:   "Network-Exposure-Architecture",
+			Header: detailedHeaders,
+			Body:   detailedRows,
+		})
 	}
 
 	lootFiles := loot.Build()
@@ -2280,7 +2471,7 @@ func NetworkExposure(cmd *cobra.Command, args []string) {
 		globals.ClusterName,
 		"results",
 		NetworkExposureOutput{
-			Table: []internal.TableFile{table},
+			Table: tables,
 			Loot:  lootFiles,
 		},
 	)
@@ -2310,7 +2501,7 @@ func NetworkExposure(cmd *cobra.Command, args []string) {
 }
 
 // buildNetworkExposureCommandsLoot creates a consolidated loot file
-func buildNetworkExposureCommandsLoot(loot *shared.LootBuilder, findings []NetworkExposureFinding, nmapCommands []string) {
+func buildNetworkExposureCommandsLoot(loot *shared.LootBuilder, findings []NetworkExposureFinding) {
 	section := loot.Section("NetworkExposure-Commands")
 	section.SetHeader(`# ===========================================
 # Network Exposure Enumeration Commands
@@ -2434,21 +2625,346 @@ func buildNetworkExposureCommandsLoot(loot *shared.LootBuilder, findings []Netwo
 		}
 	}
 
-	// NMAP commands
-	if len(nmapCommands) > 0 {
-		section.AddBlank().
-			Add("# -------------------------------------------").
-			Add("# NMAP Scanning Commands").
-			Add("# -------------------------------------------")
+	// Build K8s-NMAP loot file
+	buildK8sNMAPLoot(loot, findings)
 
-		seen := make(map[string]bool)
-		for _, cmd := range nmapCommands {
-			cmd = strings.TrimSpace(cmd)
-			if cmd == "" || seen[cmd] {
-				continue
-			}
-			seen[cmd] = true
-			section.AddBlank().Add(cmd)
+	// Build Cloud-NMAP loot file
+	buildCloudNMAPLoot(loot, findings)
+}
+
+// isWebPort checks if a port is commonly used for web services
+func isWebPort(port int32) bool {
+	webPorts := []int32{80, 443, 8080, 8443, 8000, 8888, 3000, 5000, 9000, 9090, 9443}
+	for _, wp := range webPorts {
+		if port == wp {
+			return true
 		}
 	}
+	return false
+}
+
+// buildK8sNMAPLoot creates the NetworkExposure-K8s-NMAP loot file
+func buildK8sNMAPLoot(loot *shared.LootBuilder, findings []NetworkExposureFinding) {
+	section := loot.Section("NetworkExposure-K8s-NMAP")
+	section.SetHeader(`# ===========================================
+# Kubernetes Network Exposure - NMAP Scan Commands
+# ===========================================
+# Scan Kubernetes service IPs and endpoints
+# Run from a host with network access to the cluster`)
+
+	// Collect unique K8s IPs with their ports
+	type targetInfo struct {
+		ports    map[int32]bool
+		protocol string
+		hostname string
+	}
+	k8sTargets := make(map[string]*targetInfo)
+
+	for _, f := range findings {
+		if f.IPAddress == "" {
+			continue
+		}
+		if _, exists := k8sTargets[f.IPAddress]; !exists {
+			k8sTargets[f.IPAddress] = &targetInfo{
+				ports:    make(map[int32]bool),
+				protocol: f.Protocol,
+				hostname: f.Hostname,
+			}
+		}
+		if f.Port > 0 {
+			k8sTargets[f.IPAddress].ports[f.Port] = true
+		}
+	}
+
+	if len(k8sTargets) == 0 {
+		section.AddBlank().Add("# No Kubernetes IPs found")
+		return
+	}
+
+	// NMAP section
+	section.AddBlank().
+		Add("# -------------------------------------------").
+		Add("# NMAP Scans").
+		Add("# -------------------------------------------")
+
+	for ip, info := range k8sTargets {
+		section.AddBlank()
+		if info.hostname != "" {
+			section.Addf("# Target: %s (%s)", ip, info.hostname)
+		} else {
+			section.Addf("# Target: %s", ip)
+		}
+
+		if len(info.ports) > 0 {
+			// Specific port scan
+			var portList []string
+			for port := range info.ports {
+				portList = append(portList, fmt.Sprintf("%d", port))
+			}
+			sort.Strings(portList)
+			ports := strings.Join(portList, ",")
+			section.Addf("nmap -sV -sC -p %s %s", ports, ip)
+		} else {
+			// Full port scan
+			section.Addf("nmap -sV -sC -p- %s", ip)
+		}
+	}
+
+	// Curl section for web ports
+	section.AddBlank().
+		Add("# -------------------------------------------").
+		Add("# HTTP/HTTPS Curl Commands").
+		Add("# -------------------------------------------")
+
+	hasWebTargets := false
+	for ip, info := range k8sTargets {
+		for port := range info.ports {
+			if isWebPort(port) {
+				hasWebTargets = true
+				section.AddBlank()
+				if port == 443 || port == 8443 || port == 9443 {
+					section.Addf("curl -kv https://%s:%d/", ip, port)
+				} else {
+					section.Addf("curl -v http://%s:%d/", ip, port)
+				}
+			}
+		}
+	}
+	if !hasWebTargets {
+		section.AddBlank().Add("# No web ports detected")
+	}
+
+	// EyeWitness section
+	section.AddBlank().
+		Add("# -------------------------------------------").
+		Add("# EyeWitness Screenshot Commands").
+		Add("# -------------------------------------------").
+		Add("# Generate a targets file and run EyeWitness:")
+
+	section.AddBlank().Add("# Create targets file:")
+	section.Add("cat << 'EOF' > k8s-web-targets.txt")
+	for ip, info := range k8sTargets {
+		for port := range info.ports {
+			if isWebPort(port) {
+				if port == 443 || port == 8443 || port == 9443 {
+					section.Addf("https://%s:%d", ip, port)
+				} else {
+					section.Addf("http://%s:%d", ip, port)
+				}
+			}
+		}
+	}
+	section.Add("EOF")
+
+	section.AddBlank().
+		Add("# Run EyeWitness:").
+		Add("eyewitness --web -f k8s-web-targets.txt -d k8s-eyewitness-output --no-prompt")
+}
+
+// buildCloudNMAPLoot creates the NetworkExposure-Cloud-NMAP loot file
+func buildCloudNMAPLoot(loot *shared.LootBuilder, findings []NetworkExposureFinding) {
+	section := loot.Section("NetworkExposure-Cloud-NMAP")
+	section.SetHeader(`# ===========================================
+# Cloud Network Exposure - NMAP Scan Commands
+# ===========================================
+# Scan cloud load balancer IPs and endpoints
+# Run from external network to test internet exposure`)
+
+	// Collect unique Cloud IPs with their ports
+	type cloudTargetInfo struct {
+		ports    map[int32]bool
+		hostname string
+		provider string
+	}
+	cloudTargets := make(map[string]*cloudTargetInfo)
+
+	for _, f := range findings {
+		if f.CloudNetwork == nil {
+			continue
+		}
+		for _, ip := range f.CloudNetwork.PublicIPs {
+			if _, exists := cloudTargets[ip]; !exists {
+				cloudTargets[ip] = &cloudTargetInfo{
+					ports:    make(map[int32]bool),
+					hostname: f.CloudNetwork.Hostname,
+					provider: f.CloudNetwork.Provider,
+				}
+			}
+			// Add ports from cloud network
+			for _, port := range f.CloudNetwork.Ports {
+				cloudTargets[ip].ports[port] = true
+			}
+			// Also add the service port if cloud ports not available
+			if len(f.CloudNetwork.Ports) == 0 && f.Port > 0 {
+				cloudTargets[ip].ports[f.Port] = true
+			}
+		}
+	}
+
+	// Also include cloud hostnames as targets
+	cloudHostnames := make(map[string]*cloudTargetInfo)
+	for _, f := range findings {
+		if f.CloudNetwork == nil || f.CloudNetwork.Hostname == "" {
+			continue
+		}
+		hostname := f.CloudNetwork.Hostname
+		if _, exists := cloudHostnames[hostname]; !exists {
+			cloudHostnames[hostname] = &cloudTargetInfo{
+				ports:    make(map[int32]bool),
+				provider: f.CloudNetwork.Provider,
+			}
+		}
+		for _, port := range f.CloudNetwork.Ports {
+			cloudHostnames[hostname].ports[port] = true
+		}
+		if len(f.CloudNetwork.Ports) == 0 && f.Port > 0 {
+			cloudHostnames[hostname].ports[f.Port] = true
+		}
+	}
+
+	if len(cloudTargets) == 0 && len(cloudHostnames) == 0 {
+		section.AddBlank().Add("# No Cloud IPs or hostnames found")
+		section.Add("# Use --cloud-provider flag to enable cloud correlation:")
+		section.Add("#   cloudfox kubernetes network-exposure --cloud-provider aws")
+		section.Add("#   cloudfox kubernetes network-exposure --cloud-provider gcp")
+		section.Add("#   cloudfox kubernetes network-exposure --cloud-provider azure")
+		return
+	}
+
+	// NMAP section for IPs
+	if len(cloudTargets) > 0 {
+		section.AddBlank().
+			Add("# -------------------------------------------").
+			Add("# NMAP Scans (Cloud IPs)").
+			Add("# -------------------------------------------")
+
+		for ip, info := range cloudTargets {
+			section.AddBlank()
+			if info.hostname != "" {
+				section.Addf("# Target: %s (%s) [%s]", ip, info.hostname, info.provider)
+			} else {
+				section.Addf("# Target: %s [%s]", ip, info.provider)
+			}
+
+			if len(info.ports) > 0 {
+				var portList []string
+				for port := range info.ports {
+					portList = append(portList, fmt.Sprintf("%d", port))
+				}
+				sort.Strings(portList)
+				ports := strings.Join(portList, ",")
+				section.Addf("nmap -sV -sC -p %s %s", ports, ip)
+			} else {
+				section.Addf("nmap -sV -sC -p- %s", ip)
+			}
+		}
+	}
+
+	// NMAP section for hostnames
+	if len(cloudHostnames) > 0 {
+		section.AddBlank().
+			Add("# -------------------------------------------").
+			Add("# NMAP Scans (Cloud Hostnames)").
+			Add("# -------------------------------------------")
+
+		for hostname, info := range cloudHostnames {
+			section.AddBlank().Addf("# Target: %s [%s]", hostname, info.provider)
+
+			if len(info.ports) > 0 {
+				var portList []string
+				for port := range info.ports {
+					portList = append(portList, fmt.Sprintf("%d", port))
+				}
+				sort.Strings(portList)
+				ports := strings.Join(portList, ",")
+				section.Addf("nmap -sV -sC -p %s %s", ports, hostname)
+			} else {
+				section.Addf("nmap -sV -sC -p- %s", hostname)
+			}
+		}
+	}
+
+	// Curl section for web ports
+	section.AddBlank().
+		Add("# -------------------------------------------").
+		Add("# HTTP/HTTPS Curl Commands").
+		Add("# -------------------------------------------")
+
+	hasWebTargets := false
+
+	// Curl for IPs
+	for ip, info := range cloudTargets {
+		for port := range info.ports {
+			if isWebPort(port) {
+				hasWebTargets = true
+				section.AddBlank()
+				if port == 443 || port == 8443 || port == 9443 {
+					section.Addf("curl -kv https://%s:%d/", ip, port)
+				} else {
+					section.Addf("curl -v http://%s:%d/", ip, port)
+				}
+			}
+		}
+	}
+
+	// Curl for hostnames
+	for hostname, info := range cloudHostnames {
+		for port := range info.ports {
+			if isWebPort(port) {
+				hasWebTargets = true
+				section.AddBlank()
+				if port == 443 || port == 8443 || port == 9443 {
+					section.Addf("curl -kv https://%s:%d/", hostname, port)
+				} else {
+					section.Addf("curl -v http://%s:%d/", hostname, port)
+				}
+			}
+		}
+	}
+
+	if !hasWebTargets {
+		section.AddBlank().Add("# No web ports detected")
+	}
+
+	// EyeWitness section
+	section.AddBlank().
+		Add("# -------------------------------------------").
+		Add("# EyeWitness Screenshot Commands").
+		Add("# -------------------------------------------").
+		Add("# Generate a targets file and run EyeWitness:")
+
+	section.AddBlank().Add("# Create targets file:")
+	section.Add("cat << 'EOF' > cloud-web-targets.txt")
+
+	// Add IPs
+	for ip, info := range cloudTargets {
+		for port := range info.ports {
+			if isWebPort(port) {
+				if port == 443 || port == 8443 || port == 9443 {
+					section.Addf("https://%s:%d", ip, port)
+				} else {
+					section.Addf("http://%s:%d", ip, port)
+				}
+			}
+		}
+	}
+
+	// Add hostnames
+	for hostname, info := range cloudHostnames {
+		for port := range info.ports {
+			if isWebPort(port) {
+				if port == 443 || port == 8443 || port == 9443 {
+					section.Addf("https://%s:%d", hostname, port)
+				} else {
+					section.Addf("http://%s:%d", hostname, port)
+				}
+			}
+		}
+	}
+
+	section.Add("EOF")
+
+	section.AddBlank().
+		Add("# Run EyeWitness:").
+		Add("eyewitness --web -f cloud-web-targets.txt -d cloud-eyewitness-output --no-prompt")
 }

@@ -1055,7 +1055,7 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 
 	if len(vaultInjectorRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Secret-Admission-Vault-Injector",
+			Name:   "Secret-Admission-Vault-Injector-Policies",
 			Header: vaultInjectorHeader,
 			Body:   vaultInjectorRows,
 		})
@@ -1063,7 +1063,7 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 
 	if len(vaultOperatorRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Secret-Admission-Vault-Operator",
+			Name:   "Secret-Admission-Vault-Operator-Policies",
 			Header: vaultOperatorHeader,
 			Body:   vaultOperatorRows,
 		})
@@ -1071,7 +1071,7 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 
 	if len(vaultAuthRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Secret-Admission-VaultAuth",
+			Name:   "Secret-Admission-VaultAuth-Policies",
 			Header: vaultAuthHeader,
 			Body:   vaultAuthRows,
 		})
@@ -1079,7 +1079,7 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 
 	if len(vaultStaticRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Secret-Admission-VaultStaticSecrets",
+			Name:   "Secret-Admission-VaultStaticSecrets-Policies",
 			Header: vaultStaticHeader,
 			Body:   vaultStaticRows,
 		})
@@ -1087,7 +1087,7 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 
 	if len(esoControllerRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Secret-Admission-ESO-Controller",
+			Name:   "Secret-Admission-ESO-Controller-Policies",
 			Header: esoControllerHeader,
 			Body:   esoControllerRows,
 		})
@@ -1095,7 +1095,7 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 
 	if len(secretStoreRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Secret-Admission-SecretStores",
+			Name:   "Secret-Admission-SecretStores-Policies",
 			Header: secretStoreHeader,
 			Body:   secretStoreRows,
 		})
@@ -1103,7 +1103,7 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 
 	if len(externalSecretRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Secret-Admission-ExternalSecrets",
+			Name:   "Secret-Admission-ExternalSecrets-Policies",
 			Header: externalSecretHeader,
 			Body:   externalSecretRows,
 		})
@@ -1111,7 +1111,7 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 
 	if len(sealedSecretsRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Secret-Admission-SealedSecrets",
+			Name:   "Secret-Admission-SealedSecrets-Policies",
 			Header: sealedSecretsHeader,
 			Body:   sealedSecretsRows,
 		})
@@ -1119,7 +1119,7 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 
 	if len(secretProviderClassRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Secret-Admission-CSI-ProviderClasses",
+			Name:   "Secret-Admission-CSI-ProviderClasses-Policies",
 			Header: secretProviderClassHeader,
 			Body:   secretProviderClassRows,
 		})
@@ -1127,7 +1127,7 @@ func ListSecretAdmission(cmd *cobra.Command, args []string) {
 
 	if len(unmanagedSecretsRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Secret-Admission-Unmanaged",
+			Name:   "Secret-Admission-Unmanaged-Policies",
 			Header: unmanagedSecretsHeader,
 			Body:   unmanagedSecretsRows,
 		})

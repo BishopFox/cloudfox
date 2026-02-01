@@ -1261,7 +1261,7 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 	if detailed {
 		if len(hncRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Multitenancy-Admission-HNC",
+				Name:   "Multitenancy-Admission-HNC-Policies",
 				Header: hncHeader,
 				Body:   hncRows,
 			})
@@ -1269,7 +1269,7 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 
 		if len(hncHierarchyRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Multitenancy-Admission-HNC-Hierarchies",
+				Name:   "Multitenancy-Admission-HNC-Hierarchies-Policies",
 				Header: hncHierarchyHeader,
 				Body:   hncHierarchyRows,
 			})
@@ -1277,7 +1277,7 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 
 		if len(capsuleRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Multitenancy-Admission-Capsule",
+				Name:   "Multitenancy-Admission-Capsule-Policies",
 				Header: capsuleHeader,
 				Body:   capsuleRows,
 			})
@@ -1285,7 +1285,7 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 
 		if len(capsuleTenantRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Multitenancy-Admission-Capsule-Tenants",
+				Name:   "Multitenancy-Admission-Capsule-Tenants-Policies",
 				Header: capsuleTenantHeader,
 				Body:   capsuleTenantRows,
 			})
@@ -1293,7 +1293,7 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 
 		if len(vclusterRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Multitenancy-Admission-vClusters",
+				Name:   "Multitenancy-Admission-vClusters-Policies",
 				Header: vclusterHeader,
 				Body:   vclusterRows,
 			})
@@ -1301,7 +1301,7 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 
 		if len(isolationRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Multitenancy-Admission-Namespace-Isolation",
+				Name:   "Multitenancy-Admission-Namespace-Isolation-Policies",
 				Header: isolationHeader,
 				Body:   isolationRows,
 			})
@@ -1309,7 +1309,7 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 
 		if len(crossTenantRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Multitenancy-Admission-Cross-Tenant-Resources",
+				Name:   "Multitenancy-Admission-Cross-Tenant-Resources-Policies",
 				Header: crossTenantHeader,
 				Body:   crossTenantRows,
 			})
@@ -1317,7 +1317,7 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 
 		if len(opaGatekeeperRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Multitenancy-Admission-OPA-Gatekeeper",
+				Name:   "Multitenancy-Admission-OPA-Gatekeeper-Policies",
 				Header: opaGatekeeperHeader,
 				Body:   opaGatekeeperRows,
 			})
@@ -1326,7 +1326,7 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 		// Detailed OPA Gatekeeper tables showing individual policies
 		if len(opaTemplatesRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Multitenancy-Admission-OPA-ConstraintTemplates",
+				Name:   "Multitenancy-Admission-OPA-ConstraintTemplates-Policies",
 				Header: opaTemplatesHeader,
 				Body:   opaTemplatesRows,
 			})
@@ -1334,7 +1334,7 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 
 		if len(opaConstraintsRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Multitenancy-Admission-OPA-Constraints",
+				Name:   "Multitenancy-Admission-OPA-Constraints-Policies",
 				Header: opaConstraintsHeader,
 				Body:   opaConstraintsRows,
 			})
@@ -1343,7 +1343,7 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 		// Loft Spaces detail table
 		if len(loftSpaceRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Multitenancy-Admission-Loft-Spaces",
+				Name:   "Multitenancy-Admission-Loft-Spaces-Policies",
 				Header: loftSpaceHeader,
 				Body:   loftSpaceRows,
 			})
@@ -1352,7 +1352,7 @@ func ListMultitenancyAdmission(cmd *cobra.Command, args []string) {
 		// Kiosk Accounts detail table
 		if len(kioskAccountRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Multitenancy-Admission-Kiosk-Accounts",
+				Name:   "Multitenancy-Admission-Kiosk-Accounts-Policies",
 				Header: kioskAccountHeader,
 				Body:   kioskAccountRows,
 			})

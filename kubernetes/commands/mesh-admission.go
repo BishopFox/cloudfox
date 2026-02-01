@@ -982,7 +982,7 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 	if detailed {
 		if len(istioRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Mesh-Admission-Istio",
+				Name:   "Mesh-Admission-Istio-Policies",
 				Header: istioHeader,
 				Body:   istioRows,
 			})
@@ -990,7 +990,7 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 
 		if len(peerAuthRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Mesh-Admission-Istio-PeerAuth",
+				Name:   "Mesh-Admission-Istio-PeerAuth-Policies",
 				Header: peerAuthHeader,
 				Body:   peerAuthRows,
 			})
@@ -998,7 +998,7 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 
 		if len(reqAuthRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Mesh-Admission-Istio-RequestAuth",
+				Name:   "Mesh-Admission-Istio-RequestAuth-Policies",
 				Header: reqAuthHeader,
 				Body:   reqAuthRows,
 			})
@@ -1006,7 +1006,7 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 
 		if len(linkerdRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Mesh-Admission-Linkerd",
+				Name:   "Mesh-Admission-Linkerd-Policies",
 				Header: linkerdHeader,
 				Body:   linkerdRows,
 			})
@@ -1014,7 +1014,7 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 
 		if len(linkerdAuthRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Mesh-Admission-Linkerd-Auth",
+				Name:   "Mesh-Admission-Linkerd-Auth-Policies",
 				Header: linkerdAuthHeader,
 				Body:   linkerdAuthRows,
 			})
@@ -1022,7 +1022,7 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 
 		if len(injectionRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Mesh-Admission-Injection-Status",
+				Name:   "Mesh-Admission-Injection-Status-Policies",
 				Header: injectionHeader,
 				Body:   injectionRows,
 			})
@@ -1030,7 +1030,7 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 
 		if len(ciliumMeshRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Mesh-Admission-Cilium",
+				Name:   "Mesh-Admission-Cilium-Policies",
 				Header: ciliumMeshHeader,
 				Body:   ciliumMeshRows,
 			})
@@ -1038,7 +1038,7 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 
 		if len(consulConnectRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Mesh-Admission-Consul-Connect",
+				Name:   "Mesh-Admission-Consul-Connect-Policies",
 				Header: consulConnectHeader,
 				Body:   consulConnectRows,
 			})
@@ -1046,7 +1046,7 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 
 		if len(osmRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Mesh-Admission-OSM",
+				Name:   "Mesh-Admission-OSM-Policies",
 				Header: osmHeader,
 				Body:   osmRows,
 			})
@@ -1054,7 +1054,7 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 
 		if len(fsmRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Mesh-Admission-FSM",
+				Name:   "Mesh-Admission-FSM-Policies",
 				Header: fsmHeader,
 				Body:   fsmRows,
 			})
@@ -1062,7 +1062,7 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 
 		if len(kumaRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Mesh-Admission-Kuma",
+				Name:   "Mesh-Admission-Kuma-Policies",
 				Header: kumaHeader,
 				Body:   kumaRows,
 			})
@@ -1070,7 +1070,7 @@ func ListMeshAdmission(cmd *cobra.Command, args []string) {
 
 		if len(awsAppMeshRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Mesh-Admission-AWS-AppMesh",
+				Name:   "Mesh-Admission-AWS-AppMesh-Policies",
 				Header: awsAppMeshHeader,
 				Body:   awsAppMeshRows,
 			})

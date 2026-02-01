@@ -900,7 +900,7 @@ func ListRuntimeAdmission(cmd *cobra.Command, args []string) {
 	if detailed {
 		if len(runtimeClassRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Runtime-Admission-RuntimeClasses",
+				Name:   "Runtime-Admission-RuntimeClasses-Policies",
 				Header: runtimeClassHeader,
 				Body:   runtimeClassRows,
 			})
@@ -908,7 +908,7 @@ func ListRuntimeAdmission(cmd *cobra.Command, args []string) {
 
 		if len(seccompProfileRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Runtime-Admission-Seccomp-Profiles",
+				Name:   "Runtime-Admission-Seccomp-Profiles-Policies",
 				Header: seccompProfileHeader,
 				Body:   seccompProfileRows,
 			})
@@ -916,7 +916,7 @@ func ListRuntimeAdmission(cmd *cobra.Command, args []string) {
 
 		if len(appArmorProfileRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Runtime-Admission-AppArmor-Profiles",
+				Name:   "Runtime-Admission-AppArmor-Profiles-Policies",
 				Header: appArmorProfileHeader,
 				Body:   appArmorProfileRows,
 			})
@@ -924,7 +924,7 @@ func ListRuntimeAdmission(cmd *cobra.Command, args []string) {
 
 		if len(unsandboxedPodRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Runtime-Admission-Unsandboxed-Pods",
+				Name:   "Runtime-Admission-Unsandboxed-Pods-Policies",
 				Header: unsandboxedPodHeader,
 				Body:   unsandboxedPodRows,
 			})
@@ -932,7 +932,7 @@ func ListRuntimeAdmission(cmd *cobra.Command, args []string) {
 
 		if len(runtimeSecurityToolsRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Runtime-Admission-Security-Tools",
+				Name:   "Runtime-Admission-Security-Tools-Policies",
 				Header: runtimeSecurityToolsHeader,
 				Body:   runtimeSecurityToolsRows,
 			})
@@ -940,7 +940,7 @@ func ListRuntimeAdmission(cmd *cobra.Command, args []string) {
 
 		if len(pssRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Runtime-Admission-Pod-Security-Standards",
+				Name:   "Runtime-Admission-Pod-Security-Standards-Policies",
 				Header: pssHeader,
 				Body:   pssRows,
 			})

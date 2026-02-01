@@ -2682,7 +2682,7 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		// Add webhook table if webhooks exist
 		if len(webhookRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Pod-Admission-Webhooks",
+				Name:   "Pod-Admission-Webhooks-Policies",
 				Header: webhookHeaders,
 				Body:   webhookRows,
 			})
@@ -2691,7 +2691,7 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		// Add PSP table if PSPs exist
 		if len(pspRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Pod-Admission-PSP",
+				Name:   "Pod-Admission-PSP-Policies",
 				Header: pspHeaders,
 				Body:   pspRows,
 			})
@@ -2700,7 +2700,7 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		// Add VAP table if VAPs exist
 		if len(vapRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Pod-Admission-VAP",
+				Name:   "Pod-Admission-VAP-Policies",
 				Header: vapHeaders,
 				Body:   vapRows,
 			})
@@ -2709,7 +2709,7 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		// Add Gatekeeper table if constraints exist
 		if len(gatekeeperRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Pod-Admission-Gatekeeper",
+				Name:   "Pod-Admission-Gatekeeper-Policies",
 				Header: gatekeeperHeaders,
 				Body:   gatekeeperRows,
 			})
@@ -2718,7 +2718,7 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		// Add Kyverno table if policies exist
 		if len(kyvernoRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Pod-Admission-Kyverno",
+				Name:   "Pod-Admission-Kyverno-Policies",
 				Header: kyvernoHeaders,
 				Body:   kyvernoRows,
 			})
@@ -2727,7 +2727,7 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		// Add Kyverno exceptions table if exceptions exist (bypass vectors!)
 		if len(kyvernoExceptionRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Pod-Admission-Kyverno-Exceptions",
+				Name:   "Pod-Admission-Kyverno-Exceptions-Policies",
 				Header: kyvernoExceptionHeaders,
 				Body:   kyvernoExceptionRows,
 			})
@@ -2736,7 +2736,7 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		// Add Kubewarden table if policies exist
 		if len(kubewardenRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Pod-Admission-Kubewarden",
+				Name:   "Pod-Admission-Kubewarden-Policies",
 				Header: kubewardenHeaders,
 				Body:   kubewardenRows,
 			})
@@ -2745,7 +2745,7 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		// Add jsPolicy table if policies exist
 		if len(jsPolicyRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Pod-Admission-jsPolicy",
+				Name:   "Pod-Admission-jsPolicy-Policies",
 				Header: jsPolicyHeaders,
 				Body:   jsPolicyRows,
 			})
@@ -2754,7 +2754,7 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		// Add Gatekeeper exclusions table if exclusions exist (bypass vectors!)
 		if len(gatekeeperExclusionRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Pod-Admission-Gatekeeper-Exclusions",
+				Name:   "Pod-Admission-Gatekeeper-Exclusions-Policies",
 				Header: gatekeeperExclusionHeaders,
 				Body:   gatekeeperExclusionRows,
 			})
@@ -2763,7 +2763,7 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		// Add Polaris table if Polaris is configured
 		if len(polarisRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Pod-Admission-Polaris",
+				Name:   "Pod-Admission-Polaris-Policies",
 				Header: polarisHeaders,
 				Body:   polarisRows,
 			})
@@ -2772,7 +2772,7 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		// Add Datree table if Datree is configured
 		if len(datreeRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Pod-Admission-Datree",
+				Name:   "Pod-Admission-Datree-Policies",
 				Header: datreeHeaders,
 				Body:   datreeRows,
 			})
@@ -2781,7 +2781,7 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		// Add AWS Pod Identity table if identities exist
 		if len(awsPodIdentityRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Pod-Admission-AWS-Pod-Identity",
+				Name:   "Pod-Admission-AWS-Pod-Identity-Policies",
 				Header: awsPodIdentityHeaders,
 				Body:   awsPodIdentityRows,
 			})
@@ -2790,7 +2790,7 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		// Add GCP Workload Identity table if identities exist
 		if len(gcpWorkloadIdentityRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Pod-Admission-GCP-Workload-Identity",
+				Name:   "Pod-Admission-GCP-Workload-Identity-Policies",
 				Header: gcpWorkloadIdentityHeaders,
 				Body:   gcpWorkloadIdentityRows,
 			})
@@ -2799,7 +2799,7 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		// Add Azure Workload Identity table if identities exist
 		if len(azureWorkloadIdentityRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Pod-Admission-Azure-Workload-Identity",
+				Name:   "Pod-Admission-Azure-Workload-Identity-Policies",
 				Header: azureWorkloadIdentityHeaders,
 				Body:   azureWorkloadIdentityRows,
 			})
@@ -2808,7 +2808,7 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		// Add Capsule Tenant Pod Policy table if policies exist
 		if len(capsuleTenantPodRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Pod-Admission-Capsule-Tenant",
+				Name:   "Pod-Admission-Capsule-Tenant-Policies",
 				Header: capsuleTenantPodHeaders,
 				Body:   capsuleTenantPodRows,
 			})
@@ -2817,7 +2817,7 @@ func ListPodAdmission(cmd *cobra.Command, args []string) {
 		// Add Rancher Project Pod Policy table if policies exist
 		if len(rancherProjectPodRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Pod-Admission-Rancher-Project",
+				Name:   "Pod-Admission-Rancher-Project-Policies",
 				Header: rancherProjectPodHeaders,
 				Body:   rancherProjectPodRows,
 			})

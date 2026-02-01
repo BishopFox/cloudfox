@@ -1091,7 +1091,7 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 
 	if len(falcoRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Audit-Admission-Falco",
+			Name:   "Audit-Admission-Falco-Policies",
 			Header: falcoHeader,
 			Body:   falcoRows,
 		})
@@ -1099,7 +1099,7 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 
 	if len(falcoRulesRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Audit-Admission-Falco-Rules",
+			Name:   "Audit-Admission-Falco-Rules-Policies",
 			Header: falcoRulesHeader,
 			Body:   falcoRulesRows,
 		})
@@ -1107,7 +1107,7 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 
 	if len(tetragonRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Audit-Admission-Tetragon",
+			Name:   "Audit-Admission-Tetragon-Policies",
 			Header: tetragonHeader,
 			Body:   tetragonRows,
 		})
@@ -1115,7 +1115,7 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 
 	if len(tracingPolicyRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Audit-Admission-TracingPolicies",
+			Name:   "Audit-Admission-TracingPolicies-Policies",
 			Header: tracingPolicyHeader,
 			Body:   tracingPolicyRows,
 		})
@@ -1123,7 +1123,7 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 
 	if len(kubeArmorRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Audit-Admission-KubeArmor",
+			Name:   "Audit-Admission-KubeArmor-Policies",
 			Header: kubeArmorHeader,
 			Body:   kubeArmorRows,
 		})
@@ -1131,7 +1131,7 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 
 	if len(kubeArmorPolicyRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Audit-Admission-KubeArmor-Policies",
+			Name:   "Audit-Admission-KubeArmor-SecurityPolicies-Policies",
 			Header: kubeArmorPolicyHeader,
 			Body:   kubeArmorPolicyRows,
 		})
@@ -1139,7 +1139,7 @@ func ListAuditAdmission(cmd *cobra.Command, args []string) {
 
 	if len(auditLogDestRows) > 0 {
 		tables = append(tables, internal.TableFile{
-			Name:   "Audit-Admission-Log-Destinations",
+			Name:   "Audit-Admission-Log-Destinations-Policies",
 			Header: auditLogDestHeader,
 			Body:   auditLogDestRows,
 		})

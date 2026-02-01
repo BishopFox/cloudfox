@@ -1156,7 +1156,7 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 	if detailed {
 		if len(certManagerRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Cert-Admission-CertManager",
+				Name:   "Cert-Admission-CertManager-Policies",
 				Header: certManagerHeader,
 				Body:   certManagerRows,
 			})
@@ -1164,7 +1164,7 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 
 		if len(issuerRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Cert-Admission-Issuers",
+				Name:   "Cert-Admission-Issuers-Policies",
 				Header: issuerHeader,
 				Body:   issuerRows,
 			})
@@ -1172,7 +1172,7 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 
 		if len(certificateRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Cert-Admission-Certificates",
+				Name:   "Cert-Admission-Certificates-Policies",
 				Header: certificateHeader,
 				Body:   certificateRows,
 			})
@@ -1180,7 +1180,7 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 
 		if len(certRequestRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Cert-Admission-CertificateRequests",
+				Name:   "Cert-Admission-CertificateRequests-Policies",
 				Header: certRequestHeader,
 				Body:   certRequestRows,
 			})
@@ -1188,7 +1188,7 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 
 		if len(csrRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Cert-Admission-CSRs",
+				Name:   "Cert-Admission-CSRs-Policies",
 				Header: csrHeader,
 				Body:   csrRows,
 			})
@@ -1196,7 +1196,7 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 
 		if len(csrApproverRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Cert-Admission-CSRApprovers",
+				Name:   "Cert-Admission-CSRApprovers-Policies",
 				Header: csrApproverHeader,
 				Body:   csrApproverRows,
 			})
@@ -1204,7 +1204,7 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 
 		if len(venafiRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Cert-Admission-Venafi",
+				Name:   "Cert-Admission-Venafi-Policies",
 				Header: venafiHeader,
 				Body:   venafiRows,
 			})
@@ -1212,7 +1212,7 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 
 		if len(spiffeRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Cert-Admission-SPIFFE",
+				Name:   "Cert-Admission-SPIFFE-Policies",
 				Header: spiffeHeader,
 				Body:   spiffeRows,
 			})
@@ -1220,7 +1220,7 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 
 		if len(istioCertRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Cert-Admission-IstioCerts",
+				Name:   "Cert-Admission-IstioCerts-Policies",
 				Header: istioCertHeader,
 				Body:   istioCertRows,
 			})
@@ -1229,7 +1229,7 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 		// Cloud provider certificate tables
 		if len(awsACMRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Cert-Admission-AWS-ACM",
+				Name:   "Cert-Admission-AWS-ACM-Policies",
 				Header: awsACMHeader,
 				Body:   awsACMRows,
 			})
@@ -1237,7 +1237,7 @@ func ListCertAdmission(cmd *cobra.Command, args []string) {
 
 		if len(azureKeyVaultRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Cert-Admission-Azure-KeyVault",
+				Name:   "Cert-Admission-Azure-KeyVault-Policies",
 				Header: azureKeyVaultHeader,
 				Body:   azureKeyVaultRows,
 			})

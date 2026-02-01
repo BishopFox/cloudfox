@@ -2986,7 +2986,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 
 		if len(calicoRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Network-Admission-Calico",
+				Name:   "Network-Admission-Calico-Policies",
 				Header: calicoHeaders,
 				Body:   calicoRows,
 			})
@@ -2994,7 +2994,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 
 		if len(ciliumRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Network-Admission-Cilium",
+				Name:   "Network-Admission-Cilium-Policies",
 				Header: ciliumHeaders,
 				Body:   ciliumRows,
 			})
@@ -3002,7 +3002,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 
 		if len(antreaRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Network-Admission-Antrea",
+				Name:   "Network-Admission-Antrea-Policies",
 				Header: antreaHeaders,
 				Body:   antreaRows,
 			})
@@ -3010,7 +3010,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 
 		if len(istioRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Network-Admission-Istio",
+				Name:   "Network-Admission-Istio-Policies",
 				Header: istioHeaders,
 				Body:   istioRows,
 			})
@@ -3018,7 +3018,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 
 		if len(linkerdRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Network-Admission-Linkerd",
+				Name:   "Network-Admission-Linkerd-Policies",
 				Header: linkerdHeaders,
 				Body:   linkerdRows,
 			})
@@ -3026,7 +3026,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 
 		if len(awsSGRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Network-Admission-AWS-SecurityGroup",
+				Name:   "Network-Admission-AWS-SecurityGroup-Policies",
 				Header: awsSGHeaders,
 				Body:   awsSGRows,
 			})
@@ -3034,7 +3034,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 
 		if len(openshiftEgressRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Network-Admission-OpenShift-Egress",
+				Name:   "Network-Admission-OpenShift-Egress-Policies",
 				Header: openshiftEgressHeaders,
 				Body:   openshiftEgressRows,
 			})
@@ -3042,7 +3042,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 
 		if len(consulRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Network-Admission-Consul-Connect",
+				Name:   "Network-Admission-Consul-Connect-Policies",
 				Header: consulHeaders,
 				Body:   consulRows,
 			})
@@ -3050,7 +3050,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 
 		if len(kumaRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Network-Admission-Kuma-Mesh",
+				Name:   "Network-Admission-Kuma-Mesh-Policies",
 				Header: kumaHeaders,
 				Body:   kumaRows,
 			})
@@ -3058,7 +3058,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 
 		if len(smiRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Network-Admission-SMI",
+				Name:   "Network-Admission-SMI-Policies",
 				Header: smiHeaders,
 				Body:   smiRows,
 			})
@@ -3066,7 +3066,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 
 		if len(glooRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Network-Admission-Gloo-Mesh",
+				Name:   "Network-Admission-Gloo-Mesh-Policies",
 				Header: glooHeaders,
 				Body:   glooRows,
 			})
@@ -3074,7 +3074,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 
 		if len(nsxtRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Network-Admission-NSX-T",
+				Name:   "Network-Admission-NSX-T-Policies",
 				Header: nsxtHeaders,
 				Body:   nsxtRows,
 			})
@@ -3082,7 +3082,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 
 		if len(gcpRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Network-Admission-GCP",
+				Name:   "Network-Admission-GCP-Policies",
 				Header: gcpHeaders,
 				Body:   gcpRows,
 			})
@@ -3090,7 +3090,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 
 		if len(azureRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Network-Admission-Azure",
+				Name:   "Network-Admission-Azure-Policies",
 				Header: azureHeaders,
 				Body:   azureRows,
 			})
@@ -3099,7 +3099,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		// Policy engine detailed tables
 		if len(gatekeeperNetworkRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Network-Admission-Gatekeeper",
+				Name:   "Network-Admission-Gatekeeper-Policies",
 				Header: gatekeeperNetworkHeaders,
 				Body:   gatekeeperNetworkRows,
 			})
@@ -3107,7 +3107,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 
 		if len(kyvernoNetworkRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Network-Admission-Kyverno",
+				Name:   "Network-Admission-Kyverno-Policies",
 				Header: kyvernoNetworkHeaders,
 				Body:   kyvernoNetworkRows,
 			})
@@ -3115,7 +3115,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 
 		if len(kubewardenNetworkRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Network-Admission-Kubewarden",
+				Name:   "Network-Admission-Kubewarden-Policies",
 				Header: kubewardenNetworkHeaders,
 				Body:   kubewardenNetworkRows,
 			})
@@ -3124,7 +3124,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		// CNAPP Network Policies (Aqua, Prisma, Sysdig, StackRox, NeuVector)
 		if len(cnappNetworkRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Network-Admission-CNAPP",
+				Name:   "Network-Admission-CNAPP-Policies",
 				Header: cnappNetworkHeaders,
 				Body:   cnappNetworkRows,
 			})
@@ -3133,7 +3133,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		// Capsule Network Policies
 		if len(capsuleNetworkRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Network-Admission-Capsule",
+				Name:   "Network-Admission-Capsule-Policies",
 				Header: capsuleNetworkHeaders,
 				Body:   capsuleNetworkRows,
 			})
@@ -3142,7 +3142,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		// Rancher Network Policies
 		if len(rancherNetworkRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Network-Admission-Rancher",
+				Name:   "Network-Admission-Rancher-Policies",
 				Header: rancherNetworkHeaders,
 				Body:   rancherNetworkRows,
 			})
@@ -3151,7 +3151,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		// Polaris Network Checks
 		if len(polarisNetworkRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Network-Admission-Polaris",
+				Name:   "Network-Admission-Polaris-Policies",
 				Header: polarisNetworkHeaders,
 				Body:   polarisNetworkRows,
 			})

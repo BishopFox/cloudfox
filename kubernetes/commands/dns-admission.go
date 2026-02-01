@@ -2022,7 +2022,7 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 	if detailed {
 		if len(corednsRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "DNS-Admission-CoreDNS",
+				Name:   "DNS-Admission-CoreDNS-Policies",
 				Header: corednsHeader,
 				Body:   corednsRows,
 			})
@@ -2030,7 +2030,7 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 
 		if len(corednsConfigRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "DNS-Admission-CoreDNS-Config",
+				Name:   "DNS-Admission-CoreDNS-Config-Policies",
 				Header: corednsConfigHeader,
 				Body:   corednsConfigRows,
 			})
@@ -2038,7 +2038,7 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 
 		if len(nodeLocalDNSRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "DNS-Admission-NodeLocalDNS",
+				Name:   "DNS-Admission-NodeLocalDNS-Policies",
 				Header: nodeLocalDNSHeader,
 				Body:   nodeLocalDNSRows,
 			})
@@ -2046,7 +2046,7 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 
 		if len(externalDNSRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "DNS-Admission-ExternalDNS",
+				Name:   "DNS-Admission-ExternalDNS-Policies",
 				Header: externalDNSHeader,
 				Body:   externalDNSRows,
 			})
@@ -2070,7 +2070,7 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 
 		if len(podDNSRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "DNS-Admission-Pod-DNS-Config",
+				Name:   "DNS-Admission-Pod-DNS-Config-Policies",
 				Header: podDNSHeader,
 				Body:   podDNSRows,
 			})
@@ -2078,7 +2078,7 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 
 		if len(istioDNSRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "DNS-Admission-Istio-DNS",
+				Name:   "DNS-Admission-Istio-DNS-Policies",
 				Header: istioDNSHeader,
 				Body:   istioDNSRows,
 			})
@@ -2086,7 +2086,7 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 
 		if len(cloudDNSRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "DNS-Admission-Cloud-DNS",
+				Name:   "DNS-Admission-Cloud-DNS-Policies",
 				Header: cloudDNSHeader,
 				Body:   cloudDNSRows,
 			})
@@ -2094,7 +2094,7 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 
 		if len(headlessRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "DNS-Admission-Headless-Services",
+				Name:   "DNS-Admission-Headless-Services-Policies",
 				Header: headlessHeader,
 				Body:   headlessRows,
 			})
@@ -2110,7 +2110,7 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 
 		if len(gatekeeperRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "DNS-Admission-Gatekeeper-Constraints",
+				Name:   "DNS-Admission-Gatekeeper-Constraints-Policies",
 				Header: gatekeeperHeader,
 				Body:   gatekeeperRows,
 			})
@@ -2118,7 +2118,7 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 
 		if len(consulRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "DNS-Admission-Consul",
+				Name:   "DNS-Admission-Consul-Policies",
 				Header: consulHeader,
 				Body:   consulRows,
 			})
@@ -2126,7 +2126,7 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 
 		if len(k8sNetPolDNSRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "DNS-Admission-K8s-NetworkPolicy",
+				Name:   "DNS-Admission-K8s-NetworkPolicy-Policies",
 				Header: k8sNetPolDNSHeader,
 				Body:   k8sNetPolDNSRows,
 			})
@@ -2134,7 +2134,7 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 
 		if len(consulDNSForwardingRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "DNS-Admission-Consul-Forwarding",
+				Name:   "DNS-Admission-Consul-Forwarding-Policies",
 				Header: consulDNSForwardingHeader,
 				Body:   consulDNSForwardingRows,
 			})
@@ -2142,7 +2142,7 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 
 		if len(kubewardenDNSRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "DNS-Admission-Kubewarden",
+				Name:   "DNS-Admission-Kubewarden-Policies",
 				Header: kubewardenDNSHeader,
 				Body:   kubewardenDNSRows,
 			})
@@ -2150,7 +2150,7 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 
 		if len(awsDNSFirewallRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "DNS-Admission-AWS-Firewall",
+				Name:   "DNS-Admission-AWS-Firewall-Policies",
 				Header: awsDNSFirewallHeader,
 				Body:   awsDNSFirewallRows,
 			})
@@ -2158,7 +2158,7 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 
 		if len(gcpResponsePolicyRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "DNS-Admission-GCP-ResponsePolicy",
+				Name:   "DNS-Admission-GCP-ResponsePolicy-Policies",
 				Header: gcpResponsePolicyHeader,
 				Body:   gcpResponsePolicyRows,
 			})
@@ -2166,7 +2166,7 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 
 		if len(azureDNSResolverRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "DNS-Admission-Azure-PrivateResolver",
+				Name:   "DNS-Admission-Azure-PrivateResolver-Policies",
 				Header: azureDNSResolverHeader,
 				Body:   azureDNSResolverRows,
 			})
@@ -2174,7 +2174,7 @@ func ListDNSAdmission(cmd *cobra.Command, args []string) {
 
 		if len(istioServiceEntryRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "DNS-Admission-Istio-ServiceEntry",
+				Name:   "DNS-Admission-Istio-ServiceEntry-Policies",
 				Header: istioServiceEntryHeader,
 				Body:   istioServiceEntryRows,
 			})

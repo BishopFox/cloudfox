@@ -3246,7 +3246,7 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 	if detailed {
 		if len(findingRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Image-Admission-Policies-Detail",
+				Name:   "Image-Admission-Policies-Detail-Policies",
 				Header: findingHeaders,
 				Body:   findingRows,
 			})
@@ -3254,7 +3254,7 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 
 		if len(allowedImagesRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Image-Admission-Allowed-Images",
+				Name:   "Image-Admission-Allowed-Images-Policies",
 				Header: allowedImagesHeaders,
 				Body:   allowedImagesRows,
 			})
@@ -3262,7 +3262,7 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 
 		if len(blockedImagesRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Image-Admission-Blocked-Images",
+				Name:   "Image-Admission-Blocked-Images-Policies",
 				Header: blockedImagesHeaders,
 				Body:   blockedImagesRows,
 			})
@@ -3279,7 +3279,7 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 
 		if len(gcpAttestorRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Image-Admission-GCP-Attestors",
+				Name:   "Image-Admission-GCP-Attestors-Policies",
 				Header: gcpAttestorHeaders,
 				Body:   gcpAttestorRows,
 			})
@@ -3287,7 +3287,7 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 
 		if len(awsScanConfigRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Image-Admission-AWS-ECR-Scan",
+				Name:   "Image-Admission-AWS-ECR-Scan-Policies",
 				Header: awsScanConfigHeaders,
 				Body:   awsScanConfigRows,
 			})
@@ -3295,7 +3295,7 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 
 		if len(awsSignerProfileRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Image-Admission-AWS-Signer",
+				Name:   "Image-Admission-AWS-Signer-Policies",
 				Header: awsSignerProfileHeaders,
 				Body:   awsSignerProfileRows,
 			})
@@ -3304,7 +3304,7 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 		// Security tool detailed tables
 		if len(aquaRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Image-Admission-Aqua",
+				Name:   "Image-Admission-Aqua-Policies",
 				Header: aquaHeaders,
 				Body:   aquaRows,
 			})
@@ -3312,7 +3312,7 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 
 		if len(prismaRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Image-Admission-Prisma",
+				Name:   "Image-Admission-Prisma-Policies",
 				Header: prismaHeaders,
 				Body:   prismaRows,
 			})
@@ -3320,7 +3320,7 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 
 		if len(sysdigRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Image-Admission-Sysdig",
+				Name:   "Image-Admission-Sysdig-Policies",
 				Header: sysdigHeaders,
 				Body:   sysdigRows,
 			})
@@ -3328,7 +3328,7 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 
 		if len(neuvectorRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Image-Admission-NeuVector",
+				Name:   "Image-Admission-NeuVector-Policies",
 				Header: neuvectorHeaders,
 				Body:   neuvectorRows,
 			})
@@ -3336,7 +3336,7 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 
 		if len(stackroxRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Image-Admission-StackRox",
+				Name:   "Image-Admission-StackRox-Policies",
 				Header: stackroxHeaders,
 				Body:   stackroxRows,
 			})
@@ -3344,7 +3344,7 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 
 		if len(snykRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Image-Admission-Snyk",
+				Name:   "Image-Admission-Snyk-Policies",
 				Header: snykHeaders,
 				Body:   snykRows,
 			})
@@ -3352,7 +3352,7 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 
 		if len(anchoreRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Image-Admission-Anchore",
+				Name:   "Image-Admission-Anchore-Policies",
 				Header: anchoreHeaders,
 				Body:   anchoreRows,
 			})
@@ -3360,7 +3360,7 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 
 		if len(trivyRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Image-Admission-Trivy",
+				Name:   "Image-Admission-Trivy-Policies",
 				Header: trivyHeaders,
 				Body:   trivyRows,
 			})
@@ -3368,7 +3368,7 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 
 		if len(notationRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Image-Admission-Notation",
+				Name:   "Image-Admission-Notation-Policies",
 				Header: notationHeaders,
 				Body:   notationRows,
 			})
@@ -3376,7 +3376,7 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 
 		if len(harborRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Image-Admission-Harbor",
+				Name:   "Image-Admission-Harbor-Policies",
 				Header: harborHeaders,
 				Body:   harborRows,
 			})
@@ -3384,7 +3384,7 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 
 		if len(clairRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Image-Admission-Clair",
+				Name:   "Image-Admission-Clair-Policies",
 				Header: clairHeaders,
 				Body:   clairRows,
 			})
@@ -3392,7 +3392,7 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 
 		if len(wizRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Image-Admission-Wiz",
+				Name:   "Image-Admission-Wiz-Policies",
 				Header: wizHeaders,
 				Body:   wizRows,
 			})
@@ -3400,7 +3400,7 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 
 		if len(laceworkRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Image-Admission-Lacework",
+				Name:   "Image-Admission-Lacework-Policies",
 				Header: laceworkHeaders,
 				Body:   laceworkRows,
 			})
@@ -3408,7 +3408,7 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 
 		if len(cosignRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Image-Admission-Cosign",
+				Name:   "Image-Admission-Cosign-Policies",
 				Header: cosignHeaders,
 				Body:   cosignRows,
 			})
@@ -3416,7 +3416,7 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 
 		if len(fluxImageRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Image-Admission-Flux",
+				Name:   "Image-Admission-Flux-Policies",
 				Header: fluxImageHeaders,
 				Body:   fluxImageRows,
 			})
@@ -3424,7 +3424,7 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 
 		if len(xrayRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Image-Admission-JFrogXray",
+				Name:   "Image-Admission-JFrogXray-Policies",
 				Header: xrayHeaders,
 				Body:   xrayRows,
 			})
@@ -3432,7 +3432,7 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 
 		if len(deepfenceRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Image-Admission-Deepfence",
+				Name:   "Image-Admission-Deepfence-Policies",
 				Header: deepfenceHeaders,
 				Body:   deepfenceRows,
 			})
@@ -3440,7 +3440,7 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 
 		if len(qualysRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Image-Admission-Qualys",
+				Name:   "Image-Admission-Qualys-Policies",
 				Header: qualysHeaders,
 				Body:   qualysRows,
 			})
@@ -3448,7 +3448,7 @@ func ListImageAdmission(cmd *cobra.Command, args []string) {
 
 		if len(dockerScoutRows) > 0 {
 			tables = append(tables, internal.TableFile{
-				Name:   "Image-Admission-DockerScout",
+				Name:   "Image-Admission-DockerScout-Policies",
 				Header: dockerScoutHeaders,
 				Body:   dockerScoutRows,
 			})
