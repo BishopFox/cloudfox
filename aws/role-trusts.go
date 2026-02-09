@@ -466,6 +466,8 @@ func parseFederatedTrustPolicy(statement policy.RoleTrustStatementEntry) (string
 			subjects = append(subjects, statement.Condition.StringLike.TokenActionsGithubusercontentComSub...)
 		} else if len(statement.Condition.StringEquals.TokenActionsGithubusercontentComSub) > 0 {
 			subjects = append(subjects, statement.Condition.StringEquals.TokenActionsGithubusercontentComSub...)
+		} else if len(statement.Condition.ForAllValuesStringLike.TokenActionsGithubusercontentComSub) > 0 {
+			subjects = append(subjects, statement.Condition.ForAllValuesStringLike.TokenActionsGithubusercontentComSub...)
 		} else {
 			subjects = append(subjects, "ALL REPOS!!!")
 		}
