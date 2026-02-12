@@ -301,6 +301,7 @@ func init() {
 		commands.RoleBindingsCmd,
 		commands.ServiceAccountsCmd,
 		commands.HiddenAdminsCmd,
+		commands.CloudIAMCmd,
 
 		// Attack Path Analysis
 		commands.PrivescCmd,

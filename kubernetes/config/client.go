@@ -10,7 +10,6 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 )
 
 var (
@@ -62,21 +61,11 @@ func InitConfig(kubeconfigPath, kubeContext, kubeToken, kubeAPIServer string) {
 		}
 	}
 
-	// Build rest.Config
-	var cfg *rest.Config
-	var err error
-	if len(globals.RawKubeconfig) > 0 {
-		cfg, err = clientcmd.RESTConfigFromKubeConfig(globals.RawKubeconfig)
-		if err != nil {
-			logger.ErrorM(fmt.Sprintf("Error building REST config: %v", err), globals.K8S_AUTH_MODULE_NAME)
-			os.Exit(1)
-		}
-	} else {
-		cfg, err = clientcmd.BuildConfigFromFlags("", kubeconfigPath)
-		if err != nil {
-			logger.ErrorM(fmt.Sprintf("Error building REST config: %v", err), globals.K8S_AUTH_MODULE_NAME)
-			os.Exit(1)
-		}
+	// Build rest.Config using GetRESTConfig which handles token priority
+	cfg, err := GetRESTConfig()
+	if err != nil {
+		logger.ErrorM(fmt.Sprintf("Error building REST config: %v", err), globals.K8S_AUTH_MODULE_NAME)
+		os.Exit(1)
 	}
 
 	// Suppress Kubernetes API deprecation warnings

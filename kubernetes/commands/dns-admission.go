@@ -23,6 +23,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/privatedns/armprivatedns"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/feature/ec2/imds"
 	"github.com/aws/aws-sdk-go-v2/service/route53resolver"
 	"google.golang.org/api/dns/v1"
 	"google.golang.org/api/option"
@@ -436,7 +437,9 @@ func initDNSCloudClients(logger internal.Logger) *DNSCloudClients {
 			awsCfg, err = awsconfig.LoadDefaultConfig(context.Background(),
 				awsconfig.WithSharedConfigProfile(globals.K8sAWSProfile))
 		} else {
-			awsCfg, err = awsconfig.LoadDefaultConfig(context.Background())
+			// Load default config with EC2 IMDS region detection for instance roles
+			awsCfg, err = awsconfig.LoadDefaultConfig(context.Background(),
+				awsconfig.WithEC2IMDSRegion())
 		}
 		if err == nil {
 			clients.AWSRoute53ResolverClient = route53resolver.NewFromConfig(awsCfg)
@@ -444,6 +447,21 @@ func initDNSCloudClients(logger internal.Logger) *DNSCloudClients {
 			if awsCfg.Region != "" {
 				logger.InfoM(fmt.Sprintf("AWS DNS correlation enabled (region: %s)", awsCfg.Region), K8S_DNS_ADMISSION_MODULE_NAME)
 				cloudEnabled = true
+			} else {
+				// Try to get region from EC2 IMDS as a fallback
+				imdsClient := imds.NewFromConfig(awsCfg)
+				regionResp, regionErr := imdsClient.GetRegion(context.Background(), &imds.GetRegionInput{})
+				if regionErr == nil && regionResp.Region != "" {
+					clients.AWSRegion = regionResp.Region
+					// Rebuild config with explicit region
+					awsCfg, err = awsconfig.LoadDefaultConfig(context.Background(),
+						awsconfig.WithRegion(regionResp.Region))
+					if err == nil {
+						clients.AWSRoute53ResolverClient = route53resolver.NewFromConfig(awsCfg)
+						logger.InfoM(fmt.Sprintf("AWS DNS correlation enabled (EC2 instance credentials, region: %s)", regionResp.Region), K8S_DNS_ADMISSION_MODULE_NAME)
+						cloudEnabled = true
+					}
+				}
 			}
 		} else {
 			logger.InfoM(fmt.Sprintf("AWS DNS correlation failed: %v", err), K8S_DNS_ADMISSION_MODULE_NAME)

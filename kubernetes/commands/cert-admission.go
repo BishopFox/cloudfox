@@ -11,6 +11,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/keyvault/armkeyvault"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/feature/ec2/imds"
 	"github.com/aws/aws-sdk-go-v2/service/acm"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
@@ -2381,11 +2382,23 @@ type AzureKeyVaultCertInfo struct {
 func initCertCloudClients(logger internal.Logger) *CertCloudClients {
 	clients := &CertCloudClients{}
 
-	// Try to initialize AWS ACM client
-	cfg, err := awsconfig.LoadDefaultConfig(context.Background())
+	// Try to initialize AWS ACM client with EC2 IMDS region detection for instance roles
+	cfg, err := awsconfig.LoadDefaultConfig(context.Background(),
+		awsconfig.WithEC2IMDSRegion())
 	if err == nil {
-		clients.AWSACMClient = acm.NewFromConfig(cfg)
-		logger.InfoM("AWS ACM client initialized", K8S_CERT_ADMISSION_MODULE_NAME)
+		// Check if we have a region, try IMDS fallback if not
+		if cfg.Region == "" {
+			imdsClient := imds.NewFromConfig(cfg)
+			regionResp, regionErr := imdsClient.GetRegion(context.Background(), &imds.GetRegionInput{})
+			if regionErr == nil && regionResp.Region != "" {
+				cfg, err = awsconfig.LoadDefaultConfig(context.Background(),
+					awsconfig.WithRegion(regionResp.Region))
+			}
+		}
+		if err == nil && cfg.Region != "" {
+			clients.AWSACMClient = acm.NewFromConfig(cfg)
+			logger.InfoM(fmt.Sprintf("AWS ACM client initialized (region: %s)", cfg.Region), K8S_CERT_ADMISSION_MODULE_NAME)
+		}
 	}
 
 	// Try to initialize Azure Key Vault client

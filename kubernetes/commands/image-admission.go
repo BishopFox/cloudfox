@@ -15,6 +15,7 @@ import (
 	"github.com/BishopFox/cloudfox/kubernetes/shared/admission"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/feature/ec2/imds"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/aws/aws-sdk-go-v2/service/signer"
 	"github.com/spf13/cobra"
@@ -7651,7 +7652,9 @@ func initImageAdmissionCloudClients(logger internal.Logger) *ImageAdmissionCloud
 			awsCfg, err = awsconfig.LoadDefaultConfig(context.Background(),
 				awsconfig.WithSharedConfigProfile(globals.K8sAWSProfile))
 		} else {
-			awsCfg, err = awsconfig.LoadDefaultConfig(context.Background())
+			// Load default config with EC2 IMDS region detection for instance roles
+			awsCfg, err = awsconfig.LoadDefaultConfig(context.Background(),
+				awsconfig.WithEC2IMDSRegion())
 		}
 		if err == nil {
 			clients.AWSECRClient = ecr.NewFromConfig(awsCfg)
@@ -7660,6 +7663,22 @@ func initImageAdmissionCloudClients(logger internal.Logger) *ImageAdmissionCloud
 			if awsCfg.Region != "" {
 				logger.InfoM(fmt.Sprintf("AWS ECR/Signer enabled (region: %s)", awsCfg.Region), K8S_IMAGE_ADMISSION_MODULE_NAME)
 				cloudEnabled = true
+			} else {
+				// Try to get region from EC2 IMDS as a fallback
+				imdsClient := imds.NewFromConfig(awsCfg)
+				regionResp, regionErr := imdsClient.GetRegion(context.Background(), &imds.GetRegionInput{})
+				if regionErr == nil && regionResp.Region != "" {
+					clients.AWSRegion = regionResp.Region
+					// Rebuild config with explicit region
+					awsCfg, err = awsconfig.LoadDefaultConfig(context.Background(),
+						awsconfig.WithRegion(regionResp.Region))
+					if err == nil {
+						clients.AWSECRClient = ecr.NewFromConfig(awsCfg)
+						clients.AWSSignerClient = signer.NewFromConfig(awsCfg)
+						logger.InfoM(fmt.Sprintf("AWS ECR/Signer enabled (EC2 instance credentials, region: %s)", regionResp.Region), K8S_IMAGE_ADMISSION_MODULE_NAME)
+						cloudEnabled = true
+					}
+				}
 			}
 		} else {
 			logger.InfoM(fmt.Sprintf("AWS ECR/Signer failed: %v", err), K8S_IMAGE_ADMISSION_MODULE_NAME)
