@@ -660,12 +660,6 @@ func generateCloudIAMOutput(findings []CloudIAMFinding, logger *internal.Logger)
 			namespace = "-"
 		}
 
-		// Truncate long identities for table display
-		identity := f.CloudIdentity
-		if len(identity) > 60 {
-			identity = identity[:57] + "..."
-		}
-
 		rows = append(rows, []string{
 			f.Scope,
 			namespace,
@@ -673,7 +667,7 @@ func generateCloudIAMOutput(findings []CloudIAMFinding, logger *internal.Logger)
 			f.ResourceName,
 			f.CloudProvider,
 			f.IdentityType,
-			identity,
+			f.CloudIdentity,
 			f.Source,
 		})
 	}
