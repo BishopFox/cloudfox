@@ -425,14 +425,14 @@ func ListPods(cmd *cobra.Command, args []string) {
 			if secCtx.Capabilities != nil {
 				for _, cap := range secCtx.Capabilities.Add {
 					capStr := string(cap)
-					finding.Capabilities = append(finding.Capabilities, capStr)
+					finding.Capabilities = append(finding.Capabilities, "ADD:"+capStr)
 					if k8sinternal.IsDangerousCapability(capStr) {
 						finding.DangerousCaps = append(finding.DangerousCaps, capStr)
 					}
 				}
 				for _, cap := range secCtx.Capabilities.Drop {
 					capStr := string(cap)
-					finding.Capabilities = append(finding.Capabilities, "-"+capStr)
+					finding.Capabilities = append(finding.Capabilities, "DROP:"+capStr)
 					if capStr == "ALL" {
 						finding.DroppedAllCaps = true
 					}
@@ -461,9 +461,13 @@ func ListPods(cmd *cobra.Command, args []string) {
 					c := allContainers[i]
 					containerPrivileged := false
 					var containerCaps []string
-					containerRunAsUser := "-"
-					containerAllowPrivEsc := "true" // default is true if not specified
-					containerReadOnlyRootFS := "false"
+					// Kubernetes defaults when not specified:
+					// - RunAsUser: inherits from image (usually root/0)
+					// - AllowPrivilegeEscalation: true
+					// - ReadOnlyRootFilesystem: false
+					containerRunAsUser := "0 (default)"
+					containerAllowPrivEsc := "true (default)"
+					containerReadOnlyRootFS := "false (default)"
 					containerResourceLimits := "-"
 
 					if c.SecurityContext != nil {
@@ -472,17 +476,33 @@ func ListPods(cmd *cobra.Command, args []string) {
 						}
 						if c.SecurityContext.Capabilities != nil {
 							for _, cap := range c.SecurityContext.Capabilities.Add {
-								containerCaps = append(containerCaps, string(cap))
+								containerCaps = append(containerCaps, "ADD:"+string(cap))
+							}
+							for _, cap := range c.SecurityContext.Capabilities.Drop {
+								containerCaps = append(containerCaps, "DROP:"+string(cap))
 							}
 						}
 						if c.SecurityContext.RunAsUser != nil {
-							containerRunAsUser = fmt.Sprintf("%d", *c.SecurityContext.RunAsUser)
+							uid := *c.SecurityContext.RunAsUser
+							if uid == 0 {
+								containerRunAsUser = "0 (root)"
+							} else {
+								containerRunAsUser = fmt.Sprintf("%d", uid)
+							}
 						}
 						if c.SecurityContext.AllowPrivilegeEscalation != nil {
-							containerAllowPrivEsc = fmt.Sprintf("%v", *c.SecurityContext.AllowPrivilegeEscalation)
+							if *c.SecurityContext.AllowPrivilegeEscalation {
+								containerAllowPrivEsc = "true"
+							} else {
+								containerAllowPrivEsc = "FALSE"
+							}
 						}
 						if c.SecurityContext.ReadOnlyRootFilesystem != nil {
-							containerReadOnlyRootFS = fmt.Sprintf("%v", *c.SecurityContext.ReadOnlyRootFilesystem)
+							if *c.SecurityContext.ReadOnlyRootFilesystem {
+								containerReadOnlyRootFS = "TRUE"
+							} else {
+								containerReadOnlyRootFS = "false"
+							}
 						}
 					}
 
@@ -1278,8 +1298,11 @@ func analyzePSSCompliance(podSpec *corev1.PodSpec, finding *PodFinding, secCtx S
 	if len(finding.Capabilities) > 0 {
 		// Restricted allows only NET_BIND_SERVICE
 		for _, cap := range finding.Capabilities {
-			if !strings.HasPrefix(cap, "-") && cap != "NET_BIND_SERVICE" {
-				violations = append(violations, fmt.Sprintf("restricted: capability %s not in allowed list (only NET_BIND_SERVICE allowed)", cap))
+			if strings.HasPrefix(cap, "ADD:") {
+				addedCap := strings.TrimPrefix(cap, "ADD:")
+				if addedCap != "NET_BIND_SERVICE" {
+					violations = append(violations, fmt.Sprintf("restricted: capability %s not in allowed list (only NET_BIND_SERVICE allowed)", addedCap))
+				}
 			}
 		}
 	}

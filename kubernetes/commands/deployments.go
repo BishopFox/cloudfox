@@ -501,13 +501,13 @@ func ListDeployments(cmd *cobra.Command, args []string) {
 					for _, cap := range c.SecurityContext.Capabilities.Add {
 						capStr := string(cap)
 						containerCaps = append(containerCaps, capStr)
-						capabilities = append(capabilities, capStr)
+						capabilities = append(capabilities, "ADD:"+capStr)
 						if k8sinternal.IsDangerousCapability(capStr) {
 							dangerousCaps = append(dangerousCaps, capStr)
 						}
 					}
 					for _, cap := range c.SecurityContext.Capabilities.Drop {
-						capabilities = append(capabilities, "-"+string(cap))
+						capabilities = append(capabilities, "DROP:"+string(cap))
 					}
 				}
 			}
@@ -517,20 +517,37 @@ func ListDeployments(cmd *cobra.Command, args []string) {
 			allArgs = append(allArgs, c.Args...)
 
 			// Per-container security context values for table output
-			containerRunAsUser := "-"
-			containerAllowPrivEsc := "true" // default is true if not specified
-			containerReadOnlyRootFS := "false"
+			// Kubernetes defaults when not specified:
+			// - RunAsUser: inherits from image (usually root/0)
+			// - AllowPrivilegeEscalation: true
+			// - ReadOnlyRootFilesystem: false
+			containerRunAsUser := "0 (default)"
+			containerAllowPrivEsc := "true (default)"
+			containerReadOnlyRootFS := "false (default)"
 			containerResourceLimits := "-"
 
 			if c.SecurityContext != nil {
 				if c.SecurityContext.RunAsUser != nil {
-					containerRunAsUser = fmt.Sprintf("%d", *c.SecurityContext.RunAsUser)
+					uid := *c.SecurityContext.RunAsUser
+					if uid == 0 {
+						containerRunAsUser = "0 (root)"
+					} else {
+						containerRunAsUser = fmt.Sprintf("%d", uid)
+					}
 				}
 				if c.SecurityContext.AllowPrivilegeEscalation != nil {
-					containerAllowPrivEsc = fmt.Sprintf("%v", *c.SecurityContext.AllowPrivilegeEscalation)
+					if *c.SecurityContext.AllowPrivilegeEscalation {
+						containerAllowPrivEsc = "true"
+					} else {
+						containerAllowPrivEsc = "FALSE"
+					}
 				}
 				if c.SecurityContext.ReadOnlyRootFilesystem != nil {
-					containerReadOnlyRootFS = fmt.Sprintf("%v", *c.SecurityContext.ReadOnlyRootFilesystem)
+					if *c.SecurityContext.ReadOnlyRootFilesystem {
+						containerReadOnlyRootFS = "TRUE"
+					} else {
+						containerReadOnlyRootFS = "false"
+					}
 				}
 			}
 

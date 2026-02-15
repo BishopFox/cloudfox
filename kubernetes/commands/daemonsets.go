@@ -454,11 +454,15 @@ func analyzeDaemonSetSecurity(
 		}
 
 		// Security context - per container
+		// Kubernetes defaults when not specified:
+		// - RunAsUser: inherits from image (usually root/0)
+		// - AllowPrivilegeEscalation: true
+		// - ReadOnlyRootFilesystem: false
 		containerPrivileged := false
 		var containerCaps []string
-		containerRunAsUser := "-"
-		containerAllowPrivEsc := "true" // default is true if not specified
-		containerReadOnlyRootFS := "false"
+		containerRunAsUser := "0 (default)"
+		containerAllowPrivEsc := "true (default)"
+		containerReadOnlyRootFS := "false (default)"
 		containerResourceLimits := "-"
 		if c.SecurityContext != nil {
 			if c.SecurityContext.Privileged != nil && *c.SecurityContext.Privileged {
@@ -466,19 +470,36 @@ func analyzeDaemonSetSecurity(
 				privileged = true
 			}
 			if c.SecurityContext.RunAsUser != nil {
-				runAsUser = fmt.Sprintf("%d", *c.SecurityContext.RunAsUser)
-				containerRunAsUser = runAsUser
+				uid := *c.SecurityContext.RunAsUser
+				if uid == 0 {
+					containerRunAsUser = "0 (root)"
+					runAsUser = "0 (root)"
+				} else {
+					containerRunAsUser = fmt.Sprintf("%d", uid)
+					runAsUser = containerRunAsUser
+				}
 			}
 			if c.SecurityContext.AllowPrivilegeEscalation != nil {
-				containerAllowPrivEsc = fmt.Sprintf("%v", *c.SecurityContext.AllowPrivilegeEscalation)
+				if *c.SecurityContext.AllowPrivilegeEscalation {
+					containerAllowPrivEsc = "true"
+				} else {
+					containerAllowPrivEsc = "FALSE"
+				}
 			}
 			if c.SecurityContext.ReadOnlyRootFilesystem != nil {
-				containerReadOnlyRootFS = fmt.Sprintf("%v", *c.SecurityContext.ReadOnlyRootFilesystem)
+				if *c.SecurityContext.ReadOnlyRootFilesystem {
+					containerReadOnlyRootFS = "TRUE"
+				} else {
+					containerReadOnlyRootFS = "false"
+				}
 			}
 			if c.SecurityContext.Capabilities != nil {
 				for _, cap := range c.SecurityContext.Capabilities.Add {
 					containerCaps = append(containerCaps, string(cap))
-					capabilities = append(capabilities, string(cap))
+					capabilities = append(capabilities, "ADD:"+string(cap))
+				}
+				for _, cap := range c.SecurityContext.Capabilities.Drop {
+					capabilities = append(capabilities, "DROP:"+string(cap))
 				}
 			}
 		}

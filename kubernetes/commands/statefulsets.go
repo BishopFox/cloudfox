@@ -568,7 +568,13 @@ func analyzeStatefulSet(ss *appsv1.StatefulSet, allPVCs []corev1.PersistentVolum
 		// Capabilities
 		if container.SecurityContext != nil && container.SecurityContext.Capabilities != nil {
 			for _, cap := range container.SecurityContext.Capabilities.Add {
-				capStr := string(cap)
+				capStr := "ADD:" + string(cap)
+				if !shared.Contains(finding.Capabilities, capStr) {
+					finding.Capabilities = append(finding.Capabilities, capStr)
+				}
+			}
+			for _, cap := range container.SecurityContext.Capabilities.Drop {
+				capStr := "DROP:" + string(cap)
 				if !shared.Contains(finding.Capabilities, capStr) {
 					finding.Capabilities = append(finding.Capabilities, capStr)
 				}
@@ -604,9 +610,13 @@ func analyzeStatefulSet(ss *appsv1.StatefulSet, allPVCs []corev1.PersistentVolum
 	for _, c := range allContainers {
 		containerPrivileged := false
 		var containerCaps []string
-		containerRunAsUser := "N/A"
-		containerAllowPrivEsc := "N/A"
-		containerReadOnlyRootFS := "N/A"
+		// Kubernetes defaults when not specified:
+		// - RunAsUser: inherits from image (usually root/0)
+		// - AllowPrivilegeEscalation: true
+		// - ReadOnlyRootFilesystem: false
+		containerRunAsUser := "0 (default)"
+		containerAllowPrivEsc := "true (default)"
+		containerReadOnlyRootFS := "false (default)"
 
 		if c.SecurityContext != nil {
 			if c.SecurityContext.Privileged != nil && *c.SecurityContext.Privileged {
@@ -614,22 +624,33 @@ func analyzeStatefulSet(ss *appsv1.StatefulSet, allPVCs []corev1.PersistentVolum
 			}
 			if c.SecurityContext.Capabilities != nil {
 				for _, cap := range c.SecurityContext.Capabilities.Add {
-					containerCaps = append(containerCaps, string(cap))
+					containerCaps = append(containerCaps, "ADD:"+string(cap))
+				}
+				for _, cap := range c.SecurityContext.Capabilities.Drop {
+					containerCaps = append(containerCaps, "DROP:"+string(cap))
 				}
 			}
 			if c.SecurityContext.RunAsUser != nil {
 				uid := *c.SecurityContext.RunAsUser
 				if uid == 0 {
-					containerRunAsUser = "root"
+					containerRunAsUser = "0 (root)"
 				} else {
 					containerRunAsUser = fmt.Sprintf("%d", uid)
 				}
 			}
 			if c.SecurityContext.AllowPrivilegeEscalation != nil {
-				containerAllowPrivEsc = fmt.Sprintf("%v", *c.SecurityContext.AllowPrivilegeEscalation)
+				if *c.SecurityContext.AllowPrivilegeEscalation {
+					containerAllowPrivEsc = "true"
+				} else {
+					containerAllowPrivEsc = "FALSE"
+				}
 			}
 			if c.SecurityContext.ReadOnlyRootFilesystem != nil {
-				containerReadOnlyRootFS = fmt.Sprintf("%v", *c.SecurityContext.ReadOnlyRootFilesystem)
+				if *c.SecurityContext.ReadOnlyRootFilesystem {
+					containerReadOnlyRootFS = "TRUE"
+				} else {
+					containerReadOnlyRootFS = "false"
+				}
 			}
 		}
 

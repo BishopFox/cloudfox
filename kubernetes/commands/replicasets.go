@@ -361,14 +361,14 @@ func ListReplicaSets(cmd *cobra.Command, args []string) {
 			if secCtx.Capabilities != nil {
 				for _, cap := range secCtx.Capabilities.Add {
 					capStr := string(cap)
-					finding.Capabilities = append(finding.Capabilities, capStr)
+					finding.Capabilities = append(finding.Capabilities, "ADD:"+capStr)
 					if k8sinternal.IsDangerousCapability(capStr) {
 						finding.DangerousCaps = append(finding.DangerousCaps, capStr)
 					}
 				}
 				for _, cap := range secCtx.Capabilities.Drop {
 					capStr := string(cap)
-					finding.Capabilities = append(finding.Capabilities, "-"+capStr)
+					finding.Capabilities = append(finding.Capabilities, "DROP:"+capStr)
 					if capStr == "ALL" {
 						finding.DroppedAllCaps = true
 					}
@@ -422,9 +422,13 @@ func ListReplicaSets(cmd *cobra.Command, args []string) {
 			for i, c := range allContainers {
 				containerPrivileged := false
 				var containerCaps []string
-				containerRunAsUser := "N/A"
-				containerAllowPrivEsc := "N/A"
-				containerReadOnlyRootFS := "N/A"
+				// Kubernetes defaults when not specified:
+				// - RunAsUser: inherits from image (usually root/0)
+				// - AllowPrivilegeEscalation: true
+				// - ReadOnlyRootFilesystem: false
+				containerRunAsUser := "0 (default)"
+				containerAllowPrivEsc := "true (default)"
+				containerReadOnlyRootFS := "false (default)"
 
 				if c.SecurityContext != nil {
 					if c.SecurityContext.Privileged != nil && *c.SecurityContext.Privileged {
@@ -432,22 +436,33 @@ func ListReplicaSets(cmd *cobra.Command, args []string) {
 					}
 					if c.SecurityContext.Capabilities != nil {
 						for _, cap := range c.SecurityContext.Capabilities.Add {
-							containerCaps = append(containerCaps, string(cap))
+							containerCaps = append(containerCaps, "ADD:"+string(cap))
+						}
+						for _, cap := range c.SecurityContext.Capabilities.Drop {
+							containerCaps = append(containerCaps, "DROP:"+string(cap))
 						}
 					}
 					if c.SecurityContext.RunAsUser != nil {
 						uid := *c.SecurityContext.RunAsUser
 						if uid == 0 {
-							containerRunAsUser = "root"
+							containerRunAsUser = "0 (root)"
 						} else {
 							containerRunAsUser = fmt.Sprintf("%d", uid)
 						}
 					}
 					if c.SecurityContext.AllowPrivilegeEscalation != nil {
-						containerAllowPrivEsc = fmt.Sprintf("%v", *c.SecurityContext.AllowPrivilegeEscalation)
+						if *c.SecurityContext.AllowPrivilegeEscalation {
+							containerAllowPrivEsc = "true"
+						} else {
+							containerAllowPrivEsc = "FALSE"
+						}
 					}
 					if c.SecurityContext.ReadOnlyRootFilesystem != nil {
-						containerReadOnlyRootFS = fmt.Sprintf("%v", *c.SecurityContext.ReadOnlyRootFilesystem)
+						if *c.SecurityContext.ReadOnlyRootFilesystem {
+							containerReadOnlyRootFS = "TRUE"
+						} else {
+							containerReadOnlyRootFS = "false"
+						}
 					}
 				}
 
@@ -1164,8 +1179,11 @@ func analyzeTemplatePSSCompliance(podSpec *corev1.PodSpec, finding *ReplicaSetFi
 
 	if len(finding.Capabilities) > 0 {
 		for _, cap := range finding.Capabilities {
-			if !strings.HasPrefix(cap, "-") && cap != "NET_BIND_SERVICE" {
-				violations = append(violations, fmt.Sprintf("restricted: capability %s not in allowed list", cap))
+			if strings.HasPrefix(cap, "ADD:") {
+				addedCap := strings.TrimPrefix(cap, "ADD:")
+				if addedCap != "NET_BIND_SERVICE" {
+					violations = append(violations, fmt.Sprintf("restricted: capability %s not in allowed list", addedCap))
+				}
 			}
 		}
 	}
