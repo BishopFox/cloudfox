@@ -8,7 +8,6 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	azinternal "github.com/BishopFox/cloudfox/internal/azure"
-	"github.com/BishopFox/cloudfox/internal/azure/sdk"
 	"github.com/spf13/cobra"
 )
 
@@ -221,8 +220,8 @@ func (m *VmsModule) processResourceGroup(ctx context.Context, subID, rgName stri
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	// Get VMs (CACHED) - using the complex function signature
-	vmsBody, userData := sdk.CachedGetVMsPerResourceGroupObject(m.Session, subID, rgName, m.LootMap, m.TenantName, m.TenantID)
+	// Get VMs using helper function
+	vmsBody, userData := azinternal.GetVMsPerResourceGroupObject(m.Session, subID, rgName, m.LootMap, m.TenantName, m.TenantID)
 
 	// Thread-safe append of VM rows
 	m.mu.Lock()

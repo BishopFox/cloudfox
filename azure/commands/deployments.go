@@ -11,7 +11,6 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	azinternal "github.com/BishopFox/cloudfox/internal/azure"
-	"github.com/BishopFox/cloudfox/internal/azure/sdk"
 	"github.com/spf13/cobra"
 )
 
@@ -165,14 +164,10 @@ func (m *DeploymentsModule) processResourceGroup(ctx context.Context, subID, sub
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	// Get region for this resource group
-	region := "N/A"
-	rgs := sdk.CachedGetResourceGroupsPerSubscription(m.Session, subID)
-	for _, r := range rgs {
-		if r.Name != nil && *r.Name == rgName && r.Location != nil {
-			region = *r.Location
-			break
-		}
+	// Get region for this resource group using helper function
+	region := azinternal.GetResourceGroupLocation(m.Session, subID, rgName)
+	if region == "" {
+		region = "N/A"
 	}
 
 	// Get deployments for this resource group

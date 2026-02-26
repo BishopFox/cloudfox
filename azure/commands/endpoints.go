@@ -29,7 +29,6 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	azinternal "github.com/BishopFox/cloudfox/internal/azure"
-	"github.com/BishopFox/cloudfox/internal/azure/sdk"
 	"github.com/spf13/cobra"
 )
 
@@ -170,15 +169,8 @@ func (m *EndpointsModule) processResourceGroup(ctx context.Context, subID, subNa
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	// Get region
-	region := ""
-	rgs := sdk.CachedGetResourceGroupsPerSubscription(m.Session, subID)
-	for _, r := range rgs {
-		if r.Name != nil && *r.Name == rgName && r.Location != nil {
-			region = *r.Location
-			break
-		}
-	}
+	// Get region using helper function
+	region := azinternal.GetResourceGroupLocation(m.Session, subID, rgName)
 
 	// -------------------- VMs --------------------
 	vms, _ := azinternal.GetVMsPerResourceGroupObject(m.Session, subID, rgName, m.LootMap, m.TenantName, m.TenantID)

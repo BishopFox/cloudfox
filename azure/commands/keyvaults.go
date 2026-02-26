@@ -14,7 +14,6 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	azinternal "github.com/BishopFox/cloudfox/internal/azure"
-	"github.com/BishopFox/cloudfox/internal/azure/sdk"
 	"github.com/spf13/cobra"
 )
 
@@ -145,8 +144,8 @@ func (m *KeyVaultsModule) processSubscription(ctx context.Context, subID string,
 
 	// Process each resource group
 	for _, rgName := range resourceGroups {
-		// Get Key Vaults (CACHED)
-		vaults, err := sdk.CachedGetKeyVaultsPerResourceGroup(ctx, m.Session, subID, rgName)
+		// Get Key Vaults using helper function
+		vaults, err := azinternal.GetKeyVaultsPerResourceGroup(ctx, m.Session, subID, rgName)
 		if err != nil {
 			logger.ErrorM(fmt.Sprintf("Failed to get KeyVaults in RG %s: %v", rgName, err), globals.AZ_KEYVAULT_MODULE_NAME)
 			m.CommandCounter.Error++

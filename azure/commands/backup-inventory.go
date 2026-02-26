@@ -12,7 +12,6 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	azinternal "github.com/BishopFox/cloudfox/internal/azure"
-	"github.com/BishopFox/cloudfox/internal/azure/sdk"
 	"github.com/spf13/cobra"
 )
 
@@ -697,8 +696,11 @@ func (m *BackupInventoryModule) checkUnprotectedVMs(ctx context.Context, logger 
 // Sample VMs (helper)
 // ------------------------------
 func (m *BackupInventoryModule) sampleVMs(ctx context.Context, subID string, limit int) []string {
-	// Use cached VMs if available
-	vms := sdk.CachedGetVMsPerSubscription(m.Session, subID)
+	// Get VMs using helper function
+	vms, err := azinternal.GetVMsPerSubscription(ctx, m.Session, subID)
+	if err != nil {
+		return nil
+	}
 	vmIDs := make([]string, 0, len(vms))
 
 	count := 0

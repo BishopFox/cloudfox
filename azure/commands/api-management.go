@@ -10,7 +10,6 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	azinternal "github.com/BishopFox/cloudfox/internal/azure"
-	"github.com/BishopFox/cloudfox/internal/azure/sdk"
 	"github.com/spf13/cobra"
 )
 
@@ -149,15 +148,8 @@ func (m *APIManagementModule) processResourceGroup(ctx context.Context, subID, s
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	// Get region
-	region := ""
-	rgs := sdk.CachedGetResourceGroupsPerSubscription(m.Session, subID)
-	for _, r := range rgs {
-		if r.Name != nil && *r.Name == rgName && r.Location != nil {
-			region = *r.Location
-			break
-		}
-	}
+	// Get region using helper function
+	region := azinternal.GetResourceGroupLocation(m.Session, subID, rgName)
 
 	// Get APIM services
 	services, err := azinternal.ListAPIManagementServices(ctx, m.Session, subID, rgName)

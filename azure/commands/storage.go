@@ -7,10 +7,10 @@ import (
 	"sync"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
+	storageservice "github.com/BishopFox/cloudfox/azure/services/storageService"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	azinternal "github.com/BishopFox/cloudfox/internal/azure"
-	"github.com/BishopFox/cloudfox/internal/azure/sdk"
 	"github.com/spf13/cobra"
 )
 
@@ -39,6 +39,7 @@ type StorageModule struct {
 	// Module-specific fields
 	Subscriptions   []string
 	StorageAccounts []StorageAccountInfo
+	StorageSvc      *storageservice.StorageService
 	mu              sync.Mutex
 }
 
@@ -106,6 +107,7 @@ func ListStorageAccounts(cmd *cobra.Command, args []string) {
 		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
 		Subscriptions:   cmdCtx.Subscriptions,
 		StorageAccounts: []StorageAccountInfo{},
+		StorageSvc:      storageservice.New(cmdCtx.Session),
 	}
 
 	// -------------------- Execute module --------------------
@@ -187,8 +189,12 @@ func (m *StorageModule) processResourceGroup(ctx context.Context, subID, subName
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	// Get storage accounts (CACHED)
-	storageAccounts := sdk.CachedGetStorageAccountsPerResourceGroup(m.Session, subID, rgName)
+	// Get storage accounts using service layer (CACHED)
+	storageAccounts, err := m.StorageSvc.CachedListStorageAccountsByResourceGroup(ctx, subID, rgName)
+	if err != nil {
+		// Continue with empty list on error (AWS-style error handling)
+		storageAccounts = []*armstorage.Account{}
+	}
 
 	for _, acct := range storageAccounts {
 		accountRG := azinternal.GetResourceGroupFromID(*acct.ID)
@@ -322,8 +328,8 @@ func (m *StorageModule) processResourceGroup(ctx context.Context, subID, subName
 			}
 		}
 
-		// Get containers for this storage account
-		containers, err := azinternal.ListContainers(ctx, m.Session, subID, accountName, accountRG, location, kind)
+		// Get containers for this storage account using service layer
+		containers, err := m.StorageSvc.CachedListContainers(ctx, subID, accountName, accountRG, location, kind)
 		if err != nil || len(containers) == 0 {
 			// No containers or error - add account with N/A containers
 			m.addStorageAccount(StorageAccountInfo{
@@ -402,8 +408,8 @@ func (m *StorageModule) processResourceGroup(ctx context.Context, subID, subName
 			})
 		}
 
-		// Enumerate File Shares for this storage account
-		fileShares, fsErr := azinternal.ListFileShares(ctx, m.Session, subID, accountName, accountRG)
+		// Enumerate File Shares for this storage account using service layer
+		fileShares, fsErr := m.StorageSvc.CachedListFileShares(ctx, subID, accountName, accountRG)
 		if fsErr == nil && len(fileShares) > 0 {
 			for _, share := range fileShares {
 				quota := fmt.Sprintf("%d GB", share.Quota)
@@ -438,8 +444,8 @@ func (m *StorageModule) processResourceGroup(ctx context.Context, subID, subName
 			}
 		}
 
-		// Enumerate Tables for this storage account
-		tables, tblErr := azinternal.ListTables(ctx, m.Session, subID, accountName, accountRG)
+		// Enumerate Tables for this storage account using service layer
+		tables, tblErr := m.StorageSvc.CachedListTables(ctx, subID, accountName, accountRG)
 		if tblErr == nil && len(tables) > 0 {
 			for _, table := range tables {
 				m.addStorageAccount(StorageAccountInfo{

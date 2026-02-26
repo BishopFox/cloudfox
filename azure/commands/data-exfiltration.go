@@ -12,7 +12,6 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	azinternal "github.com/BishopFox/cloudfox/internal/azure"
-	"github.com/BishopFox/cloudfox/internal/azure/sdk"
 	"github.com/spf13/cobra"
 )
 
@@ -315,15 +314,8 @@ func (m *DataExfiltrationModule) processStorageAccounts(ctx context.Context, sub
 // Process storage accounts in resource group
 // ------------------------------
 func (m *DataExfiltrationModule) processStorageAccountsInRG(ctx context.Context, subID, subName, rgName string, cred *azinternal.StaticTokenCredential, logger internal.Logger) {
-	// Get region
-	region := ""
-	rgs := sdk.CachedGetResourceGroupsPerSubscription(m.Session, subID)
-	for _, r := range rgs {
-		if r.Name != nil && *r.Name == rgName && r.Location != nil {
-			region = *r.Location
-			break
-		}
-	}
+	// Get region using helper function
+	region := azinternal.GetResourceGroupLocation(m.Session, subID, rgName)
 
 	storageClient, err := armstorage.NewAccountsClient(subID, cred, nil)
 	if err != nil {

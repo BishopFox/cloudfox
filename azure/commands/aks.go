@@ -9,8 +9,8 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
+	"github.com/BishopFox/cloudfox/azure/services/aksService"
 	azinternal "github.com/BishopFox/cloudfox/internal/azure"
-	"github.com/BishopFox/cloudfox/internal/azure/sdk"
 	"github.com/spf13/cobra"
 )
 
@@ -165,8 +165,9 @@ func (m *AksModule) processResourceGroup(ctx context.Context, subID, subName, rg
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	// Get AKS clusters (CACHED)
-	clusters, err := sdk.CachedGetAKSClustersPerResourceGroup(ctx, m.Session, subID, rgName)
+	// Get AKS clusters using aksService (CACHED)
+	aksSvc := aksservice.New(m.Session)
+	clusters, err := aksSvc.CachedListClustersByResourceGroup(ctx, subID, rgName)
 	if err != nil {
 		// AWS-style error handling: log and count, but continue
 		logger.ErrorM(fmt.Sprintf("Failed to get clusters in RG %s: %v", rgName, err), globals.AZ_AKS_MODULE_NAME)

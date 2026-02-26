@@ -10,7 +10,6 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	azinternal "github.com/BishopFox/cloudfox/internal/azure"
-	"github.com/BishopFox/cloudfox/internal/azure/sdk"
 	"github.com/spf13/cobra"
 )
 
@@ -109,9 +108,9 @@ func (m *StreamAnalyticsModule) PrintStreamAnalytics(ctx context.Context, logger
 func (m *StreamAnalyticsModule) processSubscription(ctx context.Context, subID string, logger internal.Logger) {
 	subName := azinternal.GetSubscriptionNameFromID(ctx, m.Session, subID)
 
-	// Get resource groups
-	rgs := sdk.CachedGetResourceGroupsPerSubscription(m.Session, subID)
-	if len(rgs) == 0 {
+	// Get resource groups using BaseAzureModule helper
+	rgNames := m.ResolveResourceGroups(subID)
+	if len(rgNames) == 0 {
 		return
 	}
 
@@ -149,12 +148,7 @@ func (m *StreamAnalyticsModule) processSubscription(ctx context.Context, subID s
 	var wg sync.WaitGroup
 	semaphore := make(chan struct{}, 10)
 
-	for _, rg := range rgs {
-		if rg.Name == nil {
-			continue
-		}
-		rgName := *rg.Name
-
+	for _, rgName := range rgNames {
 		wg.Add(1)
 		go m.processResourceGroup(ctx, subID, subName, rgName, saClient, inputsClient, outputsClient, &wg, semaphore, logger)
 	}
@@ -171,15 +165,8 @@ func (m *StreamAnalyticsModule) processResourceGroup(ctx context.Context, subID,
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	// Get region
-	region := ""
-	rgs := sdk.CachedGetResourceGroupsPerSubscription(m.Session, subID)
-	for _, r := range rgs {
-		if r.Name != nil && *r.Name == rgName && r.Location != nil {
-			region = *r.Location
-			break
-		}
-	}
+	// Get region using helper function
+	region := azinternal.GetResourceGroupLocation(m.Session, subID, rgName)
 
 	// List Stream Analytics jobs in resource group
 	pager := saClient.NewListByResourceGroupPager(rgName, nil)

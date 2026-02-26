@@ -9,7 +9,6 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	azinternal "github.com/BishopFox/cloudfox/internal/azure"
-	"github.com/BishopFox/cloudfox/internal/azure/sdk"
 	"github.com/spf13/cobra"
 )
 
@@ -107,9 +106,9 @@ func (m *ServiceFabricModule) PrintServiceFabric(ctx context.Context, logger int
 func (m *ServiceFabricModule) processSubscription(ctx context.Context, subID string, logger internal.Logger) {
 	subName := azinternal.GetSubscriptionNameFromID(ctx, m.Session, subID)
 
-	// Get resource groups
-	rgs := sdk.CachedGetResourceGroupsPerSubscription(m.Session, subID)
-	if len(rgs) == 0 {
+	// Get resource groups using BaseAzureModule helper
+	rgNames := m.ResolveResourceGroups(subID)
+	if len(rgNames) == 0 {
 		return
 	}
 
@@ -127,12 +126,7 @@ func (m *ServiceFabricModule) processSubscription(ctx context.Context, subID str
 	var wg sync.WaitGroup
 	semaphore := make(chan struct{}, 10)
 
-	for _, rg := range rgs {
-		if rg.Name == nil {
-			continue
-		}
-		rgName := *rg.Name
-
+	for _, rgName := range rgNames {
 		wg.Add(1)
 		go m.processResourceGroup(ctx, subID, subName, rgName, sfClient, &wg, semaphore, logger)
 	}
@@ -149,15 +143,8 @@ func (m *ServiceFabricModule) processResourceGroup(ctx context.Context, subID, s
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	// Get region
-	region := ""
-	rgs := sdk.CachedGetResourceGroupsPerSubscription(m.Session, subID)
-	for _, r := range rgs {
-		if r.Name != nil && *r.Name == rgName && r.Location != nil {
-			region = *r.Location
-			break
-		}
-	}
+	// Get region using helper function
+	region := azinternal.GetResourceGroupLocation(m.Session, subID, rgName)
 
 	// List Service Fabric clusters in resource group
 	resp, err := sfClient.ListByResourceGroup(ctx, rgName, nil)

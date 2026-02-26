@@ -9,7 +9,6 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	azinternal "github.com/BishopFox/cloudfox/internal/azure"
-	"github.com/BishopFox/cloudfox/internal/azure/sdk"
 	"github.com/spf13/cobra"
 )
 
@@ -154,17 +153,8 @@ func (m *ContainerJobsModule) processResourceGroup(ctx context.Context, subID, s
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
 
-	// Get region
-	region := ""
-	if rg := azinternal.GetResourceGroupIDFromName(m.Session, subID, rgName); rg != nil {
-		rgs := sdk.CachedGetResourceGroupsPerSubscription(m.Session, subID)
-		for _, r := range rgs {
-			if r.Name != nil && *r.Name == rgName && r.Location != nil {
-				region = *r.Location
-				break
-			}
-		}
-	}
+	// Get region using helper function
+	region := azinternal.GetResourceGroupLocation(m.Session, subID, rgName)
 
 	// -------------------- 1) Container Instances (ACI) --------------------
 	aciList := azinternal.ListContainerInstances(m.Session, subID, rgName)
