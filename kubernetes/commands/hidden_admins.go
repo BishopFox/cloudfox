@@ -11,6 +11,7 @@ import (
 	attackpathservice "github.com/BishopFox/cloudfox/kubernetes/services/attackpathService"
 	"github.com/BishopFox/cloudfox/kubernetes/shared"
 	"github.com/spf13/cobra"
+	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 )
 
@@ -205,6 +206,7 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 	// Query all ServiceAccounts to detect cloud IAM annotations using cache
 	serviceAccountCloudIAM := make(map[string]map[string]string) // namespace -> sa name -> cloud IAM
 	serviceAccountPodCount := make(map[string]map[string]int)    // namespace -> sa name -> pod count
+	serviceAccountAutoMount := make(map[string]map[string]*bool) // namespace -> sa name -> AutomountServiceAccountToken
 
 	logger.InfoM("Scanning ServiceAccounts for cloud IAM annotations...", globals.K8S_HIDDEN_ADMINS_MODULE_NAME)
 	serviceAccounts, err := sdk.GetServiceAccounts(ctx, clientset)
@@ -216,6 +218,10 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 			if serviceAccountPodCount[sa.Namespace] == nil {
 				serviceAccountPodCount[sa.Namespace] = make(map[string]int)
 			}
+			if serviceAccountAutoMount[sa.Namespace] == nil {
+				serviceAccountAutoMount[sa.Namespace] = make(map[string]*bool)
+			}
+			serviceAccountAutoMount[sa.Namespace][sa.Name] = sa.AutomountServiceAccountToken
 
 			// Check for AWS IRSA (IAM Roles for ServiceAccounts)
 			if roleARN, ok := sa.Annotations["eks.amazonaws.com/role-arn"]; ok {
@@ -249,6 +255,13 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 			serviceAccountPodCount[pod.Namespace][saName]++
 		}
 	}
+
+	// Fetch all Nodes once (cached) for SELinux/MAC detection
+	allNodes, err := sdk.GetNodes(ctx, clientset)
+	if err != nil {
+		allNodes = []corev1.Node{}
+	}
+	nodeSELinux := buildNodeSELinuxMap(allNodes)
 
 	// ClusterRoles using cache
 	clusterRoles, err := sdk.GetClusterRoles(ctx, clientset)
@@ -645,6 +658,30 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 			}
 
 			if saInfo, found := dangerousSAs[ns][saName]; found {
+				// Compute node token access for this pod
+				var saAutoMount *bool
+				if saAutoMountMap, ok := serviceAccountAutoMount[ns]; ok {
+					saAutoMount = saAutoMountMap[saName]
+				}
+				nodeTokenAccess := "No (unmounted)"
+				if isTokenMountedForPod(&pod, saAutoMount) {
+					if isPodRunAsRoot(&pod) {
+						seStatus := nodeSELinux[pod.Spec.NodeName]
+						switch seStatus {
+						case "enforcing":
+							nodeTokenAccess = "Blocked by SELinux (root)"
+						case "likely":
+							nodeTokenAccess = "Likely blocked by SELinux (root)"
+						case "possible":
+							nodeTokenAccess = "Yes (root, SELinux possible)"
+						default:
+							nodeTokenAccess = "Yes (root)"
+						}
+					} else {
+						nodeTokenAccess = "No (non-root)"
+					}
+				}
+
 				// Add to location table
 				locationRows = append(locationRows, []string{
 					ns,
@@ -653,11 +690,13 @@ func ListHiddenAdmins(cmd *cobra.Command, args []string) {
 					saInfo.CloudIAM,
 					pod.Name,
 					pod.Spec.NodeName,
+					nodeTokenAccess,
 				})
 
 				lootExecSection.AddBlank()
 				lootExecSection.Addf("## %s/%s (SA: %s)", ns, pod.Name, saName)
-				lootExecSection.Addf("# Node: %s | Permissions: %s", pod.Spec.NodeName, saInfo.Permissions)
+				lootExecSection.Addf("# Node: %s | Permissions: %s | Node Token Access: %s | Node SELinux: %s",
+					pod.Spec.NodeName, saInfo.Permissions, nodeTokenAccess, nodeSELinux[pod.Spec.NodeName])
 
 				if saInfo.CloudIAM != "" && saInfo.CloudIAM != "<NONE>" {
 					lootExecSection.Addf("# Cloud IAM: %s", saInfo.CloudIAM)
@@ -878,7 +917,7 @@ EOF`)
 	// Hidden admin location table - shows where dangerous SAs are running
 	locationTable := internal.TableFile{
 		Name:   "Hidden-Admin-Location",
-		Header: []string{"Namespace", "ServiceAccount", "Permissions", "Cloud IAM", "Pod Name", "Node Name"},
+		Header: []string{"Namespace", "ServiceAccount", "Permissions", "Cloud IAM", "Pod Name", "Node Name", "Node Token Access"},
 		Body:   locationRows,
 	}
 

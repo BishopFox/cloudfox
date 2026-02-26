@@ -106,11 +106,13 @@ type NetworkAdmissionFinding struct {
 	SecurityIssues []string
 
 	// Policy Coverage
-	HasNetworkPolicy bool
-	PolicyCount      int
-	CoveredPods      int
-	TotalPods        int
-	UncoveredPods    int
+	HasNetworkPolicy    bool
+	PolicyCount         int
+	CoveredPods         int
+	TotalPods           int
+	UncoveredPods       int
+	IngressCoveredPods  int // pods selected by at least one Ingress-type policy
+	EgressCoveredPods   int // pods selected by at least one Egress-type policy
 
 	// Default Deny Status
 	HasDefaultDenyIngress bool
@@ -205,6 +207,7 @@ type K8sNetworkPolicyInfo struct {
 	AllowsInternetEgress  bool
 	AllowsCrossNS         bool
 	AllowsMetadataAPI     bool
+	DeniesMetadataAPI     bool // True when egress rules exclude 169.254.169.254/32
 	IsDefaultDeny         bool
 	DefaultDenyIngress    bool
 	DefaultDenyEgress     bool
@@ -774,6 +777,7 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 		// Calculate covered pods
 		finding.CoveredPods = calculateNetworkPolicyCoverage(nsPods, finding.K8sNetworkPolicies)
 		finding.UncoveredPods = finding.TotalPods - finding.CoveredPods
+		finding.IngressCoveredPods, finding.EgressCoveredPods = calculateNetworkPolicyCoverageByType(nsPods, finding.K8sNetworkPolicies)
 
 		// Analyze default deny status
 		for _, p := range finding.K8sNetworkPolicies {
@@ -1037,6 +1041,8 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			internetInStr = "Blocked (" + strings.Join(finding.PolicyEngineBlocks.InternetIngressBlockedBy, ", ") + ")"
 		} else if finding.HasDefaultDenyIngress {
 			internetInStr = "Blocked (default-deny)"
+		} else if finding.IngressCoveredPods > 0 && finding.TotalPods > 0 && finding.IngressCoveredPods < finding.TotalPods {
+			internetInStr = fmt.Sprintf("Partial (%d/%d pods)", finding.IngressCoveredPods, finding.TotalPods)
 		}
 
 		// Internet Out column
@@ -1045,6 +1051,8 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			internetOutStr = "Blocked (" + strings.Join(finding.PolicyEngineBlocks.InternetEgressBlockedBy, ", ") + ")"
 		} else if finding.HasDefaultDenyEgress {
 			internetOutStr = "Blocked (default-deny)"
+		} else if finding.EgressCoveredPods > 0 && finding.TotalPods > 0 && finding.EgressCoveredPods < finding.TotalPods {
+			internetOutStr = fmt.Sprintf("Partial (%d/%d pods)", finding.EgressCoveredPods, finding.TotalPods)
 		}
 
 		// Metadata API column
@@ -1069,6 +1077,8 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			crossNSStr = "Partial (In blocked)"
 		} else if finding.HasDefaultDenyEgress {
 			crossNSStr = "Partial (Out blocked)"
+		} else if finding.IngressCoveredPods > 0 && finding.TotalPods > 0 && finding.IngressCoveredPods < finding.TotalPods {
+			crossNSStr = fmt.Sprintf("Partial (%d/%d pods)", finding.IngressCoveredPods, finding.TotalPods)
 		}
 
 		// Kube API column
@@ -1077,6 +1087,8 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			kubeAPIStr = "Blocked (" + strings.Join(finding.PolicyEngineBlocks.KubeAPIEgressBlockedBy, ", ") + ")"
 		} else if finding.HasDefaultDenyEgress {
 			kubeAPIStr = "Blocked (default-deny)"
+		} else if finding.EgressCoveredPods > 0 && finding.TotalPods > 0 && finding.EgressCoveredPods < finding.TotalPods {
+			kubeAPIStr = fmt.Sprintf("Partial (%d/%d pods)", finding.EgressCoveredPods, finding.TotalPods)
 		}
 
 		// Pods covered
@@ -1134,6 +1146,9 @@ func ListNetworkAdmission(cmd *cobra.Command, args []string) {
 			}
 			if p.AllowsMetadataAPI {
 				config = append(config, "Allows metadata API")
+			}
+			if p.DeniesMetadataAPI {
+				config = append(config, "Denies metadata API")
 			}
 			configStr := strings.Join(config, "; ")
 			if configStr == "" {
@@ -3266,6 +3281,15 @@ func analyzeK8sNetworkPolicies(ctx context.Context, clientset *kubernetes.Client
 				if to.IPBlock != nil && strings.HasPrefix(to.IPBlock.CIDR, "169.254.") {
 					info.AllowsMetadataAPI = true
 				}
+				// Detect block-metadata pattern: broad CIDR with 169.254.169.254/32 in except list
+				if to.IPBlock != nil && len(to.IPBlock.Except) > 0 {
+					for _, exc := range to.IPBlock.Except {
+						if strings.HasPrefix(exc, "169.254.169.254") {
+							info.DeniesMetadataAPI = true
+							break
+						}
+					}
+				}
 				if to.NamespaceSelector != nil && len(to.NamespaceSelector.MatchLabels) == 0 {
 					info.AllowsCrossNS = true
 				}
@@ -4525,6 +4549,9 @@ func detectNetworkPolicyEngineBlocking(
 			blocking.CrossNSEgressBlockedBy = append(blocking.CrossNSEgressBlockedBy, "K8s:"+p.Name)
 			blocking.KubeAPIEgressBlocked = true
 			blocking.KubeAPIEgressBlockedBy = append(blocking.KubeAPIEgressBlockedBy, "K8s:"+p.Name)
+		} else if p.DeniesMetadataAPI {
+			blocking.MetadataAPIBlocked = true
+			blocking.MetadataAPIBlockedBy = append(blocking.MetadataAPIBlockedBy, "K8s:"+p.Name)
 		}
 	}
 
@@ -4800,6 +4827,38 @@ func calculateNetworkPolicyCoverage(pods []corev1.Pod, policies []K8sNetworkPoli
 		}
 	}
 	return len(covered)
+}
+
+// calculateNetworkPolicyCoverageByType returns the number of pods covered by
+// ingress-type and egress-type policies separately. A pod is "ingress covered"
+// if at least one policy selecting it has Ingress in policyTypes, and likewise
+// for egress.
+func calculateNetworkPolicyCoverageByType(pods []corev1.Pod, policies []K8sNetworkPolicyInfo) (ingressCovered, egressCovered int) {
+	ingressSet := make(map[string]bool)
+	egressSet := make(map[string]bool)
+	for _, policy := range policies {
+		hasIngress := false
+		hasEgress := false
+		for _, pt := range policy.PolicyTypes {
+			if pt == "Ingress" {
+				hasIngress = true
+			}
+			if pt == "Egress" {
+				hasEgress = true
+			}
+		}
+		for _, pod := range pods {
+			if isPodCoveredByPolicy(pod, policy) {
+				if hasIngress {
+					ingressSet[pod.Name] = true
+				}
+				if hasEgress {
+					egressSet[pod.Name] = true
+				}
+			}
+		}
+	}
+	return len(ingressSet), len(egressSet)
 }
 
 func isPodCoveredByPolicy(pod corev1.Pod, policy K8sNetworkPolicyInfo) bool {

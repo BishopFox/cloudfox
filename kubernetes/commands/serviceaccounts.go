@@ -134,6 +134,11 @@ type SAFinding struct {
 	PodsWithHostPath     int
 	PodsWithCapabilities map[string]int // "SYS_ADMIN": 2, "NET_RAW": 1
 
+	// Node Token Access Analysis
+	RootPods         int    // pods running as root with token mounted
+	TokenMountedPods int    // pods that actually have SA token mounted
+	NodeTokenAccess  string // formatted column value
+
 	// External Exposure
 	ExternallyExposed bool
 	ExposureMethod    string // "LoadBalancer", "NodePort", "Ingress"
@@ -249,6 +254,7 @@ func ListServiceAccounts(cmd *cobra.Command, args []string) {
 		"Roles",
 		"ClusterRoles",
 		"Auto-Mount",
+		"Node Token Access",
 		"Issues",
 	}
 
@@ -487,6 +493,13 @@ func ListServiceAccounts(cmd *cobra.Command, args []string) {
 		}
 	}
 
+	// Fetch all Nodes once (cached) for SELinux/MAC detection
+	allNodes, err := sdk.GetNodes(ctx, clientset)
+	if err != nil {
+		allNodes = []corev1.Node{}
+	}
+	nodeSELinux := buildNodeSELinuxMap(allNodes)
+
 	// Fetch all RoleBindings once (cached)
 	allRoleBindingsList, err := sdk.GetRoleBindings(ctx, clientset)
 	if err != nil {
@@ -563,6 +576,7 @@ func ListServiceAccounts(cmd *cobra.Command, args []string) {
 			PodsWithCapabilities: make(map[string]int),
 			PodNodeMap:           make(map[string]string),
 			NodePodCount:         make(map[string]int),
+			NodeTokenAccess:      "-",
 		}
 
 			// Calculate age
@@ -624,6 +638,10 @@ func ListServiceAccounts(cmd *cobra.Command, args []string) {
 			finding.TotalPods = len(podsUsingSA)
 			finding.ActivelyUsed = len(podsUsingSA) > 0
 
+			// SELinux tracking variables (used in security issues below)
+			selinuxProtectedPods := 0
+			selinuxLikelyProtectedPods := 0
+
 			// Analyze workload types and pod security context
 			if len(podsUsingSA) > 0 {
 				workloadAnalysis := analyzeWorkloadTypes(ctx, clientset, ns, podsUsingSA)
@@ -664,6 +682,44 @@ func ListServiceAccounts(cmd *cobra.Command, args []string) {
 
 				// Generate target summary for quick reference
 				finding.TargetSummary = generateTargetSummary(&finding)
+
+				// Node token access analysis (with SELinux/MAC awareness)
+				for i := range podsUsingSA {
+					pod := &podsUsingSA[i]
+					if isTokenMountedForPod(pod, sa.AutomountServiceAccountToken) {
+						finding.TokenMountedPods++
+						if isPodRunAsRoot(pod) {
+							seStatus := nodeSELinux[pod.Spec.NodeName]
+							switch seStatus {
+							case "enforcing":
+								selinuxProtectedPods++
+							case "likely":
+								selinuxLikelyProtectedPods++
+							default:
+								finding.RootPods++
+							}
+						}
+					}
+				}
+				totalRootPods := finding.RootPods + selinuxProtectedPods + selinuxLikelyProtectedPods
+				if finding.TokenMountedPods == 0 {
+					finding.NodeTokenAccess = "No (unmounted)"
+				} else if totalRootPods == 0 {
+					finding.NodeTokenAccess = "No (non-root)"
+				} else if finding.RootPods == 0 && selinuxProtectedPods > 0 && selinuxLikelyProtectedPods == 0 {
+					finding.NodeTokenAccess = fmt.Sprintf("Blocked by SELinux (%d pods)", selinuxProtectedPods)
+				} else if finding.RootPods == 0 && selinuxLikelyProtectedPods > 0 && selinuxProtectedPods == 0 {
+					finding.NodeTokenAccess = fmt.Sprintf("Likely blocked by SELinux (%d pods)", selinuxLikelyProtectedPods)
+				} else if finding.RootPods == 0 {
+					// Mix of enforcing + likely, all protected
+					finding.NodeTokenAccess = fmt.Sprintf("Blocked by SELinux (%d pods)", selinuxProtectedPods+selinuxLikelyProtectedPods)
+				} else if selinuxProtectedPods > 0 || selinuxLikelyProtectedPods > 0 {
+					finding.NodeTokenAccess = fmt.Sprintf("Mixed (%d exposed, %d SELinux-protected)", finding.RootPods, selinuxProtectedPods+selinuxLikelyProtectedPods)
+				} else if finding.RootPods == finding.TokenMountedPods {
+					finding.NodeTokenAccess = fmt.Sprintf("Yes (%d root pods)", finding.RootPods)
+				} else {
+					finding.NodeTokenAccess = fmt.Sprintf("Partial (%d/%d pods)", finding.RootPods, finding.TokenMountedPods)
+				}
 			}
 
 			// Get image pull secrets
@@ -757,6 +813,16 @@ func ListServiceAccounts(cmd *cobra.Command, args []string) {
 					"Using legacy token secret (migrate to projected)")
 			}
 
+			// Node token access (root pods expose SA tokens on node filesystem)
+			if finding.RootPods > 0 {
+				finding.SecurityIssues = append(finding.SecurityIssues,
+					fmt.Sprintf("%d/%d pods expose SA tokens on node (root pods)", finding.RootPods, finding.TokenMountedPods))
+			}
+			if selinuxProtectedPods+selinuxLikelyProtectedPods > 0 && finding.RootPods == 0 {
+				finding.SecurityIssues = append(finding.SecurityIssues,
+					fmt.Sprintf("%d root pods have node token access blocked by SELinux", selinuxProtectedPods+selinuxLikelyProtectedPods))
+			}
+
 			// RBAC sprawl
 			if finding.RBACSprawl {
 				finding.SecurityIssues = append(finding.SecurityIssues,
@@ -827,6 +893,7 @@ func ListServiceAccounts(cmd *cobra.Command, args []string) {
 				strings.Join(k8sinternal.Unique(roles), ", "),
 				strings.Join(k8sinternal.Unique(clusterRoles), ", "),
 				autoMount,
+				finding.NodeTokenAccess,
 				fmt.Sprintf("%d", len(finding.SecurityIssues)),
 			})
 
@@ -1767,6 +1834,16 @@ func serviceAccountGenerateLootContent(finding *SAFinding, loot *shared.LootBuil
 			loot.Section("ServiceAccounts-SA-Hunter").Add("# Privileged pods can escape to the node!")
 		}
 
+		// Node token access info
+		if finding.RootPods > 0 {
+			loot.Section("ServiceAccounts-SA-Hunter").Add("#")
+			loot.Section("ServiceAccounts-SA-Hunter").Add("# === NODE TOKEN ACCESS ===")
+			loot.Section("ServiceAccounts-SA-Hunter").Addf("# %s", finding.NodeTokenAccess)
+			loot.Section("ServiceAccounts-SA-Hunter").Addf("# %d/%d token-mounted pods run as root (UID 0)", finding.RootPods, finding.TokenMountedPods)
+			loot.Section("ServiceAccounts-SA-Hunter").Add("# Root pods' SA tokens are readable from the node at:")
+			loot.Section("ServiceAccounts-SA-Hunter").Add("# /var/lib/kubelet/pods/<uid>/volumes/kubernetes.io~projected/kube-api-access-*/token")
+		}
+
 		// Quick token extraction for this SA
 		loot.Section("ServiceAccounts-SA-Hunter").Add("#")
 		loot.Section("ServiceAccounts-SA-Hunter").Add("# === EXTRACT SA TOKEN FROM POD ===")
@@ -2253,4 +2330,120 @@ func truncateString(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen-3] + "..."
+}
+
+// isPodRunAsRoot checks whether a pod effectively runs as root (UID 0).
+// Pod-level security context is checked first, then individual containers.
+// If nothing is set, defaults to true (root) since most images run as root.
+func isPodRunAsRoot(pod *corev1.Pod) bool {
+	podSC := pod.Spec.SecurityContext
+
+	// Pod-level RunAsNonRoot: true means no container runs as root
+	if podSC != nil && podSC.RunAsNonRoot != nil && *podSC.RunAsNonRoot {
+		// Still check if any container explicitly overrides to root
+		for _, c := range pod.Spec.Containers {
+			if c.SecurityContext != nil && c.SecurityContext.RunAsUser != nil && *c.SecurityContext.RunAsUser == 0 {
+				return true
+			}
+		}
+		for _, c := range pod.Spec.InitContainers {
+			if c.SecurityContext != nil && c.SecurityContext.RunAsUser != nil && *c.SecurityContext.RunAsUser == 0 {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Pod-level RunAsUser set
+	if podSC != nil && podSC.RunAsUser != nil {
+		if *podSC.RunAsUser == 0 {
+			return true
+		}
+		// Pod-level non-root, but check container overrides
+		for _, c := range pod.Spec.Containers {
+			if c.SecurityContext != nil && c.SecurityContext.RunAsUser != nil && *c.SecurityContext.RunAsUser == 0 {
+				return true
+			}
+		}
+		for _, c := range pod.Spec.InitContainers {
+			if c.SecurityContext != nil && c.SecurityContext.RunAsUser != nil && *c.SecurityContext.RunAsUser == 0 {
+				return true
+			}
+		}
+		return false
+	}
+
+	// No pod-level setting. Check each container.
+	for _, c := range pod.Spec.Containers {
+		if c.SecurityContext != nil {
+			if c.SecurityContext.RunAsNonRoot != nil && *c.SecurityContext.RunAsNonRoot {
+				continue
+			}
+			if c.SecurityContext.RunAsUser != nil && *c.SecurityContext.RunAsUser > 0 {
+				continue
+			}
+		}
+		// No security context or no RunAsUser/RunAsNonRoot: defaults to root
+		return true
+	}
+
+	// All containers explicitly non-root
+	if len(pod.Spec.Containers) > 0 {
+		return false
+	}
+
+	// No containers (shouldn't happen), default to root
+	return true
+}
+
+// isTokenMountedForPod determines whether the SA token is actually mounted in a pod.
+// Pod-level AutomountServiceAccountToken overrides the SA-level setting.
+func isTokenMountedForPod(pod *corev1.Pod, saAutoMount *bool) bool {
+	// Pod-level takes precedence
+	if pod.Spec.AutomountServiceAccountToken != nil {
+		return *pod.Spec.AutomountServiceAccountToken
+	}
+	// Fall back to SA-level
+	if saAutoMount != nil {
+		return *saAutoMount
+	}
+	// Default: true
+	return true
+}
+
+// nodeSELinuxStatus classifies a node's SELinux/MAC enforcement based on its OS image string.
+// Returns one of: "enforcing", "likely", "possible", "none", "unknown"
+func nodeSELinuxStatus(osImage string) string {
+	lower := strings.ToLower(osImage)
+	switch {
+	case strings.Contains(lower, "bottlerocket"):
+		return "enforcing"
+	case strings.Contains(lower, "red hat") || strings.Contains(lower, "coreos"):
+		return "likely"
+	case strings.Contains(lower, "fedora"):
+		return "likely"
+	case strings.Contains(lower, "centos"):
+		return "possible"
+	case strings.Contains(lower, "amazon linux"):
+		return "possible"
+	case strings.Contains(lower, "flatcar"):
+		return "possible"
+	case strings.Contains(lower, "ubuntu") || strings.Contains(lower, "debian"):
+		return "none"
+	case strings.Contains(lower, "container-optimized") || strings.Contains(lower, "cos-"):
+		return "none"
+	case strings.Contains(lower, "talos"):
+		return "none"
+	default:
+		return "unknown"
+	}
+}
+
+// buildNodeSELinuxMap builds a map of node name to SELinux enforcement status.
+func buildNodeSELinuxMap(nodes []corev1.Node) map[string]string {
+	result := make(map[string]string, len(nodes))
+	for _, node := range nodes {
+		result[node.Name] = nodeSELinuxStatus(node.Status.NodeInfo.OSImage)
+	}
+	return result
 }
