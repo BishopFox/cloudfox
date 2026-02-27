@@ -48,7 +48,7 @@ func (s *OAuthService) WhoAmI() (*Principal, error) {
 
 	tokenInfo, err := queryTokenInfo(token.AccessToken)
 	if err != nil {
-		return nil, fmt.Errorf(fmt.Sprintf("failed to retrieve metada of the token with error: %s", err.Error()))
+		return nil, fmt.Errorf("failed to retrieve metadata of the token with error: %w", err)
 	}
 	// Split the scope string into a slice of strings.
 	scopes := strings.Split(tokenInfo.Scope, " ")

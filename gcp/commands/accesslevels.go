@@ -1,0 +1,453 @@
+package commands
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"sync"
+
+	accesspolicyservice "github.com/BishopFox/cloudfox/gcp/services/accessPolicyService"
+	"github.com/BishopFox/cloudfox/globals"
+	"github.com/BishopFox/cloudfox/internal"
+	gcpinternal "github.com/BishopFox/cloudfox/internal/gcp"
+	"github.com/spf13/cobra"
+	cloudresourcemanager "google.golang.org/api/cloudresourcemanager/v1"
+)
+
+var accessLevelOrgID string
+
+var GCPAccessLevelsCommand = &cobra.Command{
+	Use:     globals.GCP_ACCESSLEVELS_MODULE_NAME,
+	Aliases: []string{"access-levels", "conditional-access", "ca"},
+	Short:   "Enumerate Access Context Manager access levels",
+	Long: `Enumerate Access Context Manager access levels (conditional access policies).
+
+Features:
+- Lists all access levels in the organization
+- Shows IP-based, device-based, and identity conditions
+- Identifies overly permissive access levels
+- Analyzes device policy requirements
+
+Organization Discovery:
+- Automatically discovers organization from project ancestry if --org not specified
+- Use --org to explicitly specify an organization ID`,
+	Run: runGCPAccessLevelsCommand,
+}
+
+func init() {
+	GCPAccessLevelsCommand.Flags().StringVar(&accessLevelOrgID, "org", "", "Organization ID (required)")
+}
+
+type AccessLevelsModule struct {
+	gcpinternal.BaseGCPModule
+	OrgID            string
+	OrgAccessLevels  map[string][]accesspolicyservice.AccessLevelInfo // orgID -> access levels
+	LootMap          map[string]map[string]*internal.LootFile         // orgID -> loot files
+	mu               sync.Mutex
+}
+
+type AccessLevelsOutput struct {
+	Table []internal.TableFile
+	Loot  []internal.LootFile
+}
+
+func (o AccessLevelsOutput) TableFiles() []internal.TableFile { return o.Table }
+func (o AccessLevelsOutput) LootFiles() []internal.LootFile   { return o.Loot }
+
+func runGCPAccessLevelsCommand(cmd *cobra.Command, args []string) {
+	cmdCtx, err := gcpinternal.InitializeCommandContext(cmd, globals.GCP_ACCESSLEVELS_MODULE_NAME)
+	if err != nil {
+		return
+	}
+
+	// Discover organizations if not specified
+	orgIDs := []string{}
+	if accessLevelOrgID != "" {
+		orgIDs = append(orgIDs, accessLevelOrgID)
+	} else {
+		// Auto-discover organizations from project ancestry
+		discoveredOrgs := discoverOrganizations(cmdCtx.Ctx, cmdCtx.ProjectIDs, cmdCtx.Logger)
+		if len(discoveredOrgs) == 0 {
+			cmdCtx.Logger.ErrorM("Could not discover any organizations. Use --org flag to specify one.", globals.GCP_ACCESSLEVELS_MODULE_NAME)
+			return
+		}
+		orgIDs = discoveredOrgs
+		cmdCtx.Logger.InfoM(fmt.Sprintf("Discovered %d organization(s) from project ancestry", len(orgIDs)), globals.GCP_ACCESSLEVELS_MODULE_NAME)
+	}
+
+	module := &AccessLevelsModule{
+		BaseGCPModule:   gcpinternal.NewBaseGCPModule(cmdCtx),
+		OrgAccessLevels: make(map[string][]accesspolicyservice.AccessLevelInfo),
+		LootMap:         make(map[string]map[string]*internal.LootFile),
+	}
+
+	// Process each organization
+	for _, orgID := range orgIDs {
+		module.processOrg(cmdCtx.Ctx, orgID, cmdCtx.Logger)
+	}
+
+	// Write combined output
+	allLevels := module.getAllAccessLevels()
+	if len(allLevels) == 0 {
+		cmdCtx.Logger.InfoM("No access levels found", globals.GCP_ACCESSLEVELS_MODULE_NAME)
+		return
+	}
+
+	cmdCtx.Logger.SuccessM(fmt.Sprintf("Found %d access level(s)", len(allLevels)), globals.GCP_ACCESSLEVELS_MODULE_NAME)
+	module.writeOutput(cmdCtx.Ctx, cmdCtx.Logger)
+}
+
+// discoverOrganizations finds organization IDs from project ancestry
+func discoverOrganizations(ctx context.Context, projectIDs []string, logger internal.Logger) []string {
+	crmService, err := cloudresourcemanager.NewService(ctx)
+	if err != nil {
+		return nil
+	}
+
+	orgMap := make(map[string]bool)
+	for _, projectID := range projectIDs {
+		resp, err := crmService.Projects.GetAncestry(projectID, &cloudresourcemanager.GetAncestryRequest{}).Do()
+		if err != nil {
+			continue
+		}
+
+		for _, ancestor := range resp.Ancestor {
+			if ancestor.ResourceId.Type == "organization" {
+				orgMap[ancestor.ResourceId.Id] = true
+			}
+		}
+	}
+
+	var orgs []string
+	for orgID := range orgMap {
+		orgs = append(orgs, orgID)
+	}
+	return orgs
+}
+
+func (m *AccessLevelsModule) getAllAccessLevels() []accesspolicyservice.AccessLevelInfo {
+	var all []accesspolicyservice.AccessLevelInfo
+	for _, levels := range m.OrgAccessLevels {
+		all = append(all, levels...)
+	}
+	return all
+}
+
+func (m *AccessLevelsModule) processOrg(ctx context.Context, orgID string, logger internal.Logger) {
+	if globals.GCP_VERBOSITY >= globals.GCP_VERBOSE_ERRORS {
+		logger.InfoM(fmt.Sprintf("Enumerating access levels for organization: %s", orgID), globals.GCP_ACCESSLEVELS_MODULE_NAME)
+	}
+
+	m.mu.Lock()
+	// Initialize loot for this org
+	if m.LootMap[orgID] == nil {
+		m.LootMap[orgID] = make(map[string]*internal.LootFile)
+		m.LootMap[orgID]["access-levels-details"] = &internal.LootFile{
+			Name:     "access-levels-details",
+			Contents: "# Access Levels (Conditional Access Policies)\n# Generated by CloudFox\n# WARNING: Only use with proper authorization\n\n",
+		}
+		m.LootMap[orgID]["access-levels-allowed-ips"] = &internal.LootFile{
+			Name:     "access-levels-allowed-ips",
+			Contents: "",
+		}
+	}
+	m.mu.Unlock()
+
+	svc := accesspolicyservice.New()
+
+	levels, err := svc.ListAccessLevels(orgID)
+	if err != nil {
+		gcpinternal.HandleGCPError(err, logger, globals.GCP_ACCESSLEVELS_MODULE_NAME,
+			fmt.Sprintf("Could not list access levels for org %s", orgID))
+		return
+	}
+
+	m.mu.Lock()
+	m.OrgAccessLevels[orgID] = levels
+	for _, level := range levels {
+		m.addToLoot(orgID, level)
+	}
+	m.mu.Unlock()
+}
+
+func (m *AccessLevelsModule) addToLoot(orgID string, level accesspolicyservice.AccessLevelInfo) {
+	if lootFile := m.LootMap[orgID]["access-levels-details"]; lootFile != nil {
+		lootFile.Contents += fmt.Sprintf(
+			"# =============================================================================\n"+
+				"# ACCESS LEVEL: %s\n"+
+				"# =============================================================================\n"+
+				"# Title: %s\n"+
+				"# Policy: %s\n"+
+				"# Combining Function: %s\n"+
+				"# Conditions: %d\n",
+			level.Name, level.Title, level.PolicyName, level.CombiningFunction, len(level.Conditions))
+
+		// Condition details
+		for i, condition := range level.Conditions {
+			lootFile.Contents += fmt.Sprintf("# --- Condition %d ---\n", i+1)
+			if len(condition.IPSubnetworks) > 0 {
+				lootFile.Contents += fmt.Sprintf("#   IP Subnets: %s\n", strings.Join(condition.IPSubnetworks, ", "))
+			}
+			if len(condition.Members) > 0 {
+				lootFile.Contents += fmt.Sprintf("#   Members: %s\n", strings.Join(condition.Members, ", "))
+			}
+			if len(condition.Regions) > 0 {
+				lootFile.Contents += fmt.Sprintf("#   Regions: %s\n", strings.Join(condition.Regions, ", "))
+			}
+			if condition.DevicePolicy != nil {
+				lootFile.Contents += "#   Device Policy: configured\n"
+			}
+		}
+
+		// Extract short level name for gcloud commands
+		levelName := level.Name
+		policyName := level.PolicyName
+
+		lootFile.Contents += fmt.Sprintf(`
+# === ENUMERATION COMMANDS ===
+
+# Describe this access level:
+gcloud access-context-manager levels describe %s --policy=%s
+
+# List all conditions for this access level:
+gcloud access-context-manager levels describe %s --policy=%s --format=json | jq '.basic.conditions'
+
+# List all access levels in this policy:
+gcloud access-context-manager levels list --policy=%s
+
+# === EXPLOIT COMMANDS ===
+
+# Check if your current IP is allowed by this access level:
+curl -s ifconfig.me && echo " <- Check if this IP is in the allowed subnets above"
+
+`, levelName, policyName,
+			levelName, policyName,
+			policyName)
+
+		// Add IP-specific bypass checks
+		if len(level.Conditions) > 0 {
+			for _, condition := range level.Conditions {
+				if len(condition.IPSubnetworks) > 0 {
+					lootFile.Contents += "# Test connectivity from allowed IP ranges (use with VPN/proxy):\n"
+					for _, ip := range condition.IPSubnetworks {
+						lootFile.Contents += fmt.Sprintf("# Allowed subnet: %s\n", ip)
+					}
+					lootFile.Contents += "\n"
+				}
+				if len(condition.Members) > 0 {
+					lootFile.Contents += "# Members that can bypass this access level:\n"
+					for _, member := range condition.Members {
+						lootFile.Contents += fmt.Sprintf("# %s\n", member)
+					}
+					lootFile.Contents += "\n"
+				}
+			}
+		}
+	}
+
+	for _, condition := range level.Conditions {
+		for _, ip := range condition.IPSubnetworks {
+			if lootFile := m.LootMap[orgID]["access-levels-allowed-ips"]; lootFile != nil {
+				lootFile.Contents += fmt.Sprintf("%s # %s\n", ip, level.Name)
+			}
+		}
+	}
+}
+
+func (m *AccessLevelsModule) writeOutput(ctx context.Context, logger internal.Logger) {
+	if m.Hierarchy != nil && !m.FlatOutput {
+		m.writeHierarchicalOutput(ctx, logger)
+	} else {
+		m.writeFlatOutput(ctx, logger)
+	}
+}
+
+func (m *AccessLevelsModule) getLevelsHeader() []string {
+	return []string{"Org ID", "Name", "Title", "Policy", "Combining", "Conditions", "Device Policy"}
+}
+
+func (m *AccessLevelsModule) getConditionsHeader() []string {
+	return []string{"Org ID", "Level", "Condition", "IP Ranges", "Members", "Regions", "Device Requirements"}
+}
+
+func (m *AccessLevelsModule) levelsToTableBody(levels []accesspolicyservice.AccessLevelInfo, orgID string) [][]string {
+	var body [][]string
+	for _, level := range levels {
+		hasDevicePolicy := "No"
+		for _, cond := range level.Conditions {
+			if cond.DevicePolicy != nil {
+				hasDevicePolicy = "Yes"
+				break
+			}
+		}
+
+		combiningFunc := level.CombiningFunction
+		if combiningFunc == "" {
+			combiningFunc = "AND"
+		}
+
+		body = append(body, []string{
+			orgID,
+			level.Name,
+			level.Title,
+			level.PolicyName,
+			combiningFunc,
+			fmt.Sprintf("%d", len(level.Conditions)),
+			hasDevicePolicy,
+		})
+	}
+	return body
+}
+
+func (m *AccessLevelsModule) conditionsToTableBody(levels []accesspolicyservice.AccessLevelInfo, orgID string) [][]string {
+	var body [][]string
+	for _, level := range levels {
+		for i, cond := range level.Conditions {
+			ipRanges := strings.Join(cond.IPSubnetworks, ", ")
+			if ipRanges == "" {
+				ipRanges = "(any)"
+			}
+
+			members := strings.Join(cond.Members, ", ")
+			if members == "" {
+				members = "(any)"
+			}
+
+			regions := strings.Join(cond.Regions, ", ")
+			if regions == "" {
+				regions = "(any)"
+			}
+
+			deviceReqs := "(none)"
+			if cond.DevicePolicy != nil {
+				var reqs []string
+				if cond.DevicePolicy.RequireScreenLock {
+					reqs = append(reqs, "screen-lock")
+				}
+				if cond.DevicePolicy.RequireCorpOwned {
+					reqs = append(reqs, "corp-owned")
+				}
+				if cond.DevicePolicy.RequireAdminApproval {
+					reqs = append(reqs, "admin-approval")
+				}
+				if len(reqs) > 0 {
+					deviceReqs = strings.Join(reqs, ", ")
+				}
+			}
+
+			body = append(body, []string{
+				orgID,
+				level.Name,
+				fmt.Sprintf("%d", i+1),
+				ipRanges,
+				members,
+				regions,
+				deviceReqs,
+			})
+		}
+	}
+	return body
+}
+
+func (m *AccessLevelsModule) buildTablesForOrg(orgID string) []internal.TableFile {
+	var tableFiles []internal.TableFile
+
+	if levels, ok := m.OrgAccessLevels[orgID]; ok && len(levels) > 0 {
+		tableFiles = append(tableFiles, internal.TableFile{
+			Name:   "access-levels",
+			Header: m.getLevelsHeader(),
+			Body:   m.levelsToTableBody(levels, orgID),
+		})
+
+		condBody := m.conditionsToTableBody(levels, orgID)
+		if len(condBody) > 0 {
+			tableFiles = append(tableFiles, internal.TableFile{
+				Name:   "access-level-conditions",
+				Header: m.getConditionsHeader(),
+				Body:   condBody,
+			})
+		}
+	}
+
+	return tableFiles
+}
+
+func (m *AccessLevelsModule) writeHierarchicalOutput(ctx context.Context, logger internal.Logger) {
+	outputData := internal.HierarchicalOutputData{
+		OrgLevelData:     make(map[string]internal.CloudfoxOutput),
+		ProjectLevelData: make(map[string]internal.CloudfoxOutput),
+	}
+
+	for orgID := range m.OrgAccessLevels {
+		tableFiles := m.buildTablesForOrg(orgID)
+
+		var lootFiles []internal.LootFile
+		if orgLoot, ok := m.LootMap[orgID]; ok {
+			for _, loot := range orgLoot {
+				if loot != nil && loot.Contents != "" && !strings.HasSuffix(loot.Contents, "# WARNING: Only use with proper authorization\n\n") {
+					lootFiles = append(lootFiles, *loot)
+				}
+			}
+		}
+
+		outputData.OrgLevelData[orgID] = AccessLevelsOutput{Table: tableFiles, Loot: lootFiles}
+	}
+
+	pathBuilder := m.BuildPathBuilder()
+
+	err := internal.HandleHierarchicalOutputSmart("gcp", m.Format, m.Verbosity, m.WrapTable, pathBuilder, outputData)
+	if err != nil {
+		logger.ErrorM(fmt.Sprintf("Error writing hierarchical output: %v", err), globals.GCP_ACCESSLEVELS_MODULE_NAME)
+	}
+}
+
+func (m *AccessLevelsModule) writeFlatOutput(ctx context.Context, logger internal.Logger) {
+	var tables []internal.TableFile
+
+	// Collect all org IDs
+	var orgIDs []string
+	for orgID := range m.OrgAccessLevels {
+		orgIDs = append(orgIDs, orgID)
+	}
+
+	// Build combined tables with org ID in each row
+	var allLevelRows [][]string
+	var allCondRows [][]string
+	for orgID, levels := range m.OrgAccessLevels {
+		allLevelRows = append(allLevelRows, m.levelsToTableBody(levels, orgID)...)
+		allCondRows = append(allCondRows, m.conditionsToTableBody(levels, orgID)...)
+	}
+
+	if len(allLevelRows) > 0 {
+		tables = append(tables, internal.TableFile{
+			Name:   "access-levels",
+			Header: m.getLevelsHeader(),
+			Body:   allLevelRows,
+		})
+	}
+
+	if len(allCondRows) > 0 {
+		tables = append(tables, internal.TableFile{
+			Name:   "access-level-conditions",
+			Header: m.getConditionsHeader(),
+			Body:   allCondRows,
+		})
+	}
+
+	var lootFiles []internal.LootFile
+	for _, orgLoot := range m.LootMap {
+		for _, loot := range orgLoot {
+			if loot != nil && loot.Contents != "" && !strings.HasSuffix(loot.Contents, "# WARNING: Only use with proper authorization\n\n") {
+				lootFiles = append(lootFiles, *loot)
+			}
+		}
+	}
+
+	output := AccessLevelsOutput{Table: tables, Loot: lootFiles}
+
+	err := internal.HandleOutputSmart("gcp", m.Format, m.OutputDirectory, m.Verbosity, m.WrapTable,
+		"org", orgIDs, orgIDs, m.Account, output)
+	if err != nil {
+		logger.ErrorM(fmt.Sprintf("Error writing output: %v", err), globals.GCP_ACCESSLEVELS_MODULE_NAME)
+	}
+}

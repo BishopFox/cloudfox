@@ -115,8 +115,9 @@ func TestSecrets(t *testing.T) {
 				{
 					Name:         "projects/my-project/secrets/secret1",
 					ProjectID:    "my-project",
-					CreationTime: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC).String(),
+					CreationTime: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339),
 					Labels:       map[string]string{"env": "test"},
+					Rotation:     "disabled",
 				},
 			},
 			wantErr: false,

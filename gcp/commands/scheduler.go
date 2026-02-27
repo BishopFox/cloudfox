@@ -1,0 +1,427 @@
+package commands
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"sync"
+
+	SchedulerService "github.com/BishopFox/cloudfox/gcp/services/schedulerService"
+	"github.com/BishopFox/cloudfox/globals"
+	"github.com/BishopFox/cloudfox/internal"
+	gcpinternal "github.com/BishopFox/cloudfox/internal/gcp"
+	"github.com/spf13/cobra"
+)
+
+var GCPSchedulerCommand = &cobra.Command{
+	Use:     globals.GCP_SCHEDULER_MODULE_NAME,
+	Aliases: []string{"cron", "jobs"},
+	Short:   "Enumerate Cloud Scheduler jobs with security analysis",
+	Long: `Enumerate Cloud Scheduler jobs across projects with security-relevant details.
+
+Features:
+- Lists all Cloud Scheduler jobs
+- Shows target configuration (HTTP, Pub/Sub, App Engine)
+- Identifies service accounts used for authentication
+- Shows schedule (cron) expressions
+- Displays job state and last execution status
+- Generates gcloud commands for job manipulation
+
+Security Columns:
+- Target: HTTP endpoint, Pub/Sub topic, or App Engine service
+- ServiceAccount: Identity used when invoking targets
+- Schedule: When the job runs (cron expression)
+- State: ENABLED, PAUSED, or DISABLED
+
+Attack Surface:
+- HTTP targets may call internal or external endpoints
+- Service accounts may have excessive permissions
+- Jobs can be modified to call attacker-controlled endpoints
+- Paused jobs may indicate suspended malicious activity`,
+	Run: runGCPSchedulerCommand,
+}
+
+// ------------------------------
+// Module Struct
+// ------------------------------
+type SchedulerModule struct {
+	gcpinternal.BaseGCPModule
+
+	ProjectJobs  map[string][]SchedulerService.JobInfo    // projectID -> jobs
+	LootMap      map[string]map[string]*internal.LootFile // projectID -> loot files
+	FoxMapperCache *gcpinternal.FoxMapperCache            // Cached FoxMapper analysis results
+	mu           sync.Mutex
+}
+
+// ------------------------------
+// Output Struct
+// ------------------------------
+type SchedulerOutput struct {
+	Table []internal.TableFile
+	Loot  []internal.LootFile
+}
+
+func (o SchedulerOutput) TableFiles() []internal.TableFile { return o.Table }
+func (o SchedulerOutput) LootFiles() []internal.LootFile   { return o.Loot }
+
+// ------------------------------
+// Command Entry Point
+// ------------------------------
+func runGCPSchedulerCommand(cmd *cobra.Command, args []string) {
+	cmdCtx, err := gcpinternal.InitializeCommandContext(cmd, globals.GCP_SCHEDULER_MODULE_NAME)
+	if err != nil {
+		return
+	}
+
+	module := &SchedulerModule{
+		BaseGCPModule: gcpinternal.NewBaseGCPModule(cmdCtx),
+		ProjectJobs:   make(map[string][]SchedulerService.JobInfo),
+		LootMap:       make(map[string]map[string]*internal.LootFile),
+	}
+
+	module.Execute(cmdCtx.Ctx, cmdCtx.Logger)
+}
+
+// ------------------------------
+// Module Execution
+// ------------------------------
+func (m *SchedulerModule) Execute(ctx context.Context, logger internal.Logger) {
+	// Get FoxMapper cache from context
+	m.FoxMapperCache = gcpinternal.GetFoxMapperCacheFromContext(ctx)
+
+	m.RunProjectEnumeration(ctx, logger, m.ProjectIDs, globals.GCP_SCHEDULER_MODULE_NAME, m.processProject)
+
+	allJobs := m.getAllJobs()
+	if len(allJobs) == 0 {
+		logger.InfoM("No Cloud Scheduler jobs found", globals.GCP_SCHEDULER_MODULE_NAME)
+		return
+	}
+
+	// Count job states
+	enabledCount := 0
+	httpCount := 0
+	for _, job := range allJobs {
+		if job.State == "ENABLED" {
+			enabledCount++
+		}
+		if job.TargetType == "http" {
+			httpCount++
+		}
+	}
+
+	msg := fmt.Sprintf("Found %d job(s)", len(allJobs))
+	if enabledCount > 0 {
+		msg += fmt.Sprintf(" [%d enabled]", enabledCount)
+	}
+	if httpCount > 0 {
+		msg += fmt.Sprintf(" [%d HTTP targets]", httpCount)
+	}
+	logger.SuccessM(msg, globals.GCP_SCHEDULER_MODULE_NAME)
+
+	m.writeOutput(ctx, logger)
+}
+
+// getAllJobs returns all jobs from all projects
+func (m *SchedulerModule) getAllJobs() []SchedulerService.JobInfo {
+	var all []SchedulerService.JobInfo
+	for _, jobs := range m.ProjectJobs {
+		all = append(all, jobs...)
+	}
+	return all
+}
+
+// ------------------------------
+// Project Processor
+// ------------------------------
+func (m *SchedulerModule) processProject(ctx context.Context, projectID string, logger internal.Logger) {
+	if globals.GCP_VERBOSITY >= globals.GCP_VERBOSE_ERRORS {
+		logger.InfoM(fmt.Sprintf("Enumerating Scheduler jobs in project: %s", projectID), globals.GCP_SCHEDULER_MODULE_NAME)
+	}
+
+	ss := SchedulerService.New()
+
+	jobs, err := ss.Jobs(projectID)
+	if err != nil {
+		m.CommandCounter.Error++
+		gcpinternal.HandleGCPError(err, logger, globals.GCP_SCHEDULER_MODULE_NAME,
+			fmt.Sprintf("Could not enumerate Scheduler jobs in project %s", projectID))
+		return
+	}
+
+	// Thread-safe store per-project
+	m.mu.Lock()
+	m.ProjectJobs[projectID] = jobs
+
+	// Initialize loot for this project
+	if m.LootMap[projectID] == nil {
+		m.LootMap[projectID] = make(map[string]*internal.LootFile)
+		m.LootMap[projectID]["scheduler-commands"] = &internal.LootFile{
+			Name: "scheduler-commands",
+			Contents: "# Scheduler Commands\n" +
+				"# Generated by CloudFox\n" +
+				"# WARNING: Only use with proper authorization\n\n",
+		}
+	}
+
+	for _, job := range jobs {
+		m.addJobToLoot(projectID, job)
+	}
+	m.mu.Unlock()
+
+	if globals.GCP_VERBOSITY >= globals.GCP_VERBOSE_ERRORS {
+		logger.InfoM(fmt.Sprintf("Found %d job(s) in project %s", len(jobs), projectID), globals.GCP_SCHEDULER_MODULE_NAME)
+	}
+}
+
+// ------------------------------
+// Loot File Management
+// ------------------------------
+func (m *SchedulerModule) addJobToLoot(projectID string, job SchedulerService.JobInfo) {
+	lootFile := m.LootMap[projectID]["scheduler-commands"]
+	if lootFile == nil {
+		return
+	}
+
+	target := formatTargetFull(job)
+
+	lootFile.Contents += fmt.Sprintf(
+		"# =============================================================================\n"+
+			"# SCHEDULER JOB: %s\n"+
+			"# =============================================================================\n"+
+			"# Project: %s, Location: %s\n"+
+			"# State: %s\n"+
+			"# Schedule: %s (%s)\n"+
+			"# Target: %s -> %s\n",
+		job.Name,
+		job.ProjectID, job.Location,
+		job.State,
+		job.Schedule, job.TimeZone,
+		job.TargetType, target,
+	)
+
+	if job.ServiceAccount != "" {
+		lootFile.Contents += fmt.Sprintf(
+			"# Service Account: %s\n",
+			job.ServiceAccount,
+		)
+	}
+
+	lootFile.Contents += fmt.Sprintf(
+		"\n# === ENUMERATION COMMANDS ===\n\n"+
+			"# Describe job:\n"+
+			"gcloud scheduler jobs describe %s --location=%s --project=%s\n\n"+
+			"# === EXPLOIT COMMANDS ===\n\n"+
+			"# Run job immediately:\n"+
+			"gcloud scheduler jobs run %s --location=%s --project=%s\n\n"+
+			"# Pause job:\n"+
+			"gcloud scheduler jobs pause %s --location=%s --project=%s\n\n",
+		job.Name, job.Location, job.ProjectID,
+		job.Name, job.Location, job.ProjectID,
+		job.Name, job.Location, job.ProjectID,
+	)
+
+	if job.TargetType == "http" {
+		lootFile.Contents += fmt.Sprintf(
+			"# Update HTTP target (requires cloudscheduler.jobs.update):\n"+
+				"gcloud scheduler jobs update http %s --location=%s --project=%s --uri=\"NEW_URL\"\n\n",
+			job.Name, job.Location, job.ProjectID,
+		)
+	}
+}
+
+// ------------------------------
+// Output Generation
+// ------------------------------
+func (m *SchedulerModule) writeOutput(ctx context.Context, logger internal.Logger) {
+	if m.Hierarchy != nil && !m.FlatOutput {
+		m.writeHierarchicalOutput(ctx, logger)
+	} else {
+		m.writeFlatOutput(ctx, logger)
+	}
+}
+
+// getTableHeader returns the header for the jobs table
+func (m *SchedulerModule) getTableHeader() []string {
+	return []string{
+		"Project Name",
+		"Project ID",
+		"Job Name",
+		"Location",
+		"State",
+		"Schedule",
+		"Target Type",
+		"Target",
+		"Service Account",
+		"SA Attack Paths",
+		"Last Run",
+	}
+}
+
+// jobsToTableBody converts jobs to table body rows
+func (m *SchedulerModule) jobsToTableBody(jobs []SchedulerService.JobInfo) [][]string {
+	var body [][]string
+	for _, job := range jobs {
+		// Format target - full, no truncation
+		target := formatTargetFull(job)
+
+		// Format service account - full, no truncation
+		sa := "-"
+		if job.ServiceAccount != "" {
+			sa = job.ServiceAccount
+		}
+
+		// Check attack paths (privesc/exfil/lateral) for the service account
+		attackPaths := "run foxmapper"
+		if m.FoxMapperCache != nil && m.FoxMapperCache.IsPopulated() {
+			if sa != "-" {
+				attackPaths = gcpinternal.GetAttackSummaryFromCaches(m.FoxMapperCache, nil, sa)
+			} else {
+				attackPaths = "No"
+			}
+		}
+
+		// Format last run
+		lastRun := "-"
+		if job.LastAttemptTime != "" {
+			lastRun = job.LastAttemptTime
+			if job.Status != "" && job.Status != "OK" {
+				lastRun += " (FAILED)"
+			}
+		}
+
+		body = append(body, []string{
+			m.GetProjectName(job.ProjectID),
+			job.ProjectID,
+			job.Name,
+			job.Location,
+			job.State,
+			job.Schedule,
+			job.TargetType,
+			target,
+			sa,
+			attackPaths,
+			lastRun,
+		})
+	}
+	return body
+}
+
+// writeHierarchicalOutput writes output to per-project directories
+func (m *SchedulerModule) writeHierarchicalOutput(ctx context.Context, logger internal.Logger) {
+	outputData := internal.HierarchicalOutputData{
+		OrgLevelData:     make(map[string]internal.CloudfoxOutput),
+		ProjectLevelData: make(map[string]internal.CloudfoxOutput),
+	}
+
+	for projectID, jobs := range m.ProjectJobs {
+		body := m.jobsToTableBody(jobs)
+		tableFiles := []internal.TableFile{{
+			Name:   globals.GCP_SCHEDULER_MODULE_NAME,
+			Header: m.getTableHeader(),
+			Body:   body,
+		}}
+
+		// Collect loot for this project
+		var lootFiles []internal.LootFile
+		if projectLoot, ok := m.LootMap[projectID]; ok {
+			for _, loot := range projectLoot {
+				if loot != nil && loot.Contents != "" && !strings.HasSuffix(loot.Contents, "# WARNING: Only use with proper authorization\n\n") {
+					lootFiles = append(lootFiles, *loot)
+				}
+			}
+		}
+
+		outputData.ProjectLevelData[projectID] = SchedulerOutput{Table: tableFiles, Loot: lootFiles}
+	}
+
+	pathBuilder := m.BuildPathBuilder()
+
+	err := internal.HandleHierarchicalOutputSmart(
+		"gcp",
+		m.Format,
+		m.Verbosity,
+		m.WrapTable,
+		pathBuilder,
+		outputData,
+	)
+	if err != nil {
+		logger.ErrorM(fmt.Sprintf("Error writing hierarchical output: %v", err), globals.GCP_SCHEDULER_MODULE_NAME)
+		m.CommandCounter.Error++
+	}
+}
+
+// writeFlatOutput writes all output to a single directory (legacy mode)
+func (m *SchedulerModule) writeFlatOutput(ctx context.Context, logger internal.Logger) {
+	allJobs := m.getAllJobs()
+	body := m.jobsToTableBody(allJobs)
+
+	// Collect all loot files
+	var lootFiles []internal.LootFile
+	for _, projectLoot := range m.LootMap {
+		for _, loot := range projectLoot {
+			if loot != nil && loot.Contents != "" && !strings.HasSuffix(loot.Contents, "# WARNING: Only use with proper authorization\n\n") {
+				lootFiles = append(lootFiles, *loot)
+			}
+		}
+	}
+
+	// Build table files
+	tableFiles := []internal.TableFile{{
+		Name:   globals.GCP_SCHEDULER_MODULE_NAME,
+		Header: m.getTableHeader(),
+		Body:   body,
+	}}
+
+	output := SchedulerOutput{
+		Table: tableFiles,
+		Loot:  lootFiles,
+	}
+
+	scopeNames := make([]string, len(m.ProjectIDs))
+	for i, id := range m.ProjectIDs {
+		scopeNames[i] = m.GetProjectName(id)
+	}
+
+	err := internal.HandleOutputSmart(
+		"gcp",
+		m.Format,
+		m.OutputDirectory,
+		m.Verbosity,
+		m.WrapTable,
+		"project",
+		m.ProjectIDs,
+		scopeNames,
+		m.Account,
+		output,
+	)
+	if err != nil {
+		logger.ErrorM(fmt.Sprintf("Error writing output: %v", err), globals.GCP_SCHEDULER_MODULE_NAME)
+		m.CommandCounter.Error++
+	}
+}
+
+// Helper functions
+
+// formatTargetFull formats the job target for display without truncation
+func formatTargetFull(job SchedulerService.JobInfo) string {
+	switch job.TargetType {
+	case "http":
+		return job.TargetURI
+	case "pubsub":
+		return job.TargetTopic
+	case "appengine":
+		target := job.TargetService
+		if job.TargetVersion != "" {
+			target += "/" + job.TargetVersion
+		}
+		if job.TargetURI != "" {
+			target += job.TargetURI
+		}
+		if target == "" {
+			return "-"
+		}
+		return target
+	default:
+		return "-"
+	}
+}

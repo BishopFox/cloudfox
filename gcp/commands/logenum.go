@@ -1,0 +1,277 @@
+package commands
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"sync"
+
+	logenumservice "github.com/BishopFox/cloudfox/gcp/services/logEnumService"
+	"github.com/BishopFox/cloudfox/globals"
+	"github.com/BishopFox/cloudfox/internal"
+	gcpinternal "github.com/BishopFox/cloudfox/internal/gcp"
+	"github.com/spf13/cobra"
+)
+
+var (
+	logEnumHours      int
+	logEnumMaxEntries int
+	logEnumLogName    string
+)
+
+var GCPLoggingEnumCommand = &cobra.Command{
+	Use:     globals.GCP_LOGGINGENUM_MODULE_NAME,
+	Aliases: []string{"logging-enum", "log-scan", "sensitive-logs"},
+	Short:   "Scan Cloud Logging entries for sensitive data (credentials, tokens, PII)",
+	Long: `Scan Cloud Logging entries for potentially sensitive data.
+
+This module reads recent log entries and applies content-based pattern matching
+to detect credentials, secrets, tokens, PII, and other sensitive information
+that may have been inadvertently logged.
+
+Content patterns detected:
+- Credentials: GCP SA keys, private keys, AWS access keys, API keys
+- Secrets: Password assignments, bearer tokens, connection strings
+- Tokens: JWTs, OAuth tokens, GitHub tokens
+- PII: Credit card numbers, SSN patterns
+
+Flags:
+  --hours        Hours of logs to scan (default 168 = 7 days)
+  --max-entries  Maximum log entries to process per project (default 50000)
+  --log-name     Optional: filter to a specific log name`,
+	Run: runGCPLoggingEnumCommand,
+}
+
+func init() {
+	GCPLoggingEnumCommand.Flags().IntVar(&logEnumHours, "hours", 168, "Hours of logs to scan (default 168 = 7 days)")
+	GCPLoggingEnumCommand.Flags().IntVar(&logEnumMaxEntries, "max-entries", 50000, "Maximum log entries to process per project")
+	GCPLoggingEnumCommand.Flags().StringVar(&logEnumLogName, "log-name", "", "Optional: filter to a specific log name")
+}
+
+type LogEnumModule struct {
+	gcpinternal.BaseGCPModule
+	ProjectEntries map[string][]logenumservice.SensitiveLogEntry
+	LootMap        map[string]map[string]*internal.LootFile
+	Hours          int
+	MaxEntries     int
+	LogNameFilter  string
+	mu             sync.Mutex
+}
+
+type LogEnumOutput struct {
+	Table []internal.TableFile
+	Loot  []internal.LootFile
+}
+
+func (o LogEnumOutput) TableFiles() []internal.TableFile { return o.Table }
+func (o LogEnumOutput) LootFiles() []internal.LootFile   { return o.Loot }
+
+func runGCPLoggingEnumCommand(cmd *cobra.Command, args []string) {
+	cmdCtx, err := gcpinternal.InitializeCommandContext(cmd, globals.GCP_LOGGINGENUM_MODULE_NAME)
+	if err != nil {
+		return
+	}
+
+	module := &LogEnumModule{
+		BaseGCPModule:  gcpinternal.NewBaseGCPModule(cmdCtx),
+		ProjectEntries: make(map[string][]logenumservice.SensitiveLogEntry),
+		LootMap:        make(map[string]map[string]*internal.LootFile),
+		Hours:          logEnumHours,
+		MaxEntries:     logEnumMaxEntries,
+		LogNameFilter:  logEnumLogName,
+	}
+	module.Execute(cmdCtx.Ctx, cmdCtx.Logger)
+}
+
+func (m *LogEnumModule) Execute(ctx context.Context, logger internal.Logger) {
+	logger.InfoM(fmt.Sprintf("Scanning log entries (last %d hours, max %d entries per project)...",
+		m.Hours, m.MaxEntries), globals.GCP_LOGGINGENUM_MODULE_NAME)
+
+	m.RunProjectEnumeration(ctx, logger, m.ProjectIDs, globals.GCP_LOGGINGENUM_MODULE_NAME, m.processProject)
+
+	allEntries := m.getAllEntries()
+	if len(allEntries) == 0 {
+		logger.InfoM("No sensitive log entries found", globals.GCP_LOGGINGENUM_MODULE_NAME)
+		return
+	}
+
+	// Count by risk level
+	criticalCount := 0
+	highCount := 0
+	for _, entry := range allEntries {
+		switch entry.RiskLevel {
+		case "CRITICAL":
+			criticalCount++
+		case "HIGH":
+			highCount++
+		}
+	}
+
+	logger.SuccessM(fmt.Sprintf("Found %d sensitive log entries (%d CRITICAL, %d HIGH)",
+		len(allEntries), criticalCount, highCount), globals.GCP_LOGGINGENUM_MODULE_NAME)
+
+	m.writeOutput(ctx, logger)
+}
+
+func (m *LogEnumModule) getAllEntries() []logenumservice.SensitiveLogEntry {
+	var all []logenumservice.SensitiveLogEntry
+	for _, entries := range m.ProjectEntries {
+		all = append(all, entries...)
+	}
+	return all
+}
+
+func (m *LogEnumModule) processProject(ctx context.Context, projectID string, logger internal.Logger) {
+	if globals.GCP_VERBOSITY >= globals.GCP_VERBOSE_ERRORS {
+		logger.InfoM(fmt.Sprintf("Scanning logs in project: %s", projectID), globals.GCP_LOGGINGENUM_MODULE_NAME)
+	}
+
+	svc := logenumservice.New()
+
+	entries, err := svc.EnumerateSensitiveLogs(projectID, m.Hours, m.MaxEntries, m.LogNameFilter)
+	if err != nil {
+		m.CommandCounter.Error++
+		gcpinternal.HandleGCPError(err, logger, globals.GCP_LOGGINGENUM_MODULE_NAME,
+			fmt.Sprintf("Could not scan logs in project %s", projectID))
+		return
+	}
+
+	m.mu.Lock()
+	m.ProjectEntries[projectID] = entries
+
+	// Build loot
+	if len(entries) > 0 {
+		if m.LootMap[projectID] == nil {
+			m.LootMap[projectID] = make(map[string]*internal.LootFile)
+		}
+		lootFile := &internal.LootFile{
+			Name:     "logging-enum-commands",
+			Contents: "# Cloud Logging Read Commands for Sensitive Entries\n# Generated by CloudFox\n\n",
+		}
+		for _, entry := range entries {
+			lootFile.Contents += fmt.Sprintf(
+				"# [%s] %s - %s (%s)\ngcloud logging read 'insertId=\"%s\"' --project=%s --format=json\n\n",
+				entry.RiskLevel, entry.Category, entry.Description, entry.Timestamp,
+				entry.InsertID, projectID,
+			)
+		}
+		m.LootMap[projectID]["logging-enum-commands"] = lootFile
+	}
+	m.mu.Unlock()
+}
+
+func (m *LogEnumModule) writeOutput(ctx context.Context, logger internal.Logger) {
+	if m.Hierarchy != nil && !m.FlatOutput {
+		m.writeHierarchicalOutput(ctx, logger)
+	} else {
+		m.writeFlatOutput(ctx, logger)
+	}
+}
+
+func (m *LogEnumModule) getHeader() []string {
+	return []string{"Project", "Log Name", "Timestamp", "Category", "Risk Level", "Description", "Resource Type", "Snippet"}
+}
+
+func (m *LogEnumModule) entriesToTableBody(entries []logenumservice.SensitiveLogEntry) [][]string {
+	var body [][]string
+	for _, entry := range entries {
+		// Shorten log name for display
+		shortLogName := entry.LogName
+		if idx := strings.LastIndex(shortLogName, "/"); idx >= 0 {
+			shortLogName = shortLogName[idx+1:]
+		}
+		body = append(body, []string{
+			m.GetProjectName(entry.ProjectID),
+			shortLogName,
+			entry.Timestamp,
+			entry.Category,
+			entry.RiskLevel,
+			entry.Description,
+			entry.ResourceType,
+			entry.Snippet,
+		})
+	}
+	return body
+}
+
+func (m *LogEnumModule) buildTablesForProject(projectID string) []internal.TableFile {
+	entries := m.ProjectEntries[projectID]
+	if len(entries) == 0 {
+		return nil
+	}
+	return []internal.TableFile{
+		{
+			Name:   "logging-enum",
+			Header: m.getHeader(),
+			Body:   m.entriesToTableBody(entries),
+		},
+	}
+}
+
+func (m *LogEnumModule) writeHierarchicalOutput(ctx context.Context, logger internal.Logger) {
+	outputData := internal.HierarchicalOutputData{
+		OrgLevelData:     make(map[string]internal.CloudfoxOutput),
+		ProjectLevelData: make(map[string]internal.CloudfoxOutput),
+	}
+
+	for projectID, entries := range m.ProjectEntries {
+		if len(entries) == 0 {
+			continue
+		}
+		tableFiles := m.buildTablesForProject(projectID)
+
+		var lootFiles []internal.LootFile
+		if projectLoot, ok := m.LootMap[projectID]; ok {
+			for _, loot := range projectLoot {
+				if loot != nil && loot.Contents != "" {
+					lootFiles = append(lootFiles, *loot)
+				}
+			}
+		}
+
+		outputData.ProjectLevelData[projectID] = LogEnumOutput{Table: tableFiles, Loot: lootFiles}
+	}
+
+	pathBuilder := m.BuildPathBuilder()
+	err := internal.HandleHierarchicalOutputSmart("gcp", m.Format, m.Verbosity, m.WrapTable, pathBuilder, outputData)
+	if err != nil {
+		logger.ErrorM(fmt.Sprintf("Error writing hierarchical output: %v", err), globals.GCP_LOGGINGENUM_MODULE_NAME)
+	}
+}
+
+func (m *LogEnumModule) writeFlatOutput(ctx context.Context, logger internal.Logger) {
+	allEntries := m.getAllEntries()
+	if len(allEntries) == 0 {
+		return
+	}
+
+	tables := []internal.TableFile{
+		{
+			Name:   "logging-enum",
+			Header: m.getHeader(),
+			Body:   m.entriesToTableBody(allEntries),
+		},
+	}
+
+	var lootFiles []internal.LootFile
+	for _, projectLoot := range m.LootMap {
+		for _, loot := range projectLoot {
+			if loot != nil && loot.Contents != "" {
+				lootFiles = append(lootFiles, *loot)
+			}
+		}
+	}
+
+	output := LogEnumOutput{Table: tables, Loot: lootFiles}
+
+	scopeNames := make([]string, len(m.ProjectIDs))
+	for i, id := range m.ProjectIDs {
+		scopeNames[i] = m.GetProjectName(id)
+	}
+
+	err := internal.HandleOutputSmart("gcp", m.Format, m.OutputDirectory, m.Verbosity, m.WrapTable,
+		"project", m.ProjectIDs, scopeNames, m.Account, output)
+	if err != nil {
+		logger.ErrorM(fmt.Sprintf("Error writing output: %v", err), globals.GCP_LOGGINGENUM_MODULE_NAME)
+	}
+}
