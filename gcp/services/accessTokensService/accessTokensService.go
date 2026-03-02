@@ -64,7 +64,7 @@ type CredentialSummary struct {
 	Profile      string
 	IsActive     bool
 	Project      string
-	TokenPreview string
+	AccessToken string
 }
 
 // AccessTokensService reads locally cached gcloud credentials
@@ -175,12 +175,8 @@ func (s *AccessTokensService) GetAllCredentials() ([]CredentialSummary, error) {
 			summary.IsActive = (p.Name == activeConfig)
 		}
 
-		// Token preview
-		if len(at.AccessToken) > 20 {
-			summary.TokenPreview = at.AccessToken[:20] + "..."
-		} else if at.AccessToken != "" {
-			summary.TokenPreview = at.AccessToken
-		}
+		// Full access token
+		summary.AccessToken = at.AccessToken
 
 		summaries = append(summaries, summary)
 	}
