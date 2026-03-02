@@ -310,6 +310,7 @@ var GCPAllChecksCommand = &cobra.Command{
 			"bigquery-enum":  true,
 			"bigtable-enum":  true,
 			"spanner-enum":   true,
+			"access-tokens":  true, // Local-only, no API calls
 		}
 
 		// Count total modules to execute (excluding self, hidden, and excluded modules)
@@ -572,6 +573,7 @@ func init() {
 		commands.GCPAccessLevelsCommand,
 
 		// Pentest/Exploitation commands
+		commands.GCPAccessTokensCommand,
 		commands.GCPPrivescCommand,
 		commands.GCPOrgPoliciesCommand,
 		commands.GCPStorageEnumCommand,

@@ -86,7 +86,14 @@ var GCP_VERBOSITY int = 0
 const GCP_VERBOSE_ERRORS = 9
 
 // const GCP_INVENTORY_MODULE_NAME string = "inventory"
-// const GCP_GCLOUD_REFRESH_TOKENS_DB_PATH = ".config/gcloud/credentials.db"
-// const GCP_GCLOUD_ACCESS_TOKENS_DB_PATH = ".config/gcloud/access_tokens.db"
-// const GCP_GCLOUD_DEFAULT_CONFIG_PATH = ".config/gcloud/configurations/config_default"
-// const GCP_GCLOUD_APPLICATION_DEFAULT_PATH = ".config/gcloud/application_default_credentials.json"
+
+// Access tokens module
+const GCP_ACCESS_TOKENS_MODULE_NAME string = "access-tokens"
+
+// Gcloud local file paths (relative to home or CLOUDSDK_CONFIG_DIR)
+const GCP_GCLOUD_REFRESH_TOKENS_DB_PATH = ".config/gcloud/credentials.db"
+const GCP_GCLOUD_ACCESS_TOKENS_DB_PATH = ".config/gcloud/access_tokens.db"
+const GCP_GCLOUD_DEFAULT_CONFIG_PATH = ".config/gcloud/configurations/config_default"
+const GCP_GCLOUD_APPLICATION_DEFAULT_PATH = ".config/gcloud/application_default_credentials.json"
+const GCP_GCLOUD_ACTIVE_CONFIG_PATH = ".config/gcloud/active_config"
+const GCP_GCLOUD_CONFIGURATIONS_DIR = ".config/gcloud/configurations"
