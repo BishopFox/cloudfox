@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
@@ -242,6 +243,42 @@ func ParseGCPError(err error, apiName string) error {
 	return err
 }
 
+// IsRetryableError checks if a GCP API error is transient and worth retrying.
+// Rate limits, server errors, and unavailable responses are retryable.
+// Permission denied, not found, and auth failures are not.
+func IsRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "rate limited") ||
+		strings.Contains(errStr, "GCP service error") ||
+		strings.Contains(errStr, "Unavailable") ||
+		strings.Contains(errStr, "Internal")
+}
+
+// RetryWithBackoff calls fn up to maxAttempts times with exponential backoff
+// for transient GCP API errors. Non-retryable errors (permission denied, etc.)
+// are returned immediately without further attempts.
+func RetryWithBackoff(logger internal.Logger, module string, maxAttempts int, fn func() error) error {
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		lastErr = fn()
+		if lastErr == nil {
+			return nil
+		}
+		if !IsRetryableError(lastErr) {
+			return lastErr
+		}
+		if attempt < maxAttempts {
+			delay := time.Duration(attempt) * 2 * time.Second // 2s, 4s, 6s
+			logger.InfoM(fmt.Sprintf("Transient error: %v (retry %d/%d in %s)", lastErr, attempt, maxAttempts-1, delay), module)
+			time.Sleep(delay)
+		}
+	}
+	return lastErr
+}
+
 // IsPermissionDenied checks if an error is a permission denied error
 func IsPermissionDenied(err error) bool {
 	return errors.Is(err, ErrPermissionDenied)
@@ -281,12 +318,13 @@ func HandleGCPError(err error, logger internal.Logger, moduleName string, resour
 		return true // Can continue with other resources
 
 	case errors.Is(parsedErr, ErrNotFound):
-		// Not found is often expected, don't log as error
+		// Log not-found errors so users can see invalid project IDs or missing resources
+		logger.ErrorM(fmt.Sprintf("%s - not found", resourceDesc), moduleName)
 		return true
 
 	default:
-		// For unknown errors, log a concise message without the full error details
-		logger.ErrorM(fmt.Sprintf("%s - error occurred", resourceDesc), moduleName)
+		// Include the actual error so it's visible in logs and (when not overwritten by spinner) on screen
+		logger.ErrorM(fmt.Sprintf("%s - %v", resourceDesc, parsedErr), moduleName)
 		return true // Continue with other resources
 	}
 }

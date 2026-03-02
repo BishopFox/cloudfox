@@ -2,7 +2,9 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	gcpinternal "github.com/BishopFox/cloudfox/internal/gcp"
 	"github.com/spf13/cobra"
+	"golang.org/x/oauth2/google"
 )
 
 var (
@@ -52,6 +55,22 @@ var (
 			GCPProjectIDs = nil
 			GCPProjectNames = make(map[string]string)
 
+			// Set quota project for GCP API calls. ADC may reference a deleted
+			// or inaccessible quota project, causing all API calls to fail with
+			// 403/404. Override it with the target project when known.
+			if GCPProjectID != "" {
+				os.Setenv("GOOGLE_CLOUD_QUOTA_PROJECT", GCPProjectID)
+			} else if GCPProjectIDsFilePath != "" {
+				lines := internal.LoadFileLinesIntoArray(GCPProjectIDsFilePath)
+				if len(lines) > 0 {
+					os.Setenv("GOOGLE_CLOUD_QUOTA_PROJECT", lines[0])
+				}
+			} else if GCPAllProjects {
+				// No target project yet. Validate the ADC quota project
+				// and clear it if the project is inaccessible.
+				validateADCQuotaProject()
+			}
+
 			// Handle project discovery based on flags
 			// Priority: -p (single project) > -l (project list) > -A (all projects)
 			if GCPProjectID != "" {
@@ -67,7 +86,12 @@ var (
 				// Discover all accessible projects with -A/--all-projects
 				GCPLogger.InfoM("Discovering all accessible projects...", "gcp")
 				orgsSvc := orgsservice.New()
-				projects, err := orgsSvc.SearchProjects("")
+				var projects []orgsservice.ProjectInfo
+				err := gcpinternal.RetryWithBackoff(GCPLogger, "gcp", 3, func() error {
+					var searchErr error
+					projects, searchErr = orgsSvc.SearchProjects("")
+					return searchErr
+				})
 				if err != nil {
 					GCPLogger.FatalM(fmt.Sprintf("Failed to discover projects: %v. Try using -p or -l flags instead.", err), "gcp")
 				}
@@ -195,6 +219,58 @@ func deduplicateProjectIDs(projectIDs []string) []string {
 	return result
 }
 
+// validateADCQuotaProject reads the ADC file and checks whether the configured
+// quota project is accessible. The Go SDK sends x-goog-user-project on every
+// request based on the ADC's quota_project_id. If that project is deleted or
+// inaccessible, ALL API calls will fail with 403/404. This function detects
+// that condition and clears the quota project so the SDK doesn't send the
+// broken header. The caller is responsible for setting a valid quota project
+// once a working project is discovered.
+func validateADCQuotaProject() {
+	creds, err := google.FindDefaultCredentials(context.Background())
+	if err != nil || creds.JSON == nil {
+		return
+	}
+
+	var adcFile struct {
+		QuotaProject string `json:"quota_project_id"`
+	}
+	if err := json.Unmarshal(creds.JSON, &adcFile); err != nil || adcFile.QuotaProject == "" {
+		return
+	}
+
+	// Proactively clear the quota project via env var override. If the ADC
+	// quota project is valid, the SearchProjects call below will succeed and
+	// we'll restore it. If it's broken, we've already fixed the problem.
+	os.Setenv("GOOGLE_CLOUD_QUOTA_PROJECT", "")
+
+	orgsSvc := orgsservice.New()
+	projects, err := orgsSvc.SearchProjects("")
+	if err != nil {
+		// Can't validate. Leave it cleared (better than a known-broken value).
+		GCPLogger.WarnM(fmt.Sprintf("Could not validate ADC quota project '%s': %v", adcFile.QuotaProject, err), "gcp")
+		return
+	}
+
+	// Check if the original quota project is among accessible active projects
+	for _, p := range projects {
+		if p.ProjectID == adcFile.QuotaProject && p.State == "ACTIVE" {
+			// Original quota project is valid, restore it
+			os.Setenv("GOOGLE_CLOUD_QUOTA_PROJECT", adcFile.QuotaProject)
+			return
+		}
+	}
+
+	// Original quota project is not accessible. Pick the first active project.
+	GCPLogger.WarnM(fmt.Sprintf("ADC quota project '%s' is not accessible or has been deleted. Overriding with first available project.", adcFile.QuotaProject), "gcp")
+	for _, p := range projects {
+		if p.State == "ACTIVE" {
+			os.Setenv("GOOGLE_CLOUD_QUOTA_PROJECT", p.ProjectID)
+			return
+		}
+	}
+}
+
 // resolveProjectNames fetches display names for given project IDs
 func resolveProjectNames(projectIDs []string) {
 	if len(projectIDs) == 0 {
@@ -203,7 +279,12 @@ func resolveProjectNames(projectIDs []string) {
 
 	orgsSvc := orgsservice.New()
 	// Fetch all accessible projects and build lookup map
-	projects, err := orgsSvc.SearchProjects("")
+	var projects []orgsservice.ProjectInfo
+	err := gcpinternal.RetryWithBackoff(GCPLogger, "gcp", 3, func() error {
+		var searchErr error
+		projects, searchErr = orgsSvc.SearchProjects("")
+		return searchErr
+	})
 	if err != nil {
 		// Non-fatal: we can continue without display names
 		GCPLogger.InfoM("Could not resolve project names, using project IDs only", "gcp")
@@ -380,7 +461,12 @@ func enumerateAndCacheOrgs(account string) *gcpinternal.OrgCache {
 	orgsSvc := orgsservice.New()
 
 	// Get all organizations
-	orgs, err := orgsSvc.SearchOrganizations()
+	var orgs []orgsservice.OrganizationInfo
+	err := gcpinternal.RetryWithBackoff(GCPLogger, "gcp", 3, func() error {
+		var searchErr error
+		orgs, searchErr = orgsSvc.SearchOrganizations()
+		return searchErr
+	})
 	if err == nil {
 		for _, org := range orgs {
 			cache.AddOrganization(gcpinternal.CachedOrganization{
@@ -394,7 +480,12 @@ func enumerateAndCacheOrgs(account string) *gcpinternal.OrgCache {
 	}
 
 	// Get all folders
-	folders, err := orgsSvc.SearchAllFolders()
+	var folders []orgsservice.FolderInfo
+	err = gcpinternal.RetryWithBackoff(GCPLogger, "gcp", 3, func() error {
+		var searchErr error
+		folders, searchErr = orgsSvc.SearchAllFolders()
+		return searchErr
+	})
 	if err == nil {
 		for _, folder := range folders {
 			cache.AddFolder(gcpinternal.CachedFolder{
@@ -408,7 +499,12 @@ func enumerateAndCacheOrgs(account string) *gcpinternal.OrgCache {
 	}
 
 	// Get all projects
-	projects, err := orgsSvc.SearchProjects("")
+	var projects []orgsservice.ProjectInfo
+	err = gcpinternal.RetryWithBackoff(GCPLogger, "gcp", 3, func() error {
+		var searchErr error
+		projects, searchErr = orgsSvc.SearchProjects("")
+		return searchErr
+	})
 	if err == nil {
 		for _, project := range projects {
 			// Extract project number from Name (format: "projects/123456789")

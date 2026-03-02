@@ -87,7 +87,7 @@ func (l *Logger) ErrorM(text string, module string) {
 	var red = color.New(color.FgRed).SprintFunc()
 	fmt.Printf(clearln+"[%s][%s] %s\n", red(emoji.Sprintf(":fox:cloudfox %s :fox:", l.version)), red(module), text)
 	if l.txtLog != nil {
-		l.txtLog.Printf("[%s] %s", module, text)
+		l.txtLog.Errorf("[%s] %s", module, text)
 	}
 }
 
