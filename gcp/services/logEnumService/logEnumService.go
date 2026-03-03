@@ -16,7 +16,7 @@ type LogEnumService struct {
 }
 
 func New() *LogEnumService {
-	return &LogEnumService{}
+	return &LogEnumService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *LogEnumService {

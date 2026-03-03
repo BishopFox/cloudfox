@@ -15,7 +15,7 @@ type FunctionsService struct{
 }
 
 func New() *FunctionsService {
-	return &FunctionsService{}
+	return &FunctionsService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *FunctionsService {

@@ -18,7 +18,7 @@ type CrossProjectService struct {
 }
 
 func New() *CrossProjectService {
-	return &CrossProjectService{}
+	return &CrossProjectService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *CrossProjectService {

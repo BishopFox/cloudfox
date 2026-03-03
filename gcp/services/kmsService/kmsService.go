@@ -15,7 +15,7 @@ type KMSService struct{
 }
 
 func New() *KMSService {
-	return &KMSService{}
+	return &KMSService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *KMSService {

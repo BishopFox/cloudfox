@@ -16,7 +16,7 @@ type SpannerEnumService struct {
 }
 
 func New() *SpannerEnumService {
-	return &SpannerEnumService{}
+	return &SpannerEnumService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *SpannerEnumService {

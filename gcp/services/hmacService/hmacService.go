@@ -15,7 +15,7 @@ type HMACService struct {
 }
 
 func New() *HMACService {
-	return &HMACService{}
+	return &HMACService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *HMACService {

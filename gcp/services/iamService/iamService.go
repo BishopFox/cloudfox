@@ -26,7 +26,7 @@ type IAMService struct {
 
 // New creates a new IAMService (legacy - uses ADC directly)
 func New() *IAMService {
-	return &IAMService{}
+	return &IAMService{session: gcpinternal.GetDefaultSession()}
 }
 
 // NewWithSession creates an IAMService with a SafeSession for managed authentication

@@ -15,7 +15,7 @@ type DNSService struct{
 }
 
 func New() *DNSService {
-	return &DNSService{}
+	return &DNSService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *DNSService {

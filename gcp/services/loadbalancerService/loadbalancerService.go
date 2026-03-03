@@ -14,7 +14,7 @@ type LoadBalancerService struct {
 }
 
 func New() *LoadBalancerService {
-	return &LoadBalancerService{}
+	return &LoadBalancerService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *LoadBalancerService {

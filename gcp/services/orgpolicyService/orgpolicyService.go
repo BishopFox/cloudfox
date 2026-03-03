@@ -15,7 +15,7 @@ type OrgPolicyService struct {
 }
 
 func New() *OrgPolicyService {
-	return &OrgPolicyService{}
+	return &OrgPolicyService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *OrgPolicyService {

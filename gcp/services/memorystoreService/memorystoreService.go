@@ -15,7 +15,7 @@ type MemorystoreService struct {
 }
 
 func New() *MemorystoreService {
-	return &MemorystoreService{}
+	return &MemorystoreService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *MemorystoreService {

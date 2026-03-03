@@ -15,7 +15,7 @@ type CloudArmorService struct{
 }
 
 func New() *CloudArmorService {
-	return &CloudArmorService{}
+	return &CloudArmorService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *CloudArmorService {

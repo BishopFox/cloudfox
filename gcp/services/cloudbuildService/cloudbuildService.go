@@ -16,7 +16,7 @@ type CloudBuildService struct {
 
 // New creates a new CloudBuildService
 func New() *CloudBuildService {
-	return &CloudBuildService{}
+	return &CloudBuildService{session: gcpinternal.GetDefaultSession()}
 }
 
 // NewWithSession creates a CloudBuildService with a SafeSession for managed authentication

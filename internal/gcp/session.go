@@ -11,6 +11,7 @@ import (
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
+	"google.golang.org/api/impersonate"
 	"google.golang.org/api/option"
 )
 
@@ -100,6 +101,41 @@ func NewSafeSession(ctx context.Context) (*SafeSession, error) {
 	return ss, nil
 }
 
+// NewSafeSessionWithImpersonation creates a SafeSession that generates short-lived
+// tokens as the target service account. The caller's ADC must have the
+// roles/iam.serviceAccountTokenCreator role on the target SA.
+func NewSafeSessionWithImpersonation(ctx context.Context, targetSA string) (*SafeSession, error) {
+	ts, err := impersonate.CredentialsTokenSource(ctx, impersonate.CredentialsConfig{
+		TargetPrincipal: targetSA,
+		Scopes:          CommonScopes,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create impersonated token source for %s: %w", targetSA, err)
+	}
+
+	ss := &SafeSession{
+		tokenSource:   ts,
+		tokens:        make(map[string]*oauth2.Token),
+		refreshBuffer: 5 * time.Minute,
+		stopMonitor:   make(chan struct{}),
+		email:         targetSA,
+		accountType:   "serviceAccount",
+	}
+
+	// Get initial token to validate impersonation works
+	token, err := ts.Token()
+	if err != nil {
+		return nil, fmt.Errorf("impersonation failed for %s (do you have roles/iam.serviceAccountTokenCreator?): %w", targetSA, err)
+	}
+	ss.currentToken = token
+	ss.sessionExpiry = token.Expiry
+
+	// Cache the token for the default scope
+	ss.tokens["https://www.googleapis.com/auth/cloud-platform"] = token
+
+	return ss, nil
+}
+
 // NewSmartSession creates a session with automatic monitoring and refresh
 func NewSmartSession(ctx context.Context) (*SafeSession, error) {
 	ss, err := NewSafeSession(ctx)
@@ -141,7 +177,10 @@ func (s *SafeSession) getTokenUnlocked(ctx context.Context) (string, error) {
 	return token.AccessToken, nil
 }
 
-// GetTokenForScope returns a token for a specific OAuth scope
+// GetTokenForScope returns a token for a specific OAuth scope.
+// When using an impersonated session, this returns the impersonated token
+// (which already has cloud-platform scope) rather than creating a new ADC
+// token source that would bypass impersonation.
 func (s *SafeSession) GetTokenForScope(ctx context.Context, scope string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -151,13 +190,10 @@ func (s *SafeSession) GetTokenForScope(ctx context.Context, scope string) (strin
 		return tok.AccessToken, nil
 	}
 
-	// Get a new token source for this scope
-	ts, err := google.DefaultTokenSource(ctx, scope)
-	if err != nil {
-		return "", fmt.Errorf("failed to create token source for scope %s: %w", scope, err)
-	}
-
-	token, err := ts.Token()
+	// Use the existing token source to preserve identity (ADC or impersonated).
+	// The token source was created with CommonScopes which includes cloud-platform,
+	// so the returned token is valid for all GCP APIs regardless of the requested scope.
+	token, err := s.tokenSource.Token()
 	if err != nil {
 		return "", fmt.Errorf("failed to get token for scope %s: %w", scope, err)
 	}
@@ -225,33 +261,25 @@ func (s *SafeSession) IsSessionExpired() bool {
 	return time.Now().Add(s.refreshBuffer).After(s.sessionExpiry)
 }
 
-// RefreshSession refreshes the token and clears the cache
+// RefreshSession refreshes the token and clears the cache.
+// This uses the existing token source (which may be ADC or an impersonated
+// token source) so it preserves the current identity.
 func (s *SafeSession) RefreshSession(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Check if gcloud session is still valid
-	if !IsSessionValid() {
-		return fmt.Errorf("GCP session expired; please run 'gcloud auth login' or 'gcloud auth application-default login'")
-	}
-
-	// Create new token source
-	ts, err := google.DefaultTokenSource(ctx, CommonScopes...)
+	// Get a fresh token from the existing token source. Both ADC and
+	// impersonated token sources handle refresh internally, so we just
+	// need to invalidate the cached token and request a new one.
+	token, err := s.tokenSource.Token()
 	if err != nil {
-		return fmt.Errorf("failed to create token source: %w", err)
-	}
-	s.tokenSource = ts
-
-	// Get fresh token
-	token, err := ts.Token()
-	if err != nil {
-		return fmt.Errorf("failed to get fresh token: %w", err)
+		return fmt.Errorf("failed to refresh token: %w", err)
 	}
 
 	s.currentToken = token
 	s.sessionExpiry = token.Expiry
 
-	// Clear token cache
+	// Clear per-scope token cache
 	s.tokens = make(map[string]*oauth2.Token)
 	s.tokens["https://www.googleapis.com/auth/cloud-platform"] = token
 
@@ -395,6 +423,27 @@ func IsSessionValid() bool {
 
 	token := strings.TrimSpace(string(out))
 	return token != "" && !strings.Contains(token, "ERROR")
+}
+
+// defaultSession holds the global session set by --impersonate-sa.
+// Services check this when their struct-level session is nil.
+var (
+	defaultSessionMu sync.RWMutex
+	defaultSession   *SafeSession
+)
+
+// SetDefaultSession sets the package-level default session (called from CLI init).
+func SetDefaultSession(s *SafeSession) {
+	defaultSessionMu.Lock()
+	defaultSession = s
+	defaultSessionMu.Unlock()
+}
+
+// GetDefaultSession returns the package-level default session, or nil.
+func GetDefaultSession() *SafeSession {
+	defaultSessionMu.RLock()
+	defer defaultSessionMu.RUnlock()
+	return defaultSession
 }
 
 // IsADCConfigured checks if Application Default Credentials are configured

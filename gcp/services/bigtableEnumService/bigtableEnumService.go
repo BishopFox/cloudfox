@@ -15,7 +15,7 @@ type BigtableEnumService struct {
 }
 
 func New() *BigtableEnumService {
-	return &BigtableEnumService{}
+	return &BigtableEnumService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *BigtableEnumService {

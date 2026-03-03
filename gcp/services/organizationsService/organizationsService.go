@@ -17,7 +17,7 @@ type OrganizationsService struct {
 
 // New creates a new OrganizationsService
 func New() *OrganizationsService {
-	return &OrganizationsService{}
+	return &OrganizationsService{session: gcpinternal.GetDefaultSession()}
 }
 
 // NewWithSession creates an OrganizationsService with a SafeSession for managed authentication

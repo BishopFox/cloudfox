@@ -15,7 +15,7 @@ type BeyondCorpService struct {
 }
 
 func New() *BeyondCorpService {
-	return &BeyondCorpService{}
+	return &BeyondCorpService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *BeyondCorpService {

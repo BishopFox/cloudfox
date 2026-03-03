@@ -64,7 +64,7 @@ type NetwworkService struct {
 
 // New creates a new NetworkService (legacy - uses ADC directly)
 func New() *NetwworkService {
-	return &NetwworkService{}
+	return &NetwworkService{session: gcpinternal.GetDefaultSession()}
 }
 
 // NewWithSession creates a NetworkService with a SafeSession for managed authentication

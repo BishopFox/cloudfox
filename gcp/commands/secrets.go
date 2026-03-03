@@ -8,6 +8,7 @@ import (
 
 	secretmanager "cloud.google.com/go/secretmanager/apiv1"
 	SecretsService "github.com/BishopFox/cloudfox/gcp/services/secretsService"
+	"google.golang.org/api/option"
 	"github.com/BishopFox/cloudfox/gcp/shared"
 	gcpinternal "github.com/BishopFox/cloudfox/internal/gcp"
 	"github.com/BishopFox/cloudfox/globals"
@@ -78,8 +79,12 @@ func runGCPSecretsCommand(cmd *cobra.Command, args []string) {
 		return // Error already logged
 	}
 
-	// Create Secret Manager client
-	client, err := secretmanager.NewClient(cmdCtx.Ctx)
+	// Create Secret Manager client (uses impersonated credentials if --impersonate-sa is set)
+	var smOpts []option.ClientOption
+	if s := gcpinternal.GetDefaultSession(); s != nil {
+		smOpts = append(smOpts, s.GetClientOption())
+	}
+	client, err := secretmanager.NewClient(cmdCtx.Ctx, smOpts...)
 	if err != nil {
 		cmdCtx.Logger.ErrorM(fmt.Sprintf("Failed to create Secret Manager client: %v", err), globals.GCP_SECRETS_MODULE_NAME)
 		return

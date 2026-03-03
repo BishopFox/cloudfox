@@ -16,7 +16,7 @@ type IAPService struct {
 }
 
 func New() *IAPService {
-	return &IAPService{}
+	return &IAPService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *IAPService {

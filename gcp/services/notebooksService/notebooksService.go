@@ -15,7 +15,7 @@ type NotebooksService struct {
 }
 
 func New() *NotebooksService {
-	return &NotebooksService{}
+	return &NotebooksService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *NotebooksService {

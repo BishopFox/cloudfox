@@ -15,7 +15,7 @@ type PubSubService struct {
 }
 
 func New() *PubSubService {
-	return &PubSubService{}
+	return &PubSubService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *PubSubService {

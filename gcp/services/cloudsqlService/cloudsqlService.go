@@ -15,7 +15,7 @@ type CloudSQLService struct{
 }
 
 func New() *CloudSQLService {
-	return &CloudSQLService{}
+	return &CloudSQLService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *CloudSQLService {

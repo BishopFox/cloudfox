@@ -16,7 +16,7 @@ type NetworkEndpointsService struct {
 }
 
 func New() *NetworkEndpointsService {
-	return &NetworkEndpointsService{}
+	return &NetworkEndpointsService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *NetworkEndpointsService {

@@ -17,7 +17,7 @@ type BucketEnumService struct {
 }
 
 func New() *BucketEnumService {
-	return &BucketEnumService{}
+	return &BucketEnumService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *BucketEnumService {

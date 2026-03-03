@@ -15,7 +15,7 @@ type WorkloadIdentityService struct{
 }
 
 func New() *WorkloadIdentityService {
-	return &WorkloadIdentityService{}
+	return &WorkloadIdentityService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *WorkloadIdentityService {

@@ -16,7 +16,7 @@ type DataprocService struct {
 }
 
 func New() *DataprocService {
-	return &DataprocService{}
+	return &DataprocService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *DataprocService {

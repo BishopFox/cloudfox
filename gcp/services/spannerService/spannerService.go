@@ -15,7 +15,7 @@ type SpannerService struct {
 }
 
 func New() *SpannerService {
-	return &SpannerService{}
+	return &SpannerService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *SpannerService {

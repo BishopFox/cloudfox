@@ -17,7 +17,7 @@ type CloudRunService struct{
 }
 
 func New() *CloudRunService {
-	return &CloudRunService{}
+	return &CloudRunService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *CloudRunService {

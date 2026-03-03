@@ -15,7 +15,7 @@ type SourceReposService struct{
 }
 
 func New() *SourceReposService {
-	return &SourceReposService{}
+	return &SourceReposService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *SourceReposService {

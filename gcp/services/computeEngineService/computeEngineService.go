@@ -16,7 +16,7 @@ type ComputeEngineService struct {
 
 // New creates a new ComputeEngineService (legacy - uses ADC directly)
 func New() *ComputeEngineService {
-	return &ComputeEngineService{}
+	return &ComputeEngineService{session: gcpinternal.GetDefaultSession()}
 }
 
 // NewWithSession creates a ComputeEngineService with a SafeSession for managed authentication

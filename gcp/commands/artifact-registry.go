@@ -9,6 +9,7 @@ import (
 	artifactregistry "cloud.google.com/go/artifactregistry/apiv1"
 	ArtifactRegistryService "github.com/BishopFox/cloudfox/gcp/services/artifactRegistryService"
 	gcpinternal "github.com/BishopFox/cloudfox/internal/gcp"
+	"google.golang.org/api/option"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/spf13/cobra"
@@ -73,8 +74,12 @@ func runGCPArtifactRegistryCommand(cmd *cobra.Command, args []string) {
 		return // Error already logged
 	}
 
-	// Create Artifact Registry client
-	client, err := artifactregistry.NewClient(cmdCtx.Ctx)
+	// Create Artifact Registry client (uses impersonated credentials if --impersonate-sa is set)
+	var arOpts []option.ClientOption
+	if s := gcpinternal.GetDefaultSession(); s != nil {
+		arOpts = append(arOpts, s.GetClientOption())
+	}
+	client, err := artifactregistry.NewClient(cmdCtx.Ctx, arOpts...)
 	if err != nil {
 		cmdCtx.Logger.ErrorM(fmt.Sprintf("Failed to create Artifact Registry client: %v", err), globals.GCP_ARTIFACT_RESGISTRY_MODULE_NAME)
 		return

@@ -17,7 +17,7 @@ type CertManagerService struct {
 }
 
 func New() *CertManagerService {
-	return &CertManagerService{}
+	return &CertManagerService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *CertManagerService {

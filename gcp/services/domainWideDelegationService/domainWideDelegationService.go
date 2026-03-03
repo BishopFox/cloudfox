@@ -15,7 +15,7 @@ type DomainWideDelegationService struct{
 }
 
 func New() *DomainWideDelegationService {
-	return &DomainWideDelegationService{}
+	return &DomainWideDelegationService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *DomainWideDelegationService {

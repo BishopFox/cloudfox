@@ -15,7 +15,7 @@ type BigtableService struct {
 }
 
 func New() *BigtableService {
-	return &BigtableService{}
+	return &BigtableService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *BigtableService {

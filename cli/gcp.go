@@ -25,6 +25,9 @@ var (
 	GCPProjectIDs         []string
 	GCPAllProjects        bool
 
+	// Service account impersonation
+	GCPImpersonateSA string
+
 	// Project name mapping (ProjectID -> DisplayName)
 	GCPProjectNames map[string]string
 
@@ -55,20 +58,39 @@ var (
 			GCPProjectIDs = nil
 			GCPProjectNames = make(map[string]string)
 
-			// Set quota project for GCP API calls. ADC may reference a deleted
-			// or inaccessible quota project, causing all API calls to fail with
-			// 403/404. Override it with the target project when known.
-			if GCPProjectID != "" {
-				os.Setenv("GOOGLE_CLOUD_QUOTA_PROJECT", GCPProjectID)
-			} else if GCPProjectIDsFilePath != "" {
-				lines := internal.LoadFileLinesIntoArray(GCPProjectIDsFilePath)
-				if len(lines) > 0 {
-					os.Setenv("GOOGLE_CLOUD_QUOTA_PROJECT", lines[0])
+			// Create impersonated session if --impersonate-sa is set
+			var gcpSession *gcpinternal.SafeSession
+			if GCPImpersonateSA != "" {
+				// Clear any quota project override before creating the impersonated
+				// session. The impersonated SA's own project handles billing/quota.
+				// If GOOGLE_CLOUD_QUOTA_PROJECT is set (from user env or prior run)
+				// to a project where the impersonated SA lacks
+				// serviceusage.services.use, all API calls fail with permission denied.
+				os.Unsetenv("GOOGLE_CLOUD_QUOTA_PROJECT")
+
+				GCPLogger.InfoM(fmt.Sprintf("Impersonating service account: %s", GCPImpersonateSA), "gcp")
+				var err error
+				gcpSession, err = gcpinternal.NewSafeSessionWithImpersonation(context.Background(), GCPImpersonateSA)
+				if err != nil {
+					GCPLogger.FatalM(fmt.Sprintf("Failed to impersonate %s: %v", GCPImpersonateSA, err), "gcp")
 				}
-			} else if GCPAllProjects {
-				// No target project yet. Validate the ADC quota project
-				// and clear it if the project is inaccessible.
-				validateADCQuotaProject()
+				GCPLogger.SuccessM(fmt.Sprintf("Successfully impersonating %s", GCPImpersonateSA), "gcp")
+			} else {
+				// Set quota project for GCP API calls. ADC may reference a deleted
+				// or inaccessible quota project, causing all API calls to fail with
+				// 403/404. Override it with the target project when known.
+				if GCPProjectID != "" {
+					os.Setenv("GOOGLE_CLOUD_QUOTA_PROJECT", GCPProjectID)
+				} else if GCPProjectIDsFilePath != "" {
+					lines := internal.LoadFileLinesIntoArray(GCPProjectIDsFilePath)
+					if len(lines) > 0 {
+						os.Setenv("GOOGLE_CLOUD_QUOTA_PROJECT", lines[0])
+					}
+				} else if GCPAllProjects {
+					// No target project yet. Validate the ADC quota project
+					// and clear it if the project is inaccessible.
+					validateADCQuotaProject()
+				}
 			}
 
 			// Handle project discovery based on flags
@@ -76,16 +98,16 @@ var (
 			if GCPProjectID != "" {
 				// Single project specified with -p/--project
 				GCPProjectIDs = append(GCPProjectIDs, GCPProjectID)
-				resolveProjectNames(GCPProjectIDs)
+				resolveProjectNames(GCPProjectIDs, gcpSession)
 			} else if GCPProjectIDsFilePath != "" {
 				// Project list specified with -l/--project-list
 				rawProjectIDs := internal.LoadFileLinesIntoArray(GCPProjectIDsFilePath)
 				GCPProjectIDs = deduplicateProjectIDs(rawProjectIDs)
-				resolveProjectNames(GCPProjectIDs)
+				resolveProjectNames(GCPProjectIDs, gcpSession)
 			} else if GCPAllProjects {
 				// Discover all accessible projects with -A/--all-projects
 				GCPLogger.InfoM("Discovering all accessible projects...", "gcp")
-				orgsSvc := orgsservice.New()
+				orgsSvc := newOrgsService(gcpSession)
 				var projects []orgsservice.ProjectInfo
 				err := gcpinternal.RetryWithBackoff(GCPLogger, "gcp", 3, func() error {
 					var searchErr error
@@ -113,18 +135,28 @@ var (
 			ctx := context.WithValue(context.Background(), "projectIDs", GCPProjectIDs)
 			ctx = context.WithValue(ctx, "projectNames", GCPProjectNames)
 
-			// Authenticate and get account info
-			os := oauthservice.NewOAuthService()
-			principal, err := os.WhoAmI()
-			if err != nil {
-				GCPLogger.FatalM(fmt.Sprintf("could not determine default user credential with error %s.\n\nPlease use default application default credentials: https://cloud.google.com/docs/authentication/application-default-credentials\n\nTry: gcloud auth application-default login", err.Error()), "gcp")
+			// Set default session so all services pick up impersonation
+			if gcpSession != nil {
+				gcpinternal.SetDefaultSession(gcpSession)
 			}
-			ctx = context.WithValue(ctx, "account", principal.Email)
+
+			// Authenticate and get account info
+			if GCPImpersonateSA != "" {
+				// When impersonating, use the SA email directly (we already validated the token)
+				ctx = context.WithValue(ctx, "account", GCPImpersonateSA)
+			} else {
+				os := oauthservice.NewOAuthService()
+				principal, err := os.WhoAmI()
+				if err != nil {
+					GCPLogger.FatalM(fmt.Sprintf("could not determine default user credential with error %s.\n\nPlease use default application default credentials: https://cloud.google.com/docs/authentication/application-default-credentials\n\nTry: gcloud auth application-default login", err.Error()), "gcp")
+				}
+				ctx = context.WithValue(ctx, "account", principal.Email)
+			}
 
 			// Build scope hierarchy for hierarchical output (unless --flat-output is set)
 			if !GCPFlatOutput && len(GCPProjectIDs) > 0 {
 				GCPLogger.InfoM("Building scope hierarchy for hierarchical output...", "gcp")
-				orgsSvc := orgsservice.New()
+				orgsSvc := newOrgsService(gcpSession)
 				provider := orgsservice.NewHierarchyProvider(orgsSvc)
 				hierarchy, err := gcpinternal.BuildScopeHierarchy(GCPProjectIDs, provider)
 				if err != nil {
@@ -177,7 +209,7 @@ var (
 			// Cache auto-refreshes after 24 hours
 			// Force refresh when running the organizations command to ensure fresh data
 			refreshCache := GCPRefreshCache || cmd.Name() == "organizations"
-			orgCache := loadOrPopulateOrgCache(account, refreshCache)
+			orgCache := loadOrPopulateOrgCache(account, refreshCache, gcpSession)
 			if orgCache != nil && orgCache.IsPopulated() {
 				ctx = gcpinternal.SetOrgCacheInContext(ctx, orgCache)
 			}
@@ -186,6 +218,14 @@ var (
 		},
 	}
 )
+
+// newOrgsService creates an organizations service, using the impersonated session if provided
+func newOrgsService(session *gcpinternal.SafeSession) *orgsservice.OrganizationsService {
+	if session != nil {
+		return orgsservice.NewWithSession(session)
+	}
+	return orgsservice.New()
+}
 
 // deduplicateProjectIDs removes duplicates, trims whitespace, and filters empty entries
 func deduplicateProjectIDs(projectIDs []string) []string {
@@ -272,12 +312,12 @@ func validateADCQuotaProject() {
 }
 
 // resolveProjectNames fetches display names for given project IDs
-func resolveProjectNames(projectIDs []string) {
+func resolveProjectNames(projectIDs []string, session *gcpinternal.SafeSession) {
 	if len(projectIDs) == 0 {
 		return
 	}
 
-	orgsSvc := orgsservice.New()
+	orgsSvc := newOrgsService(session)
 	// Fetch all accessible projects and build lookup map
 	var projects []orgsservice.ProjectInfo
 	err := gcpinternal.RetryWithBackoff(GCPLogger, "gcp", 3, func() error {
@@ -326,11 +366,17 @@ var GCPAllChecksCommand = &cobra.Command{
 		ctx = gcpinternal.SetAllChecksMode(ctx, true)
 		cmd.SetContext(ctx)
 
+		// Get session from context for impersonation support
+		var allChecksSession *gcpinternal.SafeSession
+		if s, ok := ctx.Value("session").(*gcpinternal.SafeSession); ok {
+			allChecksSession = s
+		}
+
 		// Load or populate org cache for cross-project modules
 		existingOrgCache := gcpinternal.GetOrgCacheFromContext(ctx)
 		if existingOrgCache == nil || !existingOrgCache.IsPopulated() {
 			GCPLogger.InfoM("Loading/enumerating organization data for cross-project analysis...", "all-checks")
-			orgCache := loadOrPopulateOrgCache(account, GCPRefreshCache)
+			orgCache := loadOrPopulateOrgCache(account, GCPRefreshCache, allChecksSession)
 			if orgCache != nil && orgCache.IsPopulated() {
 				ctx = gcpinternal.SetOrgCacheInContext(ctx, orgCache)
 				cmd.SetContext(ctx)
@@ -426,7 +472,7 @@ var GCPAllChecksCommand = &cobra.Command{
 }
 
 // loadOrPopulateOrgCache loads org cache from disk if available, or enumerates and saves it
-func loadOrPopulateOrgCache(account string, forceRefresh bool) *gcpinternal.OrgCache {
+func loadOrPopulateOrgCache(account string, forceRefresh bool, session *gcpinternal.SafeSession) *gcpinternal.OrgCache {
 	// Check if cache exists and we're not forcing refresh
 	if !forceRefresh && gcpinternal.OrgCacheExists(GCPOutputDirectory, account) {
 		// Check if cache is stale (older than 24 hours)
@@ -450,15 +496,15 @@ func loadOrPopulateOrgCache(account string, forceRefresh bool) *gcpinternal.OrgC
 	}
 
 	// Enumerate and create cache
-	cache := enumerateAndCacheOrgs(account)
+	cache := enumerateAndCacheOrgs(account, session)
 	return cache
 }
 
 // enumerateAndCacheOrgs enumerates all orgs/folders/projects and saves to disk
-func enumerateAndCacheOrgs(account string) *gcpinternal.OrgCache {
+func enumerateAndCacheOrgs(account string, session *gcpinternal.SafeSession) *gcpinternal.OrgCache {
 	cache := gcpinternal.NewOrgCache()
 
-	orgsSvc := orgsservice.New()
+	orgsSvc := newOrgsService(session)
 
 	// Get all organizations
 	var orgs []orgsservice.OrganizationInfo
@@ -601,6 +647,7 @@ func init() {
 	GCPCommands.PersistentFlags().BoolVarP(&GCPWrapTable, "wrap", "w", false, "Wrap table to fit in terminal (complicates grepping)")
 	GCPCommands.PersistentFlags().BoolVar(&GCPFlatOutput, "flat-output", false, "Use legacy flat output structure instead of hierarchical per-project directories")
 	GCPCommands.PersistentFlags().BoolVar(&GCPRefreshCache, "refresh-cache", false, "Force re-enumeration of cached data (cache auto-expires after 24 hours)")
+	GCPCommands.PersistentFlags().StringVarP(&GCPImpersonateSA, "impersonate-sa", "i", "", "Service account email to impersonate (requires roles/iam.serviceAccountTokenCreator)")
 
 	// Available commands
 	GCPCommands.AddCommand(

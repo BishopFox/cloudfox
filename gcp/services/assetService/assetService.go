@@ -16,7 +16,7 @@ type AssetService struct {
 }
 
 func New() *AssetService {
-	return &AssetService{}
+	return &AssetService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *AssetService {

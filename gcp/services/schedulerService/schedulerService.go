@@ -17,7 +17,7 @@ type SchedulerService struct{
 }
 
 func New() *SchedulerService {
-	return &SchedulerService{}
+	return &SchedulerService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *SchedulerService {

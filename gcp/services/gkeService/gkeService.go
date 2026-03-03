@@ -16,7 +16,7 @@ type GKEService struct {
 
 // New creates a new GKEService (legacy - uses ADC directly)
 func New() *GKEService {
-	return &GKEService{}
+	return &GKEService{session: gcpinternal.GetDefaultSession()}
 }
 
 // NewWithSession creates a GKEService with a SafeSession for managed authentication

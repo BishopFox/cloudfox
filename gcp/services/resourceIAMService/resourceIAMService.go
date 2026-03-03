@@ -27,7 +27,7 @@ type ResourceIAMService struct {
 
 // New creates a new ResourceIAMService
 func New() *ResourceIAMService {
-	return &ResourceIAMService{}
+	return &ResourceIAMService{session: gcpinternal.GetDefaultSession()}
 }
 
 // NewWithSession creates a ResourceIAMService with a SafeSession

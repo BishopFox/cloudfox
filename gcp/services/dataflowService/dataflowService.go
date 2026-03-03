@@ -14,7 +14,7 @@ type DataflowService struct {
 }
 
 func New() *DataflowService {
-	return &DataflowService{}
+	return &DataflowService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *DataflowService {

@@ -20,7 +20,7 @@ type CloudStorageService struct {
 
 // New creates a new CloudStorageService (requires session for SDK caching)
 func New() *CloudStorageService {
-	return &CloudStorageService{}
+	return &CloudStorageService{session: gcpinternal.GetDefaultSession()}
 }
 
 // NewWithSession creates a CloudStorageService with a SafeSession for managed authentication

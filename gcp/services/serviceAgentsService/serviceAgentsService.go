@@ -15,7 +15,7 @@ type ServiceAgentsService struct{
 }
 
 func New() *ServiceAgentsService {
-	return &ServiceAgentsService{}
+	return &ServiceAgentsService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *ServiceAgentsService {

@@ -15,7 +15,7 @@ type VPCService struct {
 }
 
 func New() *VPCService {
-	return &VPCService{}
+	return &VPCService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *VPCService {

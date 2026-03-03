@@ -15,7 +15,7 @@ type BigQueryEnumService struct {
 }
 
 func New() *BigQueryEnumService {
-	return &BigQueryEnumService{}
+	return &BigQueryEnumService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *BigQueryEnumService {

@@ -15,7 +15,7 @@ type FilestoreService struct {
 }
 
 func New() *FilestoreService {
-	return &FilestoreService{}
+	return &FilestoreService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *FilestoreService {

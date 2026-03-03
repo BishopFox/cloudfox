@@ -15,6 +15,7 @@ import (
 
 	// REST API services (NewService pattern)
 	gcpinternal "github.com/BishopFox/cloudfox/internal/gcp"
+	"google.golang.org/api/option"
 	accesscontextmanager "google.golang.org/api/accesscontextmanager/v1"
 	apikeys "google.golang.org/api/apikeys/v2"
 	artifactregistryapi "google.golang.org/api/artifactregistry/v1"
@@ -54,13 +55,26 @@ import (
 	storageapi "google.golang.org/api/storage/v1"
 )
 
+// resolveOpts returns the client options for a session. If session is nil,
+// it checks the package-level default session (set by --impersonate-sa).
+// If no session is available, returns nil so the GCP SDK uses ADC.
+func resolveOpts(session *gcpinternal.SafeSession) []option.ClientOption {
+	if session == nil {
+		session = gcpinternal.GetDefaultSession()
+	}
+	if session != nil {
+		return []option.ClientOption{session.GetClientOption()}
+	}
+	return nil
+}
+
 // =============================================================================
 // GO SDK CLIENTS (NewClient pattern) - These return *Client types
 // =============================================================================
 
 // GetStorageClient returns a Cloud Storage client (Go SDK)
 func GetStorageClient(ctx context.Context, session *gcpinternal.SafeSession) (*storage.Client, error) {
-	client, err := storage.NewClient(ctx, session.GetClientOption())
+	client, err := storage.NewClient(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage client: %w", err)
 	}
@@ -69,7 +83,7 @@ func GetStorageClient(ctx context.Context, session *gcpinternal.SafeSession) (*s
 
 // GetSecretManagerClient returns a Secret Manager client (Go SDK)
 func GetSecretManagerClient(ctx context.Context, session *gcpinternal.SafeSession) (*secretmanagerclient.Client, error) {
-	client, err := secretmanagerclient.NewClient(ctx, session.GetClientOption())
+	client, err := secretmanagerclient.NewClient(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create secret manager client: %w", err)
 	}
@@ -78,7 +92,7 @@ func GetSecretManagerClient(ctx context.Context, session *gcpinternal.SafeSessio
 
 // GetBigQueryClient returns a BigQuery client (Go SDK)
 func GetBigQueryClient(ctx context.Context, session *gcpinternal.SafeSession, projectID string) (*bigquery.Client, error) {
-	client, err := bigquery.NewClient(ctx, projectID, session.GetClientOption())
+	client, err := bigquery.NewClient(ctx, projectID, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create BigQuery client: %w", err)
 	}
@@ -87,7 +101,7 @@ func GetBigQueryClient(ctx context.Context, session *gcpinternal.SafeSession, pr
 
 // GetPubSubClient returns a Pub/Sub client (Go SDK)
 func GetPubSubClient(ctx context.Context, session *gcpinternal.SafeSession, projectID string) (*pubsub.Client, error) {
-	client, err := pubsub.NewClient(ctx, projectID, session.GetClientOption())
+	client, err := pubsub.NewClient(ctx, projectID, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Pub/Sub client: %w", err)
 	}
@@ -96,7 +110,7 @@ func GetPubSubClient(ctx context.Context, session *gcpinternal.SafeSession, proj
 
 // GetAssetClient returns a Cloud Asset client (Go SDK)
 func GetAssetClient(ctx context.Context, session *gcpinternal.SafeSession) (*asset.Client, error) {
-	client, err := asset.NewClient(ctx, session.GetClientOption())
+	client, err := asset.NewClient(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create asset client: %w", err)
 	}
@@ -105,7 +119,7 @@ func GetAssetClient(ctx context.Context, session *gcpinternal.SafeSession) (*ass
 
 // GetArtifactRegistryClient returns an Artifact Registry client (Go SDK)
 func GetArtifactRegistryClient(ctx context.Context, session *gcpinternal.SafeSession) (*artifactregistry.Client, error) {
-	client, err := artifactregistry.NewClient(ctx, session.GetClientOption())
+	client, err := artifactregistry.NewClient(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create artifact registry client: %w", err)
 	}
@@ -114,7 +128,7 @@ func GetArtifactRegistryClient(ctx context.Context, session *gcpinternal.SafeSes
 
 // GetOrganizationsClient returns a Resource Manager Organizations client (Go SDK)
 func GetOrganizationsClient(ctx context.Context, session *gcpinternal.SafeSession) (*resourcemanager.OrganizationsClient, error) {
-	client, err := resourcemanager.NewOrganizationsClient(ctx, session.GetClientOption())
+	client, err := resourcemanager.NewOrganizationsClient(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create organizations client: %w", err)
 	}
@@ -127,7 +141,7 @@ func GetOrganizationsClient(ctx context.Context, session *gcpinternal.SafeSessio
 
 // GetComputeService returns a Compute Engine service
 func GetComputeService(ctx context.Context, session *gcpinternal.SafeSession) (*compute.Service, error) {
-	service, err := compute.NewService(ctx, session.GetClientOption())
+	service, err := compute.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create compute service: %w", err)
 	}
@@ -136,7 +150,7 @@ func GetComputeService(ctx context.Context, session *gcpinternal.SafeSession) (*
 
 // GetIAMService returns an IAM Admin service
 func GetIAMService(ctx context.Context, session *gcpinternal.SafeSession) (*iam.Service, error) {
-	service, err := iam.NewService(ctx, session.GetClientOption())
+	service, err := iam.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create IAM service: %w", err)
 	}
@@ -145,7 +159,7 @@ func GetIAMService(ctx context.Context, session *gcpinternal.SafeSession) (*iam.
 
 // GetResourceManagerService returns a Cloud Resource Manager service (v1)
 func GetResourceManagerService(ctx context.Context, session *gcpinternal.SafeSession) (*cloudresourcemanager.Service, error) {
-	service, err := cloudresourcemanager.NewService(ctx, session.GetClientOption())
+	service, err := cloudresourcemanager.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create resource manager service: %w", err)
 	}
@@ -154,7 +168,7 @@ func GetResourceManagerService(ctx context.Context, session *gcpinternal.SafeSes
 
 // GetSecretManagerService returns a Secret Manager service (REST API)
 func GetSecretManagerService(ctx context.Context, session *gcpinternal.SafeSession) (*secretmanagerapi.Service, error) {
-	service, err := secretmanagerapi.NewService(ctx, session.GetClientOption())
+	service, err := secretmanagerapi.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create secret manager service: %w", err)
 	}
@@ -163,7 +177,7 @@ func GetSecretManagerService(ctx context.Context, session *gcpinternal.SafeSessi
 
 // GetBigQueryService returns a BigQuery service (REST API v2)
 func GetBigQueryService(ctx context.Context, session *gcpinternal.SafeSession) (*bigqueryapi.Service, error) {
-	service, err := bigqueryapi.NewService(ctx, session.GetClientOption())
+	service, err := bigqueryapi.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create BigQuery service: %w", err)
 	}
@@ -172,7 +186,7 @@ func GetBigQueryService(ctx context.Context, session *gcpinternal.SafeSession) (
 
 // GetStorageService returns a Cloud Storage service (REST API)
 func GetStorageService(ctx context.Context, session *gcpinternal.SafeSession) (*storageapi.Service, error) {
-	service, err := storageapi.NewService(ctx, session.GetClientOption())
+	service, err := storageapi.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage service: %w", err)
 	}
@@ -181,7 +195,7 @@ func GetStorageService(ctx context.Context, session *gcpinternal.SafeSession) (*
 
 // GetArtifactRegistryService returns an Artifact Registry service (REST API)
 func GetArtifactRegistryService(ctx context.Context, session *gcpinternal.SafeSession) (*artifactregistryapi.Service, error) {
-	service, err := artifactregistryapi.NewService(ctx, session.GetClientOption())
+	service, err := artifactregistryapi.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Artifact Registry service: %w", err)
 	}
@@ -190,7 +204,7 @@ func GetArtifactRegistryService(ctx context.Context, session *gcpinternal.SafeSe
 
 // GetContainerService returns a GKE Container service
 func GetContainerService(ctx context.Context, session *gcpinternal.SafeSession) (*container.Service, error) {
-	service, err := container.NewService(ctx, session.GetClientOption())
+	service, err := container.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create container service: %w", err)
 	}
@@ -199,7 +213,7 @@ func GetContainerService(ctx context.Context, session *gcpinternal.SafeSession) 
 
 // GetCloudRunService returns a Cloud Run service (v1)
 func GetCloudRunService(ctx context.Context, session *gcpinternal.SafeSession) (*run.APIService, error) {
-	service, err := run.NewService(ctx, session.GetClientOption())
+	service, err := run.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Cloud Run service: %w", err)
 	}
@@ -208,7 +222,7 @@ func GetCloudRunService(ctx context.Context, session *gcpinternal.SafeSession) (
 
 // GetCloudRunServiceV2 returns a Cloud Run service (v2)
 func GetCloudRunServiceV2(ctx context.Context, session *gcpinternal.SafeSession) (*runv2.Service, error) {
-	service, err := runv2.NewService(ctx, session.GetClientOption())
+	service, err := runv2.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Cloud Run v2 service: %w", err)
 	}
@@ -217,7 +231,7 @@ func GetCloudRunServiceV2(ctx context.Context, session *gcpinternal.SafeSession)
 
 // GetCloudFunctionsService returns a Cloud Functions service (v1)
 func GetCloudFunctionsService(ctx context.Context, session *gcpinternal.SafeSession) (*cloudfunctions.Service, error) {
-	service, err := cloudfunctions.NewService(ctx, session.GetClientOption())
+	service, err := cloudfunctions.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Cloud Functions service: %w", err)
 	}
@@ -226,7 +240,7 @@ func GetCloudFunctionsService(ctx context.Context, session *gcpinternal.SafeSess
 
 // GetCloudFunctionsServiceV2 returns a Cloud Functions v2 service
 func GetCloudFunctionsServiceV2(ctx context.Context, session *gcpinternal.SafeSession) (*cloudfunctionsv2.Service, error) {
-	service, err := cloudfunctionsv2.NewService(ctx, session.GetClientOption())
+	service, err := cloudfunctionsv2.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Cloud Functions v2 service: %w", err)
 	}
@@ -235,7 +249,7 @@ func GetCloudFunctionsServiceV2(ctx context.Context, session *gcpinternal.SafeSe
 
 // GetCloudIdentityService returns a Cloud Identity service
 func GetCloudIdentityService(ctx context.Context, session *gcpinternal.SafeSession) (*cloudidentity.Service, error) {
-	service, err := cloudidentity.NewService(ctx, session.GetClientOption())
+	service, err := cloudidentity.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Cloud Identity service: %w", err)
 	}
@@ -244,7 +258,7 @@ func GetCloudIdentityService(ctx context.Context, session *gcpinternal.SafeSessi
 
 // GetAccessContextManagerService returns an Access Context Manager service
 func GetAccessContextManagerService(ctx context.Context, session *gcpinternal.SafeSession) (*accesscontextmanager.Service, error) {
-	service, err := accesscontextmanager.NewService(ctx, session.GetClientOption())
+	service, err := accesscontextmanager.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Access Context Manager service: %w", err)
 	}
@@ -253,7 +267,7 @@ func GetAccessContextManagerService(ctx context.Context, session *gcpinternal.Sa
 
 // GetRedisService returns a Memorystore Redis service
 func GetRedisService(ctx context.Context, session *gcpinternal.SafeSession) (*redis.Service, error) {
-	service, err := redis.NewService(ctx, session.GetClientOption())
+	service, err := redis.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Redis service: %w", err)
 	}
@@ -262,7 +276,7 @@ func GetRedisService(ctx context.Context, session *gcpinternal.SafeSession) (*re
 
 // GetServiceNetworkingService returns a Service Networking service
 func GetServiceNetworkingService(ctx context.Context, session *gcpinternal.SafeSession) (*servicenetworking.APIService, error) {
-	service, err := servicenetworking.NewService(ctx, session.GetClientOption())
+	service, err := servicenetworking.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Service Networking service: %w", err)
 	}
@@ -271,7 +285,7 @@ func GetServiceNetworkingService(ctx context.Context, session *gcpinternal.SafeS
 
 // GetComposerService returns a Cloud Composer service
 func GetComposerService(ctx context.Context, session *gcpinternal.SafeSession) (*composer.Service, error) {
-	service, err := composer.NewService(ctx, session.GetClientOption())
+	service, err := composer.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Composer service: %w", err)
 	}
@@ -280,7 +294,7 @@ func GetComposerService(ctx context.Context, session *gcpinternal.SafeSession) (
 
 // GetDataflowService returns a Dataflow service
 func GetDataflowService(ctx context.Context, session *gcpinternal.SafeSession) (*dataflow.Service, error) {
-	service, err := dataflow.NewService(ctx, session.GetClientOption())
+	service, err := dataflow.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Dataflow service: %w", err)
 	}
@@ -289,7 +303,7 @@ func GetDataflowService(ctx context.Context, session *gcpinternal.SafeSession) (
 
 // GetDataprocService returns a Dataproc service
 func GetDataprocService(ctx context.Context, session *gcpinternal.SafeSession) (*dataproc.Service, error) {
-	service, err := dataproc.NewService(ctx, session.GetClientOption())
+	service, err := dataproc.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Dataproc service: %w", err)
 	}
@@ -298,7 +312,7 @@ func GetDataprocService(ctx context.Context, session *gcpinternal.SafeSession) (
 
 // GetNotebooksService returns a Notebooks service
 func GetNotebooksService(ctx context.Context, session *gcpinternal.SafeSession) (*notebooks.Service, error) {
-	service, err := notebooks.NewService(ctx, session.GetClientOption())
+	service, err := notebooks.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Notebooks service: %w", err)
 	}
@@ -307,7 +321,7 @@ func GetNotebooksService(ctx context.Context, session *gcpinternal.SafeSession) 
 
 // GetBeyondCorpService returns a BeyondCorp service
 func GetBeyondCorpService(ctx context.Context, session *gcpinternal.SafeSession) (*beyondcorp.Service, error) {
-	service, err := beyondcorp.NewService(ctx, session.GetClientOption())
+	service, err := beyondcorp.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create BeyondCorp service: %w", err)
 	}
@@ -316,7 +330,7 @@ func GetBeyondCorpService(ctx context.Context, session *gcpinternal.SafeSession)
 
 // GetIAPService returns an IAP service
 func GetIAPService(ctx context.Context, session *gcpinternal.SafeSession) (*iap.Service, error) {
-	service, err := iap.NewService(ctx, session.GetClientOption())
+	service, err := iap.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create IAP service: %w", err)
 	}
@@ -325,7 +339,7 @@ func GetIAPService(ctx context.Context, session *gcpinternal.SafeSession) (*iap.
 
 // GetKMSService returns a Cloud KMS service
 func GetKMSService(ctx context.Context, session *gcpinternal.SafeSession) (*cloudkms.Service, error) {
-	service, err := cloudkms.NewService(ctx, session.GetClientOption())
+	service, err := cloudkms.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create KMS service: %w", err)
 	}
@@ -334,7 +348,7 @@ func GetKMSService(ctx context.Context, session *gcpinternal.SafeSession) (*clou
 
 // GetSQLAdminService returns a Cloud SQL Admin service (v1)
 func GetSQLAdminService(ctx context.Context, session *gcpinternal.SafeSession) (*sqladmin.Service, error) {
-	service, err := sqladmin.NewService(ctx, session.GetClientOption())
+	service, err := sqladmin.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create SQL Admin service: %w", err)
 	}
@@ -343,7 +357,7 @@ func GetSQLAdminService(ctx context.Context, session *gcpinternal.SafeSession) (
 
 // GetSQLAdminServiceBeta returns a Cloud SQL Admin service (v1beta4)
 func GetSQLAdminServiceBeta(ctx context.Context, session *gcpinternal.SafeSession) (*sqladminbeta.Service, error) {
-	service, err := sqladminbeta.NewService(ctx, session.GetClientOption())
+	service, err := sqladminbeta.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create SQL Admin beta service: %w", err)
 	}
@@ -352,7 +366,7 @@ func GetSQLAdminServiceBeta(ctx context.Context, session *gcpinternal.SafeSessio
 
 // GetDNSService returns a Cloud DNS service
 func GetDNSService(ctx context.Context, session *gcpinternal.SafeSession) (*dns.Service, error) {
-	service, err := dns.NewService(ctx, session.GetClientOption())
+	service, err := dns.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create DNS service: %w", err)
 	}
@@ -361,7 +375,7 @@ func GetDNSService(ctx context.Context, session *gcpinternal.SafeSession) (*dns.
 
 // GetPubSubService returns a Pub/Sub service (REST API)
 func GetPubSubService(ctx context.Context, session *gcpinternal.SafeSession) (*pubsubapi.Service, error) {
-	service, err := pubsubapi.NewService(ctx, session.GetClientOption())
+	service, err := pubsubapi.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Pub/Sub service: %w", err)
 	}
@@ -370,7 +384,7 @@ func GetPubSubService(ctx context.Context, session *gcpinternal.SafeSession) (*p
 
 // GetLoggingService returns a Cloud Logging service
 func GetLoggingService(ctx context.Context, session *gcpinternal.SafeSession) (*logging.Service, error) {
-	service, err := logging.NewService(ctx, session.GetClientOption())
+	service, err := logging.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Logging service: %w", err)
 	}
@@ -379,7 +393,7 @@ func GetLoggingService(ctx context.Context, session *gcpinternal.SafeSession) (*
 
 // GetSpannerService returns a Cloud Spanner service
 func GetSpannerService(ctx context.Context, session *gcpinternal.SafeSession) (*spanner.Service, error) {
-	service, err := spanner.NewService(ctx, session.GetClientOption())
+	service, err := spanner.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Spanner service: %w", err)
 	}
@@ -388,7 +402,7 @@ func GetSpannerService(ctx context.Context, session *gcpinternal.SafeSession) (*
 
 // GetBigtableAdminService returns a Bigtable Admin service
 func GetBigtableAdminService(ctx context.Context, session *gcpinternal.SafeSession) (*bigtableadmin.Service, error) {
-	service, err := bigtableadmin.NewService(ctx, session.GetClientOption())
+	service, err := bigtableadmin.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Bigtable Admin service: %w", err)
 	}
@@ -397,7 +411,7 @@ func GetBigtableAdminService(ctx context.Context, session *gcpinternal.SafeSessi
 
 // GetFilestoreService returns a Filestore service
 func GetFilestoreService(ctx context.Context, session *gcpinternal.SafeSession) (*file.Service, error) {
-	service, err := file.NewService(ctx, session.GetClientOption())
+	service, err := file.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Filestore service: %w", err)
 	}
@@ -406,7 +420,7 @@ func GetFilestoreService(ctx context.Context, session *gcpinternal.SafeSession) 
 
 // GetSourceRepoService returns a Source Repositories service
 func GetSourceRepoService(ctx context.Context, session *gcpinternal.SafeSession) (*sourcerepo.Service, error) {
-	service, err := sourcerepo.NewService(ctx, session.GetClientOption())
+	service, err := sourcerepo.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Source Repositories service: %w", err)
 	}
@@ -415,7 +429,7 @@ func GetSourceRepoService(ctx context.Context, session *gcpinternal.SafeSession)
 
 // GetCloudBuildService returns a Cloud Build service
 func GetCloudBuildService(ctx context.Context, session *gcpinternal.SafeSession) (*cloudbuild.Service, error) {
-	service, err := cloudbuild.NewService(ctx, session.GetClientOption())
+	service, err := cloudbuild.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Cloud Build service: %w", err)
 	}
@@ -424,7 +438,7 @@ func GetCloudBuildService(ctx context.Context, session *gcpinternal.SafeSession)
 
 // GetOrgPolicyService returns an Organization Policy service
 func GetOrgPolicyService(ctx context.Context, session *gcpinternal.SafeSession) (*orgpolicy.Service, error) {
-	service, err := orgpolicy.NewService(ctx, session.GetClientOption())
+	service, err := orgpolicy.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Org Policy service: %w", err)
 	}
@@ -433,7 +447,7 @@ func GetOrgPolicyService(ctx context.Context, session *gcpinternal.SafeSession) 
 
 // GetSchedulerService returns a Cloud Scheduler service
 func GetSchedulerService(ctx context.Context, session *gcpinternal.SafeSession) (*cloudscheduler.Service, error) {
-	service, err := cloudscheduler.NewService(ctx, session.GetClientOption())
+	service, err := cloudscheduler.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Scheduler service: %w", err)
 	}
@@ -442,7 +456,7 @@ func GetSchedulerService(ctx context.Context, session *gcpinternal.SafeSession) 
 
 // GetAPIKeysService returns an API Keys service
 func GetAPIKeysService(ctx context.Context, session *gcpinternal.SafeSession) (*apikeys.Service, error) {
-	service, err := apikeys.NewService(ctx, session.GetClientOption())
+	service, err := apikeys.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create API Keys service: %w", err)
 	}
@@ -451,7 +465,7 @@ func GetAPIKeysService(ctx context.Context, session *gcpinternal.SafeSession) (*
 
 // GetCertificateManagerService returns a Certificate Manager service
 func GetCertificateManagerService(ctx context.Context, session *gcpinternal.SafeSession) (*certificatemanager.Service, error) {
-	service, err := certificatemanager.NewService(ctx, session.GetClientOption())
+	service, err := certificatemanager.NewService(ctx, resolveOpts(session)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Certificate Manager service: %w", err)
 	}

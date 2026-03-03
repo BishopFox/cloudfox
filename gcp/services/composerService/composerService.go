@@ -17,7 +17,7 @@ type ComposerService struct {
 }
 
 func New() *ComposerService {
-	return &ComposerService{}
+	return &ComposerService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *ComposerService {

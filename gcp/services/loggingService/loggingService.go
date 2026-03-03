@@ -19,7 +19,7 @@ type LoggingService struct{
 }
 
 func New() *LoggingService {
-	return &LoggingService{}
+	return &LoggingService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *LoggingService {

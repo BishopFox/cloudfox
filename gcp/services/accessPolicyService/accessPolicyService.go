@@ -15,7 +15,7 @@ type AccessPolicyService struct {
 }
 
 func New() *AccessPolicyService {
-	return &AccessPolicyService{}
+	return &AccessPolicyService{session: gcpinternal.GetDefaultSession()}
 }
 
 func NewWithSession(session *gcpinternal.SafeSession) *AccessPolicyService {

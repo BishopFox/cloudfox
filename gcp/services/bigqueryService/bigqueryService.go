@@ -112,7 +112,7 @@ type BigQueryService struct {
 
 // New creates a new instance of BigQueryService (legacy - uses ADC directly)
 func New() *BigQueryService {
-	return &BigQueryService{}
+	return &BigQueryService{session: gcpinternal.GetDefaultSession()}
 }
 
 // NewWithSession creates a BigQueryService with a SafeSession for managed authentication

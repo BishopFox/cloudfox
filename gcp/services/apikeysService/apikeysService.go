@@ -17,7 +17,7 @@ type APIKeysService struct {
 
 // New creates a new APIKeysService
 func New() *APIKeysService {
-	return &APIKeysService{}
+	return &APIKeysService{session: gcpinternal.GetDefaultSession()}
 }
 
 // NewWithSession creates an APIKeysService with a SafeSession for managed authentication
