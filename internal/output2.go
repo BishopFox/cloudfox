@@ -160,7 +160,9 @@ func HandleStreamingOutput(
 	}
 
 	// ---- STREAM ROWS TO TEMP FILES ----
-	for _, t := range dataToOutput.TableFiles() {
+	streamTables := dataToOutput.TableFiles()
+	applyQueryFilter(streamTables)
+	for _, t := range streamTables {
 		if verbosity > 0 {
 			tmpClient := TableClient{Wrap: wrap}
 			tmpClient.printTablesToScreen([]TableFile{t})
@@ -538,6 +540,66 @@ func AppendLootFile(outputDirectory, lootFileName, entry string) error {
 	}
 
 	return nil
+}
+
+// ============================================================================
+// QUERY FILTER - Global row-level filtering for --query / -q flag
+// ============================================================================
+
+var globalQueryFilter string
+
+// SetQueryFilter sets the global query filter string. Called once from PersistentPreRun.
+func SetQueryFilter(query string) {
+	globalQueryFilter = query
+}
+
+// buildQueryPatterns generates search patterns from a query string.
+// All patterns are lowercased for case-insensitive matching.
+//
+// When the query contains dots (a fully qualified identifier like a permission
+// or email), only the exact query is used. When the query has no dots (a short
+// fragment like "setIamPolicy" or "TokenCreator"), it is used as a single
+// substring pattern that matches anywhere.
+//
+// Examples:
+//   - "resourcemanager.projects.setIamPolicy" -> ["resourcemanager.projects.setiampolicy"] (exact only)
+//   - "setIamPolicy" -> ["setiampolicy"] (matches anywhere)
+//   - "TokenCreator" -> ["tokencreator"]
+//   - "alice@example.com" -> ["alice@example.com"] (exact only, has dots)
+func buildQueryPatterns(query string) []string {
+	return []string{strings.ToLower(query)}
+}
+
+// rowMatchesQuery returns true if any column value (after stripping ANSI codes
+// and lowercasing) contains any of the given patterns as a substring.
+func rowMatchesQuery(row []string, patterns []string) bool {
+	for _, col := range row {
+		colLower := strings.ToLower(removeColorCodes(col))
+		for _, pattern := range patterns {
+			if strings.Contains(colLower, pattern) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// applyQueryFilter filters all table bodies in-place using the global query.
+// No-op when globalQueryFilter is empty.
+func applyQueryFilter(tables []TableFile) {
+	if globalQueryFilter == "" {
+		return
+	}
+	patterns := buildQueryPatterns(globalQueryFilter)
+	for i := range tables {
+		var filtered [][]string
+		for _, row := range tables[i].Body {
+			if rowMatchesQuery(row, patterns) {
+				filtered = append(filtered, row)
+			}
+		}
+		tables[i].Body = filtered
+	}
 }
 
 func removeColorCodes(input string) string {
@@ -982,6 +1044,7 @@ func HandleOutputV2(
 	)
 
 	tables := dataToOutput.TableFiles()
+	applyQueryFilter(tables)
 	lootFiles := dataToOutput.LootFiles()
 
 	// Determine base module name from first table file (for backwards compatibility)
@@ -1030,6 +1093,11 @@ func HandleOutputSmart(
 	dataToOutput CloudfoxOutput,
 ) error {
 	logger := NewLogger()
+
+	// Log query filter if active
+	if globalQueryFilter != "" {
+		logger.InfoM(fmt.Sprintf("Filtering output with query: %q", globalQueryFilter), "output")
+	}
 
 	// Count total rows across all table files
 	totalRows := 0
@@ -1276,6 +1344,7 @@ func HandleHierarchicalOutput(
 // writeOutputToPath writes CloudfoxOutput data to a specific path
 func writeOutputToPath(outPath string, format string, verbosity int, wrap bool, data CloudfoxOutput, logger Logger) error {
 	tables := data.TableFiles()
+	applyQueryFilter(tables)
 	lootFiles := data.LootFiles()
 
 	// Determine base module name from first table file (for logging)
@@ -1357,7 +1426,9 @@ func streamOutputToPath(outPath string, format string, verbosity int, wrap bool,
 	}
 
 	// Stream table files
-	for _, t := range data.TableFiles() {
+	streamTables := data.TableFiles()
+	applyQueryFilter(streamTables)
+	for _, t := range streamTables {
 		if verbosity > 0 {
 			tmpClient := TableClient{Wrap: wrap}
 			tmpClient.printTablesToScreen([]TableFile{t})
@@ -1465,6 +1536,11 @@ func HandleHierarchicalOutputSmart(
 	outputData HierarchicalOutputData,
 ) error {
 	logger := NewLogger()
+
+	// Log query filter if active
+	if globalQueryFilter != "" {
+		logger.InfoM(fmt.Sprintf("Filtering output with query: %q", globalQueryFilter), "output")
+	}
 
 	// Count total rows across all data
 	totalRows := 0
@@ -1610,6 +1686,9 @@ func HandleHierarchicalOutputTee(config TeeStreamingConfig) error {
 
 	// Track which projects received data (for loot file generation)
 	projectsWithData := make(map[string]bool)
+
+	// Apply query filter to all tables before processing
+	applyQueryFilter(config.Tables)
 
 	// Process each table
 	for _, t := range config.Tables {

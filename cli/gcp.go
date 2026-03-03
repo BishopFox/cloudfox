@@ -37,6 +37,7 @@ var (
 	GCPVerbosity       int
 	GCPWrapTable       bool
 	GCPFlatOutput      bool
+	GCPQuery           string
 
 	// Refresh cache flag - force re-enumeration even if cache exists
 	GCPRefreshCache bool
@@ -138,6 +139,11 @@ var (
 			// Set default session so all services pick up impersonation
 			if gcpSession != nil {
 				gcpinternal.SetDefaultSession(gcpSession)
+			}
+
+			// Set global query filter if --query flag is provided
+			if GCPQuery != "" {
+				internal.SetQueryFilter(GCPQuery)
 			}
 
 			// Authenticate and get account info
@@ -648,6 +654,7 @@ func init() {
 	GCPCommands.PersistentFlags().BoolVar(&GCPFlatOutput, "flat-output", false, "Use legacy flat output structure instead of hierarchical per-project directories")
 	GCPCommands.PersistentFlags().BoolVar(&GCPRefreshCache, "refresh-cache", false, "Force re-enumeration of cached data (cache auto-expires after 24 hours)")
 	GCPCommands.PersistentFlags().StringVarP(&GCPImpersonateSA, "impersonate-sa", "i", "", "Service account email to impersonate (requires roles/iam.serviceAccountTokenCreator)")
+	GCPCommands.PersistentFlags().StringVarP(&GCPQuery, "query", "q", "", "Filter output rows by substring match against any column (case-insensitive)")
 
 	// Available commands
 	GCPCommands.AddCommand(
