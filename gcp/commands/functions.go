@@ -9,6 +9,7 @@ import (
 	"github.com/BishopFox/cloudfox/gcp/shared"
 
 	FunctionsService "github.com/BishopFox/cloudfox/gcp/services/functionsService"
+	IAMService "github.com/BishopFox/cloudfox/gcp/services/iamService"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	gcpinternal "github.com/BishopFox/cloudfox/internal/gcp"
@@ -152,6 +153,26 @@ func (m *FunctionsModule) processProject(ctx context.Context, projectID string, 
 		gcpinternal.HandleGCPError(err, logger, globals.GCP_FUNCTIONS_MODULE_NAME,
 			fmt.Sprintf("Could not enumerate functions in project %s", projectID))
 		return
+	}
+
+	// Inject inherited project-level IAM bindings into each function
+	iamSvc := IAMService.New()
+	projectPolicies, projErr := iamSvc.Policies(projectID, "project")
+	if projErr == nil {
+		for i := range functions {
+			for _, pb := range projectPolicies {
+				if !shared.IsInheritedRole("function", pb.Role) {
+					continue
+				}
+				for _, member := range pb.Members {
+					functions[i].IAMBindings = append(functions[i].IAMBindings, FunctionsService.IAMBinding{
+						Role:   pb.Role,
+						Member: member,
+						Source: "Project",
+					})
+				}
+			}
+		}
 	}
 
 	// Thread-safe store per-project
@@ -495,6 +516,7 @@ func (m *FunctionsModule) getTableHeader() []string {
 		"VPC Access",
 		"IAM Binding Role",
 		"IAM Binding Principal",
+		"Binding Source",
 	}
 }
 
@@ -572,6 +594,7 @@ func (m *FunctionsModule) functionsToTableBody(functions []FunctionsService.Func
 					vpcAccess,
 					binding.Role,
 					binding.Member,
+					shared.BindingSource(binding.Source),
 				})
 			}
 		} else {
@@ -590,6 +613,7 @@ func (m *FunctionsModule) functionsToTableBody(functions []FunctionsService.Func
 				attackPaths,
 				defaultSA,
 				vpcAccess,
+				"-",
 				"-",
 				"-",
 			})

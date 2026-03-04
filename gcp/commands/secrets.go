@@ -8,6 +8,7 @@ import (
 
 	secretmanager "cloud.google.com/go/secretmanager/apiv1"
 	SecretsService "github.com/BishopFox/cloudfox/gcp/services/secretsService"
+	IAMService "github.com/BishopFox/cloudfox/gcp/services/iamService"
 	"google.golang.org/api/option"
 	"github.com/BishopFox/cloudfox/gcp/shared"
 	gcpinternal "github.com/BishopFox/cloudfox/internal/gcp"
@@ -154,6 +155,24 @@ func (m *SecretsModule) processProject(ctx context.Context, projectID string, lo
 		gcpinternal.HandleGCPError(err, logger, globals.GCP_SECRETS_MODULE_NAME,
 			fmt.Sprintf("Could not enumerate secrets in project %s", projectID))
 		return
+	}
+
+	// Inject inherited project-level IAM bindings into each secret
+	iamSvc := IAMService.New()
+	projectPolicies, projErr := iamSvc.Policies(projectID, "project")
+	if projErr == nil {
+		for i := range secrets {
+			for _, pb := range projectPolicies {
+				if !shared.IsInheritedRole("secret", pb.Role) {
+					continue
+				}
+				secrets[i].IAMBindings = append(secrets[i].IAMBindings, SecretsService.IAMBinding{
+					Role:    pb.Role,
+					Members: pb.Members,
+					Source:  "Project",
+				})
+			}
+		}
 	}
 
 	// Thread-safe store per-project
@@ -404,6 +423,7 @@ func (m *SecretsModule) getTableHeader() []string {
 		"IAM Binding Role",
 		"Principal Type",
 		"IAM Binding Principal",
+		"Binding Source",
 		"Principal Attack Paths",
 	}
 }
@@ -477,6 +497,7 @@ func (m *SecretsModule) secretsToTableBody(secrets []SecretsService.SecretInfo) 
 						binding.Role,
 						memberType,
 						member,
+						shared.BindingSource(binding.Source),
 						attackPaths,
 					})
 				}
@@ -495,6 +516,7 @@ func (m *SecretsModule) secretsToTableBody(secrets []SecretsService.SecretInfo) 
 				expiration,
 				destroyTTL,
 				secret.CreationTime,
+				"-",
 				"-",
 				"-",
 				"-",

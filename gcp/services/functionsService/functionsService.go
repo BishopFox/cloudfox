@@ -94,6 +94,7 @@ type EnvVarInfo struct {
 type IAMBinding struct {
 	Role   string
 	Member string
+	Source string // "Resource" (direct) or "Project" (inherited)
 }
 
 // getService returns a Cloud Functions v2 service instance, using cached wrapper if session is available

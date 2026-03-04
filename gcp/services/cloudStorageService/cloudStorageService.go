@@ -32,6 +32,7 @@ func NewWithSession(session *gcpinternal.SafeSession) *CloudStorageService {
 type IAMBinding struct {
 	Role    string   `json:"role"`
 	Members []string `json:"members"`
+	Source  string   `json:"source"` // "Resource" (direct) or "Project" (inherited)
 }
 
 // LifecycleRule represents a single lifecycle rule on a bucket

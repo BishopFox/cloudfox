@@ -91,6 +91,7 @@ func NewWithSession(session *gcpinternal.SafeSession) (SecretsService, error) {
 type IAMBinding struct {
 	Role    string   `json:"role"`
 	Members []string `json:"members"`
+	Source  string   `json:"source"` // "Resource" (direct) or "Project" (inherited)
 }
 
 // SecretInfo contains secret metadata and security-relevant configuration

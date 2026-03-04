@@ -7,6 +7,8 @@ import (
 	"sync"
 
 	CloudRunService "github.com/BishopFox/cloudfox/gcp/services/cloudrunService"
+	IAMService "github.com/BishopFox/cloudfox/gcp/services/iamService"
+	"github.com/BishopFox/cloudfox/gcp/shared"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	gcpinternal "github.com/BishopFox/cloudfox/internal/gcp"
@@ -173,6 +175,10 @@ func (m *CloudRunModule) processProject(ctx context.Context, projectID string, l
 	}
 	m.mu.Unlock()
 
+	// Fetch project-level IAM for inherited binding injection
+	iamSvc := IAMService.New()
+	projectPolicies, _ := iamSvc.Policies(projectID, "project")
+
 	// Get services
 	services, err := cs.Services(projectID)
 	if err != nil {
@@ -180,6 +186,23 @@ func (m *CloudRunModule) processProject(ctx context.Context, projectID string, l
 		gcpinternal.HandleGCPError(err, logger, globals.GCP_CLOUDRUN_MODULE_NAME,
 			fmt.Sprintf("Could not enumerate Cloud Run services in project %s", projectID))
 	} else {
+		// Inject inherited project-level IAM bindings into services
+		if projectPolicies != nil {
+			for i := range services {
+				for _, pb := range projectPolicies {
+					if !shared.IsInheritedRole("cloudrun", pb.Role) {
+						continue
+					}
+					for _, member := range pb.Members {
+						services[i].IAMBindings = append(services[i].IAMBindings, CloudRunService.IAMBinding{
+							Role:   pb.Role,
+							Member: member,
+							Source: "Project",
+						})
+					}
+				}
+			}
+		}
 		m.mu.Lock()
 		m.ProjectServices[projectID] = services
 		for _, svc := range services {
@@ -195,6 +218,23 @@ func (m *CloudRunModule) processProject(ctx context.Context, projectID string, l
 		gcpinternal.HandleGCPError(err, logger, globals.GCP_CLOUDRUN_MODULE_NAME,
 			fmt.Sprintf("Could not enumerate Cloud Run jobs in project %s", projectID))
 	} else {
+		// Inject inherited project-level IAM bindings into jobs
+		if projectPolicies != nil {
+			for i := range jobs {
+				for _, pb := range projectPolicies {
+					if !shared.IsInheritedRole("cloudrun", pb.Role) {
+						continue
+					}
+					for _, member := range pb.Members {
+						jobs[i].IAMBindings = append(jobs[i].IAMBindings, CloudRunService.IAMBinding{
+							Role:   pb.Role,
+							Member: member,
+							Source: "Project",
+						})
+					}
+				}
+			}
+		}
 		m.mu.Lock()
 		m.ProjectJobs[projectID] = jobs
 		for _, job := range jobs {
@@ -454,7 +494,7 @@ func (m *CloudRunModule) buildTablesForProject(projectID string, services []Clou
 	servicesHeader := []string{
 		"Project", "Type", "Name", "Region", "Status", "URL", "Ingress", "Public",
 		"Service Account", "SA Attack Paths", "Default SA", "Image", "VPC Access",
-		"Min/Max", "IAM Binding Role", "IAM Binding Principal",
+		"Min/Max", "IAM Binding Role", "IAM Binding Principal", "Binding Source",
 	}
 
 	var servicesBody [][]string
@@ -497,6 +537,7 @@ func (m *CloudRunModule) buildTablesForProject(projectID string, services []Clou
 					formatIngress(svc.IngressSettings), publicStatus, svc.ServiceAccount,
 					attackPaths, defaultSA, svc.ContainerImage, vpcAccess, scaling,
 					binding.Role, binding.Member,
+					shared.BindingSource(binding.Source),
 				})
 			}
 		} else {
@@ -505,7 +546,7 @@ func (m *CloudRunModule) buildTablesForProject(projectID string, services []Clou
 				m.GetProjectName(svc.ProjectID), "Service", svc.Name, svc.Region, status, svc.URL,
 				formatIngress(svc.IngressSettings), publicStatus, svc.ServiceAccount,
 				attackPaths, defaultSA, svc.ContainerImage, vpcAccess, scaling,
-				"-", "-",
+				"-", "-", "-",
 			})
 		}
 	}
@@ -522,7 +563,7 @@ func (m *CloudRunModule) buildTablesForProject(projectID string, services []Clou
 	jobsHeader := []string{
 		"Project", "Type", "Name", "Region", "Status", "Service Account", "SA Attack Paths", "Default SA",
 		"Image", "VPC Access", "Tasks", "Parallelism", "Last Execution",
-		"IAM Binding Role", "IAM Binding Principal",
+		"IAM Binding Role", "IAM Binding Principal", "Binding Source",
 	}
 
 	var jobsBody [][]string
@@ -565,6 +606,7 @@ func (m *CloudRunModule) buildTablesForProject(projectID string, services []Clou
 					job.ServiceAccount, jobAttackPaths, defaultSA, job.ContainerImage, vpcAccess,
 					fmt.Sprintf("%d", job.TaskCount), fmt.Sprintf("%d", job.Parallelism),
 					lastExec, binding.Role, binding.Member,
+					shared.BindingSource(binding.Source),
 				})
 			}
 		} else {
@@ -573,7 +615,7 @@ func (m *CloudRunModule) buildTablesForProject(projectID string, services []Clou
 				m.GetProjectName(job.ProjectID), "Job", job.Name, job.Region, status,
 				job.ServiceAccount, jobAttackPaths, defaultSA, job.ContainerImage, vpcAccess,
 				fmt.Sprintf("%d", job.TaskCount), fmt.Sprintf("%d", job.Parallelism),
-				lastExec, "-", "-",
+				lastExec, "-", "-", "-",
 			})
 		}
 	}

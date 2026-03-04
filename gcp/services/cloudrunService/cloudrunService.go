@@ -116,6 +116,7 @@ type SecretRefInfo struct {
 type IAMBinding struct {
 	Role   string
 	Member string
+	Source string // "Resource" (direct) or "Project" (inherited)
 }
 
 // JobInfo holds Cloud Run job details

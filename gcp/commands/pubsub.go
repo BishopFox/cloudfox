@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	IAMService "github.com/BishopFox/cloudfox/gcp/services/iamService"
 	PubSubService "github.com/BishopFox/cloudfox/gcp/services/pubsubService"
 	"github.com/BishopFox/cloudfox/gcp/shared"
 	"github.com/BishopFox/cloudfox/globals"
@@ -185,6 +186,40 @@ func (m *PubSubModule) processProject(ctx context.Context, projectID string, log
 			fmt.Sprintf("Could not enumerate Pub/Sub subscriptions in project %s", projectID))
 	} else {
 		subs = subsResult
+	}
+
+	// Inject inherited project-level IAM bindings
+	iamSvc := IAMService.New()
+	projectPolicies, projErr := iamSvc.Policies(projectID, "project")
+	if projErr == nil {
+		for i := range topics {
+			for _, pb := range projectPolicies {
+				if !shared.IsInheritedRole("topic", pb.Role) {
+					continue
+				}
+				for _, member := range pb.Members {
+					topics[i].IAMBindings = append(topics[i].IAMBindings, PubSubService.IAMBinding{
+						Role:   pb.Role,
+						Member: member,
+						Source: "Project",
+					})
+				}
+			}
+		}
+		for i := range subs {
+			for _, pb := range projectPolicies {
+				if !shared.IsInheritedRole("subscription", pb.Role) {
+					continue
+				}
+				for _, member := range pb.Members {
+					subs[i].IAMBindings = append(subs[i].IAMBindings, PubSubService.IAMBinding{
+						Role:   pb.Role,
+						Member: member,
+						Source: "Project",
+					})
+				}
+			}
+		}
 	}
 
 	// Thread-safe store per-project
@@ -615,6 +650,7 @@ func (m *PubSubModule) getTopicsHeader() []string {
 		"Public Publish",
 		"IAM Binding Role",
 		"IAM Binding Principal",
+		"Binding Source",
 	}
 }
 
@@ -633,6 +669,7 @@ func (m *PubSubModule) getSubsHeader() []string {
 		"Public Subscribe",
 		"IAM Binding Role",
 		"IAM Binding Principal",
+		"Binding Source",
 	}
 }
 
@@ -688,6 +725,7 @@ func (m *PubSubModule) topicsToTableBody(topics []PubSubService.TopicInfo) [][]s
 					publicPublish,
 					binding.Role,
 					binding.Member,
+					shared.BindingSource(binding.Source),
 				})
 			}
 		} else {
@@ -699,6 +737,7 @@ func (m *PubSubModule) topicsToTableBody(topics []PubSubService.TopicInfo) [][]s
 				kmsKey,
 				retention,
 				publicPublish,
+				"-",
 				"-",
 				"-",
 			})
@@ -782,6 +821,7 @@ func (m *PubSubModule) subsToTableBody(subs []PubSubService.SubscriptionInfo) []
 					publicSubscribe,
 					binding.Role,
 					binding.Member,
+					shared.BindingSource(binding.Source),
 				})
 			}
 		} else {
@@ -797,6 +837,7 @@ func (m *PubSubModule) subsToTableBody(subs []PubSubService.SubscriptionInfo) []
 				retention,
 				deadLetter,
 				publicSubscribe,
+				"-",
 				"-",
 				"-",
 			})

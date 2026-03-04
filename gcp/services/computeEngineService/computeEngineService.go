@@ -34,6 +34,7 @@ type ServiceAccountInfo struct {
 type IAMBinding struct {
 	Role   string `json:"role"`
 	Member string `json:"member"`
+	Source string `json:"source"` // "Resource" (direct) or "Project" (inherited)
 }
 
 // InstanceType represents the type/manager of an instance

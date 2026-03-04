@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	ComputeEngineService "github.com/BishopFox/cloudfox/gcp/services/computeEngineService"
+	IAMService "github.com/BishopFox/cloudfox/gcp/services/iamService"
 	"github.com/BishopFox/cloudfox/gcp/shared"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
@@ -146,6 +147,26 @@ func (m *InstancesModule) processProject(ctx context.Context, projectID string, 
 		gcpinternal.HandleGCPError(err, logger, globals.GCP_INSTANCES_MODULE_NAME,
 			fmt.Sprintf("Could not enumerate instances in project %s", projectID))
 		return
+	}
+
+	// Inject inherited project-level IAM bindings into each instance
+	iamSvc := IAMService.New()
+	projectPolicies, projErr := iamSvc.Policies(projectID, "project")
+	if projErr == nil {
+		for i := range instances {
+			for _, pb := range projectPolicies {
+				if !shared.IsInheritedRole("instance", pb.Role) {
+					continue
+				}
+				for _, member := range pb.Members {
+					instances[i].IAMBindings = append(instances[i].IAMBindings, ComputeEngineService.IAMBinding{
+						Role:   pb.Role,
+						Member: member,
+						Source: "Project",
+					})
+				}
+			}
+		}
 	}
 
 	// Thread-safe store per-project
@@ -716,6 +737,7 @@ func (m *InstancesModule) getInstancesTableHeader() []string {
 		// IAM
 		"IAM Binding Role",
 		"IAM Binding Principal",
+		"Binding Source",
 	}
 }
 
@@ -936,18 +958,20 @@ func (m *InstancesModule) instancesToTableBody(instances []ComputeEngineService.
 		// If instance has IAM bindings, create one row per binding
 		if len(instance.IAMBindings) > 0 {
 			for _, binding := range instance.IAMBindings {
-				row := make([]string, len(baseRow)+2)
+				row := make([]string, len(baseRow)+3)
 				copy(row, baseRow)
 				row[len(baseRow)] = binding.Role
 				row[len(baseRow)+1] = binding.Member
+				row[len(baseRow)+2] = shared.BindingSource(binding.Source)
 				body = append(body, row)
 			}
 		} else {
 			// No IAM bindings - single row
-			row := make([]string, len(baseRow)+2)
+			row := make([]string, len(baseRow)+3)
 			copy(row, baseRow)
 			row[len(baseRow)] = "-"
 			row[len(baseRow)+1] = "-"
+			row[len(baseRow)+2] = "-"
 			body = append(body, row)
 		}
 	}

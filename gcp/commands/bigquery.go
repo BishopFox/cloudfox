@@ -7,6 +7,8 @@ import (
 	"sync"
 
 	BigQueryService "github.com/BishopFox/cloudfox/gcp/services/bigqueryService"
+	IAMService "github.com/BishopFox/cloudfox/gcp/services/iamService"
+	"github.com/BishopFox/cloudfox/gcp/shared"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	gcpinternal "github.com/BishopFox/cloudfox/internal/gcp"
@@ -135,6 +137,40 @@ func (m *BigQueryModule) processProject(ctx context.Context, projectID string, l
 		return
 	}
 
+	// Inject inherited project-level IAM bindings
+	iamSvc := IAMService.New()
+	projectPolicies, projErr := iamSvc.Policies(projectID, "project")
+	if projErr == nil {
+		// Inject into datasets (AccessEntries)
+		for i := range result.Datasets {
+			for _, pb := range projectPolicies {
+				if !shared.IsInheritedRole("dataset", pb.Role) {
+					continue
+				}
+				for _, member := range pb.Members {
+					result.Datasets[i].AccessEntries = append(result.Datasets[i].AccessEntries, BigQueryService.AccessEntry{
+						Role:   pb.Role,
+						Entity: member,
+						Source: "Project",
+					})
+				}
+			}
+		}
+		// Inject into tables
+		for i := range result.Tables {
+			for _, pb := range projectPolicies {
+				if !shared.IsInheritedRole("table", pb.Role) {
+					continue
+				}
+				result.Tables[i].IAMBindings = append(result.Tables[i].IAMBindings, BigQueryService.TableIAMBinding{
+					Role:    pb.Role,
+					Members: pb.Members,
+					Source:  "Project",
+				})
+			}
+		}
+	}
+
 	// Thread-safe store per-project
 	m.mu.Lock()
 	m.ProjectDatasets[projectID] = result.Datasets
@@ -261,6 +297,7 @@ func (m *BigQueryModule) getDatasetHeader() []string {
 		"IAM Binding Role",
 		"Principal Type",
 		"IAM Binding Principal",
+		"Binding Source",
 	}
 }
 
@@ -276,6 +313,7 @@ func (m *BigQueryModule) getTableHeader() []string {
 		"Public",
 		"IAM Binding Role",
 		"IAM Binding Principal",
+		"Binding Source",
 	}
 }
 
@@ -306,6 +344,7 @@ func (m *BigQueryModule) datasetsToTableBody(datasets []BigQueryService.Bigquery
 					role,
 					memberType,
 					entry.Entity,
+					shared.BindingSource(entry.Source),
 				})
 			}
 		} else {
@@ -315,6 +354,7 @@ func (m *BigQueryModule) datasetsToTableBody(datasets []BigQueryService.Bigquery
 				dataset.Location,
 				publicStatus,
 				dataset.EncryptionType,
+				"-",
 				"-",
 				"-",
 				"-",
@@ -344,6 +384,7 @@ func (m *BigQueryModule) tablesToTableBody(tables []BigQueryService.BigqueryTabl
 				publicStatus,
 				"-",
 				"-",
+				"-",
 			})
 		} else {
 			for _, binding := range table.IAMBindings {
@@ -358,6 +399,7 @@ func (m *BigQueryModule) tablesToTableBody(tables []BigQueryService.BigqueryTabl
 						publicStatus,
 						binding.Role,
 						member,
+						shared.BindingSource(binding.Source),
 					})
 				}
 			}

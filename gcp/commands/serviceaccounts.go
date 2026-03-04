@@ -40,6 +40,35 @@ Column Descriptions:
 type SAIAMBinding struct {
 	Role   string
 	Member string
+	Source string // "SA" (direct on SA resource) or "Project" (inherited from project IAM)
+}
+
+// saAccessRoles are project-level roles that implicitly grant access to all
+// service accounts in the project. When a principal holds one of these at the
+// project level, they can interact with every SA in that project.
+var saAccessRoles = map[string]bool{
+	"roles/owner":                          true,
+	"roles/editor":                         true,
+	"roles/iam.serviceAccountAdmin":        true,
+	"roles/iam.serviceAccountKeyAdmin":     true,
+	"roles/iam.serviceAccountTokenCreator": true,
+	"roles/iam.serviceAccountUser":         true,
+	"roles/iam.workloadIdentityUser":       true,
+	"roles/iam.serviceAccountOpenIdTokenCreator": true,
+}
+
+// saRelevantPermissions are individual permissions that grant meaningful access
+// to service accounts. Custom roles containing any of these should be treated
+// as SA-access roles for inherited binding purposes.
+var saRelevantPermissions = map[string]bool{
+	"iam.serviceAccounts.getAccessToken":     true,
+	"iam.serviceAccountKeys.create":          true,
+	"iam.serviceAccounts.signBlob":           true,
+	"iam.serviceAccounts.signJwt":            true,
+	"iam.serviceAccounts.implicitDelegation": true,
+	"iam.serviceAccounts.actAs":              true,
+	"iam.serviceAccounts.setIamPolicy":       true,
+	"iam.serviceAccounts.getOpenIdToken":     true,
 }
 
 // ServiceAccountAnalysis extends ServiceAccountInfo with security analysis
@@ -198,7 +227,7 @@ func (m *ServiceAccountsModule) processProject(ctx context.Context, projectID st
 		// Silently skip if we can't get roles - user may not have IAM permissions
 	}
 
-	// Get raw SA-level IAM bindings for each service account
+	// Get raw SA-level IAM bindings for each service account (direct bindings)
 	saIAMBindingsMap := make(map[string][]SAIAMBinding)
 	bindingCtx := context.Background()
 	for _, sa := range serviceAccounts {
@@ -209,6 +238,53 @@ func (m *ServiceAccountsModule) processProject(ctx context.Context, projectID st
 					saIAMBindingsMap[sa.Email] = append(saIAMBindingsMap[sa.Email], SAIAMBinding{
 						Role:   pb.Role,
 						Member: member,
+						Source: "SA",
+					})
+				}
+			}
+		}
+	}
+
+	// Get project-level IAM bindings that grant implicit access to all SAs.
+	// These are inherited, not set directly on the SA resource.
+	projectBindings, err := iamService.Policies(projectID, "project")
+	if err == nil {
+		// Cache for custom role resolution so we only resolve each role once
+		resolvedRoles := make(map[string]bool) // role -> hasSAPermissions
+		roleCtx := context.Background()
+
+		for _, pb := range projectBindings {
+			include := saAccessRoles[pb.Role]
+
+			// For roles not in the hardcoded list, resolve permissions to check
+			// for SA-relevant permissions (catches custom roles like privesc_02_createSAKey)
+			if !include {
+				if cached, ok := resolvedRoles[pb.Role]; ok {
+					include = cached
+				} else {
+					perms, permErr := iamService.GetRolePermissions(roleCtx, pb.Role)
+					if permErr == nil {
+						for _, p := range perms {
+							if saRelevantPermissions[p] {
+								include = true
+								break
+							}
+						}
+					}
+					resolvedRoles[pb.Role] = include
+				}
+			}
+
+			if !include {
+				continue
+			}
+			for _, member := range pb.Members {
+				// Add this inherited binding to every SA in the project
+				for _, sa := range serviceAccounts {
+					saIAMBindingsMap[sa.Email] = append(saIAMBindingsMap[sa.Email], SAIAMBinding{
+						Role:   pb.Role,
+						Member: member,
+						Source: "Project",
 					})
 				}
 			}
@@ -510,6 +586,7 @@ func (m *ServiceAccountsModule) getTableHeader() []string {
 		// Impersonation
 		"IAM Binding Role",
 		"IAM Binding Principal",
+		"Binding Source",
 	}
 }
 
@@ -587,7 +664,7 @@ func (m *ServiceAccountsModule) serviceAccountsToTableBody(serviceAccounts []Ser
 						m.GetProjectName(sa.ProjectID), sa.Email, sa.DisplayName, disabled, defaultSA,
 						userKeys, googleKeys, oldestKeyAge,
 						dwd, rolesDisplay, attackPaths,
-						binding.Role, binding.Member,
+						binding.Role, binding.Member, binding.Source,
 					})
 				}
 			}
@@ -598,7 +675,7 @@ func (m *ServiceAccountsModule) serviceAccountsToTableBody(serviceAccounts []Ser
 				m.GetProjectName(sa.ProjectID), sa.Email, sa.DisplayName, disabled, defaultSA,
 				userKeys, googleKeys, oldestKeyAge,
 				dwd, rolesDisplay, attackPaths,
-				"-", "-",
+				"-", "-", "-",
 			})
 		}
 	}

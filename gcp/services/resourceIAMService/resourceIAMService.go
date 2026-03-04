@@ -206,8 +206,8 @@ func (s *ResourceIAMService) GetBucketIAM(ctx context.Context, projectID string)
 					ProjectID:    projectID,
 					Role:         string(role),
 					Member:       member,
-					MemberType:   determineMemberType(member),
-					MemberEmail:  extractEmail(member),
+					MemberType:   DetermineMemberType(member),
+					MemberEmail:  ExtractEmail(member),
 					IsPublic:     isPublicMember(member),
 				}
 				bindings = append(bindings, binding)
@@ -280,7 +280,7 @@ func (s *ResourceIAMService) GetBigQueryDatasetIAM(ctx context.Context, projectI
 					memberType = "SpecialGroup"
 				}
 			case bigquery.IAMMemberEntity:
-				memberType = determineMemberType(access.Entity)
+				memberType = DetermineMemberType(access.Entity)
 				isPublic = isPublicMember(access.Entity)
 			}
 
@@ -296,7 +296,7 @@ func (s *ResourceIAMService) GetBigQueryDatasetIAM(ctx context.Context, projectI
 				Role:         string(access.Role),
 				Member:       member,
 				MemberType:   memberType,
-				MemberEmail:  extractEmail(member),
+				MemberEmail:  ExtractEmail(member),
 				IsPublic:     isPublic,
 			}
 			bindings = append(bindings, binding)
@@ -349,8 +349,8 @@ func (s *ResourceIAMService) GetPubSubIAM(ctx context.Context, projectID string)
 					ProjectID:    projectID,
 					Role:         string(role),
 					Member:       member,
-					MemberType:   determineMemberType(member),
-					MemberEmail:  extractEmail(member),
+					MemberType:   DetermineMemberType(member),
+					MemberEmail:  ExtractEmail(member),
 					IsPublic:     isPublicMember(member),
 				}
 				bindings = append(bindings, binding)
@@ -385,8 +385,8 @@ func (s *ResourceIAMService) GetPubSubIAM(ctx context.Context, projectID string)
 					ProjectID:    projectID,
 					Role:         string(role),
 					Member:       member,
-					MemberType:   determineMemberType(member),
-					MemberEmail:  extractEmail(member),
+					MemberType:   DetermineMemberType(member),
+					MemberEmail:  ExtractEmail(member),
 					IsPublic:     isPublicMember(member),
 				}
 				bindings = append(bindings, binding)
@@ -443,8 +443,8 @@ func (s *ResourceIAMService) GetSecretManagerIAM(ctx context.Context, projectID 
 					ProjectID:    projectID,
 					Role:         binding.Role,
 					Member:       member,
-					MemberType:   determineMemberType(member),
-					MemberEmail:  extractEmail(member),
+					MemberType:   DetermineMemberType(member),
+					MemberEmail:  ExtractEmail(member),
 					IsPublic:     isPublicMember(member),
 				}
 				if binding.Condition != nil {
@@ -521,8 +521,8 @@ func (s *ResourceIAMService) GetKMSIAM(ctx context.Context, projectID string) ([
 							ProjectID:    projectID,
 							Role:         string(role),
 							Member:       member,
-							MemberType:   determineMemberType(member),
-							MemberEmail:  extractEmail(member),
+							MemberType:   DetermineMemberType(member),
+							MemberEmail:  ExtractEmail(member),
 							IsPublic:     isPublicMember(member),
 						}
 						bindings = append(bindings, binding)
@@ -568,8 +568,8 @@ func (s *ResourceIAMService) GetCloudFunctionsIAM(ctx context.Context, projectID
 					ProjectID:    projectID,
 					Role:         binding.Role,
 					Member:       member,
-					MemberType:   determineMemberType(member),
-					MemberEmail:  extractEmail(member),
+					MemberType:   DetermineMemberType(member),
+					MemberEmail:  ExtractEmail(member),
 					IsPublic:     isPublicMember(member),
 				}
 				if binding.Condition != nil {
@@ -618,8 +618,8 @@ func (s *ResourceIAMService) GetCloudRunIAM(ctx context.Context, projectID strin
 					ProjectID:    projectID,
 					Role:         binding.Role,
 					Member:       member,
-					MemberType:   determineMemberType(member),
-					MemberEmail:  extractEmail(member),
+					MemberType:   DetermineMemberType(member),
+					MemberEmail:  ExtractEmail(member),
 					IsPublic:     isPublicMember(member),
 				}
 				if binding.Condition != nil {
@@ -669,8 +669,8 @@ func (s *ResourceIAMService) GetServiceAccountIAM(ctx context.Context, projectID
 						ProjectID:    projectID,
 						Role:         binding.Role,
 						Member:       member,
-						MemberType:   determineMemberType(member),
-						MemberEmail:  extractEmail(member),
+						MemberType:   DetermineMemberType(member),
+						MemberEmail:  ExtractEmail(member),
 						IsPublic:     isPublicMember(member),
 					}
 					if binding.Condition != nil {
@@ -732,8 +732,8 @@ func (s *ResourceIAMService) GetComputeInstanceIAM(ctx context.Context, projectI
 							ProjectID:    projectID,
 							Role:         binding.Role,
 							Member:       member,
-							MemberType:   determineMemberType(member),
-							MemberEmail:  extractEmail(member),
+							MemberType:   DetermineMemberType(member),
+							MemberEmail:  ExtractEmail(member),
 							IsPublic:     isPublicMember(member),
 						}
 						if binding.Condition != nil {
@@ -767,7 +767,8 @@ func extractZoneFromURL(zoneURL string) string {
 	return ""
 }
 
-func determineMemberType(member string) string {
+// DetermineMemberType classifies an IAM member string into its type.
+func DetermineMemberType(member string) string {
 	switch {
 	case member == "allUsers":
 		return "allUsers"
@@ -790,7 +791,8 @@ func determineMemberType(member string) string {
 	}
 }
 
-func extractEmail(member string) string {
+// ExtractEmail strips the member type prefix from an IAM member string.
+func ExtractEmail(member string) string {
 	if strings.Contains(member, ":") {
 		parts := strings.SplitN(member, ":", 2)
 		if len(parts) == 2 {

@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	CloudStorageService "github.com/BishopFox/cloudfox/gcp/services/cloudStorageService"
+	IAMService "github.com/BishopFox/cloudfox/gcp/services/iamService"
 	"github.com/BishopFox/cloudfox/gcp/shared"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
@@ -159,6 +160,24 @@ func (m *BucketsModule) processProject(ctx context.Context, projectID string, lo
 		gcpinternal.HandleGCPError(err, logger, globals.GCP_STORAGE_MODULE_NAME,
 			fmt.Sprintf("Could not enumerate buckets in project %s", projectID))
 		return
+	}
+
+	// Inject inherited project-level IAM bindings into each bucket
+	iamSvc := IAMService.New()
+	projectPolicies, projErr := iamSvc.Policies(projectID, "project")
+	if projErr == nil {
+		for i := range buckets {
+			for _, pb := range projectPolicies {
+				if !shared.IsInheritedRole("bucket", pb.Role) {
+					continue
+				}
+				buckets[i].IAMBindings = append(buckets[i].IAMBindings, CloudStorageService.IAMBinding{
+					Role:    pb.Role,
+					Members: pb.Members,
+					Source:  "Project",
+				})
+			}
+		}
 	}
 
 	// Thread-safe store per-project
@@ -377,6 +396,7 @@ func (m *BucketsModule) getTableHeader() []string {
 		"IAM Binding Role",
 		"Principal Type",
 		"IAM Binding Principal",
+		"Binding Source",
 		"Principal Attack Paths",
 	}
 }
@@ -454,6 +474,7 @@ func (m *BucketsModule) bucketsToTableBody(buckets []CloudStorageService.BucketI
 						binding.Role,
 						memberType,
 						member,
+						shared.BindingSource(binding.Source),
 						attackPaths,
 					})
 				}
@@ -471,6 +492,7 @@ func (m *BucketsModule) bucketsToTableBody(buckets []CloudStorageService.BucketI
 				lifecycleDisplay,
 				shared.BoolToYesNo(bucket.VersioningEnabled),
 				encryptionDisplay,
+				"-",
 				"-",
 				"-",
 				"-",

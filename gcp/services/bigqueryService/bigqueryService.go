@@ -18,6 +18,7 @@ type AccessEntry struct {
 	Role       string `json:"role"`       // OWNER, WRITER, READER
 	EntityType string `json:"entityType"` // User, Group, Domain, ServiceAccount, etc.
 	Entity     string `json:"entity"`     // The actual entity identifier
+	Source     string `json:"source"`     // "Resource" (direct) or "Project" (inherited)
 }
 
 // BigqueryDataset represents a dataset in BigQuery with security-relevant fields
@@ -98,6 +99,7 @@ type BigqueryTable struct {
 type TableIAMBinding struct {
 	Role    string   `json:"role"`
 	Members []string `json:"members"`
+	Source  string   `json:"source"` // "Resource" (direct) or "Project" (inherited)
 }
 
 // CombinedBigqueryData represents both datasets and tables within a project

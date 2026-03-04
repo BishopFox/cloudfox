@@ -35,6 +35,7 @@ func (ps *PubSubService) getService(ctx context.Context) (*pubsub.Service, error
 type IAMBinding struct {
 	Role   string `json:"role"`
 	Member string `json:"member"`
+	Source string `json:"source"` // "Resource" (direct) or "Project" (inherited)
 }
 
 // TopicInfo holds Pub/Sub topic details with security-relevant information

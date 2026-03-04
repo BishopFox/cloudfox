@@ -47,6 +47,7 @@ type KeyRingInfo struct {
 type IAMBinding struct {
 	Role   string
 	Member string
+	Source string // "Resource" (direct) or "Project" (inherited)
 }
 
 // CryptoKeyInfo holds KMS crypto key details with security-relevant information

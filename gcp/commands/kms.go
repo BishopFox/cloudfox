@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	KMSService "github.com/BishopFox/cloudfox/gcp/services/kmsService"
+	IAMService "github.com/BishopFox/cloudfox/gcp/services/iamService"
 	"github.com/BishopFox/cloudfox/gcp/shared"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
@@ -184,6 +185,26 @@ func (m *KMSModule) processProject(ctx context.Context, projectID string, logger
 			fmt.Sprintf("Could not enumerate KMS keys in project %s", projectID))
 	}
 
+	// Inject inherited project-level IAM bindings into each key
+	iamSvc := IAMService.New()
+	projectPolicies, projErr := iamSvc.Policies(projectID, "project")
+	if projErr == nil {
+		for i := range keys {
+			for _, pb := range projectPolicies {
+				if !shared.IsInheritedRole("cryptoKey", pb.Role) {
+					continue
+				}
+				for _, member := range pb.Members {
+					keys[i].IAMBindings = append(keys[i].IAMBindings, KMSService.IAMBinding{
+						Role:   pb.Role,
+						Member: member,
+						Source: "Project",
+					})
+				}
+			}
+		}
+	}
+
 	// Thread-safe store per-project
 	m.mu.Lock()
 	m.ProjectKeyRings[projectID] = keyRings
@@ -295,6 +316,7 @@ func (m *KMSModule) getKeysHeader() []string {
 		"Public Decrypt",
 		"IAM Binding Role",
 		"IAM Binding Principal",
+		"Binding Source",
 	}
 }
 
@@ -341,6 +363,7 @@ func (m *KMSModule) keysToTableBody(keys []KMSService.CryptoKeyInfo) [][]string 
 					shared.BoolToYesNo(key.IsPublicDecrypt),
 					binding.Role,
 					binding.Member,
+					shared.BindingSource(binding.Source),
 				})
 			}
 		} else {
@@ -357,6 +380,7 @@ func (m *KMSModule) keysToTableBody(keys []KMSService.CryptoKeyInfo) [][]string 
 				rotation,
 				shared.BoolToYesNo(key.IsPublicEncrypt),
 				shared.BoolToYesNo(key.IsPublicDecrypt),
+				"-",
 				"-",
 				"-",
 			})
