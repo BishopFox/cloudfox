@@ -9,6 +9,7 @@ import (
 
 	IAMService "github.com/BishopFox/cloudfox/gcp/services/iamService"
 	orgsservice "github.com/BishopFox/cloudfox/gcp/services/organizationsService"
+	resourceiamservice "github.com/BishopFox/cloudfox/gcp/services/resourceIAMService"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	gcpinternal "github.com/BishopFox/cloudfox/internal/gcp"
@@ -386,6 +387,138 @@ func (m *PermissionsModule) processProject(ctx context.Context, projectID string
 		}
 	}
 
+	// Enumerate SA-level IAM bindings (resource-level permissions on service accounts)
+	saList, saErr := iamService.ServiceAccountsBasic(projectID)
+	if saErr == nil {
+		saCtx := context.Background()
+		saBindingCount := 0
+		for _, sa := range saList {
+			saBindings, err := iamService.GetServiceAccountIAMBindings(saCtx, sa.Email, projectID)
+			if err != nil {
+				continue
+			}
+			for _, binding := range saBindings {
+				// Get permissions for this role
+				permissions, err := iamService.GetRolePermissions(saCtx, binding.Role)
+				if err != nil {
+					continue
+				}
+
+				for _, member := range binding.Members {
+					memberType := IAMService.GetMemberType(member)
+					memberEmail := extractMemberEmail(member)
+
+					for _, perm := range permissions {
+						isHighPriv := isHighPrivilegePermission(perm)
+
+						exploded := ExplodedPermission{
+							Entity:            member,
+							EntityType:        memberType,
+							EntityEmail:       memberEmail,
+							Permission:        perm,
+							Role:              binding.Role,
+							RoleType:          IAMService.GetRoleType(binding.Role),
+							ResourceScope:     fmt.Sprintf("serviceAccount/%s", sa.Email),
+							ResourceScopeType: "serviceAccount",
+							ResourceScopeID:   sa.Email,
+							ResourceScopeName: sa.Email,
+							IsInherited:       false,
+							HasCondition:      binding.HasCondition,
+							EffectiveProject:  projectID,
+							ProjectName:       m.GetProjectName(projectID),
+							IsHighPrivilege:   isHighPriv,
+						}
+
+						if binding.ConditionInfo != nil {
+							exploded.ConditionTitle = binding.ConditionInfo.Title
+							exploded.Condition = binding.ConditionInfo.Title
+						}
+
+						// Detect cross-project access
+						if memberType == "ServiceAccount" {
+							saProject := extractProjectFromPrincipal(memberEmail, m.OrgCache)
+							if saProject != "" && saProject != projectID {
+								exploded.IsCrossProject = true
+								exploded.SourceProject = saProject
+							}
+						}
+
+						projectPerms = append(projectPerms, exploded)
+						saBindingCount++
+					}
+				}
+			}
+		}
+		if saBindingCount > 0 && globals.GCP_VERBOSITY >= globals.GCP_VERBOSE_ERRORS {
+			logger.InfoM(fmt.Sprintf("Enumerated %d SA-level permission entries across %d service account(s)", saBindingCount, len(saList)), globals.GCP_PERMISSIONS_MODULE_NAME)
+		}
+	}
+
+	// Enumerate resource-level IAM bindings (buckets, datasets, secrets, KMS, functions, Cloud Run, instances)
+	resourceIAMSvc := resourceiamservice.New()
+	resourceBindings, resourceErr := resourceIAMSvc.GetAllResourceIAM(ctx, projectID)
+	if resourceErr == nil && len(resourceBindings) > 0 {
+		resCtx := context.Background()
+		resourcePermCount := 0
+		for _, rb := range resourceBindings {
+			// Skip serviceAccount type here since we already handled it above
+			if rb.ResourceType == "serviceAccount" {
+				continue
+			}
+
+			// Get permissions for this role
+			permissions, err := iamService.GetRolePermissions(resCtx, rb.Role)
+			if err != nil {
+				continue
+			}
+
+			memberType := IAMService.GetMemberType(rb.Member)
+			memberEmail := extractMemberEmail(rb.Member)
+
+			for _, perm := range permissions {
+				isHighPriv := isHighPrivilegePermission(perm)
+
+				exploded := ExplodedPermission{
+					Entity:            rb.Member,
+					EntityType:        memberType,
+					EntityEmail:       memberEmail,
+					Permission:        perm,
+					Role:              rb.Role,
+					RoleType:          IAMService.GetRoleType(rb.Role),
+					ResourceScope:     fmt.Sprintf("%s/%s", rb.ResourceType, rb.ResourceID),
+					ResourceScopeType: rb.ResourceType,
+					ResourceScopeID:   rb.ResourceID,
+					ResourceScopeName: rb.ResourceName,
+					IsInherited:       false,
+					HasCondition:      rb.HasCondition,
+					EffectiveProject:  projectID,
+					ProjectName:       m.GetProjectName(projectID),
+					IsHighPrivilege:   isHighPriv,
+				}
+
+				if rb.HasCondition && rb.ConditionTitle != "" {
+					exploded.ConditionTitle = rb.ConditionTitle
+					exploded.Condition = rb.ConditionTitle
+				}
+
+				// Detect cross-project access
+				if memberType == "ServiceAccount" {
+					saProject := extractProjectFromPrincipal(memberEmail, m.OrgCache)
+					if saProject != "" && saProject != projectID {
+						exploded.IsCrossProject = true
+						exploded.SourceProject = saProject
+					}
+				}
+
+				projectPerms = append(projectPerms, exploded)
+				resourcePermCount++
+			}
+		}
+		if resourcePermCount > 0 && globals.GCP_VERBOSITY >= globals.GCP_VERBOSE_ERRORS {
+			logger.InfoM(fmt.Sprintf("Enumerated %d resource-level permission entries in project %s", resourcePermCount, projectID), globals.GCP_PERMISSIONS_MODULE_NAME)
+		}
+	}
+
 	m.mu.Lock()
 	// Store per-project permissions
 	m.ProjectPerms[projectID] = append(m.ProjectPerms[projectID], projectPerms...)
@@ -435,9 +568,21 @@ func (m *PermissionsModule) getScopeName(scopeType, scopeID string) string {
 		return scopeID
 	case "folder":
 		return scopeID // Could be enhanced to lookup folder names
+	case "serviceAccount", "bucket", "dataset", "topic", "subscription",
+		"secret", "cryptoKey", "function", "cloudrun", "instance":
+		return scopeID // Resource ID is the scope name
 	default:
 		return scopeID
 	}
+}
+
+// extractMemberEmail strips the type prefix from a member string (e.g., "user:foo@bar.com" -> "foo@bar.com")
+func extractMemberEmail(member string) string {
+	parts := strings.SplitN(member, ":", 2)
+	if len(parts) == 2 {
+		return parts[1]
+	}
+	return member
 }
 
 func parseConditionTitle(condition string) string {

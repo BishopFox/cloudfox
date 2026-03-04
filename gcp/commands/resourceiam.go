@@ -30,6 +30,8 @@ Supported Resource Types:
 - Cloud KMS keys
 - Cloud Functions
 - Cloud Run services
+- Service Accounts
+- Compute Instances
 
 Key Findings:
 - Public access (allUsers/allAuthenticatedUsers)
@@ -275,6 +277,28 @@ func (m *ResourceIAMModule) addResourceToLoot(b resourceiamservice.ResourceIAMBi
 			b.ResourceID, b.ProjectID,
 			b.ResourceID, b.ProjectID,
 		)
+	case "serviceAccount":
+		lootFile.Contents += fmt.Sprintf(
+			"# Service Account: %s (Member: %s, Role: %s)\n"+
+				"gcloud iam service-accounts describe %s --project=%s\n"+
+				"gcloud iam service-accounts get-iam-policy %s --project=%s\n"+
+				"gcloud iam service-accounts keys list --iam-account=%s --project=%s\n\n",
+			b.ResourceID, b.Member, b.Role,
+			b.ResourceID, b.ProjectID,
+			b.ResourceID, b.ProjectID,
+			b.ResourceID, b.ProjectID,
+		)
+	case "instance":
+		// Extract zone from ResourceName (projects/{proj}/zones/{zone}/instances/{name})
+		zone := extractZoneFromResourceName(b.ResourceName)
+		lootFile.Contents += fmt.Sprintf(
+			"# Compute Instance: %s (Member: %s, Role: %s)\n"+
+				"gcloud compute instances describe %s --zone=%s --project=%s\n"+
+				"gcloud compute instances get-iam-policy %s --zone=%s --project=%s\n\n",
+			b.ResourceID, b.Member, b.Role,
+			b.ResourceID, zone, b.ProjectID,
+			b.ResourceID, zone, b.ProjectID,
+		)
 	}
 }
 
@@ -306,7 +330,30 @@ func (m *ResourceIAMModule) addPublicResourceToLoot(b resourceiamservice.Resourc
 			"# Cloud Run service may be publicly accessible\ngcloud run services describe %s --project=%s\n\n",
 			b.ResourceID, b.ProjectID,
 		)
+	case "serviceAccount":
+		lootFile.Contents += fmt.Sprintf(
+			"# Service account has public IAM binding\ngcloud iam service-accounts describe %s --project=%s\n\n",
+			b.ResourceID, b.ProjectID,
+		)
+	case "instance":
+		zone := extractZoneFromResourceName(b.ResourceName)
+		lootFile.Contents += fmt.Sprintf(
+			"# Compute instance has public IAM binding\ngcloud compute instances describe %s --zone=%s --project=%s\n\n",
+			b.ResourceID, zone, b.ProjectID,
+		)
 	}
+}
+
+// extractZoneFromResourceName extracts the zone from a resource name like
+// "projects/{proj}/zones/{zone}/instances/{name}"
+func extractZoneFromResourceName(resourceName string) string {
+	parts := strings.Split(resourceName, "/")
+	for i, part := range parts {
+		if part == "zones" && i+1 < len(parts) {
+			return parts[i+1]
+		}
+	}
+	return ""
 }
 
 // resourceKey creates a unique key for a resource to group bindings

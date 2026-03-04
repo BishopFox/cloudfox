@@ -13,11 +13,13 @@ import (
 	regionservice "github.com/BishopFox/cloudfox/gcp/services/regionService"
 	gcpinternal "github.com/BishopFox/cloudfox/internal/gcp"
 	"github.com/BishopFox/cloudfox/internal/gcp/sdk"
-	run "google.golang.org/api/run/v1"
-	secretmanager "google.golang.org/api/secretmanager/v1"
+	cloudfunctions "google.golang.org/api/cloudfunctions/v1"
+	compute "google.golang.org/api/compute/v1"
+	iam "google.golang.org/api/iam/v1"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
-	cloudfunctions "google.golang.org/api/cloudfunctions/v1"
+	run "google.golang.org/api/run/v1"
+	secretmanager "google.golang.org/api/secretmanager/v1"
 )
 
 // ResourceIAMService handles enumeration of resource-level IAM policies
@@ -65,6 +67,22 @@ func (s *ResourceIAMService) getCloudRunService(ctx context.Context) (*run.APISe
 		return sdk.CachedGetCloudRunService(ctx, s.session)
 	}
 	return run.NewService(ctx)
+}
+
+// getIAMService returns a cached IAM service
+func (s *ResourceIAMService) getIAMService(ctx context.Context) (*iam.Service, error) {
+	if s.session != nil {
+		return sdk.CachedGetIAMService(ctx, s.session)
+	}
+	return iam.NewService(ctx)
+}
+
+// getComputeService returns a cached Compute Engine service
+func (s *ResourceIAMService) getComputeService(ctx context.Context) (*compute.Service, error) {
+	if s.session != nil {
+		return sdk.CachedGetComputeService(ctx, s.session)
+	}
+	return compute.NewService(ctx)
 }
 
 // ResourceIAMBinding represents an IAM binding on a specific resource
@@ -127,6 +145,18 @@ func (s *ResourceIAMService) GetAllResourceIAM(ctx context.Context, projectID st
 	runBindings, err := s.GetCloudRunIAM(ctx, projectID)
 	if err == nil {
 		allBindings = append(allBindings, runBindings...)
+	}
+
+	// Get Service Account IAM
+	saBindings, err := s.GetServiceAccountIAM(ctx, projectID)
+	if err == nil {
+		allBindings = append(allBindings, saBindings...)
+	}
+
+	// Get Compute Instance IAM
+	instanceBindings, err := s.GetComputeInstanceIAM(ctx, projectID)
+	if err == nil {
+		allBindings = append(allBindings, instanceBindings...)
 	}
 
 	return allBindings, nil
@@ -605,7 +635,137 @@ func (s *ResourceIAMService) GetCloudRunIAM(ctx context.Context, projectID strin
 	return bindings, nil
 }
 
+// GetServiceAccountIAM enumerates IAM policies on service accounts
+func (s *ResourceIAMService) GetServiceAccountIAM(ctx context.Context, projectID string) ([]ResourceIAMBinding, error) {
+	var bindings []ResourceIAMBinding
+
+	iamSvc, err := s.getIAMService(ctx)
+	if err != nil {
+		return nil, gcpinternal.ParseGCPError(err, "iam.googleapis.com")
+	}
+
+	// List all service accounts in the project
+	req := iamSvc.Projects.ServiceAccounts.List("projects/" + projectID)
+	err = req.Pages(ctx, func(page *iam.ListServiceAccountsResponse) error {
+		for _, sa := range page.Accounts {
+			// Get IAM policy for this service account
+			saResource := fmt.Sprintf("projects/%s/serviceAccounts/%s", projectID, sa.Email)
+			policy, err := iamSvc.Projects.ServiceAccounts.GetIamPolicy(saResource).Context(ctx).Do()
+			if err != nil {
+				continue
+			}
+
+			// Skip service accounts with no bindings
+			if len(policy.Bindings) == 0 {
+				continue
+			}
+
+			for _, binding := range policy.Bindings {
+				for _, member := range binding.Members {
+					b := ResourceIAMBinding{
+						ResourceType: "serviceAccount",
+						ResourceName: saResource,
+						ResourceID:   sa.Email,
+						ProjectID:    projectID,
+						Role:         binding.Role,
+						Member:       member,
+						MemberType:   determineMemberType(member),
+						MemberEmail:  extractEmail(member),
+						IsPublic:     isPublicMember(member),
+					}
+					if binding.Condition != nil {
+						b.HasCondition = true
+						b.ConditionTitle = binding.Condition.Title
+						b.ConditionExpression = binding.Condition.Expression
+					}
+					bindings = append(bindings, b)
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return bindings, gcpinternal.ParseGCPError(err, "iam.googleapis.com")
+	}
+
+	return bindings, nil
+}
+
+// GetComputeInstanceIAM enumerates IAM policies on Compute Engine instances
+func (s *ResourceIAMService) GetComputeInstanceIAM(ctx context.Context, projectID string) ([]ResourceIAMBinding, error) {
+	var bindings []ResourceIAMBinding
+
+	computeSvc, err := s.getComputeService(ctx)
+	if err != nil {
+		return nil, gcpinternal.ParseGCPError(err, "compute.googleapis.com")
+	}
+
+	// List all instances across all zones using AggregatedList
+	req := computeSvc.Instances.AggregatedList(projectID)
+	err = req.Pages(ctx, func(page *compute.InstanceAggregatedList) error {
+		for _, scopedList := range page.Items {
+			for _, instance := range scopedList.Instances {
+				// Extract zone from the instance's zone URL
+				zone := extractZoneFromURL(instance.Zone)
+				if zone == "" {
+					continue
+				}
+
+				// Get IAM policy for this instance
+				policy, err := computeSvc.Instances.GetIamPolicy(projectID, zone, instance.Name).Context(ctx).Do()
+				if err != nil {
+					continue
+				}
+
+				// Skip instances with no bindings
+				if len(policy.Bindings) == 0 {
+					continue
+				}
+
+				resourceName := fmt.Sprintf("projects/%s/zones/%s/instances/%s", projectID, zone, instance.Name)
+				for _, binding := range policy.Bindings {
+					for _, member := range binding.Members {
+						b := ResourceIAMBinding{
+							ResourceType: "instance",
+							ResourceName: resourceName,
+							ResourceID:   instance.Name,
+							ProjectID:    projectID,
+							Role:         binding.Role,
+							Member:       member,
+							MemberType:   determineMemberType(member),
+							MemberEmail:  extractEmail(member),
+							IsPublic:     isPublicMember(member),
+						}
+						if binding.Condition != nil {
+							b.HasCondition = true
+							b.ConditionTitle = binding.Condition.Title
+							b.ConditionExpression = binding.Condition.Expression
+						}
+						bindings = append(bindings, b)
+					}
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return bindings, gcpinternal.ParseGCPError(err, "compute.googleapis.com")
+	}
+
+	return bindings, nil
+}
+
 // Helper functions
+
+// extractZoneFromURL extracts zone name from a full zone URL
+// e.g., "https://www.googleapis.com/compute/v1/projects/my-project/zones/us-central1-a" -> "us-central1-a"
+func extractZoneFromURL(zoneURL string) string {
+	parts := strings.Split(zoneURL, "/")
+	if len(parts) > 0 {
+		return parts[len(parts)-1]
+	}
+	return ""
+}
 
 func determineMemberType(member string) string {
 	switch {

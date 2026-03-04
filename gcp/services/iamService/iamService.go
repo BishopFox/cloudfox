@@ -1465,6 +1465,47 @@ func (s *IAMService) GetServiceAccountIAMPolicy(ctx context.Context, saEmail str
 	return info, nil
 }
 
+// GetServiceAccountIAMBindings returns raw PolicyBinding objects for a service account's IAM policy.
+// This is used by the permissions module to explode SA-level bindings into individual permissions.
+func (s *IAMService) GetServiceAccountIAMBindings(ctx context.Context, saEmail string, projectID string) ([]PolicyBinding, error) {
+	iamService, err := s.getIAMService(ctx)
+	if err != nil {
+		return nil, gcpinternal.ParseGCPError(err, "iam.googleapis.com")
+	}
+
+	saResource := fmt.Sprintf("projects/%s/serviceAccounts/%s", projectID, saEmail)
+
+	policy, err := iamService.Projects.ServiceAccounts.GetIamPolicy(saResource).Context(ctx).Do()
+	if err != nil {
+		return nil, gcpinternal.ParseGCPError(err, "iam.googleapis.com")
+	}
+
+	var bindings []PolicyBinding
+	for _, binding := range policy.Bindings {
+		pb := PolicyBinding{
+			Role:         binding.Role,
+			Members:      binding.Members,
+			ResourceID:   saEmail,
+			ResourceType: "serviceAccount",
+			PolicyName:   saResource + "_policyBindings",
+		}
+
+		if binding.Condition != nil {
+			pb.Condition = fmt.Sprintf("title:%s expression:%s", binding.Condition.Title, binding.Condition.Expression)
+			pb.HasCondition = true
+			pb.ConditionInfo = &IAMCondition{
+				Title:       binding.Condition.Title,
+				Description: binding.Condition.Description,
+				Expression:  binding.Condition.Expression,
+			}
+		}
+
+		bindings = append(bindings, pb)
+	}
+
+	return bindings, nil
+}
+
 // GetAllServiceAccountImpersonation analyzes impersonation risks for all SAs in a project
 func (s *IAMService) GetAllServiceAccountImpersonation(projectID string) ([]SAImpersonationInfo, error) {
 	ctx := context.Background()
