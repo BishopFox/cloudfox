@@ -78,6 +78,28 @@ var highPrivilegeRoles = map[string]bool{
 	"roles/orgpolicy.policyAdmin": true,
 }
 
+// adminRoles are roles that grant broad administrative control. Used as a
+// fallback for the Admin column when FoxMapper data is not available.
+var adminRoles = map[string]bool{
+	"roles/owner":                             true,
+	"roles/editor":                            true,
+	"roles/resourcemanager.projectIamAdmin":   true,
+	"roles/resourcemanager.folderAdmin":       true,
+	"roles/resourcemanager.folderIamAdmin":    true,
+	"roles/resourcemanager.organizationAdmin": true,
+	"roles/iam.securityAdmin":                 true,
+	"roles/iam.roleAdmin":                     true,
+}
+
+// isAdminRole returns "Yes" if the role is a known admin role, "" otherwise.
+// Used as a fallback when FoxMapper is not available.
+func isAdminRole(role string) string {
+	if adminRoles[role] {
+		return "Yes"
+	}
+	return ""
+}
+
 // ------------------------------
 // Module Struct with embedded BaseGCPModule
 // ------------------------------
@@ -631,9 +653,11 @@ func (m *IAMModule) buildTables() []internal.TableFile {
 
 	// Add scope bindings (one row per binding)
 	for _, sb := range m.ScopeBindings {
-		// Check admin status from FoxMapper only - shows Org/Folder/Project or No
-		// This is different from "high privilege roles" - Admin means broad IAM control
+		// Check admin status: FoxMapper (granular) > role-based fallback
 		adminStatus := gcpinternal.GetAdminStatusFromCache(m.FoxMapperCache, sb.MemberEmail)
+		if adminStatus == "" {
+			adminStatus = isAdminRole(sb.Role)
+		}
 		if adminStatus == "" {
 			adminStatus = "No"
 		}
@@ -716,8 +740,16 @@ func (m *IAMModule) buildTables() []internal.TableFile {
 			groups = strings.Join(memberGroups, ", ")
 		}
 
-		// Check admin status from FoxMapper
+		// Check admin status: FoxMapper (granular) > role-based fallback
 		adminStatus := gcpinternal.GetAdminStatusFromCache(m.FoxMapperCache, sa.Email)
+		if adminStatus == "" {
+			for _, role := range sa.Roles {
+				if adminRoles[role] {
+					adminStatus = "Yes"
+					break
+				}
+			}
+		}
 		if adminStatus == "" {
 			adminStatus = "No"
 		}
@@ -1099,8 +1131,11 @@ func (m *IAMModule) buildTablesForProject(projectID string) []internal.TableFile
 			continue
 		}
 
-		// Check admin status from FoxMapper only - shows Org/Folder/Project or No
+		// Check admin status: FoxMapper (granular) > role-based fallback
 		adminStatus := gcpinternal.GetAdminStatusFromCache(m.FoxMapperCache, sb.MemberEmail)
+		if adminStatus == "" {
+			adminStatus = isAdminRole(sb.Role)
+		}
 		if adminStatus == "" {
 			adminStatus = "No"
 		}
@@ -1182,8 +1217,16 @@ func (m *IAMModule) buildTablesForProject(projectID string) []internal.TableFile
 			groups = strings.Join(memberGroups, ", ")
 		}
 
-		// Check admin status from FoxMapper
+		// Check admin status: FoxMapper (granular) > role-based fallback
 		adminStatus := gcpinternal.GetAdminStatusFromCache(m.FoxMapperCache, sa.Email)
+		if adminStatus == "" {
+			for _, role := range sa.Roles {
+				if adminRoles[role] {
+					adminStatus = "Yes"
+					break
+				}
+			}
+		}
 		if adminStatus == "" {
 			adminStatus = "No"
 		}
