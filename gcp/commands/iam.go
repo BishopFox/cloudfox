@@ -722,6 +722,16 @@ func (m *IAMModule) buildTables() []internal.TableFile {
 		})
 	}
 
+	// Build SA email -> roles lookup from scope bindings for admin fallback.
+	// ServiceAccountsBasic() doesn't populate the Roles field, so we
+	// extract roles from the already-enumerated bindings.
+	saRolesMap := make(map[string][]string)
+	for _, sb := range m.ScopeBindings {
+		if sb.MemberType == "ServiceAccount" {
+			saRolesMap[sb.MemberEmail] = append(saRolesMap[sb.MemberEmail], sb.Role)
+		}
+	}
+
 	// Add service accounts
 	for _, sa := range m.ServiceAccounts {
 		hasKeys := "No"
@@ -743,7 +753,7 @@ func (m *IAMModule) buildTables() []internal.TableFile {
 		// Check admin status: FoxMapper (granular) > role-based fallback
 		adminStatus := gcpinternal.GetAdminStatusFromCache(m.FoxMapperCache, sa.Email)
 		if adminStatus == "" {
-			for _, role := range sa.Roles {
+			for _, role := range saRolesMap[sa.Email] {
 				if adminRoles[role] {
 					adminStatus = "Yes"
 					break
@@ -1196,6 +1206,14 @@ func (m *IAMModule) buildTablesForProject(projectID string) []internal.TableFile
 		})
 	}
 
+	// Build SA email -> roles lookup from scope bindings for admin fallback
+	saRolesMap := make(map[string][]string)
+	for _, sb := range m.ScopeBindings {
+		if sb.MemberType == "ServiceAccount" {
+			saRolesMap[sb.MemberEmail] = append(saRolesMap[sb.MemberEmail], sb.Role)
+		}
+	}
+
 	// Add service accounts for this project only
 	for _, sa := range m.ServiceAccounts {
 		if sa.ProjectID != projectID {
@@ -1220,7 +1238,7 @@ func (m *IAMModule) buildTablesForProject(projectID string) []internal.TableFile
 		// Check admin status: FoxMapper (granular) > role-based fallback
 		adminStatus := gcpinternal.GetAdminStatusFromCache(m.FoxMapperCache, sa.Email)
 		if adminStatus == "" {
-			for _, role := range sa.Roles {
+			for _, role := range saRolesMap[sa.Email] {
 				if adminRoles[role] {
 					adminStatus = "Yes"
 					break

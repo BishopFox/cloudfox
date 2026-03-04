@@ -80,22 +80,10 @@ var (
 				GCPLogger.FatalM("--access-token and --key-file cannot be used together (both are base credentials)", "gcp")
 			}
 
-			// For non-ADC auth, override the quota project env var so downstream
-			// GCP clients don't pick up a stale quota_project_id from the ADC file.
-			// The target project (--project) is the correct billing/quota project.
-			// If no target project is specified, clear the env var entirely.
-			setNonADCQuotaProject := func() {
-				if GCPProjectID != "" {
-					os.Setenv("GOOGLE_CLOUD_QUOTA_PROJECT", GCPProjectID)
-				} else {
-					os.Unsetenv("GOOGLE_CLOUD_QUOTA_PROJECT")
-				}
-			}
-
 			// Step 1: Create base session from access-token or key-file (if provided)
 			var baseSession *gcpinternal.SafeSession
 			if GCPAccessToken != "" {
-				setNonADCQuotaProject()
+				os.Unsetenv("GOOGLE_CLOUD_QUOTA_PROJECT")
 				GCPLogger.InfoM("Authenticating with provided access token...", "gcp")
 				var err error
 				baseSession, err = gcpinternal.NewSafeSessionFromAccessToken(context.Background(), GCPAccessToken)
@@ -109,7 +97,7 @@ var (
 					GCPLogger.SuccessM("Authenticated with access token (identity unknown)", "gcp")
 				}
 			} else if GCPKeyFile != "" {
-				setNonADCQuotaProject()
+				os.Unsetenv("GOOGLE_CLOUD_QUOTA_PROJECT")
 				GCPLogger.InfoM(fmt.Sprintf("Authenticating with key file: %s", GCPKeyFile), "gcp")
 				var err error
 				baseSession, err = gcpinternal.NewSafeSessionFromKeyFile(context.Background(), GCPKeyFile)
@@ -121,7 +109,7 @@ var (
 
 			// Step 2: Layer impersonation on top (if requested)
 			if GCPImpersonateSA != "" {
-				setNonADCQuotaProject()
+				os.Unsetenv("GOOGLE_CLOUD_QUOTA_PROJECT")
 				var baseTS oauth2.TokenSource
 				if baseSession != nil {
 					baseTS = baseSession.GetTokenSource()
