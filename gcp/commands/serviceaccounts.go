@@ -36,6 +36,12 @@ Column Descriptions:
 	Run: runGCPServiceAccountsCommand,
 }
 
+// SAIAMBinding represents a raw IAM binding on a service account (role + member)
+type SAIAMBinding struct {
+	Role   string
+	Member string
+}
+
 // ServiceAccountAnalysis extends ServiceAccountInfo with security analysis
 type ServiceAccountAnalysis struct {
 	IAMService.ServiceAccountInfo
@@ -46,6 +52,8 @@ type ServiceAccountAnalysis struct {
 	HasOldKeys        bool // Keys older than 90 days
 	// Pentest: Impersonation analysis
 	ImpersonationInfo *IAMService.SAImpersonationInfo
+	// Raw IAM bindings on this service account (actual roles, not friendly names)
+	RawIAMBindings    []SAIAMBinding
 }
 
 // ------------------------------
@@ -190,6 +198,23 @@ func (m *ServiceAccountsModule) processProject(ctx context.Context, projectID st
 		// Silently skip if we can't get roles - user may not have IAM permissions
 	}
 
+	// Get raw SA-level IAM bindings for each service account
+	saIAMBindingsMap := make(map[string][]SAIAMBinding)
+	bindingCtx := context.Background()
+	for _, sa := range serviceAccounts {
+		rawBindings, err := iamService.GetServiceAccountIAMBindings(bindingCtx, sa.Email, projectID)
+		if err == nil {
+			for _, pb := range rawBindings {
+				for _, member := range pb.Members {
+					saIAMBindingsMap[sa.Email] = append(saIAMBindingsMap[sa.Email], SAIAMBinding{
+						Role:   pb.Role,
+						Member: member,
+					})
+				}
+			}
+		}
+	}
+
 	// Analyze each service account
 	var analyzedSAs []ServiceAccountAnalysis
 	for _, sa := range serviceAccounts {
@@ -201,6 +226,10 @@ func (m *ServiceAccountsModule) processProject(ctx context.Context, projectID st
 		// Attach roles if available
 		if roles, ok := saRoles[sa.Email]; ok {
 			analyzed.Roles = roles
+		}
+		// Attach raw IAM bindings
+		if bindings, ok := saIAMBindingsMap[sa.Email]; ok {
+			analyzed.RawIAMBindings = bindings
 		}
 		analyzedSAs = append(analyzedSAs, analyzed)
 	}
@@ -541,85 +570,24 @@ func (m *ServiceAccountsModule) serviceAccountsToTableBody(serviceAccounts []Ser
 			}
 		}
 
-		// Format roles for display
-		rolesDisplay := IAMService.FormatRolesShort(sa.Roles)
+		// Format roles for display (full role names)
+		rolesDisplay := "-"
+		if len(sa.Roles) > 0 {
+			rolesDisplay = strings.Join(sa.Roles, ", ")
+		}
 
-		// Build IAM bindings from impersonation info
-		// Row order: Identity (Project, Email, Display Name, Disabled, Default SA),
-		//            Keys (User Managed Keys, Google Managed Keys, Oldest Key Age),
-		//            Permissions (DWD, Roles, SA Attack Paths),
-		//            Impersonation (IAM Binding Role, IAM Binding Principal)
+		// Build IAM binding rows from raw bindings (actual roles, not friendly names)
 		hasBindings := false
-		if sa.ImpersonationInfo != nil {
-			for _, member := range sa.ImpersonationInfo.TokenCreators {
-				email := extractEmailFromMember(member)
+		if len(sa.RawIAMBindings) > 0 {
+			for _, binding := range sa.RawIAMBindings {
+				email := extractEmailFromMember(binding.Member)
 				if email != sa.Email {
 					hasBindings = true
 					body = append(body, []string{
 						m.GetProjectName(sa.ProjectID), sa.Email, sa.DisplayName, disabled, defaultSA,
 						userKeys, googleKeys, oldestKeyAge,
 						dwd, rolesDisplay, attackPaths,
-						"TokenCreator", member,
-					})
-				}
-			}
-			for _, member := range sa.ImpersonationInfo.KeyCreators {
-				email := extractEmailFromMember(member)
-				if email != sa.Email {
-					hasBindings = true
-					body = append(body, []string{
-						m.GetProjectName(sa.ProjectID), sa.Email, sa.DisplayName, disabled, defaultSA,
-						userKeys, googleKeys, oldestKeyAge,
-						dwd, rolesDisplay, attackPaths,
-						"KeyAdmin", member,
-					})
-				}
-			}
-			for _, member := range sa.ImpersonationInfo.ActAsUsers {
-				email := extractEmailFromMember(member)
-				if email != sa.Email {
-					hasBindings = true
-					body = append(body, []string{
-						m.GetProjectName(sa.ProjectID), sa.Email, sa.DisplayName, disabled, defaultSA,
-						userKeys, googleKeys, oldestKeyAge,
-						dwd, rolesDisplay, attackPaths,
-						"ActAs", member,
-					})
-				}
-			}
-			for _, member := range sa.ImpersonationInfo.SAAdmins {
-				email := extractEmailFromMember(member)
-				if email != sa.Email {
-					hasBindings = true
-					body = append(body, []string{
-						m.GetProjectName(sa.ProjectID), sa.Email, sa.DisplayName, disabled, defaultSA,
-						userKeys, googleKeys, oldestKeyAge,
-						dwd, rolesDisplay, attackPaths,
-						"SAAdmin", member,
-					})
-				}
-			}
-			for _, member := range sa.ImpersonationInfo.SignBlobUsers {
-				email := extractEmailFromMember(member)
-				if email != sa.Email {
-					hasBindings = true
-					body = append(body, []string{
-						m.GetProjectName(sa.ProjectID), sa.Email, sa.DisplayName, disabled, defaultSA,
-						userKeys, googleKeys, oldestKeyAge,
-						dwd, rolesDisplay, attackPaths,
-						"SignBlob", member,
-					})
-				}
-			}
-			for _, member := range sa.ImpersonationInfo.SignJwtUsers {
-				email := extractEmailFromMember(member)
-				if email != sa.Email {
-					hasBindings = true
-					body = append(body, []string{
-						m.GetProjectName(sa.ProjectID), sa.Email, sa.DisplayName, disabled, defaultSA,
-						userKeys, googleKeys, oldestKeyAge,
-						dwd, rolesDisplay, attackPaths,
-						"SignJwt", member,
+						binding.Role, binding.Member,
 					})
 				}
 			}
