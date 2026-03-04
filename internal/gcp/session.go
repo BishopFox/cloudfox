@@ -104,13 +104,27 @@ func NewSafeSession(ctx context.Context) (*SafeSession, error) {
 }
 
 // NewSafeSessionWithImpersonation creates a SafeSession that generates short-lived
-// tokens as the target service account. The caller's ADC must have the
-// roles/iam.serviceAccountTokenCreator role on the target SA.
-func NewSafeSessionWithImpersonation(ctx context.Context, targetSA string) (*SafeSession, error) {
+// tokens as the target service account. When baseTS is nil the caller's ADC is
+// used as the base credential. When baseTS is provided (e.g. from a key file or
+// access token session) it is used instead, enabling auth chaining like
+// --key-file + --impersonate-sa or --access-token + --impersonate-sa.
+func NewSafeSessionWithImpersonation(ctx context.Context, targetSA string, baseTS oauth2.TokenSource) (*SafeSession, error) {
+	var opts []option.ClientOption
+	if baseTS != nil {
+		opts = append(opts, option.WithTokenSource(baseTS))
+	}
+
+	// Override the ADC quota project with the target SA's project. The ADC
+	// file may contain a stale or deleted quota_project_id which causes the
+	// IAM Credentials API call to fail with USER_PROJECT_DENIED.
+	if projectID := projectFromSAEmail(targetSA); projectID != "" {
+		opts = append(opts, option.WithQuotaProject(projectID))
+	}
+
 	ts, err := impersonate.CredentialsTokenSource(ctx, impersonate.CredentialsConfig{
 		TargetPrincipal: targetSA,
 		Scopes:          CommonScopes,
-	})
+	}, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create impersonated token source for %s: %w", targetSA, err)
 	}
@@ -192,6 +206,77 @@ func NewSafeSessionFromKeyFile(ctx context.Context, keyFilePath string) (*SafeSe
 	ss.tokens["https://www.googleapis.com/auth/cloud-platform"] = token
 
 	return ss, nil
+}
+
+// NewSafeSessionFromAccessToken creates a SafeSession from a raw GCP access token.
+// The token cannot be refreshed, so the session will expire when the token does.
+// Identity is resolved via the Google tokeninfo endpoint.
+func NewSafeSessionFromAccessToken(ctx context.Context, accessToken string) (*SafeSession, error) {
+	if strings.TrimSpace(accessToken) == "" {
+		return nil, fmt.Errorf("access token is empty")
+	}
+
+	token := &oauth2.Token{
+		AccessToken: strings.TrimSpace(accessToken),
+		TokenType:   "Bearer",
+	}
+
+	ts := &StaticTokenSource{StaticToken: token}
+
+	ss := &SafeSession{
+		tokenSource:   ts,
+		currentToken:  token,
+		tokens:        make(map[string]*oauth2.Token),
+		refreshBuffer: 5 * time.Minute,
+		stopMonitor:   make(chan struct{}),
+	}
+
+	// Cache the token for the default scope
+	ss.tokens["https://www.googleapis.com/auth/cloud-platform"] = token
+
+	// Resolve identity via tokeninfo endpoint
+	ss.resolveTokenIdentity(ctx, accessToken)
+
+	return ss, nil
+}
+
+// resolveTokenIdentity calls the Google tokeninfo endpoint to determine the
+// email and account type for a raw access token.
+func (s *SafeSession) resolveTokenIdentity(ctx context.Context, accessToken string) {
+	// Use the tokeninfo endpoint to get identity
+	cmd := exec.CommandContext(ctx, "curl", "-s",
+		fmt.Sprintf("https://oauth2.googleapis.com/tokeninfo?access_token=%s", accessToken))
+	out, err := cmd.Output()
+	if err != nil {
+		return
+	}
+
+	var info struct {
+		Email string `json:"email"`
+		Scope string `json:"scope"`
+		Exp   string `json:"exp"`
+	}
+	if err := json.Unmarshal(out, &info); err != nil {
+		return
+	}
+
+	if info.Email != "" {
+		s.email = info.Email
+		if strings.Contains(info.Email, ".iam.gserviceaccount.com") {
+			s.accountType = "serviceAccount"
+		} else {
+			s.accountType = "user"
+		}
+	}
+
+	// Parse expiry if available
+	if info.Exp != "" {
+		var expUnix int64
+		if _, err := fmt.Sscanf(info.Exp, "%d", &expUnix); err == nil {
+			s.sessionExpiry = time.Unix(expUnix, 0)
+			s.currentToken.Expiry = s.sessionExpiry
+		}
+	}
 }
 
 // NewSmartSession creates a session with automatic monitoring and refresh
@@ -527,6 +612,21 @@ func GetDefaultAccount() string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// projectFromSAEmail extracts the project ID from a service account email.
+// e.g. "my-sa@my-project.iam.gserviceaccount.com" -> "my-project"
+func projectFromSAEmail(email string) string {
+	// SA emails have the form: <name>@<project>.iam.gserviceaccount.com
+	parts := strings.SplitN(email, "@", 2)
+	if len(parts) != 2 {
+		return ""
+	}
+	domain := parts[1]
+	if !strings.HasSuffix(domain, ".iam.gserviceaccount.com") {
+		return ""
+	}
+	return strings.TrimSuffix(domain, ".iam.gserviceaccount.com")
 }
 
 // GetAccessToken returns a fresh access token from gcloud CLI

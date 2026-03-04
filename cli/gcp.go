@@ -14,6 +14,7 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	gcpinternal "github.com/BishopFox/cloudfox/internal/gcp"
 	"github.com/spf13/cobra"
+	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
 
@@ -30,6 +31,9 @@ var (
 
 	// Service account key file authentication
 	GCPKeyFile string
+
+	// Raw access token authentication
+	GCPAccessToken string
 
 	// Project name mapping (ProjectID -> DisplayName)
 	GCPProjectNames map[string]string
@@ -62,38 +66,78 @@ var (
 			GCPProjectIDs = nil
 			GCPProjectNames = make(map[string]string)
 
-			// Create session based on auth method: --key-file > --impersonate-sa > ADC
+			// Create session based on auth flags.
+			// Allowed combinations:
+			//   --access-token                        (raw token)
+			//   --key-file                            (SA key file)
+			//   --impersonate-sa                      (impersonate over ADC)
+			//   --access-token  + --impersonate-sa    (impersonate using token as base)
+			//   --key-file      + --impersonate-sa    (impersonate using key as base)
+			// Disallowed: --access-token + --key-file (both are base credentials)
 			var gcpSession *gcpinternal.SafeSession
-			if GCPKeyFile != "" && GCPImpersonateSA != "" {
-				GCPLogger.FatalM("Cannot use both --key-file and --impersonate-sa at the same time", "gcp")
+
+			if GCPAccessToken != "" && GCPKeyFile != "" {
+				GCPLogger.FatalM("--access-token and --key-file cannot be used together (both are base credentials)", "gcp")
 			}
 
-			if GCPKeyFile != "" {
-				// Authenticate using a service account JSON key file
-				os.Unsetenv("GOOGLE_CLOUD_QUOTA_PROJECT")
+			// For non-ADC auth, override the quota project env var so downstream
+			// GCP clients don't pick up a stale quota_project_id from the ADC file.
+			// The target project (--project) is the correct billing/quota project.
+			// If no target project is specified, clear the env var entirely.
+			setNonADCQuotaProject := func() {
+				if GCPProjectID != "" {
+					os.Setenv("GOOGLE_CLOUD_QUOTA_PROJECT", GCPProjectID)
+				} else {
+					os.Unsetenv("GOOGLE_CLOUD_QUOTA_PROJECT")
+				}
+			}
 
+			// Step 1: Create base session from access-token or key-file (if provided)
+			var baseSession *gcpinternal.SafeSession
+			if GCPAccessToken != "" {
+				setNonADCQuotaProject()
+				GCPLogger.InfoM("Authenticating with provided access token...", "gcp")
+				var err error
+				baseSession, err = gcpinternal.NewSafeSessionFromAccessToken(context.Background(), GCPAccessToken)
+				if err != nil {
+					GCPLogger.FatalM(fmt.Sprintf("Failed to authenticate with access token: %v", err), "gcp")
+				}
+				email := baseSession.GetEmail()
+				if email != "" {
+					GCPLogger.SuccessM(fmt.Sprintf("Authenticated as %s (from access token)", email), "gcp")
+				} else {
+					GCPLogger.SuccessM("Authenticated with access token (identity unknown)", "gcp")
+				}
+			} else if GCPKeyFile != "" {
+				setNonADCQuotaProject()
 				GCPLogger.InfoM(fmt.Sprintf("Authenticating with key file: %s", GCPKeyFile), "gcp")
 				var err error
-				gcpSession, err = gcpinternal.NewSafeSessionFromKeyFile(context.Background(), GCPKeyFile)
+				baseSession, err = gcpinternal.NewSafeSessionFromKeyFile(context.Background(), GCPKeyFile)
 				if err != nil {
 					GCPLogger.FatalM(fmt.Sprintf("Failed to authenticate with key file %s: %v", GCPKeyFile, err), "gcp")
 				}
-				GCPLogger.SuccessM(fmt.Sprintf("Authenticated as %s (from key file)", gcpSession.GetEmail()), "gcp")
-			} else if GCPImpersonateSA != "" {
-				// Clear any quota project override before creating the impersonated
-				// session. The impersonated SA's own project handles billing/quota.
-				// If GOOGLE_CLOUD_QUOTA_PROJECT is set (from user env or prior run)
-				// to a project where the impersonated SA lacks
-				// serviceusage.services.use, all API calls fail with permission denied.
-				os.Unsetenv("GOOGLE_CLOUD_QUOTA_PROJECT")
+				GCPLogger.SuccessM(fmt.Sprintf("Authenticated as %s (from key file)", baseSession.GetEmail()), "gcp")
+			}
 
-				GCPLogger.InfoM(fmt.Sprintf("Impersonating service account: %s", GCPImpersonateSA), "gcp")
+			// Step 2: Layer impersonation on top (if requested)
+			if GCPImpersonateSA != "" {
+				setNonADCQuotaProject()
+				var baseTS oauth2.TokenSource
+				if baseSession != nil {
+					baseTS = baseSession.GetTokenSource()
+					GCPLogger.InfoM(fmt.Sprintf("Impersonating %s using %s as base credential...", GCPImpersonateSA, baseSession.GetEmail()), "gcp")
+				} else {
+					GCPLogger.InfoM(fmt.Sprintf("Impersonating service account: %s", GCPImpersonateSA), "gcp")
+				}
 				var err error
-				gcpSession, err = gcpinternal.NewSafeSessionWithImpersonation(context.Background(), GCPImpersonateSA)
+				gcpSession, err = gcpinternal.NewSafeSessionWithImpersonation(context.Background(), GCPImpersonateSA, baseTS)
 				if err != nil {
 					GCPLogger.FatalM(fmt.Sprintf("Failed to impersonate %s: %v", GCPImpersonateSA, err), "gcp")
 				}
 				GCPLogger.SuccessM(fmt.Sprintf("Successfully impersonating %s", GCPImpersonateSA), "gcp")
+			} else if baseSession != nil {
+				// No impersonation, use the base session directly
+				gcpSession = baseSession
 			} else {
 				// Set quota project for GCP API calls. ADC may reference a deleted
 				// or inaccessible quota project, causing all API calls to fail with
@@ -164,13 +208,19 @@ var (
 				internal.SetQueryFilter(GCPQuery)
 			}
 
-			// Authenticate and get account info
-			if GCPKeyFile != "" {
-				// When using a key file, use the SA email from the session
-				ctx = context.WithValue(ctx, "account", gcpSession.GetEmail())
-			} else if GCPImpersonateSA != "" {
-				// When impersonating, use the SA email directly (we already validated the token)
+			// Authenticate and get account info.
+			// Check impersonation first since it overrides the effective identity
+			// even when combined with --access-token or --key-file.
+			if GCPImpersonateSA != "" {
 				ctx = context.WithValue(ctx, "account", GCPImpersonateSA)
+			} else if GCPAccessToken != "" {
+				email := gcpSession.GetEmail()
+				if email == "" {
+					email = "access-token-user"
+				}
+				ctx = context.WithValue(ctx, "account", email)
+			} else if GCPKeyFile != "" {
+				ctx = context.WithValue(ctx, "account", gcpSession.GetEmail())
 			} else {
 				os := oauthservice.NewOAuthService()
 				principal, err := os.WhoAmI()
@@ -676,6 +726,7 @@ func init() {
 	GCPCommands.PersistentFlags().BoolVar(&GCPRefreshCache, "refresh-cache", false, "Force re-enumeration of cached data (cache auto-expires after 24 hours)")
 	GCPCommands.PersistentFlags().StringVarP(&GCPImpersonateSA, "impersonate-sa", "i", "", "Service account email to impersonate (requires roles/iam.serviceAccountTokenCreator)")
 	GCPCommands.PersistentFlags().StringVarP(&GCPKeyFile, "key-file", "k", "", "Path to a service account JSON key file for authentication")
+	GCPCommands.PersistentFlags().StringVar(&GCPAccessToken, "access-token", "", "Raw GCP access token for authentication (non-refreshable)")
 	GCPCommands.PersistentFlags().StringVarP(&GCPQuery, "query", "q", "", "Filter output rows by substring match against any column (case-insensitive)")
 
 	// Available commands
