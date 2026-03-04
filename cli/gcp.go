@@ -28,6 +28,9 @@ var (
 	// Service account impersonation
 	GCPImpersonateSA string
 
+	// Service account key file authentication
+	GCPKeyFile string
+
 	// Project name mapping (ProjectID -> DisplayName)
 	GCPProjectNames map[string]string
 
@@ -59,9 +62,24 @@ var (
 			GCPProjectIDs = nil
 			GCPProjectNames = make(map[string]string)
 
-			// Create impersonated session if --impersonate-sa is set
+			// Create session based on auth method: --key-file > --impersonate-sa > ADC
 			var gcpSession *gcpinternal.SafeSession
-			if GCPImpersonateSA != "" {
+			if GCPKeyFile != "" && GCPImpersonateSA != "" {
+				GCPLogger.FatalM("Cannot use both --key-file and --impersonate-sa at the same time", "gcp")
+			}
+
+			if GCPKeyFile != "" {
+				// Authenticate using a service account JSON key file
+				os.Unsetenv("GOOGLE_CLOUD_QUOTA_PROJECT")
+
+				GCPLogger.InfoM(fmt.Sprintf("Authenticating with key file: %s", GCPKeyFile), "gcp")
+				var err error
+				gcpSession, err = gcpinternal.NewSafeSessionFromKeyFile(context.Background(), GCPKeyFile)
+				if err != nil {
+					GCPLogger.FatalM(fmt.Sprintf("Failed to authenticate with key file %s: %v", GCPKeyFile, err), "gcp")
+				}
+				GCPLogger.SuccessM(fmt.Sprintf("Authenticated as %s (from key file)", gcpSession.GetEmail()), "gcp")
+			} else if GCPImpersonateSA != "" {
 				// Clear any quota project override before creating the impersonated
 				// session. The impersonated SA's own project handles billing/quota.
 				// If GOOGLE_CLOUD_QUOTA_PROJECT is set (from user env or prior run)
@@ -147,7 +165,10 @@ var (
 			}
 
 			// Authenticate and get account info
-			if GCPImpersonateSA != "" {
+			if GCPKeyFile != "" {
+				// When using a key file, use the SA email from the session
+				ctx = context.WithValue(ctx, "account", gcpSession.GetEmail())
+			} else if GCPImpersonateSA != "" {
 				// When impersonating, use the SA email directly (we already validated the token)
 				ctx = context.WithValue(ctx, "account", GCPImpersonateSA)
 			} else {
@@ -654,6 +675,7 @@ func init() {
 	GCPCommands.PersistentFlags().BoolVar(&GCPFlatOutput, "flat-output", false, "Use legacy flat output structure instead of hierarchical per-project directories")
 	GCPCommands.PersistentFlags().BoolVar(&GCPRefreshCache, "refresh-cache", false, "Force re-enumeration of cached data (cache auto-expires after 24 hours)")
 	GCPCommands.PersistentFlags().StringVarP(&GCPImpersonateSA, "impersonate-sa", "i", "", "Service account email to impersonate (requires roles/iam.serviceAccountTokenCreator)")
+	GCPCommands.PersistentFlags().StringVarP(&GCPKeyFile, "key-file", "k", "", "Path to a service account JSON key file for authentication")
 	GCPCommands.PersistentFlags().StringVarP(&GCPQuery, "query", "q", "", "Filter output rows by substring match against any column (case-insensitive)")
 
 	// Available commands

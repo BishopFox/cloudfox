@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"os"
+
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/impersonate"
@@ -126,6 +128,62 @@ func NewSafeSessionWithImpersonation(ctx context.Context, targetSA string) (*Saf
 	token, err := ts.Token()
 	if err != nil {
 		return nil, fmt.Errorf("impersonation failed for %s (do you have roles/iam.serviceAccountTokenCreator?): %w", targetSA, err)
+	}
+	ss.currentToken = token
+	ss.sessionExpiry = token.Expiry
+
+	// Cache the token for the default scope
+	ss.tokens["https://www.googleapis.com/auth/cloud-platform"] = token
+
+	return ss, nil
+}
+
+// NewSafeSessionFromKeyFile creates a SafeSession from a service account JSON key file.
+// This bypasses gcloud CLI entirely and authenticates directly using the key file.
+func NewSafeSessionFromKeyFile(ctx context.Context, keyFilePath string) (*SafeSession, error) {
+	keyJSON, err := os.ReadFile(keyFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read key file %s: %w", keyFilePath, err)
+	}
+
+	// Parse the JSON to extract the service account email and project
+	var keyFileData struct {
+		ClientEmail string `json:"client_email"`
+		ProjectID   string `json:"project_id"`
+		Type        string `json:"type"`
+	}
+	if err := json.Unmarshal(keyJSON, &keyFileData); err != nil {
+		return nil, fmt.Errorf("failed to parse key file %s: %w", keyFilePath, err)
+	}
+
+	if keyFileData.Type != "service_account" {
+		return nil, fmt.Errorf("key file %s is not a service account key (type: %s)", keyFilePath, keyFileData.Type)
+	}
+
+	if keyFileData.ClientEmail == "" {
+		return nil, fmt.Errorf("key file %s does not contain a client_email field", keyFilePath)
+	}
+
+	// Create credentials from the key file
+	creds, err := google.CredentialsFromJSON(ctx, keyJSON, CommonScopes...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create credentials from key file %s: %w", keyFilePath, err)
+	}
+
+	ss := &SafeSession{
+		tokenSource:   creds.TokenSource,
+		tokens:        make(map[string]*oauth2.Token),
+		refreshBuffer: 5 * time.Minute,
+		stopMonitor:   make(chan struct{}),
+		email:         keyFileData.ClientEmail,
+		accountType:   "serviceAccount",
+		projectID:     keyFileData.ProjectID,
+	}
+
+	// Get initial token to validate the key works
+	token, err := creds.TokenSource.Token()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get token from key file %s (key may be expired or revoked): %w", keyFilePath, err)
 	}
 	ss.currentToken = token
 	ss.sessionExpiry = token.Expiry
