@@ -1,14 +1,89 @@
 package globals
 
 // Module names
-// const GCP_WHOAMI_MODULE_NAME = "whoami"
 const GCP_ARTIFACT_RESGISTRY_MODULE_NAME string = "artifact-registry"
 const GCP_BIGQUERY_MODULE_NAME string = "bigquery"
-const GCP_BUCKETS_MODULE_NAME string = "buckets"
+const GCP_STORAGE_MODULE_NAME string = "storage"
 const GCP_INSTANCES_MODULE_NAME string = "instances"
 const GCP_IAM_MODULE_NAME string = "iam"
+const GCP_PERMISSIONS_MODULE_NAME string = "permissions"
 const GCP_SECRETS_MODULE_NAME string = "secrets"
 const GCP_WHOAMI_MODULE_NAME string = "whoami"
+
+// New module names
+const GCP_FUNCTIONS_MODULE_NAME string = "functions"
+const GCP_CLOUDRUN_MODULE_NAME string = "cloudrun"
+const GCP_CLOUDSQL_MODULE_NAME string = "cloudsql"
+const GCP_GKE_MODULE_NAME string = "gke"
+const GCP_PUBSUB_MODULE_NAME string = "pubsub"
+const GCP_KMS_MODULE_NAME string = "kms"
+const GCP_SERVICEACCOUNTS_MODULE_NAME string = "serviceaccounts"
+const GCP_LOGGING_MODULE_NAME string = "logging"
+const GCP_NETWORKS_MODULE_NAME string = "networks"
+const GCP_FIREWALL_MODULE_NAME string = "firewall"
+const GCP_DNS_MODULE_NAME string = "dns"
+const GCP_SCHEDULER_MODULE_NAME string = "scheduler"
+const GCP_ORGANIZATIONS_MODULE_NAME string = "organizations"
+const GCP_APIKEYS_MODULE_NAME string = "apikeys"
+const GCP_EXPOSURE_MODULE_NAME string = "exposure"
+const GCP_CLOUDBUILD_MODULE_NAME string = "cloudbuild"
+const GCP_DATAFLOW_MODULE_NAME string = "dataflow"
+const GCP_COMPOSER_MODULE_NAME string = "composer"
+const GCP_MEMORYSTORE_MODULE_NAME string = "memorystore"
+const GCP_FILESTORE_MODULE_NAME string = "filestore"
+const GCP_SPANNER_MODULE_NAME string = "spanner"
+const GCP_BIGTABLE_MODULE_NAME string = "bigtable"
+const GCP_VPCSC_MODULE_NAME string = "vpc-sc"
+const GCP_WORKLOAD_IDENTITY_MODULE_NAME string = "workload-identity"
+const GCP_IDENTITY_FEDERATION_MODULE_NAME string = "identity-federation"
+const GCP_ASSET_INVENTORY_MODULE_NAME string = "asset-inventory"
+const GCP_LOADBALANCERS_MODULE_NAME string = "loadbalancers"
+const GCP_VPCNETWORKS_MODULE_NAME string = "vpc-networks"
+const GCP_NOTEBOOKS_MODULE_NAME string = "notebooks"
+const GCP_DATAPROC_MODULE_NAME string = "dataproc"
+const GCP_IAP_MODULE_NAME string = "iap"
+const GCP_BEYONDCORP_MODULE_NAME string = "beyondcorp"
+const GCP_ACCESSLEVELS_MODULE_NAME string = "access-levels"
+
+// Pentest modules
+const GCP_HIDDEN_ADMINS_MODULE_NAME string = "hidden-admins"
+const GCP_KEYS_MODULE_NAME string = "keys"
+const GCP_HMACKEYS_MODULE_NAME string = "hmac-keys"
+const GCP_PRIVESC_MODULE_NAME string = "privesc"
+const GCP_ORGPOLICIES_MODULE_NAME string = "org-policies"
+const GCP_STORAGEENUM_MODULE_NAME string = "storage-enum"
+const GCP_LOGGINGENUM_MODULE_NAME string = "logging-enum"
+const GCP_BIGQUERYENUM_MODULE_NAME string = "bigquery-enum"
+const GCP_BIGTABLEENUM_MODULE_NAME string = "bigtable-enum"
+const GCP_SPANNERENUM_MODULE_NAME string = "spanner-enum"
+const GCP_CROSSPROJECT_MODULE_NAME string = "cross-project"
+const GCP_PUBLICRESOURCES_MODULE_NAME string = "public-resources"
+const GCP_PUBLICACCESS_MODULE_NAME string = "public-access"
+const GCP_SOURCEREPOS_MODULE_NAME string = "source-repos"
+const GCP_SSHOSLOGIN_MODULE_NAME string = "ssh-oslogin"
+const GCP_SERVICEAGENTS_MODULE_NAME string = "service-agents"
+const GCP_DOMAINWIDEDELEGATION_MODULE_NAME string = "domain-wide-delegation"
+const GCP_PRIVATESERVICECONNECT_MODULE_NAME string = "private-service-connect"
+const GCP_CLOUDARMOR_MODULE_NAME string = "cloud-armor"
+const GCP_CERTMANAGER_MODULE_NAME string = "cert-manager"
+
+// Resource IAM module
+const GCP_RESOURCEIAM_MODULE_NAME string = "resource-iam"
+
+// New security analysis modules (Azure equivalents)
+const GCP_SECURITYCENTER_MODULE_NAME string = "security-center"
+const GCP_LATERALMOVEMENT_MODULE_NAME string = "lateral-movement"
+const GCP_DATAEXFILTRATION_MODULE_NAME string = "data-exfiltration"
+const GCP_BACKUPINVENTORY_MODULE_NAME string = "backup-inventory"
+const GCP_COMPLIANCEDASHBOARD_MODULE_NAME string = "compliance-dashboard"
+const GCP_COSTSECURITY_MODULE_NAME string = "cost-security"
+const GCP_MONITORINGALERTS_MODULE_NAME string = "monitoring-alerts"
+const GCP_NETWORKTOPOLOGY_MODULE_NAME string = "network-topology"
+
+// Verbosity levels (matching Azure pattern)
+var GCP_VERBOSITY int = 0
+
+const GCP_VERBOSE_ERRORS = 9
 
 // const GCP_INVENTORY_MODULE_NAME string = "inventory"
 // const GCP_GCLOUD_REFRESH_TOKENS_DB_PATH = ".config/gcloud/credentials.db"

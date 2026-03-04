@@ -19,6 +19,8 @@ func init() {
 	text.EnableColors()
 }
 
+// Note: clearln is defined in aws.go as "\r\x1b[2K" and is used to clear spinner status lines
+
 // This function returns ~/.cloudfox.
 // If the folder does not exist the function creates it.
 func GetLogDirPath() *string {
@@ -54,7 +56,7 @@ func (l *Logger) Info(text string) {
 
 func (l *Logger) InfoM(text string, module string) {
 	var cyan = color.New(color.FgCyan).SprintFunc()
-	fmt.Printf("[%s][%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox %s :fox:", l.version)), cyan(module), text)
+	fmt.Printf(clearln+"[%s][%s] %s\n", cyan(emoji.Sprintf(":fox:cloudfox %s :fox:", l.version)), cyan(module), text)
 }
 
 func (l *Logger) Success(text string) {
@@ -62,7 +64,19 @@ func (l *Logger) Success(text string) {
 }
 func (l *Logger) SuccessM(text string, module string) {
 	var green = color.New(color.FgGreen).SprintFunc()
-	fmt.Printf("[%s][%s] %s\n", green(emoji.Sprintf(":fox:cloudfox %s :fox:", l.version)), green(module), text)
+	fmt.Printf(clearln+"[%s][%s] %s\n", green(emoji.Sprintf(":fox:cloudfox %s :fox:", l.version)), green(module), text)
+}
+
+func (l *Logger) Warn(text string) {
+	l.WarnM(text, "config")
+}
+
+func (l *Logger) WarnM(text string, module string) {
+	var yellow = color.New(color.FgYellow).SprintFunc()
+	fmt.Printf(clearln+"[%s][%s] ⚠️  %s\n", yellow(emoji.Sprintf(":fox:cloudfox %s :fox:", l.version)), yellow(module), text)
+	if l.txtLog != nil {
+		l.txtLog.Printf("[%s] WARNING: %s", module, text)
+	}
 }
 
 func (l *Logger) Error(text string) {
@@ -71,8 +85,10 @@ func (l *Logger) Error(text string) {
 
 func (l *Logger) ErrorM(text string, module string) {
 	var red = color.New(color.FgRed).SprintFunc()
-	fmt.Printf("[%s][%s] %s\n", red(emoji.Sprintf(":fox:cloudfox %s :fox:", l.version)), red(module), text)
-	l.txtLog.Printf("[%s] %s", module, text)
+	fmt.Printf(clearln+"[%s][%s] %s\n", red(emoji.Sprintf(":fox:cloudfox %s :fox:", l.version)), red(module), text)
+	if l.txtLog != nil {
+		l.txtLog.Printf("[%s] %s", module, text)
+	}
 }
 
 func (l *Logger) Fatal(text string) {
@@ -81,7 +97,9 @@ func (l *Logger) Fatal(text string) {
 
 func (l *Logger) FatalM(text string, module string) {
 	var red = color.New(color.FgRed).SprintFunc()
-	l.txtLog.Printf("[%s] %s", module, text)
-	fmt.Printf("[%s][%s] %s\n", red(emoji.Sprintf(":fox:cloudfox %s :fox:", l.version)), red(module), text)
+	if l.txtLog != nil {
+		l.txtLog.Printf("[%s] %s", module, text)
+	}
+	fmt.Printf(clearln+"[%s][%s] %s\n", red(emoji.Sprintf(":fox:cloudfox %s :fox:", l.version)), red(module), text)
 	os.Exit(1)
 }

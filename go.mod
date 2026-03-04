@@ -87,9 +87,12 @@ require (
 
 require (
 	cel.dev/expr v0.25.1 // indirect
+	cloud.google.com/go/accesscontextmanager v1.9.7 // indirect
 	cloud.google.com/go/auth v0.17.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
-	cloud.google.com/go/monitoring v1.24.3 // indirect
+	cloud.google.com/go/orgpolicy v1.15.1 // indirect
+	cloud.google.com/go/osconfig v1.15.1 // indirect
+	cloud.google.com/go/pubsub/v2 v2.0.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.30.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.54.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.54.0 // indirect
@@ -122,6 +125,7 @@ require (
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.6.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
+	go.opencensus.io v0.24.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/detectors/gcp v1.39.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.64.0 // indirect
@@ -137,6 +141,11 @@ require (
 )
 
 require (
+	cloud.google.com/go/asset v1.22.0
+	cloud.google.com/go/kms v1.23.2
+	cloud.google.com/go/monitoring v1.24.3
+	cloud.google.com/go/pubsub v1.50.1
+	cloud.google.com/go/securitycenter v1.38.1
 	github.com/aws/aws-sdk-go-v2/service/kms v1.49.4
 	golang.org/x/oauth2 v0.34.0
 	google.golang.org/api v0.257.0
@@ -209,5 +218,5 @@ require (
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20251202230838-ff82c1b0f217 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251202230838-ff82c1b0f217 // indirect
-	google.golang.org/grpc v1.77.0 // indirect
+	google.golang.org/grpc v1.77.0
 )

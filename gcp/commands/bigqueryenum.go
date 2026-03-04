@@ -1,0 +1,279 @@
+package commands
+
+import (
+	"context"
+	"fmt"
+	"sync"
+
+	bigqueryenumservice "github.com/BishopFox/cloudfox/gcp/services/bigqueryEnumService"
+	"github.com/BishopFox/cloudfox/globals"
+	"github.com/BishopFox/cloudfox/internal"
+	gcpinternal "github.com/BishopFox/cloudfox/internal/gcp"
+	"github.com/spf13/cobra"
+)
+
+var (
+	bqEnumSampleData bool
+	bqEnumMaxRows    int
+	bqEnumMaxTables  int
+)
+
+var GCPBigQueryEnumCommand = &cobra.Command{
+	Use:     globals.GCP_BIGQUERYENUM_MODULE_NAME,
+	Aliases: []string{"bq-enum", "bq-scan"},
+	Short:   "Scan BigQuery datasets, tables, and columns for sensitive data indicators",
+	Long: `Scan BigQuery metadata for potentially sensitive data.
+
+Phase 1 (always runs): Scans dataset names, table names, and column names
+against sensitive data patterns (credentials, PII, financial, compliance).
+
+Phase 2 (opt-in): Samples data from flagged tables and scans content for
+credentials, tokens, and other sensitive values.
+
+Flags:
+  --sample-data  Enable data sampling on flagged tables (default off)
+  --max-rows     Maximum rows to sample per table (default 100)
+  --max-tables   Maximum tables to scan per project (default 50)`,
+	Run: runGCPBigQueryEnumCommand,
+}
+
+func init() {
+	GCPBigQueryEnumCommand.Flags().BoolVar(&bqEnumSampleData, "sample-data", false, "Sample data from flagged tables and scan content")
+	GCPBigQueryEnumCommand.Flags().IntVar(&bqEnumMaxRows, "max-rows", 100, "Maximum rows to sample per table")
+	GCPBigQueryEnumCommand.Flags().IntVar(&bqEnumMaxTables, "max-tables", 50, "Maximum tables to scan per project")
+}
+
+type BigQueryEnumModule struct {
+	gcpinternal.BaseGCPModule
+	ProjectResources map[string][]bigqueryenumservice.SensitiveBQResource
+	LootMap          map[string]map[string]*internal.LootFile
+	SampleData       bool
+	MaxRows          int
+	MaxTables        int
+	mu               sync.Mutex
+}
+
+type BigQueryEnumOutput struct {
+	Table []internal.TableFile
+	Loot  []internal.LootFile
+}
+
+func (o BigQueryEnumOutput) TableFiles() []internal.TableFile { return o.Table }
+func (o BigQueryEnumOutput) LootFiles() []internal.LootFile   { return o.Loot }
+
+func runGCPBigQueryEnumCommand(cmd *cobra.Command, args []string) {
+	cmdCtx, err := gcpinternal.InitializeCommandContext(cmd, globals.GCP_BIGQUERYENUM_MODULE_NAME)
+	if err != nil {
+		return
+	}
+
+	module := &BigQueryEnumModule{
+		BaseGCPModule:    gcpinternal.NewBaseGCPModule(cmdCtx),
+		ProjectResources: make(map[string][]bigqueryenumservice.SensitiveBQResource),
+		LootMap:          make(map[string]map[string]*internal.LootFile),
+		SampleData:       bqEnumSampleData,
+		MaxRows:          bqEnumMaxRows,
+		MaxTables:        bqEnumMaxTables,
+	}
+	module.Execute(cmdCtx.Ctx, cmdCtx.Logger)
+}
+
+func (m *BigQueryEnumModule) Execute(ctx context.Context, logger internal.Logger) {
+	mode := "metadata scan"
+	if m.SampleData {
+		mode = "metadata scan + data sampling"
+	}
+	logger.InfoM(fmt.Sprintf("Scanning BigQuery resources (%s, max %d tables per project)...",
+		mode, m.MaxTables), globals.GCP_BIGQUERYENUM_MODULE_NAME)
+
+	m.RunProjectEnumeration(ctx, logger, m.ProjectIDs, globals.GCP_BIGQUERYENUM_MODULE_NAME, m.processProject)
+
+	allResources := m.getAllResources()
+	if len(allResources) == 0 {
+		logger.InfoM("No sensitive BigQuery resources found", globals.GCP_BIGQUERYENUM_MODULE_NAME)
+		return
+	}
+
+	criticalCount := 0
+	highCount := 0
+	for _, r := range allResources {
+		switch r.RiskLevel {
+		case "CRITICAL":
+			criticalCount++
+		case "HIGH":
+			highCount++
+		}
+	}
+
+	logger.SuccessM(fmt.Sprintf("Found %d sensitive BigQuery resources (%d CRITICAL, %d HIGH)",
+		len(allResources), criticalCount, highCount), globals.GCP_BIGQUERYENUM_MODULE_NAME)
+
+	m.writeOutput(ctx, logger)
+}
+
+func (m *BigQueryEnumModule) getAllResources() []bigqueryenumservice.SensitiveBQResource {
+	var all []bigqueryenumservice.SensitiveBQResource
+	for _, resources := range m.ProjectResources {
+		all = append(all, resources...)
+	}
+	return all
+}
+
+func (m *BigQueryEnumModule) processProject(ctx context.Context, projectID string, logger internal.Logger) {
+	if globals.GCP_VERBOSITY >= globals.GCP_VERBOSE_ERRORS {
+		logger.InfoM(fmt.Sprintf("Scanning BigQuery in project: %s", projectID), globals.GCP_BIGQUERYENUM_MODULE_NAME)
+	}
+
+	svc := bigqueryenumservice.New()
+
+	resources, err := svc.EnumerateSensitiveResources(projectID, m.MaxTables, m.SampleData, m.MaxRows)
+	if err != nil {
+		m.CommandCounter.Error++
+		gcpinternal.HandleGCPError(err, logger, globals.GCP_BIGQUERYENUM_MODULE_NAME,
+			fmt.Sprintf("Could not scan BigQuery in project %s", projectID))
+		return
+	}
+
+	m.mu.Lock()
+	m.ProjectResources[projectID] = resources
+
+	if len(resources) > 0 {
+		if m.LootMap[projectID] == nil {
+			m.LootMap[projectID] = make(map[string]*internal.LootFile)
+		}
+		lootFile := &internal.LootFile{
+			Name:     "bigquery-enum-commands",
+			Contents: "# BigQuery Commands for Sensitive Resources\n# Generated by CloudFox\n\n",
+		}
+		for _, r := range resources {
+			if r.Table != "" {
+				lootFile.Contents += fmt.Sprintf(
+					"# [%s] %s - %s.%s.%s\n# %s\nbq query --use_legacy_sql=false 'SELECT * FROM `%s.%s.%s` LIMIT 10'\n\n",
+					r.RiskLevel, r.Category, projectID, r.Dataset, r.Table,
+					r.Description,
+					projectID, r.Dataset, r.Table,
+				)
+			} else {
+				lootFile.Contents += fmt.Sprintf(
+					"# [%s] %s - %s.%s\n# %s\nbq ls %s:%s\n\n",
+					r.RiskLevel, r.Category, projectID, r.Dataset,
+					r.Description,
+					projectID, r.Dataset,
+				)
+			}
+		}
+		m.LootMap[projectID]["bigquery-enum-commands"] = lootFile
+	}
+	m.mu.Unlock()
+}
+
+func (m *BigQueryEnumModule) writeOutput(ctx context.Context, logger internal.Logger) {
+	if m.Hierarchy != nil && !m.FlatOutput {
+		m.writeHierarchicalOutput(ctx, logger)
+	} else {
+		m.writeFlatOutput(ctx, logger)
+	}
+}
+
+func (m *BigQueryEnumModule) getHeader() []string {
+	return []string{"Project", "Dataset", "Table", "Column", "Match Type", "Category", "Risk Level", "Description"}
+}
+
+func (m *BigQueryEnumModule) resourcesToTableBody(resources []bigqueryenumservice.SensitiveBQResource) [][]string {
+	var body [][]string
+	for _, r := range resources {
+		body = append(body, []string{
+			m.GetProjectName(r.ProjectID),
+			r.Dataset,
+			r.Table,
+			r.Column,
+			r.MatchType,
+			r.Category,
+			r.RiskLevel,
+			r.Description,
+		})
+	}
+	return body
+}
+
+func (m *BigQueryEnumModule) buildTablesForProject(projectID string) []internal.TableFile {
+	resources := m.ProjectResources[projectID]
+	if len(resources) == 0 {
+		return nil
+	}
+	return []internal.TableFile{
+		{
+			Name:   "bigquery-enum",
+			Header: m.getHeader(),
+			Body:   m.resourcesToTableBody(resources),
+		},
+	}
+}
+
+func (m *BigQueryEnumModule) writeHierarchicalOutput(ctx context.Context, logger internal.Logger) {
+	outputData := internal.HierarchicalOutputData{
+		OrgLevelData:     make(map[string]internal.CloudfoxOutput),
+		ProjectLevelData: make(map[string]internal.CloudfoxOutput),
+	}
+
+	for projectID, resources := range m.ProjectResources {
+		if len(resources) == 0 {
+			continue
+		}
+		tableFiles := m.buildTablesForProject(projectID)
+
+		var lootFiles []internal.LootFile
+		if projectLoot, ok := m.LootMap[projectID]; ok {
+			for _, loot := range projectLoot {
+				if loot != nil && loot.Contents != "" {
+					lootFiles = append(lootFiles, *loot)
+				}
+			}
+		}
+
+		outputData.ProjectLevelData[projectID] = BigQueryEnumOutput{Table: tableFiles, Loot: lootFiles}
+	}
+
+	pathBuilder := m.BuildPathBuilder()
+	err := internal.HandleHierarchicalOutputSmart("gcp", m.Format, m.Verbosity, m.WrapTable, pathBuilder, outputData)
+	if err != nil {
+		logger.ErrorM(fmt.Sprintf("Error writing hierarchical output: %v", err), globals.GCP_BIGQUERYENUM_MODULE_NAME)
+	}
+}
+
+func (m *BigQueryEnumModule) writeFlatOutput(ctx context.Context, logger internal.Logger) {
+	allResources := m.getAllResources()
+	if len(allResources) == 0 {
+		return
+	}
+
+	tables := []internal.TableFile{
+		{
+			Name:   "bigquery-enum",
+			Header: m.getHeader(),
+			Body:   m.resourcesToTableBody(allResources),
+		},
+	}
+
+	var lootFiles []internal.LootFile
+	for _, projectLoot := range m.LootMap {
+		for _, loot := range projectLoot {
+			if loot != nil && loot.Contents != "" {
+				lootFiles = append(lootFiles, *loot)
+			}
+		}
+	}
+
+	output := BigQueryEnumOutput{Table: tables, Loot: lootFiles}
+
+	scopeNames := make([]string, len(m.ProjectIDs))
+	for i, id := range m.ProjectIDs {
+		scopeNames[i] = m.GetProjectName(id)
+	}
+
+	err := internal.HandleOutputSmart("gcp", m.Format, m.OutputDirectory, m.Verbosity, m.WrapTable,
+		"project", m.ProjectIDs, scopeNames, m.Account, output)
+	if err != nil {
+		logger.ErrorM(fmt.Sprintf("Error writing output: %v", err), globals.GCP_BIGQUERYENUM_MODULE_NAME)
+	}
+}

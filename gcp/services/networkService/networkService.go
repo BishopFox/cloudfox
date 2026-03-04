@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	ComputeEngineService "github.com/BishopFox/cloudfox/gcp/services/computeEngineService"
+	gcpinternal "github.com/BishopFox/cloudfox/internal/gcp"
+	"github.com/BishopFox/cloudfox/internal/gcp/sdk"
 	"google.golang.org/api/compute/v1"
 )
 
@@ -57,17 +59,31 @@ type Endpoint struct {
 }
 
 type NetwworkService struct {
-	// DataStoreService datastoreservice.DataStoreService
+	session *gcpinternal.SafeSession
 }
 
+// New creates a new NetworkService (legacy - uses ADC directly)
 func New() *NetwworkService {
 	return &NetwworkService{}
+}
+
+// NewWithSession creates a NetworkService with a SafeSession for managed authentication
+func NewWithSession(session *gcpinternal.SafeSession) *NetwworkService {
+	return &NetwworkService{session: session}
+}
+
+// getService returns a compute service, using cached wrapper if session is available
+func (ns *NetwworkService) getService(ctx context.Context) (*compute.Service, error) {
+	if ns.session != nil {
+		return sdk.CachedGetComputeService(ctx, ns.session)
+	}
+	return compute.NewService(ctx)
 }
 
 // Returns firewall rules for a project.
 func (ns *NetwworkService) FirewallRules(projectID string) ([]*compute.Firewall, error) {
 	ctx := context.Background()
-	computeService, err := compute.NewService(ctx)
+	computeService, err := ns.getService(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +124,9 @@ func getIPAddressesForTargetTag(instances []ComputeEngineService.ComputeEngineIn
 	var ips []string
 	for _, instance := range instances {
 		if contains(instance.Tags.Items, tag) {
-			ips = append(ips, instance.NetworkInterfaces[0].NetworkIP)
+			if len(instance.NetworkInterfaces) > 0 {
+				ips = append(ips, instance.NetworkInterfaces[0].NetworkIP)
+			}
 		}
 	}
 	return ips, nil
@@ -256,5 +274,244 @@ func parseFirewallRule(fw *compute.Firewall, projectID string) (FirewallRule, er
 	}, nil
 }
 
-// TODO
-// func (ns *NetworkService) ForwardingRules() {}
+// VPCInfo holds VPC network details
+type VPCInfo struct {
+	Name                  string
+	ProjectID             string
+	Description           string
+	AutoCreateSubnetworks bool
+	RoutingMode           string // REGIONAL or GLOBAL
+	Mtu                   int64
+	Subnetworks           []string
+	Peerings              []VPCPeering
+	CreationTime          string
+}
+
+// VPCPeering holds VPC peering details
+type VPCPeering struct {
+	Name                 string
+	Network              string
+	State                string
+	ExportCustomRoutes   bool
+	ImportCustomRoutes   bool
+	ExchangeSubnetRoutes bool
+}
+
+// SubnetInfo holds subnet details
+type SubnetInfo struct {
+	Name                  string
+	ProjectID             string
+	Region                string
+	Network               string
+	IPCidrRange           string
+	GatewayAddress        string
+	PrivateIPGoogleAccess bool
+	Purpose               string
+	StackType             string
+	CreationTime          string
+}
+
+// FirewallRuleInfo holds enhanced firewall rule details for security analysis
+type FirewallRuleInfo struct {
+	Name              string
+	ProjectID         string
+	Description       string
+	Network           string
+	Priority          int64
+	Direction         string // INGRESS or EGRESS
+	Disabled          bool
+
+	// Source/Destination
+	SourceRanges      []string
+	SourceTags        []string
+	SourceSAs         []string
+	DestinationRanges []string
+	TargetTags        []string
+	TargetSAs         []string
+
+	// Traffic
+	AllowedProtocols  map[string][]string // protocol -> ports
+	DeniedProtocols   map[string][]string
+
+	// Security analysis
+	IsPublicIngress   bool   // 0.0.0.0/0 in source ranges
+	IsPublicEgress    bool   // 0.0.0.0/0 in destination ranges
+	AllowsAllPorts    bool   // Empty ports = all ports
+	LoggingEnabled    bool   // Firewall logging enabled
+}
+
+// Networks retrieves all VPC networks in a project
+func (ns *NetwworkService) Networks(projectID string) ([]VPCInfo, error) {
+	ctx := context.Background()
+	computeService, err := ns.getService(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var networks []VPCInfo
+
+	networkList, err := computeService.Networks.List(projectID).Do()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, network := range networkList.Items {
+		info := VPCInfo{
+			Name:                  network.Name,
+			ProjectID:             projectID,
+			Description:           network.Description,
+			AutoCreateSubnetworks: network.AutoCreateSubnetworks,
+			RoutingMode:           network.RoutingConfig.RoutingMode,
+			Mtu:                   network.Mtu,
+			Subnetworks:           network.Subnetworks,
+			CreationTime:          network.CreationTimestamp,
+		}
+
+		// Parse peerings
+		for _, peering := range network.Peerings {
+			info.Peerings = append(info.Peerings, VPCPeering{
+				Name:                 peering.Name,
+				Network:              peering.Network,
+				State:                peering.State,
+				ExportCustomRoutes:   peering.ExportCustomRoutes,
+				ImportCustomRoutes:   peering.ImportCustomRoutes,
+				ExchangeSubnetRoutes: peering.ExchangeSubnetRoutes,
+			})
+		}
+
+		networks = append(networks, info)
+	}
+
+	return networks, nil
+}
+
+// Subnets retrieves all subnets in a project
+func (ns *NetwworkService) Subnets(projectID string) ([]SubnetInfo, error) {
+	ctx := context.Background()
+	computeService, err := ns.getService(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var subnets []SubnetInfo
+
+	// List subnets across all regions
+	subnetList, err := computeService.Subnetworks.AggregatedList(projectID).Do()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, scopedList := range subnetList.Items {
+		for _, subnet := range scopedList.Subnetworks {
+			info := SubnetInfo{
+				Name:                  subnet.Name,
+				ProjectID:             projectID,
+				Region:                extractRegionFromURL(subnet.Region),
+				Network:               extractNameFromURL(subnet.Network),
+				IPCidrRange:           subnet.IpCidrRange,
+				GatewayAddress:        subnet.GatewayAddress,
+				PrivateIPGoogleAccess: subnet.PrivateIpGoogleAccess,
+				Purpose:               subnet.Purpose,
+				StackType:             subnet.StackType,
+				CreationTime:          subnet.CreationTimestamp,
+			}
+			subnets = append(subnets, info)
+		}
+	}
+
+	return subnets, nil
+}
+
+// FirewallRulesEnhanced retrieves firewall rules with security analysis
+func (ns *NetwworkService) FirewallRulesEnhanced(projectID string) ([]FirewallRuleInfo, error) {
+	ctx := context.Background()
+	computeService, err := ns.getService(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var rules []FirewallRuleInfo
+
+	firewallList, err := computeService.Firewalls.List(projectID).Do()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, fw := range firewallList.Items {
+		info := FirewallRuleInfo{
+			Name:              fw.Name,
+			ProjectID:         projectID,
+			Description:       fw.Description,
+			Network:           extractNameFromURL(fw.Network),
+			Priority:          fw.Priority,
+			Direction:         fw.Direction,
+			Disabled:          fw.Disabled,
+			SourceRanges:      fw.SourceRanges,
+			SourceTags:        fw.SourceTags,
+			SourceSAs:         fw.SourceServiceAccounts,
+			DestinationRanges: fw.DestinationRanges,
+			TargetTags:        fw.TargetTags,
+			TargetSAs:         fw.TargetServiceAccounts,
+			AllowedProtocols:  make(map[string][]string),
+			DeniedProtocols:   make(map[string][]string),
+		}
+
+		// Parse allowed protocols
+		for _, allowed := range fw.Allowed {
+			info.AllowedProtocols[allowed.IPProtocol] = allowed.Ports
+			if len(allowed.Ports) == 0 {
+				info.AllowsAllPorts = true
+			}
+		}
+
+		// Parse denied protocols
+		for _, denied := range fw.Denied {
+			info.DeniedProtocols[denied.IPProtocol] = denied.Ports
+		}
+
+		// Security analysis - check for public ingress/egress
+		for _, source := range fw.SourceRanges {
+			if source == "0.0.0.0/0" || source == "::/0" {
+				info.IsPublicIngress = true
+				break
+			}
+		}
+		for _, dest := range fw.DestinationRanges {
+			if dest == "0.0.0.0/0" || dest == "::/0" {
+				info.IsPublicEgress = true
+				break
+			}
+		}
+
+		// Check if logging is enabled
+		if fw.LogConfig != nil && fw.LogConfig.Enable {
+			info.LoggingEnabled = true
+		}
+
+		rules = append(rules, info)
+	}
+
+	return rules, nil
+}
+
+// Helper functions
+func extractNameFromURL(url string) string {
+	parts := strings.Split(url, "/")
+	if len(parts) > 0 {
+		return parts[len(parts)-1]
+	}
+	return url
+}
+
+func extractRegionFromURL(url string) string {
+	parts := strings.Split(url, "/")
+	if len(parts) > 0 {
+		return parts[len(parts)-1]
+	}
+	return url
+}
+
+// GetComputeService returns a compute.Service instance for external use
+func (ns *NetwworkService) GetComputeService(ctx context.Context) (*compute.Service, error) {
+	return ns.getService(ctx)
+}
