@@ -45,6 +45,7 @@ var (
 	GCPWrapTable       bool
 	GCPFlatOutput      bool
 	GCPQuery           string
+	GCPSQLQuery        string
 
 	// Refresh cache flag - force re-enumeration even if cache exists
 	GCPRefreshCache bool
@@ -191,9 +192,15 @@ var (
 				gcpinternal.SetDefaultSession(gcpSession)
 			}
 
-			// Set global query filter if --query flag is provided
+			// Set global query filter if --query or --sqlquery flag is provided
+			if GCPQuery != "" && GCPSQLQuery != "" {
+				GCPLogger.FatalM("--query and --sqlquery cannot be used together", "gcp")
+			}
 			if GCPQuery != "" {
 				internal.SetQueryFilter(GCPQuery)
+			}
+			if GCPSQLQuery != "" {
+				internal.SetSQLQueryFilter(GCPSQLQuery)
 			}
 
 			// Authenticate and get account info.
@@ -715,7 +722,8 @@ func init() {
 	GCPCommands.PersistentFlags().StringVarP(&GCPImpersonateSA, "impersonate-sa", "i", "", "Service account email to impersonate (requires roles/iam.serviceAccountTokenCreator)")
 	GCPCommands.PersistentFlags().StringVarP(&GCPKeyFile, "key-file", "k", "", "Path to a service account JSON key file for authentication")
 	GCPCommands.PersistentFlags().StringVar(&GCPAccessToken, "access-token", "", "Raw GCP access token for authentication (non-refreshable)")
-	GCPCommands.PersistentFlags().StringVarP(&GCPQuery, "query", "q", "", "Filter output rows by substring match against any column (case-insensitive)")
+	GCPCommands.PersistentFlags().StringVarP(&GCPQuery, "query", "q", "", "Filter output rows by substring match (e.g. \"Role:owner,Principal:privesc02\" or plain \"privesc02\")")
+	GCPCommands.PersistentFlags().StringVar(&GCPSQLQuery, "sqlquery", "", "Filter output with SQL-like syntax (e.g. \"Role CONTAINS owner AND Principal CONTAINS privesc02\")")
 
 	// Available commands
 	GCPCommands.AddCommand(

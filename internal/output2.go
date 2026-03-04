@@ -547,25 +547,20 @@ func AppendLootFile(outputDirectory, lootFileName, entry string) error {
 // ============================================================================
 
 var globalQueryFilter string
+var globalSQLQueryFilter string
 
 // SetQueryFilter sets the global query filter string. Called once from PersistentPreRun.
 func SetQueryFilter(query string) {
 	globalQueryFilter = query
 }
 
+// SetSQLQueryFilter sets the global SQL-like query filter string.
+func SetSQLQueryFilter(query string) {
+	globalSQLQueryFilter = query
+}
+
 // buildQueryPatterns generates search patterns from a query string.
 // All patterns are lowercased for case-insensitive matching.
-//
-// When the query contains dots (a fully qualified identifier like a permission
-// or email), only the exact query is used. When the query has no dots (a short
-// fragment like "setIamPolicy" or "TokenCreator"), it is used as a single
-// substring pattern that matches anywhere.
-//
-// Examples:
-//   - "resourcemanager.projects.setIamPolicy" -> ["resourcemanager.projects.setiampolicy"] (exact only)
-//   - "setIamPolicy" -> ["setiampolicy"] (matches anywhere)
-//   - "TokenCreator" -> ["tokencreator"]
-//   - "alice@example.com" -> ["alice@example.com"] (exact only, has dots)
 func buildQueryPatterns(query string) []string {
 	return []string{strings.ToLower(query)}
 }
@@ -584,18 +579,329 @@ func rowMatchesQuery(row []string, patterns []string) bool {
 	return false
 }
 
+// ============================================================================
+// Column-aware query types and parsing
+// ============================================================================
+
+type queryOperator int
+
+const (
+	opContains    queryOperator = iota // case-insensitive substring
+	opEquals                           // case-insensitive exact match
+	opNotContains                      // negated substring
+	opNotEquals                        // negated exact match
+)
+
+type queryCondition struct {
+	columnPattern string        // fuzzy match against header names (lowercase)
+	value         string        // match value (lowercase)
+	operator      queryOperator
+}
+
+// parseKeyValueQuery parses the enhanced --query key:value syntax.
+// Returns (conditions, isStructured). If isStructured is false, the query has
+// no column prefixes and should use legacy global substring matching.
+//
+// Syntax:
+//
+//	"Role:owner,Principal:privesc02"      -> column substring matches, ANDed
+//	"!Principal:compute"                  -> negated substring
+//	"Role=roles/owner"                    -> exact match
+//	"!Source=Project"                     -> negated exact match
+//	"privesc02"                           -> legacy global substring (no colon/equals)
+func parseKeyValueQuery(query string) ([]queryCondition, bool) {
+	parts := strings.Split(query, ",")
+
+	// Check if any part contains a structured separator (: or =)
+	hasStructured := false
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		// Strip leading ! for detection
+		if strings.HasPrefix(trimmed, "!") {
+			trimmed = trimmed[1:]
+		}
+		if strings.ContainsAny(trimmed, ":=") {
+			hasStructured = true
+			break
+		}
+	}
+
+	if !hasStructured {
+		return nil, false
+	}
+
+	var conditions []queryCondition
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+
+		// Check for negation prefix
+		negated := false
+		if strings.HasPrefix(trimmed, "!") {
+			negated = true
+			trimmed = trimmed[1:]
+		}
+
+		// Determine operator by finding first = or :
+		eqIdx := strings.Index(trimmed, "=")
+		colonIdx := strings.Index(trimmed, ":")
+
+		var colPattern, value string
+		var isExact bool
+
+		switch {
+		case eqIdx >= 0 && (colonIdx < 0 || eqIdx < colonIdx):
+			// = found before : (or no : at all) -> exact match
+			colPattern = trimmed[:eqIdx]
+			value = trimmed[eqIdx+1:]
+			isExact = true
+		case colonIdx >= 0:
+			// : found -> substring match
+			colPattern = trimmed[:colonIdx]
+			value = trimmed[colonIdx+1:]
+			isExact = false
+		default:
+			// No separator found in this part, skip it
+			continue
+		}
+
+		op := opContains
+		if isExact && negated {
+			op = opNotEquals
+		} else if isExact {
+			op = opEquals
+		} else if negated {
+			op = opNotContains
+		}
+
+		conditions = append(conditions, queryCondition{
+			columnPattern: strings.ToLower(strings.TrimSpace(colPattern)),
+			value:         strings.ToLower(strings.TrimSpace(value)),
+			operator:      op,
+		})
+	}
+
+	return conditions, true
+}
+
+// parseSQLQuery parses the --sqlquery SQL-like WHERE clause syntax.
+//
+// Syntax:
+//
+//	"Role CONTAINS owner AND Principal CONTAINS privesc02"
+//	"Role = roles/owner AND Principal NOT CONTAINS compute"
+//	"Source != Project"
+//
+// Operators: CONTAINS, =, NOT CONTAINS, !=
+// Conjunction: AND only (all conditions must match)
+// All operators and keywords are case-insensitive.
+func parseSQLQuery(query string) []queryCondition {
+	// Split on AND (case-insensitive) with word boundaries
+	// Use a simple approach: find " AND " case-insensitively
+	parts := splitOnAND(query)
+
+	var conditions []queryCondition
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+
+		cond, ok := parseSQLCondition(trimmed)
+		if ok {
+			conditions = append(conditions, cond)
+		}
+	}
+
+	return conditions
+}
+
+// splitOnAND splits a string on " AND " (case-insensitive)
+func splitOnAND(s string) []string {
+	lower := strings.ToLower(s)
+	var parts []string
+	for {
+		idx := strings.Index(lower, " and ")
+		if idx < 0 {
+			parts = append(parts, s)
+			break
+		}
+		parts = append(parts, s[:idx])
+		s = s[idx+5:] // len(" and ") == 5
+		lower = lower[idx+5:]
+	}
+	return parts
+}
+
+// parseSQLCondition parses a single SQL condition like "Role CONTAINS owner"
+func parseSQLCondition(s string) (queryCondition, bool) {
+	lower := strings.ToLower(s)
+
+	// Try "NOT CONTAINS" first (must come before "CONTAINS" check)
+	if idx := strings.Index(lower, " not contains "); idx >= 0 {
+		col := strings.TrimSpace(s[:idx])
+		val := strings.TrimSpace(s[idx+14:]) // len(" not contains ") == 14
+		return queryCondition{
+			columnPattern: strings.ToLower(col),
+			value:         strings.ToLower(val),
+			operator:      opNotContains,
+		}, true
+	}
+
+	// Try "CONTAINS"
+	if idx := strings.Index(lower, " contains "); idx >= 0 {
+		col := strings.TrimSpace(s[:idx])
+		val := strings.TrimSpace(s[idx+10:]) // len(" contains ") == 10
+		return queryCondition{
+			columnPattern: strings.ToLower(col),
+			value:         strings.ToLower(val),
+			operator:      opContains,
+		}, true
+	}
+
+	// Try "!=" (must come before "=" check)
+	if idx := strings.Index(s, "!="); idx >= 0 {
+		col := strings.TrimSpace(s[:idx])
+		val := strings.TrimSpace(s[idx+2:])
+		return queryCondition{
+			columnPattern: strings.ToLower(col),
+			value:         strings.ToLower(val),
+			operator:      opNotEquals,
+		}, true
+	}
+
+	// Try "="
+	if idx := strings.Index(s, "="); idx >= 0 {
+		col := strings.TrimSpace(s[:idx])
+		val := strings.TrimSpace(s[idx+1:])
+		return queryCondition{
+			columnPattern: strings.ToLower(col),
+			value:         strings.ToLower(val),
+			operator:      opEquals,
+		}, true
+	}
+
+	return queryCondition{}, false
+}
+
+// resolveColumns returns indices of all headers that contain the pattern
+// as a case-insensitive substring.
+func resolveColumns(columnPattern string, headers []string) []int {
+	var indices []int
+	for i, h := range headers {
+		if strings.Contains(strings.ToLower(h), columnPattern) {
+			indices = append(indices, i)
+		}
+	}
+	return indices
+}
+
+// rowMatchesConditions checks if a row satisfies all query conditions.
+// All conditions are ANDed. Column resolution uses fuzzy substring matching
+// against header names.
+func rowMatchesConditions(row []string, conditions []queryCondition, headers []string) bool {
+	for _, cond := range conditions {
+		colIndices := resolveColumns(cond.columnPattern, headers)
+		if len(colIndices) == 0 {
+			// No columns matched the pattern, condition fails
+			return false
+		}
+
+		switch cond.operator {
+		case opContains:
+			// At least one resolved column must contain the value
+			found := false
+			for _, idx := range colIndices {
+				if idx < len(row) {
+					colVal := strings.ToLower(removeColorCodes(row[idx]))
+					if strings.Contains(colVal, cond.value) {
+						found = true
+						break
+					}
+				}
+			}
+			if !found {
+				return false
+			}
+
+		case opEquals:
+			// At least one resolved column must exactly equal the value
+			found := false
+			for _, idx := range colIndices {
+				if idx < len(row) {
+					colVal := strings.ToLower(removeColorCodes(row[idx]))
+					if colVal == cond.value {
+						found = true
+						break
+					}
+				}
+			}
+			if !found {
+				return false
+			}
+
+		case opNotContains:
+			// None of the resolved columns may contain the value
+			for _, idx := range colIndices {
+				if idx < len(row) {
+					colVal := strings.ToLower(removeColorCodes(row[idx]))
+					if strings.Contains(colVal, cond.value) {
+						return false
+					}
+				}
+			}
+
+		case opNotEquals:
+			// None of the resolved columns may exactly equal the value
+			for _, idx := range colIndices {
+				if idx < len(row) {
+					colVal := strings.ToLower(removeColorCodes(row[idx]))
+					if colVal == cond.value {
+						return false
+					}
+				}
+			}
+		}
+	}
+
+	return true
+}
+
 // applyQueryFilter filters all table bodies in-place using the global query.
-// No-op when globalQueryFilter is empty.
+// Supports both legacy global substring matching and column-aware filtering.
+// No-op when both globalQueryFilter and globalSQLQueryFilter are empty.
 func applyQueryFilter(tables []TableFile) {
-	if globalQueryFilter == "" {
+	if globalQueryFilter == "" && globalSQLQueryFilter == "" {
 		return
 	}
-	patterns := buildQueryPatterns(globalQueryFilter)
+
+	var conditions []queryCondition
+	var useLegacy bool
+
+	if globalSQLQueryFilter != "" {
+		conditions = parseSQLQuery(globalSQLQueryFilter)
+	} else {
+		var isStructured bool
+		conditions, isStructured = parseKeyValueQuery(globalQueryFilter)
+		if !isStructured {
+			// Fall back to legacy global substring matching
+			useLegacy = true
+		}
+	}
+
 	for i := range tables {
 		var filtered [][]string
 		for _, row := range tables[i].Body {
-			if rowMatchesQuery(row, patterns) {
-				filtered = append(filtered, row)
+			if useLegacy {
+				if rowMatchesQuery(row, buildQueryPatterns(globalQueryFilter)) {
+					filtered = append(filtered, row)
+				}
+			} else {
+				if rowMatchesConditions(row, conditions, tables[i].Header) {
+					filtered = append(filtered, row)
+				}
 			}
 		}
 		tables[i].Body = filtered
@@ -1098,6 +1404,9 @@ func HandleOutputSmart(
 	if globalQueryFilter != "" {
 		logger.InfoM(fmt.Sprintf("Filtering output with query: %q", globalQueryFilter), "output")
 	}
+	if globalSQLQueryFilter != "" {
+		logger.InfoM(fmt.Sprintf("Filtering output with sqlquery: %q", globalSQLQueryFilter), "output")
+	}
 
 	// Count total rows across all table files
 	totalRows := 0
@@ -1540,6 +1849,9 @@ func HandleHierarchicalOutputSmart(
 	// Log query filter if active
 	if globalQueryFilter != "" {
 		logger.InfoM(fmt.Sprintf("Filtering output with query: %q", globalQueryFilter), "output")
+	}
+	if globalSQLQueryFilter != "" {
+		logger.InfoM(fmt.Sprintf("Filtering output with sqlquery: %q", globalSQLQueryFilter), "output")
 	}
 
 	// Count total rows across all data
