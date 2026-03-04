@@ -110,7 +110,7 @@ Additional policy notes (as of 09/2022):
 
 ### GCP
 * Google Cloud SDK installed and authenticated
-* Application Default Credentials configured (`gcloud auth application-default login`)
+* Application Default Credentials configured (`gcloud auth application-default login`), or use `--key-file` / `--access-token` / `--impersonate-sa` flags
 * Recommended permissions at appropriate hierarchy levels (see below)
 
 #### GCP Permissions: Minimal vs Comprehensive
@@ -203,6 +203,50 @@ For detailed setup instructions, see the [GCP Setup Guide](https://github.com/Bi
 | Azure | [storage](https://github.com/BishopFox/cloudfox/wiki/Azure-Commands#storage) | The storage command is still under development. Currently it only displays limited data about the storage accounts | 
 | Azure | [vms](https://github.com/BishopFox/cloudfox/wiki/Azure-Commands#vms) | Enumerates useful information for Compute instances in all available resource groups and subscriptions | 
 
+
+# GCP Global Flags
+
+All GCP commands support these flags:
+
+### Authentication
+| Flag | Description |
+| - | - |
+| `--access-token` | Raw GCP access token for authentication (non-refreshable) |
+| `-i, --impersonate-sa` | Service account email to impersonate (requires `roles/iam.serviceAccountTokenCreator`) |
+| `-k, --key-file` | Path to a service account JSON key file for authentication |
+
+If no authentication flags are provided, CloudFox uses Application Default Credentials (ADC). You can combine `--key-file` or `--access-token` with `--impersonate-sa` to impersonate using a specific base credential.
+
+### Query Filtering
+| Flag | Description |
+| - | - |
+| `-q, --query` | Filter output rows by substring match or column-aware key:value syntax |
+| `--sqlquery` | Filter output with SQL-like WHERE clause syntax |
+
+**`--query` examples:**
+```bash
+# Plain substring (matches any column)
+cloudfox gcp -p my-project iam --query "privesc02"
+
+# Column-specific: Role contains "owner" AND Principal contains "privesc02"
+cloudfox gcp -p my-project serviceaccounts --query "Role:owner,Principal:privesc02"
+
+# Negation: Role contains "owner" but Principal does NOT contain "compute"
+cloudfox gcp -p my-project serviceaccounts --query "Role:owner,!Principal:compute"
+
+# Exact match on column value
+cloudfox gcp -p my-project iam --query "Role=roles/owner"
+```
+
+**`--sqlquery` examples:**
+```bash
+cloudfox gcp -p my-project serviceaccounts \
+  --sqlquery "Role CONTAINS owner AND Principal CONTAINS privesc02"
+
+cloudfox gcp -p my-project iam --sqlquery "Source != Project"
+```
+
+For full query filtering documentation, see the [GCP Commands Wiki - Query Filtering](https://github.com/BishopFox/cloudfox/wiki/GCP-Commands#query-filtering).
 
 # GCP Commands
 
