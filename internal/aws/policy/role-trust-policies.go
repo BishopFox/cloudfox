@@ -64,6 +64,9 @@ type RoleTrustStatementEntry struct {
 			CircleCISub                         ListOfPrincipals `json:"CircleCISub"`
 			// Add patterns for provider-specific claims that support wildcards or partial matches
 		} `json:"StringLike"`
+		ForAllValuesStringLike struct {
+			TokenActionsGithubusercontentComSub ListOfPrincipals `json:"token.actions.githubusercontent.com:sub"`
+		} `json:"ForAllValues:StringLike"`
 		ForAnyValueStringLike struct {
 			CognitoAMR string `json:"cognito-identity.amazonaws.com:amr"`
 			//Auth0Amr   ListOfPrincipals `json:"Auth0Amr"`
