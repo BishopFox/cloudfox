@@ -237,13 +237,42 @@ func (m *WhoAmIModule) Execute(ctx context.Context, logger internal.Logger) {
 	}
 
 	// Step 1: Get current identity
+	// When a non-ADC session exists (--access-token, --key-file, --impersonate-sa),
+	// resolve identity from the session's token. Never fall back to ADC when the
+	// user provided explicit credentials, as that would report the wrong identity.
 	oauthService := OAuthService.NewOAuthService()
-	principal, err := oauthService.WhoAmI()
-	if err != nil {
-		parsedErr := gcpinternal.ParseGCPError(err, "oauth2.googleapis.com")
-		gcpinternal.HandleGCPError(parsedErr, logger, globals.GCP_WHOAMI_MODULE_NAME,
-			"Could not retrieve token info")
-		return
+	var principal *OAuthService.Principal
+	var err error
+
+	if session := gcpinternal.GetDefaultSession(); session != nil {
+		// Try 1: Use the session's already-resolved email (populated during session creation
+		// from key file client_email, tokeninfo, or impersonation target).
+		if session.GetEmail() != "" {
+			principal = &OAuthService.Principal{Email: session.GetEmail()}
+		} else {
+			// Try 2: Query tokeninfo with the session's access token.
+			token, tokenErr := session.GetToken(ctx)
+			if tokenErr == nil && token != "" {
+				principal, err = oauthService.WhoAmIWithToken(token)
+			}
+		}
+
+		// If we still have no identity, error out. Do NOT fall back to ADC.
+		if principal == nil || principal.Email == "" {
+			logger.ErrorM("Could not determine identity for the provided credentials. "+
+				"The access token may not include the email claim. "+
+				"Try using --key-file or --impersonate-sa instead.", globals.GCP_WHOAMI_MODULE_NAME)
+			return
+		}
+	} else {
+		// No explicit session: use Application Default Credentials
+		principal, err = oauthService.WhoAmI()
+		if err != nil {
+			parsedErr := gcpinternal.ParseGCPError(err, "oauth2.googleapis.com")
+			gcpinternal.HandleGCPError(parsedErr, logger, globals.GCP_WHOAMI_MODULE_NAME,
+				"Could not retrieve token info")
+			return
+		}
 	}
 
 	m.Identity = IdentityContext{

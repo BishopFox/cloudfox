@@ -91,11 +91,17 @@ var (
 				if err != nil {
 					GCPLogger.FatalM(fmt.Sprintf("Failed to authenticate with access token: %v", err), "gcp")
 				}
+				// If tokeninfo/userinfo endpoints didn't return an email (common with
+				// SA tokens that only have the cloud-platform scope), try a project-scoped
+				// probe using the CRM API to extract the caller from the error response.
+				if baseSession.GetEmail() == "" && GCPProjectID != "" {
+					gcpinternal.ProbeIdentityWithProject(context.Background(), baseSession, GCPProjectID)
+				}
 				email := baseSession.GetEmail()
 				if email != "" {
 					GCPLogger.SuccessM(fmt.Sprintf("Authenticated as %s (from access token)", email), "gcp")
 				} else {
-					GCPLogger.SuccessM("Authenticated with access token (identity unknown)", "gcp")
+					GCPLogger.WarnM("Authenticated with access token (could not resolve identity)", "gcp")
 				}
 			} else if GCPKeyFile != "" {
 				os.Unsetenv("GOOGLE_CLOUD_QUOTA_PROJECT")

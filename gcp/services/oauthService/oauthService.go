@@ -59,6 +59,21 @@ func (s *OAuthService) WhoAmI() (*Principal, error) {
 	}, nil
 }
 
+// WhoAmIWithToken resolves identity from an explicit access token instead of ADC.
+// This is used when --access-token or --key-file flags provide a session.
+func (s *OAuthService) WhoAmIWithToken(accessToken string) (*Principal, error) {
+	tokenInfo, err := queryTokenInfo(accessToken)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve metadata of the token with error: %w", err)
+	}
+
+	scopes := strings.Split(tokenInfo.Scope, " ")
+	return &Principal{
+		Email: tokenInfo.Email,
+		Scope: scopes,
+	}, nil
+}
+
 // queryTokenInfo function modified to return (*Principal, error).
 func queryTokenInfo(accessToken string) (*tokenInfoResponse, error) {
 	url := fmt.Sprintf("https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=%s", accessToken)

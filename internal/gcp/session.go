@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
 	"time"
-
-	"os"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -40,6 +41,7 @@ type SafeSession struct {
 	email       string
 	projectID   string
 	accountType string // "user" or "serviceAccount"
+	uniqueID    string // Numeric unique ID from tokeninfo (issued_to/azp)
 }
 
 // GCPCredentialInfo holds information about the current credential
@@ -240,43 +242,536 @@ func NewSafeSessionFromAccessToken(ctx context.Context, accessToken string) (*Sa
 	return ss, nil
 }
 
-// resolveTokenIdentity calls the Google tokeninfo endpoint to determine the
-// email and account type for a raw access token.
+// resolveTokenIdentity tries multiple Google endpoints to determine the email
+// and account type for a raw access token.
+//
+// Strategy:
+//  1. tokeninfo v1 endpoint: returns email (if scope includes email) AND the
+//     numeric unique ID (issued_to/azp) which is always present.
+//  2. If email was found, done. Otherwise use the unique ID with
+//     serviceAccounts.get to resolve the SA email (IAM API accepts numeric IDs
+//     in the resource path: projects/-/serviceAccounts/{uniqueId}).
+//  3. Fallback: userinfo endpoint, then GCP API error parsing.
+//  4. If still unresolved and --project is set, ProbeIdentityWithProject lists
+//     SAs in the project and matches by unique ID (called from CLI layer).
 func (s *SafeSession) resolveTokenIdentity(ctx context.Context, accessToken string) {
-	// Use the tokeninfo endpoint to get identity
-	cmd := exec.CommandContext(ctx, "curl", "-s",
-		fmt.Sprintf("https://oauth2.googleapis.com/tokeninfo?access_token=%s", accessToken))
-	out, err := cmd.Output()
+	debug := os.Getenv("CLOUDFOX_DEBUG") != ""
+
+	// Step 1: Call tokeninfo to get email (if available) and unique ID (always available)
+	email, acctType, uniqueID, expiry := queryTokenInfoFull(ctx, accessToken)
+	if debug {
+		fmt.Fprintf(os.Stderr, "[debug] resolveTokenIdentity tokeninfo: email=%q acctType=%q uniqueID=%q\n", email, acctType, uniqueID)
+	}
+
+	// Store expiry and unique ID regardless of email resolution
+	if !expiry.IsZero() {
+		s.sessionExpiry = expiry
+		s.currentToken.Expiry = expiry
+	}
+	if uniqueID != "" {
+		s.uniqueID = uniqueID
+	}
+
+	if email != "" {
+		s.email = email
+		s.accountType = acctType
+		return
+	}
+
+	// Step 2: Use unique ID with serviceAccounts.get to resolve SA email.
+	// The IAM API accepts numeric unique IDs in place of the SA email in the
+	// resource path: projects/-/serviceAccounts/{uniqueId}
+	// This returns the full SA object including the email field.
+	if uniqueID != "" {
+		email, acctType = getSAByUniqueID(ctx, accessToken, uniqueID)
+		if debug {
+			fmt.Fprintf(os.Stderr, "[debug] resolveTokenIdentity getSAByUniqueID: email=%q acctType=%q\n", email, acctType)
+		}
+		if email != "" {
+			s.email = email
+			s.accountType = acctType
+			return
+		}
+	}
+
+	// Step 3: Fallback - userinfo endpoint (works with openid/email scopes)
+	email, acctType = queryUserInfoHTTP(ctx, accessToken)
+	if debug {
+		fmt.Fprintf(os.Stderr, "[debug] resolveTokenIdentity userinfo: email=%q acctType=%q\n", email, acctType)
+	}
+	if email != "" {
+		s.email = email
+		s.accountType = acctType
+		return
+	}
+
+	// Step 4: Fallback - GCP API error parsing
+	email, acctType = probeGCPIdentity(ctx, accessToken)
+	if debug {
+		fmt.Fprintf(os.Stderr, "[debug] resolveTokenIdentity iam-probe: email=%q acctType=%q\n", email, acctType)
+	}
+	if email != "" {
+		s.email = email
+		s.accountType = acctType
+	}
+}
+
+// getSAByUniqueID calls the IAM serviceAccounts.get endpoint using the SA's
+// numeric unique ID. The IAM API accepts unique IDs in place of email in the
+// resource path: projects/-/serviceAccounts/{uniqueId}
+// If the caller has iam.serviceAccounts.get permission, this returns the full
+// SA object including the email. This works even without knowing the project.
+func getSAByUniqueID(ctx context.Context, accessToken, uniqueID string) (email, acctType string) {
+	saURL := fmt.Sprintf("https://iam.googleapis.com/v1/projects/-/serviceAccounts/%s", uniqueID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, saURL, nil)
 	if err != nil {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return
+	}
+
+	if os.Getenv("CLOUDFOX_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "[debug] getSAByUniqueID response (status %d): %s\n", resp.StatusCode, string(body))
+	}
+
+	if resp.StatusCode == http.StatusOK {
+		var sa struct {
+			Email    string `json:"email"`
+			UniqueID string `json:"uniqueId"`
+			Name     string `json:"name"`
+		}
+		if err := json.Unmarshal(body, &sa); err == nil && sa.Email != "" {
+			return sa.Email, "serviceAccount"
+		}
+	}
+
+	// On 403, the error message might contain the resolved email
+	resolvedEmail, resolvedType := extractCallerFromGCPResponse(body)
+	if resolvedEmail != "" {
+		return resolvedEmail, resolvedType
+	}
+	return extractEmailFromGCPError(string(body)), "serviceAccount"
+}
+
+// queryTokenInfoFull calls the Google tokeninfo v1 endpoint and extracts email,
+// account type, the numeric unique ID (issued_to/azp), and expiry.
+// SA tokens from generateAccessToken always return the unique ID even when
+// the email field is empty (because the token lacks the email scope).
+func queryTokenInfoFull(ctx context.Context, accessToken string) (email, acctType, uniqueID string, expiry time.Time) {
+	url := fmt.Sprintf("https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=%s", accessToken)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return
+	}
+
+	if os.Getenv("CLOUDFOX_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "[debug] queryTokenInfoFull (status %d): %s\n", resp.StatusCode, string(body))
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return
+	}
+
+	var info struct {
+		Email    string `json:"email"`
+		IssuedTo string `json:"issued_to"` // numeric unique ID of the SA/user
+		Audience string `json:"audience"`
+		Scope    string `json:"scope"`
+		Exp      string `json:"exp"`
+		// v2/v3 field names (if we switch endpoints later)
+		AZP string `json:"azp"`
+	}
+	if err := json.Unmarshal(body, &info); err != nil {
+		return
+	}
+
+	if info.Email != "" {
+		email = info.Email
+		if strings.Contains(info.Email, ".iam.gserviceaccount.com") {
+			acctType = "serviceAccount"
+		} else {
+			acctType = "user"
+		}
+	}
+
+	// Extract unique ID: v1 uses "issued_to", v2/v3 use "azp"
+	uniqueID = info.IssuedTo
+	if uniqueID == "" {
+		uniqueID = info.AZP
+	}
+
+	if info.Exp != "" {
+		var expUnix int64
+		if _, scanErr := fmt.Sscanf(info.Exp, "%d", &expUnix); scanErr == nil {
+			expiry = time.Unix(expUnix, 0)
+		}
+	}
+	return
+}
+
+// queryUserInfoHTTP calls the Google userinfo endpoint as a fallback for
+// identity resolution. This works for tokens that have openid or email scopes.
+func queryUserInfoHTTP(ctx context.Context, accessToken string) (email, acctType string) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://www.googleapis.com/oauth2/v3/userinfo", nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil || resp.StatusCode != http.StatusOK {
 		return
 	}
 
 	var info struct {
 		Email string `json:"email"`
-		Scope string `json:"scope"`
-		Exp   string `json:"exp"`
 	}
-	if err := json.Unmarshal(out, &info); err != nil {
+	if err := json.Unmarshal(body, &info); err != nil {
 		return
 	}
 
 	if info.Email != "" {
-		s.email = info.Email
+		email = info.Email
 		if strings.Contains(info.Email, ".iam.gserviceaccount.com") {
-			s.accountType = "serviceAccount"
+			acctType = "serviceAccount"
 		} else {
-			s.accountType = "user"
+			acctType = "user"
+		}
+	}
+	return
+}
+
+// probeGCPIdentity is a last-resort identity resolver that makes GCP API calls
+// and attempts to extract the caller email from error responses. Most identity
+// resolution is handled earlier by getSAByUniqueID (step 2) or
+// matchSAByUniqueID (in ProbeIdentityWithProject). This function exists as a
+// final fallback for edge cases where those approaches fail.
+func probeGCPIdentity(ctx context.Context, accessToken string) (email, acctType string) {
+	// Try a lightweight GCP API call and parse the error for caller identity.
+	// Use compute.regions.list which often includes the caller in 403 errors.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		"https://compute.googleapis.com/compute/v1/projects/_/regions?maxResults=1", nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return
+	}
+
+	if os.Getenv("CLOUDFOX_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "[debug] probeGCPIdentity compute response (status %d): %s\n", resp.StatusCode, string(body))
+	}
+
+	return extractCallerFromGCPResponse(body)
+}
+
+// extractEmailFromGCPError extracts an email address from a GCP API error message.
+// GCP error messages often contain the caller identity in patterns like:
+//   - "... Caller: user@example.com ..."
+//   - "... caller does not have permission ... user@example.com ..."
+func extractEmailFromGCPError(msg string) string {
+	// Look for email-like patterns in the error message
+	// Simple approach: find strings matching X@Y.Z pattern
+	parts := strings.Fields(msg)
+	for _, part := range parts {
+		// Clean common trailing punctuation
+		part = strings.TrimRight(part, ".,;:\"'")
+		if isLikelyEmail(part) {
+			return part
+		}
+	}
+	return ""
+}
+
+// isLikelyEmail checks if a string looks like an email address
+func isLikelyEmail(s string) bool {
+	at := strings.Index(s, "@")
+	if at < 1 || at >= len(s)-1 {
+		return false
+	}
+	dot := strings.LastIndex(s[at:], ".")
+	return dot > 1
+}
+
+// ProbeIdentityWithProject attempts to resolve the session's email by making
+// project-scoped GCP API calls. This is used as a fallback when tokeninfo
+// endpoints return a numeric unique ID but no email (common with SA tokens
+// generated via generateAccessToken with only cloud-platform scope).
+//
+// Strategies (in order):
+//  1. List service accounts in the project and match by unique ID
+//  2. Cloud Resource Manager projects.get (extracts caller from error details)
+//  3. Cloud Resource Manager projects.testIamPermissions
+func ProbeIdentityWithProject(ctx context.Context, session *SafeSession, projectID string) {
+	if session.GetEmail() != "" {
+		return // already resolved
+	}
+
+	token, err := session.GetToken(ctx)
+	if err != nil || token == "" {
+		return
+	}
+
+	debug := os.Getenv("CLOUDFOX_DEBUG") != ""
+
+	// Strategy 1: List SAs in the project and match by unique ID.
+	// The tokeninfo endpoint always returns the SA's numeric unique ID
+	// (issued_to/azp), even when email is missing. Each SA in the project
+	// has a uniqueId field. We match to find the email.
+	session.mu.Lock()
+	uniqueID := session.uniqueID
+	session.mu.Unlock()
+
+	if uniqueID != "" {
+		email, acctType := matchSAByUniqueID(ctx, token, projectID, uniqueID)
+		if debug {
+			fmt.Fprintf(os.Stderr, "[debug] matchSAByUniqueID: email=%q acctType=%q\n", email, acctType)
+		}
+		if email != "" {
+			session.mu.Lock()
+			session.email = email
+			session.accountType = acctType
+			session.mu.Unlock()
+			return
 		}
 	}
 
-	// Parse expiry if available
-	if info.Exp != "" {
-		var expUnix int64
-		if _, err := fmt.Sscanf(info.Exp, "%d", &expUnix); err == nil {
-			s.sessionExpiry = time.Unix(expUnix, 0)
-			s.currentToken.Expiry = s.sessionExpiry
+	// Strategy 2: projects.get - extracts caller from 403 error details
+	email, acctType := probeWithCRM(ctx, token, projectID)
+	if debug {
+		fmt.Fprintf(os.Stderr, "[debug] probeWithCRM: email=%q acctType=%q\n", email, acctType)
+	}
+	if email != "" {
+		session.mu.Lock()
+		session.email = email
+		session.accountType = acctType
+		session.mu.Unlock()
+		return
+	}
+
+	// Strategy 3: testIamPermissions - extracts caller from error details
+	email, acctType = probeWithTestPermissions(ctx, token, projectID)
+	if debug {
+		fmt.Fprintf(os.Stderr, "[debug] probeWithTestPermissions: email=%q acctType=%q\n", email, acctType)
+	}
+	if email != "" {
+		session.mu.Lock()
+		session.email = email
+		session.accountType = acctType
+		session.mu.Unlock()
+	}
+}
+
+// matchSAByUniqueID lists service accounts in a project and matches by numeric
+// unique ID. The IAM API returns each SA's uniqueId field which corresponds to
+// the issued_to/azp value from the tokeninfo endpoint.
+func matchSAByUniqueID(ctx context.Context, accessToken, projectID, targetUniqueID string) (email, acctType string) {
+	debug := os.Getenv("CLOUDFOX_DEBUG") != ""
+	pageToken := ""
+
+	for {
+		url := fmt.Sprintf("https://iam.googleapis.com/v1/projects/%s/serviceAccounts?pageSize=100", projectID)
+		if pageToken != "" {
+			url += "&pageToken=" + pageToken
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return
+		}
+		req.Header.Set("Authorization", "Bearer "+accessToken)
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return
+		}
+
+		if debug {
+			fmt.Fprintf(os.Stderr, "[debug] matchSAByUniqueID page (status %d, project %s)\n", resp.StatusCode, projectID)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			if debug {
+				fmt.Fprintf(os.Stderr, "[debug] matchSAByUniqueID error: %s\n", string(body))
+			}
+			return
+		}
+
+		var listResp struct {
+			Accounts []struct {
+				Email    string `json:"email"`
+				UniqueID string `json:"uniqueId"`
+				Name     string `json:"name"`
+			} `json:"accounts"`
+			NextPageToken string `json:"nextPageToken"`
+		}
+		if err := json.Unmarshal(body, &listResp); err != nil {
+			return
+		}
+
+		for _, sa := range listResp.Accounts {
+			if sa.UniqueID == targetUniqueID {
+				if debug {
+					fmt.Fprintf(os.Stderr, "[debug] matchSAByUniqueID MATCH: uniqueID=%s -> email=%s\n", targetUniqueID, sa.Email)
+				}
+				return sa.Email, "serviceAccount"
+			}
+		}
+
+		if listResp.NextPageToken == "" {
+			break
+		}
+		pageToken = listResp.NextPageToken
+	}
+
+	if debug {
+		fmt.Fprintf(os.Stderr, "[debug] matchSAByUniqueID: no match for uniqueID=%s in project %s\n", targetUniqueID, projectID)
+	}
+	return
+}
+
+// probeWithCRM calls cloudresourcemanager projects.get and extracts caller email
+// from the response or error details.
+func probeWithCRM(ctx context.Context, accessToken, projectID string) (email, acctType string) {
+	url := fmt.Sprintf("https://cloudresourcemanager.googleapis.com/v1/projects/%s", projectID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return
+	}
+
+	if os.Getenv("CLOUDFOX_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "[debug] probeWithCRM response (status %d): %s\n", resp.StatusCode, string(body))
+	}
+
+	return extractCallerFromGCPResponse(body)
+}
+
+// probeWithTestPermissions calls testIamPermissions on the project. This endpoint
+// is commonly accessible and error responses include the caller identity.
+func probeWithTestPermissions(ctx context.Context, accessToken, projectID string) (email, acctType string) {
+	url := fmt.Sprintf("https://cloudresourcemanager.googleapis.com/v1/projects/%s:testIamPermissions", projectID)
+	payload := `{"permissions":["resourcemanager.projects.get"]}`
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(payload))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return
+	}
+
+	return extractCallerFromGCPResponse(body)
+}
+
+// extractCallerFromGCPResponse extracts a caller email from a GCP API response body.
+// Works with both error responses (403/404) and success responses that may include
+// the caller in audit metadata or error details.
+func extractCallerFromGCPResponse(body []byte) (email, acctType string) {
+	var apiResp struct {
+		Error struct {
+			Message string `json:"message"`
+			Status  string `json:"status"`
+			Details []struct {
+				Type     string            `json:"@type"`
+				Reason   string            `json:"reason"`
+				Domain   string            `json:"domain"`
+				Metadata map[string]string `json:"metadata"`
+			} `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return
+	}
+
+	// Check error details metadata for caller identity
+	for _, detail := range apiResp.Error.Details {
+		if detail.Type == "type.googleapis.com/google.rpc.ErrorInfo" {
+			// Check common metadata keys for caller identity
+			for _, key := range []string{"caller", "email", "principal", "service_account"} {
+				if val, ok := detail.Metadata[key]; ok && isLikelyEmail(val) {
+					email = val
+					break
+				}
+			}
+			if email != "" {
+				break
+			}
 		}
 	}
+
+	// Fallback: scan the error message for email-like strings
+	if email == "" {
+		email = extractEmailFromGCPError(apiResp.Error.Message)
+	}
+
+	if email != "" {
+		if strings.Contains(email, ".iam.gserviceaccount.com") {
+			acctType = "serviceAccount"
+		} else {
+			acctType = "user"
+		}
+	}
+	return
 }
 
 // NewSmartSession creates a session with automatic monitoring and refresh
