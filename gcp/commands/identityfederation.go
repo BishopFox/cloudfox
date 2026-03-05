@@ -448,6 +448,7 @@ func (m *IdentityFederationModule) buildTables(
 			"Display Name",
 			"State",
 			"Disabled",
+			"Full Resource Path",
 		}
 
 		var poolsBody [][]string
@@ -462,6 +463,7 @@ func (m *IdentityFederationModule) buildTables(
 				pool.DisplayName,
 				pool.State,
 				disabled,
+				pool.Name,
 			})
 		}
 
@@ -482,6 +484,7 @@ func (m *IdentityFederationModule) buildTables(
 			"OIDC Issuer / AWS Account",
 			"Trust Scope",
 			"Access Condition",
+			"Full Resource Path",
 		}
 
 		var providersBody [][]string
@@ -508,6 +511,7 @@ func (m *IdentityFederationModule) buildTables(
 				issuerOrAccount,
 				trustScope,
 				attrCond,
+				p.Name,
 			})
 		}
 
