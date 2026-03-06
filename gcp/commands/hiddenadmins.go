@@ -290,6 +290,7 @@ func (m *HiddenAdminsModule) analyzeOrganizationIAM(ctx context.Context, logger 
 
 		policy, err := orgsClient.GetIamPolicy(ctx, &iampb.GetIamPolicyRequest{
 			Resource: org.Name,
+			Options:  &iampb.GetPolicyOptions{RequestedPolicyVersion: 3},
 		})
 		if err != nil {
 			continue
@@ -332,6 +333,7 @@ func (m *HiddenAdminsModule) analyzeFolderIAM(ctx context.Context, logger intern
 
 		policy, err := foldersClient.GetIamPolicy(ctx, &iampb.GetIamPolicyRequest{
 			Resource: folder.Name,
+			Options:  &iampb.GetPolicyOptions{RequestedPolicyVersion: 3},
 		})
 		if err != nil {
 			continue
@@ -352,7 +354,9 @@ func (m *HiddenAdminsModule) analyzeProjectIAM(ctx context.Context, logger inter
 		return
 	}
 
-	policy, err := crmService.Projects.GetIamPolicy(projectID, &crmv1.GetIamPolicyRequest{}).Do()
+	policy, err := crmService.Projects.GetIamPolicy(projectID, &crmv1.GetIamPolicyRequest{
+		Options: &crmv1.GetPolicyOptions{RequestedPolicyVersion: 3},
+	}).Do()
 	if err != nil {
 		return
 	}

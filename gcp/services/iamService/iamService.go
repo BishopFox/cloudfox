@@ -277,6 +277,7 @@ func (s *IAMService) Policies(resourceID string, resourceType string) ([]PolicyB
 
 	req := &iampb.GetIamPolicyRequest{
 		Resource: resourceName,
+		Options:  &iampb.GetPolicyOptions{RequestedPolicyVersion: 3},
 	}
 
 	// Fetch the IAM policy for the resource
@@ -623,7 +624,10 @@ func (s *IAMService) getPoliciesForResource(ctx context.Context, resourceID stri
 		defer client.Close()
 
 		resourceName = "projects/" + resourceID
-		policy, err := client.GetIamPolicy(ctx, &iampb.GetIamPolicyRequest{Resource: resourceName})
+		policy, err := client.GetIamPolicy(ctx, &iampb.GetIamPolicyRequest{
+			Resource: resourceName,
+			Options:  &iampb.GetPolicyOptions{RequestedPolicyVersion: 3},
+		})
 		if err != nil {
 			return nil, gcpinternal.ParseGCPError(err, "cloudresourcemanager.googleapis.com")
 		}
@@ -646,7 +650,10 @@ func (s *IAMService) getPoliciesForResource(ctx context.Context, resourceID stri
 		defer client.Close()
 
 		resourceName = "folders/" + resourceID
-		policy, err := client.GetIamPolicy(ctx, &iampb.GetIamPolicyRequest{Resource: resourceName})
+		policy, err := client.GetIamPolicy(ctx, &iampb.GetIamPolicyRequest{
+			Resource: resourceName,
+			Options:  &iampb.GetPolicyOptions{RequestedPolicyVersion: 3},
+		})
 		if err != nil {
 			policyFailureCache[cacheKey] = true
 			return nil, gcpinternal.ParseGCPError(err, "cloudresourcemanager.googleapis.com")
@@ -670,7 +677,10 @@ func (s *IAMService) getPoliciesForResource(ctx context.Context, resourceID stri
 		defer client.Close()
 
 		resourceName = "organizations/" + resourceID
-		policy, err := client.GetIamPolicy(ctx, &iampb.GetIamPolicyRequest{Resource: resourceName})
+		policy, err := client.GetIamPolicy(ctx, &iampb.GetIamPolicyRequest{
+			Resource: resourceName,
+			Options:  &iampb.GetPolicyOptions{RequestedPolicyVersion: 3},
+		})
 		if err != nil {
 			policyFailureCache[cacheKey] = true
 			return nil, gcpinternal.ParseGCPError(err, "cloudresourcemanager.googleapis.com")
@@ -956,6 +966,7 @@ func (s *IAMService) GetRolePermissions(ctx context.Context, roleName string) ([
 		// Project-level custom role
 		role, err := iamService.Projects.Roles.Get(roleName).Context(ctx).Do()
 		if err != nil {
+			rolePermissionsFailureCache[roleName] = true
 			return nil, gcpinternal.ParseGCPError(err, "iam.googleapis.com")
 		}
 		permissions = role.IncludedPermissions
@@ -1424,7 +1435,7 @@ func (s *IAMService) GetServiceAccountIAMPolicy(ctx context.Context, saEmail str
 
 	saResource := fmt.Sprintf("projects/%s/serviceAccounts/%s", projectID, saEmail)
 
-	policy, err := iamService.Projects.ServiceAccounts.GetIamPolicy(saResource).Context(ctx).Do()
+	policy, err := iamService.Projects.ServiceAccounts.GetIamPolicy(saResource).OptionsRequestedPolicyVersion(3).Context(ctx).Do()
 	if err != nil {
 		return nil, gcpinternal.ParseGCPError(err, "iam.googleapis.com")
 	}
@@ -1475,7 +1486,7 @@ func (s *IAMService) GetServiceAccountIAMBindings(ctx context.Context, saEmail s
 
 	saResource := fmt.Sprintf("projects/%s/serviceAccounts/%s", projectID, saEmail)
 
-	policy, err := iamService.Projects.ServiceAccounts.GetIamPolicy(saResource).Context(ctx).Do()
+	policy, err := iamService.Projects.ServiceAccounts.GetIamPolicy(saResource).OptionsRequestedPolicyVersion(3).Context(ctx).Do()
 	if err != nil {
 		return nil, gcpinternal.ParseGCPError(err, "iam.googleapis.com")
 	}
@@ -1713,6 +1724,7 @@ func (s *IAMService) GetOrganizationIAM(ctx context.Context) ([]ScopeBinding, ma
 		// Get IAM policy for this organization
 		policy, err := orgsClient.GetIamPolicy(ctx, &iampb.GetIamPolicyRequest{
 			Resource: org.Name,
+			Options:  &iampb.GetPolicyOptions{RequestedPolicyVersion: 3},
 		})
 		if err != nil {
 			continue
@@ -1785,6 +1797,7 @@ func (s *IAMService) GetFolderIAM(ctx context.Context) ([]ScopeBinding, map[stri
 		// Get IAM policy for this folder
 		policy, err := foldersClient.GetIamPolicy(ctx, &iampb.GetIamPolicyRequest{
 			Resource: folder.Name,
+			Options:  &iampb.GetPolicyOptions{RequestedPolicyVersion: 3},
 		})
 		if err != nil {
 			continue

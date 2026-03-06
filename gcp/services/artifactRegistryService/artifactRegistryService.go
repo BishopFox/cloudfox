@@ -206,6 +206,7 @@ func (ars *ArtifactRegistryService) getRepositoryIAMPolicy(ctx context.Context, 
 	// Get IAM policy
 	req := &iampb.GetIamPolicyRequest{
 		Resource: repoName,
+		Options:  &iampb.GetPolicyOptions{RequestedPolicyVersion: 3},
 	}
 
 	policy, err := client.GetIamPolicy(ctx, req)

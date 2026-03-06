@@ -428,7 +428,7 @@ func (s *ResourceIAMService) GetSecretManagerIAM(ctx context.Context, projectID 
 
 	for _, secret := range allSecrets {
 		// Get IAM policy for this secret
-		policy, err := smService.Projects.Secrets.GetIamPolicy(secret.Name).Context(ctx).Do()
+		policy, err := smService.Projects.Secrets.GetIamPolicy(secret.Name).OptionsRequestedPolicyVersion(3).Context(ctx).Do()
 		if err != nil {
 			continue
 		}
@@ -553,7 +553,7 @@ func (s *ResourceIAMService) GetCloudFunctionsIAM(ctx context.Context, projectID
 
 	for _, fn := range resp.Functions {
 		// Get IAM policy for this function
-		policy, err := cfService.Projects.Locations.Functions.GetIamPolicy(fn.Name).Context(ctx).Do()
+		policy, err := cfService.Projects.Locations.Functions.GetIamPolicy(fn.Name).OptionsRequestedPolicyVersion(3).Context(ctx).Do()
 		if err != nil {
 			continue
 		}
@@ -603,7 +603,7 @@ func (s *ResourceIAMService) GetCloudRunIAM(ctx context.Context, projectID strin
 
 	for _, svc := range resp.Items {
 		// Get IAM policy for this service
-		policy, err := runService.Projects.Locations.Services.GetIamPolicy(svc.Metadata.Name).Context(ctx).Do()
+		policy, err := runService.Projects.Locations.Services.GetIamPolicy(svc.Metadata.Name).OptionsRequestedPolicyVersion(3).Context(ctx).Do()
 		if err != nil {
 			continue
 		}
@@ -650,7 +650,7 @@ func (s *ResourceIAMService) GetServiceAccountIAM(ctx context.Context, projectID
 		for _, sa := range page.Accounts {
 			// Get IAM policy for this service account
 			saResource := fmt.Sprintf("projects/%s/serviceAccounts/%s", projectID, sa.Email)
-			policy, err := iamSvc.Projects.ServiceAccounts.GetIamPolicy(saResource).Context(ctx).Do()
+			policy, err := iamSvc.Projects.ServiceAccounts.GetIamPolicy(saResource).OptionsRequestedPolicyVersion(3).Context(ctx).Do()
 			if err != nil {
 				continue
 			}
@@ -712,7 +712,7 @@ func (s *ResourceIAMService) GetComputeInstanceIAM(ctx context.Context, projectI
 				}
 
 				// Get IAM policy for this instance
-				policy, err := computeSvc.Instances.GetIamPolicy(projectID, zone, instance.Name).Context(ctx).Do()
+				policy, err := computeSvc.Instances.GetIamPolicy(projectID, zone, instance.Name).OptionsRequestedPolicyVersion(3).Context(ctx).Do()
 				if err != nil {
 					continue
 				}
