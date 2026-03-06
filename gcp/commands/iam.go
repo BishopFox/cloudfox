@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	IAMService "github.com/BishopFox/cloudfox/gcp/services/iamService"
+	resourceiamservice "github.com/BishopFox/cloudfox/gcp/services/resourceIAMService"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	gcpinternal "github.com/BishopFox/cloudfox/internal/gcp"
@@ -107,11 +108,12 @@ type IAMModule struct {
 	gcpinternal.BaseGCPModule
 
 	// Module-specific fields - using enhanced data
-	ScopeBindings   []IAMService.ScopeBinding
-	ServiceAccounts []IAMService.ServiceAccountInfo
-	CustomRoles     []IAMService.CustomRole
-	Groups          []IAMService.GroupInfo
-	MFAStatus       map[string]*IAMService.MFAStatus
+	ScopeBindings    []IAMService.ScopeBinding
+	ServiceAccounts  []IAMService.ServiceAccountInfo
+	CustomRoles      []IAMService.CustomRole
+	Groups           []IAMService.GroupInfo
+	MFAStatus        map[string]*IAMService.MFAStatus
+	ResourceBindings []resourceiamservice.ResourceIAMBinding
 
 	// Per-scope loot for inheritance-aware output
 	OrgLoot     map[string]*internal.LootFile // orgID -> loot commands
@@ -154,11 +156,12 @@ func runGCPIAMCommand(cmd *cobra.Command, args []string) {
 	// Create module instance
 	module := &IAMModule{
 		BaseGCPModule:   gcpinternal.NewBaseGCPModule(cmdCtx),
-		ScopeBindings:   []IAMService.ScopeBinding{},
-		ServiceAccounts: []IAMService.ServiceAccountInfo{},
-		CustomRoles:     []IAMService.CustomRole{},
-		Groups:          []IAMService.GroupInfo{},
-		MFAStatus:       make(map[string]*IAMService.MFAStatus),
+		ScopeBindings:    []IAMService.ScopeBinding{},
+		ServiceAccounts:  []IAMService.ServiceAccountInfo{},
+		CustomRoles:      []IAMService.CustomRole{},
+		Groups:           []IAMService.GroupInfo{},
+		MFAStatus:        make(map[string]*IAMService.MFAStatus),
+		ResourceBindings: []resourceiamservice.ResourceIAMBinding{},
 		OrgLoot:         make(map[string]*internal.LootFile),
 		FolderLoot:      make(map[string]*internal.LootFile),
 		ProjectLoot:     make(map[string]*internal.LootFile),
@@ -204,6 +207,16 @@ func (m *IAMModule) Execute(ctx context.Context, logger internal.Logger) {
 	m.Groups = iamData.Groups
 	m.MFAStatus = iamData.MFAStatus
 
+	// Enumerate resource-level IAM bindings (SA, buckets, secrets, functions, etc.)
+	resourceIAMSvc := resourceiamservice.New()
+	for _, projectID := range m.ProjectIDs {
+		resourceBindings, err := resourceIAMSvc.GetAllResourceIAM(ctx, projectID)
+		if err != nil {
+			continue
+		}
+		m.ResourceBindings = append(m.ResourceBindings, resourceBindings...)
+	}
+
 	// Try to enumerate group memberships to build reverse lookup
 	enrichedGroups := iamService.GetGroupMemberships(ctx, m.Groups)
 	m.Groups = enrichedGroups
@@ -242,8 +255,9 @@ func (m *IAMModule) Execute(ctx context.Context, logger internal.Logger) {
 		}
 	}
 
-	logger.SuccessM(fmt.Sprintf("Found %d binding(s) across %d org(s), %d folder(s), %d project(s); %d SA(s), %d custom role(s), %d group(s)",
+	logger.SuccessM(fmt.Sprintf("Found %d binding(s) across %d org(s), %d folder(s), %d project(s); %d resource-level binding(s); %d SA(s), %d custom role(s), %d group(s)",
 		len(m.ScopeBindings), orgCount, folderCount, projectCount,
+		len(m.ResourceBindings),
 		len(m.ServiceAccounts), len(m.CustomRoles), len(m.Groups)), globals.GCP_IAM_MODULE_NAME)
 
 	// Write output
@@ -722,6 +736,81 @@ func (m *IAMModule) buildTables() []internal.TableFile {
 		})
 	}
 
+	// Add resource-level IAM bindings (one row per binding)
+	for _, rb := range m.ResourceBindings {
+		memberType := resourceiamservice.DetermineMemberType(rb.Member)
+		memberEmail := rb.MemberEmail
+
+		// Check admin status: FoxMapper (granular) > role-based fallback
+		adminStatus := gcpinternal.GetAdminStatusFromCache(m.FoxMapperCache, memberEmail)
+		if adminStatus == "" {
+			adminStatus = isAdminRole(rb.Role)
+		}
+		if adminStatus == "" {
+			adminStatus = "No"
+		}
+
+		isCustom := "No"
+		if strings.HasPrefix(rb.Role, "projects/") || strings.HasPrefix(rb.Role, "organizations/") {
+			isCustom = "Yes"
+		}
+
+		condition := "No"
+		if rb.HasCondition && rb.ConditionTitle != "" {
+			condition = rb.ConditionTitle
+		} else if rb.HasCondition {
+			condition = "Yes"
+		}
+
+		// Get MFA status
+		mfa := "-"
+		if memberType == "User" {
+			if status, ok := m.MFAStatus[memberEmail]; ok {
+				if status.Error != "" {
+					mfa = "Unknown"
+				} else if status.HasMFA {
+					mfa = "Yes"
+				} else {
+					mfa = "No"
+				}
+			}
+		} else if memberType == "ServiceAccount" {
+			mfa = "N/A"
+		}
+
+		// Get groups this member belongs to
+		groups := "-"
+		if memberGroups, ok := m.MemberToGroups[memberEmail]; ok && len(memberGroups) > 0 {
+			groups = strings.Join(memberGroups, ", ")
+		}
+
+		// Check for federated identity
+		federated := formatFederatedInfo(parseFederatedIdentity(memberEmail))
+
+		// Check attack paths for service account principals
+		attackPaths := "-"
+		if memberType == "ServiceAccount" {
+			attackPaths = gcpinternal.GetAttackSummaryFromCaches(m.FoxMapperCache, nil, memberEmail)
+		}
+
+		body = append(body, []string{
+			rb.ResourceType,
+			rb.ResourceID,
+			rb.ResourceName,
+			memberType,
+			memberEmail,
+			rb.Role,
+			adminStatus,
+			isCustom,
+			"-",
+			condition,
+			mfa,
+			groups,
+			federated,
+			attackPaths,
+		})
+	}
+
 	// Build SA email -> roles lookup from scope bindings for admin fallback.
 	// ServiceAccountsBasic() doesn't populate the Roles field, so we
 	// extract roles from the already-enumerated bindings.
@@ -1040,6 +1129,12 @@ func (m *IAMModule) writeHierarchicalOutputTee(ctx context.Context, logger inter
 		}
 	}
 
+	// Build reverse lookup: for each resource ID, which project it belongs to
+	resourceToProject := make(map[string]string)
+	for _, rb := range m.ResourceBindings {
+		resourceToProject[rb.ResourceID] = rb.ProjectID
+	}
+
 	// Create a row router that routes based on scope type and OrgCache
 	rowRouter := func(row []string) []string {
 		// Row format: [ScopeType, ScopeID, ScopeName, ...]
@@ -1063,6 +1158,11 @@ func (m *IAMModule) writeHierarchicalOutputTee(ctx context.Context, logger inter
 			}
 			return m.ProjectIDs
 		default:
+			// Resource-level binding (serviceAccount, bucket, secret, etc.)
+			// Route to the project that owns this resource
+			if projectID, ok := resourceToProject[scopeID]; ok {
+				return []string{projectID}
+			}
 			return nil
 		}
 	}
@@ -1195,6 +1295,81 @@ func (m *IAMModule) buildTablesForProject(projectID string) []internal.TableFile
 			sb.MemberType,
 			sb.MemberEmail,
 			sb.Role,
+			adminStatus,
+			isCustom,
+			"-",
+			condition,
+			mfa,
+			groups,
+			federated,
+			attackPaths,
+		})
+	}
+
+	// Add resource-level IAM bindings for this project
+	for _, rb := range m.ResourceBindings {
+		if rb.ProjectID != projectID {
+			continue
+		}
+
+		memberType := resourceiamservice.DetermineMemberType(rb.Member)
+		memberEmail := rb.MemberEmail
+
+		// Check admin status: FoxMapper (granular) > role-based fallback
+		adminStatus := gcpinternal.GetAdminStatusFromCache(m.FoxMapperCache, memberEmail)
+		if adminStatus == "" {
+			adminStatus = isAdminRole(rb.Role)
+		}
+		if adminStatus == "" {
+			adminStatus = "No"
+		}
+
+		isCustom := "No"
+		if strings.HasPrefix(rb.Role, "projects/") || strings.HasPrefix(rb.Role, "organizations/") {
+			isCustom = "Yes"
+		}
+
+		condition := "No"
+		if rb.HasCondition && rb.ConditionTitle != "" {
+			condition = rb.ConditionTitle
+		} else if rb.HasCondition {
+			condition = "Yes"
+		}
+
+		mfa := "-"
+		if memberType == "User" {
+			if status, ok := m.MFAStatus[memberEmail]; ok {
+				if status.Error != "" {
+					mfa = "Unknown"
+				} else if status.HasMFA {
+					mfa = "Yes"
+				} else {
+					mfa = "No"
+				}
+			}
+		} else if memberType == "ServiceAccount" {
+			mfa = "N/A"
+		}
+
+		groups := "-"
+		if memberGroups, ok := m.MemberToGroups[memberEmail]; ok && len(memberGroups) > 0 {
+			groups = strings.Join(memberGroups, ", ")
+		}
+
+		federated := formatFederatedInfo(parseFederatedIdentity(memberEmail))
+
+		attackPaths := "-"
+		if memberType == "ServiceAccount" {
+			attackPaths = gcpinternal.GetAttackSummaryFromCaches(m.FoxMapperCache, nil, memberEmail)
+		}
+
+		body = append(body, []string{
+			rb.ResourceType,
+			rb.ResourceID,
+			rb.ResourceName,
+			memberType,
+			memberEmail,
+			rb.Role,
 			adminStatus,
 			isCustom,
 			"-",
