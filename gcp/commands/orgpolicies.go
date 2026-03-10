@@ -1,13 +1,14 @@
 package commands
 
 import (
-	"github.com/BishopFox/cloudfox/gcp/shared"
 	"context"
 	"fmt"
 	"strings"
 	"sync"
 
+	organizationsservice "github.com/BishopFox/cloudfox/gcp/services/organizationsService"
 	orgpolicyservice "github.com/BishopFox/cloudfox/gcp/services/orgpolicyService"
+	"github.com/BishopFox/cloudfox/gcp/shared"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	gcpinternal "github.com/BishopFox/cloudfox/internal/gcp"
@@ -22,6 +23,9 @@ var GCPOrgPoliciesCommand = &cobra.Command{
 
 Organization policies control security constraints across GCP resources. This module
 identifies policies that may be misconfigured or weakened, creating security risks.
+
+Enumerates policies at organization, folder, and project levels. Org and folder level
+enumeration requires orgpolicy.policies.list at those scopes and is best-effort.
 
 Security-Relevant Policies Analyzed:
 - Domain restrictions (iam.allowedPolicyMemberDomains)
@@ -44,7 +48,9 @@ Risk Indicators:
 type OrgPoliciesModule struct {
 	gcpinternal.BaseGCPModule
 	ProjectPolicies map[string][]orgpolicyservice.OrgPolicyInfo // projectID -> policies
-	LootMap         map[string]map[string]*internal.LootFile    // projectID -> loot files
+	OrgPolicies     map[string][]orgpolicyservice.OrgPolicyInfo // orgID -> policies
+	FolderPolicies  map[string][]orgpolicyservice.OrgPolicyInfo // folderID -> policies
+	LootMap         map[string]map[string]*internal.LootFile    // scopeID -> loot files
 	mu              sync.Mutex
 }
 
@@ -65,12 +71,18 @@ func runGCPOrgPoliciesCommand(cmd *cobra.Command, args []string) {
 	module := &OrgPoliciesModule{
 		BaseGCPModule:   gcpinternal.NewBaseGCPModule(cmdCtx),
 		ProjectPolicies: make(map[string][]orgpolicyservice.OrgPolicyInfo),
+		OrgPolicies:     make(map[string][]orgpolicyservice.OrgPolicyInfo),
+		FolderPolicies:  make(map[string][]orgpolicyservice.OrgPolicyInfo),
 		LootMap:         make(map[string]map[string]*internal.LootFile),
 	}
 	module.Execute(cmdCtx.Ctx, cmdCtx.Logger)
 }
 
 func (m *OrgPoliciesModule) Execute(ctx context.Context, logger internal.Logger) {
+	// Enumerate org-level and folder-level policies (best-effort)
+	m.enumerateOrgAndFolderPolicies(logger)
+
+	// Enumerate project-level policies
 	m.RunProjectEnumeration(ctx, logger, m.ProjectIDs, globals.GCP_ORGPOLICIES_MODULE_NAME, m.processProject)
 
 	allPolicies := m.getAllPolicies()
@@ -83,8 +95,91 @@ func (m *OrgPoliciesModule) Execute(ctx context.Context, logger internal.Logger)
 	m.writeOutput(ctx, logger)
 }
 
+func (m *OrgPoliciesModule) enumerateOrgAndFolderPolicies(logger internal.Logger) {
+	orgSvc := organizationsservice.New()
+	policySvc := orgpolicyservice.New()
+
+	// Discover organizations
+	orgs, err := orgSvc.SearchOrganizations()
+	if err != nil {
+		if globals.GCP_VERBOSITY >= globals.GCP_VERBOSE_ERRORS {
+			logger.InfoM("Could not enumerate organizations (may lack permissions)", globals.GCP_ORGPOLICIES_MODULE_NAME)
+		}
+	} else {
+		for _, org := range orgs {
+			orgID := strings.TrimPrefix(org.Name, "organizations/")
+			if globals.GCP_VERBOSITY >= globals.GCP_VERBOSE_ERRORS {
+				logger.InfoM(fmt.Sprintf("Enumerating org policies for organization: %s (%s)", org.DisplayName, orgID), globals.GCP_ORGPOLICIES_MODULE_NAME)
+			}
+
+			policies, err := policySvc.ListOrganizationPolicies(orgID, org.DisplayName)
+			if err != nil {
+				if globals.GCP_VERBOSITY >= globals.GCP_VERBOSE_ERRORS {
+					gcpinternal.HandleGCPError(err, logger, globals.GCP_ORGPOLICIES_MODULE_NAME,
+						fmt.Sprintf("Could not enumerate org policies for organization %s", orgID))
+				}
+				continue
+			}
+
+			m.mu.Lock()
+			m.OrgPolicies[orgID] = policies
+			m.initLootForScope(orgID)
+			for _, policy := range policies {
+				m.addPolicyToLoot(orgID, policy)
+			}
+			m.mu.Unlock()
+
+			if len(policies) > 0 {
+				logger.SuccessM(fmt.Sprintf("Found %d org-level policy(ies) for organization %s", len(policies), org.DisplayName), globals.GCP_ORGPOLICIES_MODULE_NAME)
+			}
+		}
+	}
+
+	// Discover folders
+	folders, err := orgSvc.SearchAllFolders()
+	if err != nil {
+		if globals.GCP_VERBOSITY >= globals.GCP_VERBOSE_ERRORS {
+			logger.InfoM("Could not enumerate folders (may lack permissions)", globals.GCP_ORGPOLICIES_MODULE_NAME)
+		}
+	} else {
+		for _, folder := range folders {
+			folderID := strings.TrimPrefix(folder.Name, "folders/")
+			if globals.GCP_VERBOSITY >= globals.GCP_VERBOSE_ERRORS {
+				logger.InfoM(fmt.Sprintf("Enumerating org policies for folder: %s (%s)", folder.DisplayName, folderID), globals.GCP_ORGPOLICIES_MODULE_NAME)
+			}
+
+			policies, err := policySvc.ListFolderPolicies(folderID, folder.DisplayName)
+			if err != nil {
+				if globals.GCP_VERBOSITY >= globals.GCP_VERBOSE_ERRORS {
+					gcpinternal.HandleGCPError(err, logger, globals.GCP_ORGPOLICIES_MODULE_NAME,
+						fmt.Sprintf("Could not enumerate org policies for folder %s", folderID))
+				}
+				continue
+			}
+
+			m.mu.Lock()
+			m.FolderPolicies[folderID] = policies
+			m.initLootForScope(folderID)
+			for _, policy := range policies {
+				m.addPolicyToLoot(folderID, policy)
+			}
+			m.mu.Unlock()
+
+			if len(policies) > 0 {
+				logger.SuccessM(fmt.Sprintf("Found %d folder-level policy(ies) for folder %s", len(policies), folder.DisplayName), globals.GCP_ORGPOLICIES_MODULE_NAME)
+			}
+		}
+	}
+}
+
 func (m *OrgPoliciesModule) getAllPolicies() []orgpolicyservice.OrgPolicyInfo {
 	var all []orgpolicyservice.OrgPolicyInfo
+	for _, policies := range m.OrgPolicies {
+		all = append(all, policies...)
+	}
+	for _, policies := range m.FolderPolicies {
+		all = append(all, policies...)
+	}
 	for _, policies := range m.ProjectPolicies {
 		all = append(all, policies...)
 	}
@@ -97,13 +192,7 @@ func (m *OrgPoliciesModule) processProject(ctx context.Context, projectID string
 	}
 
 	m.mu.Lock()
-	if m.LootMap[projectID] == nil {
-		m.LootMap[projectID] = make(map[string]*internal.LootFile)
-		m.LootMap[projectID]["orgpolicies-commands"] = &internal.LootFile{
-			Name:     "orgpolicies-commands",
-			Contents: "# Organization Policy Commands\n# Generated by CloudFox\n# WARNING: Only use with proper authorization\n\n",
-		}
-	}
+	m.initLootForScope(projectID)
 	m.mu.Unlock()
 
 	svc := orgpolicyservice.New()
@@ -115,6 +204,11 @@ func (m *OrgPoliciesModule) processProject(ctx context.Context, projectID string
 		return
 	}
 
+	// Set ScopeName from project name map
+	for i := range policies {
+		policies[i].ScopeName = m.GetProjectName(projectID)
+	}
+
 	m.mu.Lock()
 	m.ProjectPolicies[projectID] = policies
 	for _, policy := range policies {
@@ -123,8 +217,18 @@ func (m *OrgPoliciesModule) processProject(ctx context.Context, projectID string
 	m.mu.Unlock()
 }
 
-func (m *OrgPoliciesModule) addPolicyToLoot(projectID string, policy orgpolicyservice.OrgPolicyInfo) {
-	lootFile := m.LootMap[projectID]["orgpolicies-commands"]
+func (m *OrgPoliciesModule) initLootForScope(scopeID string) {
+	if m.LootMap[scopeID] == nil {
+		m.LootMap[scopeID] = make(map[string]*internal.LootFile)
+		m.LootMap[scopeID]["orgpolicies-commands"] = &internal.LootFile{
+			Name:     "orgpolicies-commands",
+			Contents: "# Organization Policy Commands\n# Generated by CloudFox\n# WARNING: Only use with proper authorization\n\n",
+		}
+	}
+}
+
+func (m *OrgPoliciesModule) addPolicyToLoot(scopeID string, policy orgpolicyservice.OrgPolicyInfo) {
+	lootFile := m.LootMap[scopeID]["orgpolicies-commands"]
 	if lootFile == nil {
 		return
 	}
@@ -134,13 +238,19 @@ func (m *OrgPoliciesModule) addPolicyToLoot(projectID string, policy orgpolicyse
 		constraintName = strings.TrimPrefix(constraintName, "constraints/")
 	}
 
+	// Scope label for loot comments
+	scopeLabel := fmt.Sprintf("%s: %s", policy.ScopeType, policy.ScopeID)
+	if policy.ScopeName != "" {
+		scopeLabel = fmt.Sprintf("%s: %s (%s)", policy.ScopeType, policy.ScopeName, policy.ScopeID)
+	}
+
 	lootFile.Contents += fmt.Sprintf(
 		"# =============================================================================\n"+
 			"# CONSTRAINT: %s\n"+
 			"# =============================================================================\n"+
-			"# Project: %s\n",
+			"# Scope: %s\n",
 		policy.Constraint,
-		policy.ProjectID,
+		scopeLabel,
 	)
 
 	if policy.Description != "" {
@@ -162,21 +272,55 @@ func (m *OrgPoliciesModule) addPolicyToLoot(projectID string, policy orgpolicyse
 		lootFile.Contents += fmt.Sprintf("# Denied Values: %s\n", strings.Join(policy.DeniedValues, ", "))
 	}
 
-	lootFile.Contents += fmt.Sprintf(
-		"\n# === ENUMERATION COMMANDS ===\n\n"+
+	// Build enumeration commands based on scope type
+	lootFile.Contents += "\n# === ENUMERATION COMMANDS ===\n\n"
+	switch policy.ScopeType {
+	case "organization":
+		lootFile.Contents += fmt.Sprintf(
 			"# Describe this policy:\n"+
-			"gcloud org-policies describe %s --project=%s\n\n"+
-			"# Get effective policy (includes inheritance):\n"+
-			"gcloud org-policies describe %s --project=%s --effective\n\n"+
-			"# List all constraints for this project:\n"+
-			"gcloud org-policies list --project=%s\n\n",
-		constraintName, policy.ProjectID,
-		constraintName, policy.ProjectID,
-		policy.ProjectID,
-	)
+				"gcloud org-policies describe %s --organization=%s\n\n"+
+				"# Get effective policy (includes inheritance):\n"+
+				"gcloud org-policies describe %s --organization=%s --effective\n\n"+
+				"# List all constraints for this organization:\n"+
+				"gcloud org-policies list --organization=%s\n\n",
+			constraintName, policy.ScopeID,
+			constraintName, policy.ScopeID,
+			policy.ScopeID,
+		)
+	case "folder":
+		lootFile.Contents += fmt.Sprintf(
+			"# Describe this policy:\n"+
+				"gcloud org-policies describe %s --folder=%s\n\n"+
+				"# Get effective policy (includes inheritance):\n"+
+				"gcloud org-policies describe %s --folder=%s --effective\n\n"+
+				"# List all constraints for this folder:\n"+
+				"gcloud org-policies list --folder=%s\n\n",
+			constraintName, policy.ScopeID,
+			constraintName, policy.ScopeID,
+			policy.ScopeID,
+		)
+	default: // project
+		lootFile.Contents += fmt.Sprintf(
+			"# Describe this policy:\n"+
+				"gcloud org-policies describe %s --project=%s\n\n"+
+				"# Get effective policy (includes inheritance):\n"+
+				"gcloud org-policies describe %s --project=%s --effective\n\n"+
+				"# List all constraints for this project:\n"+
+				"gcloud org-policies list --project=%s\n\n",
+			constraintName, policy.ScopeID,
+			constraintName, policy.ScopeID,
+			policy.ScopeID,
+		)
+	}
 
 	// Exploit/bypass commands based on specific constraint types
 	lootFile.Contents += "# === EXPLOIT / BYPASS COMMANDS ===\n\n"
+
+	// For exploit commands, use project ID if available, otherwise use scope ID
+	targetProject := policy.ProjectID
+	if targetProject == "" {
+		targetProject = "<PROJECT_ID>"
+	}
 
 	switch constraintName {
 	case "iam.allowedPolicyMemberDomains":
@@ -185,7 +329,7 @@ func (m *OrgPoliciesModule) addPolicyToLoot(projectID string, policy orgpolicyse
 			lootFile.Contents += fmt.Sprintf(
 				"# Grant access to external identity:\n"+
 					"gcloud projects add-iam-policy-binding %s --member=user:attacker@external.com --role=roles/viewer\n\n",
-				policy.ProjectID,
+				targetProject,
 			)
 		} else if !policy.Enforced {
 			lootFile.Contents += "# [FINDING] Domain restriction is NOT ENFORCED\n\n"
@@ -196,7 +340,7 @@ func (m *OrgPoliciesModule) addPolicyToLoot(projectID string, policy orgpolicyse
 			lootFile.Contents += "# [FINDING] SA key creation is NOT restricted - create keys for persistence:\n"
 			lootFile.Contents += fmt.Sprintf(
 				"gcloud iam service-accounts keys create /tmp/sa-key.json --iam-account=SA_EMAIL@%s.iam.gserviceaccount.com\n\n",
-				policy.ProjectID,
+				targetProject,
 			)
 		} else {
 			lootFile.Contents += "# SA key creation is restricted - try alternative persistence methods:\n" +
@@ -209,7 +353,7 @@ func (m *OrgPoliciesModule) addPolicyToLoot(projectID string, policy orgpolicyse
 			lootFile.Contents += "# [FINDING] SA creation is NOT restricted - create backdoor service accounts:\n"
 			lootFile.Contents += fmt.Sprintf(
 				"gcloud iam service-accounts create cloudfox-backdoor --display-name='System Service' --project=%s\n\n",
-				policy.ProjectID,
+				targetProject,
 			)
 		}
 
@@ -225,7 +369,7 @@ func (m *OrgPoliciesModule) addPolicyToLoot(projectID string, policy orgpolicyse
 			lootFile.Contents += fmt.Sprintf(
 				"# Add SSH key to project metadata:\n"+
 					"gcloud compute project-info add-metadata --metadata=ssh-keys=\"attacker:ssh-rsa AAAA...\" --project=%s\n\n",
-				policy.ProjectID,
+				targetProject,
 			)
 		}
 
@@ -283,8 +427,9 @@ func (m *OrgPoliciesModule) writeOutput(ctx context.Context, logger internal.Log
 
 func (m *OrgPoliciesModule) getHeader() []string {
 	return []string{
-		"Project Name",
-		"Project ID",
+		"Scope Type",
+		"Scope ID",
+		"Scope Name",
 		"Constraint",
 		"Description",
 		"Enforced",
@@ -314,9 +459,15 @@ func (m *OrgPoliciesModule) policiesToTableBody(policies []orgpolicyservice.OrgP
 			deniedValues = strings.Join(policy.DeniedValues, ", ")
 		}
 
+		scopeName := policy.ScopeName
+		if scopeName == "" {
+			scopeName = "-"
+		}
+
 		body = append(body, []string{
-			m.GetProjectName(policy.ProjectID),
-			policy.ProjectID,
+			policy.ScopeType,
+			policy.ScopeID,
+			scopeName,
 			policy.Constraint,
 			description,
 			shared.BoolToYesNo(policy.Enforced),
@@ -330,9 +481,9 @@ func (m *OrgPoliciesModule) policiesToTableBody(policies []orgpolicyservice.OrgP
 	return body
 }
 
-func (m *OrgPoliciesModule) buildTablesForProject(projectID string) []internal.TableFile {
+func (m *OrgPoliciesModule) buildTablesForScope(scopeID string, policies []orgpolicyservice.OrgPolicyInfo) []internal.TableFile {
 	var tableFiles []internal.TableFile
-	if policies, ok := m.ProjectPolicies[projectID]; ok && len(policies) > 0 {
+	if len(policies) > 0 {
 		tableFiles = append(tableFiles, internal.TableFile{
 			Name:   "orgpolicies",
 			Header: m.getHeader(),
@@ -342,24 +493,43 @@ func (m *OrgPoliciesModule) buildTablesForProject(projectID string) []internal.T
 	return tableFiles
 }
 
+func (m *OrgPoliciesModule) collectLootForScope(scopeID string) []internal.LootFile {
+	var lootFiles []internal.LootFile
+	if scopeLoot, ok := m.LootMap[scopeID]; ok {
+		for _, loot := range scopeLoot {
+			if loot != nil && loot.Contents != "" && !strings.HasSuffix(loot.Contents, "# WARNING: Only use with proper authorization\n\n") {
+				lootFiles = append(lootFiles, *loot)
+			}
+		}
+	}
+	return lootFiles
+}
+
 func (m *OrgPoliciesModule) writeHierarchicalOutput(ctx context.Context, logger internal.Logger) {
 	outputData := internal.HierarchicalOutputData{
 		OrgLevelData:     make(map[string]internal.CloudfoxOutput),
+		FolderLevelData:  make(map[string]internal.CloudfoxOutput),
 		ProjectLevelData: make(map[string]internal.CloudfoxOutput),
 	}
 
-	for projectID := range m.ProjectPolicies {
-		tableFiles := m.buildTablesForProject(projectID)
+	// Org-level data
+	for orgID, policies := range m.OrgPolicies {
+		tableFiles := m.buildTablesForScope(orgID, policies)
+		lootFiles := m.collectLootForScope(orgID)
+		outputData.OrgLevelData[orgID] = OrgPoliciesOutput{Table: tableFiles, Loot: lootFiles}
+	}
 
-		var lootFiles []internal.LootFile
-		if projectLoot, ok := m.LootMap[projectID]; ok {
-			for _, loot := range projectLoot {
-				if loot != nil && loot.Contents != "" && !strings.HasSuffix(loot.Contents, "# WARNING: Only use with proper authorization\n\n") {
-					lootFiles = append(lootFiles, *loot)
-				}
-			}
-		}
+	// Folder-level data
+	for folderID, policies := range m.FolderPolicies {
+		tableFiles := m.buildTablesForScope(folderID, policies)
+		lootFiles := m.collectLootForScope(folderID)
+		outputData.FolderLevelData[folderID] = OrgPoliciesOutput{Table: tableFiles, Loot: lootFiles}
+	}
 
+	// Project-level data
+	for projectID, policies := range m.ProjectPolicies {
+		tableFiles := m.buildTablesForScope(projectID, policies)
+		lootFiles := m.collectLootForScope(projectID)
 		outputData.ProjectLevelData[projectID] = OrgPoliciesOutput{Table: tableFiles, Loot: lootFiles}
 	}
 
@@ -384,8 +554,8 @@ func (m *OrgPoliciesModule) writeFlatOutput(ctx context.Context, logger internal
 	}
 
 	var lootFiles []internal.LootFile
-	for _, projectLoot := range m.LootMap {
-		for _, loot := range projectLoot {
+	for _, scopeLoot := range m.LootMap {
+		for _, loot := range scopeLoot {
 			if loot != nil && loot.Contents != "" && !strings.HasSuffix(loot.Contents, "# WARNING: Only use with proper authorization\n\n") {
 				lootFiles = append(lootFiles, *loot)
 			}

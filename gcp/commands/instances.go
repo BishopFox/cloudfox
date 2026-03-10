@@ -10,6 +10,7 @@ import (
 
 	ComputeEngineService "github.com/BishopFox/cloudfox/gcp/services/computeEngineService"
 	IAMService "github.com/BishopFox/cloudfox/gcp/services/iamService"
+	orgpolicyservice "github.com/BishopFox/cloudfox/gcp/services/orgpolicyService"
 	"github.com/BishopFox/cloudfox/gcp/shared"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
@@ -40,6 +41,7 @@ Security Columns:
 - BroadScopes: Has cloud-platform or other broad OAuth scopes
 - OSLogin: OS Login enabled (recommended for access control)
 - OSLogin2FA: OS Login with 2FA required
+- OSLoginPolicy: Whether compute.requireOsLogin org policy is enforced (inherited)
 - BlockProjKeys: Instance blocks project-wide SSH keys
 - SerialPort: Serial port access enabled (security risk if exposed)
 - CanIPForward: Can forward packets (potential for lateral movement)
@@ -56,11 +58,12 @@ type InstancesModule struct {
 	gcpinternal.BaseGCPModule
 
 	// Module-specific fields - per-project for hierarchical output
-	ProjectInstances map[string][]ComputeEngineService.ComputeEngineInfo    // projectID -> instances
-	ProjectMetadata  map[string]*ComputeEngineService.ProjectMetadataInfo   // projectID -> metadata
-	LootMap          map[string]map[string]*internal.LootFile               // projectID -> loot files
-	FoxMapperCache   *gcpinternal.FoxMapperCache                            // FoxMapper graph data (preferred)
-	mu               sync.Mutex
+	ProjectInstances     map[string][]ComputeEngineService.ComputeEngineInfo  // projectID -> instances
+	ProjectMetadata      map[string]*ComputeEngineService.ProjectMetadataInfo // projectID -> metadata
+	ProjectOSLoginPolicy map[string]string                                    // projectID -> "Enforced", "Not Enforced", "Unknown"
+	LootMap              map[string]map[string]*internal.LootFile             // projectID -> loot files
+	FoxMapperCache       *gcpinternal.FoxMapperCache                          // FoxMapper graph data (preferred)
+	mu                   sync.Mutex
 }
 
 // ------------------------------
@@ -86,10 +89,11 @@ func runGCPInstancesCommand(cmd *cobra.Command, args []string) {
 
 	// Create module instance
 	module := &InstancesModule{
-		BaseGCPModule:    gcpinternal.NewBaseGCPModule(cmdCtx),
-		ProjectInstances: make(map[string][]ComputeEngineService.ComputeEngineInfo),
-		ProjectMetadata:  make(map[string]*ComputeEngineService.ProjectMetadataInfo),
-		LootMap:          make(map[string]map[string]*internal.LootFile),
+		BaseGCPModule:      gcpinternal.NewBaseGCPModule(cmdCtx),
+		ProjectInstances:   make(map[string][]ComputeEngineService.ComputeEngineInfo),
+		ProjectMetadata:    make(map[string]*ComputeEngineService.ProjectMetadataInfo),
+		ProjectOSLoginPolicy: make(map[string]string),
+		LootMap:            make(map[string]map[string]*internal.LootFile),
 	}
 
 	// Execute enumeration
@@ -169,10 +173,21 @@ func (m *InstancesModule) processProject(ctx context.Context, projectID string, 
 		}
 	}
 
+	// Check effective compute.requireOsLogin org policy for this project
+	orgPolicySvc := orgpolicyservice.New()
+	effectivePolicy, policyErr := orgPolicySvc.GetEffectivePolicy("project", projectID, "compute.requireOsLogin")
+	osLoginPolicy := "Unknown"
+	if policyErr == nil && effectivePolicy != nil && effectivePolicy.Enforced {
+		osLoginPolicy = "Enforced"
+	} else if policyErr == nil {
+		osLoginPolicy = "Not Enforced"
+	}
+
 	// Thread-safe store per-project
 	m.mu.Lock()
 	m.ProjectInstances[projectID] = instances
 	m.ProjectMetadata[projectID] = projectMeta
+	m.ProjectOSLoginPolicy[projectID] = osLoginPolicy
 
 	// Initialize loot for this project
 	if m.LootMap[projectID] == nil {
@@ -693,7 +708,7 @@ func (m *InstancesModule) writeFlatOutput(ctx context.Context, logger internal.L
 // - Identity: Project, Name, Type, Zone, State, Machine Type
 // - Network: External IP, Internal IP, IP Forward
 // - Service Account: Service Account, SA Attack Paths, Scopes, Default SA, Broad Scopes
-// - Access Control: OS Login, OS Login 2FA, Block Proj Keys, Serial Port
+// - Access Control: OS Login, OS Login 2FA, OS Login Policy, Block Proj Keys, Serial Port
 // - Protection: Delete Protect, Last Snapshot
 // - Hardware Security: Shielded VM, Secure Boot, vTPM, Integrity, Confidential
 // - Disk Encryption: Encryption, KMS Key
@@ -720,6 +735,7 @@ func (m *InstancesModule) getInstancesTableHeader() []string {
 		// Access Control
 		"OS Login",
 		"OS Login 2FA",
+		"OS Login Policy",
 		"Block Proj Keys",
 		"Serial Port",
 		// Protection
@@ -907,6 +923,12 @@ func (m *InstancesModule) instancesToTableBody(instances []ComputeEngineService.
 			kmsKey = "-"
 		}
 
+		// OS Login Policy display
+		osLoginPolicy := "Unknown"
+		if val, ok := m.ProjectOSLoginPolicy[instance.ProjectID]; ok {
+			osLoginPolicy = val
+		}
+
 		// Instance type for contextual display
 		instType := instance.InstanceType
 		if instType == "" {
@@ -938,6 +960,7 @@ func (m *InstancesModule) instancesToTableBody(instances []ComputeEngineService.
 			// Access Control
 			shared.BoolToYesNo(instance.OSLoginEnabled),
 			shared.BoolToYesNo(instance.OSLogin2FAEnabled),
+			osLoginPolicy,
 			shared.BoolToYesNo(instance.BlockProjectSSHKeys),
 			shared.BoolToYesNo(instance.SerialPortEnabled),
 			// Protection - Delete protection is NOT expected for managed instances (they're ephemeral)

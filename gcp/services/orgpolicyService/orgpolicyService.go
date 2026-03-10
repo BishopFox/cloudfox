@@ -35,6 +35,9 @@ type OrgPolicyInfo struct {
 	Name          string   `json:"name"`
 	Constraint    string   `json:"constraint"`
 	ProjectID     string   `json:"projectId"`
+	ScopeType     string   `json:"scopeType"` // "organization", "folder", or "project"
+	ScopeID       string   `json:"scopeId"`   // org/folder/project ID
+	ScopeName     string   `json:"scopeName"` // display name
 	Enforced      bool     `json:"enforced"`
 	AllowAll      bool     `json:"allowAll"`
 	DenyAll       bool     `json:"denyAll"`
@@ -171,7 +174,7 @@ func (s *OrgPolicyService) ListProjectPolicies(projectID string) ([]OrgPolicyInf
 
 	err = service.Projects.Policies.List(parent).Pages(ctx, func(resp *orgpolicy.GoogleCloudOrgpolicyV2ListPoliciesResponse) error {
 		for _, policy := range resp.Policies {
-			info := s.parsePolicyInfo(policy, projectID)
+			info := s.parsePolicyInfo(policy, "project", projectID, "")
 			policies = append(policies, info)
 		}
 		return nil
@@ -183,10 +186,107 @@ func (s *OrgPolicyService) ListProjectPolicies(projectID string) ([]OrgPolicyInf
 	return policies, nil
 }
 
-func (s *OrgPolicyService) parsePolicyInfo(policy *orgpolicy.GoogleCloudOrgpolicyV2Policy, projectID string) OrgPolicyInfo {
+// ListOrganizationPolicies lists all org policies for an organization
+func (s *OrgPolicyService) ListOrganizationPolicies(orgID, orgDisplayName string) ([]OrgPolicyInfo, error) {
+	ctx := context.Background()
+
+	service, err := s.getService(ctx)
+	if err != nil {
+		return nil, gcpinternal.ParseGCPError(err, "orgpolicy.googleapis.com")
+	}
+
+	var policies []OrgPolicyInfo
+	parent := fmt.Sprintf("organizations/%s", orgID)
+
+	err = service.Organizations.Policies.List(parent).Pages(ctx, func(resp *orgpolicy.GoogleCloudOrgpolicyV2ListPoliciesResponse) error {
+		for _, policy := range resp.Policies {
+			info := s.parsePolicyInfo(policy, "organization", orgID, orgDisplayName)
+			policies = append(policies, info)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, gcpinternal.ParseGCPError(err, "orgpolicy.googleapis.com")
+	}
+
+	return policies, nil
+}
+
+// ListFolderPolicies lists all org policies for a folder
+func (s *OrgPolicyService) ListFolderPolicies(folderID, folderDisplayName string) ([]OrgPolicyInfo, error) {
+	ctx := context.Background()
+
+	service, err := s.getService(ctx)
+	if err != nil {
+		return nil, gcpinternal.ParseGCPError(err, "orgpolicy.googleapis.com")
+	}
+
+	var policies []OrgPolicyInfo
+	parent := fmt.Sprintf("folders/%s", folderID)
+
+	err = service.Folders.Policies.List(parent).Pages(ctx, func(resp *orgpolicy.GoogleCloudOrgpolicyV2ListPoliciesResponse) error {
+		for _, policy := range resp.Policies {
+			info := s.parsePolicyInfo(policy, "folder", folderID, folderDisplayName)
+			policies = append(policies, info)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, gcpinternal.ParseGCPError(err, "orgpolicy.googleapis.com")
+	}
+
+	return policies, nil
+}
+
+// GetEffectivePolicy gets the effective (inherited + local) policy for a specific constraint at a given scope.
+// scopeType must be "project", "folder", or "organization".
+// constraint should be the short name (e.g., "compute.requireOsLogin").
+func (s *OrgPolicyService) GetEffectivePolicy(scopeType, scopeID, constraint string) (*OrgPolicyInfo, error) {
+	ctx := context.Background()
+
+	service, err := s.getService(ctx)
+	if err != nil {
+		return nil, gcpinternal.ParseGCPError(err, "orgpolicy.googleapis.com")
+	}
+
+	// Strip "constraints/" prefix if present
+	constraint = strings.TrimPrefix(constraint, "constraints/")
+
+	var policy *orgpolicy.GoogleCloudOrgpolicyV2Policy
+
+	switch scopeType {
+	case "project":
+		name := fmt.Sprintf("projects/%s/policies/%s", scopeID, constraint)
+		policy, err = service.Projects.Policies.GetEffectivePolicy(name).Context(ctx).Do()
+	case "folder":
+		name := fmt.Sprintf("folders/%s/policies/%s", scopeID, constraint)
+		policy, err = service.Folders.Policies.GetEffectivePolicy(name).Context(ctx).Do()
+	case "organization":
+		name := fmt.Sprintf("organizations/%s/policies/%s", scopeID, constraint)
+		policy, err = service.Organizations.Policies.GetEffectivePolicy(name).Context(ctx).Do()
+	default:
+		return nil, fmt.Errorf("unsupported scope type: %s", scopeType)
+	}
+
+	if err != nil {
+		return nil, gcpinternal.ParseGCPError(err, "orgpolicy.googleapis.com")
+	}
+
+	info := s.parsePolicyInfo(policy, scopeType, scopeID, "")
+	return &info, nil
+}
+
+func (s *OrgPolicyService) parsePolicyInfo(policy *orgpolicy.GoogleCloudOrgpolicyV2Policy, scopeType, scopeID, scopeName string) OrgPolicyInfo {
 	info := OrgPolicyInfo{
 		Name:      policy.Name,
-		ProjectID: projectID,
+		ScopeType: scopeType,
+		ScopeID:   scopeID,
+		ScopeName: scopeName,
+	}
+
+	// Set ProjectID for backward compatibility when scope is project
+	if scopeType == "project" {
+		info.ProjectID = scopeID
 	}
 
 	// Extract constraint name from policy name
