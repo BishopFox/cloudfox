@@ -293,7 +293,7 @@ func (m *EndpointsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore 
 		wg.Add(1)
 		go m.getEksClustersPerRegion(r, wg, semaphore, dataReceiver)
 	}
-	res, err = servicemap.IsServiceInRegion("mq", r)
+	res, err = servicemap.IsServiceInRegion("amazon-mq", r)
 	if err != nil {
 		m.modLog.Error(err)
 	}
@@ -302,7 +302,7 @@ func (m *EndpointsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore 
 		wg.Add(1)
 		go m.getMqBrokersPerRegion(r, wg, semaphore, dataReceiver)
 	}
-	res, err = servicemap.IsServiceInRegion("es", r)
+	res, err = servicemap.IsServiceInRegion("opensearch-service", r)
 	if err != nil {
 		m.modLog.Error(err)
 	}
@@ -320,7 +320,7 @@ func (m *EndpointsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore 
 		wg.Add(1)
 		m.getGrafanaEndPointsPerRegion(r, wg, semaphore, dataReceiver)
 	}
-	res, err = servicemap.IsServiceInRegion("elb", r)
+	res, err = servicemap.IsServiceInRegion("elasticloadbalancing", r)
 	if err != nil {
 		m.modLog.Error(err)
 	}
@@ -378,7 +378,7 @@ func (m *EndpointsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore 
 	wg.Add(1)
 	go m.getAppRunnerEndpointsPerRegion(r, wg, semaphore, dataReceiver)
 
-	res, err = servicemap.IsServiceInRegion("lightsail", r)
+	res, err = servicemap.IsServiceInRegion("amazonlightsail.com", r)
 	if err != nil {
 		m.modLog.Error(err)
 	}
