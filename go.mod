@@ -1,6 +1,6 @@
 module github.com/BishopFox/cloudfox
 
-go 1.24.2
+go 1.25.9
 
 require (
 	cloud.google.com/go/artifactregistry v1.18.0
