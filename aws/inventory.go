@@ -599,7 +599,7 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 		go m.getEKSNodeGroupsPerRegion(r, wg, semaphore)
 	}
 
-	res, err = servicemap.IsServiceInRegion("elb", r)
+	res, err = servicemap.IsServiceInRegion("elasticloadbalancing", r)
 	if err != nil {
 		m.modLog.Error(err)
 	}
@@ -645,7 +645,7 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 		go m.GetEMRInstancesPerRegion(r, wg, semaphore)
 	}
 
-	res, err = servicemap.IsServiceInRegion("es", r)
+	res, err = servicemap.IsServiceInRegion("opensearch-service", r)
 	if err != nil {
 		m.modLog.Error(err)
 	}
@@ -682,7 +682,7 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 
 	}
 
-	res, err = servicemap.IsServiceInRegion("kinesis", r)
+	res, err = servicemap.IsServiceInRegion("streams", r)
 	if err != nil {
 		m.modLog.Error(err)
 	}
@@ -703,7 +703,7 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 		go m.getLambdaFunctionsPerRegion(r, wg, semaphore)
 	}
 
-	res, err = servicemap.IsServiceInRegion("lightsail", r)
+	res, err = servicemap.IsServiceInRegion("amazonlightsail.com", r)
 	if err != nil {
 		m.modLog.Error(err)
 	}
@@ -713,7 +713,7 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 		go m.getLightsailInstancesAndContainersPerRegion(r, wg, semaphore)
 	}
 
-	res, err = servicemap.IsServiceInRegion("mq", r)
+	res, err = servicemap.IsServiceInRegion("amazon-mq", r)
 	if err != nil {
 		m.modLog.Error(err)
 	}
@@ -743,7 +743,7 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 		go m.getRedshiftClustersPerRegion(r, wg, semaphore)
 	}
 
-	res, err = servicemap.IsServiceInRegion("secretsmanager", r)
+	res, err = servicemap.IsServiceInRegion("secrets-manager", r)
 	if err != nil {
 		m.modLog.Error(err)
 	}
@@ -773,7 +773,7 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 		go m.getSQSQueuesPerRegion(r, wg, semaphore)
 	}
 
-	res, err = servicemap.IsServiceInRegion("ssm", r)
+	res, err = servicemap.IsServiceInRegion("systems-manager", r)
 	if err != nil {
 		m.modLog.Error(err)
 	}
@@ -783,7 +783,7 @@ func (m *Inventory2Module) executeChecks(r string, wg *sync.WaitGroup, semaphore
 		go m.getSSMParametersPerRegion(r, wg, semaphore)
 	}
 
-	res, err = servicemap.IsServiceInRegion("stepfunctions", r)
+	res, err = servicemap.IsServiceInRegion("step-functions", r)
 	if err != nil {
 		m.modLog.Error(err)
 	}

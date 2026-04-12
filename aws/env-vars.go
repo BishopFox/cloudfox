@@ -310,7 +310,7 @@ func (m *EnvsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan 
 	wg.Add(1)
 	go m.getAppRunnerEnvironmentVariablesPerRegion(r, wg, semaphore, dataReceiver)
 
-	res, err = servicemap.IsServiceInRegion("lightsail", r)
+	res, err = servicemap.IsServiceInRegion("amazonlightsail.com", r)
 	if err != nil {
 		m.modLog.Error(err)
 	}
@@ -320,7 +320,7 @@ func (m *EnvsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore chan 
 		go m.getLightsailEnvironmentVariablesPerRegion(r, wg, semaphore, dataReceiver)
 	}
 
-	res, err = servicemap.IsServiceInRegion("sagemaker", r)
+	res, err = servicemap.IsServiceInRegion("sagemaker-ai", r)
 	if err != nil {
 		m.modLog.Error(err)
 	}

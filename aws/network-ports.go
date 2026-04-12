@@ -318,7 +318,7 @@ func (m *NetworkPortsModule) executeChecks(r string, wg *sync.WaitGroup, dataRec
 		m.getElastiCacheNetworkPortsPerRegion(r, dataReceiver)
 	}
 
-	res, err = servicemap.IsServiceInRegion("elb", r)
+	res, err = servicemap.IsServiceInRegion("elasticloadbalancing", r)
 	if err != nil {
 		m.modLog.Error(err)
 	}
@@ -327,7 +327,7 @@ func (m *NetworkPortsModule) executeChecks(r string, wg *sync.WaitGroup, dataRec
 		m.getLBNetworkPortsPerRegion(r, dataReceiver)
 	}
 
-	res, err = servicemap.IsServiceInRegion("lightsail", r)
+	res, err = servicemap.IsServiceInRegion("amazonlightsail.com", r)
 	if err != nil {
 		m.modLog.Error(err)
 	}
