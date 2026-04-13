@@ -16,7 +16,7 @@ require (
 	github.com/Azure/go-autorest/autorest v0.11.30
 	github.com/Azure/go-autorest/autorest/azure/auth v0.5.13
 	github.com/aquasecurity/table v1.11.0
-	github.com/aws/aws-sdk-go-v2 v1.41.0
+	github.com/aws/aws-sdk-go-v2 v1.41.5
 	github.com/aws/aws-sdk-go-v2/config v1.32.5
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.5
 	github.com/aws/aws-sdk-go-v2/service/apigateway v1.38.3
@@ -49,8 +49,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/glue v1.135.3
 	github.com/aws/aws-sdk-go-v2/service/grafana v1.32.9
 	github.com/aws/aws-sdk-go-v2/service/iam v1.53.1
-	github.com/aws/aws-sdk-go-v2/service/kinesis v1.42.9
-	github.com/aws/aws-sdk-go-v2/service/lambda v1.87.0
+	github.com/aws/aws-sdk-go-v2/service/kinesis v1.43.5
+	github.com/aws/aws-sdk-go-v2/service/lambda v1.88.5
 	github.com/aws/aws-sdk-go-v2/service/lightsail v1.50.10
 	github.com/aws/aws-sdk-go-v2/service/mq v1.34.14
 	github.com/aws/aws-sdk-go-v2/service/opensearch v1.56.0
@@ -60,7 +60,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/redshift v1.61.4
 	github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi v1.31.5
 	github.com/aws/aws-sdk-go-v2/service/route53 v1.62.0
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.93.2
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.97.3
 	github.com/aws/aws-sdk-go-v2/service/sagemaker v1.228.2
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.41.0
 	github.com/aws/aws-sdk-go-v2/service/sfn v1.40.5
@@ -68,7 +68,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.42.20
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.67.7
 	github.com/aws/aws-sdk-go-v2/service/sts v1.41.5
-	github.com/aws/smithy-go v1.24.0
+	github.com/aws/smithy-go v1.24.2
 	github.com/bishopfox/awsservicemap v1.1.0
 	github.com/bishopfox/knownawsaccountslookup v0.0.0-20231228165844-c37ef8df33cb
 	github.com/dominikbraun/graph v0.23.0
@@ -168,17 +168,17 @@ require (
 	github.com/Azure/go-autorest/logger v0.2.2 // indirect
 	github.com/Azure/go-autorest/tracing v0.6.1 // indirect
 	github.com/AzureAD/microsoft-authentication-library-for-go v1.6.0 // indirect
-	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.4 // indirect
+	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.8 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.16 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.16 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.16 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.21 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.21 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/ini v1.8.4 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.16 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.4 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.7 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.22 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.7 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.13 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/endpoint-discovery v1.11.16 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.16 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.16 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.21 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.21 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.30.7 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.12 // indirect
 	github.com/charmbracelet/bubbles v0.21.0
