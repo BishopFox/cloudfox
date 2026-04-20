@@ -200,7 +200,7 @@ func (m *SecretsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore ch
 			JsonFileSource: "DOWNLOAD_FROM_AWS",
 		}
 	}
-	res, err := servicemap.IsServiceInRegion("secretsmanager", r)
+	res, err := servicemap.IsServiceInRegion("secrets-manager", r)
 	if err != nil {
 		m.modLog.Error(err)
 	}
@@ -209,7 +209,7 @@ func (m *SecretsModule) executeChecks(r string, wg *sync.WaitGroup, semaphore ch
 		wg.Add(1)
 		go m.getSecretsManagerSecretsPerRegion(r, wg, semaphore, dataReceiver)
 	}
-	res, err = servicemap.IsServiceInRegion("ssm", r)
+	res, err = servicemap.IsServiceInRegion("systems-manager", r)
 	if err != nil {
 		m.modLog.Error(err)
 	}

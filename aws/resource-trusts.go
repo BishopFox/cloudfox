@@ -272,7 +272,7 @@ func (m *ResourceTrustsModule) executeChecks(r string, wg *sync.WaitGroup, semap
 		m.getEFSfilesystemPoliciesPerRegion(r, wg, semaphore, dataReceiver)
 	}
 
-	res, err = servicemap.IsServiceInRegion("secretsmanager", r)
+	res, err = servicemap.IsServiceInRegion("secrets-manager", r)
 	if err != nil {
 		m.modLog.Error(err)
 	}
@@ -329,7 +329,7 @@ func (m *ResourceTrustsModule) executeChecks(r string, wg *sync.WaitGroup, semap
 	}
 
 	if m.OpenSearchClient != nil {
-		res, err = servicemap.IsServiceInRegion("es", r)
+		res, err = servicemap.IsServiceInRegion("opensearch-service", r)
 		if err != nil {
 			m.modLog.Error(err)
 		}
