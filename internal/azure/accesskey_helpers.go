@@ -214,7 +214,7 @@ func GetEventHubSASTokens(session *SafeSession, subID string) []EventHubSASToken
 	var results []EventHubSASToken
 
 	// Event Hubs
-	ehFactory, err := armeventhub.NewClientFactory(subID, cred, nil)
+	ehFactory, err := armeventhub.NewClientFactory(subID, cred, DefaultARMClientOptions())
 	if err == nil {
 		nsClient := ehFactory.NewNamespacesClient()
 		pager := nsClient.NewListPager(nil)
@@ -278,7 +278,7 @@ func GetACRCredentials(session *SafeSession, subID string, resourceGroups []stri
 	ctx := context.Background()
 	var results []ACRCredential
 
-	regClient, err := armcontainerregistry.NewRegistriesClient(subID, cred, nil)
+	regClient, err := armcontainerregistry.NewRegistriesClient(subID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil
 	}
@@ -343,7 +343,7 @@ func GetCosmosDBKeys(session *SafeSession, subID string, resourceGroups []string
 	ctx := context.Background()
 	var results []CosmosDBKey
 
-	cosmosClient, err := armcosmos.NewDatabaseAccountsClient(subID, cred, nil)
+	cosmosClient, err := armcosmos.NewDatabaseAccountsClient(subID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil
 	}
@@ -420,7 +420,7 @@ func GetFunctionAppKeys(session *SafeSession, subID string, resourceGroups []str
 	ctx := context.Background()
 	var results []FunctionAppKey
 
-	webClient, err := armappservice.NewWebAppsClient(subID, cred, nil)
+	webClient, err := armappservice.NewWebAppsClient(subID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil
 	}
@@ -621,12 +621,12 @@ func GetAPIManagementSecrets(session *SafeSession, subID string, resourceGroups 
 	ctx := context.Background()
 	var results []APIManagementSecret
 
-	apimClient, err := armapimanagement.NewServiceClient(subID, cred, nil)
+	apimClient, err := armapimanagement.NewServiceClient(subID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil
 	}
 
-	namedValuesClient, err := armapimanagement.NewNamedValueClient(subID, cred, nil)
+	namedValuesClient, err := armapimanagement.NewNamedValueClient(subID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil
 	}
@@ -685,7 +685,7 @@ func GetServiceBusKeys(session *SafeSession, subID string, resourceGroups []stri
 	ctx := context.Background()
 	var results []ServiceBusKey
 
-	nsClient, err := armservicebus.NewNamespacesClient(subID, cred, nil)
+	nsClient, err := armservicebus.NewNamespacesClient(subID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil
 	}
@@ -763,7 +763,7 @@ func GetAppConfigKeys(session *SafeSession, subID string, resourceGroups []strin
 	ctx := context.Background()
 	var results []AppConfigKey
 
-	configClient, err := armappconfiguration.NewConfigurationStoresClient(subID, cred, nil)
+	configClient, err := armappconfiguration.NewConfigurationStoresClient(subID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil
 	}
@@ -815,7 +815,7 @@ func GetBatchAccountKeys(session *SafeSession, subID string, resourceGroups []st
 	ctx := context.Background()
 	var results []BatchAccountKey
 
-	batchClient, err := armbatch.NewAccountClient(subID, cred, nil)
+	batchClient, err := armbatch.NewAccountClient(subID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil
 	}
@@ -876,7 +876,7 @@ func GetCognitiveServicesKeys(session *SafeSession, subID string, resourceGroups
 	ctx := context.Background()
 	var results []CognitiveServicesKey
 
-	cogClient, err := armcognitiveservices.NewAccountsClient(subID, cred, nil)
+	cogClient, err := armcognitiveservices.NewAccountsClient(subID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil
 	}
@@ -986,7 +986,7 @@ func containsSubstring(s, substr string) bool {
 //			continue
 //		}
 //
-//		blobClient, err := armstorage.NewBlobContainersClient(subID, cred, nil)
+//		blobClient, err := armstorage.NewBlobContainersClient(subID, cred, DefaultARMClientOptions())
 //		if err != nil {
 //			if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 //				fmt.Printf("Failed to create BlobContainers client for account %s: %v\n", accountName, err)

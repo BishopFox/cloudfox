@@ -27,7 +27,7 @@ func GetLogAnalyticsWorkspacesPerSubscription(session *SafeSession, subscription
 	cred := NewStaticTokenCredential(token)
 
 	// Create Operational Insights client
-	client, err := armoperationalinsights.NewWorkspacesClient(subscriptionID, cred, nil)
+	client, err := armoperationalinsights.NewWorkspacesClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 			logger.ErrorM(fmt.Sprintf("Failed to create Log Analytics client for subscription %s: %v", subscriptionID, err), globals.AZ_UTILS_MODULE_NAME)

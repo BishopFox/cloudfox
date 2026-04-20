@@ -49,7 +49,7 @@ type SASInfo struct {
 //		return nil
 //	}
 //
-//	clientFactory, err := armstorage.NewClientFactory(subID, cred, nil)
+//	clientFactory, err := armstorage.NewClientFactory(subID, cred, DefaultARMClientOptions())
 //	if err != nil {
 //		return nil
 //	}
@@ -85,7 +85,7 @@ func GetStorageAccountsPerResourceGroup(session *SafeSession, subID, rgName stri
 		return nil
 	}
 
-	clientFactory, err := armstorage.NewClientFactory(subID, cred, nil)
+	clientFactory, err := armstorage.NewClientFactory(subID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil
 	}
@@ -120,7 +120,7 @@ func GetStorageAccountKeys(session *SafeSession, subID, accountName, resourceGro
 		return nil
 	}
 
-	clientFactory, err := armstorage.NewClientFactory(subID, cred, nil)
+	clientFactory, err := armstorage.NewClientFactory(subID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil
 	}
@@ -155,7 +155,7 @@ func ListContainers(ctx context.Context, session *SafeSession, subID, accountNam
 
 	cred := &StaticTokenCredential{Token: token}
 
-	storageClient, err := armstorage.NewBlobContainersClient(subID, cred, nil)
+	storageClient, err := armstorage.NewBlobContainersClient(subID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create BlobContainers client: %w", err)
 	}
@@ -292,7 +292,7 @@ func ListFileShares(ctx context.Context, session *SafeSession, subID, accountNam
 
 	cred := &StaticTokenCredential{Token: token}
 
-	storageClient, err := armstorage.NewFileSharesClient(subID, cred, nil)
+	storageClient, err := armstorage.NewFileSharesClient(subID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create FileShares client: %w", err)
 	}
@@ -345,7 +345,7 @@ func ListTables(ctx context.Context, session *SafeSession, subID, accountName, r
 
 	cred := &StaticTokenCredential{Token: token}
 
-	storageClient, err := armstorage.NewTableClient(subID, cred, nil)
+	storageClient, err := armstorage.NewTableClient(subID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Table client: %w", err)
 	}

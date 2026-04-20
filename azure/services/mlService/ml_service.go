@@ -105,7 +105,7 @@ func (s *MLService) ListWorkspaces(ctx context.Context, subID string) ([]*armmac
 		return nil, err
 	}
 
-	client, err := armmachinelearning.NewWorkspacesClient(subID, cred, nil)
+	client, err := armmachinelearning.NewWorkspacesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create ML workspaces client: %w", err)
 	}
@@ -131,7 +131,7 @@ func (s *MLService) ListWorkspacesByResourceGroup(ctx context.Context, subID, rg
 		return nil, err
 	}
 
-	client, err := armmachinelearning.NewWorkspacesClient(subID, cred, nil)
+	client, err := armmachinelearning.NewWorkspacesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create ML workspaces client: %w", err)
 	}
@@ -157,7 +157,7 @@ func (s *MLService) GetWorkspace(ctx context.Context, subID, rgName, workspaceNa
 		return nil, err
 	}
 
-	client, err := armmachinelearning.NewWorkspacesClient(subID, cred, nil)
+	client, err := armmachinelearning.NewWorkspacesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create ML workspaces client: %w", err)
 	}
@@ -177,7 +177,7 @@ func (s *MLService) ListComputes(ctx context.Context, subID, rgName, workspaceNa
 		return nil, err
 	}
 
-	client, err := armmachinelearning.NewComputeClient(subID, cred, nil)
+	client, err := armmachinelearning.NewComputeClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create compute client: %w", err)
 	}
@@ -203,7 +203,7 @@ func (s *MLService) ListDatastores(ctx context.Context, subID, rgName, workspace
 		return nil, err
 	}
 
-	client, err := armmachinelearning.NewDatastoresClient(subID, cred, nil)
+	client, err := armmachinelearning.NewDatastoresClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create datastores client: %w", err)
 	}
@@ -229,7 +229,7 @@ func (s *MLService) ListEnvironments(ctx context.Context, subID, rgName, workspa
 		return nil, err
 	}
 
-	client, err := armmachinelearning.NewEnvironmentContainersClient(subID, cred, nil)
+	client, err := armmachinelearning.NewEnvironmentContainersClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create environments client: %w", err)
 	}

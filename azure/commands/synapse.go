@@ -88,7 +88,6 @@ func ListSynapse(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	module := &SynapseModule{
 		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
@@ -147,21 +146,21 @@ func (m *SynapseModule) processSubscription(ctx context.Context, subID string, l
 	}
 	cred := &azinternal.StaticTokenCredential{Token: token}
 
-	workspaceClient, err := armsynapse.NewWorkspacesClient(subID, cred, nil)
+	workspaceClient, err := armsynapse.NewWorkspacesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Failed to create Synapse workspace client: %v", err), globals.AZ_SYNAPSE_MODULE_NAME)
 		m.CommandCounter.Error++
 		return
 	}
 
-	sqlPoolClient, err := armsynapse.NewSQLPoolsClient(subID, cred, nil)
+	sqlPoolClient, err := armsynapse.NewSQLPoolsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Failed to create SQL pool client: %v", err), globals.AZ_SYNAPSE_MODULE_NAME)
 		m.CommandCounter.Error++
 		return
 	}
 
-	sparkPoolClient, err := armsynapse.NewBigDataPoolsClient(subID, cred, nil)
+	sparkPoolClient, err := armsynapse.NewBigDataPoolsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Failed to create Spark pool client: %v", err), globals.AZ_SYNAPSE_MODULE_NAME)
 		m.CommandCounter.Error++

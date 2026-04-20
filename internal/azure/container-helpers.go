@@ -48,7 +48,7 @@ func ListContainerInstances(session *SafeSession, subscriptionID, resourceGroup 
 
 	cred := &StaticTokenCredential{Token: token}
 
-	client, err := armcontainerinstance.NewContainerGroupsClient(subscriptionID, cred, nil)
+	client, err := armcontainerinstance.NewContainerGroupsClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil
 	}
@@ -147,7 +147,7 @@ func ListContainerAppsJobs(session *SafeSession, subscriptionID, rgName string) 
 
 	cred := &StaticTokenCredential{Token: token}
 
-	client, err := armappcontainers.NewJobsClient(subscriptionID, cred, nil)
+	client, err := armappcontainers.NewJobsClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil
 	}

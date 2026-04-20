@@ -79,7 +79,6 @@ func ListMonitor(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return // error already logged by helper
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	// -------------------- Initialize module --------------------
 	module := &MonitorModule{
@@ -200,7 +199,7 @@ func (m *MonitorModule) processLogAnalyticsWorkspaces(ctx context.Context, subID
 	cred := azinternal.NewStaticTokenCredential(token)
 
 	// Create Operational Insights client
-	client, err := armoperationalinsights.NewWorkspacesClient(subID, cred, nil)
+	client, err := armoperationalinsights.NewWorkspacesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
 			logger.ErrorM(fmt.Sprintf("Failed to create Log Analytics client for subscription %s: %v", subID, err), globals.AZ_MONITOR_MODULE_NAME)
@@ -380,7 +379,7 @@ func (m *MonitorModule) processMetricAlerts(ctx context.Context, subID, subName 
 	cred := azinternal.NewStaticTokenCredential(token)
 
 	// Create Metric Alerts client
-	client, err := armmonitor.NewMetricAlertsClient(subID, cred, nil)
+	client, err := armmonitor.NewMetricAlertsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
 			logger.ErrorM(fmt.Sprintf("Failed to create Metric Alerts client for subscription %s: %v", subID, err), globals.AZ_MONITOR_MODULE_NAME)
@@ -507,7 +506,7 @@ func (m *MonitorModule) processActionGroups(ctx context.Context, subID, subName 
 	cred := azinternal.NewStaticTokenCredential(token)
 
 	// Create Action Groups client
-	client, err := armmonitor.NewActionGroupsClient(subID, cred, nil)
+	client, err := armmonitor.NewActionGroupsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
 			logger.ErrorM(fmt.Sprintf("Failed to create Action Groups client for subscription %s: %v", subID, err), globals.AZ_MONITOR_MODULE_NAME)

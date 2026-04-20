@@ -18,7 +18,7 @@ func GetPublicIPsPerRG(ctx context.Context, session *SafeSession, subscriptionID
 
 	cred := &StaticTokenCredential{Token: token}
 
-	client, err := armnetwork.NewPublicIPAddressesClient(subscriptionID, cred, nil)
+	client, err := armnetwork.NewPublicIPAddressesClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create PublicIP client: %v", err)
 	}
@@ -37,7 +37,7 @@ func GetPublicIPsPerRG(ctx context.Context, session *SafeSession, subscriptionID
 
 // GetPublicIPsPerSubscription lists all Public IPs in a subscription
 //func GetPublicIPsPerSubscription(ctx context.Context, subscriptionID string, cred azcore.TokenCredential) ([]*armnetwork.PublicIPAddress, error) {
-//	client, err := armnetwork.NewPublicIPAddressesClient(subscriptionID, cred, nil)
+//	client, err := armnetwork.NewPublicIPAddressesClient(subscriptionID, cred, DefaultARMClientOptions())
 //	if err != nil {
 //		return nil, fmt.Errorf("failed to create PublicIP client: %v", err)
 //	}
@@ -105,7 +105,7 @@ func ListNetworkInterfaces(ctx context.Context, session *SafeSession, subscripti
 
 	cred := &StaticTokenCredential{Token: token}
 
-	client, err := armnetwork.NewInterfacesClient(subscriptionID, cred, nil)
+	client, err := armnetwork.NewInterfacesClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create NIC client: %v", err)
 	}
@@ -151,7 +151,7 @@ func GetPublicIPByID(ctx context.Context, session *SafeSession, publicIPID strin
 	resourceGroup := parts[4]
 	publicIPName := parts[8]
 
-	client, err := armnetwork.NewPublicIPAddressesClient(subscriptionID, cred, nil)
+	client, err := armnetwork.NewPublicIPAddressesClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return "", err
 	}

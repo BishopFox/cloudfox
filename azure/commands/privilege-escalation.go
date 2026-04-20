@@ -173,7 +173,6 @@ func ListPrivilegeEscalation(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	module := &PrivilegeEscalationModule{
 		BaseAzureModule:  azinternal.NewBaseAzureModule(cmdCtx, 5),
@@ -246,17 +245,11 @@ func (m *PrivilegeEscalationModule) analyzeRoleAssignment(ctx context.Context, s
 		return
 	}
 
-	// Extract role name from role definition ID
+	// Resolve role name from role definition ID via cached lookup
 	roleName := "Unknown"
 	if assignment.Properties.RoleDefinitionID != nil {
 		roleDefID := *assignment.Properties.RoleDefinitionID
-		// Extract role name from ID (last segment)
-		parts := strings.Split(roleDefID, "/")
-		if len(parts) > 0 {
-			roleDefID = parts[len(parts)-1]
-		}
-		// TODO: Resolve role definition ID to role name via API call
-		roleName = roleDefID
+		roleName = azinternal.GetRoleNameFromDefinitionID(ctx, m.Session, subID, roleDefID)
 	}
 
 	principalID := azinternal.SafeStringPtr(assignment.Properties.PrincipalID)

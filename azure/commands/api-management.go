@@ -71,7 +71,6 @@ func ListAPIManagement(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	module := &APIManagementModule{
 		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),

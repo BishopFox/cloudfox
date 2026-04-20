@@ -100,7 +100,7 @@ func (s *LogicAppService) ListWorkflows(ctx context.Context, subID string) ([]*a
 		return nil, err
 	}
 
-	client, err := armlogic.NewWorkflowsClient(subID, cred, nil)
+	client, err := armlogic.NewWorkflowsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create workflows client: %w", err)
 	}
@@ -126,7 +126,7 @@ func (s *LogicAppService) ListWorkflowsByResourceGroup(ctx context.Context, subI
 		return nil, err
 	}
 
-	client, err := armlogic.NewWorkflowsClient(subID, cred, nil)
+	client, err := armlogic.NewWorkflowsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create workflows client: %w", err)
 	}
@@ -152,7 +152,7 @@ func (s *LogicAppService) GetWorkflow(ctx context.Context, subID, rgName, workfl
 		return nil, err
 	}
 
-	client, err := armlogic.NewWorkflowsClient(subID, cred, nil)
+	client, err := armlogic.NewWorkflowsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create workflows client: %w", err)
 	}
@@ -172,7 +172,7 @@ func (s *LogicAppService) ListTriggers(ctx context.Context, subID, rgName, workf
 		return nil, err
 	}
 
-	client, err := armlogic.NewWorkflowTriggersClient(subID, cred, nil)
+	client, err := armlogic.NewWorkflowTriggersClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create triggers client: %w", err)
 	}
@@ -198,7 +198,7 @@ func (s *LogicAppService) GetTriggerCallbackURL(ctx context.Context, subID, rgNa
 		return "", err
 	}
 
-	client, err := armlogic.NewWorkflowTriggersClient(subID, cred, nil)
+	client, err := armlogic.NewWorkflowTriggersClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return "", fmt.Errorf("failed to create triggers client: %w", err)
 	}
@@ -221,7 +221,7 @@ func (s *LogicAppService) ListRuns(ctx context.Context, subID, rgName, workflowN
 		return nil, err
 	}
 
-	client, err := armlogic.NewWorkflowRunsClient(subID, cred, nil)
+	client, err := armlogic.NewWorkflowRunsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create runs client: %w", err)
 	}
@@ -247,7 +247,7 @@ func (s *LogicAppService) ListIntegrationAccounts(ctx context.Context, subID str
 		return nil, err
 	}
 
-	client, err := armlogic.NewIntegrationAccountsClient(subID, cred, nil)
+	client, err := armlogic.NewIntegrationAccountsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create integration accounts client: %w", err)
 	}

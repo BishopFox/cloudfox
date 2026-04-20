@@ -73,7 +73,6 @@ func ListCDN(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return // error already logged by helper
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	// -------------------- Initialize module --------------------
 	module := &CDNModule{
@@ -168,7 +167,7 @@ func (m *CDNModule) processResourceGroup(ctx context.Context, subID, subName, rg
 	}
 
 	cred := &azinternal.StaticTokenCredential{Token: token}
-	profileClient, err := armcdn.NewProfilesClient(subID, cred, nil)
+	profileClient, err := armcdn.NewProfilesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return
 	}
@@ -221,7 +220,7 @@ func (m *CDNModule) processCDNProfile(ctx context.Context, subID, subName, rgNam
 	}
 
 	// Get endpoint client for this profile
-	endpointClient, err := armcdn.NewEndpointsClient(subID, cred, nil)
+	endpointClient, err := armcdn.NewEndpointsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return
 	}

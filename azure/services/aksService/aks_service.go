@@ -90,7 +90,7 @@ func (s *AKSService) ListClustersByResourceGroup(ctx context.Context, subID, rgN
 		return nil, err
 	}
 
-	client, err := armcontainerservice.NewManagedClustersClient(subID, cred, nil)
+	client, err := armcontainerservice.NewManagedClustersClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create managed clusters client: %w", err)
 	}
@@ -116,7 +116,7 @@ func (s *AKSService) ListClusters(ctx context.Context, subID string) ([]*armcont
 		return nil, err
 	}
 
-	client, err := armcontainerservice.NewManagedClustersClient(subID, cred, nil)
+	client, err := armcontainerservice.NewManagedClustersClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create managed clusters client: %w", err)
 	}
@@ -142,7 +142,7 @@ func (s *AKSService) GetCluster(ctx context.Context, subID, rgName, clusterName 
 		return nil, err
 	}
 
-	client, err := armcontainerservice.NewManagedClustersClient(subID, cred, nil)
+	client, err := armcontainerservice.NewManagedClustersClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create managed clusters client: %w", err)
 	}
@@ -162,7 +162,7 @@ func (s *AKSService) GetClusterCredentials(ctx context.Context, subID, rgName, c
 		return nil, err
 	}
 
-	client, err := armcontainerservice.NewManagedClustersClient(subID, cred, nil)
+	client, err := armcontainerservice.NewManagedClustersClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create managed clusters client: %w", err)
 	}
@@ -192,7 +192,7 @@ func (s *AKSService) ListAgentPools(ctx context.Context, subID, rgName, clusterN
 		return nil, err
 	}
 
-	client, err := armcontainerservice.NewAgentPoolsClient(subID, cred, nil)
+	client, err := armcontainerservice.NewAgentPoolsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create agent pools client: %w", err)
 	}

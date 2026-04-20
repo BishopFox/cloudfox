@@ -28,7 +28,7 @@ type DNSRecordRow struct {
 //	var rows []DNSRecordRow
 //	logger := internal.NewLogger()
 //
-//	dnsZonesClient, err := armdns.NewZonesClient(subID, cred, nil)
+//	dnsZonesClient, err := armdns.NewZonesClient(subID, cred, DefaultARMClientOptions())
 //	if err != nil {
 //		return nil, fmt.Errorf("creating DNS zones client for %s: %w", subID, err)
 //	}
@@ -48,7 +48,7 @@ type DNSRecordRow struct {
 //			zoneName := *zone.Name
 //			rgName := GetResourceGroupNameFromID(*zone.ID)
 //
-//			rsClient, err := armdns.NewRecordSetsClient(subID, cred, nil)
+//			rsClient, err := armdns.NewRecordSetsClient(subID, cred, DefaultARMClientOptions())
 //			if err != nil {
 //				if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 //					logger.ErrorM(fmt.Sprintf("[ERROR] creating record sets client: %v", err), globals.AZ_DNS_MODULE_NAME)
@@ -140,7 +140,7 @@ func ListDNSRecordsPerResourceGroup(ctx context.Context, session *SafeSession, s
 	}
 
 	cred := &StaticTokenCredential{Token: token}
-	dnsZonesClient, err := armdns.NewZonesClient(subID, cred, nil)
+	dnsZonesClient, err := armdns.NewZonesClient(subID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("creating DNS zones client for %s: %w", subID, err)
 	}
@@ -160,7 +160,7 @@ func ListDNSRecordsPerResourceGroup(ctx context.Context, session *SafeSession, s
 
 			zoneName := *zone.Name
 
-			rsClient, err := armdns.NewRecordSetsClient(subID, cred, nil)
+			rsClient, err := armdns.NewRecordSetsClient(subID, cred, DefaultARMClientOptions())
 			if err != nil {
 				if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 					logger.ErrorM(fmt.Sprintf("[ERROR] creating record sets client: %v", err), globals.AZ_DNS_MODULE_NAME)
@@ -266,7 +266,7 @@ func ListPrivateDNSZonesPerResourceGroup(ctx context.Context, session *SafeSessi
 	}
 
 	cred := &StaticTokenCredential{Token: token}
-	privateDNSZonesClient, err := armprivatedns.NewPrivateZonesClient(subID, cred, nil)
+	privateDNSZonesClient, err := armprivatedns.NewPrivateZonesClient(subID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("creating Private DNS zones client for %s: %w", subID, err)
 	}
@@ -303,7 +303,7 @@ func ListPrivateDNSZonesPerResourceGroup(ctx context.Context, session *SafeSessi
 			vnetLinks := []string{}
 			autoReg := "Disabled"
 
-			vnetLinkClient, err := armprivatedns.NewVirtualNetworkLinksClient(subID, cred, nil)
+			vnetLinkClient, err := armprivatedns.NewVirtualNetworkLinksClient(subID, cred, DefaultARMClientOptions())
 			if err != nil {
 				if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 					logger.ErrorM(fmt.Sprintf("[ERROR] creating VNet links client: %v", err), globals.AZ_ENDPOINTS_MODULE_NAME)

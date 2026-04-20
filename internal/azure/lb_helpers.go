@@ -16,7 +16,7 @@ type FrontendIPInfo struct {
 
 // -------------------- Load Balancers per Subscription --------------------
 //func GetLoadBalancersPerSubscription(ctx context.Context, subscriptionID string, cred azcore.TokenCredential) ([]*armnetwork.LoadBalancer, error) {
-//	lbClient, err := armnetwork.NewLoadBalancersClient(subscriptionID, cred, nil)
+//	lbClient, err := armnetwork.NewLoadBalancersClient(subscriptionID, cred, DefaultARMClientOptions())
 //	if err != nil {
 //		return nil, fmt.Errorf("failed to create Load Balancer client: %v", err)
 //	}
@@ -42,7 +42,7 @@ func GetLoadBalancersPerResourceGroup(ctx context.Context, session *SafeSession,
 	}
 
 	cred := &StaticTokenCredential{Token: token}
-	lbClient, err := armnetwork.NewLoadBalancersClient(subscriptionID, cred, nil)
+	lbClient, err := armnetwork.NewLoadBalancersClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Load Balancer client: %v", err)
 	}

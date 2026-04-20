@@ -34,7 +34,7 @@ func ListAzureFileShares(ctx context.Context, session *SafeSession, subscription
 
 	cred := &StaticTokenCredential{Token: token}
 
-	storageClient, err := armstorage.NewAccountsClient(subscriptionID, cred, nil)
+	storageClient, err := armstorage.NewAccountsClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 			logger.ErrorM(fmt.Sprintf("Failed to create storage accounts client: %v", err), globals.AZ_FILESYSTEMS_MODULE)
@@ -58,7 +58,7 @@ func ListAzureFileShares(ctx context.Context, session *SafeSession, subscription
 			logger.InfoM(fmt.Sprintf("Fetched %d storage accounts for resource group %s", len(page.Value), rgName), globals.AZ_FILESYSTEMS_MODULE)
 		}
 		// Reuse FileShares client
-		fileClient, err := armstorage.NewFileSharesClient(subscriptionID, cred, nil)
+		fileClient, err := armstorage.NewFileSharesClient(subscriptionID, cred, DefaultARMClientOptions())
 		if err != nil {
 			if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 				logger.ErrorM(fmt.Sprintf("Failed to create FileShares client: %v", err), globals.AZ_FILESYSTEMS_MODULE)
@@ -118,15 +118,15 @@ func ListNetAppFiles(ctx context.Context, session *SafeSession, subscriptionID, 
 
 	cred := &StaticTokenCredential{Token: token}
 
-	accountsClient, err := armnetapp.NewAccountsClient(subscriptionID, cred, nil)
+	accountsClient, err := armnetapp.NewAccountsClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create NetApp Accounts client: %v", err)
 	}
-	poolsClient, err := armnetapp.NewPoolsClient(subscriptionID, cred, nil)
+	poolsClient, err := armnetapp.NewPoolsClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create NetApp Pools client: %v", err)
 	}
-	volumesClient, err := armnetapp.NewVolumesClient(subscriptionID, cred, nil)
+	volumesClient, err := armnetapp.NewVolumesClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create NetApp Volumes client: %v", err)
 	}

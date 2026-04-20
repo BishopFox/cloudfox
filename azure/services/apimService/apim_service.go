@@ -103,7 +103,7 @@ func (s *APIMService) ListServices(ctx context.Context, subID string) ([]*armapi
 		return nil, err
 	}
 
-	client, err := armapimanagement.NewServiceClient(subID, cred, nil)
+	client, err := armapimanagement.NewServiceClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create APIM client: %w", err)
 	}
@@ -129,7 +129,7 @@ func (s *APIMService) ListServicesByResourceGroup(ctx context.Context, subID, rg
 		return nil, err
 	}
 
-	client, err := armapimanagement.NewServiceClient(subID, cred, nil)
+	client, err := armapimanagement.NewServiceClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create APIM client: %w", err)
 	}
@@ -155,7 +155,7 @@ func (s *APIMService) GetService(ctx context.Context, subID, rgName, serviceName
 		return nil, err
 	}
 
-	client, err := armapimanagement.NewServiceClient(subID, cred, nil)
+	client, err := armapimanagement.NewServiceClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create APIM client: %w", err)
 	}
@@ -175,7 +175,7 @@ func (s *APIMService) ListAPIs(ctx context.Context, subID, rgName, serviceName s
 		return nil, err
 	}
 
-	client, err := armapimanagement.NewAPIClient(subID, cred, nil)
+	client, err := armapimanagement.NewAPIClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create API client: %w", err)
 	}
@@ -201,7 +201,7 @@ func (s *APIMService) ListSubscriptions(ctx context.Context, subID, rgName, serv
 		return nil, err
 	}
 
-	client, err := armapimanagement.NewSubscriptionClient(subID, cred, nil)
+	client, err := armapimanagement.NewSubscriptionClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create subscription client: %w", err)
 	}
@@ -227,7 +227,7 @@ func (s *APIMService) ListNamedValues(ctx context.Context, subID, rgName, servic
 		return nil, err
 	}
 
-	client, err := armapimanagement.NewNamedValueClient(subID, cred, nil)
+	client, err := armapimanagement.NewNamedValueClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create named value client: %w", err)
 	}

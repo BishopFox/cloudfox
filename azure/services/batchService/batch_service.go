@@ -94,7 +94,7 @@ func (s *BatchService) ListAccounts(ctx context.Context, subID string) ([]*armba
 		return nil, err
 	}
 
-	client, err := armbatch.NewAccountClient(subID, cred, nil)
+	client, err := armbatch.NewAccountClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create batch account client: %w", err)
 	}
@@ -120,7 +120,7 @@ func (s *BatchService) ListAccountsByResourceGroup(ctx context.Context, subID, r
 		return nil, err
 	}
 
-	client, err := armbatch.NewAccountClient(subID, cred, nil)
+	client, err := armbatch.NewAccountClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create batch account client: %w", err)
 	}
@@ -146,7 +146,7 @@ func (s *BatchService) GetAccountKeys(ctx context.Context, subID, rgName, accoun
 		return nil, err
 	}
 
-	client, err := armbatch.NewAccountClient(subID, cred, nil)
+	client, err := armbatch.NewAccountClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create batch account client: %w", err)
 	}
@@ -166,7 +166,7 @@ func (s *BatchService) ListPools(ctx context.Context, subID, rgName, accountName
 		return nil, err
 	}
 
-	client, err := armbatch.NewPoolClient(subID, cred, nil)
+	client, err := armbatch.NewPoolClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create pool client: %w", err)
 	}
@@ -192,7 +192,7 @@ func (s *BatchService) ListApplications(ctx context.Context, subID, rgName, acco
 		return nil, err
 	}
 
-	client, err := armbatch.NewApplicationClient(subID, cred, nil)
+	client, err := armbatch.NewApplicationClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create application client: %w", err)
 	}

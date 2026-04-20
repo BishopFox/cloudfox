@@ -60,7 +60,6 @@ func ListStreamAnalytics(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	module := &StreamAnalyticsModule{
 		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),

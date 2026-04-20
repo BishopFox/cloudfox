@@ -60,7 +60,6 @@ func ListDataFactory(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	module := &DataFactoryModule{
 		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),

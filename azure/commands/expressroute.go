@@ -69,7 +69,6 @@ func ListExpressRouteCircuits(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	module := &ExpressRouteModule{
 		BaseAzureModule:  azinternal.NewBaseAzureModule(cmdCtx, 5),
@@ -149,7 +148,7 @@ func (m *ExpressRouteModule) getExpressRouteCircuits(ctx context.Context, subID,
 	}
 
 	cred := &azinternal.StaticTokenCredential{Token: token}
-	erClient, err := armnetwork.NewExpressRouteCircuitsClient(subID, cred, nil)
+	erClient, err := armnetwork.NewExpressRouteCircuitsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, err
 	}

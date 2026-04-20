@@ -135,7 +135,6 @@ func ListRBAC(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	// Parse RBAC-specific flags
 	tenantLevel, _ := cmd.Flags().GetBool("tenant-level")
@@ -269,7 +268,7 @@ func (m *RBACModule) processSubscription(ctx context.Context, subID string, logg
 	cred := &azinternal.StaticTokenCredential{Token: token}
 
 	// Create authorization client factory for this subscription
-	clientFactory, err := armauthorization.NewClientFactory(subID, cred, nil)
+	clientFactory, err := armauthorization.NewClientFactory(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Failed to create authorization client factory for %s: %v", subID, err), globals.AZ_RBAC_MODULE_NAME)
 		m.CommandCounter.Error++
@@ -393,7 +392,7 @@ func (m *RBACModule) processTenantLevel(ctx context.Context, logger internal.Log
 	cred := &azinternal.StaticTokenCredential{Token: token}
 
 	// Use tenant ID to create client factory for tenant-level queries
-	clientFactory, err := armauthorization.NewClientFactory(m.TenantID, cred, nil)
+	clientFactory, err := armauthorization.NewClientFactory(m.TenantID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Failed to create authorization client factory for tenant-level query: %v", err), globals.AZ_RBAC_MODULE_NAME)
 		m.CommandCounter.Error++
@@ -490,7 +489,7 @@ func (m *RBACModule) listResourceGroupAssignments(ctx context.Context, subID str
 	var assignments []*armauthorization.RoleAssignment
 
 	// Get resource groups using the provided credential
-	rgClient, err := armresources.NewResourceGroupsClient(subID, cred, nil)
+	rgClient, err := armresources.NewResourceGroupsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return assignments
 	}
@@ -520,7 +519,7 @@ func (m *RBACModule) listResourceLevelAssignments(ctx context.Context, subID str
 	var assignments []*armauthorization.RoleAssignment
 
 	// Get all resources in the subscription
-	resourcesClient, err := armresources.NewClient(subID, cred, nil)
+	resourcesClient, err := armresources.NewClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Failed to create resources client for subscription %s: %v", subID, err), globals.AZ_RBAC_MODULE_NAME)
 		return assignments

@@ -78,7 +78,6 @@ func ListPrincipals(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return // error already logged by helper
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	// Test Graph API access
 	if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
@@ -148,11 +147,10 @@ func (m *PrincipalsModule) processTenantPrincipals(ctx context.Context, logger i
 	principals := []Principal{}
 
 	// 1) Entra Users
-	if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
-		logger.InfoM("Enumerating Entra users...", globals.AZ_PRINCIPALS_MODULE_NAME)
-	}
+	internal.PrintPhaseStatus(globals.AZ_PRINCIPALS_MODULE_NAME, "Enumerating users...")
 	users, uErr := azinternal.ListEntraUsers(ctx, m.Session, m.TenantID)
 	if uErr == nil {
+		internal.PrintPhaseDone(globals.AZ_PRINCIPALS_MODULE_NAME, fmt.Sprintf("Enumerating users: found %d", len(users)))
 		for _, u := range users {
 			// Use the actual userType from the API (e.g., "Guest", "Member")
 			// Default to "User" if userType is empty or unrecognized
@@ -181,20 +179,17 @@ func (m *PrincipalsModule) processTenantPrincipals(ctx context.Context, logger i
 			})
 		}
 	} else {
+		internal.PrintPhaseDone(globals.AZ_PRINCIPALS_MODULE_NAME, "Enumerating users: failed")
 		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 			logger.ErrorM(fmt.Sprintf("Failed to list Entra users: %v", uErr), globals.AZ_PRINCIPALS_MODULE_NAME)
 		}
 	}
 
 	// 2) Service Principals
-	if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
-		logger.InfoM("Enumerating service principals...", globals.AZ_PRINCIPALS_MODULE_NAME)
-	}
+	internal.PrintPhaseStatus(globals.AZ_PRINCIPALS_MODULE_NAME, "Enumerating service principals...")
 	sps, spErr := azinternal.ListServicePrincipals(ctx, m.Session, m.TenantID)
 	if spErr == nil {
-		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
-			logger.InfoM(fmt.Sprintf("Found %d service principals", len(sps)), globals.AZ_PRINCIPALS_MODULE_NAME)
-		}
+		internal.PrintPhaseDone(globals.AZ_PRINCIPALS_MODULE_NAME, fmt.Sprintf("Enumerating service principals: found %d", len(sps)))
 		for _, sp := range sps {
 			principals = append(principals, Principal{
 				Service:     "EntraID",
@@ -206,20 +201,17 @@ func (m *PrincipalsModule) processTenantPrincipals(ctx context.Context, logger i
 			})
 		}
 	} else {
+		internal.PrintPhaseDone(globals.AZ_PRINCIPALS_MODULE_NAME, "Enumerating service principals: failed")
 		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 			logger.ErrorM(fmt.Sprintf("Failed to list service principals: %v", spErr), globals.AZ_PRINCIPALS_MODULE_NAME)
 		}
 	}
 
 	// 3) Security Groups
-	if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
-		logger.InfoM("Enumerating security groups...", globals.AZ_PRINCIPALS_MODULE_NAME)
-	}
+	internal.PrintPhaseStatus(globals.AZ_PRINCIPALS_MODULE_NAME, "Enumerating groups...")
 	groups, grpErr := azinternal.ListEntraGroups(ctx, m.Session, m.TenantID)
 	if grpErr == nil {
-		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
-			logger.InfoM(fmt.Sprintf("Found %d security groups", len(groups)), globals.AZ_PRINCIPALS_MODULE_NAME)
-		}
+		internal.PrintPhaseDone(globals.AZ_PRINCIPALS_MODULE_NAME, fmt.Sprintf("Enumerating groups: found %d", len(groups)))
 		for _, grp := range groups {
 			principals = append(principals, Principal{
 				Service:     "EntraID",
@@ -231,18 +223,20 @@ func (m *PrincipalsModule) processTenantPrincipals(ctx context.Context, logger i
 			})
 		}
 	} else {
+		internal.PrintPhaseDone(globals.AZ_PRINCIPALS_MODULE_NAME, "Enumerating groups: failed")
 		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 			logger.ErrorM(fmt.Sprintf("Failed to list security groups: %v", grpErr), globals.AZ_PRINCIPALS_MODULE_NAME)
 		}
 	}
 
 	// 4) User-assigned Managed Identities
-	if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
-		logger.InfoM("Enumerating user-assigned managed identities (per-subscription)...", globals.AZ_PRINCIPALS_MODULE_NAME)
-	}
+	internal.PrintPhaseStatus(globals.AZ_PRINCIPALS_MODULE_NAME, "Enumerating managed identities...")
 
 	// Initialize MI collection list
 	m.collectedMIs = []azinternal.ManagedIdentity{}
+
+	// Reset CommandCounter before MI subscription enumeration
+	m.CommandCounter = internal.CommandCounter{}
 
 	// Use RunSubscriptionEnumeration for standardized processing
 	m.RunSubscriptionEnumeration(ctx, logger, m.Subscriptions, globals.AZ_PRINCIPALS_MODULE_NAME, m.processSubscriptionForMIs)
@@ -282,21 +276,18 @@ func (m *PrincipalsModule) processTenantPrincipals(ctx context.Context, logger i
 		subNameMap[s.ID] = s.Name
 	}
 
-	// Process principals with controlled concurrency using worker pool
-	// This prevents network timeouts from too many simultaneous API calls
-	var wg sync.WaitGroup
-	semaphore := make(chan struct{}, m.Goroutines) // Limit concurrent workers
-
-	for _, p := range principals {
-		wg.Add(1)
-		go func(principal Principal) {
-			semaphore <- struct{}{}        // Acquire semaphore
-			defer func() { <-semaphore }() // Release semaphore
-			m.processPrincipal(ctx, principal, contextLabel, subNameMap, &wg)
-		}(p)
+	// Process principals with centralized progress tracking
+	m.CommandCounter = internal.CommandCounter{}
+	principalIDs := make([]string, len(principals))
+	principalMap := make(map[string]Principal, len(principals))
+	for i, p := range principals {
+		principalIDs[i] = p.PrincipalID
+		principalMap[p.PrincipalID] = p
 	}
-
-	wg.Wait()
+	m.RunEntityEnumeration(ctx, logger, principalIDs, globals.AZ_PRINCIPALS_MODULE_NAME, "principals",
+		func(ctx context.Context, entityID string, logger internal.Logger) {
+			m.processPrincipal(ctx, principalMap[entityID], contextLabel, subNameMap)
+		})
 }
 
 // processSubscriptionForMIs processes a single subscription for managed identity collection
@@ -316,9 +307,7 @@ func (m *PrincipalsModule) processSubscriptionForMIs(ctx context.Context, subID 
 // ------------------------------
 // Process single principal
 // ------------------------------
-func (m *PrincipalsModule) processPrincipal(ctx context.Context, p Principal, contextLabel string, subNameMap map[string]string, wg *sync.WaitGroup) {
-	defer wg.Done()
-
+func (m *PrincipalsModule) processPrincipal(ctx context.Context, p Principal, contextLabel string, subNameMap map[string]string) {
 	// Normalize fields
 	upn := p.UPN
 	if upn == "" {

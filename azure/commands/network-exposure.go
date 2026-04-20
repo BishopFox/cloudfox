@@ -82,7 +82,6 @@ func AnalyzeNetworkExposure(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	module := &NetworkExposureModule{
 		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
@@ -596,7 +595,7 @@ func (m *NetworkExposureModule) analyzeAppGateways(ctx context.Context, subID, s
 // Analyze Web Apps (public)
 // ------------------------------
 func (m *NetworkExposureModule) analyzeWebApps(ctx context.Context, subID, subName, rgName, region string, logger internal.Logger) {
-	webApps := azinternal.GetWebAppsPerRG(ctx, subID, m.LootMap, rgName)
+	webApps := azinternal.GetWebAppsPerRG(ctx, m.Session, subID, m.LootMap, rgName)
 
 	for _, appRow := range webApps {
 		if len(appRow) < 20 {
@@ -1155,7 +1154,7 @@ func (m *NetworkExposureModule) analyzeAzureFirewall(ctx context.Context, subID,
 	}
 
 	cred := &azinternal.StaticTokenCredential{Token: token}
-	firewallClient, err := armnetwork.NewAzureFirewallsClient(subID, cred, nil)
+	firewallClient, err := armnetwork.NewAzureFirewallsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return
 	}
@@ -1175,7 +1174,7 @@ func (m *NetworkExposureModule) analyzeAzureFirewall(ctx context.Context, subID,
 			firewallName := *firewall.Name
 
 			// Check for public IPs
-			pubIPClient, err := armnetwork.NewPublicIPAddressesClient(subID, cred, nil)
+			pubIPClient, err := armnetwork.NewPublicIPAddressesClient(subID, cred, azinternal.DefaultARMClientOptions())
 			if err != nil {
 				continue
 			}

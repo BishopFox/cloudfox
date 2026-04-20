@@ -79,7 +79,6 @@ func ListBackupInventory(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return // error already logged by helper
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	// -------------------- Initialize module --------------------
 	module := &BackupInventoryModule{
@@ -218,7 +217,7 @@ func (m *BackupInventoryModule) processRecoveryServicesVaults(ctx context.Contex
 	cred := azinternal.NewStaticTokenCredential(token)
 
 	// Create Recovery Services client
-	client, err := armrecoveryservices.NewVaultsClient(subID, cred, nil)
+	client, err := armrecoveryservices.NewVaultsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
 			logger.ErrorM(fmt.Sprintf("Failed to create Recovery Services client for subscription %s: %v", subID, err), globals.AZ_BACKUP_INVENTORY_MODULE_NAME)
@@ -377,7 +376,7 @@ func (m *BackupInventoryModule) processBackupPolicies(ctx context.Context, subID
 	// TODO: Uncomment when SDK is upgraded
 	/*
 	// Create Backup Policies client
-	client, err := armrecoveryservicesbackup.NewPoliciesClient(subID, cred, nil)
+	client, err := armrecoveryservicesbackup.NewPoliciesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return
 	}
@@ -525,7 +524,7 @@ func (m *BackupInventoryModule) processProtectedItems(ctx context.Context, subID
 	// TODO: Uncomment when SDK is upgraded
 	/*
 	// Create Protected Items client
-	client, err := armrecoveryservicesbackup.NewProtectedItemsClient(subID, cred, nil)
+	client, err := armrecoveryservicesbackup.NewProtectedItemsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return
 	}

@@ -539,6 +539,12 @@ func (o *RBACOutput) LootFiles() []internal.LootFile {
 // GetRoleAssignmentsForSubscription retrieves all role assignments for a given subscription
 // Returns role assignments using the modern Azure SDK
 func GetRoleAssignmentsForSubscription(ctx context.Context, session *SafeSession, subscriptionID string) ([]*armauthorizationv2.RoleAssignment, error) {
+	// Check in-memory cache first
+	cacheKey := AzCacheKey("role-assignments-v2", subscriptionID)
+	if cached, found := AzureDataCache.Get(cacheKey); found {
+		return cached.([]*armauthorizationv2.RoleAssignment), nil
+	}
+
 	// Get ARM token
 	token, err := session.GetTokenForResource(globals.CommonScopes[0])
 	if err != nil {
@@ -567,5 +573,7 @@ func GetRoleAssignmentsForSubscription(ctx context.Context, session *SafeSession
 		roleAssignments = append(roleAssignments, page.Value...)
 	}
 
+	// Cache the result before returning
+	AzureDataCache.Set(cacheKey, roleAssignments, 0)
 	return roleAssignments, nil
 }

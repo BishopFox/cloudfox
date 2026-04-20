@@ -63,7 +63,6 @@ func ListAutomation(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return // error already logged by helper
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	// -------------------- Initialize module --------------------
 	module := &AutomationModule{

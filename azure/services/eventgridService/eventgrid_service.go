@@ -100,7 +100,7 @@ func (s *EventGridService) ListTopics(ctx context.Context, subID string) ([]*arm
 		return nil, err
 	}
 
-	client, err := armeventgrid.NewTopicsClient(subID, cred, nil)
+	client, err := armeventgrid.NewTopicsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create topics client: %w", err)
 	}
@@ -126,7 +126,7 @@ func (s *EventGridService) ListTopicsByResourceGroup(ctx context.Context, subID,
 		return nil, err
 	}
 
-	client, err := armeventgrid.NewTopicsClient(subID, cred, nil)
+	client, err := armeventgrid.NewTopicsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create topics client: %w", err)
 	}
@@ -152,7 +152,7 @@ func (s *EventGridService) GetTopicKeys(ctx context.Context, subID, rgName, topi
 		return nil, err
 	}
 
-	client, err := armeventgrid.NewTopicsClient(subID, cred, nil)
+	client, err := armeventgrid.NewTopicsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create topics client: %w", err)
 	}
@@ -172,7 +172,7 @@ func (s *EventGridService) ListDomains(ctx context.Context, subID string) ([]*ar
 		return nil, err
 	}
 
-	client, err := armeventgrid.NewDomainsClient(subID, cred, nil)
+	client, err := armeventgrid.NewDomainsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create domains client: %w", err)
 	}
@@ -198,7 +198,7 @@ func (s *EventGridService) ListSystemTopics(ctx context.Context, subID string) (
 		return nil, err
 	}
 
-	client, err := armeventgrid.NewSystemTopicsClient(subID, cred, nil)
+	client, err := armeventgrid.NewSystemTopicsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create system topics client: %w", err)
 	}

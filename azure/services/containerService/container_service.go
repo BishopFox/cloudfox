@@ -110,7 +110,7 @@ func (s *ContainerService) ListContainerApps(ctx context.Context, subID string) 
 		return nil, err
 	}
 
-	client, err := armappcontainers.NewContainerAppsClient(subID, cred, nil)
+	client, err := armappcontainers.NewContainerAppsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create container apps client: %w", err)
 	}
@@ -136,7 +136,7 @@ func (s *ContainerService) ListContainerAppsByResourceGroup(ctx context.Context,
 		return nil, err
 	}
 
-	client, err := armappcontainers.NewContainerAppsClient(subID, cred, nil)
+	client, err := armappcontainers.NewContainerAppsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create container apps client: %w", err)
 	}
@@ -162,7 +162,7 @@ func (s *ContainerService) ListContainerAppEnvironments(ctx context.Context, sub
 		return nil, err
 	}
 
-	client, err := armappcontainers.NewManagedEnvironmentsClient(subID, cred, nil)
+	client, err := armappcontainers.NewManagedEnvironmentsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create environments client: %w", err)
 	}
@@ -188,7 +188,7 @@ func (s *ContainerService) GetContainerAppSecrets(ctx context.Context, subID, rg
 		return nil, err
 	}
 
-	client, err := armappcontainers.NewContainerAppsClient(subID, cred, nil)
+	client, err := armappcontainers.NewContainerAppsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create container apps client: %w", err)
 	}
@@ -208,7 +208,7 @@ func (s *ContainerService) ListContainerGroups(ctx context.Context, subID string
 		return nil, err
 	}
 
-	client, err := armcontainerinstance.NewContainerGroupsClient(subID, cred, nil)
+	client, err := armcontainerinstance.NewContainerGroupsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create container groups client: %w", err)
 	}
@@ -234,7 +234,7 @@ func (s *ContainerService) ListContainerGroupsByResourceGroup(ctx context.Contex
 		return nil, err
 	}
 
-	client, err := armcontainerinstance.NewContainerGroupsClient(subID, cred, nil)
+	client, err := armcontainerinstance.NewContainerGroupsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create container groups client: %w", err)
 	}

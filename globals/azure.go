@@ -17,6 +17,7 @@ var (
 	AAD_USERS_TEST_FILE        string
 	ACR_REGISTRIES_TEST_FILE   string
 	AZ_VERBOSITY               int
+	AZ_REFRESH_CACHE           bool
 
 	// Token-based authentication
 	// Separate tokens for ARM and Graph APIs

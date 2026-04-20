@@ -4,101 +4,17 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/BishopFox/cloudfox/internal/cacheutil"
 )
 
 // DefaultCacheExpiration is the default time after which cache is considered stale
 // and will be automatically refreshed
 const DefaultCacheExpiration = 24 * time.Hour
 
-// atomicWriteGob writes data to a file atomically using a temp file and rename
-// This prevents corruption if the process is interrupted during write
-func atomicWriteGob(filename string, data interface{}) error {
-	// Create temp file in the same directory (required for atomic rename)
-	dir := filepath.Dir(filename)
-	tempFile, err := os.CreateTemp(dir, ".tmp-*.gob")
-	if err != nil {
-		return fmt.Errorf("failed to create temp file: %w", err)
-	}
-	tempName := tempFile.Name()
-
-	// Ensure cleanup on failure
-	success := false
-	defer func() {
-		if !success {
-			tempFile.Close()
-			os.Remove(tempName)
-		}
-	}()
-
-	// Encode to temp file
-	encoder := gob.NewEncoder(tempFile)
-	if err := encoder.Encode(data); err != nil {
-		return fmt.Errorf("failed to encode data: %w", err)
-	}
-
-	// Sync to ensure data is written to disk
-	if err := tempFile.Sync(); err != nil {
-		return fmt.Errorf("failed to sync temp file: %w", err)
-	}
-
-	// Close before rename
-	if err := tempFile.Close(); err != nil {
-		return fmt.Errorf("failed to close temp file: %w", err)
-	}
-
-	// Atomic rename
-	if err := os.Rename(tempName, filename); err != nil {
-		return fmt.Errorf("failed to rename temp file: %w", err)
-	}
-
-	success = true
-	return nil
-}
-
-// atomicWriteFile writes data to a file atomically
-func atomicWriteFile(filename string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(filename)
-	tempFile, err := os.CreateTemp(dir, ".tmp-*")
-	if err != nil {
-		return fmt.Errorf("failed to create temp file: %w", err)
-	}
-	tempName := tempFile.Name()
-
-	success := false
-	defer func() {
-		if !success {
-			tempFile.Close()
-			os.Remove(tempName)
-		}
-	}()
-
-	if _, err := io.WriteString(tempFile, string(data)); err != nil {
-		return fmt.Errorf("failed to write data: %w", err)
-	}
-
-	if err := tempFile.Chmod(perm); err != nil {
-		return fmt.Errorf("failed to set permissions: %w", err)
-	}
-
-	if err := tempFile.Sync(); err != nil {
-		return fmt.Errorf("failed to sync: %w", err)
-	}
-
-	if err := tempFile.Close(); err != nil {
-		return fmt.Errorf("failed to close: %w", err)
-	}
-
-	if err := os.Rename(tempName, filename); err != nil {
-		return fmt.Errorf("failed to rename: %w", err)
-	}
-
-	success = true
-	return nil
-}
 
 // CacheMetadata holds information about when the cache was created
 type CacheMetadata struct {
@@ -119,24 +35,8 @@ type PersistentOrgCache struct {
 
 // GetCacheDirectory returns the cache directory for a given account
 func GetCacheDirectory(baseDir, account string) string {
-	// Sanitize account email for use in path
-	sanitized := sanitizeForPath(account)
+	sanitized := cacheutil.SanitizeForPath(account)
 	return filepath.Join(baseDir, "cached-data", "gcp", sanitized)
-}
-
-// sanitizeForPath removes/replaces characters that are problematic in file paths
-func sanitizeForPath(s string) string {
-	// Replace @ and other special chars with underscores
-	result := make([]byte, 0, len(s))
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' {
-			result = append(result, c)
-		} else {
-			result = append(result, '_')
-		}
-	}
-	return string(result)
 }
 
 // OrgCacheFilename returns the filename for org cache
@@ -166,7 +66,7 @@ func SaveOrgCacheToFile(cache *OrgCache, baseDir, account, version string) error
 	filename := filepath.Join(cacheDir, OrgCacheFilename())
 
 	// Use atomic write: write to temp file, then rename
-	if err := atomicWriteGob(filename, persistent); err != nil {
+	if err := cacheutil.AtomicWriteGob(filename, persistent); err != nil {
 		return fmt.Errorf("failed to write cache file: %w", err)
 	}
 
@@ -174,7 +74,7 @@ func SaveOrgCacheToFile(cache *OrgCache, baseDir, account, version string) error
 	jsonFilename := filepath.Join(cacheDir, "org-cache.json")
 	jsonData, err := json.MarshalIndent(persistent, "", "  ")
 	if err == nil {
-		atomicWriteFile(jsonFilename, jsonData, 0644)
+		cacheutil.AtomicWriteFile(jsonFilename, jsonData, 0644)
 	}
 
 	return nil

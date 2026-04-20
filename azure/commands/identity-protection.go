@@ -71,7 +71,6 @@ func ListIdentityProtection(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	module := &IdentityProtectionModule{
 		BaseAzureModule:   azinternal.NewBaseAzureModule(cmdCtx, 5),

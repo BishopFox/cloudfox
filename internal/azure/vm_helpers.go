@@ -27,7 +27,7 @@ func GetBastionHostsPerSubscription(session *SafeSession, subscriptionID string)
 
 	cred := &StaticTokenCredential{Token: token}
 
-	client, _ := armnetwork.NewBastionHostsClient(subscriptionID, cred, nil)
+	client, _ := armnetwork.NewBastionHostsClient(subscriptionID, cred, DefaultARMClientOptions())
 
 	var results []*armnetwork.BastionHost
 	pager := client.NewListPager(nil)
@@ -1796,7 +1796,7 @@ func GetVMsPerSubscription(ctx context.Context, session *SafeSession, subscripti
 	}
 
 	cred := &StaticTokenCredential{Token: token}
-	client, err := armcompute.NewVirtualMachinesClient(subscriptionID, cred, nil)
+	client, err := armcompute.NewVirtualMachinesClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create VM client: %v", err)
 	}

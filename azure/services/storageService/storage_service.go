@@ -120,7 +120,7 @@ func (s *StorageService) ListStorageAccountsByResourceGroup(ctx context.Context,
 		return nil, err
 	}
 
-	clientFactory, err := armstorage.NewClientFactory(subID, cred, nil)
+	clientFactory, err := armstorage.NewClientFactory(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage client factory: %w", err)
 	}
@@ -147,7 +147,7 @@ func (s *StorageService) ListStorageAccounts(ctx context.Context, subID string) 
 		return nil, err
 	}
 
-	clientFactory, err := armstorage.NewClientFactory(subID, cred, nil)
+	clientFactory, err := armstorage.NewClientFactory(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage client factory: %w", err)
 	}
@@ -174,7 +174,7 @@ func (s *StorageService) GetStorageAccountKeys(ctx context.Context, subID, accou
 		return nil, err
 	}
 
-	clientFactory, err := armstorage.NewClientFactory(subID, cred, nil)
+	clientFactory, err := armstorage.NewClientFactory(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage client factory: %w", err)
 	}
@@ -210,7 +210,7 @@ func (s *StorageService) ListContainers(ctx context.Context, subID, accountName,
 		return nil, err
 	}
 
-	storageClient, err := armstorage.NewBlobContainersClient(subID, cred, nil)
+	storageClient, err := armstorage.NewBlobContainersClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create BlobContainers client: %w", err)
 	}
@@ -315,7 +315,7 @@ func (s *StorageService) ListFileShares(ctx context.Context, subID, accountName,
 		return nil, err
 	}
 
-	storageClient, err := armstorage.NewFileSharesClient(subID, cred, nil)
+	storageClient, err := armstorage.NewFileSharesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create FileShares client: %w", err)
 	}
@@ -366,7 +366,7 @@ func (s *StorageService) ListTables(ctx context.Context, subID, accountName, res
 		return nil, err
 	}
 
-	storageClient, err := armstorage.NewTableClient(subID, cred, nil)
+	storageClient, err := armstorage.NewTableClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Table client: %w", err)
 	}

@@ -201,27 +201,20 @@ import (
 
 // GetWebAppsPerRG enumerates all Web & App Services per resource group
 // GetWebAppsPerRGWithAuth processes web apps with EntraID auth status
-func GetWebAppsPerRGWithAuth(ctx context.Context, subscriptionID string, lootMap map[string]*internal.LootFile, rgName string, authEnabledApps map[string]bool, tenantName, tenantID string) [][]string {
-	return getWebAppsPerRGInternal(ctx, subscriptionID, lootMap, rgName, authEnabledApps, tenantName, tenantID)
+func GetWebAppsPerRGWithAuth(ctx context.Context, session *SafeSession, subscriptionID string, lootMap map[string]*internal.LootFile, rgName string, authEnabledApps map[string]bool, tenantName, tenantID string) [][]string {
+	return getWebAppsPerRGInternal(ctx, session, subscriptionID, lootMap, rgName, authEnabledApps, tenantName, tenantID)
 }
 
 // GetWebAppsPerRG processes web apps (legacy, calls internal function with nil auth map)
-func GetWebAppsPerRG(ctx context.Context, subscriptionID string, lootMap map[string]*internal.LootFile, rgName string) [][]string {
-	return getWebAppsPerRGInternal(ctx, subscriptionID, lootMap, rgName, nil, "", "")
+func GetWebAppsPerRG(ctx context.Context, session *SafeSession, subscriptionID string, lootMap map[string]*internal.LootFile, rgName string) [][]string {
+	return getWebAppsPerRGInternal(ctx, session, subscriptionID, lootMap, rgName, nil, "", "")
 }
 
 // getWebAppsPerRGInternal is the internal implementation
-func getWebAppsPerRGInternal(ctx context.Context, subscriptionID string, lootMap map[string]*internal.LootFile, rgName string, authEnabledApps map[string]bool, tenantName, tenantID string) [][]string {
+func getWebAppsPerRGInternal(ctx context.Context, session *SafeSession, subscriptionID string, lootMap map[string]*internal.LootFile, rgName string, authEnabledApps map[string]bool, tenantName, tenantID string) [][]string {
 	var resultsBody [][]string
 	var appServiceCommandInfoList []AppServiceCommandInfo
 	logger := internal.NewLogger()
-
-	// Initialize session
-	session, _ := NewSafeSession(ctx)
-	if session == nil {
-		logger.ErrorM("Failed to initialize SafeSession", globals.AZ_PRINCIPALS_MODULE_NAME)
-		return nil
-	}
 
 	if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 		logger.InfoM(fmt.Sprintf("Fetching web apps in resource group %s for subscription %s", rgName, subscriptionID), globals.AZ_WEBAPPS_MODULE_NAME)

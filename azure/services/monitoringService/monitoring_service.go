@@ -114,7 +114,7 @@ func (s *MonitoringService) ListDiagnosticSettings(ctx context.Context, resource
 		return nil, err
 	}
 
-	client, err := armmonitor.NewDiagnosticSettingsClient(cred, nil)
+	client, err := armmonitor.NewDiagnosticSettingsClient(cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create diagnostic settings client: %w", err)
 	}
@@ -140,7 +140,7 @@ func (s *MonitoringService) ListMetricAlerts(ctx context.Context, subID string) 
 		return nil, err
 	}
 
-	client, err := armmonitor.NewMetricAlertsClient(subID, cred, nil)
+	client, err := armmonitor.NewMetricAlertsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create metric alerts client: %w", err)
 	}
@@ -166,7 +166,7 @@ func (s *MonitoringService) ListMetricAlertsByResourceGroup(ctx context.Context,
 		return nil, err
 	}
 
-	client, err := armmonitor.NewMetricAlertsClient(subID, cred, nil)
+	client, err := armmonitor.NewMetricAlertsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create metric alerts client: %w", err)
 	}
@@ -192,7 +192,7 @@ func (s *MonitoringService) ListActionGroups(ctx context.Context, subID string) 
 		return nil, err
 	}
 
-	client, err := armmonitor.NewActionGroupsClient(subID, cred, nil)
+	client, err := armmonitor.NewActionGroupsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create action groups client: %w", err)
 	}
@@ -218,7 +218,7 @@ func (s *MonitoringService) ListActivityLogAlerts(ctx context.Context, subID str
 		return nil, err
 	}
 
-	client, err := armmonitor.NewActivityLogAlertsClient(subID, cred, nil)
+	client, err := armmonitor.NewActivityLogAlertsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create activity log alerts client: %w", err)
 	}

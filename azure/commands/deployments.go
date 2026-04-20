@@ -63,7 +63,6 @@ func ListDeployments(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return // error already logged by helper
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	// -------------------- Initialize module --------------------
 	module := &DeploymentsModule{
@@ -780,7 +779,7 @@ func GetDeploymentsPerResourceGroup(session *azinternal.SafeSession, subscriptio
 	}
 
 	cred := &azinternal.StaticTokenCredential{Token: token}
-	client, err := armresources.NewDeploymentsClient(subscriptionID, cred, nil)
+	client, err := armresources.NewDeploymentsClient(subscriptionID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create deployments client: %w", err)
 	}

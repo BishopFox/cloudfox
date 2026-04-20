@@ -10,7 +10,7 @@ import (
 
 // -------------------- AKS Clusters per Subscription --------------------
 //func GetAKSClustersPerSubscription(ctx context.Context, subscriptionID string, cred azcore.TokenCredential) ([]*armcontainerservice.ManagedCluster, error) {
-//	aksClient, err := armcontainerservice.NewManagedClustersClient(subscriptionID, cred, nil)
+//	aksClient, err := armcontainerservice.NewManagedClustersClient(subscriptionID, cred, DefaultARMClientOptions())
 //	if err != nil {
 //		return nil, fmt.Errorf("failed to create AKS client: %v", err)
 //	}
@@ -36,7 +36,7 @@ func GetAKSClustersPerResourceGroup(ctx context.Context, session *SafeSession, s
 
 	cred := &StaticTokenCredential{Token: token}
 
-	aksClient, err := armcontainerservice.NewManagedClustersClient(subscriptionID, cred, nil)
+	aksClient, err := armcontainerservice.NewManagedClustersClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AKS client: %v", err)
 	}

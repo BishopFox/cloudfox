@@ -120,7 +120,6 @@ func ListLighthouse(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	module := &LighthouseModule{
 		BaseAzureModule:   azinternal.NewBaseAzureModule(cmdCtx, 5),

@@ -60,7 +60,6 @@ func ListKusto(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	module := &KustoModule{
 		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),

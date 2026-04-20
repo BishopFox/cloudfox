@@ -107,7 +107,7 @@ func (s *AutomationService) ListAccounts(ctx context.Context, subID string) ([]*
 		return nil, err
 	}
 
-	client, err := armautomation.NewAccountClient(subID, cred, nil)
+	client, err := armautomation.NewAccountClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create automation client: %w", err)
 	}
@@ -133,7 +133,7 @@ func (s *AutomationService) ListAccountsByResourceGroup(ctx context.Context, sub
 		return nil, err
 	}
 
-	client, err := armautomation.NewAccountClient(subID, cred, nil)
+	client, err := armautomation.NewAccountClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create automation client: %w", err)
 	}
@@ -159,7 +159,7 @@ func (s *AutomationService) ListRunbooks(ctx context.Context, subID, rgName, acc
 		return nil, err
 	}
 
-	client, err := armautomation.NewRunbookClient(subID, cred, nil)
+	client, err := armautomation.NewRunbookClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create runbook client: %w", err)
 	}
@@ -185,7 +185,7 @@ func (s *AutomationService) GetRunbook(ctx context.Context, subID, rgName, accou
 		return nil, err
 	}
 
-	client, err := armautomation.NewRunbookClient(subID, cred, nil)
+	client, err := armautomation.NewRunbookClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create runbook client: %w", err)
 	}
@@ -205,7 +205,7 @@ func (s *AutomationService) ListCredentials(ctx context.Context, subID, rgName, 
 		return nil, err
 	}
 
-	client, err := armautomation.NewCredentialClient(subID, cred, nil)
+	client, err := armautomation.NewCredentialClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create credential client: %w", err)
 	}
@@ -231,7 +231,7 @@ func (s *AutomationService) ListVariables(ctx context.Context, subID, rgName, ac
 		return nil, err
 	}
 
-	client, err := armautomation.NewVariableClient(subID, cred, nil)
+	client, err := armautomation.NewVariableClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create variable client: %w", err)
 	}
@@ -257,7 +257,7 @@ func (s *AutomationService) ListSchedules(ctx context.Context, subID, rgName, ac
 		return nil, err
 	}
 
-	client, err := armautomation.NewScheduleClient(subID, cred, nil)
+	client, err := armautomation.NewScheduleClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create schedule client: %w", err)
 	}

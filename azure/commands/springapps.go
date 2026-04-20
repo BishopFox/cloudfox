@@ -61,7 +61,6 @@ func ListSpringApps(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	module := &SpringAppsModule{
 		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),

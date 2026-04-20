@@ -71,7 +71,6 @@ func ListVPNGateways(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	module := &VPNGatewayModule{
 		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
@@ -357,7 +356,7 @@ func (m *VPNGatewayModule) getVPNConnections(ctx context.Context, subID, rgName 
 	}
 
 	cred := azinternal.NewStaticTokenCredential(token)
-	connClient, err := armnetwork.NewVirtualNetworkGatewayConnectionsClient(subID, cred, nil)
+	connClient, err := armnetwork.NewVirtualNetworkGatewayConnectionsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, err
 	}

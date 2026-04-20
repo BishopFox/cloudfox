@@ -71,7 +71,6 @@ func ListKeyVaults(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return // error already logged by helper
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	// -------------------- Initialize module --------------------
 	module := &KeyVaultsModule{
@@ -175,7 +174,7 @@ func (m *KeyVaultsModule) processSubscription(ctx context.Context, subID string,
 	}
 
 	cred := &azinternal.StaticTokenCredential{Token: token}
-	hsmClient, err := armkeyvault.NewManagedHsmsClient(subID, cred, nil)
+	hsmClient, err := armkeyvault.NewManagedHsmsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 			logger.ErrorM(fmt.Sprintf("Failed to create Managed HSM client for subscription %s: %v", subID, err), globals.AZ_KEYVAULT_MODULE_NAME)
@@ -225,7 +224,7 @@ func (m *KeyVaultsModule) processVault(ctx context.Context, v AzureVault, subID,
 	}
 
 	cred := &azinternal.StaticTokenCredential{Token: token}
-	clientFactory, err := armkeyvault.NewClientFactory(subID, cred, nil)
+	clientFactory, err := armkeyvault.NewClientFactory(subID, cred, azinternal.DefaultARMClientOptions())
 	if err == nil {
 		vaultResp, err := clientFactory.NewVaultsClient().Get(ctx, v.ResourceGroup, v.VaultName, nil)
 		if err == nil && vaultResp.Properties != nil {

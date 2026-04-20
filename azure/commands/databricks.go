@@ -88,7 +88,6 @@ func ListDatabricks(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	module := &DatabricksModule{
 		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
@@ -148,7 +147,7 @@ func (m *DatabricksModule) processSubscription(ctx context.Context, subID string
 	}
 	cred := &azinternal.StaticTokenCredential{Token: token}
 
-	workspaceClient, err := armdatabricks.NewWorkspacesClient(subID, cred, nil)
+	workspaceClient, err := armdatabricks.NewWorkspacesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Failed to create Databricks workspace client: %v", err), globals.AZ_DATABRICKS_MODULE_NAME)
 		m.CommandCounter.Error++

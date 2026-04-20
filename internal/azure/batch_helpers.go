@@ -52,7 +52,7 @@ func GetBatchAccounts(session *SafeSession, subscriptionID string, resourceGroup
 	cred := &StaticTokenCredential{Token: token}
 	ctx := context.Background()
 
-	client, err := armbatch.NewAccountClient(subscriptionID, cred, nil)
+	client, err := armbatch.NewAccountClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +100,7 @@ func GetBatchPools(session *SafeSession, subscriptionID, resourceGroup, accountN
 	cred := &StaticTokenCredential{Token: token}
 	ctx := context.Background()
 
-	client, err := armbatch.NewPoolClient(subscriptionID, cred, nil)
+	client, err := armbatch.NewPoolClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +166,7 @@ func GetBatchApplications(session *SafeSession, subscriptionID, resourceGroup, a
 	cred := &StaticTokenCredential{Token: token}
 	ctx := context.Background()
 
-	client, err := armbatch.NewApplicationClient(subscriptionID, cred, nil)
+	client, err := armbatch.NewApplicationClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, err
 	}

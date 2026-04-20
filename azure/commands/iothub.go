@@ -76,7 +76,6 @@ func ListIoTHub(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	module := &IoTHubModule{
 		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
@@ -131,7 +130,7 @@ func (m *IoTHubModule) processSubscription(ctx context.Context, subID string, lo
 	}
 	cred := &azinternal.StaticTokenCredential{Token: token}
 
-	iotClient, err := armiothub.NewResourceClient(subID, cred, nil)
+	iotClient, err := armiothub.NewResourceClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Failed to create IoT Hub client: %v", err), globals.AZ_IOTHUB_MODULE_NAME)
 		m.CommandCounter.Error++

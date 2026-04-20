@@ -120,7 +120,7 @@ func (s *KeyVaultService) ListVaultsByResourceGroup(ctx context.Context, subID, 
 		return nil, err
 	}
 
-	client, err := armkeyvault.NewVaultsClient(subID, cred, nil)
+	client, err := armkeyvault.NewVaultsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create vaults client: %w", err)
 	}
@@ -146,7 +146,7 @@ func (s *KeyVaultService) ListVaults(ctx context.Context, subID string) ([]*armk
 		return nil, err
 	}
 
-	client, err := armkeyvault.NewVaultsClient(subID, cred, nil)
+	client, err := armkeyvault.NewVaultsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create vaults client: %w", err)
 	}
@@ -172,7 +172,7 @@ func (s *KeyVaultService) GetVault(ctx context.Context, subID, rgName, vaultName
 		return nil, err
 	}
 
-	client, err := armkeyvault.NewVaultsClient(subID, cred, nil)
+	client, err := armkeyvault.NewVaultsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create vaults client: %w", err)
 	}

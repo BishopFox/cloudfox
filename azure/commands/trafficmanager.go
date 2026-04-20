@@ -72,7 +72,6 @@ func ListTrafficManager(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return // error already logged by helper
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	// -------------------- Initialize module --------------------
 	module := &TrafficManagerModule{
@@ -166,7 +165,7 @@ func (m *TrafficManagerModule) processResourceGroup(ctx context.Context, subID, 
 	}
 
 	cred := azinternal.NewStaticTokenCredential(token)
-	profileClient, err := armtrafficmanager.NewProfilesClient(subID, cred, nil)
+	profileClient, err := armtrafficmanager.NewProfilesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return
 	}

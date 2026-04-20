@@ -74,7 +74,6 @@ func ListWhoami(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return // error already logged by helper
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	// -------------------- Extract whoami-specific flags --------------------
 	listRGs, _ := cmd.Flags().GetBool("list-rgs")
@@ -84,7 +83,7 @@ func ListWhoami(cmd *cobra.Command, args []string) {
 	}
 
 	// -------------------- Get user type (whoami-specific) --------------------
-	userType := azinternal.GetUserType(cmdCtx.UserObjectID)
+	userType := azinternal.GetUserType(cmdCtx.Ctx, cmdCtx.Session, cmdCtx.UserObjectID)
 
 	// -------------------- Initialize module --------------------
 	module := &WhoamiModule{
@@ -159,7 +158,7 @@ func (m *WhoamiModule) processSubscription(ctx context.Context, subscriptionID s
 	cred := &azinternal.StaticTokenCredential{Token: token}
 
 	// -------------------- Role Assignments --------------------
-	raClient, err := armauthorization.NewRoleAssignmentsClient(subscriptionID, cred, nil)
+	raClient, err := armauthorization.NewRoleAssignmentsClient(subscriptionID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 			logger.ErrorM(fmt.Sprintf("Failed to create RoleAssignments client: %v", err), globals.AZ_WHOAMI_MODULE_NAME)
@@ -514,7 +513,7 @@ func (m *WhoamiModule) processSubscription(ctx context.Context, subscriptionID s
 
 	// -------------------- Resource Groups (optional) --------------------
 	if m.ListRGs {
-		rgClient, err := armresources.NewResourceGroupsClient(subscriptionID, cred, nil)
+		rgClient, err := armresources.NewResourceGroupsClient(subscriptionID, cred, azinternal.DefaultARMClientOptions())
 		if err != nil {
 			if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 				logger.ErrorM(fmt.Sprintf("Failed to create RG client for sub %s: %v", subscriptionID, err), globals.AZ_WHOAMI_MODULE_NAME)

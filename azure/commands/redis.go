@@ -81,7 +81,6 @@ func ListRedis(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	module := &RedisModule{
 		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
@@ -136,7 +135,7 @@ func (m *RedisModule) processSubscription(ctx context.Context, subID string, log
 	}
 	cred := &azinternal.StaticTokenCredential{Token: token}
 
-	redisClient, err := armredis.NewClient(subID, cred, nil)
+	redisClient, err := armredis.NewClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Failed to create Redis client: %v", err), globals.AZ_REDIS_MODULE_NAME)
 		m.CommandCounter.Error++
@@ -243,7 +242,7 @@ func (m *RedisModule) processRedisCache(ctx context.Context, cache *armredis.Res
 			token, err := m.Session.GetTokenForResource(globals.CommonScopes[0])
 			if err == nil {
 				cred := &azinternal.StaticTokenCredential{Token: token}
-				firewallClient, err := armredis.NewFirewallRulesClient(subID, cred, nil)
+				firewallClient, err := armredis.NewFirewallRulesClient(subID, cred, azinternal.DefaultARMClientOptions())
 				if err == nil {
 					// Get firewall rules from the cache
 					firewallPager := firewallClient.NewListPager(rgName, cacheName, nil)

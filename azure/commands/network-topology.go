@@ -106,7 +106,6 @@ func AnalyzeNetworkTopology(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return // error already logged by helper
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	// -------------------- Initialize module --------------------
 	module := &NetworkTopologyModule{
@@ -199,7 +198,7 @@ func (m *NetworkTopologyModule) processResourceGroup(ctx context.Context, subID,
 	}
 
 	cred := &azinternal.StaticTokenCredential{Token: token}
-	vnetClient, err := armnetwork.NewVirtualNetworksClient(subID, cred, nil)
+	vnetClient, err := armnetwork.NewVirtualNetworksClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return
 	}

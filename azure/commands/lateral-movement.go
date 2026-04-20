@@ -73,7 +73,6 @@ func AnalyzeLateralMovement(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	module := &LateralMovementModule{
 		BaseAzureModule:     azinternal.NewBaseAzureModule(cmdCtx, 5),
@@ -397,7 +396,7 @@ func (m *LateralMovementModule) analyzePrivateEndpoints(ctx context.Context, sub
 	}
 
 	cred := &azinternal.StaticTokenCredential{Token: token}
-	peClient, err := armnetwork.NewPrivateEndpointsClient(subID, cred, nil)
+	peClient, err := armnetwork.NewPrivateEndpointsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return
 	}

@@ -183,15 +183,33 @@ func (m *DevOpsSecurityModule) PrintDevOpsSecurity(logger internal.Logger) {
 
 	logger.InfoM(fmt.Sprintf("Found %d projects, analyzing security posture...", len(projects)), globals.AZ_DEVOPS_SECURITY_MODULE_NAME)
 
-	// Process projects concurrently
+	// Process projects concurrently with progress spinner
 	var wg sync.WaitGroup
+	semaphore := make(chan struct{}, m.Goroutines)
+	spinnerDone := make(chan bool)
+	go internal.SpinUntil(globals.AZ_DEVOPS_SECURITY_MODULE_NAME, &m.CommandCounter, spinnerDone, "projects")
+
 	for _, proj := range projects {
 		m.CommandCounter.Total++
+		m.CommandCounter.Pending++
 		wg.Add(1)
-		go m.processProject(proj, &wg, logger)
+		go func(p map[string]interface{}) {
+			defer func() {
+				m.CommandCounter.Executing--
+				m.CommandCounter.Complete++
+				wg.Done()
+			}()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+			m.CommandCounter.Pending--
+			m.CommandCounter.Executing++
+			m.processProject(p, logger)
+		}(proj)
 	}
 
 	wg.Wait()
+	spinnerDone <- true
+	<-spinnerDone
 
 	// Fetch organization-level resources
 	logger.InfoM("Analyzing organization-level extensions...", globals.AZ_DEVOPS_SECURITY_MODULE_NAME)
@@ -207,9 +225,7 @@ func (m *DevOpsSecurityModule) PrintDevOpsSecurity(logger internal.Logger) {
 // ------------------------------
 // Process single project
 // ------------------------------
-func (m *DevOpsSecurityModule) processProject(proj map[string]interface{}, wg *sync.WaitGroup, logger internal.Logger) {
-	defer wg.Done()
-
+func (m *DevOpsSecurityModule) processProject(proj map[string]interface{}, logger internal.Logger) {
 	projName := proj["name"].(string)
 	projID := proj["id"].(string)
 

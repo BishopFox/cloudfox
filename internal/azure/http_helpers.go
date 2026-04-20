@@ -55,6 +55,17 @@ func HTTPRequestWithRetry(ctx context.Context, method, url, token string, body i
 			}
 		}
 
+		// Rate limit before each attempt
+		if strings.Contains(url, "graph.microsoft.com") {
+			if err := WaitGraph(ctx); err != nil {
+				return nil, fmt.Errorf("rate limiter cancelled: %v", err)
+			}
+		} else if strings.Contains(url, "management.azure.com") {
+			if err := WaitARM(ctx); err != nil {
+				return nil, fmt.Errorf("rate limiter cancelled: %v", err)
+			}
+		}
+
 		// Create request
 		req, err := http.NewRequestWithContext(ctx, method, url, body)
 		if err != nil {
@@ -96,6 +107,13 @@ func HTTPRequestWithRetry(ctx context.Context, method, url, token string, body i
 		// Handle rate limiting (429)
 		if resp.StatusCode == 429 {
 			retryAfter := extractRetryAfter(resp, config)
+
+			// Adaptive: reduce rate on throttle, restore after cooldown
+			if strings.Contains(url, "graph.microsoft.com") {
+				AdaptiveSlowdown(GetGraphLimiter(), retryAfter)
+			} else {
+				AdaptiveSlowdown(GetARMLimiter(), retryAfter)
+			}
 
 			if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 				logger.ErrorM(fmt.Sprintf("Rate limited (429) - will retry after %v", retryAfter), "http-retry")

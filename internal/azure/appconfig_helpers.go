@@ -49,7 +49,7 @@ func GetAppConfigStores(session *SafeSession, subscriptionID string, resourceGro
 	cred := &StaticTokenCredential{Token: token}
 	ctx := context.Background()
 
-	client, err := armappconfiguration.NewConfigurationStoresClient(subscriptionID, cred, nil)
+	client, err := armappconfiguration.NewConfigurationStoresClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, err
 	}
@@ -162,7 +162,7 @@ func GetAppConfigAccessKeys(session *SafeSession, subscriptionID, resourceGroup,
 	cred := &StaticTokenCredential{Token: token}
 	ctx := context.Background()
 
-	client, err := armappconfiguration.NewConfigurationStoresClient(subscriptionID, cred, nil)
+	client, err := armappconfiguration.NewConfigurationStoresClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, err
 	}

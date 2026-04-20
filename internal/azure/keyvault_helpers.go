@@ -32,7 +32,7 @@ type CertificateInfo struct {
 
 // Returns a slice of AzureVault structs for a subscription
 //func GetKeyVaultsPerSubscription(ctx context.Context, cred azcore.TokenCredential, subID string) ([]AzureVault, error) {
-//	clientFactory, err := armkeyvault.NewClientFactory(subID, cred, nil)
+//	clientFactory, err := armkeyvault.NewClientFactory(subID, cred, DefaultARMClientOptions())
 //	if err != nil {
 //		return nil, err
 //	}
@@ -78,7 +78,7 @@ func GetKeyVaultsPerResourceGroup(ctx context.Context, session *SafeSession, sub
 	cred := &StaticTokenCredential{Token: token}
 
 	// Pass the wrapped token to ARM Key Vault client
-	clientFactory, err := armkeyvault.NewClientFactory(subID, cred, nil)
+	clientFactory, err := armkeyvault.NewClientFactory(subID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, err
 	}

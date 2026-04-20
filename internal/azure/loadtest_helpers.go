@@ -59,7 +59,7 @@ func GetLoadTestingResources(session *SafeSession, subscriptionID string, resour
 	cred := &StaticTokenCredential{Token: token}
 	ctx := context.Background()
 
-	client, err := armloadtesting.NewLoadTestsClient(subscriptionID, cred, nil)
+	client, err := armloadtesting.NewLoadTestsClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, err
 	}

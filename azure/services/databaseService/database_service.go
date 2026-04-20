@@ -121,7 +121,7 @@ func (s *DatabaseService) ListSQLServers(ctx context.Context, subID string) ([]*
 		return nil, err
 	}
 
-	client, err := armsql.NewServersClient(subID, cred, nil)
+	client, err := armsql.NewServersClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create SQL servers client: %w", err)
 	}
@@ -147,7 +147,7 @@ func (s *DatabaseService) ListSQLServersByResourceGroup(ctx context.Context, sub
 		return nil, err
 	}
 
-	client, err := armsql.NewServersClient(subID, cred, nil)
+	client, err := armsql.NewServersClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create SQL servers client: %w", err)
 	}
@@ -173,7 +173,7 @@ func (s *DatabaseService) ListSQLDatabases(ctx context.Context, subID, rgName, s
 		return nil, err
 	}
 
-	client, err := armsql.NewDatabasesClient(subID, cred, nil)
+	client, err := armsql.NewDatabasesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create SQL databases client: %w", err)
 	}
@@ -199,7 +199,7 @@ func (s *DatabaseService) ListCosmosDBAccounts(ctx context.Context, subID string
 		return nil, err
 	}
 
-	client, err := armcosmos.NewDatabaseAccountsClient(subID, cred, nil)
+	client, err := armcosmos.NewDatabaseAccountsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Cosmos DB client: %w", err)
 	}
@@ -225,7 +225,7 @@ func (s *DatabaseService) ListCosmosDBAccountsByResourceGroup(ctx context.Contex
 		return nil, err
 	}
 
-	client, err := armcosmos.NewDatabaseAccountsClient(subID, cred, nil)
+	client, err := armcosmos.NewDatabaseAccountsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Cosmos DB client: %w", err)
 	}
@@ -251,7 +251,7 @@ func (s *DatabaseService) GetCosmosDBKeys(ctx context.Context, subID, rgName, ac
 		return nil, err
 	}
 
-	client, err := armcosmos.NewDatabaseAccountsClient(subID, cred, nil)
+	client, err := armcosmos.NewDatabaseAccountsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Cosmos DB client: %w", err)
 	}
@@ -271,7 +271,7 @@ func (s *DatabaseService) ListPostgreSQLFlexibleServers(ctx context.Context, sub
 		return nil, err
 	}
 
-	client, err := armpostgresqlflexibleservers.NewServersClient(subID, cred, nil)
+	client, err := armpostgresqlflexibleservers.NewServersClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create PostgreSQL client: %w", err)
 	}
@@ -297,7 +297,7 @@ func (s *DatabaseService) ListPostgreSQLFlexibleServersByResourceGroup(ctx conte
 		return nil, err
 	}
 
-	client, err := armpostgresqlflexibleservers.NewServersClient(subID, cred, nil)
+	client, err := armpostgresqlflexibleservers.NewServersClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create PostgreSQL client: %w", err)
 	}
@@ -323,7 +323,7 @@ func (s *DatabaseService) ListMySQLFlexibleServers(ctx context.Context, subID st
 		return nil, err
 	}
 
-	client, err := armmysqlflexibleservers.NewServersClient(subID, cred, nil)
+	client, err := armmysqlflexibleservers.NewServersClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create MySQL client: %w", err)
 	}
@@ -349,7 +349,7 @@ func (s *DatabaseService) ListMySQLFlexibleServersByResourceGroup(ctx context.Co
 		return nil, err
 	}
 
-	client, err := armmysqlflexibleservers.NewServersClient(subID, cred, nil)
+	client, err := armmysqlflexibleservers.NewServersClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create MySQL client: %w", err)
 	}

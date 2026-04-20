@@ -11,6 +11,40 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// sharedSession allows reuse of the same SafeSession across multiple commands
+// within a single process (e.g., all-checks). This avoids redundant session
+// validation, token prefetch, and monitoring goroutine creation.
+var (
+	sharedSession   *SafeSession
+	sharedSessionMu sync.Mutex
+)
+
+// GetOrCreateSession returns the shared session, creating it on first call.
+func GetOrCreateSession(ctx context.Context) (*SafeSession, error) {
+	sharedSessionMu.Lock()
+	defer sharedSessionMu.Unlock()
+	if sharedSession != nil {
+		return sharedSession, nil
+	}
+	ss, err := NewSmartSession(ctx)
+	if err != nil {
+		return nil, err
+	}
+	sharedSession = ss
+	return ss, nil
+}
+
+// ResetSharedSession tears down the shared session (stops monitoring) and clears it.
+// Useful for testing or multi-tenant scenarios that need a fresh session.
+func ResetSharedSession() {
+	sharedSessionMu.Lock()
+	defer sharedSessionMu.Unlock()
+	if sharedSession != nil {
+		sharedSession.StopMonitoring()
+	}
+	sharedSession = nil
+}
+
 // ------------------------------
 // parseMultiValueFlag parses a flag value that can contain comma-separated
 // and/or space-separated values. Examples:
@@ -339,6 +373,74 @@ func (b *BaseAzureModule) RunSubscriptionEnumeration(
 }
 
 // ------------------------------
+// EntityProcessor - Callback function type for processing individual entities
+// ------------------------------
+// This function type defines the signature for entity processing callbacks used by RunEntityEnumeration.
+// Parameters:
+//   - ctx: Context for cancellation and timeouts
+//   - entityID: The entity identifier to process
+//   - logger: Logger for outputting messages
+type EntityProcessor func(ctx context.Context, entityID string, logger internal.Logger)
+
+// ------------------------------
+// RunEntityEnumeration - Generic orchestration for any entity type with centralized progress tracking
+// ------------------------------
+// This is the same pattern as RunSubscriptionEnumeration but works with arbitrary entity lists.
+// Useful for processing principals, resources, or any other list of items with progress tracking.
+//
+// Usage:
+//
+//	m.RunEntityEnumeration(ctx, logger, principalIDs, globals.AZ_PRINCIPALS_MODULE_NAME, "principals", m.processPrincipal)
+func (b *BaseAzureModule) RunEntityEnumeration(
+	ctx context.Context,
+	logger internal.Logger,
+	entityIDs []string,
+	moduleName string,
+	entityType string,
+	processor EntityProcessor,
+) {
+	// Setup synchronization primitives
+	var wg sync.WaitGroup
+	semaphore := make(chan struct{}, b.Goroutines)
+
+	// Start progress spinner
+	spinnerDone := make(chan bool)
+	go internal.SpinUntil(moduleName, &b.CommandCounter, spinnerDone, entityType)
+
+	// Process each entity with goroutines
+	for _, id := range entityIDs {
+		b.CommandCounter.Total++
+		b.CommandCounter.Pending++
+		wg.Add(1)
+
+		go func(entityID string) {
+			defer func() {
+				b.CommandCounter.Executing--
+				b.CommandCounter.Complete++
+				wg.Done()
+			}()
+
+			// Acquire semaphore
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+
+			b.CommandCounter.Pending--
+			b.CommandCounter.Executing++
+
+			// Call the module-specific processor
+			processor(ctx, entityID, logger)
+		}(id)
+	}
+
+	// Wait for all entities to complete
+	wg.Wait()
+
+	// Stop spinner
+	spinnerDone <- true
+	<-spinnerDone
+}
+
+// ------------------------------
 // TenantProcessor - Callback function type for processing individual tenants
 // ------------------------------
 // This function type defines the signature for tenant processing callbacks used by RunTenantEnumeration.
@@ -513,7 +615,6 @@ func (b *BaseAzureModule) RunTenantSubscriptionEnumeration(
 //	if err != nil {
 //	    return // error already logged
 //	}
-//	defer cmdCtx.Session.StopMonitoring()
 func InitializeCommandContext(cmd *cobra.Command, moduleName string) (*CommandContext, error) {
 	ctx := context.Background()
 	logger := internal.NewLogger()
@@ -532,7 +633,7 @@ func InitializeCommandContext(cmd *cobra.Command, moduleName string) (*CommandCo
 	tenantFlagPresent := parentCmd.PersistentFlags().Changed("tenant")
 
 	// -------------------- Initialize session --------------------
-	session, err := NewSmartSession(ctx)
+	session, err := GetOrCreateSession(ctx)
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Failed to initialize SmartSession: %v", err), moduleName)
 		return nil, err
@@ -556,7 +657,6 @@ func InitializeCommandContext(cmd *cobra.Command, moduleName string) (*CommandCo
 
 			if len(tenants) == 0 {
 				logger.ErrorM("Empty tenant flag provided", moduleName)
-				session.StopMonitoring()
 				return nil, fmt.Errorf("empty tenant flag")
 			}
 
@@ -613,14 +713,12 @@ func InitializeCommandContext(cmd *cobra.Command, moduleName string) (*CommandCo
 						}
 					} else {
 						logger.ErrorM("Failed to auto-detect tenant from subscription", moduleName)
-						session.StopMonitoring()
 						return nil, fmt.Errorf("failed to auto-detect tenant from subscription")
 					}
 				}
 			} else {
 				// No subscription specified - cannot auto-detect tenant
 				logger.ErrorM("--tenant flag specified but no tenant ID or subscription provided for auto-detection", moduleName)
-				session.StopMonitoring()
 				return nil, fmt.Errorf("--tenant flag specified but no value provided and no subscription specified for auto-detection")
 			}
 		}
@@ -630,7 +728,6 @@ func InitializeCommandContext(cmd *cobra.Command, moduleName string) (*CommandCo
 
 		if len(subscriptionsFromFlag) == 0 {
 			logger.ErrorM("Empty subscription flag provided", moduleName)
-			session.StopMonitoring()
 			return nil, fmt.Errorf("empty subscription flag")
 		}
 
@@ -644,12 +741,10 @@ func InitializeCommandContext(cmd *cobra.Command, moduleName string) (*CommandCo
 			}
 		} else {
 			logger.ErrorM("Failed to resolve tenant from subscription", moduleName)
-			session.StopMonitoring()
 			return nil, fmt.Errorf("failed to resolve tenant from subscription")
 		}
 	} else {
 		logger.ErrorM("No tenant or subscription specified", moduleName)
-		session.StopMonitoring()
 		return nil, fmt.Errorf("no tenant or subscription specified")
 	}
 
@@ -716,7 +811,6 @@ func InitializeCommandContext(cmd *cobra.Command, moduleName string) (*CommandCo
 
 		if len(subscriptions) == 0 {
 			logger.ErrorM("No accessible subscriptions found across all tenants", moduleName)
-			session.StopMonitoring()
 			return nil, fmt.Errorf("no accessible subscriptions found")
 		}
 
@@ -763,7 +857,6 @@ func InitializeCommandContext(cmd *cobra.Command, moduleName string) (*CommandCo
 
 		if len(subscriptions) == 0 {
 			logger.ErrorM(fmt.Sprintf("No accessible subscriptions found for tenant %s", tenantID), moduleName)
-			session.StopMonitoring()
 			return nil, fmt.Errorf("no accessible subscriptions found")
 		}
 

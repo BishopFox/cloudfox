@@ -77,7 +77,6 @@ func ListSecurityCenter(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return // error already logged by helper
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	// -------------------- Initialize module --------------------
 	module := &SecurityCenterModule{
@@ -192,7 +191,7 @@ func (m *SecurityCenterModule) processDefenderPlans(ctx context.Context, subID, 
 	cred := azinternal.NewStaticTokenCredential(token)
 
 	// Create Security client
-	client, err := armsecurity.NewPricingsClient(cred, nil)
+	client, err := armsecurity.NewPricingsClient(cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
 			logger.ErrorM(fmt.Sprintf("Failed to create Security client for subscription %s: %v", subID, err), globals.AZ_SECURITY_CENTER_MODULE_NAME)
@@ -296,7 +295,7 @@ func (m *SecurityCenterModule) processSecurityRecommendations(ctx context.Contex
 	cred := azinternal.NewStaticTokenCredential(token)
 
 	// Create Assessments client
-	client, err := armsecurity.NewAssessmentsClient(cred, nil)
+	client, err := armsecurity.NewAssessmentsClient(cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
 			logger.ErrorM(fmt.Sprintf("Failed to create Assessments client for subscription %s: %v", subID, err), globals.AZ_SECURITY_CENTER_MODULE_NAME)
@@ -446,7 +445,7 @@ func (m *SecurityCenterModule) processSecureScore(ctx context.Context, subID, su
 	cred := azinternal.NewStaticTokenCredential(token)
 
 	// Create Secure Scores client
-	client, err := armsecurity.NewSecureScoresClient(subID, cred, nil)
+	client, err := armsecurity.NewSecureScoresClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
 			logger.ErrorM(fmt.Sprintf("Failed to create Secure Scores client for subscription %s: %v", subID, err), globals.AZ_SECURITY_CENTER_MODULE_NAME)

@@ -84,7 +84,6 @@ func ListEndpoints(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return // error already logged by helper
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	// -------------------- Initialize module --------------------
 	module := &EndpointsModule{
@@ -224,7 +223,7 @@ func (m *EndpointsModule) processResourceGroup(ctx context.Context, subID, subNa
 	}
 
 	// -------------------- WebApps --------------------
-	webApps := azinternal.GetWebAppsPerRG(ctx, subID, m.LootMap, rgName)
+	webApps := azinternal.GetWebAppsPerRG(ctx, m.Session, subID, m.LootMap, rgName)
 	for _, appRow := range webApps {
 		// WebApp row structure from webapp_helpers.go GetWebAppsPerRG():
 		// [0]=subID, [1]=subName, [2]=rgName, [3]=location, [4]=appName,
@@ -417,7 +416,7 @@ func (m *EndpointsModule) processResourceGroup(ctx context.Context, subID, subNa
 	token, err := m.Session.GetTokenForResource(globals.CommonScopes[0])
 	if err == nil {
 		cred := &azinternal.StaticTokenCredential{Token: token}
-		redisClient, err := armredis.NewClient(subID, cred, nil)
+		redisClient, err := armredis.NewClient(subID, cred, azinternal.DefaultARMClientOptions())
 		if err == nil {
 			pager := redisClient.NewListByResourceGroupPager(rgName, nil)
 			for pager.More() {
@@ -451,7 +450,7 @@ func (m *EndpointsModule) processResourceGroup(ctx context.Context, subID, subNa
 	// -------------------- Synapse Analytics --------------------
 	if token, err := m.Session.GetTokenForResource(globals.CommonScopes[0]); err == nil {
 		cred := &azinternal.StaticTokenCredential{Token: token}
-		synapseClient, err := armsynapse.NewWorkspacesClient(subID, cred, nil)
+		synapseClient, err := armsynapse.NewWorkspacesClient(subID, cred, azinternal.DefaultARMClientOptions())
 		if err == nil {
 			pager := synapseClient.NewListByResourceGroupPager(rgName, nil)
 			for pager.More() {
@@ -502,7 +501,7 @@ func (m *EndpointsModule) processResourceGroup(ctx context.Context, subID, subNa
 	// -------------------- Azure Databricks --------------------
 	if token, err := m.Session.GetTokenForResource(globals.CommonScopes[0]); err == nil {
 		cred := &azinternal.StaticTokenCredential{Token: token}
-		databricksClient, err := armdatabricks.NewWorkspacesClient(subID, cred, nil)
+		databricksClient, err := armdatabricks.NewWorkspacesClient(subID, cred, azinternal.DefaultARMClientOptions())
 		if err == nil {
 			pager := databricksClient.NewListByResourceGroupPager(rgName, nil)
 			for pager.More() {
@@ -538,7 +537,7 @@ func (m *EndpointsModule) processResourceGroup(ctx context.Context, subID, subNa
 	// -------------------- API Management (APIM) --------------------
 	if token, err := m.Session.GetTokenForResource(globals.CommonScopes[0]); err == nil {
 		cred := &azinternal.StaticTokenCredential{Token: token}
-		apimClient, err := armapimanagement.NewServiceClient(subID, cred, nil)
+		apimClient, err := armapimanagement.NewServiceClient(subID, cred, azinternal.DefaultARMClientOptions())
 		if err == nil {
 			pager := apimClient.NewListByResourceGroupPager(rgName, nil)
 			for pager.More() {
@@ -617,7 +616,7 @@ func (m *EndpointsModule) processResourceGroup(ctx context.Context, subID, subNa
 	// -------------------- Azure Front Door --------------------
 	if token, err := m.Session.GetTokenForResource(globals.CommonScopes[0]); err == nil {
 		cred := &azinternal.StaticTokenCredential{Token: token}
-		frontDoorClient, err := armfrontdoor.NewFrontDoorsClient(subID, cred, nil)
+		frontDoorClient, err := armfrontdoor.NewFrontDoorsClient(subID, cred, azinternal.DefaultARMClientOptions())
 		if err == nil {
 			pager := frontDoorClient.NewListByResourceGroupPager(rgName, nil)
 			for pager.More() {
@@ -663,7 +662,7 @@ func (m *EndpointsModule) processResourceGroup(ctx context.Context, subID, subNa
 	// -------------------- Azure CDN --------------------
 	if token, err := m.Session.GetTokenForResource(globals.CommonScopes[0]); err == nil {
 		cred := &azinternal.StaticTokenCredential{Token: token}
-		cdnProfileClient, err := armcdn.NewProfilesClient(subID, cred, nil)
+		cdnProfileClient, err := armcdn.NewProfilesClient(subID, cred, azinternal.DefaultARMClientOptions())
 		if err == nil {
 			profilePager := cdnProfileClient.NewListByResourceGroupPager(rgName, nil)
 			for profilePager.More() {
@@ -675,7 +674,7 @@ func (m *EndpointsModule) processResourceGroup(ctx context.Context, subID, subNa
 					profileName := azinternal.SafeStringPtr(profile.Name)
 
 					// Enumerate endpoints within each CDN profile
-					cdnEndpointClient, err := armcdn.NewEndpointsClient(subID, cred, nil)
+					cdnEndpointClient, err := armcdn.NewEndpointsClient(subID, cred, azinternal.DefaultARMClientOptions())
 					if err != nil {
 						continue
 					}
@@ -724,7 +723,7 @@ func (m *EndpointsModule) processResourceGroup(ctx context.Context, subID, subNa
 	// -------------------- Azure Firewall --------------------
 	if token, err := m.Session.GetTokenForResource(globals.CommonScopes[0]); err == nil {
 		cred := &azinternal.StaticTokenCredential{Token: token}
-		firewallClient, err := armnetwork.NewAzureFirewallsClient(subID, cred, nil)
+		firewallClient, err := armnetwork.NewAzureFirewallsClient(subID, cred, azinternal.DefaultARMClientOptions())
 		if err == nil {
 			pager := firewallClient.NewListPager(rgName, nil)
 			for pager.More() {
@@ -781,7 +780,7 @@ func (m *EndpointsModule) processResourceGroup(ctx context.Context, subID, subNa
 	// -------------------- Traffic Manager --------------------
 	if token, err := m.Session.GetTokenForResource(globals.CommonScopes[0]); err == nil {
 		cred := &azinternal.StaticTokenCredential{Token: token}
-		tmClient, err := armtrafficmanager.NewProfilesClient(subID, cred, nil)
+		tmClient, err := armtrafficmanager.NewProfilesClient(subID, cred, azinternal.DefaultARMClientOptions())
 		if err == nil {
 			pager := tmClient.NewListByResourceGroupPager(rgName, nil)
 			for pager.More() {
@@ -837,7 +836,7 @@ func (m *EndpointsModule) processResourceGroup(ctx context.Context, subID, subNa
 	// -------------------- Azure Bastion --------------------
 	if token, err := m.Session.GetTokenForResource(globals.CommonScopes[0]); err == nil {
 		cred := &azinternal.StaticTokenCredential{Token: token}
-		bastionClient, err := armnetwork.NewBastionHostsClient(subID, cred, nil)
+		bastionClient, err := armnetwork.NewBastionHostsClient(subID, cred, azinternal.DefaultARMClientOptions())
 		if err == nil {
 			pager := bastionClient.NewListByResourceGroupPager(rgName, nil)
 			for pager.More() {
@@ -887,7 +886,7 @@ func (m *EndpointsModule) processResourceGroup(ctx context.Context, subID, subNa
 	// -------------------- Event Hubs --------------------
 	if token, err := m.Session.GetTokenForResource(globals.CommonScopes[0]); err == nil {
 		cred := &azinternal.StaticTokenCredential{Token: token}
-		ehFactory, err := armeventhub.NewClientFactory(subID, cred, nil)
+		ehFactory, err := armeventhub.NewClientFactory(subID, cred, azinternal.DefaultARMClientOptions())
 		if err == nil {
 			nsClient := ehFactory.NewNamespacesClient()
 			pager := nsClient.NewListByResourceGroupPager(rgName, nil)
@@ -919,7 +918,7 @@ func (m *EndpointsModule) processResourceGroup(ctx context.Context, subID, subNa
 	// -------------------- Service Bus --------------------
 	if token, err := m.Session.GetTokenForResource(globals.CommonScopes[0]); err == nil {
 		cred := &azinternal.StaticTokenCredential{Token: token}
-		sbClient, err := armservicebus.NewNamespacesClient(subID, cred, nil)
+		sbClient, err := armservicebus.NewNamespacesClient(subID, cred, azinternal.DefaultARMClientOptions())
 		if err == nil {
 			pager := sbClient.NewListByResourceGroupPager(rgName, nil)
 			for pager.More() {
@@ -950,7 +949,7 @@ func (m *EndpointsModule) processResourceGroup(ctx context.Context, subID, subNa
 	// -------------------- IoT Hub --------------------
 	if token, err := m.Session.GetTokenForResource(globals.CommonScopes[0]); err == nil {
 		cred := &azinternal.StaticTokenCredential{Token: token}
-		iotClient, err := armiothub.NewResourceClient(subID, cred, nil)
+		iotClient, err := armiothub.NewResourceClient(subID, cred, azinternal.DefaultARMClientOptions())
 		if err == nil {
 			pager := iotClient.NewListByResourceGroupPager(rgName, nil)
 			for pager.More() {
@@ -992,7 +991,7 @@ func (m *EndpointsModule) processResourceGroup(ctx context.Context, subID, subNa
 	// -------------------- Azure Container Instances (ACI) --------------------
 	if token, err := m.Session.GetTokenForResource(globals.CommonScopes[0]); err == nil {
 		cred := &azinternal.StaticTokenCredential{Token: token}
-		aciClient, err := armcontainerinstance.NewContainerGroupsClient(subID, cred, nil)
+		aciClient, err := armcontainerinstance.NewContainerGroupsClient(subID, cred, azinternal.DefaultARMClientOptions())
 		if err == nil {
 			pager := aciClient.NewListByResourceGroupPager(rgName, nil)
 			for pager.More() {
@@ -1037,7 +1036,7 @@ func (m *EndpointsModule) processResourceGroup(ctx context.Context, subID, subNa
 	// -------------------- Azure Arc Servers --------------------
 	if token, err := m.Session.GetTokenForResource(globals.CommonScopes[0]); err == nil {
 		cred := &azinternal.StaticTokenCredential{Token: token}
-		arcClient, err := armhybridcompute.NewMachinesClient(subID, cred, nil)
+		arcClient, err := armhybridcompute.NewMachinesClient(subID, cred, azinternal.DefaultARMClientOptions())
 		if err == nil {
 			pager := arcClient.NewListByResourceGroupPager(rgName, nil)
 			for pager.More() {
@@ -1085,7 +1084,7 @@ func (m *EndpointsModule) processResourceGroup(ctx context.Context, subID, subNa
 	// -------------------- Azure Data Explorer (Kusto) --------------------
 	if token, err := m.Session.GetTokenForResource(globals.CommonScopes[0]); err == nil {
 		cred := &azinternal.StaticTokenCredential{Token: token}
-		kustoClient, err := armkusto.NewClustersClient(subID, cred, nil)
+		kustoClient, err := armkusto.NewClustersClient(subID, cred, azinternal.DefaultARMClientOptions())
 		if err == nil {
 			pager := kustoClient.NewListByResourceGroupPager(rgName, nil)
 			for pager.More() {
@@ -1140,7 +1139,7 @@ func (m *EndpointsModule) processResourceGroup(ctx context.Context, subID, subNa
 	// -------------------- Azure Data Factory --------------------
 	if token, err := m.Session.GetTokenForResource(globals.CommonScopes[0]); err == nil {
 		cred := &azinternal.StaticTokenCredential{Token: token}
-		dfClient, err := armdatafactory.NewFactoriesClient(subID, cred, nil)
+		dfClient, err := armdatafactory.NewFactoriesClient(subID, cred, azinternal.DefaultARMClientOptions())
 		if err == nil {
 			pager := dfClient.NewListByResourceGroupPager(rgName, nil)
 			for pager.More() {
@@ -1181,7 +1180,7 @@ func (m *EndpointsModule) processResourceGroup(ctx context.Context, subID, subNa
 	// -------------------- Azure HDInsight --------------------
 	if token, err := m.Session.GetTokenForResource(globals.CommonScopes[0]); err == nil {
 		cred := &azinternal.StaticTokenCredential{Token: token}
-		hdiClient, err := armhdinsight.NewClustersClient(subID, cred, nil)
+		hdiClient, err := armhdinsight.NewClustersClient(subID, cred, azinternal.DefaultARMClientOptions())
 		if err == nil {
 			pager := hdiClient.NewListByResourceGroupPager(rgName, nil)
 			for pager.More() {
@@ -1284,7 +1283,7 @@ func (m *EndpointsModule) processResourceGroup(ctx context.Context, subID, subNa
 	// -------------------- Cognitive Services (Azure OpenAI) --------------------
 	if token, err := m.Session.GetTokenForResource(globals.CommonScopes[0]); err == nil {
 		cred := &azinternal.StaticTokenCredential{Token: token}
-		cogClient, err := armcognitiveservices.NewAccountsClient(subID, cred, nil)
+		cogClient, err := armcognitiveservices.NewAccountsClient(subID, cred, azinternal.DefaultARMClientOptions())
 		if err == nil {
 			// List Cognitive Services accounts in resource group
 			cogPager := cogClient.NewListByResourceGroupPager(rgName, nil)
@@ -1347,7 +1346,7 @@ func (m *EndpointsModule) processResourceGroup(ctx context.Context, subID, subNa
 	// -------------------- Azure Spring Apps --------------------
 	if token, err := m.Session.GetTokenForResource(globals.CommonScopes[0]); err == nil {
 		cred := &azinternal.StaticTokenCredential{Token: token}
-		springClient, err := armappplatform.NewServicesClient(subID, cred, nil)
+		springClient, err := armappplatform.NewServicesClient(subID, cred, azinternal.DefaultARMClientOptions())
 		if err == nil {
 			springPager := springClient.NewListPager(rgName, nil)
 			for springPager.More() {
@@ -1397,7 +1396,7 @@ func (m *EndpointsModule) processResourceGroup(ctx context.Context, subID, subNa
 	// -------------------- Azure SignalR Service --------------------
 	if token, err := m.Session.GetTokenForResource(globals.CommonScopes[0]); err == nil {
 		cred := &azinternal.StaticTokenCredential{Token: token}
-		signalrClient, err := armsignalr.NewClient(subID, cred, nil)
+		signalrClient, err := armsignalr.NewClient(subID, cred, azinternal.DefaultARMClientOptions())
 		if err == nil {
 			signalrPager := signalrClient.NewListByResourceGroupPager(rgName, nil)
 			for signalrPager.More() {
@@ -1451,7 +1450,7 @@ func (m *EndpointsModule) processResourceGroup(ctx context.Context, subID, subNa
 	// -------------------- Azure Service Fabric Clusters --------------------
 	if token, err := m.Session.GetTokenForResource(globals.CommonScopes[0]); err == nil {
 		cred := &azinternal.StaticTokenCredential{Token: token}
-		sfClient, err := armservicefabric.NewClustersClient(subID, cred, nil)
+		sfClient, err := armservicefabric.NewClustersClient(subID, cred, azinternal.DefaultARMClientOptions())
 		if err == nil {
 			sfResp, err := sfClient.ListByResourceGroup(ctx, rgName, nil)
 			if err != nil {

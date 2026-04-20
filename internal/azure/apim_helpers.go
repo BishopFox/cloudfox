@@ -18,7 +18,7 @@ func ListAPIManagementServices(ctx context.Context, session *SafeSession, subscr
 	}
 
 	cred := &StaticTokenCredential{Token: token}
-	client, err := armapimanagement.NewServiceClient(subscriptionID, cred, nil)
+	client, err := armapimanagement.NewServiceClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create APIM service client: %v", err)
 	}
@@ -46,7 +46,7 @@ func ListAPIsInService(ctx context.Context, session *SafeSession, subscriptionID
 	}
 
 	cred := &StaticTokenCredential{Token: token}
-	client, err := armapimanagement.NewAPIClient(subscriptionID, cred, nil)
+	client, err := armapimanagement.NewAPIClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create APIM API client: %v", err)
 	}
@@ -75,7 +75,7 @@ func GetAPIManagementIdentityProviders(ctx context.Context, session *SafeSession
 	}
 
 	cred := &StaticTokenCredential{Token: token}
-	client, err := armapimanagement.NewIdentityProviderClient(subscriptionID, cred, nil)
+	client, err := armapimanagement.NewIdentityProviderClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil
 	}
@@ -115,7 +115,7 @@ func GetAPIPolicyXML(ctx context.Context, session *SafeSession, subscriptionID, 
 	}
 
 	cred := &StaticTokenCredential{Token: token}
-	client, err := armapimanagement.NewAPIPolicyClient(subscriptionID, cred, nil)
+	client, err := armapimanagement.NewAPIPolicyClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return "", err
 	}

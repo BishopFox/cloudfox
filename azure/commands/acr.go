@@ -80,7 +80,6 @@ func ListAcr(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return // error already logged by helper
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	// -------------------- Initialize module --------------------
 	module := &AcrModule{
@@ -155,7 +154,7 @@ func (m *AcrModule) processSubscription(ctx context.Context, subID string, logge
 	}
 	cred := &azinternal.StaticTokenCredential{Token: token}
 
-	regClient, err := armcontainerregistry.NewRegistriesClient(subID, cred, nil)
+	regClient, err := armcontainerregistry.NewRegistriesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Failed to create registries client: %v", err), globals.AZ_ACR_MODULE_NAME)
 		m.CommandCounter.Error++

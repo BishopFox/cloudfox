@@ -75,7 +75,6 @@ func ListPrivateEndpoints(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	module := &PrivateLinkModule{
 		BaseAzureModule:     azinternal.NewBaseAzureModule(cmdCtx, 5),
@@ -137,7 +136,7 @@ func (m *PrivateLinkModule) processSubscription(ctx context.Context, subID strin
 	}
 	cred := &azinternal.StaticTokenCredential{Token: token}
 
-	peClient, err := armnetwork.NewPrivateEndpointsClient(subID, cred, nil)
+	peClient, err := armnetwork.NewPrivateEndpointsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Failed to create Private Endpoints client: %v", err), globals.AZ_PRIVATELINK_MODULE_NAME)
 		m.CommandCounter.Error++

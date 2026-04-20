@@ -64,7 +64,6 @@ func ListConsentGrants(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	// Initialize module
 	module := &ConsentGrantsModule{

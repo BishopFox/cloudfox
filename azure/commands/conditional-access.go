@@ -62,7 +62,6 @@ func ListConditionalAccessPolicies(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	// Initialize module
 	module := &ConditionalAccessModule{

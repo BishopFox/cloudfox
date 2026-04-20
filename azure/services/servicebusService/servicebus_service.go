@@ -102,7 +102,7 @@ func (s *ServiceBusService) ListNamespaces(ctx context.Context, subID string) ([
 		return nil, err
 	}
 
-	client, err := armservicebus.NewNamespacesClient(subID, cred, nil)
+	client, err := armservicebus.NewNamespacesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create namespaces client: %w", err)
 	}
@@ -128,7 +128,7 @@ func (s *ServiceBusService) ListNamespacesByResourceGroup(ctx context.Context, s
 		return nil, err
 	}
 
-	client, err := armservicebus.NewNamespacesClient(subID, cred, nil)
+	client, err := armservicebus.NewNamespacesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create namespaces client: %w", err)
 	}
@@ -154,7 +154,7 @@ func (s *ServiceBusService) GetNamespaceKeys(ctx context.Context, subID, rgName,
 		return nil, err
 	}
 
-	client, err := armservicebus.NewNamespacesClient(subID, cred, nil)
+	client, err := armservicebus.NewNamespacesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create namespaces client: %w", err)
 	}
@@ -174,7 +174,7 @@ func (s *ServiceBusService) ListQueues(ctx context.Context, subID, rgName, names
 		return nil, err
 	}
 
-	client, err := armservicebus.NewQueuesClient(subID, cred, nil)
+	client, err := armservicebus.NewQueuesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create queues client: %w", err)
 	}
@@ -200,7 +200,7 @@ func (s *ServiceBusService) ListTopics(ctx context.Context, subID, rgName, names
 		return nil, err
 	}
 
-	client, err := armservicebus.NewTopicsClient(subID, cred, nil)
+	client, err := armservicebus.NewTopicsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create topics client: %w", err)
 	}
@@ -226,7 +226,7 @@ func (s *ServiceBusService) ListSubscriptions(ctx context.Context, subID, rgName
 		return nil, err
 	}
 
-	client, err := armservicebus.NewSubscriptionsClient(subID, cred, nil)
+	client, err := armservicebus.NewSubscriptionsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create subscriptions client: %w", err)
 	}

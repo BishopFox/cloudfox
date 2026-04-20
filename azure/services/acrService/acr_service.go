@@ -99,7 +99,7 @@ func (s *ACRService) ListRegistriesByResourceGroup(ctx context.Context, subID, r
 		return nil, err
 	}
 
-	client, err := armcontainerregistry.NewRegistriesClient(subID, cred, nil)
+	client, err := armcontainerregistry.NewRegistriesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create registries client: %w", err)
 	}
@@ -125,7 +125,7 @@ func (s *ACRService) ListRegistries(ctx context.Context, subID string) ([]*armco
 		return nil, err
 	}
 
-	client, err := armcontainerregistry.NewRegistriesClient(subID, cred, nil)
+	client, err := armcontainerregistry.NewRegistriesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create registries client: %w", err)
 	}
@@ -151,7 +151,7 @@ func (s *ACRService) GetRegistryCredentials(ctx context.Context, subID, rgName, 
 		return nil, err
 	}
 
-	client, err := armcontainerregistry.NewRegistriesClient(subID, cred, nil)
+	client, err := armcontainerregistry.NewRegistriesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create registries client: %w", err)
 	}

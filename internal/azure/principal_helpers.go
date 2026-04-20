@@ -374,6 +374,12 @@ func ListPrincipals(ctx context.Context, session *SafeSession, tenantID string) 
 
 // ListEntraUsers returns all users in the tenant via Microsoft Graph
 func ListEntraUsers(ctx context.Context, session *SafeSession, tenantID string) ([]PrincipalInfo, error) {
+	// Check in-memory cache first
+	cacheKey := AzCacheKey("entra-users", tenantID)
+	if cached, found := AzureDataCache.Get(cacheKey); found {
+		return cached.([]PrincipalInfo), nil
+	}
+
 	logger := internal.NewLogger()
 	if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 		logger.InfoM(fmt.Sprintf("Enumerating Entra users for tenant: %v", tenantID), globals.AZ_PRINCIPALS_MODULE_NAME)
@@ -439,11 +445,19 @@ func ListEntraUsers(ctx context.Context, session *SafeSession, tenantID string) 
 		return nil, fmt.Errorf("failed to enumerate users: %v", err)
 	}
 
+	// Cache the result before returning
+	AzureDataCache.Set(cacheKey, users, 0)
 	return users, nil
 }
 
 // ListServicePrincipals returns all service principals in the tenant
 func ListServicePrincipals(ctx context.Context, session *SafeSession, tenantID string) ([]PrincipalInfo, error) {
+	// Check in-memory cache first
+	cacheKey := AzCacheKey("service-principals", tenantID)
+	if cached, found := AzureDataCache.Get(cacheKey); found {
+		return cached.([]PrincipalInfo), nil
+	}
+
 	logger := internal.NewLogger()
 	if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 		logger.InfoM(fmt.Sprintf("Enumerating service principals for tenant: %v", tenantID), globals.AZ_PRINCIPALS_MODULE_NAME)
@@ -495,6 +509,8 @@ func ListServicePrincipals(ctx context.Context, session *SafeSession, tenantID s
 		return nil, fmt.Errorf("failed to enumerate service principals: %v", err)
 	}
 
+	// Cache the result before returning
+	AzureDataCache.Set(cacheKey, sps, 0)
 	return sps, nil
 }
 
@@ -517,7 +533,7 @@ func ListUserAssignedManagedIdentities(ctx context.Context, session *SafeSession
 		// Create a credential wrapper for the ARM SDK using the token
 		cred := &StaticTokenCredential{Token: token}
 
-		client, err := armmi.NewUserAssignedIdentitiesClient(subID, cred, nil)
+		client, err := armmi.NewUserAssignedIdentitiesClient(subID, cred, DefaultARMClientOptions())
 		if err != nil {
 			return nil, fmt.Errorf("failed to create MI client for subscription %s: %v", subID, err)
 		}
@@ -1894,6 +1910,12 @@ func processRoleAssignment(ctx context.Context, assignment *armauthorizationv2.R
 // GetManagementGroupHierarchy returns the management group IDs in the hierarchy for a subscription
 // Returns an array of management group IDs from immediate parent to root
 func GetManagementGroupHierarchy(ctx context.Context, session *SafeSession, subscriptionID string) []string {
+	// Check in-memory cache first
+	cacheKey := AzCacheKey("mg-hierarchy", subscriptionID)
+	if cached, found := AzureDataCache.Get(cacheKey); found {
+		return cached.([]string)
+	}
+
 	logger := internal.NewLogger()
 	var hierarchy []string
 
@@ -1908,7 +1930,7 @@ func GetManagementGroupHierarchy(ctx context.Context, session *SafeSession, subs
 	cred := &StaticTokenCredential{Token: token}
 
 	// Use entities API to find the subscription and its parent management group
-	entitiesClient, err := armmanagementgroups.NewEntitiesClient(cred, nil)
+	entitiesClient, err := armmanagementgroups.NewEntitiesClient(cred, DefaultARMClientOptions())
 	if err != nil {
 		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 			logger.ErrorM(fmt.Sprintf("Failed to create entities client: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
@@ -1952,7 +1974,7 @@ func GetManagementGroupHierarchy(ctx context.Context, session *SafeSession, subs
 	}
 
 	// Now walk up the management group hierarchy
-	mgClient, err := armmanagementgroups.NewClient(cred, nil)
+	mgClient, err := armmanagementgroups.NewClient(cred, DefaultARMClientOptions())
 	if err != nil {
 		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 			logger.ErrorM(fmt.Sprintf("Failed to create management groups client: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
@@ -1994,6 +2016,8 @@ func GetManagementGroupHierarchy(ctx context.Context, session *SafeSession, subs
 		}
 	}
 
+	// Cache the result before returning
+	AzureDataCache.Set(cacheKey, hierarchy, 0)
 	return hierarchy
 }
 
@@ -2649,6 +2673,12 @@ func GetPIMActiveRoles(ctx context.Context, session *SafeSession, subscriptionID
 
 // ListEntraGroups returns all security groups in the tenant via Microsoft Graph
 func ListEntraGroups(ctx context.Context, session *SafeSession, tenantID string) ([]PrincipalInfo, error) {
+	// Check in-memory cache first
+	cacheKey := AzCacheKey("entra-groups", tenantID)
+	if cached, found := AzureDataCache.Get(cacheKey); found {
+		return cached.([]PrincipalInfo), nil
+	}
+
 	logger := internal.NewLogger()
 	if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 		logger.InfoM(fmt.Sprintf("Enumerating Entra security groups for tenant: %v", tenantID), globals.AZ_PRINCIPALS_MODULE_NAME)
@@ -2706,6 +2736,8 @@ func ListEntraGroups(ctx context.Context, session *SafeSession, tenantID string)
 		logger.InfoM(fmt.Sprintf("Found %d security group(s)", len(groups)), globals.AZ_PRINCIPALS_MODULE_NAME)
 	}
 
+	// Cache the result before returning
+	AzureDataCache.Set(cacheKey, groups, 0)
 	return groups, nil
 }
 
@@ -3061,7 +3093,7 @@ func GetEnhancedRBACAssignments(ctx context.Context, session *SafeSession, princ
 				page, err := pager.NextPage(ctx)
 				if err != nil {
 					if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
-						logger.ErrorM(fmt.Sprintf("Failed to get role assignments at scope %s: %v", scope.Path, err), globals.AZ_PRINCIPALS_MODULE_NAME)
+						logger.ErrorM(fmt.Sprintf("Failed to get role assignments at scope %s for principal %s: %v (partial results may be returned)", scope.Path, principalID, err), globals.AZ_PRINCIPALS_MODULE_NAME)
 					}
 					break
 				}

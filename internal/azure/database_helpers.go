@@ -99,7 +99,7 @@ func GetDatabasesPerResourceGroup(ctx context.Context, session *SafeSession, sub
 		}
 
 		// List databases on this server
-		dbClient, _ := armsql.NewDatabasesClient(subID, cred, nil)
+		dbClient, _ := armsql.NewDatabasesClient(subID, cred, DefaultARMClientOptions())
 		dbPager := dbClient.NewListByServerPager(rgName, SafeStringPtr(srv.Name), nil)
 
 		for dbPager.More() {
@@ -239,7 +239,7 @@ func GetDatabasesPerResourceGroup(ctx context.Context, session *SafeSession, sub
 		}
 
 		// List databases on this managed instance
-		miDbClient, _ := armsql.NewManagedDatabasesClient(subID, cred, nil)
+		miDbClient, _ := armsql.NewManagedDatabasesClient(subID, cred, DefaultARMClientOptions())
 		miDbPager := miDbClient.NewListByInstancePager(rgName, SafeStringPtr(mi.Name), nil)
 
 		for miDbPager.More() {
@@ -390,7 +390,7 @@ func GetDatabasesPerResourceGroup(ctx context.Context, session *SafeSession, sub
 			}
 		}
 
-		mysqlClient, _ := armmysql.NewDatabasesClient(subID, cred, nil)
+		mysqlClient, _ := armmysql.NewDatabasesClient(subID, cred, DefaultARMClientOptions())
 		dbPager := mysqlClient.NewListByServerPager(rgName, SafeStringPtr(srv.Name), nil)
 		for dbPager.More() {
 			page, err := dbPager.NextPage(ctx)
@@ -512,7 +512,7 @@ func GetDatabasesPerResourceGroup(ctx context.Context, session *SafeSession, sub
 
 		// MySQL Flexible Server uses different database enumeration
 		// List databases on this flexible server
-		flexDbClient, _ := armmysqlflexibleservers.NewDatabasesClient(subID, cred, nil)
+		flexDbClient, _ := armmysqlflexibleservers.NewDatabasesClient(subID, cred, DefaultARMClientOptions())
 		flexDbPager := flexDbClient.NewListByServerPager(rgName, SafeStringPtr(srv.Name), nil)
 
 		for flexDbPager.More() {
@@ -642,7 +642,7 @@ func GetDatabasesPerResourceGroup(ctx context.Context, session *SafeSession, sub
 			}
 		}
 
-		pgClient, _ := armpostgresql.NewDatabasesClient(subID, cred, nil)
+		pgClient, _ := armpostgresql.NewDatabasesClient(subID, cred, DefaultARMClientOptions())
 		dbPager := pgClient.NewListByServerPager(rgName, SafeStringPtr(srv.Name), nil)
 
 		for dbPager.More() {
@@ -764,7 +764,7 @@ func GetDatabasesPerResourceGroup(ctx context.Context, session *SafeSession, sub
 			}
 		}
 
-		pgFlexClient, _ := armpostgresqlflexibleservers.NewDatabasesClient(subID, cred, nil)
+		pgFlexClient, _ := armpostgresqlflexibleservers.NewDatabasesClient(subID, cred, DefaultARMClientOptions())
 		dbPager := pgFlexClient.NewListByServerPager(rgName, SafeStringPtr(srv.Name), nil)
 
 		for dbPager.More() {
@@ -889,7 +889,7 @@ func GetDatabasesPerResourceGroup(ctx context.Context, session *SafeSession, sub
 			}
 		}
 
-		mariaClient, _ := armmariadb.NewDatabasesClient(subID, cred, nil)
+		mariaClient, _ := armmariadb.NewDatabasesClient(subID, cred, DefaultARMClientOptions())
 		dbPager := mariaClient.NewListByServerPager(rgName, SafeStringPtr(srv.Name), nil)
 
 		for dbPager.More() {
@@ -1143,7 +1143,7 @@ func GetDatabaseServerIPs(ctx context.Context, session *SafeSession, subscriptio
 	var privateIPs, publicIPs []string
 
 	// ---------------- Private IPs ----------------
-	peClient, err := armnetwork.NewPrivateEndpointsClient(subscriptionID, cred, nil)
+	peClient, err := armnetwork.NewPrivateEndpointsClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err == nil {
 		rgName := GetResourceGroupFromID(resourceID)
 		pager := peClient.NewListPager(rgName, nil)
@@ -1229,7 +1229,7 @@ func GetSQLServers(ctx context.Context, session *SafeSession, subID, rgName stri
 	if cred == nil {
 		return nil
 	}
-	client, _ := armsql.NewServersClient(subID, cred, nil)
+	client, _ := armsql.NewServersClient(subID, cred, DefaultARMClientOptions())
 	pager := client.NewListByResourceGroupPager(rgName, nil)
 	var servers []*armsql.Server
 	for pager.More() {
@@ -1253,7 +1253,7 @@ func GetSQLManagedInstances(ctx context.Context, session *SafeSession, subID, rg
 	if cred == nil {
 		return nil
 	}
-	client, _ := armsql.NewManagedInstancesClient(subID, cred, nil)
+	client, _ := armsql.NewManagedInstancesClient(subID, cred, DefaultARMClientOptions())
 	pager := client.NewListByResourceGroupPager(rgName, nil)
 	var instances []*armsql.ManagedInstance
 	for pager.More() {
@@ -1277,7 +1277,7 @@ func GetMySQLServers(ctx context.Context, session *SafeSession, subID, rgName st
 	if cred == nil {
 		return nil
 	}
-	client, _ := armmysql.NewServersClient(subID, cred, nil)
+	client, _ := armmysql.NewServersClient(subID, cred, DefaultARMClientOptions())
 	pager := client.NewListByResourceGroupPager(rgName, nil)
 	var servers []*armmysql.Server
 	for pager.More() {
@@ -1301,7 +1301,7 @@ func GetMySQLFlexibleServers(ctx context.Context, session *SafeSession, subID, r
 	if cred == nil {
 		return nil
 	}
-	client, _ := armmysqlflexibleservers.NewServersClient(subID, cred, nil)
+	client, _ := armmysqlflexibleservers.NewServersClient(subID, cred, DefaultARMClientOptions())
 	pager := client.NewListByResourceGroupPager(rgName, nil)
 	var servers []*armmysqlflexibleservers.Server
 	for pager.More() {
@@ -1325,7 +1325,7 @@ func GetPostgreSQLFlexibleServers(ctx context.Context, session *SafeSession, sub
 	if cred == nil {
 		return nil
 	}
-	client, _ := armpostgresqlflexibleservers.NewServersClient(subID, cred, nil)
+	client, _ := armpostgresqlflexibleservers.NewServersClient(subID, cred, DefaultARMClientOptions())
 	pager := client.NewListByResourceGroupPager(rgName, nil)
 	var servers []*armpostgresqlflexibleservers.Server
 	for pager.More() {
@@ -1349,7 +1349,7 @@ func GetPostgresServers(ctx context.Context, session *SafeSession, subID, rgName
 	if cred == nil {
 		return nil
 	}
-	client, _ := armpostgresql.NewServersClient(subID, cred, nil)
+	client, _ := armpostgresql.NewServersClient(subID, cred, DefaultARMClientOptions())
 	pager := client.NewListByResourceGroupPager(rgName, nil)
 	var servers []*armpostgresql.Server
 	for pager.More() {
@@ -1374,7 +1374,7 @@ func GetCosmosAccounts(ctx context.Context, session *SafeSession, subID, rgName 
 		return nil
 	}
 
-	client, _ := armcosmos.NewDatabaseAccountsClient(subID, cred, nil)
+	client, _ := armcosmos.NewDatabaseAccountsClient(subID, cred, DefaultARMClientOptions())
 	pager := client.NewListByResourceGroupPager(rgName, nil)
 	var accounts []*armcosmos.DatabaseAccountGetResults
 	for pager.More() {
@@ -1398,7 +1398,7 @@ func GetMariaDBServers(ctx context.Context, session *SafeSession, subID, rgName 
 	if cred == nil {
 		return nil
 	}
-	client, _ := armmariadb.NewServersClient(subID, cred, nil)
+	client, _ := armmariadb.NewServersClient(subID, cred, DefaultARMClientOptions())
 	pager := client.NewListByResourceGroupPager(rgName, nil)
 	var servers []*armmariadb.Server
 	for pager.More() {
@@ -1439,7 +1439,7 @@ func GetCosmosDBIPs(ctx context.Context, session *SafeSession, acct *armcosmos.D
 
 	// ---------------- Private IPs (via Private Endpoints) ----------------
 	if acct.ID != nil {
-		peClient, err := armnetwork.NewPrivateEndpointsClient(subscriptionID, cred, nil)
+		peClient, err := armnetwork.NewPrivateEndpointsClient(subscriptionID, cred, DefaultARMClientOptions())
 		if err == nil {
 			rgName := GetResourceGroupFromID(*acct.ID)
 			pager := peClient.NewListPager(rgName, nil)
@@ -1788,7 +1788,7 @@ func GetManagedIdentities(ctx context.Context, session *SafeSession, subscriptio
 // CheckTDEStatus checks if Transparent Data Encryption is enabled for a SQL database
 func CheckTDEStatus(ctx context.Context, cred *StaticTokenCredential, subID, rgName, serverName, dbName string) string {
 	// Create TDE client
-	tdeClient, err := armsql.NewTransparentDataEncryptionsClient(subID, cred, nil)
+	tdeClient, err := armsql.NewTransparentDataEncryptionsClient(subID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return "N/A"
 	}

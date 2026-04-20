@@ -38,22 +38,6 @@ type SubscriptionInfo struct {
 	Accessible   bool
 }
 
-var roleCache = struct {
-	sync.Mutex
-	m map[string]string
-}{m: map[string]string{}}
-
-// Thread-safe caches for subscription and tenant names to reduce redundant API calls
-var subscriptionNameCache = struct {
-	sync.RWMutex
-	m map[string]string
-}{m: make(map[string]string)}
-
-var tenantNameCache = struct {
-	sync.RWMutex
-	m map[string]string
-}{m: make(map[string]string)}
-
 type SafeSession struct {
 	mu            sync.Mutex
 	Cred          azcore.TokenCredential
@@ -453,7 +437,9 @@ func NewSafeSession(ctx context.Context) (*SafeSession, error) {
 	for _, r := range globals.CommonScopes {
 		scope := ResourceToScope(r)
 		if _, err := ss.GetToken(scope); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to prefetch token for %s: %v\n", scope, err)
+			if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+				fmt.Fprintf(os.Stderr, "warning: failed to prefetch token for %s: %v\n", ScopeDisplayName(scope), err)
+			}
 		}
 	}
 
@@ -561,33 +547,6 @@ func NewSmartSession(ctx context.Context) (*SafeSession, error) {
 	return ss, nil
 }
 
-// ------------------------- SAFE SESSION WRAPPERS -------------------------
-
-// Ensure validates or refreshes the current Azure CLI session.
-func (s *SafeSession) Ensure(ctx context.Context) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.Cred != nil {
-		return nil
-	}
-
-	out, err := exec.CommandContext(ctx, "az", "ad", "signed-in-user", "show", "-o", "json").Output()
-	if err != nil || len(out) == 0 {
-		return fmt.Errorf("azure CLI session invalid or expired: %w", err)
-	}
-
-	var data struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(out, &data); err != nil || data.ID == "" {
-		return fmt.Errorf("failed to parse Azure CLI session or empty ID: %w", err)
-	}
-
-	s.Cred = &azureCLICredential{}
-	return nil
-}
-
 // ------------------------- SMART SESSION METHODS -------------------------
 
 // getSessionExpiry retrieves the Azure CLI session expiration time
@@ -655,7 +614,9 @@ func (s *SafeSession) RefreshSession(ctx context.Context) error {
 		scope := ResourceToScope(r)
 		// Call unlocked version
 		if _, err := s.getTokenUnlocked(scope); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to refresh token for %s: %v\n", scope, err)
+			if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+				fmt.Fprintf(os.Stderr, "warning: failed to refresh token for %s: %v\n", ScopeDisplayName(scope), err)
+			}
 		}
 	}
 
@@ -700,10 +661,14 @@ func (s *SafeSession) monitorSession(ctx context.Context) {
 		case <-ticker.C:
 			if s.IsSessionExpired() {
 				if err := s.RefreshSession(ctx); err != nil {
-					fmt.Fprintf(os.Stderr, "smart session: auto-refresh failed: %v\n", err)
-					fmt.Fprintf(os.Stderr, "smart session: please run 'az login' to re-authenticate\n")
+					if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+						fmt.Fprintf(os.Stderr, "smart session: auto-refresh failed: %v\n", err)
+						fmt.Fprintf(os.Stderr, "smart session: please run 'az login' to re-authenticate\n")
+					}
 				} else {
-					fmt.Fprintf(os.Stderr, "smart session: automatically refreshed Azure CLI tokens\n")
+					if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+						fmt.Fprintf(os.Stderr, "smart session: automatically refreshed Azure CLI tokens\n")
+					}
 				}
 			}
 		}
@@ -801,78 +766,58 @@ func ResourceToScope(resource string) string {
 	}
 }
 
-// GetCredentialSafe returns a credential capable of providing tokens for any requested scope
-func GetCredentialSafe(ctx context.Context) (azcore.TokenCredential, error) {
-	// If using token-based auth, return a static credential
-	if globals.AZ_BEARER_TOKEN != "" {
-		return &StaticTokenCredential{Token: globals.AZ_BEARER_TOKEN}, nil
+// ScopeDisplayName returns a human-friendly name for an OAuth scope string.
+func ScopeDisplayName(scope string) string {
+	switch {
+	case strings.Contains(scope, "management.azure.com"):
+		return "Azure Resource Manager (" + scope + ")"
+	case strings.Contains(scope, "graph.microsoft.com"):
+		return "Microsoft Graph (" + scope + ")"
+	case strings.Contains(scope, "vault.azure.net"):
+		return "Azure Key Vault (" + scope + ")"
+	case strings.Contains(scope, "storage.azure.com"):
+		return "Azure Storage (" + scope + ")"
+	case strings.Contains(scope, "499b84ac-1321-427f"):
+		return "Azure DevOps (" + scope + ")"
+	case strings.Contains(scope, "vssps.visualstudio.com"):
+		return "Azure DevOps (" + scope + ")"
+	default:
+		return scope
 	}
-
-	cred := &azureCLICredential{}
-	_, err := cred.GetToken(ctx, policy.TokenRequestOptions{Scopes: []string{"https://management.azure.com/.default"}})
-	if err != nil {
-		return nil, fmt.Errorf("failed to acquire Azure CLI token: %w", err)
-	}
-	return cred, nil
 }
 
-// GetCredential returns a simple default credential or nil if unavailable
-func GetCredential() azcore.TokenCredential {
-	ctx := context.Background()
-	cred, err := GetCredentialSafe(ctx)
-	if err != nil {
-		return nil
-	}
-	return cred
-}
 
 // ------------------------- TENANT FUNCTIONS -------------------------
 
 func GetTenantNameFromID(ctx context.Context, session *SafeSession, tenantID string) string {
-	// Check cache first (read lock)
-	tenantNameCache.RLock()
-	if name, ok := tenantNameCache.m[tenantID]; ok {
-		tenantNameCache.RUnlock()
-		return name
+	cacheKey := AzCacheKey("tenant-name", tenantID)
+	if cached, found := AzureDataCache.Get(cacheKey); found {
+		return cached.(string)
 	}
-	tenantNameCache.RUnlock()
 
-	// Not in cache - fetch from Azure
-	var name string
-
-	// Attempt SDK-based tenant lookup first
+	// Look up from already-cached tenant list
 	for _, t := range GetTenants(ctx, session) {
 		if t.TenantID != nil && *t.TenantID == tenantID {
 			if t.DisplayName != nil && *t.DisplayName != "" {
-				name = *t.DisplayName
-				break
+				AzureDataCache.Set(cacheKey, *t.DisplayName, 0)
+				return *t.DisplayName
 			}
 			break
 		}
 	}
 
-	// CLI fallback if SDK fails
-	if name == "" {
-		if out, err := exec.Command("az", "account", "tenant", "show",
-			"--tenant", tenantID, "--query", "displayName", "-o", "tsv").Output(); err == nil {
-			nameFromCLI := strings.TrimSpace(string(out))
-			if nameFromCLI != "" {
-				name = nameFromCLI
-			}
+	// CLI fallback
+	if out, err := exec.Command("az", "account", "tenant", "show",
+		"--tenant", tenantID, "--query", "displayName", "-o", "tsv").Output(); err == nil {
+		name := strings.TrimSpace(string(out))
+		if name != "" {
+			AzureDataCache.Set(cacheKey, name, 0)
+			return name
 		}
 	}
 
-	// Fallback to tenant ID itself
-	if name == "" {
-		name = tenantID
-	}
-
-	// Cache the result (write lock)
-	tenantNameCache.Lock()
-	tenantNameCache.m[tenantID] = name
-	tenantNameCache.Unlock()
-
-	return name
+	AzureDataCache.Set(cacheKey, tenantID, 0)
+	return tenantID
 }
 
 func GetTenantIDFromSubscription(session *SafeSession, subscriptionID string) *string {
@@ -895,49 +840,22 @@ func getTenantDefaultDomain(tenantID string) string {
 
 // ------------------------- USER FUNCTIONS -------------------------
 
-// GetCurrentUser returns the current identity's object ID (GUID) and UPN (email).
-// Returns ("UNKNOWN","UNKNOWN", error) on failure.
-func (s *SafeSession) CurrentUser(ctx context.Context) (objectID, upn, display string, err error) {
-	out, err := exec.Command("az", "ad", "signed-in-user", "show", "-o", "json").Output()
-	if err == nil && len(out) > 0 {
-		var data struct {
-			ID                string `json:"id"`
-			UserPrincipalName string `json:"userPrincipalName"`
-			DisplayName       string `json:"displayName"`
-		}
-		if err := json.Unmarshal(out, &data); err == nil && data.ID != "" {
-			return data.ID, data.UserPrincipalName, data.DisplayName, nil
-		}
-	}
-
-	// Fallback: Graph with retry logic
-	token, err := s.GetTokenForResource("https://graph.microsoft.com/")
-	if err != nil {
-		return "UNKNOWN", "UNKNOWN", "UNKNOWN", fmt.Errorf("failed to get Graph token: %w", err)
-	}
-
-	body, err := GraphAPIRequestWithRetry(ctx, "GET", "https://graph.microsoft.com/v1.0/me", token)
-	if err != nil {
-		return "UNKNOWN", "UNKNOWN", "UNKNOWN", err
-	}
-
-	var data struct {
-		ID                string `json:"id"`
-		UserPrincipalName string `json:"userPrincipalName"`
-		DisplayName       string `json:"displayName"`
-	}
-	if err := json.Unmarshal(body, &data); err != nil || data.ID == "" {
-		return "UNKNOWN", "UNKNOWN", "UNKNOWN", fmt.Errorf("failed to decode /me response or empty ID")
-	}
-
-	return data.ID, data.UserPrincipalName, data.DisplayName, nil
-}
 
 // GetCurrentUserSafe returns the current identity's object ID, UPN, and display name.
 func GetCurrentUserSafe(ctx context.Context, session *SafeSession) (objectID, upn, displayName string, err error) {
+	cacheKey := AzCacheKey("current-user")
+	if cached, found := AzureDataCache.Get(cacheKey); found {
+		parts := cached.([3]string)
+		return parts[0], parts[1], parts[2], nil
+	}
+
 	// If using token-based auth, skip CLI check and go straight to Graph API
 	if globals.AZ_BEARER_TOKEN != "" {
-		return getCurrentUserFromToken(ctx, session)
+		objectID, upn, displayName, err = getCurrentUserFromToken(ctx, session)
+		if err == nil {
+			AzureDataCache.Set(cacheKey, [3]string{objectID, upn, displayName}, 0)
+		}
+		return
 	}
 
 	// First, check if session is valid
@@ -946,20 +864,25 @@ func GetCurrentUserSafe(ctx context.Context, session *SafeSession) (objectID, up
 	}
 
 	// Try Azure CLI first
-	out, err := exec.Command("az", "ad", "signed-in-user", "show", "-o", "json").Output()
-	if err == nil && len(out) > 0 {
+	out, cliErr := exec.Command("az", "ad", "signed-in-user", "show", "-o", "json").Output()
+	if cliErr == nil && len(out) > 0 {
 		var data struct {
 			ID                string `json:"id"`
 			UserPrincipalName string `json:"userPrincipalName"`
 			DisplayName       string `json:"displayName"`
 		}
-		if err := json.Unmarshal(out, &data); err == nil && data.ID != "" {
+		if json.Unmarshal(out, &data) == nil && data.ID != "" {
+			AzureDataCache.Set(cacheKey, [3]string{data.ID, data.UserPrincipalName, data.DisplayName}, 0)
 			return data.ID, data.UserPrincipalName, data.DisplayName, nil
 		}
 	}
 
 	// Fallback: Microsoft Graph
-	return getCurrentUserFromToken(ctx, session)
+	objectID, upn, displayName, err = getCurrentUserFromToken(ctx, session)
+	if err == nil {
+		AzureDataCache.Set(cacheKey, [3]string{objectID, upn, displayName}, 0)
+	}
+	return
 }
 
 // getCurrentUserFromToken retrieves user info using the Graph API with the session token
@@ -992,34 +915,6 @@ func getCurrentUserFromToken(ctx context.Context, session *SafeSession) (objectI
 
 // ------------------------- ACCESS TOKEN HELPERS -------------------------
 
-func getAccessTokenForResource(ctx context.Context, resource string) (string, error) {
-	out, err := exec.Command("az", "account", "get-access-token", "--resource", resource, "--query", "accessToken", "-o", "tsv").Output()
-	if err == nil {
-		if t := strings.TrimSpace(string(out)); t != "" {
-			return t, nil
-		}
-	}
-
-	cred, err := GetCredentialSafe(ctx)
-	if err != nil {
-		return "", fmt.Errorf("no credential available: %w", err)
-	}
-
-	var scopes []string
-	if strings.Contains(resource, "graph.microsoft.com") {
-		scopes = []string{"https://graph.microsoft.com/.default"}
-	} else if strings.Contains(resource, "management.azure.com") {
-		scopes = []string{"https://management.azure.com/.default"}
-	} else {
-		scopes = []string{resource + "/.default"}
-	}
-
-	token, err := cred.GetToken(ctx, policy.TokenRequestOptions{Scopes: scopes})
-	if err != nil {
-		return "", fmt.Errorf("failed to get token from credential: %v", err)
-	}
-	return token.Token, nil
-}
 
 func getEnv(key string) string {
 	return os.Getenv(key)
@@ -1197,6 +1092,11 @@ func GetClientID() string {
 
 // GetRoleNameFromDefinitionID resolves a roleDefinitionID into a human-readable role name.
 func GetRoleNameFromDefinitionID(ctx context.Context, session *SafeSession, subscriptionID string, roleDefinitionID string) string {
+	cacheKey := AzCacheKey("role-name", roleDefinitionID)
+	if cached, found := AzureDataCache.Get(cacheKey); found {
+		return cached.(string)
+	}
+
 	token, err := session.GetTokenForResource(globals.CommonScopes[0]) // ARM scope
 	if err != nil {
 		return "Unknown"
@@ -1204,11 +1104,7 @@ func GetRoleNameFromDefinitionID(ctx context.Context, session *SafeSession, subs
 
 	cred := &StaticTokenCredential{Token: token}
 
-	if err != nil {
-		return "Unknown"
-	}
-
-	client, err := armauthorization.NewRoleDefinitionsClient(cred, nil)
+	client, err := armauthorization.NewRoleDefinitionsClient(cred, DefaultARMClientOptions())
 	if err != nil {
 		return "Unknown"
 	}
@@ -1218,146 +1114,92 @@ func GetRoleNameFromDefinitionID(ctx context.Context, session *SafeSession, subs
 
 	def, err := client.Get(ctx, scope, roleDefGUID, nil)
 	if err != nil {
+		if IsThrottlingError(err.Error()) {
+			logger := internal.NewLogger()
+			if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+				logger.ErrorM(fmt.Sprintf("Throttled resolving role %s after retries: %v", roleDefGUID, err), globals.AZ_UTILS_MODULE_NAME)
+			}
+		}
 		return "Unknown"
 	}
 	if def.Properties != nil && def.Properties.RoleName != nil {
-		return *def.Properties.RoleName
+		roleName := *def.Properties.RoleName
+		AzureDataCache.Set(cacheKey, roleName, 0)
+		return roleName
 	}
 	return "Unknown"
 }
 
-func GetUserType(objectID string) string {
+// GetUserType determines whether an Azure AD object is a User, ServicePrincipal,
+// ManagedIdentity, or Group using the Graph API directoryObjects endpoint.
+// Results are cached in AzureDataCache.
+func GetUserType(ctx context.Context, session *SafeSession, objectID string) string {
 	if objectID == "" {
 		return "Unknown"
 	}
-
-	// Use Azure CLI to get object details from Microsoft Graph
-	cmd := exec.Command("az", "ad", "user", "show", "--id", objectID, "--output", "json")
-	out, err := cmd.Output()
-	if err == nil && len(out) > 0 {
-		// Successfully retrieved user
-		return "User"
+	cacheKey := AzCacheKey("user-type", objectID)
+	if cached, found := AzureDataCache.Get(cacheKey); found {
+		return cached.(string)
 	}
 
-	cmd = exec.Command("az", "ad", "sp", "show", "--id", objectID, "--output", "json")
-	out, err = cmd.Output()
-	if err == nil && len(out) > 0 {
-		// Could be ServicePrincipal or ManagedIdentity
-		var obj map[string]interface{}
-		if json.Unmarshal(out, &obj) == nil {
-			if objType, ok := obj["servicePrincipalType"].(string); ok {
-				if objType == "ManagedIdentity" {
-					return "ManagedIdentity"
-				}
-			}
-		}
+	token, err := session.GetTokenForResource("https://graph.microsoft.com/")
+	if err != nil {
+		return "Unknown"
+	}
+	reqURL := fmt.Sprintf("https://graph.microsoft.com/v1.0/directoryObjects/%s?$select=id", objectID)
+	body, err := GraphAPIRequestWithRetry(ctx, "GET", reqURL, token)
+	if err != nil {
+		return "Unknown"
+	}
+	var obj struct {
+		ODataType string `json:"@odata.type"`
+	}
+	if json.Unmarshal(body, &obj) != nil {
+		return "Unknown"
+	}
+	// @odata.type returns "#microsoft.graph.user", "#microsoft.graph.servicePrincipal", etc.
+	result := "Unknown"
+	switch {
+	case strings.Contains(obj.ODataType, "user"):
+		result = "User"
+	case strings.Contains(obj.ODataType, "servicePrincipal"):
+		result = getServicePrincipalSubType(ctx, session, objectID, token)
+	case strings.Contains(obj.ODataType, "group"):
+		result = "Group"
+	}
+	AzureDataCache.Set(cacheKey, result, 0)
+	return result
+}
+
+// getServicePrincipalSubType checks whether a service principal is a ManagedIdentity
+// or a regular ServicePrincipal by querying the servicePrincipalType field.
+func getServicePrincipalSubType(ctx context.Context, session *SafeSession, objectID, token string) string {
+	reqURL := fmt.Sprintf("https://graph.microsoft.com/v1.0/servicePrincipals/%s?$select=servicePrincipalType", objectID)
+	body, err := GraphAPIRequestWithRetry(ctx, "GET", reqURL, token)
+	if err != nil {
 		return "ServicePrincipal"
 	}
-
-	return "Unknown"
+	var sp struct {
+		SPType string `json:"servicePrincipalType"`
+	}
+	if json.Unmarshal(body, &sp) == nil && sp.SPType == "ManagedIdentity" {
+		return "ManagedIdentity"
+	}
+	return "ServicePrincipal"
 }
 
-// IsPIMRole checks if a role assignment is managed via PIM (Privileged Identity Management).
-// Returns "true" if eligible PIM, "false" if not, or "unknown" on error.
-func IsPIMRole(ctx context.Context, session *SafeSession, subscriptionID string, roleAssignment armauthorization.RoleAssignment) string {
-	// Validate role assignment
-	if roleAssignment.Properties == nil || roleAssignment.Properties.PrincipalID == nil {
-		return "unknown"
-	}
 
-	// --------------------
-	// Step 1: ARM token
-	// --------------------
-	armScope := globals.CommonScopes[0] // ARM scope
-	armToken, err := session.GetToken(armScope)
-	if err != nil {
-		return "unknown"
-	}
 
-	// Wrap token for ARM SDK
-	cred := &StaticTokenCredential{Token: armToken}
-	client, err := armauthorization.NewRoleAssignmentsClient(subscriptionID, cred, nil)
-	if err != nil {
-		return "unknown"
-	}
-
-	scope := fmt.Sprintf("/subscriptions/%s", subscriptionID)
-	roleAssignmentName := *roleAssignment.Name
-
-	_, err = client.Get(ctx, scope, roleAssignmentName, nil)
-	if err != nil {
-		return "unknown"
-	}
-
-	// --------------------
-	// Step 2: Graph token
-	// --------------------
-	//	graphScope := globals.CommonScopes[1] // Graph scope
-	//	graphToken, err := session.GetToken(graphScope)
-	//	if err != nil {
-	//		return "unknown"
-	//	}
-
-	principalID := *roleAssignment.Properties.PrincipalID
-	pimAssigned, err := isPrincipalPIM(ctx, session, principalID)
-	if err != nil {
-		return "unknown"
-	}
-
-	if pimAssigned {
-		return "true"
-	}
-	return "false"
-}
-
-// getGraphToken requests an access token for Microsoft Graph API using an existing credential
-func getGraphToken(ctx context.Context, session *SafeSession, tenantID string) (string, error) {
-	token, err := session.GetTokenForResource(globals.CommonScopes[1]) // Graph scope
-	if err != nil {
-		return "", fmt.Errorf("failed to get Graph token for tenant %s: %v", tenantID, err)
-	}
-
-	return token, nil
-}
-
-// isPrincipalPIM queries Microsoft Graph to check if the principal has any eligible/active PIM roles
-func isPrincipalPIM(ctx context.Context, session *SafeSession, principalID string) (bool, error) {
-
-	token, err := session.GetTokenForResource(globals.CommonScopes[1]) // Graph scope
-	if err != nil {
-		return false, fmt.Errorf("failed to get GRAPH token for principal %s: %v", principalID, err)
-	}
-
-	url := fmt.Sprintf("https://graph.microsoft.com/beta/privilegedRoleAssignments?$filter=principalId eq '%s'", principalID)
-
-	body, err := GraphAPIRequestWithRetry(ctx, "GET", url, token)
-	if err != nil {
-		return false, err
-	}
-
-	var data struct {
-		Value []struct {
-			ID     string `json:"id"`
-			Status string `json:"status"` // "Eligible", "Active", etc.
-		} `json:"value"`
-	}
-
-	if err := json.Unmarshal(body, &data); err != nil {
-		return false, err
-	}
-
-	for _, assignment := range data.Value {
-		if assignment.Status == "Eligible" || assignment.Status == "Active" {
-			return true, nil
-		}
-	}
-
-	return false, nil
-}
 
 // ------------------------- SUBSCRIPTION FUNCTIONS -------------------------
 
 func GetSubscriptions(session *SafeSession) []*armsubscriptions.Subscription {
+	// Check in-memory cache first
+	cacheKey := AzCacheKey("subscriptions")
+	if cached, found := AzureDataCache.Get(cacheKey); found {
+		return cached.([]*armsubscriptions.Subscription)
+	}
+
 	logger := internal.NewLogger()
 
 	// Fetch ARM-scoped token
@@ -1369,7 +1211,7 @@ func GetSubscriptions(session *SafeSession) []*armsubscriptions.Subscription {
 
 	// Wrap token in credential for SDK
 	cred := &StaticTokenCredential{Token: token}
-	client, err := armsubscriptions.NewClient(cred, nil)
+	client, err := armsubscriptions.NewClient(cred, DefaultARMClientOptions())
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Failed to create subscriptions client: %v", err), globals.AZ_UTILS_MODULE_NAME)
 		return nil
@@ -1399,6 +1241,8 @@ func GetSubscriptions(session *SafeSession) []*armsubscriptions.Subscription {
 		}
 	}
 
+	// Cache the result before returning
+	AzureDataCache.Set(cacheKey, results, 0)
 	return results
 }
 
@@ -1411,58 +1255,27 @@ func GetSubscriptionByIDOrName(session *SafeSession, input string) *armsubscript
 	return nil
 }
 
-//func GetSubscriptionNameFromID(subscriptionID string) *string {
-//	if sub := GetSubscriptionByIDOrName(subscriptionID); sub != nil {
-//		return sub.DisplayName
-//	}
-//	return nil
-//}
-
-// GetSubscriptionName returns the friendly subscription name with caching.
+// GetSubscriptionNameFromID returns the friendly subscription name using cached data.
 func GetSubscriptionNameFromID(ctx context.Context, session *SafeSession, subscriptionID string) string {
-	// Check cache first (read lock)
-	subscriptionNameCache.RLock()
-	if name, ok := subscriptionNameCache.m[subscriptionID]; ok {
-		subscriptionNameCache.RUnlock()
-		return name
-	}
-	subscriptionNameCache.RUnlock()
-
-	// Not in cache - fetch from Azure
-	token, err := session.GetTokenForResource(globals.CommonScopes[0]) // ARM scope
-	if err != nil {
-		return "Unknown"
+	cacheKey := AzCacheKey("sub-name", subscriptionID)
+	if cached, found := AzureDataCache.Get(cacheKey); found {
+		return cached.(string)
 	}
 
-	cred := &StaticTokenCredential{Token: token}
-	if err != nil {
-		return "Unknown"
+	// Look up from already-cached subscription list
+	for _, s := range GetSubscriptions(session) {
+		if ptr.ToString(s.SubscriptionID) == subscriptionID {
+			name := ptr.ToString(s.DisplayName)
+			if name == "" {
+				name = "Unknown"
+			}
+			AzureDataCache.Set(cacheKey, name, 0)
+			return name
+		}
 	}
 
-	client, err := armsubscriptions.NewClient(cred, nil)
-	if err != nil {
-		return "Unknown"
-	}
-
-	resp, err := client.Get(ctx, subscriptionID, nil)
-	if err != nil {
-		return "Unknown"
-	}
-
-	// Extract name
-	var name string
-	if resp.Subscription.DisplayName != nil {
-		name = *resp.Subscription.DisplayName
-	} else {
-		name = "Unknown"
-	}
-
-	// Cache the result (write lock)
-	subscriptionNameCache.Lock()
-	subscriptionNameCache.m[subscriptionID] = name
-	subscriptionNameCache.Unlock()
-
-	return name
+	AzureDataCache.Set(cacheKey, "Unknown", 0)
+	return "Unknown"
 }
 
 func GetSubscriptionIDFromName(session *SafeSession, subscription string) *string {
@@ -1483,6 +1296,12 @@ func GetSubscriptionsPerTenantID(session *SafeSession, tenantID string) []*armsu
 }
 
 func IsSubscriptionAccessible(session *SafeSession, subscriptionID string) bool {
+	// Check in-memory cache first
+	cacheKey := AzCacheKey("sub-accessible", subscriptionID)
+	if cached, found := AzureDataCache.Get(cacheKey); found {
+		return cached.(bool)
+	}
+
 	logger := internal.NewLogger()
 	ctx := context.Background()
 
@@ -1499,7 +1318,7 @@ func IsSubscriptionAccessible(session *SafeSession, subscriptionID string) bool 
 	cred := &StaticTokenCredential{Token: armToken}
 
 	// Create subscriptions client
-	client, err := armsubscriptions.NewClient(cred, nil)
+	client, err := armsubscriptions.NewClient(cred, DefaultARMClientOptions())
 	if err != nil {
 		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 			logger.ErrorM(fmt.Sprintf("Failed to create subscriptions client: %v", err), globals.AZ_UTILS_MODULE_NAME)
@@ -1513,9 +1332,11 @@ func IsSubscriptionAccessible(session *SafeSession, subscriptionID string) bool 
 		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 			logger.ErrorM(fmt.Sprintf("Subscription %s inaccessible: %v", subscriptionID, err), globals.AZ_UTILS_MODULE_NAME)
 		}
+		AzureDataCache.Set(cacheKey, false, 0)
 		return false
 	}
 
+	AzureDataCache.Set(cacheKey, true, 0)
 	return true
 }
 
@@ -1548,6 +1369,12 @@ func PopulateTenant(session *SafeSession, tenantID string) TenantInfo {
 // ------------------------- RESOURCE GROUP FUNCTIONS -------------------------
 
 func GetResourceGroupsPerSubscription(session *SafeSession, subscriptionID string) []*armresources.ResourceGroup {
+	// Check in-memory cache first
+	cacheKey := AzCacheKey("resource-groups", subscriptionID)
+	if cached, found := AzureDataCache.Get(cacheKey); found {
+		return cached.([]*armresources.ResourceGroup)
+	}
+
 	logger := internal.NewLogger()
 	ctx := context.Background()
 
@@ -1564,7 +1391,7 @@ func GetResourceGroupsPerSubscription(session *SafeSession, subscriptionID strin
 	cred := &StaticTokenCredential{Token: armToken}
 
 	// Create ResourceGroups client
-	client, err := armresources.NewResourceGroupsClient(subscriptionID, cred, nil)
+	client, err := armresources.NewResourceGroupsClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 			logger.ErrorM(fmt.Sprintf("Failed to create ResourceGroups client: %v", err), globals.AZ_UTILS_MODULE_NAME)
@@ -1586,6 +1413,8 @@ func GetResourceGroupsPerSubscription(session *SafeSession, subscriptionID strin
 		groups = append(groups, page.Value...)
 	}
 
+	// Cache the result before returning
+	AzureDataCache.Set(cacheKey, groups, 0)
 	return groups
 }
 
@@ -1629,6 +1458,12 @@ func GetResourceTypeFromID(resourceID string) string {
 // ------------------------- TENANT SDK -------------------------
 
 func GetTenants(ctx context.Context, session *SafeSession) []*armsubscriptions.TenantIDDescription {
+	// Check in-memory cache first
+	cacheKey := AzCacheKey("tenants")
+	if cached, found := AzureDataCache.Get(cacheKey); found {
+		return cached.([]*armsubscriptions.TenantIDDescription)
+	}
+
 	logger := internal.NewLogger()
 	var tenants []*armsubscriptions.TenantIDDescription
 
@@ -1643,7 +1478,7 @@ func GetTenants(ctx context.Context, session *SafeSession) []*armsubscriptions.T
 	cred := &StaticTokenCredential{Token: token}
 
 	// Create modern ARM TenantsClient
-	client, err := armsubscriptions.NewTenantsClient(cred, nil)
+	client, err := armsubscriptions.NewTenantsClient(cred, DefaultARMClientOptions())
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("failed to create TenantsClient: %v", err), globals.AZ_UTILS_MODULE_NAME)
 		return tenants
@@ -1671,15 +1506,22 @@ func GetTenants(ctx context.Context, session *SafeSession) []*armsubscriptions.T
 		}
 	}
 
+	// Cache the result before returning
+	AzureDataCache.Set(cacheKey, tenants, 0)
 	return tenants
 }
 
 // ------------------------- ROLE FUNCTIONS -------------------------
 
 // GetRoleAssignmentsForPrincipal returns a list of role names assigned to a principal in the given subscription.
-// principalID: the Object ID of the system/user-assigned managed identity
-// subscriptionID: the Azure subscription ID
+// Results are cached per (principalID, subscriptionID) pair. Role name resolution uses the
+// cached GetRoleNameFromDefinitionID helper instead of creating a separate RoleDefinitionsClient.
 func GetRoleAssignmentsForPrincipal(ctx context.Context, session *SafeSession, principalID string, subscriptionID string) ([]string, error) {
+	cacheKey := AzCacheKey("role-assignments", principalID, subscriptionID)
+	if cached, found := AzureDataCache.Get(cacheKey); found {
+		return cached.([]string), nil
+	}
+
 	logger := internal.NewLogger()
 
 	// Fetch ARM token from SafeSession
@@ -1689,24 +1531,15 @@ func GetRoleAssignmentsForPrincipal(ctx context.Context, session *SafeSession, p
 		return nil, fmt.Errorf("failed to get ARM token: %v", err)
 	}
 
-	// Wrap token in StaticTokenCredential
 	cred := &StaticTokenCredential{Token: armToken}
 
-	// Create RoleAssignments client
-	assignmentsClient, err := armauthorization.NewRoleAssignmentsClient(subscriptionID, cred, nil)
+	assignmentsClient, err := armauthorization.NewRoleAssignmentsClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create RoleAssignments client: %v", err)
 	}
 
-	// Create RoleDefinitions client
-	defsClient, err := armauthorization.NewRoleDefinitionsClient(cred, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create RoleDefinitions client: %v", err)
-	}
-
 	var roles []string
 
-	// List role assignments for the principal
 	pager := assignmentsClient.NewListForScopePager(
 		fmt.Sprintf("/subscriptions/%s", subscriptionID),
 		&armauthorization.RoleAssignmentsClientListForScopeOptions{
@@ -1727,40 +1560,16 @@ func GetRoleAssignmentsForPrincipal(ctx context.Context, session *SafeSession, p
 			}
 
 			roleDefID := *ra.Properties.RoleDefinitionID
-			parts := strings.Split(roleDefID, "/")
-			if len(parts) == 0 {
-				continue
-			}
+			roleDefGUID := ParseRoleDefinitionID(roleDefID)
 
-			roleDefGUID := parts[len(parts)-1]
-
-			// Try to get the friendly role name
-			var displayName string
-			scopes := []string{
-				fmt.Sprintf("/subscriptions/%s", subscriptionID),
-				"/", // fallback to tenant root
-			}
-
-			for _, scope := range scopes {
-				rdResp, err := defsClient.Get(ctx, scope, roleDefGUID, nil)
-				if err != nil {
-					continue
-				}
-
-				if rdResp.RoleDefinition.Properties != nil && rdResp.RoleDefinition.Properties.RoleName != nil {
-					displayName = fmt.Sprintf("%s (%s)", roleDefGUID, *rdResp.RoleDefinition.Properties.RoleName)
-					break
-				}
-			}
-
-			if displayName == "" {
-				displayName = roleDefGUID
-			}
-
+			// Use cached role name lookup instead of creating a separate RoleDefinitionsClient
+			roleName := GetRoleNameFromDefinitionID(ctx, session, subscriptionID, roleDefID)
+			displayName := fmt.Sprintf("%s (%s)", roleDefGUID, roleName)
 			roles = append(roles, displayName)
 		}
 	}
 
+	AzureDataCache.Set(cacheKey, roles, 0)
 	return roles, nil
 }
 
@@ -1782,7 +1591,7 @@ func ListRoleAssignments(ctx context.Context, session *SafeSession, subscription
 
 	cred := &StaticTokenCredential{Token: token}
 
-	client, err := armauthorization.NewRoleAssignmentsClient(subscriptionID, cred, nil)
+	client, err := armauthorization.NewRoleAssignmentsClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create role assignments client: %w", err)
 	}
@@ -1806,28 +1615,3 @@ func ListRoleAssignments(ctx context.Context, session *SafeSession, subscription
 	return results, nil
 }
 
-// GetRoleDefinitionName returns the friendly role name for a role definition ID.
-func GetRoleDefinitionName(ctx context.Context, session *SafeSession, subscriptionID, roleDefinitionID string) string {
-	token, err := session.GetTokenForResource(globals.CommonScopes[0]) // ARM scope
-	if err != nil {
-		return "Unknown"
-	}
-
-	cred := &StaticTokenCredential{Token: token}
-
-	client, err := armauthorization.NewRoleDefinitionsClient(cred, nil)
-	if err != nil {
-		return "Unknown"
-	}
-	roleDefGUID := ParseRoleDefinitionID(roleDefinitionID)
-	scope := fmt.Sprintf("/subscriptions/%s", subscriptionID)
-	resp, err := client.Get(ctx, scope, roleDefGUID, nil)
-	if err != nil {
-		return "Unknown"
-	}
-
-	if resp.Properties != nil && resp.Properties.RoleName != nil {
-		return *resp.Properties.RoleName
-	}
-	return "Unknown"
-}

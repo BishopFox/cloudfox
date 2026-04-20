@@ -36,7 +36,7 @@ func GetDisksForSubscription(ctx context.Context, session *SafeSession, subscrip
 	subName := GetSubscriptionNameFromID(ctx, session, subscriptionID)
 
 	// Create disks client
-	disksClient, err := armcompute.NewDisksClient(subscriptionID, cred, nil)
+	disksClient, err := armcompute.NewDisksClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create disks client: %w", err)
 	}

@@ -60,7 +60,6 @@ func ListFederatedCredentials(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	// Test Graph API access
 	if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
@@ -417,14 +416,9 @@ func (m *FederatedCredentialsModule) getRolesForSubscription(ctx context.Context
 	for _, assignment := range data.Value {
 		if props, ok := assignment["properties"].(map[string]interface{}); ok {
 			if roleDefID, ok := props["roleDefinitionId"].(string); ok {
-				// Extract role name from ID (last segment)
-				parts := strings.Split(roleDefID, "/")
-				if len(parts) > 0 {
-					roleID := parts[len(parts)-1]
-					roleName := m.getRoleName(ctx, subscriptionID, roleID)
-					if roleName != "" {
-						roles = append(roles, roleName)
-					}
+				roleName := azinternal.GetRoleNameFromDefinitionID(ctx, m.Session, subscriptionID, roleDefID)
+				if roleName != "" {
+					roles = append(roles, roleName)
 				}
 			}
 		}
@@ -433,51 +427,6 @@ func (m *FederatedCredentialsModule) getRolesForSubscription(ctx context.Context
 	return roles
 }
 
-// getRoleName resolves a role definition ID to a role name
-func (m *FederatedCredentialsModule) getRoleName(ctx context.Context, subscriptionID, roleID string) string {
-	token, err := m.Session.GetTokenForResource(globals.CommonScopes[0])
-	if err != nil || token == "" {
-		return roleID
-	}
-
-	url := fmt.Sprintf("https://management.azure.com/subscriptions/%s/providers/Microsoft.Authorization/roleDefinitions/%s?api-version=2022-04-01",
-		subscriptionID, roleID)
-
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return roleID
-	}
-
-	req.Header.Set("Authorization", "Bearer "+token)
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return roleID
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return roleID
-	}
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return roleID
-	}
-
-	var data map[string]interface{}
-	if err := json.Unmarshal(bodyBytes, &data); err != nil {
-		return roleID
-	}
-
-	if props, ok := data["properties"].(map[string]interface{}); ok {
-		if roleName, ok := props["roleName"].(string); ok {
-			return roleName
-		}
-	}
-
-	return roleID
-}
 
 // enumerateDevOpsServiceConnections fetches Azure DevOps service connections
 func (m *FederatedCredentialsModule) enumerateDevOpsServiceConnections(org, pat string) []ServiceConnection {

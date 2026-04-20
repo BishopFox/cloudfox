@@ -37,7 +37,7 @@ func GetLogicAppsForResourceGroup(ctx context.Context, session *SafeSession, sub
 	cred := &StaticTokenCredential{Token: token}
 
 	// Create Logic Apps client
-	logicClient, err := armlogic.NewWorkflowsClient(subscriptionID, cred, nil)
+	logicClient, err := armlogic.NewWorkflowsClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create logic apps client: %w", err)
 	}

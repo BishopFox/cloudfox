@@ -69,7 +69,6 @@ func ListLoadBalancers(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	module := &LoadBalancersModule{
 		BaseAzureModule:  azinternal.NewBaseAzureModule(cmdCtx, 5),

@@ -60,7 +60,6 @@ func ListWebApps(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return // error already logged by helper
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	// -------------------- Initialize module --------------------
 	module := &WebAppsModule{
@@ -164,7 +163,7 @@ func (m *WebAppsModule) processResourceGroup(ctx context.Context, subID, rgName 
 	webApps, err := azinternal.GetWebAppsPerResourceGroup(m.Session, subID, rgName)
 	if err != nil || len(webApps) == 0 {
 		// If we can't get webApps, still process with empty auth map
-		webAppsData := azinternal.GetWebAppsPerRGWithAuth(ctx, subID, m.LootMap, rgName, make(map[string]bool), m.TenantName, m.TenantID)
+		webAppsData := azinternal.GetWebAppsPerRGWithAuth(ctx, m.Session, subID, m.LootMap, rgName, make(map[string]bool), m.TenantName, m.TenantID)
 		m.mu.Lock()
 		m.WebAppRows = append(m.WebAppRows, webAppsData...)
 		m.mu.Unlock()
@@ -181,7 +180,7 @@ func (m *WebAppsModule) processResourceGroup(ctx context.Context, subID, rgName 
 	}
 
 	// Use existing helper function - returns [][]string rows directly
-	webAppsData := azinternal.GetWebAppsPerRGWithAuth(ctx, subID, m.LootMap, rgName, authEnabledApps, m.TenantName, m.TenantID)
+	webAppsData := azinternal.GetWebAppsPerRGWithAuth(ctx, m.Session, subID, m.LootMap, rgName, authEnabledApps, m.TenantName, m.TenantID)
 
 	// Thread-safe append
 	m.mu.Lock()

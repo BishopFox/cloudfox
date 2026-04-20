@@ -43,7 +43,7 @@ func GetUserAssignedIdentities(session *SafeSession, subscriptionID string) ([]U
 	cred := &StaticTokenCredential{Token: token}
 	ctx := context.Background()
 
-	client, err := armmsi.NewUserAssignedIdentitiesClient(subscriptionID, cred, nil)
+	client, err := armmsi.NewUserAssignedIdentitiesClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, err
 	}

@@ -86,7 +86,7 @@ func GetMLWorkspaces(session *SafeSession, subID string, resourceGroups []string
 	cred := &StaticTokenCredential{Token: token}
 	ctx := context.Background()
 
-	client, err := armmachinelearning.NewWorkspacesClient(subID, cred, nil)
+	client, err := armmachinelearning.NewWorkspacesClient(subID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, err
 	}
@@ -329,7 +329,7 @@ func GetMLComputeInstances(session *SafeSession, subID, rgName, workspaceName st
 	cred := &StaticTokenCredential{Token: token}
 	ctx := context.Background()
 
-	client, err := armmachinelearning.NewComputeClient(subID, cred, nil)
+	client, err := armmachinelearning.NewComputeClient(subID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil
 	}

@@ -121,7 +121,6 @@ func ListPermissions(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	// Parse permissions-specific flags
 	tenantLevel, _ := cmd.Flags().GetBool("tenant-level")
@@ -263,7 +262,7 @@ func (m *PermissionsModule) collectRoleDefinitions(ctx context.Context, subID st
 	cred := &azinternal.StaticTokenCredential{Token: token}
 
 	// Create authorization client factory
-	clientFactory, err := armauthorization.NewClientFactory(subID, cred, nil)
+	clientFactory, err := armauthorization.NewClientFactory(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Failed to create authorization client factory: %v", err), globals.AZ_PERMISSIONS_MODULE_NAME)
 		m.CommandCounter.Error++
@@ -337,7 +336,7 @@ func (m *PermissionsModule) processSubscriptionForOrphanedScan(ctx context.Conte
 	}
 
 	cred := &azinternal.StaticTokenCredential{Token: token}
-	clientFactory, err := armauthorization.NewClientFactory(subID, cred, nil)
+	clientFactory, err := armauthorization.NewClientFactory(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return
 	}
@@ -793,7 +792,7 @@ func (m *PermissionsModule) processSubscriptionForPrincipalPermissions(ctx conte
 	}
 
 	cred := &azinternal.StaticTokenCredential{Token: token}
-	clientFactory, err := armauthorization.NewClientFactory(subID, cred, nil)
+	clientFactory, err := armauthorization.NewClientFactory(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Failed to create client factory for subscription %s: %v", subID, err), globals.AZ_PERMISSIONS_MODULE_NAME)
 		m.CommandCounter.Error++
@@ -852,7 +851,7 @@ func (m *PermissionsModule) buildScopesForSubscription(ctx context.Context, subI
 
 	// 4. Resource group level (if enabled)
 	if m.RGLevel {
-		rgClient, err := armresources.NewResourceGroupsClient(subID, cred, nil)
+		rgClient, err := armresources.NewResourceGroupsClient(subID, cred, azinternal.DefaultARMClientOptions())
 		if err == nil {
 			pager := rgClient.NewListPager(nil)
 			for pager.More() {

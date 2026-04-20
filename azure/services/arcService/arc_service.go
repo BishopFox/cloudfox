@@ -86,7 +86,7 @@ func (s *ArcService) ListMachines(ctx context.Context, subID string) ([]*armhybr
 		return nil, err
 	}
 
-	client, err := armhybridcompute.NewMachinesClient(subID, cred, nil)
+	client, err := armhybridcompute.NewMachinesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create machines client: %w", err)
 	}
@@ -112,7 +112,7 @@ func (s *ArcService) ListMachinesByResourceGroup(ctx context.Context, subID, rgN
 		return nil, err
 	}
 
-	client, err := armhybridcompute.NewMachinesClient(subID, cred, nil)
+	client, err := armhybridcompute.NewMachinesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create machines client: %w", err)
 	}
@@ -138,7 +138,7 @@ func (s *ArcService) GetMachine(ctx context.Context, subID, rgName, machineName 
 		return nil, err
 	}
 
-	client, err := armhybridcompute.NewMachinesClient(subID, cred, nil)
+	client, err := armhybridcompute.NewMachinesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create machines client: %w", err)
 	}
@@ -158,7 +158,7 @@ func (s *ArcService) ListExtensions(ctx context.Context, subID, rgName, machineN
 		return nil, err
 	}
 
-	client, err := armhybridcompute.NewMachineExtensionsClient(subID, cred, nil)
+	client, err := armhybridcompute.NewMachineExtensionsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create extensions client: %w", err)
 	}

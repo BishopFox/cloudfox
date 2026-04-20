@@ -214,7 +214,7 @@ func (m *SentinelModule) checkSentinelEnabled(ctx context.Context, subID, rgName
 	}
 
 	cred := azinternal.NewStaticTokenCredential(token)
-	client, err := armsecurityinsights.NewSentinelOnboardingStatesClient(subID, cred, nil)
+	client, err := armsecurityinsights.NewSentinelOnboardingStatesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
 			logger.InfoM(fmt.Sprintf("Failed to create Sentinel client for %s/%s: %v", rgName, wsName, err), globals.AZ_SENTINEL_MODULE_NAME)
@@ -242,7 +242,7 @@ func (m *SentinelModule) processAnalyticsRules(ctx context.Context, subID, subNa
 	}
 
 	cred := azinternal.NewStaticTokenCredential(token)
-	client, err := armsecurityinsights.NewAlertRulesClient(subID, cred, nil)
+	client, err := armsecurityinsights.NewAlertRulesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
 			logger.InfoM(fmt.Sprintf("Failed to create Analytics Rules client for %s/%s: %v", rgName, wsName, err), globals.AZ_SENTINEL_MODULE_NAME)
@@ -395,7 +395,7 @@ func (m *SentinelModule) processAutomationRules(ctx context.Context, subID, subN
 	}
 
 	cred := azinternal.NewStaticTokenCredential(token)
-	client, err := armsecurityinsights.NewAutomationRulesClient(subID, cred, nil)
+	client, err := armsecurityinsights.NewAutomationRulesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
 			logger.InfoM(fmt.Sprintf("Failed to create Automation Rules client for %s/%s: %v", rgName, wsName, err), globals.AZ_SENTINEL_MODULE_NAME)
@@ -495,7 +495,7 @@ func (m *SentinelModule) processDataConnectors(ctx context.Context, subID, subNa
 	}
 
 	cred := azinternal.NewStaticTokenCredential(token)
-	client, err := armsecurityinsights.NewDataConnectorsClient(subID, cred, nil)
+	client, err := armsecurityinsights.NewDataConnectorsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
 			logger.InfoM(fmt.Sprintf("Failed to create Data Connectors client for %s/%s: %v", rgName, wsName, err), globals.AZ_SENTINEL_MODULE_NAME)
@@ -699,7 +699,7 @@ func (m *SentinelModule) processIncidents(ctx context.Context, subID, subName, r
 	}
 
 	cred := azinternal.NewStaticTokenCredential(token)
-	client, err := armsecurityinsights.NewIncidentsClient(subID, cred, nil)
+	client, err := armsecurityinsights.NewIncidentsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
 			logger.InfoM(fmt.Sprintf("Failed to create Incidents client for %s/%s: %v", rgName, wsName, err), globals.AZ_SENTINEL_MODULE_NAME)
@@ -1107,7 +1107,6 @@ Security Focus:
 		if err != nil {
 			return // error already logged by helper
 		}
-		defer cmdCtx.Session.StopMonitoring()
 
 		// Initialize module
 		m := &SentinelModule{

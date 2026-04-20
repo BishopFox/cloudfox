@@ -68,7 +68,6 @@ func ListDataExfiltration(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	module := &DataExfiltrationModule{
 		BaseAzureModule:  azinternal.NewBaseAzureModule(cmdCtx, 10),
@@ -133,7 +132,7 @@ func (m *DataExfiltrationModule) processSubscription(ctx context.Context, subID 
 // ------------------------------
 func (m *DataExfiltrationModule) processSnapshots(ctx context.Context, subID, subName string, cred *azinternal.StaticTokenCredential, logger internal.Logger) {
 	// Create snapshots client
-	snapshotClient, err := armcompute.NewSnapshotsClient(subID, cred, nil)
+	snapshotClient, err := armcompute.NewSnapshotsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Failed to create snapshots client: %v", err), globals.AZ_DATA_EXFILTRATION_MODULE_NAME)
 		m.CommandCounter.Error++
@@ -317,7 +316,7 @@ func (m *DataExfiltrationModule) processStorageAccountsInRG(ctx context.Context,
 	// Get region using helper function
 	region := azinternal.GetResourceGroupLocation(m.Session, subID, rgName)
 
-	storageClient, err := armstorage.NewAccountsClient(subID, cred, nil)
+	storageClient, err := armstorage.NewAccountsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		logger.ErrorM(fmt.Sprintf("Failed to create storage client: %v", err), globals.AZ_DATA_EXFILTRATION_MODULE_NAME)
 		m.CommandCounter.Error++

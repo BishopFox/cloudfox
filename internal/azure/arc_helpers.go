@@ -43,7 +43,7 @@ func GetArcMachines(session *SafeSession, subscriptionID string, resourceGroups 
 	cred := &StaticTokenCredential{Token: token}
 	ctx := context.Background()
 
-	client, err := armhybridcompute.NewMachinesClient(subscriptionID, cred, nil)
+	client, err := armhybridcompute.NewMachinesClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, err
 	}

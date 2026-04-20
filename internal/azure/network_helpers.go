@@ -56,7 +56,7 @@ func GetVMNetworkInterfaces(session *SafeSession, subscriptionID, vmName, resour
 	cred := &StaticTokenCredential{Token: token}
 
 	// Create network client
-	nicClient, err := armnetwork.NewInterfacesClient(subscriptionID, cred, nil)
+	nicClient, err := armnetwork.NewInterfacesClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return []*armnetwork.Interface{}
 	}

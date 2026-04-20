@@ -175,15 +175,33 @@ func (m *DevOpsPipelinesModule) PrintDevOpsPipelines(logger internal.Logger) {
 		return
 	}
 
-	// Process projects concurrently
+	// Process projects concurrently with progress spinner
 	var wg sync.WaitGroup
+	semaphore := make(chan struct{}, m.Goroutines)
+	spinnerDone := make(chan bool)
+	go internal.SpinUntil(globals.AZ_DEVOPS_PIPELINES_MODULE_NAME, &m.CommandCounter, spinnerDone, "projects")
+
 	for _, proj := range projects {
 		m.CommandCounter.Total++
+		m.CommandCounter.Pending++
 		wg.Add(1)
-		go m.processProject(proj, &wg, logger)
+		go func(p map[string]interface{}) {
+			defer func() {
+				m.CommandCounter.Executing--
+				m.CommandCounter.Complete++
+				wg.Done()
+			}()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+			m.CommandCounter.Pending--
+			m.CommandCounter.Executing++
+			m.processProject(p, logger)
+		}(proj)
 	}
 
 	wg.Wait()
+	spinnerDone <- true
+	<-spinnerDone
 
 	// Generate and write output
 	m.writeOutput(logger)
@@ -192,9 +210,7 @@ func (m *DevOpsPipelinesModule) PrintDevOpsPipelines(logger internal.Logger) {
 // ------------------------------
 // Process single project
 // ------------------------------
-func (m *DevOpsPipelinesModule) processProject(proj map[string]interface{}, wg *sync.WaitGroup, logger internal.Logger) {
-	defer wg.Done()
-
+func (m *DevOpsPipelinesModule) processProject(proj map[string]interface{}, logger internal.Logger) {
 	projName := proj["name"].(string)
 	projID := proj["id"].(string)
 
@@ -233,7 +249,10 @@ func (m *DevOpsPipelinesModule) processProject(proj map[string]interface{}, wg *
 	var pipelineWg sync.WaitGroup
 	for _, pl := range pipelines {
 		pipelineWg.Add(1)
-		go m.processPipeline(projID, projName, pl, &pipelineWg, logger)
+		go func(p map[string]interface{}) {
+			defer pipelineWg.Done()
+			m.processPipeline(projID, projName, p, logger)
+		}(pl)
 	}
 
 	pipelineWg.Wait()
@@ -242,9 +261,7 @@ func (m *DevOpsPipelinesModule) processProject(proj map[string]interface{}, wg *
 // ------------------------------
 // Process single pipeline
 // ------------------------------
-func (m *DevOpsPipelinesModule) processPipeline(projID, projName string, pl map[string]interface{}, wg *sync.WaitGroup, logger internal.Logger) {
-	defer wg.Done()
-
+func (m *DevOpsPipelinesModule) processPipeline(projID, projName string, pl map[string]interface{}, logger internal.Logger) {
 	pipeID := int(pl["id"].(float64))
 	pipeName := pl["name"].(string)
 	repo := ""

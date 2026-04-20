@@ -31,7 +31,7 @@ func GetVPNGatewaysPerResourceGroup(
 
 	cred := &StaticTokenCredential{Token: token}
 
-	client, err := armnetwork.NewVirtualNetworkGatewaysClient(subscriptionID, cred, nil)
+	client, err := armnetwork.NewVirtualNetworkGatewaysClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +91,7 @@ func GetVPNGatewayIPs(ctx context.Context, session *SafeSession, subscriptionID 
 		return infos
 	}
 
-	publicIPClient, err := armnetwork.NewPublicIPAddressesClient(subscriptionID, cred, nil)
+	publicIPClient, err := armnetwork.NewPublicIPAddressesClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return infos
 	}

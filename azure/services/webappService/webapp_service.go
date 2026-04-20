@@ -95,7 +95,7 @@ func (s *WebAppService) ListWebApps(ctx context.Context, subID string) ([]*armap
 		return nil, err
 	}
 
-	client, err := armappservice.NewWebAppsClient(subID, cred, nil)
+	client, err := armappservice.NewWebAppsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create web apps client: %w", err)
 	}
@@ -126,7 +126,7 @@ func (s *WebAppService) ListWebAppsByResourceGroup(ctx context.Context, subID, r
 		return nil, err
 	}
 
-	client, err := armappservice.NewWebAppsClient(subID, cred, nil)
+	client, err := armappservice.NewWebAppsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create web apps client: %w", err)
 	}
@@ -156,7 +156,7 @@ func (s *WebAppService) GetWebApp(ctx context.Context, subID, rgName, appName st
 		return nil, err
 	}
 
-	client, err := armappservice.NewWebAppsClient(subID, cred, nil)
+	client, err := armappservice.NewWebAppsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create web apps client: %w", err)
 	}
@@ -176,7 +176,7 @@ func (s *WebAppService) GetAppSettings(ctx context.Context, subID, rgName, appNa
 		return nil, err
 	}
 
-	client, err := armappservice.NewWebAppsClient(subID, cred, nil)
+	client, err := armappservice.NewWebAppsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create web apps client: %w", err)
 	}
@@ -205,7 +205,7 @@ func (s *WebAppService) GetConnectionStrings(ctx context.Context, subID, rgName,
 		return nil, err
 	}
 
-	client, err := armappservice.NewWebAppsClient(subID, cred, nil)
+	client, err := armappservice.NewWebAppsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create web apps client: %w", err)
 	}
@@ -234,7 +234,7 @@ func (s *WebAppService) ListAppServicePlans(ctx context.Context, subID string) (
 		return nil, err
 	}
 
-	client, err := armappservice.NewPlansClient(subID, cred, nil)
+	client, err := armappservice.NewPlansClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create plans client: %w", err)
 	}
@@ -260,7 +260,7 @@ func (s *WebAppService) ListDeploymentSlots(ctx context.Context, subID, rgName, 
 		return nil, err
 	}
 
-	client, err := armappservice.NewWebAppsClient(subID, cred, nil)
+	client, err := armappservice.NewWebAppsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create web apps client: %w", err)
 	}

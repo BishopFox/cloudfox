@@ -60,7 +60,6 @@ func ListFirewall(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	module := &FirewallModule{
 		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
@@ -377,7 +376,7 @@ func (m *FirewallModule) getFirewallPolicy(ctx context.Context, subID, rgName, p
 	}
 
 	cred := &azinternal.StaticTokenCredential{Token: token}
-	policyClient, err := armnetwork.NewFirewallPoliciesClient(subID, cred, nil)
+	policyClient, err := armnetwork.NewFirewallPoliciesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, err
 	}

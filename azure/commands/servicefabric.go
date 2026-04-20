@@ -59,7 +59,6 @@ func ListServiceFabric(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	module := &ServiceFabricModule{
 		BaseAzureModule:   azinternal.NewBaseAzureModule(cmdCtx, 5),

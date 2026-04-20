@@ -89,7 +89,7 @@ func (s *DNSService) ListZones(ctx context.Context, subID string) ([]*armdns.Zon
 		return nil, err
 	}
 
-	client, err := armdns.NewZonesClient(subID, cred, nil)
+	client, err := armdns.NewZonesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create DNS zones client: %w", err)
 	}
@@ -115,7 +115,7 @@ func (s *DNSService) ListZonesByResourceGroup(ctx context.Context, subID, rgName
 		return nil, err
 	}
 
-	client, err := armdns.NewZonesClient(subID, cred, nil)
+	client, err := armdns.NewZonesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create DNS zones client: %w", err)
 	}
@@ -141,7 +141,7 @@ func (s *DNSService) ListRecordSets(ctx context.Context, subID, rgName, zoneName
 		return nil, err
 	}
 
-	client, err := armdns.NewRecordSetsClient(subID, cred, nil)
+	client, err := armdns.NewRecordSetsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create record sets client: %w", err)
 	}
@@ -167,7 +167,7 @@ func (s *DNSService) ListPrivateZones(ctx context.Context, subID string) ([]*arm
 		return nil, err
 	}
 
-	client, err := armprivatedns.NewPrivateZonesClient(subID, cred, nil)
+	client, err := armprivatedns.NewPrivateZonesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create private DNS zones client: %w", err)
 	}
@@ -193,7 +193,7 @@ func (s *DNSService) ListPrivateZonesByResourceGroup(ctx context.Context, subID,
 		return nil, err
 	}
 
-	client, err := armprivatedns.NewPrivateZonesClient(subID, cred, nil)
+	client, err := armprivatedns.NewPrivateZonesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create private DNS zones client: %w", err)
 	}
@@ -219,7 +219,7 @@ func (s *DNSService) ListVirtualNetworkLinks(ctx context.Context, subID, rgName,
 		return nil, err
 	}
 
-	client, err := armprivatedns.NewVirtualNetworkLinksClient(subID, cred, nil)
+	client, err := armprivatedns.NewVirtualNetworkLinksClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create VNet links client: %w", err)
 	}

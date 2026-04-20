@@ -38,7 +38,7 @@ func GetCustomPolicyDefinitions(ctx context.Context, session *SafeSession, subsc
 	cred := &StaticTokenCredential{Token: token}
 
 	// Create policy definitions client
-	policyClient, err := armpolicy.NewDefinitionsClient(subscriptionID, cred, nil)
+	policyClient, err := armpolicy.NewDefinitionsClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create policy definitions client: %w", err)
 	}
@@ -122,7 +122,7 @@ func GetPolicyAssignments(ctx context.Context, session *SafeSession, subscriptio
 	cred := &StaticTokenCredential{Token: token}
 
 	// Create policy assignments client
-	assignmentClient, err := armpolicy.NewAssignmentsClient(subscriptionID, cred, nil)
+	assignmentClient, err := armpolicy.NewAssignmentsClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create policy assignments client: %w", err)
 	}

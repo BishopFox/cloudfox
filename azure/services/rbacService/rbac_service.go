@@ -92,7 +92,7 @@ func (s *RBACService) ListRoleAssignments(ctx context.Context, scope string) ([]
 		return nil, err
 	}
 
-	client, err := armauthorization.NewRoleAssignmentsClient("", cred, nil)
+	client, err := armauthorization.NewRoleAssignmentsClient("", cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create role assignments client: %w", err)
 	}
@@ -118,7 +118,7 @@ func (s *RBACService) ListRoleAssignmentsForSubscription(ctx context.Context, su
 		return nil, err
 	}
 
-	client, err := armauthorization.NewRoleAssignmentsClient(subID, cred, nil)
+	client, err := armauthorization.NewRoleAssignmentsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create role assignments client: %w", err)
 	}
@@ -144,7 +144,7 @@ func (s *RBACService) GetRoleAssignment(ctx context.Context, scope, roleAssignme
 		return nil, err
 	}
 
-	client, err := armauthorization.NewRoleAssignmentsClient("", cred, nil)
+	client, err := armauthorization.NewRoleAssignmentsClient("", cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create role assignments client: %w", err)
 	}
@@ -164,7 +164,7 @@ func (s *RBACService) ListRoleDefinitions(ctx context.Context, scope string) ([]
 		return nil, err
 	}
 
-	client, err := armauthorization.NewRoleDefinitionsClient(cred, nil)
+	client, err := armauthorization.NewRoleDefinitionsClient(cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create role definitions client: %w", err)
 	}
@@ -190,7 +190,7 @@ func (s *RBACService) GetRoleDefinition(ctx context.Context, scope, roleDefiniti
 		return nil, err
 	}
 
-	client, err := armauthorization.NewRoleDefinitionsClient(cred, nil)
+	client, err := armauthorization.NewRoleDefinitionsClient(cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create role definitions client: %w", err)
 	}
@@ -210,7 +210,7 @@ func (s *RBACService) ListEligibleRoleAssignments(ctx context.Context, scope str
 		return nil, err
 	}
 
-	client, err := armauthorization.NewRoleEligibilityScheduleInstancesClient(cred, nil)
+	client, err := armauthorization.NewRoleEligibilityScheduleInstancesClient(cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create eligible role assignments client: %w", err)
 	}

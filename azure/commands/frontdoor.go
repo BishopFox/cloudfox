@@ -73,7 +73,6 @@ func ListFrontDoor(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return // error already logged by helper
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	// -------------------- Initialize module --------------------
 	module := &FrontDoorModule{
@@ -168,7 +167,7 @@ func (m *FrontDoorModule) processResourceGroup(ctx context.Context, subID, subNa
 	}
 
 	cred := &azinternal.StaticTokenCredential{Token: token}
-	frontDoorClient, err := armfrontdoor.NewFrontDoorsClient(subID, cred, nil)
+	frontDoorClient, err := armfrontdoor.NewFrontDoorsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return
 	}

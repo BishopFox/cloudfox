@@ -130,7 +130,7 @@ func (s *NetworkService) ListVirtualNetworks(ctx context.Context, subID string) 
 		return nil, err
 	}
 
-	client, err := armnetwork.NewVirtualNetworksClient(subID, cred, nil)
+	client, err := armnetwork.NewVirtualNetworksClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create VNet client: %w", err)
 	}
@@ -156,7 +156,7 @@ func (s *NetworkService) ListVirtualNetworksByResourceGroup(ctx context.Context,
 		return nil, err
 	}
 
-	client, err := armnetwork.NewVirtualNetworksClient(subID, cred, nil)
+	client, err := armnetwork.NewVirtualNetworksClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create VNet client: %w", err)
 	}
@@ -182,7 +182,7 @@ func (s *NetworkService) ListNSGs(ctx context.Context, subID string) ([]*armnetw
 		return nil, err
 	}
 
-	client, err := armnetwork.NewSecurityGroupsClient(subID, cred, nil)
+	client, err := armnetwork.NewSecurityGroupsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create NSG client: %w", err)
 	}
@@ -208,7 +208,7 @@ func (s *NetworkService) ListNSGsByResourceGroup(ctx context.Context, subID, rgN
 		return nil, err
 	}
 
-	client, err := armnetwork.NewSecurityGroupsClient(subID, cred, nil)
+	client, err := armnetwork.NewSecurityGroupsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create NSG client: %w", err)
 	}
@@ -234,7 +234,7 @@ func (s *NetworkService) ListNetworkInterfaces(ctx context.Context, subID string
 		return nil, err
 	}
 
-	client, err := armnetwork.NewInterfacesClient(subID, cred, nil)
+	client, err := armnetwork.NewInterfacesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create NIC client: %w", err)
 	}
@@ -260,7 +260,7 @@ func (s *NetworkService) ListNetworkInterfacesByResourceGroup(ctx context.Contex
 		return nil, err
 	}
 
-	client, err := armnetwork.NewInterfacesClient(subID, cred, nil)
+	client, err := armnetwork.NewInterfacesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create NIC client: %w", err)
 	}
@@ -286,7 +286,7 @@ func (s *NetworkService) ListPublicIPAddresses(ctx context.Context, subID string
 		return nil, err
 	}
 
-	client, err := armnetwork.NewPublicIPAddressesClient(subID, cred, nil)
+	client, err := armnetwork.NewPublicIPAddressesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create public IP client: %w", err)
 	}
@@ -312,7 +312,7 @@ func (s *NetworkService) ListLoadBalancers(ctx context.Context, subID string) ([
 		return nil, err
 	}
 
-	client, err := armnetwork.NewLoadBalancersClient(subID, cred, nil)
+	client, err := armnetwork.NewLoadBalancersClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create load balancer client: %w", err)
 	}
@@ -338,7 +338,7 @@ func (s *NetworkService) ListRouteTables(ctx context.Context, subID string) ([]*
 		return nil, err
 	}
 
-	client, err := armnetwork.NewRouteTablesClient(subID, cred, nil)
+	client, err := armnetwork.NewRouteTablesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create route table client: %w", err)
 	}
@@ -364,7 +364,7 @@ func (s *NetworkService) ListApplicationGateways(ctx context.Context, subID stri
 		return nil, err
 	}
 
-	client, err := armnetwork.NewApplicationGatewaysClient(subID, cred, nil)
+	client, err := armnetwork.NewApplicationGatewaysClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create app gateway client: %w", err)
 	}
@@ -390,7 +390,7 @@ func (s *NetworkService) ListPrivateEndpoints(ctx context.Context, subID string)
 		return nil, err
 	}
 
-	client, err := armnetwork.NewPrivateEndpointsClient(subID, cred, nil)
+	client, err := armnetwork.NewPrivateEndpointsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create private endpoint client: %w", err)
 	}

@@ -94,7 +94,6 @@ func ListResourceGraph(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	module := &ResourceGraphModule{
 		BaseAzureModule:           azinternal.NewBaseAzureModule(cmdCtx, 5),

@@ -60,7 +60,6 @@ func ListRoutes(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	module := &RoutesModule{
 		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),

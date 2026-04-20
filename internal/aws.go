@@ -482,6 +482,16 @@ func SpinUntil(callingModuleName string, counter *CommandCounter, done chan bool
 	}
 }
 
+// PrintPhaseStatus overwrites the current terminal line with a status message (no newline).
+func PrintPhaseStatus(callingModuleName string, message string) {
+	fmt.Printf(clearln+"[%s] %s", cyan(callingModuleName), message)
+}
+
+// PrintPhaseDone prints a status message and advances to a new line.
+func PrintPhaseDone(callingModuleName string, message string) {
+	fmt.Printf(clearln+"[%s] %s\n", cyan(callingModuleName), message)
+}
+
 func ReorganizeAWSProfiles(allProfiles []string, mgmtProfile string) []string {
 	// take the mgmt profile, move it from its current position to the front of the list
 	var newProfiles []string

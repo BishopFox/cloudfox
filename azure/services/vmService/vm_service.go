@@ -108,7 +108,7 @@ func (s *VMService) ListVMsByResourceGroup(ctx context.Context, subID, rgName st
 		return nil, err
 	}
 
-	client, err := armcompute.NewVirtualMachinesClient(subID, cred, nil)
+	client, err := armcompute.NewVirtualMachinesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create VM client: %w", err)
 	}
@@ -134,7 +134,7 @@ func (s *VMService) ListVMs(ctx context.Context, subID string) ([]*armcompute.Vi
 		return nil, err
 	}
 
-	client, err := armcompute.NewVirtualMachinesClient(subID, cred, nil)
+	client, err := armcompute.NewVirtualMachinesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create VM client: %w", err)
 	}
@@ -160,7 +160,7 @@ func (s *VMService) GetVM(ctx context.Context, subID, rgName, vmName string) (*a
 		return nil, err
 	}
 
-	client, err := armcompute.NewVirtualMachinesClient(subID, cred, nil)
+	client, err := armcompute.NewVirtualMachinesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create VM client: %w", err)
 	}
@@ -180,7 +180,7 @@ func (s *VMService) GetVMInstanceView(ctx context.Context, subID, rgName, vmName
 		return nil, err
 	}
 
-	client, err := armcompute.NewVirtualMachinesClient(subID, cred, nil)
+	client, err := armcompute.NewVirtualMachinesClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create VM client: %w", err)
 	}
@@ -200,7 +200,7 @@ func (s *VMService) ListVMSS(ctx context.Context, subID string) ([]*armcompute.V
 		return nil, err
 	}
 
-	client, err := armcompute.NewVirtualMachineScaleSetsClient(subID, cred, nil)
+	client, err := armcompute.NewVirtualMachineScaleSetsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create VMSS client: %w", err)
 	}
@@ -226,7 +226,7 @@ func (s *VMService) ListDisks(ctx context.Context, subID string) ([]*armcompute.
 		return nil, err
 	}
 
-	client, err := armcompute.NewDisksClient(subID, cred, nil)
+	client, err := armcompute.NewDisksClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create disks client: %w", err)
 	}
@@ -252,7 +252,7 @@ func (s *VMService) ListDisksByResourceGroup(ctx context.Context, subID, rgName 
 		return nil, err
 	}
 
-	client, err := armcompute.NewDisksClient(subID, cred, nil)
+	client, err := armcompute.NewDisksClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create disks client: %w", err)
 	}

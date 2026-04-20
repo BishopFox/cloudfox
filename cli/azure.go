@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -28,6 +29,9 @@ var (
 	AzARMToken   string // ARM token passed via --arm-token flag
 	AzGraphToken string // Graph token passed via --graph-token flag
 
+	// Cache flags
+	AzRefreshCache bool
+
 	logger = internal.NewLogger()
 
 	AzCommands = &cobra.Command{
@@ -37,6 +41,17 @@ var (
 		Short:   "See \"Available Commands\" for Azure Modules below",
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			globals.AZ_VERBOSITY = AzVerbosity
+			globals.AZ_REFRESH_CACHE = AzRefreshCache
+
+			// If --refresh-cache, clear the in-memory cache
+			if globals.AZ_REFRESH_CACHE {
+				azinternal.ClearAzureCache()
+			}
+
+			// Load tenant cache from disk into in-memory cache (if available)
+			// This benefits individual commands across separate invocations
+			tenantID := loadTenantCacheFromDisk(AzOutputDirectory)
+			loadRoleDefinitionCacheFromDisk(AzOutputDirectory, tenantID)
 
 			// Check for bearer tokens from flags or environment variables
 			armToken, graphToken := resolveAzureTokens()
@@ -73,6 +88,14 @@ var (
 				}
 			}
 		},
+		PersistentPostRun: func(cmd *cobra.Command, args []string) {
+			// Save caches to disk after command completes.
+			// This allows subsequent individual commands to reuse Entra + role data.
+			// resolveTenantID() handles both -t and -s flag scenarios.
+			tenantID := resolveTenantID()
+			saveTenantCacheToDisk(AzOutputDirectory, tenantID)
+			saveRoleDefinitionCacheToDisk(AzOutputDirectory, tenantID)
+		},
 		Run: func(cmd *cobra.Command, args []string) {
 			cmd.Help()
 		},
@@ -95,6 +118,12 @@ Authentication options:
   4. Environment variables: AZURE_ARM_TOKEN, AZURE_GRAPH_TOKEN`,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			globals.AZ_VERBOSITY = AzVerbosity
+			globals.AZ_REFRESH_CACHE = AzRefreshCache
+
+			// If --refresh-cache, clear the in-memory cache
+			if globals.AZ_REFRESH_CACHE {
+				azinternal.ClearAzureCache()
+			}
 
 			// Check for bearer tokens from flags or environment variables
 			armToken, graphToken := resolveAzureTokens()
@@ -132,6 +161,12 @@ Authentication options:
 			}
 		},
 		Run: func(cmd *cobra.Command, args []string) {
+			startTime := time.Now()
+
+			// ========== CACHE: Load from disk if available ==========
+			tenantID := loadTenantCacheFromDisk(AzOutputDirectory)
+			loadRoleDefinitionCacheFromDisk(AzOutputDirectory, tenantID)
+
 			// ========== STEP 1: Run Principals FIRST ==========
 			// This provides identity and RBAC role lookup for all subsequent commands
 			logger.InfoM("Running command: principals", "all-checks")
@@ -165,6 +200,14 @@ Authentication options:
 			logger.InfoM("Running command: access-keys", "all-checks")
 			commands.AzAccessKeysCommand.Run(cmd, args)
 
+			// ========== CACHE: Save to disk after all commands ==========
+			saveTenantCacheToDisk(AzOutputDirectory, tenantID)
+			saveRoleDefinitionCacheToDisk(AzOutputDirectory, tenantID)
+
+			// Print execution summary
+			duration := time.Since(startTime)
+			cacheItems := azinternal.GetAzureCacheStats()
+			logger.InfoM(fmt.Sprintf("All checks completed in %s (cached %d API responses)", formatDur(duration), cacheItems), "all-checks")
 		},
 	}
 )
@@ -365,6 +408,9 @@ func init() {
 	AzCommands.PersistentFlags().StringVar(&AzARMToken, "arm-token", "", "Azure ARM token for resource enumeration (https://management.azure.com/). Can also use AZURE_ARM_TOKEN env var.")
 	AzCommands.PersistentFlags().StringVar(&AzGraphToken, "graph-token", "", "Microsoft Graph token for user/principal info (https://graph.microsoft.com/). Can also use AZURE_GRAPH_TOKEN env var.")
 
+	// Cache flags
+	AzCommands.PersistentFlags().BoolVar(&AzRefreshCache, "refresh-cache", false, "Force re-enumeration of cached data (cache auto-expires after 24 hours)")
+
 	AzCommands.AddCommand(
 		commands.AzAccessKeysCommand,
 		commands.AzAcrCommand,
@@ -446,4 +492,209 @@ func init() {
 
 		AzAllChecksCommand,
 	)
+}
+
+// resolveTenantID returns the tenant ID from the -t flag, or resolves it from the -s flag
+// using the Azure CLI. Returns empty string if neither flag is set or resolution fails.
+func resolveTenantID() string {
+	if AzTenantID != "" {
+		return AzTenantID
+	}
+	if AzSubscription == "" {
+		return ""
+	}
+
+	// Resolve tenant from subscription via Azure CLI (lightweight, no SafeSession needed)
+	out, err := exec.Command("az", "account", "show",
+		"--subscription", AzSubscription,
+		"--query", "tenantId",
+		"-o", "tsv").Output()
+	if err != nil {
+		return ""
+	}
+	tenantID := strings.TrimSpace(string(out))
+	if tenantID != "" && globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+		logger.InfoM(fmt.Sprintf("Resolved tenant %s from subscription %s for cache lookup", tenantID, AzSubscription), "cache")
+	}
+	return tenantID
+}
+
+// loadTenantCacheFromDisk attempts to load tenant cache from disk into the in-memory cache.
+// Returns the tenant ID used (from -t flag, resolved from -s flag, or empty).
+func loadTenantCacheFromDisk(outputDir string) string {
+	tenantID := resolveTenantID()
+	if tenantID == "" {
+		return ""
+	}
+
+	// If --refresh-cache, delete existing disk cache
+	if globals.AZ_REFRESH_CACHE {
+		if azinternal.TenantCacheExists(outputDir, tenantID) {
+			logger.InfoM("Deleting existing tenant cache (--refresh-cache)", "cache")
+			azinternal.DeleteTenantCache(outputDir, tenantID)
+		}
+		return tenantID
+	}
+
+	// Check if disk cache exists
+	if !azinternal.TenantCacheExists(outputDir, tenantID) {
+		return tenantID
+	}
+
+	// Check staleness
+	if azinternal.IsTenantCacheStale(outputDir, tenantID, azinternal.DefaultAzureCacheExpiration) {
+		age, _ := azinternal.GetTenantCacheAge(outputDir, tenantID)
+		logger.InfoM(fmt.Sprintf("Tenant cache expired (age: %s), will re-enumerate", formatDur(age)), "cache")
+		azinternal.DeleteTenantCache(outputDir, tenantID)
+		return tenantID
+	}
+
+	// Load from disk
+	users, sps, groups, metadata, err := azinternal.LoadTenantCacheFromFile(outputDir, tenantID)
+	if err != nil {
+		logger.InfoM(fmt.Sprintf("Could not load tenant cache: %v, will re-enumerate", err), "cache")
+		azinternal.DeleteTenantCache(outputDir, tenantID)
+		return tenantID
+	}
+	if metadata == nil {
+		return tenantID
+	}
+
+	// Populate in-memory cache from disk cache
+	if len(users) > 0 {
+		azinternal.AzureDataCache.Set(azinternal.AzCacheKey("entra-users", tenantID), users, 0)
+	}
+	if len(sps) > 0 {
+		azinternal.AzureDataCache.Set(azinternal.AzCacheKey("service-principals", tenantID), sps, 0)
+	}
+	if len(groups) > 0 {
+		azinternal.AzureDataCache.Set(azinternal.AzCacheKey("entra-groups", tenantID), groups, 0)
+	}
+
+	age, _ := azinternal.GetTenantCacheAge(outputDir, tenantID)
+	logger.InfoM(fmt.Sprintf("Loaded tenant cache from disk (age: %s, %d users, %d SPs, %d groups)",
+		formatDur(age), metadata.TotalUsers, metadata.TotalSPs, metadata.TotalGroups), "cache")
+
+	// Staleness warning for caches between 12-24h
+	if age > 12*time.Hour {
+		logger.InfoM(fmt.Sprintf("Tenant cache is %s old. Use --refresh-cache to force refresh.", formatDur(age)), "cache")
+	}
+
+	return tenantID
+}
+
+// saveTenantCacheToDisk saves the current in-memory tenant data to disk for future runs.
+func saveTenantCacheToDisk(outputDir, tenantID string) {
+	if tenantID == "" {
+		return
+	}
+
+	// Read slices directly from in-memory cache
+	var users, sps, groups []azinternal.PrincipalInfo
+
+	if cached, found := azinternal.AzureDataCache.Get(azinternal.AzCacheKey("entra-users", tenantID)); found {
+		users = cached.([]azinternal.PrincipalInfo)
+	}
+	if cached, found := azinternal.AzureDataCache.Get(azinternal.AzCacheKey("service-principals", tenantID)); found {
+		sps = cached.([]azinternal.PrincipalInfo)
+	}
+	if cached, found := azinternal.AzureDataCache.Get(azinternal.AzCacheKey("entra-groups", tenantID)); found {
+		groups = cached.([]azinternal.PrincipalInfo)
+	}
+
+	if len(users) == 0 && len(sps) == 0 && len(groups) == 0 {
+		return // Nothing to save
+	}
+
+	err := azinternal.SaveTenantCacheToFile(users, sps, groups, outputDir, tenantID, "", "1.0.0")
+	if err != nil {
+		logger.InfoM(fmt.Sprintf("Could not save tenant cache to disk: %v", err), "cache")
+	} else {
+		cacheDir := azinternal.GetAzureCacheDirectory(outputDir, tenantID)
+		logger.InfoM(fmt.Sprintf("Tenant cache saved to %s (%d users, %d SPs, %d groups)",
+			cacheDir, len(users), len(sps), len(groups)), "cache")
+	}
+}
+
+// loadRoleDefinitionCacheFromDisk attempts to load role definition cache from disk into
+// the in-memory cache. Role definitions are tenant-scoped and rarely change (7-day TTL).
+func loadRoleDefinitionCacheFromDisk(outputDir, tenantID string) {
+	if tenantID == "" {
+		return
+	}
+
+	// If --refresh-cache, delete existing disk cache
+	if globals.AZ_REFRESH_CACHE {
+		if azinternal.RoleDefinitionCacheExists(outputDir, tenantID) {
+			logger.InfoM("Deleting existing role definition cache (--refresh-cache)", "cache")
+			azinternal.DeleteRoleDefinitionCache(outputDir, tenantID)
+		}
+		return
+	}
+
+	// Check if disk cache exists
+	if !azinternal.RoleDefinitionCacheExists(outputDir, tenantID) {
+		return
+	}
+
+	// Check staleness (7 days for role definitions)
+	if azinternal.IsRoleDefinitionCacheStale(outputDir, tenantID, azinternal.RoleDefinitionCacheExpiration) {
+		age, _ := azinternal.GetRoleDefinitionCacheAge(outputDir, tenantID)
+		logger.InfoM(fmt.Sprintf("Role definition cache expired (age: %s), will re-enumerate", formatDur(age)), "cache")
+		azinternal.DeleteRoleDefinitionCache(outputDir, tenantID)
+		return
+	}
+
+	// Load from disk
+	defs, metadata, err := azinternal.LoadRoleDefinitionCache(outputDir, tenantID)
+	if err != nil {
+		logger.InfoM(fmt.Sprintf("Could not load role definition cache: %v, will re-enumerate", err), "cache")
+		azinternal.DeleteRoleDefinitionCache(outputDir, tenantID)
+		return
+	}
+	if metadata == nil {
+		return
+	}
+
+	// Populate in-memory cache from disk cache
+	for roleDefID, roleName := range defs {
+		azinternal.AzureDataCache.Set(azinternal.AzCacheKey("role-name", roleDefID), roleName, 0)
+	}
+
+	age, _ := azinternal.GetRoleDefinitionCacheAge(outputDir, tenantID)
+	logger.InfoM(fmt.Sprintf("Loaded role definition cache from disk (age: %s, %d definitions)",
+		formatDur(age), metadata.TotalDefs), "cache")
+}
+
+// saveRoleDefinitionCacheToDisk scans the in-memory cache for role definitions and
+// persists them to disk for future runs.
+func saveRoleDefinitionCacheToDisk(outputDir, tenantID string) {
+	if tenantID == "" {
+		return
+	}
+
+	// Scan in-memory cache for all role-name entries
+	const prefix = "az-role-name-"
+	defs := make(map[string]string)
+	for key, item := range azinternal.AzureDataCache.Items() {
+		if len(key) > len(prefix) && key[:len(prefix)] == prefix {
+			roleDefID := key[len(prefix):]
+			if roleName, ok := item.Object.(string); ok {
+				defs[roleDefID] = roleName
+			}
+		}
+	}
+
+	if len(defs) == 0 {
+		return // Nothing to save
+	}
+
+	err := azinternal.SaveRoleDefinitionCache(defs, outputDir, tenantID)
+	if err != nil {
+		logger.InfoM(fmt.Sprintf("Could not save role definition cache to disk: %v", err), "cache")
+	} else {
+		cacheDir := azinternal.GetAzureCacheDirectory(outputDir, tenantID)
+		logger.InfoM(fmt.Sprintf("Role definition cache saved to %s (%d definitions)",
+			cacheDir, len(defs)), "cache")
+	}
 }

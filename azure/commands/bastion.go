@@ -76,7 +76,6 @@ func ListBastion(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return // error already logged by helper
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	// -------------------- Initialize module --------------------
 	module := &BastionModule{
@@ -170,7 +169,7 @@ func (m *BastionModule) processResourceGroup(ctx context.Context, subID, subName
 	cred := &azinternal.StaticTokenCredential{Token: token}
 
 	// Enumerate Bastion hosts
-	bastionClient, err := armnetwork.NewBastionHostsClient(subID, cred, nil)
+	bastionClient, err := armnetwork.NewBastionHostsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return
 	}
@@ -192,7 +191,7 @@ func (m *BastionModule) processResourceGroup(ctx context.Context, subID, subName
 	}
 
 	// Also enumerate VNets for coverage analysis
-	vnetClient, err := armnetwork.NewVirtualNetworksClient(subID, cred, nil)
+	vnetClient, err := armnetwork.NewVirtualNetworksClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return
 	}

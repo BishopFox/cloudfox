@@ -108,7 +108,7 @@ type Properties struct {
 // -------------------- Clients --------------------
 
 func getAutomationAccountClient(subscriptionID string, cred azcore.TokenCredential) (*armautomation.AccountClient, error) {
-	client, err := armautomation.NewAccountClient(subscriptionID, cred, nil)
+	client, err := armautomation.NewAccountClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, err
 	}
@@ -116,17 +116,17 @@ func getAutomationAccountClient(subscriptionID string, cred azcore.TokenCredenti
 }
 
 //func getRunbookClient(subscriptionID string, cred *azidentity.DefaultAzureCredential) *armautomation.RunbookClient {
-//	client, _ := armautomation.NewRunbookClient(subscriptionID, cred, nil)
+//	client, _ := armautomation.NewRunbookClient(subscriptionID, cred, DefaultARMClientOptions())
 //	return client
 //}
 //
 //func getVariableClient(subscriptionID string, cred *azidentity.DefaultAzureCredential) *armautomation.VariableClient {
-//	client, _ := armautomation.NewVariableClient(subscriptionID, cred, nil)
+//	client, _ := armautomation.NewVariableClient(subscriptionID, cred, DefaultARMClientOptions())
 //	return client
 //}
 //
 //func getScheduleClient(subscriptionID string, cred *azidentity.DefaultAzureCredential) *armautomation.ScheduleClient {
-//	client, _ := armautomation.NewScheduleClient(subscriptionID, cred, nil)
+//	client, _ := armautomation.NewScheduleClient(subscriptionID, cred, DefaultARMClientOptions())
 //	return client
 //}
 //
@@ -134,7 +134,7 @@ func getAutomationAccountClient(subscriptionID string, cred azcore.TokenCredenti
 //// These can be retrieved individually, but for now we'll represent them as generic "assets".
 //// Placeholder for extension.
 //func getCredentialClient(subscriptionID string, cred *azidentity.DefaultAzureCredential) *armautomation.CredentialClient {
-//	client, _ := armautomation.NewCredentialClient(subscriptionID, cred, nil)
+//	client, _ := armautomation.NewCredentialClient(subscriptionID, cred, DefaultARMClientOptions())
 //	return client
 //}
 
@@ -214,7 +214,7 @@ func GetRunbooksForAutomationAccount(ctx context.Context, session *SafeSession, 
 
 	cred := &StaticTokenCredential{Token: token}
 
-	client, err := armautomation.NewRunbookClient(subscriptionID, cred, nil)
+	client, err := armautomation.NewRunbookClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, err
 	}
@@ -290,7 +290,7 @@ func GetAutomationVariables(ctx context.Context, session *SafeSession, subscript
 
 	cred := &StaticTokenCredential{Token: token}
 
-	client, err := armautomation.NewVariableClient(subscriptionID, cred, nil)
+	client, err := armautomation.NewVariableClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, err
 	}
@@ -349,7 +349,7 @@ func GetAutomationSchedules(ctx context.Context, session *SafeSession, subscript
 
 	cred := &StaticTokenCredential{Token: token}
 
-	client, err := armautomation.NewScheduleClient(subscriptionID, cred, nil)
+	client, err := armautomation.NewScheduleClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, err
 	}
@@ -408,7 +408,7 @@ func GetAutomationAssets(ctx context.Context, session *SafeSession, subscription
 	cred := &StaticTokenCredential{Token: token}
 
 	// --- Variables ---
-	varClient, err := armautomation.NewVariableClient(subscriptionID, cred, nil)
+	varClient, err := armautomation.NewVariableClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, err
 	}
@@ -434,7 +434,7 @@ func GetAutomationAssets(ctx context.Context, session *SafeSession, subscription
 	}
 
 	// --- Modules ---
-	modClient, err := armautomation.NewModuleClient(subscriptionID, cred, nil)
+	modClient, err := armautomation.NewModuleClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, err
 	}
@@ -460,7 +460,7 @@ func GetAutomationAssets(ctx context.Context, session *SafeSession, subscription
 	}
 
 	// --- Credentials ---
-	credClient, err := armautomation.NewCredentialClient(subscriptionID, cred, nil)
+	credClient, err := armautomation.NewCredentialClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, err
 	}
@@ -486,7 +486,7 @@ func GetAutomationAssets(ctx context.Context, session *SafeSession, subscription
 	}
 
 	// --- Connections ---
-	connClient, err := armautomation.NewConnectionClient(subscriptionID, cred, nil)
+	connClient, err := armautomation.NewConnectionClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, err
 	}
@@ -512,7 +512,7 @@ func GetAutomationAssets(ctx context.Context, session *SafeSession, subscription
 	}
 
 	// --- Schedules ---
-	schedClient, err := armautomation.NewScheduleClient(subscriptionID, cred, nil)
+	schedClient, err := armautomation.NewScheduleClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, err
 	}
@@ -664,7 +664,7 @@ func GetAutomationConnections(ctx context.Context, session *SafeSession, subscri
 	}
 	cred := &StaticTokenCredential{Token: token}
 
-	client, err := armautomation.NewConnectionClient(subscriptionID, cred, nil)
+	client, err := armautomation.NewConnectionClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, err
 	}

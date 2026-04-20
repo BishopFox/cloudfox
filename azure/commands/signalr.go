@@ -60,7 +60,6 @@ func ListSignalR(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	module := &SignalRModule{
 		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),

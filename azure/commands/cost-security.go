@@ -85,7 +85,6 @@ func ListCostSecurity(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	module := &CostSecurityModule{
 		BaseAzureModule:       azinternal.NewBaseAzureModule(cmdCtx, 5),

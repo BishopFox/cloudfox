@@ -154,15 +154,33 @@ func (m *DevOpsProjectsModule) PrintDevOpsProjects(logger internal.Logger) {
 		return
 	}
 
-	// Process projects concurrently
+	// Process projects concurrently with progress spinner
 	var wg sync.WaitGroup
+	semaphore := make(chan struct{}, m.Goroutines)
+	spinnerDone := make(chan bool)
+	go internal.SpinUntil(globals.AZ_DEVOPS_PROJECTS_MODULE_NAME, &m.CommandCounter, spinnerDone, "projects")
+
 	for _, proj := range projects {
 		m.CommandCounter.Total++
+		m.CommandCounter.Pending++
 		wg.Add(1)
-		go m.processProject(proj, &wg, logger)
+		go func(p map[string]interface{}) {
+			defer func() {
+				m.CommandCounter.Executing--
+				m.CommandCounter.Complete++
+				wg.Done()
+			}()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+			m.CommandCounter.Pending--
+			m.CommandCounter.Executing++
+			m.processProject(p, logger)
+		}(proj)
 	}
 
 	wg.Wait()
+	spinnerDone <- true
+	<-spinnerDone
 
 	// Generate and write output
 	m.writeOutput(logger)
@@ -171,9 +189,7 @@ func (m *DevOpsProjectsModule) PrintDevOpsProjects(logger internal.Logger) {
 // ------------------------------
 // Process single project
 // ------------------------------
-func (m *DevOpsProjectsModule) processProject(proj map[string]interface{}, wg *sync.WaitGroup, logger internal.Logger) {
-	defer wg.Done()
-
+func (m *DevOpsProjectsModule) processProject(proj map[string]interface{}, logger internal.Logger) {
 	projName := proj["name"].(string)
 	projID := proj["id"].(string)
 	visibility := proj["visibility"].(string)
@@ -219,7 +235,10 @@ func (m *DevOpsProjectsModule) processProject(proj map[string]interface{}, wg *s
 	var repoWg sync.WaitGroup
 	for _, r := range repos {
 		repoWg.Add(1)
-		go m.processRepo(projID, projName, visibility, projectURL, description, r, serviceConnections, variableGroups, policies, &repoWg, logger)
+		go func(repo map[string]interface{}) {
+			defer repoWg.Done()
+			m.processRepo(projID, projName, visibility, projectURL, description, repo, serviceConnections, variableGroups, policies, logger)
+		}(r)
 	}
 
 	repoWg.Wait()
@@ -228,9 +247,7 @@ func (m *DevOpsProjectsModule) processProject(proj map[string]interface{}, wg *s
 // ------------------------------
 // Process single repository
 // ------------------------------
-func (m *DevOpsProjectsModule) processRepo(projID, projName, visibility, projectURL, description string, r map[string]interface{}, serviceConnections, variableGroups, policies []map[string]interface{}, wg *sync.WaitGroup, logger internal.Logger) {
-	defer wg.Done()
-
+func (m *DevOpsProjectsModule) processRepo(projID, projName, visibility, projectURL, description string, r map[string]interface{}, serviceConnections, variableGroups, policies []map[string]interface{}, logger internal.Logger) {
 	repoName := r["name"].(string)
 	repoID := r["id"].(string)
 	repoURL := r["webUrl"].(string)

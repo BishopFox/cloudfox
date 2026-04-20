@@ -62,7 +62,6 @@ func ListVNets(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	module := &VNetsModule{
 		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),

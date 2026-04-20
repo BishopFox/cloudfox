@@ -183,7 +183,7 @@ func RunDevOpsAgentsCommand(organization, pat string, verbosity int, outputDirec
 	module.initializeLootFiles()
 
 	// Enumerate agent pools and agents
-	logger.InfoM("Enumerating Azure DevOps Agents across all agent pools...", globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
+	internal.PrintPhaseStatus(globals.AZ_DEVOPS_AGENTS_MODULE_NAME, "Enumerating agent pools...")
 	module.enumerateAgentPools()
 
 	// Write output using unified output handler
@@ -278,10 +278,11 @@ func (m *DevOpsAgentsModule) enumerateAgentPools() {
 		return
 	}
 
-	logger.InfoM(fmt.Sprintf("Found %d agent pools", len(pools)), globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
+	internal.PrintPhaseDone(globals.AZ_DEVOPS_AGENTS_MODULE_NAME, fmt.Sprintf("Enumerating agent pools: found %d", len(pools)))
 
 	// Process each pool
-	for _, poolItem := range pools {
+	for i, poolItem := range pools {
+		internal.PrintPhaseStatus(globals.AZ_DEVOPS_AGENTS_MODULE_NAME, fmt.Sprintf("Processing pool %d/%d...", i+1, len(pools)))
 		pool, ok := poolItem.(map[string]interface{})
 		if !ok {
 			continue
@@ -300,6 +301,7 @@ func (m *DevOpsAgentsModule) enumerateAgentPools() {
 		// Enumerate pool permissions
 		m.enumeratePoolPermissions(poolID, poolName)
 	}
+	internal.PrintPhaseDone(globals.AZ_DEVOPS_AGENTS_MODULE_NAME, fmt.Sprintf("Processing pools: %d/%d complete", len(pools), len(pools)))
 }
 
 // enumerateAgentsInPool enumerates all agents in a specific pool

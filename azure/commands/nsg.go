@@ -61,7 +61,6 @@ func ListNSG(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	module := &NSGModule{
 		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),

@@ -76,7 +76,6 @@ func ListHDInsight(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
-	defer cmdCtx.Session.StopMonitoring()
 
 	module := &HDInsightModule{
 		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),

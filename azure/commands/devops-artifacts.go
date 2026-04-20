@@ -158,15 +158,33 @@ func (m *DevOpsArtifactsModule) PrintDevOpsArtifacts(logger internal.Logger) {
 		return
 	}
 
-	// Process feeds concurrently
+	// Process feeds concurrently with progress spinner
 	var wg sync.WaitGroup
+	semaphore := make(chan struct{}, m.Goroutines)
+	spinnerDone := make(chan bool)
+	go internal.SpinUntil(globals.AZ_DEVOPS_ARTIFACTS_MODULE_NAME, &m.CommandCounter, spinnerDone, "feeds")
+
 	for _, feed := range feeds {
 		m.CommandCounter.Total++
+		m.CommandCounter.Pending++
 		wg.Add(1)
-		go m.processFeed(feed, &wg, logger)
+		go func(f map[string]interface{}) {
+			defer func() {
+				m.CommandCounter.Executing--
+				m.CommandCounter.Complete++
+				wg.Done()
+			}()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+			m.CommandCounter.Pending--
+			m.CommandCounter.Executing++
+			m.processFeed(f, logger)
+		}(feed)
 	}
 
 	wg.Wait()
+	spinnerDone <- true
+	<-spinnerDone
 
 	// Generate and write output
 	m.writeOutput(logger)
@@ -175,9 +193,7 @@ func (m *DevOpsArtifactsModule) PrintDevOpsArtifacts(logger internal.Logger) {
 // ------------------------------
 // Process single feed
 // ------------------------------
-func (m *DevOpsArtifactsModule) processFeed(feed map[string]interface{}, wg *sync.WaitGroup, logger internal.Logger) {
-	defer wg.Done()
-
+func (m *DevOpsArtifactsModule) processFeed(feed map[string]interface{}, logger internal.Logger) {
 	feedName := feed["name"].(string)
 	feedID := feed["id"].(string)
 	feedVisibility := feed["visibility"].(string)
@@ -235,7 +251,10 @@ func (m *DevOpsArtifactsModule) processFeed(feed map[string]interface{}, wg *syn
 	var pkgWg sync.WaitGroup
 	for _, pkg := range packages {
 		pkgWg.Add(1)
-		go m.processPackage(feedName, feedID, feedVisibility, publicExposure, upstreamSources, retentionPolicy, pkg, &pkgWg, logger)
+		go func(p map[string]interface{}) {
+			defer pkgWg.Done()
+			m.processPackage(feedName, feedID, feedVisibility, publicExposure, upstreamSources, retentionPolicy, p, logger)
+		}(pkg)
 	}
 
 	pkgWg.Wait()
@@ -244,9 +263,7 @@ func (m *DevOpsArtifactsModule) processFeed(feed map[string]interface{}, wg *syn
 // ------------------------------
 // Process single package
 // ------------------------------
-func (m *DevOpsArtifactsModule) processPackage(feedName, feedID, feedVisibility, publicExposure, upstreamSources, retentionPolicy string, pkg map[string]interface{}, wg *sync.WaitGroup, logger internal.Logger) {
-	defer wg.Done()
-
+func (m *DevOpsArtifactsModule) processPackage(feedName, feedID, feedVisibility, publicExposure, upstreamSources, retentionPolicy string, pkg map[string]interface{}, logger internal.Logger) {
 	pkgName := pkg["name"].(string)
 	pkgID := pkg["id"].(string)
 	version := pkg["version"].(string)

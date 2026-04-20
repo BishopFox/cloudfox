@@ -102,7 +102,7 @@ func (s *PolicyService) ListPolicyDefinitions(ctx context.Context, subID string)
 		return nil, err
 	}
 
-	client, err := armpolicy.NewDefinitionsClient(subID, cred, nil)
+	client, err := armpolicy.NewDefinitionsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create policy definitions client: %w", err)
 	}
@@ -128,7 +128,7 @@ func (s *PolicyService) ListBuiltInPolicyDefinitions(ctx context.Context, subID 
 		return nil, err
 	}
 
-	client, err := armpolicy.NewDefinitionsClient(subID, cred, nil)
+	client, err := armpolicy.NewDefinitionsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create policy definitions client: %w", err)
 	}
@@ -154,7 +154,7 @@ func (s *PolicyService) GetPolicyDefinition(ctx context.Context, subID, policyNa
 		return nil, err
 	}
 
-	client, err := armpolicy.NewDefinitionsClient(subID, cred, nil)
+	client, err := armpolicy.NewDefinitionsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create policy definitions client: %w", err)
 	}
@@ -174,7 +174,7 @@ func (s *PolicyService) ListPolicyAssignments(ctx context.Context, subID string)
 		return nil, err
 	}
 
-	client, err := armpolicy.NewAssignmentsClient(subID, cred, nil)
+	client, err := armpolicy.NewAssignmentsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create policy assignments client: %w", err)
 	}
@@ -200,7 +200,7 @@ func (s *PolicyService) ListPolicyAssignmentsForResourceGroup(ctx context.Contex
 		return nil, err
 	}
 
-	client, err := armpolicy.NewAssignmentsClient(subID, cred, nil)
+	client, err := armpolicy.NewAssignmentsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create policy assignments client: %w", err)
 	}
@@ -226,7 +226,7 @@ func (s *PolicyService) GetPolicyAssignment(ctx context.Context, scope, assignme
 		return nil, err
 	}
 
-	client, err := armpolicy.NewAssignmentsClient("", cred, nil)
+	client, err := armpolicy.NewAssignmentsClient("", cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create policy assignments client: %w", err)
 	}
@@ -246,7 +246,7 @@ func (s *PolicyService) ListPolicySetDefinitions(ctx context.Context, subID stri
 		return nil, err
 	}
 
-	client, err := armpolicy.NewSetDefinitionsClient(subID, cred, nil)
+	client, err := armpolicy.NewSetDefinitionsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create policy set definitions client: %w", err)
 	}
@@ -272,7 +272,7 @@ func (s *PolicyService) ListPolicyExemptions(ctx context.Context, subID string) 
 		return nil, err
 	}
 
-	client, err := armpolicy.NewExemptionsClient(subID, cred, nil)
+	client, err := armpolicy.NewExemptionsClient(subID, cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create policy exemptions client: %w", err)
 	}

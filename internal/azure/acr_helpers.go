@@ -52,7 +52,7 @@ func GetACRsWithManagedIdentities(session *SafeSession, subscriptionID string, r
 	cred := &StaticTokenCredential{Token: token}
 	ctx := context.Background()
 
-	client, err := armcontainerregistry.NewRegistriesClient(subscriptionID, cred, nil)
+	client, err := armcontainerregistry.NewRegistriesClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, err
 	}

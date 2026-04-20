@@ -32,7 +32,7 @@ type RewriteRuleSet struct {
 //	cred := GetCredential()
 //	logger := internal.NewLogger()
 //
-//	client, err := armnetwork.NewApplicationGatewaysClient(subscriptionID, cred, nil)
+//	client, err := armnetwork.NewApplicationGatewaysClient(subscriptionID, cred, DefaultARMClientOptions())
 //	if err != nil {
 //		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 //			logger.ErrorM(fmt.Sprintf("Failed to create ApplicationGateways client: %v\n", err), globals.AZ_APPGATEWAY_MODULE_NAME)
@@ -69,7 +69,7 @@ func GetAppGatewaysPerResourceGroup(session *SafeSession, subscriptionID, rgName
 
 	logger := internal.NewLogger()
 
-	client, err := armnetwork.NewApplicationGatewaysClient(subscriptionID, cred, nil)
+	client, err := armnetwork.NewApplicationGatewaysClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 			logger.ErrorM(fmt.Sprintf("Failed to create ApplicationGateways client: %v\n", err), globals.AZ_APPGATEWAY_MODULE_NAME)
@@ -140,7 +140,7 @@ func GetAppGatewayFrontendIPs(session *SafeSession, subscriptionID string, agw *
 
 	cred := &StaticTokenCredential{Token: token}
 
-	publicIPClient, err := armnetwork.NewPublicIPAddressesClient(subscriptionID, cred, nil)
+	publicIPClient, err := armnetwork.NewPublicIPAddressesClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		if err != nil && globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 			logger.ErrorM(fmt.Sprintf("Failed to create PublicIPAddresses client: %v\n", err), globals.AZ_APPGATEWAY_MODULE_NAME)
@@ -208,7 +208,7 @@ func GetRewriteRuleSetByID(session *SafeSession, subscriptionID string, rewriteR
 		return nil, fmt.Errorf("failed to get Azure credential")
 	}
 
-	resClient, err := armresources.NewClient(subscriptionID, cred, nil)
+	resClient, err := armresources.NewClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create resources client: %v", err)
 	}
