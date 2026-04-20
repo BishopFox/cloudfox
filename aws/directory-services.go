@@ -198,7 +198,7 @@ func (m *DirectoryModule) executeChecks(r string, wg *sync.WaitGroup, semaphore 
 			JsonFileSource: "DOWNLOAD_FROM_AWS",
 		}
 	}
-	res, err := servicemap.IsServiceInRegion("clouddirectory", r)
+	res, err := servicemap.IsServiceInRegion("directoryservice", r)
 	if err != nil {
 		m.modLog.Error(err)
 	}
