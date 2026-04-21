@@ -2252,6 +2252,7 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			WrapTable:              AWSWrapTable,
 			AWSOutputType:          AWSOutputType,
 			AWSTableCols:           AWSTableCols,
+			PmapperDataBasePath:   PmapperDataBasePath,
 		}
 		ec2UserData.Instances(InstancesFilter, AWSOutputDirectory, Verbosity)
 		envsMod := aws.EnvsModule{
