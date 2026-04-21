@@ -128,9 +128,13 @@ func (m *InstancesModule) Instances(filter string, outputDirectory string, verbo
 	}
 
 	wg.Wait()
-	//time.Sleep(time.Second * 2)
 
-	// Perform role analysis
+	// Signal the receiver to stop and wait for it to finish draining the channel.
+	// This must happen BEFORE role analysis to ensure all MappedInstances are collected.
+	receiverDone <- true
+	<-receiverDone
+
+	// Perform role analysis (all instances are now in m.MappedInstances)
 	if m.pmapperError == nil {
 		for i := range m.MappedInstances {
 			m.MappedInstances[i].Admin, m.MappedInstances[i].CanPrivEsc = GetPmapperResults(m.SkipAdminCheck, m.pmapperMod, &m.MappedInstances[i].Role)
@@ -144,8 +148,6 @@ func (m *InstancesModule) Instances(filter string, outputDirectory string, verbo
 	// Send a message to the spinner goroutine to close the channel and stop
 	spinnerDone <- true
 	<-spinnerDone
-	receiverDone <- true
-	<-receiverDone
 
 	// This conditional block will either dump the userData attribute content or the general instances data, depending on what you select via command line.
 	//fmt.Printf("\n[*] Preparing output...\n\n")

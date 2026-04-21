@@ -2435,12 +2435,13 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		roleTrusts.PrintRoleTrusts(AWSOutputDirectory, Verbosity)
 
 		pmapperCommand := aws.PmapperModule{
-			Caller:        *caller,
-			AWSProfile:    profile,
-			Goroutines:    Goroutines,
-			WrapTable:     AWSWrapTable,
-			AWSOutputType: AWSOutputType,
-			AWSTableCols:  AWSTableCols,
+			Caller:              *caller,
+			AWSProfile:          profile,
+			Goroutines:          Goroutines,
+			WrapTable:           AWSWrapTable,
+			AWSOutputType:       AWSOutputType,
+			AWSTableCols:        AWSTableCols,
+			PmapperDataBasePath: PmapperDataBasePath,
 		}
 		pmapperCommand.PrintPmapperData(AWSOutputDirectory, Verbosity)
 
