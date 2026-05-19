@@ -189,8 +189,9 @@ var (
 				GCPLogger.InfoM("No project scope specified. Use -p, -l, or -A flag.", "gcp")
 			}
 
-			// Create a context with project IDs and names
-			ctx := context.WithValue(context.Background(), "projectIDs", GCPProjectIDs)
+			// Create a context with project IDs and names, using signal-aware base context
+			sigCtx := internal.SetupSignalHandler()
+			ctx := context.WithValue(sigCtx, "projectIDs", GCPProjectIDs)
 			ctx = context.WithValue(ctx, "projectNames", GCPProjectNames)
 
 			// Set default session so all services pick up impersonation

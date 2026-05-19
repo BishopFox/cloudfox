@@ -544,6 +544,9 @@ type OrgAccounts struct {
 }
 
 func awsPreRun(cmd *cobra.Command, args []string) {
+	// Set up Ctrl+C handler (double-press to confirm shutdown)
+	internal.SetupSignalHandler()
+
 	gob.Register(&types.Organization{})
 
 	// if multiple profiles were used, ensure the management account is first

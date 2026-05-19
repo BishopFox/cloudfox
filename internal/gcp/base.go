@@ -477,8 +477,12 @@ func (b *BaseGCPModule) RunProjectEnumeration(
 				wg.Done()
 			}()
 
-			// Acquire semaphore
-			semaphore <- struct{}{}
+			// Check for cancellation before starting work
+			select {
+			case <-ctx.Done():
+				return
+			case semaphore <- struct{}{}:
+			}
 			defer func() { <-semaphore }()
 
 			b.CommandCounter.Pending--
