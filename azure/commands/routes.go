@@ -62,7 +62,7 @@ func ListRoutes(cmd *cobra.Command, args []string) {
 	}
 
 	module := &RoutesModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		RouteRows:       [][]string{},
 		LootMap: map[string]*internal.LootFile{

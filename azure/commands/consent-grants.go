@@ -67,7 +67,7 @@ func ListConsentGrants(cmd *cobra.Command, args []string) {
 
 	// Initialize module
 	module := &ConsentGrantsModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		GrantRows:       [][]string{},
 	}
 
@@ -107,6 +107,10 @@ func (m *ConsentGrantsModule) PrintConsentGrants(ctx context.Context, logger int
 // Process single tenant
 // ------------------------------
 func (m *ConsentGrantsModule) processTenant(ctx context.Context, logger internal.Logger) {
+	// Load OAuth2 grants from disk cache if available (benefits standalone runs)
+	azinternal.EnsureBulkCacheLoaded(m.OutputDirectory, m.TenantID,
+		azinternal.AzCacheKey("oauth2-grants-all", "tenant"))
+
 	logger.InfoM(fmt.Sprintf("Enumerating OAuth2 Consent Grants for tenant: %s", m.TenantName), globals.AZ_CONSENT_GRANTS_MODULE_NAME)
 
 	// Get all consent grants

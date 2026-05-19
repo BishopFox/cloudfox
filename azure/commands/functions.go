@@ -64,7 +64,7 @@ func ListFunctions(cmd *cobra.Command, args []string) {
 
 	// -------------------- Initialize module --------------------
 	module := &FunctionsModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		FunctionRows:    [][]string{},
 		LootMap: map[string]*internal.LootFile{

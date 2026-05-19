@@ -82,7 +82,7 @@ func ListBackupInventory(cmd *cobra.Command, args []string) {
 
 	// -------------------- Initialize module --------------------
 	module := &BackupInventoryModule{
-		BaseAzureModule:      azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule:      azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:        cmdCtx.Subscriptions,
 		VaultRows:            [][]string{},
 		PolicyRows:           [][]string{},

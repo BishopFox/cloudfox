@@ -80,7 +80,7 @@ func ListSecurityCenter(cmd *cobra.Command, args []string) {
 
 	// -------------------- Initialize module --------------------
 	module := &SecurityCenterModule{
-		BaseAzureModule:    azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule:    azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:      cmdCtx.Subscriptions,
 		SecurityRows:       [][]string{},
 		RecommendationRows: [][]string{},

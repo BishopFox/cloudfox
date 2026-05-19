@@ -73,7 +73,7 @@ func ListIdentityProtection(cmd *cobra.Command, args []string) {
 	}
 
 	module := &IdentityProtectionModule{
-		BaseAzureModule:   azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule:   azinternal.NewBaseAzureModule(cmdCtx, 0),
 		RiskyUserRows:     [][]string{},
 		RiskySignInRows:   [][]string{},
 		RiskDetectionRows: [][]string{},
@@ -164,15 +164,15 @@ func (m *IdentityProtectionModule) enumerateRiskyUsers(ctx context.Context, logg
 		userID := azinternal.SafeStringPtr(user.GetId())
 		riskLevel := "Unknown"
 		if user.GetRiskLevel() != nil {
-			riskLevel = string(*user.GetRiskLevel())
+			riskLevel = user.GetRiskLevel().String()
 		}
 		riskState := "Unknown"
 		if user.GetRiskState() != nil {
-			riskState = string(*user.GetRiskState())
+			riskState = user.GetRiskState().String()
 		}
 		riskDetail := "Unknown"
 		if user.GetRiskDetail() != nil {
-			riskDetail = string(*user.GetRiskDetail())
+			riskDetail = user.GetRiskDetail().String()
 		}
 		lastUpdated := "N/A"
 		if user.GetRiskLastUpdatedDateTime() != nil {
@@ -240,11 +240,11 @@ func (m *IdentityProtectionModule) enumerateRiskySignIns(ctx context.Context, lo
 			appID := azinternal.SafeStringPtr(sp.GetAppId())
 			riskLevel := "Unknown"
 			if sp.GetRiskLevel() != nil {
-				riskLevel = string(*sp.GetRiskLevel())
+				riskLevel = sp.GetRiskLevel().String()
 			}
 			riskState := "Unknown"
 			if sp.GetRiskState() != nil {
-				riskState = string(*sp.GetRiskState())
+				riskState = sp.GetRiskState().String()
 			}
 
 			risk := "INFO"
@@ -311,11 +311,11 @@ func (m *IdentityProtectionModule) enumerateRiskDetections(ctx context.Context, 
 		}
 		riskLevel := "Unknown"
 		if detection.GetRiskLevel() != nil {
-			riskLevel = string(*detection.GetRiskLevel())
+			riskLevel = detection.GetRiskLevel().String()
 		}
 		riskState := "Unknown"
 		if detection.GetRiskState() != nil {
-			riskState = string(*detection.GetRiskState())
+			riskState = detection.GetRiskState().String()
 		}
 		detectedDateTime := "N/A"
 		if detection.GetDetectedDateTime() != nil {
@@ -323,7 +323,7 @@ func (m *IdentityProtectionModule) enumerateRiskDetections(ctx context.Context, 
 		}
 		activity := "Unknown"
 		if detection.GetActivity() != nil {
-			activity = string(*detection.GetActivity())
+			activity = detection.GetActivity().String()
 		}
 		ipAddress := azinternal.SafeStringPtr(detection.GetIpAddress())
 		location := "Unknown"

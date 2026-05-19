@@ -57,8 +57,7 @@ func (m *SentinelModule) PrintSentinelCommand(ctx context.Context, logger intern
 
 	m.workspaceRegistry = make(map[string]workspaceInfo)
 
-	m.modLog.Info("Enumerating Microsoft Sentinel (SIEM) instances and configuration...")
-	fmt.Printf("[azure] Enumerating Microsoft Sentinel workspaces and rules.\n")
+	m.modLog.InfoM("Enumerating Microsoft Sentinel workspaces and rules", globals.AZ_SENTINEL_MODULE_NAME)
 
 	// Multi-tenant processing
 	if m.IsMultiTenant {
@@ -802,13 +801,12 @@ func (m *SentinelModule) processIncidents(ctx context.Context, subID, subName, r
 }
 
 func (m *SentinelModule) generateSummary() {
-	m.modLog.Info("Generating Sentinel summary...")
+	m.modLog.InfoM("Generating Sentinel summary...", globals.AZ_SENTINEL_MODULE_NAME)
 
 	totalWorkspaces := len(m.WorkspaceRows)
 	enabledWorkspaces := 0
 	totalRules := len(m.AnalyticsRuleRows)
 	disabledRules := 0
-	totalAutomationRules := len(m.AutomationRuleRows)
 	totalDataConnectors := len(m.DataConnectorRows)
 	disconnectedConnectors := 0
 	totalIncidents := len(m.IncidentRows)
@@ -838,12 +836,8 @@ func (m *SentinelModule) generateSummary() {
 		}
 	}
 
-	fmt.Printf("\n[azure] Microsoft Sentinel Summary:\n")
-	fmt.Printf("  Sentinel Workspaces: %d total (%d enabled)\n", totalWorkspaces, enabledWorkspaces)
-	fmt.Printf("  Analytics Rules: %d total (%d disabled)\n", totalRules, disabledRules)
-	fmt.Printf("  Automation Rules: %d total\n", totalAutomationRules)
-	fmt.Printf("  Data Connectors: %d total (%d disconnected)\n", totalDataConnectors, disconnectedConnectors)
-	fmt.Printf("  Active Incidents: %d total (%d high severity)\n", totalIncidents, highSeverityIncidents)
+	m.modLog.InfoM(fmt.Sprintf("Summary: %d workspaces (%d enabled), %d rules (%d disabled), %d connectors (%d disconnected), %d incidents (%d high)",
+		totalWorkspaces, enabledWorkspaces, totalRules, disabledRules, totalDataConnectors, disconnectedConnectors, totalIncidents, highSeverityIncidents), globals.AZ_SENTINEL_MODULE_NAME)
 }
 
 // writeOutput generates and writes output files using HandleOutputSmart
@@ -1110,7 +1104,7 @@ Security Focus:
 
 		// Initialize module
 		m := &SentinelModule{
-			BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+			BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 			Subscriptions:   cmdCtx.Subscriptions, // Use pre-fetched subscriptions from context
 			Caller:          "sentinel",
 			LootMap: map[string]*internal.LootFile{

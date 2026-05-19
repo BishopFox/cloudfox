@@ -70,7 +70,7 @@ func ListDataExfiltration(cmd *cobra.Command, args []string) {
 	}
 
 	module := &DataExfiltrationModule{
-		BaseAzureModule:  azinternal.NewBaseAzureModule(cmdCtx, 10),
+		BaseAzureModule:  azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:    cmdCtx.Subscriptions,
 		ExfiltrationRows: [][]string{},
 		LootMap: map[string]*internal.LootFile{

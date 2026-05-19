@@ -84,7 +84,7 @@ func AnalyzeNetworkExposure(cmd *cobra.Command, args []string) {
 	}
 
 	module := &NetworkExposureModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		ExposureRows:    [][]string{},
 		nsgSummaryCache: make(map[string]*NSGRiskInfo),

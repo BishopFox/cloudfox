@@ -175,7 +175,7 @@ func ListPrivilegeEscalation(cmd *cobra.Command, args []string) {
 	}
 
 	module := &PrivilegeEscalationModule{
-		BaseAzureModule:  azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule:  azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:    cmdCtx.Subscriptions,
 		EscalationRows:   [][]string{},
 		DangerousRoleMap: dangerousRoles,

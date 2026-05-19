@@ -43,8 +43,9 @@ var (
 			globals.AZ_VERBOSITY = AzVerbosity
 			globals.AZ_REFRESH_CACHE = AzRefreshCache
 
-			// If --refresh-cache, clear the in-memory cache
+			// If --refresh-cache, wipe all disk + in-memory caches once
 			if globals.AZ_REFRESH_CACHE {
+				clearAllDiskCaches(AzOutputDirectory)
 				azinternal.ClearAzureCache()
 			}
 
@@ -120,9 +121,12 @@ Authentication options:
 			globals.AZ_VERBOSITY = AzVerbosity
 			globals.AZ_REFRESH_CACHE = AzRefreshCache
 
-			// If --refresh-cache, clear the in-memory cache
+			// If --refresh-cache, wipe all disk + in-memory caches once,
+			// then reset the flag so sub-commands don't repeat the clearing.
 			if globals.AZ_REFRESH_CACHE {
+				clearAllDiskCaches(AzOutputDirectory)
 				azinternal.ClearAzureCache()
+				globals.AZ_REFRESH_CACHE = false
 			}
 
 			// Check for bearer tokens from flags or environment variables
@@ -164,6 +168,8 @@ Authentication options:
 			startTime := time.Now()
 
 			// ========== CACHE: Load from disk if available ==========
+			// Note: --refresh-cache already cleared all caches in PersistentPreRun
+			// and reset AZ_REFRESH_CACHE=false, so this just loads (or finds nothing).
 			tenantID := loadTenantCacheFromDisk(AzOutputDirectory)
 			loadRoleDefinitionCacheFromDisk(AzOutputDirectory, tenantID)
 
@@ -411,6 +417,10 @@ func init() {
 	// Cache flags
 	AzCommands.PersistentFlags().BoolVar(&AzRefreshCache, "refresh-cache", false, "Force re-enumeration of cached data (cache auto-expires after 24 hours)")
 
+	// Performance tuning flags
+	AzCommands.PersistentFlags().BoolVar(&globals.AZ_SKIP_MFA, "skip-mfa", false, "Skip MFA enumeration (saves ~1hr on large tenants)")
+	AzCommands.PersistentFlags().IntVar(&globals.AZ_GRAPH_RPS, "graph-rps", 0, "Override Graph API rate limit ceiling in req/s (default: auto-tuning from 20 to 50)")
+
 	AzCommands.AddCommand(
 		commands.AzAccessKeysCommand,
 		commands.AzAcrCommand,
@@ -494,6 +504,29 @@ func init() {
 	)
 }
 
+// clearAllDiskCaches deletes all disk caches for the current tenant.
+// Called once when --refresh-cache is passed, before any command runs.
+func clearAllDiskCaches(outputDir string) {
+	tenantID := resolveTenantID()
+	if tenantID == "" {
+		return
+	}
+	logger.InfoM("Clearing all caches (--refresh-cache)", "cache")
+	if azinternal.TenantCacheExists(outputDir, tenantID) {
+		azinternal.DeleteTenantCache(outputDir, tenantID)
+	}
+	if azinternal.EnrichmentCacheExists(outputDir, tenantID) {
+		azinternal.DeleteEnrichmentCache(outputDir, tenantID)
+	}
+	if azinternal.PermEnrichmentCacheExists(outputDir, tenantID) {
+		azinternal.DeletePermEnrichmentCache(outputDir, tenantID)
+	}
+	if azinternal.RoleDefinitionCacheExists(outputDir, tenantID) {
+		azinternal.DeleteRoleDefinitionCache(outputDir, tenantID)
+	}
+	azinternal.DeleteAllPrefetchCaches(outputDir, tenantID)
+}
+
 // resolveTenantID returns the tenant ID from the -t flag, or resolves it from the -s flag
 // using the Azure CLI. Returns empty string if neither flag is set or resolution fails.
 func resolveTenantID() string {
@@ -521,19 +554,11 @@ func resolveTenantID() string {
 
 // loadTenantCacheFromDisk attempts to load tenant cache from disk into the in-memory cache.
 // Returns the tenant ID used (from -t flag, resolved from -s flag, or empty).
+// This is a pure loader; cache clearing is handled by clearAllDiskCaches.
 func loadTenantCacheFromDisk(outputDir string) string {
 	tenantID := resolveTenantID()
 	if tenantID == "" {
 		return ""
-	}
-
-	// If --refresh-cache, delete existing disk cache
-	if globals.AZ_REFRESH_CACHE {
-		if azinternal.TenantCacheExists(outputDir, tenantID) {
-			logger.InfoM("Deleting existing tenant cache (--refresh-cache)", "cache")
-			azinternal.DeleteTenantCache(outputDir, tenantID)
-		}
-		return tenantID
 	}
 
 	// Check if disk cache exists
@@ -541,12 +566,10 @@ func loadTenantCacheFromDisk(outputDir string) string {
 		return tenantID
 	}
 
-	// Check staleness
+	// Check staleness - warn but still load (only --refresh-cache forces re-enumeration)
 	if azinternal.IsTenantCacheStale(outputDir, tenantID, azinternal.DefaultAzureCacheExpiration) {
 		age, _ := azinternal.GetTenantCacheAge(outputDir, tenantID)
-		logger.InfoM(fmt.Sprintf("Tenant cache expired (age: %s), will re-enumerate", formatDur(age)), "cache")
-		azinternal.DeleteTenantCache(outputDir, tenantID)
-		return tenantID
+		logger.InfoM(fmt.Sprintf("Tenant cache is stale (age: %s). Use --refresh-cache to force update.", formatDur(age)), "cache")
 	}
 
 	// Load from disk
@@ -618,17 +641,9 @@ func saveTenantCacheToDisk(outputDir, tenantID string) {
 
 // loadRoleDefinitionCacheFromDisk attempts to load role definition cache from disk into
 // the in-memory cache. Role definitions are tenant-scoped and rarely change (7-day TTL).
+// This is a pure loader; cache clearing is handled by clearAllDiskCaches.
 func loadRoleDefinitionCacheFromDisk(outputDir, tenantID string) {
 	if tenantID == "" {
-		return
-	}
-
-	// If --refresh-cache, delete existing disk cache
-	if globals.AZ_REFRESH_CACHE {
-		if azinternal.RoleDefinitionCacheExists(outputDir, tenantID) {
-			logger.InfoM("Deleting existing role definition cache (--refresh-cache)", "cache")
-			azinternal.DeleteRoleDefinitionCache(outputDir, tenantID)
-		}
 		return
 	}
 

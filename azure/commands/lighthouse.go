@@ -122,7 +122,7 @@ func ListLighthouse(cmd *cobra.Command, args []string) {
 	}
 
 	module := &LighthouseModule{
-		BaseAzureModule:   azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule:   azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:     cmdCtx.Subscriptions,
 		DelegationRows:    [][]string{},
 		AuthorizationRows: [][]string{},

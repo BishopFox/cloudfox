@@ -64,7 +64,7 @@ func ListAppGateway(cmd *cobra.Command, args []string) {
 
 	// -------------------- Initialize module --------------------
 	module := &AppGatewayModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		AppGatewayRows:  [][]string{},
 		LootMap: map[string]*internal.LootFile{

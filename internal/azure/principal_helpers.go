@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	armauthorizationv2 "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v2"
 	armmanagementgroups "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/managementgroups/armmanagementgroups"
+	armresources "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
 	armmi "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/msi/armmsi"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
@@ -666,8 +669,10 @@ func contains(slice []string, item string) bool {
 	return false
 }
 
-// GetPrincipalPermissions retrieves both Graph and RBAC permissions for a given principal ID.
-func GetPrincipalPermissions(ctx context.Context, session *SafeSession, principal string) PrincipalPermissions {
+// GetPrincipalPermissions retrieves Graph permissions for a given principal.
+// When principalType is provided (e.g., "User", "ServicePrincipal"), it skips the
+// type-detection API calls. Pass "" to fall back to auto-detection.
+func GetPrincipalPermissions(ctx context.Context, session *SafeSession, principal string, principalType ...string) PrincipalPermissions {
 	logger := internal.NewLogger()
 	if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 		logger.InfoM(fmt.Sprintf("Enumerating principal permissions for: %v", principal), globals.AZ_PRINCIPALS_MODULE_NAME)
@@ -682,65 +687,74 @@ func GetPrincipalPermissions(ctx context.Context, session *SafeSession, principa
 	objectID := ""
 	isSP := false
 
-	// ----------------- Determine type of principal -----------------
-	// Always try to determine the actual type, even if it's a UUID
-	// (both users and service principals have UUID object IDs)
+	// If caller provides the type, skip the type-detection API calls entirely
+	knownType := ""
+	if len(principalType) > 0 {
+		knownType = principalType[0]
+	}
 
-	if isUUID(principal) {
-		// It's a UUID - try as user first, then service principal
-		url := fmt.Sprintf("https://graph.microsoft.com/v1.0/users/%s?$select=id", principal)
-		body, err := GraphAPIRequestWithRetry(ctx, "GET", url, token)
-		if err == nil {
-			var userData struct {
-				ID string `json:"id"`
-			}
-			if json.Unmarshal(body, &userData) == nil && userData.ID != "" {
-				objectID = userData.ID
-				isSP = false
-			}
-		}
-
-		// If not found as user, try as service principal (includes managed identities)
-		if objectID == "" {
-			url = fmt.Sprintf("https://graph.microsoft.com/v1.0/servicePrincipals/%s?$select=id", principal)
-			body, err := GraphAPIRequestWithRetry(ctx, "GET", url, token)
-			if err == nil {
-				var spData struct {
-					ID string `json:"id"`
-				}
-				if json.Unmarshal(body, &spData) == nil && spData.ID != "" {
-					objectID = spData.ID
-					isSP = true
-				}
-			}
+	if knownType != "" {
+		objectID = principal
+		switch knownType {
+		case "ServicePrincipal", "UserAssignedManagedIdentity":
+			isSP = true
+		default:
+			isSP = false
 		}
 	} else {
-		// It's not a UUID - try to resolve as UPN/email or displayName
-		url := fmt.Sprintf("https://graph.microsoft.com/v1.0/users/%s?$select=id", principal)
-		body, err := GraphAPIRequestWithRetry(ctx, "GET", url, token)
-		if err == nil {
-			var userData struct {
-				ID string `json:"id"`
-			}
-			if json.Unmarshal(body, &userData) == nil && userData.ID != "" {
-				objectID = userData.ID
-				isSP = false
-			}
-		}
-
-		// If not resolved as user, try as service principal displayName
-		if objectID == "" {
-			url = fmt.Sprintf("https://graph.microsoft.com/v1.0/servicePrincipals?$filter=displayName eq '%s'&$select=id", principal)
+		// Auto-detect: try as user first, then service principal (1-2 API calls)
+		if isUUID(principal) {
+			url := fmt.Sprintf("https://graph.microsoft.com/v1.0/users/%s?$select=id", principal)
 			body, err := GraphAPIRequestWithRetry(ctx, "GET", url, token)
 			if err == nil {
-				var spData struct {
-					Value []struct {
-						ID string `json:"id"`
-					} `json:"value"`
+				var userData struct {
+					ID string `json:"id"`
 				}
-				if json.Unmarshal(body, &spData) == nil && len(spData.Value) > 0 {
-					objectID = spData.Value[0].ID
-					isSP = true
+				if json.Unmarshal(body, &userData) == nil && userData.ID != "" {
+					objectID = userData.ID
+					isSP = false
+				}
+			}
+
+			if objectID == "" {
+				url = fmt.Sprintf("https://graph.microsoft.com/v1.0/servicePrincipals/%s?$select=id", principal)
+				body, err := GraphAPIRequestWithRetry(ctx, "GET", url, token)
+				if err == nil {
+					var spData struct {
+						ID string `json:"id"`
+					}
+					if json.Unmarshal(body, &spData) == nil && spData.ID != "" {
+						objectID = spData.ID
+						isSP = true
+					}
+				}
+			}
+		} else {
+			url := fmt.Sprintf("https://graph.microsoft.com/v1.0/users/%s?$select=id", principal)
+			body, err := GraphAPIRequestWithRetry(ctx, "GET", url, token)
+			if err == nil {
+				var userData struct {
+					ID string `json:"id"`
+				}
+				if json.Unmarshal(body, &userData) == nil && userData.ID != "" {
+					objectID = userData.ID
+					isSP = false
+				}
+			}
+
+			if objectID == "" {
+				url = fmt.Sprintf("https://graph.microsoft.com/v1.0/servicePrincipals?$filter=displayName eq '%s'&$select=id", principal)
+				body, err := GraphAPIRequestWithRetry(ctx, "GET", url, token)
+				if err == nil {
+					var spData struct {
+						Value []struct {
+							ID string `json:"id"`
+						} `json:"value"`
+					}
+					if json.Unmarshal(body, &spData) == nil && len(spData.Value) > 0 {
+						objectID = spData.Value[0].ID
+						isSP = true
+					}
 				}
 			}
 		}
@@ -757,113 +771,182 @@ func GetPrincipalPermissions(ctx context.Context, session *SafeSession, principa
 
 	// ----------------- Fetch permissions based on type -----------------
 	if isSP {
-		// Service Principal: appRoleAssignments with pagination
-		initialURL := fmt.Sprintf("https://graph.microsoft.com/v1.0/servicePrincipals/%s/appRoleAssignments", objectID)
-
-		err := GraphAPIPagedRequest(ctx, initialURL, token, func(body []byte) (bool, string, error) {
-			var data struct {
-				Value []struct {
-					ResourceDisplayName string  `json:"resourceDisplayName"`
-					ResourceId          string  `json:"resourceId"`
-					AppRoleId           *string `json:"appRoleId"`
-				} `json:"value"`
-				NextLink string `json:"@odata.nextLink"`
-			}
-
-			if err := json.Unmarshal(body, &data); err != nil {
-				return false, "", fmt.Errorf("failed to decode appRoleAssignments: %v", err)
-			}
-
-			for _, a := range data.Value {
-				appRoleName := "(unknown)"
-				if a.AppRoleId != nil && a.ResourceId != "" {
-					roleURL := fmt.Sprintf("https://graph.microsoft.com/v1.0/servicePrincipals/%s/appRoles", a.ResourceId)
-					roleBody, err := GraphAPIRequestWithRetry(ctx, "GET", roleURL, token)
-					if err != nil {
-						if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
-							logger.ErrorM(fmt.Sprintf("Failed to fetch appRoles for resource %s (%s): %v", a.ResourceDisplayName, a.ResourceId, err), globals.AZ_PRINCIPALS_MODULE_NAME)
-						}
-					} else {
-						var roleData struct {
-							Value []struct {
-								ID          string `json:"id"`
-								Value       string `json:"value"`
-								DisplayName string `json:"displayName"`
-							} `json:"value"`
-						}
-						if json.Unmarshal(roleBody, &roleData) == nil {
-							found := false
-							for _, r := range roleData.Value {
-								if strings.EqualFold(r.ID, *a.AppRoleId) {
-									if r.Value != "" {
-										appRoleName = r.Value
-									} else if r.DisplayName != "" {
-										appRoleName = r.DisplayName
-									}
-									found = true
-									break
-								}
-							}
-							if !found && globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
-								logger.ErrorM(fmt.Sprintf("AppRole ID %s not found in resource %s (%s) appRoles list (found %d roles)", *a.AppRoleId, a.ResourceDisplayName, a.ResourceId, len(roleData.Value)), globals.AZ_PRINCIPALS_MODULE_NAME)
-							}
-						} else if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
-							logger.ErrorM(fmt.Sprintf("Failed to decode appRoles JSON for resource %s (%s)", a.ResourceDisplayName, a.ResourceId), globals.AZ_PRINCIPALS_MODULE_NAME)
-						}
-					}
-				} else if a.AppRoleId == nil && globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
-					logger.ErrorM(fmt.Sprintf("AppRoleAssignment has nil AppRoleId for resource %s (%s)", a.ResourceDisplayName, a.ResourceId), globals.AZ_PRINCIPALS_MODULE_NAME)
+		// Check bulk SP appRoleAssignments cache first
+		bulkKey := AzCacheKey("sp-approle-assignments-all", "tenant")
+		bulkHit := false
+		if cached, found := AzureDataCache.Get(bulkKey); found {
+			bulkData := cached.(map[string][]CachedSPAppRoleAssignment)
+			if assignments, ok := bulkData[objectID]; ok {
+				for _, a := range assignments {
+					graphPerms = append(graphPerms, fmt.Sprintf("%s (%s)", a.ResourceDisplayName, a.AppRoleName))
 				}
-				graphPerms = append(graphPerms, fmt.Sprintf("%s (%s)", a.ResourceDisplayName, appRoleName))
+				bulkHit = true
+			}
+		}
+		if !bulkHit {
+			// Fall back to per-SP API call (bulk cache not available or principal missing)
+			initialURL := fmt.Sprintf("https://graph.microsoft.com/v1.0/servicePrincipals/%s/appRoleAssignments", objectID)
+			var cachedAssignments []CachedSPAppRoleAssignment
+
+			err := GraphAPIPagedRequest(ctx, initialURL, token, func(body []byte) (bool, string, error) {
+				var data struct {
+					Value []struct {
+						ResourceDisplayName string  `json:"resourceDisplayName"`
+						ResourceId          string  `json:"resourceId"`
+						AppRoleId           *string `json:"appRoleId"`
+					} `json:"value"`
+					NextLink string `json:"@odata.nextLink"`
+				}
+
+				if err := json.Unmarshal(body, &data); err != nil {
+					return false, "", fmt.Errorf("failed to decode appRoleAssignments: %v", err)
+				}
+
+				for _, a := range data.Value {
+					appRoleName := "(unknown)"
+					if a.AppRoleId != nil && a.ResourceId != "" {
+						appRoleName = resolveAppRoleName(ctx, token, a.ResourceId, a.ResourceDisplayName, *a.AppRoleId, logger)
+					} else if a.AppRoleId == nil && globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+						logger.ErrorM(fmt.Sprintf("AppRoleAssignment has nil AppRoleId for resource %s (%s)", a.ResourceDisplayName, a.ResourceId), globals.AZ_PRINCIPALS_MODULE_NAME)
+					}
+					graphPerms = append(graphPerms, fmt.Sprintf("%s (%s)", a.ResourceDisplayName, appRoleName))
+					cachedAssignments = append(cachedAssignments, CachedSPAppRoleAssignment{
+						ResourceDisplayName: a.ResourceDisplayName,
+						AppRoleName:         appRoleName,
+					})
+				}
+
+				hasMore := data.NextLink != ""
+				nextURL := data.NextLink
+				return hasMore, nextURL, nil
+			})
+
+			if err != nil {
+				if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+					logger.InfoM(fmt.Sprintf("[GetPrincipalPermissions] Failed to fetch appRoleAssignments: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
+				}
 			}
 
-			hasMore := data.NextLink != ""
-			nextURL := data.NextLink
-			return hasMore, nextURL, nil
-		})
-
-		if err != nil {
-			if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
-				logger.InfoM(fmt.Sprintf("[GetPrincipalPermissions] Failed to fetch appRoleAssignments: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
-			}
-			// Return partial results instead of empty result
+			// Backfill bulk cache so other callers benefit
+			BackfillBulkCache(bulkKey, objectID, cachedAssignments)
 		}
 
 	} else {
-		// User: memberOf groups with pagination
-		initialURL := fmt.Sprintf("https://graph.microsoft.com/v1.0/users/%s/memberOf", objectID)
+		// User: check bulk group cache first, fall back to memberOf API
+		bulkKey := AzCacheKey("group-memberships-all", "tenant")
+		bulkHit := false
+		if cached, found := AzureDataCache.Get(bulkKey); found {
+			bulkData := cached.(map[string]CachedGroupMembership)
+			if membership, ok := bulkData[objectID]; ok {
+				for _, g := range membership.AllGroupNames {
+					graphPerms = append(graphPerms, fmt.Sprintf("%s (group)", g))
+				}
+				bulkHit = true
+			}
+		}
+		if !bulkHit {
+			// Fall back to per-principal memberOf API
+			initialURL := fmt.Sprintf("https://graph.microsoft.com/v1.0/users/%s/memberOf", objectID)
+			var groupNames []string
 
-		err := GraphAPIPagedRequest(ctx, initialURL, token, func(body []byte) (bool, string, error) {
-			var data struct {
-				Value []struct {
-					DisplayName string `json:"displayName"`
-				} `json:"value"`
-				NextLink string `json:"@odata.nextLink"`
+			err := GraphAPIPagedRequest(ctx, initialURL, token, func(body []byte) (bool, string, error) {
+				var data struct {
+					Value []struct {
+						DisplayName string `json:"displayName"`
+					} `json:"value"`
+					NextLink string `json:"@odata.nextLink"`
+				}
+
+				if err := json.Unmarshal(body, &data); err != nil {
+					return false, "", fmt.Errorf("failed to decode memberOf: %v", err)
+				}
+
+				for _, g := range data.Value {
+					graphPerms = append(graphPerms, fmt.Sprintf("%s (group)", g.DisplayName))
+					groupNames = append(groupNames, g.DisplayName)
+				}
+
+				hasMore := data.NextLink != ""
+				nextURL := data.NextLink
+				return hasMore, nextURL, nil
+			})
+
+			if err != nil {
+				if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+					logger.InfoM(fmt.Sprintf("[GetPrincipalPermissions] Failed to fetch memberOf: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
+				}
 			}
 
-			if err := json.Unmarshal(body, &data); err != nil {
-				return false, "", fmt.Errorf("failed to decode memberOf: %v", err)
-			}
-
-			for _, g := range data.Value {
-				graphPerms = append(graphPerms, fmt.Sprintf("%s (group)", g.DisplayName))
-			}
-
-			hasMore := data.NextLink != ""
-			nextURL := data.NextLink
-			return hasMore, nextURL, nil
-		})
-
-		if err != nil {
-			if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
-				logger.InfoM(fmt.Sprintf("[GetPrincipalPermissions] Failed to fetch memberOf: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
-			}
-			// Return partial results instead of empty result
+			// Backfill bulk cache so other callers benefit
+			BackfillBulkCache(bulkKey, objectID, CachedGroupMembership{
+				AllGroupNames: groupNames,
+			})
 		}
 	}
 
 	result.Graph = strings.Join(graphPerms, ", ")
 	return result
+}
+
+// resolveAppRoleName looks up an appRole display name for a given resource SP + role ID.
+// Results are cached in AzureDataCache so repeated lookups across principals are free.
+func resolveAppRoleName(ctx context.Context, token, resourceID, resourceDisplayName, appRoleID string, logger internal.Logger) string {
+	// Cache key: appRoles for this resource SP
+	cacheKey := AzCacheKey("approles", resourceID)
+
+	// Check cache: map[appRoleID] -> roleName
+	if cached, found := AzureDataCache.Get(cacheKey); found {
+		roleMap := cached.(map[string]string)
+		if name, ok := roleMap[strings.ToLower(appRoleID)]; ok {
+			return name
+		}
+		return "(unknown)"
+	}
+
+	// Fetch from API and cache the entire appRoles list for this resource
+	roleURL := fmt.Sprintf("https://graph.microsoft.com/v1.0/servicePrincipals/%s/appRoles", resourceID)
+	roleBody, err := GraphAPIRequestWithRetry(ctx, "GET", roleURL, token)
+	if err != nil {
+		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+			logger.ErrorM(fmt.Sprintf("Failed to fetch appRoles for resource %s (%s): %v", resourceDisplayName, resourceID, err), globals.AZ_PRINCIPALS_MODULE_NAME)
+		}
+		// Cache empty map to avoid retrying a failing resource
+		AzureDataCache.Set(cacheKey, map[string]string{}, 0)
+		return "(unknown)"
+	}
+
+	var roleData struct {
+		Value []struct {
+			ID          string `json:"id"`
+			Value       string `json:"value"`
+			DisplayName string `json:"displayName"`
+		} `json:"value"`
+	}
+	if err := json.Unmarshal(roleBody, &roleData); err != nil {
+		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+			logger.ErrorM(fmt.Sprintf("Failed to decode appRoles JSON for resource %s (%s)", resourceDisplayName, resourceID), globals.AZ_PRINCIPALS_MODULE_NAME)
+		}
+		AzureDataCache.Set(cacheKey, map[string]string{}, 0)
+		return "(unknown)"
+	}
+
+	roleMap := make(map[string]string, len(roleData.Value))
+	for _, r := range roleData.Value {
+		name := r.DisplayName
+		if r.Value != "" {
+			name = r.Value
+		}
+		roleMap[strings.ToLower(r.ID)] = name
+	}
+	AzureDataCache.Set(cacheKey, roleMap, 0)
+
+	if name, ok := roleMap[strings.ToLower(appRoleID)]; ok {
+		return name
+	}
+	if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+		logger.ErrorM(fmt.Sprintf("AppRole ID %s not found in resource %s (%s) appRoles list (found %d roles)", appRoleID, resourceDisplayName, resourceID, len(roleData.Value)), globals.AZ_PRINCIPALS_MODULE_NAME)
+	}
+	return "(unknown)"
 }
 
 // ----------------- helper -----------------
@@ -891,6 +974,22 @@ func isUUID(s string) bool {
 // principalId filter does NOT expand group memberships automatically.
 // Uses transitiveMemberOf to capture ALL group memberships including nested group inheritance.
 func GetUserGroupMemberships(ctx context.Context, session *SafeSession, userObjectID string) []string {
+	// Check bulk group memberships cache first (returns AllGroupIDs)
+	bulkKey := AzCacheKey("group-memberships-all", "tenant")
+	if cached, found := AzureDataCache.Get(bulkKey); found {
+		bulkData := cached.(map[string]CachedGroupMembership)
+		if membership, ok := bulkData[userObjectID]; ok {
+			return membership.AllGroupIDs
+		}
+		// Principal not in bulk cache - fall through to per-principal API
+	}
+
+	// Fall back to per-principal cache / API
+	cacheKey := AzCacheKey("group-memberships", userObjectID)
+	if cached, found := AzureDataCache.Get(cacheKey); found {
+		return cached.([]string)
+	}
+
 	logger := internal.NewLogger()
 	groupIDs := []string{}
 
@@ -899,6 +998,7 @@ func GetUserGroupMemberships(ctx context.Context, session *SafeSession, userObje
 		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 			logger.ErrorM(fmt.Sprintf("Failed to get Graph token for group membership enumeration: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
 		}
+		AzureDataCache.Set(cacheKey, groupIDs, 0)
 		return groupIDs
 	}
 
@@ -932,12 +1032,20 @@ func GetUserGroupMemberships(ctx context.Context, session *SafeSession, userObje
 		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 			logger.ErrorM(fmt.Sprintf("Failed to enumerate group memberships for user %s: %v", userObjectID, err), globals.AZ_PRINCIPALS_MODULE_NAME)
 		}
+		AzureDataCache.Set(cacheKey, groupIDs, 0)
 		return groupIDs
 	}
 
 	if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS && len(groupIDs) > 0 {
 		logger.InfoM(fmt.Sprintf("User %s is a member of %d group(s) (including nested groups)", userObjectID, len(groupIDs)), globals.AZ_PRINCIPALS_MODULE_NAME)
 	}
+
+	AzureDataCache.Set(cacheKey, groupIDs, 0)
+
+	// Backfill bulk cache so other callers benefit
+	BackfillBulkCache(bulkKey, userObjectID, CachedGroupMembership{
+		AllGroupIDs: groupIDs,
+	})
 
 	return groupIDs
 }
@@ -1053,6 +1161,23 @@ func GetRoleAssignments(ctx context.Context, session *SafeSession, principalID s
 }
 
 func GetDelegatedOAuth2Grants(ctx context.Context, session *SafeSession, appObjectID string) []string {
+	// Check bulk OAuth2 grants cache first
+	bulkKey := AzCacheKey("oauth2-grants-all", "tenant")
+	if cached, found := AzureDataCache.Get(bulkKey); found {
+		bulkData := cached.(map[string][]CachedOAuth2Grant)
+		if grants, ok := bulkData[appObjectID]; ok {
+			var scopesFormatted []string
+			for _, grant := range grants {
+				for _, scope := range grant.Scopes {
+					scopesFormatted = append(scopesFormatted, fmt.Sprintf("%s: %s (%s)", grant.ResourceName, scope, grant.ConsentType))
+				}
+			}
+			return scopesFormatted
+		}
+		// Principal not in bulk cache - fall through to per-principal API
+	}
+
+	// Fall back to per-principal API
 	logger := internal.NewLogger()
 	if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
 		logger.InfoM(fmt.Sprintf("Enumerating OAuth2 Grants for app: %v", appObjectID), globals.AZ_PRINCIPALS_MODULE_NAME)
@@ -1067,6 +1192,7 @@ func GetDelegatedOAuth2Grants(ctx context.Context, session *SafeSession, appObje
 	}
 
 	var scopesFormatted []string
+	var cachedGrants []CachedOAuth2Grant
 	grantCount := 0
 	adminConsentCount := 0
 	userConsentCount := 0
@@ -1126,13 +1252,22 @@ func GetDelegatedOAuth2Grants(ctx context.Context, session *SafeSession, appObje
 
 			// Format scopes with consent type and resource name
 			scopes := strings.Split(*grant.Scope, " ")
+			var nonEmptyScopes []string
 			for _, scope := range scopes {
 				if scope != "" {
-					// Format: "Resource: scope (ConsentType)"
 					formatted := fmt.Sprintf("%s: %s (%s)", resourceName, scope, consentType)
 					scopesFormatted = append(scopesFormatted, formatted)
+					nonEmptyScopes = append(nonEmptyScopes, scope)
 				}
 			}
+
+			// Collect for bulk cache backfill
+			cachedGrants = append(cachedGrants, CachedOAuth2Grant{
+				ClientID:    appObjectID,
+				ConsentType: consentType,
+				ResourceName: resourceName,
+				Scopes:      nonEmptyScopes,
+			})
 		}
 
 		hasMore := data.NextLink != ""
@@ -1151,6 +1286,9 @@ func GetDelegatedOAuth2Grants(ctx context.Context, session *SafeSession, appObje
 		logger.InfoM(fmt.Sprintf("Found %d OAuth2 permission grant(s) for app %s: %d admin consent, %d user consent, %d total permissions",
 			grantCount, appObjectID, adminConsentCount, userConsentCount, len(scopesFormatted)), globals.AZ_PRINCIPALS_MODULE_NAME)
 	}
+
+	// Backfill bulk cache so other callers benefit
+	BackfillBulkCache(bulkKey, appObjectID, cachedGrants)
 
 	return scopesFormatted
 }
@@ -1227,6 +1365,37 @@ func GetAllOAuth2PermissionGrants(ctx context.Context, session *SafeSession) ([]
 		return grants, err
 	}
 
+	// Build SP display name lookup map from in-memory cache (avoids per-grant API calls).
+	// If the cache isn't populated, we fall back to per-grant API lookups.
+	spNameMap := make(map[string]string) // objectID -> displayName
+	var spCacheAvailable bool
+	for key, item := range AzureDataCache.Items() {
+		if strings.HasPrefix(key, "az-service-principals-") {
+			if sps, ok := item.Object.([]PrincipalInfo); ok {
+				for _, sp := range sps {
+					spNameMap[sp.ObjectID] = sp.DisplayName
+				}
+				spCacheAvailable = true
+			}
+			break
+		}
+	}
+
+	// Build user UPN lookup map from in-memory cache
+	userUPNMap := make(map[string]string) // objectID -> UPN
+	var userCacheAvailable bool
+	for key, item := range AzureDataCache.Items() {
+		if strings.HasPrefix(key, "az-entra-users-") {
+			if users, ok := item.Object.([]PrincipalInfo); ok {
+				for _, u := range users {
+					userUPNMap[u.ObjectID] = u.UserPrincipalName
+				}
+				userCacheAvailable = true
+			}
+			break
+		}
+	}
+
 	// Get all OAuth2 permission grants in the tenant
 	initialURL := "https://graph.microsoft.com/v1.0/oauth2PermissionGrants"
 
@@ -1260,17 +1429,14 @@ func GetAllOAuth2PermissionGrants(ctx context.Context, session *SafeSession) ([]
 				ExpiryTime:  grant.ExpiryTime,
 			}
 
-			// Get principal ID for user consent
 			if grant.PrincipalID != nil {
 				details.PrincipalID = *grant.PrincipalID
 			}
 
-			// Parse scopes
 			if grant.Scope != "" {
 				details.Scopes = strings.Fields(grant.Scope)
 			}
 
-			// Identify risky permissions
 			for _, scope := range details.Scopes {
 				if description, isRisky := RiskyOAuth2Permissions[scope]; isRisky {
 					details.RiskyPermissions = append(details.RiskyPermissions, fmt.Sprintf("%s (%s)", scope, description))
@@ -1278,51 +1444,61 @@ func GetAllOAuth2PermissionGrants(ctx context.Context, session *SafeSession) ([]
 				}
 			}
 
-			// Get client service principal display name
+			// Resolve client SP display name: cache first, API fallback
 			if details.ClientID != "" {
-				spURL := fmt.Sprintf("https://graph.microsoft.com/v1.0/servicePrincipals/%s?$select=displayName,appId,appOwnerOrganizationId", details.ClientID)
-				spBody, err := GraphAPIRequestWithRetry(ctx, "GET", spURL, token)
-				if err == nil {
-					var spData struct {
-						DisplayName            string  `json:"displayName"`
-						AppID                  string  `json:"appId"`
-						AppOwnerOrganizationID *string `json:"appOwnerOrganizationId"`
-					}
-					if json.Unmarshal(spBody, &spData) == nil {
-						details.ClientDisplayName = spData.DisplayName
-						// Check if external/multi-tenant
-						if spData.AppOwnerOrganizationID != nil && *spData.AppOwnerOrganizationID != "" {
-							// Compare with current tenant - if different, it's external
-							details.IsExternal = true // Simplified - could compare tenant IDs
+				if spCacheAvailable {
+					details.ClientDisplayName = spNameMap[details.ClientID]
+				} else {
+					spURL := fmt.Sprintf("https://graph.microsoft.com/v1.0/servicePrincipals/%s?$select=displayName,appId,appOwnerOrganizationId", details.ClientID)
+					spBody, err := GraphAPIRequestWithRetry(ctx, "GET", spURL, token)
+					if err == nil {
+						var spData struct {
+							DisplayName            string  `json:"displayName"`
+							AppID                  string  `json:"appId"`
+							AppOwnerOrganizationID *string `json:"appOwnerOrganizationId"`
+						}
+						if json.Unmarshal(spBody, &spData) == nil {
+							details.ClientDisplayName = spData.DisplayName
+							if spData.AppOwnerOrganizationID != nil && *spData.AppOwnerOrganizationID != "" {
+								details.IsExternal = true
+							}
 						}
 					}
 				}
 			}
 
-			// Get resource service principal display name
+			// Resolve resource SP display name: cache first, API fallback
 			if details.ResourceID != "" {
-				spURL := fmt.Sprintf("https://graph.microsoft.com/v1.0/servicePrincipals/%s?$select=displayName", details.ResourceID)
-				spBody, err := GraphAPIRequestWithRetry(ctx, "GET", spURL, token)
-				if err == nil {
-					var spData struct {
-						DisplayName string `json:"displayName"`
-					}
-					if json.Unmarshal(spBody, &spData) == nil && spData.DisplayName != "" {
-						details.ResourceDisplayName = spData.DisplayName
+				if spCacheAvailable {
+					details.ResourceDisplayName = spNameMap[details.ResourceID]
+				} else {
+					spURL := fmt.Sprintf("https://graph.microsoft.com/v1.0/servicePrincipals/%s?$select=displayName", details.ResourceID)
+					spBody, err := GraphAPIRequestWithRetry(ctx, "GET", spURL, token)
+					if err == nil {
+						var spData struct {
+							DisplayName string `json:"displayName"`
+						}
+						if json.Unmarshal(spBody, &spData) == nil && spData.DisplayName != "" {
+							details.ResourceDisplayName = spData.DisplayName
+						}
 					}
 				}
 			}
 
-			// Get principal name for user consent
+			// Resolve principal UPN for user consent: cache first, API fallback
 			if details.PrincipalID != "" && details.ConsentType == "Principal" {
-				userURL := fmt.Sprintf("https://graph.microsoft.com/v1.0/users/%s?$select=userPrincipalName", details.PrincipalID)
-				userBody, err := GraphAPIRequestWithRetry(ctx, "GET", userURL, token)
-				if err == nil {
-					var userData struct {
-						UserPrincipalName string `json:"userPrincipalName"`
-					}
-					if json.Unmarshal(userBody, &userData) == nil && userData.UserPrincipalName != "" {
-						details.PrincipalName = userData.UserPrincipalName
+				if userCacheAvailable {
+					details.PrincipalName = userUPNMap[details.PrincipalID]
+				} else {
+					userURL := fmt.Sprintf("https://graph.microsoft.com/v1.0/users/%s?$select=userPrincipalName", details.PrincipalID)
+					userBody, err := GraphAPIRequestWithRetry(ctx, "GET", userURL, token)
+					if err == nil {
+						var userData struct {
+							UserPrincipalName string `json:"userPrincipalName"`
+						}
+						if json.Unmarshal(userBody, &userData) == nil && userData.UserPrincipalName != "" {
+							details.PrincipalName = userData.UserPrincipalName
+						}
 					}
 				}
 			}
@@ -1345,8 +1521,37 @@ func GetAllOAuth2PermissionGrants(ctx context.Context, session *SafeSession) ([]
 	return grants, nil
 }
 
-// GetConsentGrantsForClient retrieves consent grants for a specific client application
+// GetConsentGrantsForClient retrieves consent grants for a specific client application.
+// Checks the bulk OAuth2 grants cache first, falls back to per-client API if not cached.
 func GetConsentGrantsForClient(ctx context.Context, session *SafeSession, clientID string) ([]OAuth2PermissionGrantDetails, error) {
+	// Check bulk OAuth2 grants cache (populated by PreFetchOAuth2Grants)
+	bulkKey := AzCacheKey("oauth2-grants-all", "tenant")
+	if cached, found := AzureDataCache.Get(bulkKey); found {
+		bulkData := cached.(map[string][]CachedOAuth2Grant)
+		if cachedGrants, ok := bulkData[clientID]; ok {
+			var grants []OAuth2PermissionGrantDetails
+			for _, cg := range cachedGrants {
+				details := OAuth2PermissionGrantDetails{
+					ClientID:            cg.ClientID,
+					ConsentType:         cg.ConsentType,
+					ResourceDisplayName: cg.ResourceName,
+					Scopes:              cg.Scopes,
+					Scope:               strings.Join(cg.Scopes, " "),
+				}
+				for _, scope := range cg.Scopes {
+					if description, isRisky := RiskyOAuth2Permissions[scope]; isRisky {
+						details.RiskyPermissions = append(details.RiskyPermissions, fmt.Sprintf("%s (%s)", scope, description))
+						details.IsRisky = true
+					}
+				}
+				grants = append(grants, details)
+			}
+			return grants, nil
+		}
+		// Client not in bulk cache - fall through to per-client API
+	}
+
+	// Fall back to per-client API
 	logger := internal.NewLogger()
 	var grants []OAuth2PermissionGrantDetails
 
@@ -1355,7 +1560,6 @@ func GetConsentGrantsForClient(ctx context.Context, session *SafeSession, client
 		return grants, err
 	}
 
-	// Filter by clientId
 	initialURL := fmt.Sprintf("https://graph.microsoft.com/v1.0/oauth2PermissionGrants?$filter=clientId eq '%s'", clientID)
 
 	err = GraphAPIPagedRequest(ctx, initialURL, token, func(body []byte) (bool, string, error) {
@@ -1388,12 +1592,10 @@ func GetConsentGrantsForClient(ctx context.Context, session *SafeSession, client
 				details.PrincipalID = *grant.PrincipalID
 			}
 
-			// Parse scopes
 			if grant.Scope != "" {
 				details.Scopes = strings.Fields(grant.Scope)
 			}
 
-			// Identify risky permissions
 			for _, scope := range details.Scopes {
 				if description, isRisky := RiskyOAuth2Permissions[scope]; isRisky {
 					details.RiskyPermissions = append(details.RiskyPermissions, fmt.Sprintf("%s (%s)", scope, description))
@@ -1401,7 +1603,7 @@ func GetConsentGrantsForClient(ctx context.Context, session *SafeSession, client
 				}
 			}
 
-			// Get resource display name
+			// Resolve resource display name via API
 			if details.ResourceID != "" {
 				spURL := fmt.Sprintf("https://graph.microsoft.com/v1.0/servicePrincipals/%s?$select=displayName", details.ResourceID)
 				spBody, err := GraphAPIRequestWithRetry(ctx, "GET", spURL, token)
@@ -1429,6 +1631,18 @@ func GetConsentGrantsForClient(ctx context.Context, session *SafeSession, client
 		}
 		return grants, err
 	}
+
+	// Backfill bulk cache so other callers benefit
+	var cached []CachedOAuth2Grant
+	for _, g := range grants {
+		cached = append(cached, CachedOAuth2Grant{
+			ClientID:     g.ClientID,
+			ConsentType:  g.ConsentType,
+			ResourceName: g.ResourceDisplayName,
+			Scopes:       g.Scopes,
+		})
+	}
+	BackfillBulkCache(bulkKey, clientID, cached)
 
 	return grants, nil
 }
@@ -1516,6 +1730,17 @@ func GetUserSignInActivity(ctx context.Context, session *SafeSession, userObject
 		IsStale:                          false,
 	}
 
+	// Check bulk sign-in activity cache first
+	bulkKey := AzCacheKey("sign-in-activity-all", "tenant")
+	if cached, found := AzureDataCache.Get(bulkKey); found {
+		bulkData := cached.(map[string]SignInActivity)
+		if activity, ok := bulkData[userObjectID]; ok {
+			return activity, nil
+		}
+		// User not in bulk cache - fall through to per-principal API
+	}
+
+	// Fall back to per-principal API
 	token, err := session.GetTokenForResource(globals.CommonScopes[1]) // Graph scope
 	if err != nil {
 		return result, fmt.Errorf("failed to get Graph token: %w", err)
@@ -1570,6 +1795,9 @@ func GetUserSignInActivity(ctx context.Context, session *SafeSession, userObject
 	if data.SignInActivity.LastSuccessfulSignInDateTime != "" {
 		result.LastSuccessfulSignInDateTime = data.SignInActivity.LastSuccessfulSignInDateTime
 	}
+
+	// Backfill bulk cache so other callers benefit
+	BackfillBulkCache(bulkKey, userObjectID, result)
 
 	return result, nil
 }
@@ -1727,13 +1955,13 @@ func GetRBACAssignments(ctx context.Context, session *SafeSession, subscriptionI
 	cred := &StaticTokenCredential{Token: token}
 
 	// Role Assignments client
-	assignClient, err := armauthorizationv2.NewRoleAssignmentsClient(subscriptionID, cred, nil)
+	assignClient, err := armauthorizationv2.NewRoleAssignmentsClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create role assignments client: %v", err)
 	}
 
 	// Role Definitions client
-	roleClient, err := armauthorizationv2.NewRoleDefinitionsClient(cred, nil)
+	roleClient, err := armauthorizationv2.NewRoleDefinitionsClient(cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create role definitions client: %v", err)
 	}
@@ -1757,8 +1985,8 @@ func GetRBACAssignments(ctx context.Context, session *SafeSession, subscriptionI
 		for mgPager.More() {
 			page, err := mgPager.NextPage(ctx)
 			if err != nil {
-				if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
-					logger.ErrorM(fmt.Sprintf("Failed to get role assignments at management group scope %s: %v", mgScope, err), globals.AZ_PRINCIPALS_MODULE_NAME)
+				if !IsAccessDenied(err) && globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+					logger.ErrorM(fmt.Sprintf("Failed to get role assignments at MG scope %s: %s", mgID, AzureAPIErrorSummary(err)), globals.AZ_PRINCIPALS_MODULE_NAME)
 				}
 				break
 			}
@@ -1788,8 +2016,8 @@ func GetRBACAssignments(ctx context.Context, session *SafeSession, subscriptionI
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
-				logger.ErrorM(fmt.Sprintf("Failed to get next page of role assignments for subscription %s: %v", subscriptionID, err), globals.AZ_PRINCIPALS_MODULE_NAME)
+			if !IsAccessDenied(err) && globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+				logger.ErrorM(fmt.Sprintf("Failed to list role assignments for subscription %s: %s", subscriptionID, AzureAPIErrorSummary(err)), globals.AZ_PRINCIPALS_MODULE_NAME)
 			}
 			break // Stop pagination but return what we have so far
 		}
@@ -2491,17 +2719,197 @@ type PIMRoleAssignment struct {
 	AssignedVia      string // "Direct (PIM Eligible)", "Group (PIM Eligible)", "Direct (PIM Active)", "Group (PIM Active)"
 }
 
-// GetPIMEligibleRoles retrieves PIM-eligible role assignments for a subscription
-// These are roles that can be activated but are not currently active
+// PreFetchPIMRolesForSubscription fetches all PIM eligible and active role assignments
+// for a subscription and caches them. Call once per subscription before enrichment.
+// Results are persisted to disk so subsequent runs (or other modules) can reuse them.
+func PreFetchPIMRolesForSubscription(ctx context.Context, session *SafeSession, subscriptionID, baseDir, tenantID string) {
+	SetBulkCacheContext(baseDir, tenantID)
+	logger := internal.NewLogger()
+
+	eligibleKey := AzCacheKey("pim-eligible-all", subscriptionID)
+	activeKey := AzCacheKey("pim-active-all", subscriptionID)
+
+	// 1. Check in-memory cache
+	_, eligibleFound := AzureDataCache.Get(eligibleKey)
+	_, activeFound := AzureDataCache.Get(activeKey)
+	if eligibleFound && activeFound {
+		return
+	}
+
+	// 2. Check disk cache
+	diskFile := fmt.Sprintf("pim-sub-%s.gob", subscriptionID)
+	var diskCache PIMSubCache
+	if loadPrefetchCache(baseDir, tenantID, diskFile, DefaultAzureCacheExpiration, &diskCache) {
+		if diskCache.Eligible != nil {
+			AzureDataCache.Set(eligibleKey, diskCache.Eligible, 0)
+		}
+		if diskCache.Active != nil {
+			AzureDataCache.Set(activeKey, diskCache.Active, 0)
+		}
+		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+			logger.InfoM(fmt.Sprintf("Loaded PIM cache from disk for subscription %s", subscriptionID), globals.AZ_PRINCIPALS_MODULE_NAME)
+		}
+		return
+	}
+
+	// 3. Fetch from API
+	token, err := session.GetTokenForResource(globals.CommonScopes[0])
+	if err != nil {
+		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+			logger.ErrorM(fmt.Sprintf("Failed to get ARM token for PIM pre-fetch: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
+		}
+		return
+	}
+
+	var eligibleMap map[string][]PIMRoleAssignment
+	var activeMap map[string][]PIMRoleAssignment
+
+	// Pre-fetch eligible
+	if _, found := AzureDataCache.Get(eligibleKey); !found {
+		url := fmt.Sprintf("https://management.azure.com/subscriptions/%s/providers/Microsoft.Authorization/roleEligibilityScheduleInstances?api-version=2020-10-01&$filter=asTarget()", subscriptionID)
+		body, err := HTTPRequestWithRetry(ctx, "GET", url, token, nil, DefaultRateLimitConfig())
+		if err == nil {
+			var pimData struct {
+				Value []struct {
+					Properties struct {
+						PrincipalID        string `json:"principalId"`
+						RoleDefinitionID   string `json:"roleDefinitionId"`
+						Scope              string `json:"scope"`
+						Status             string `json:"status"`
+						ExpandedProperties struct {
+							Principal struct {
+								DisplayName string `json:"displayName"`
+								Type        string `json:"type"`
+							} `json:"principal"`
+							RoleDefinition struct {
+								DisplayName string `json:"displayName"`
+							} `json:"roleDefinition"`
+						} `json:"expandedProperties"`
+					} `json:"properties"`
+				} `json:"value"`
+			}
+			if json.Unmarshal(body, &pimData) == nil {
+				// Build map: principalID -> []PIMRoleAssignment
+				eligibleMap = make(map[string][]PIMRoleAssignment)
+				for _, pa := range pimData.Value {
+					pid := pa.Properties.PrincipalID
+					principalType := pa.Properties.ExpandedProperties.Principal.Type
+					assignedVia := "Direct (PIM Eligible)"
+					if principalType == "Group" {
+						assignedVia = "Group (PIM Eligible)"
+					}
+					eligibleMap[pid] = append(eligibleMap[pid], PIMRoleAssignment{
+						PrincipalID:      pid,
+						PrincipalType:    principalType,
+						RoleDefinitionID: pa.Properties.RoleDefinitionID,
+						RoleName:         pa.Properties.ExpandedProperties.RoleDefinition.DisplayName,
+						Scope:            pa.Properties.Scope,
+						Status:           pa.Properties.Status,
+						AssignedVia:      assignedVia,
+					})
+				}
+				AzureDataCache.Set(eligibleKey, eligibleMap, 0)
+				if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+					total := 0
+					for _, v := range eligibleMap {
+						total += len(v)
+					}
+					logger.InfoM(fmt.Sprintf("Pre-fetched %d PIM-eligible assignments for subscription %s", total, subscriptionID), globals.AZ_PRINCIPALS_MODULE_NAME)
+				}
+			}
+		} else if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+			logger.ErrorM(fmt.Sprintf("Failed to pre-fetch PIM eligibility for subscription %s: %v", subscriptionID, err), globals.AZ_PRINCIPALS_MODULE_NAME)
+		}
+	}
+
+	// Pre-fetch active
+	if _, found := AzureDataCache.Get(activeKey); !found {
+		url := fmt.Sprintf("https://management.azure.com/subscriptions/%s/providers/Microsoft.Authorization/roleAssignmentScheduleInstances?api-version=2020-10-01&$filter=asTarget()", subscriptionID)
+		body, err := HTTPRequestWithRetry(ctx, "GET", url, token, nil, DefaultRateLimitConfig())
+		if err == nil {
+			var pimData struct {
+				Value []struct {
+					Properties struct {
+						PrincipalID        string `json:"principalId"`
+						RoleDefinitionID   string `json:"roleDefinitionId"`
+						Scope              string `json:"scope"`
+						ExpandedProperties struct {
+							Principal struct {
+								DisplayName string `json:"displayName"`
+								Type        string `json:"type"`
+							} `json:"principal"`
+							RoleDefinition struct {
+								DisplayName string `json:"displayName"`
+							} `json:"roleDefinition"`
+						} `json:"expandedProperties"`
+					} `json:"properties"`
+				} `json:"value"`
+			}
+			if json.Unmarshal(body, &pimData) == nil {
+				activeMap = make(map[string][]PIMRoleAssignment)
+				for _, pa := range pimData.Value {
+					pid := pa.Properties.PrincipalID
+					principalType := pa.Properties.ExpandedProperties.Principal.Type
+					assignedVia := "Direct (PIM Active)"
+					if principalType == "Group" {
+						assignedVia = "Group (PIM Active)"
+					}
+					activeMap[pid] = append(activeMap[pid], PIMRoleAssignment{
+						PrincipalID:      pid,
+						PrincipalType:    principalType,
+						RoleDefinitionID: pa.Properties.RoleDefinitionID,
+						RoleName:         pa.Properties.ExpandedProperties.RoleDefinition.DisplayName,
+						Scope:            pa.Properties.Scope,
+						Status:           "Active",
+						AssignedVia:      assignedVia,
+					})
+				}
+				AzureDataCache.Set(activeKey, activeMap, 0)
+				if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+					total := 0
+					for _, v := range activeMap {
+						total += len(v)
+					}
+					logger.InfoM(fmt.Sprintf("Pre-fetched %d PIM-active assignments for subscription %s", total, subscriptionID), globals.AZ_PRINCIPALS_MODULE_NAME)
+				}
+			}
+		} else if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+			logger.ErrorM(fmt.Sprintf("Failed to pre-fetch active PIM roles for subscription %s: %v", subscriptionID, err), globals.AZ_PRINCIPALS_MODULE_NAME)
+		}
+	}
+
+	// 4. Save to disk
+	if eligibleMap != nil || activeMap != nil {
+		if eligibleMap == nil {
+			eligibleMap = make(map[string][]PIMRoleAssignment)
+		}
+		if activeMap == nil {
+			activeMap = make(map[string][]PIMRoleAssignment)
+		}
+		savePrefetchCache(baseDir, tenantID, diskFile, PIMSubCache{Eligible: eligibleMap, Active: activeMap})
+	}
+}
+
+// GetPIMEligibleRoles retrieves PIM-eligible role assignments for a subscription.
+// Uses cached data if available (from PreFetchPIMRolesForSubscription).
 func GetPIMEligibleRoles(ctx context.Context, session *SafeSession, subscriptionID string, principalIDs []string) ([]PIMRoleAssignment, error) {
+	// Try cached path
+	eligibleKey := AzCacheKey("pim-eligible-all", subscriptionID)
+	if cached, found := AzureDataCache.Get(eligibleKey); found {
+		eligibleMap := cached.(map[string][]PIMRoleAssignment)
+		var assignments []PIMRoleAssignment
+		for _, pid := range principalIDs {
+			assignments = append(assignments, eligibleMap[pid]...)
+		}
+		return assignments, nil
+	}
+
+	// Fallback: fetch from API
 	logger := internal.NewLogger()
 	var assignments []PIMRoleAssignment
 
-	token, err := session.GetTokenForResource(globals.CommonScopes[0]) // ARM scope
+	token, err := session.GetTokenForResource(globals.CommonScopes[0])
 	if err != nil {
-		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
-			logger.ErrorM(fmt.Sprintf("Failed to get ARM token for PIM eligibility: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
-		}
 		return assignments, err
 	}
 
@@ -2538,59 +2946,55 @@ func GetPIMEligibleRoles(ctx context.Context, session *SafeSession, subscription
 		return assignments, fmt.Errorf("failed to parse PIM eligibility response: %v", err)
 	}
 
-	// Create a map for quick principal ID lookups
-	principalMap := make(map[string]bool)
+	principalMap := make(map[string]bool, len(principalIDs))
 	for _, pid := range principalIDs {
 		principalMap[pid] = true
 	}
 
-	for _, pimAssignment := range pimData.Value {
-		principalID := pimAssignment.Properties.PrincipalID
-
-		// Only include assignments for principals in our list
-		if !principalMap[principalID] {
+	for _, pa := range pimData.Value {
+		pid := pa.Properties.PrincipalID
+		if !principalMap[pid] {
 			continue
 		}
-
-		roleName := pimAssignment.Properties.ExpandedProperties.RoleDefinition.DisplayName
-		scope := pimAssignment.Properties.Scope
-		status := pimAssignment.Properties.Status
-		principalType := pimAssignment.Properties.ExpandedProperties.Principal.Type
-
+		principalType := pa.Properties.ExpandedProperties.Principal.Type
 		assignedVia := "Direct (PIM Eligible)"
 		if principalType == "Group" {
 			assignedVia = "Group (PIM Eligible)"
 		}
-
 		assignments = append(assignments, PIMRoleAssignment{
-			PrincipalID:      principalID,
+			PrincipalID:      pid,
 			PrincipalType:    principalType,
-			RoleDefinitionID: pimAssignment.Properties.RoleDefinitionID,
-			RoleName:         roleName,
-			Scope:            scope,
-			Status:           status,
+			RoleDefinitionID: pa.Properties.RoleDefinitionID,
+			RoleName:         pa.Properties.ExpandedProperties.RoleDefinition.DisplayName,
+			Scope:            pa.Properties.Scope,
+			Status:           pa.Properties.Status,
 			AssignedVia:      assignedVia,
 		})
-	}
-
-	if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS && len(assignments) > 0 {
-		logger.InfoM(fmt.Sprintf("Found %d PIM-eligible role assignment(s) for subscription %s", len(assignments), subscriptionID), globals.AZ_PRINCIPALS_MODULE_NAME)
 	}
 
 	return assignments, nil
 }
 
-// GetPIMActiveRoles retrieves currently active PIM role assignments for a subscription
-// These are roles that have been activated through PIM
+// GetPIMActiveRoles retrieves currently active PIM role assignments for a subscription.
+// Uses cached data if available (from PreFetchPIMRolesForSubscription).
 func GetPIMActiveRoles(ctx context.Context, session *SafeSession, subscriptionID string, principalIDs []string) ([]PIMRoleAssignment, error) {
+	// Try cached path
+	activeKey := AzCacheKey("pim-active-all", subscriptionID)
+	if cached, found := AzureDataCache.Get(activeKey); found {
+		activeMap := cached.(map[string][]PIMRoleAssignment)
+		var assignments []PIMRoleAssignment
+		for _, pid := range principalIDs {
+			assignments = append(assignments, activeMap[pid]...)
+		}
+		return assignments, nil
+	}
+
+	// Fallback: fetch from API
 	logger := internal.NewLogger()
 	var assignments []PIMRoleAssignment
 
-	token, err := session.GetTokenForResource(globals.CommonScopes[0]) // ARM scope
+	token, err := session.GetTokenForResource(globals.CommonScopes[0])
 	if err != nil {
-		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
-			logger.ErrorM(fmt.Sprintf("Failed to get ARM token for active PIM roles: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
-		}
 		return assignments, err
 	}
 
@@ -2626,42 +3030,30 @@ func GetPIMActiveRoles(ctx context.Context, session *SafeSession, subscriptionID
 		return assignments, fmt.Errorf("failed to parse active PIM response: %v", err)
 	}
 
-	// Create a map for quick principal ID lookups
-	principalMap := make(map[string]bool)
+	principalMap := make(map[string]bool, len(principalIDs))
 	for _, pid := range principalIDs {
 		principalMap[pid] = true
 	}
 
-	for _, pimAssignment := range pimData.Value {
-		principalID := pimAssignment.Properties.PrincipalID
-
-		// Only include assignments for principals in our list
-		if !principalMap[principalID] {
+	for _, pa := range pimData.Value {
+		pid := pa.Properties.PrincipalID
+		if !principalMap[pid] {
 			continue
 		}
-
-		roleName := pimAssignment.Properties.ExpandedProperties.RoleDefinition.DisplayName
-		scope := pimAssignment.Properties.Scope
-		principalType := pimAssignment.Properties.ExpandedProperties.Principal.Type
-
+		principalType := pa.Properties.ExpandedProperties.Principal.Type
 		assignedVia := "Direct (PIM Active)"
 		if principalType == "Group" {
 			assignedVia = "Group (PIM Active)"
 		}
-
 		assignments = append(assignments, PIMRoleAssignment{
-			PrincipalID:      principalID,
+			PrincipalID:      pid,
 			PrincipalType:    principalType,
-			RoleDefinitionID: pimAssignment.Properties.RoleDefinitionID,
-			RoleName:         roleName,
-			Scope:            scope,
+			RoleDefinitionID: pa.Properties.RoleDefinitionID,
+			RoleName:         pa.Properties.ExpandedProperties.RoleDefinition.DisplayName,
+			Scope:            pa.Properties.Scope,
 			Status:           "Active",
 			AssignedVia:      assignedVia,
 		})
-	}
-
-	if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS && len(assignments) > 0 {
-		logger.InfoM(fmt.Sprintf("Found %d active PIM role assignment(s) for subscription %s", len(assignments), subscriptionID), globals.AZ_PRINCIPALS_MODULE_NAME)
 	}
 
 	return assignments, nil
@@ -2786,20 +3178,371 @@ type ConditionalAccessPolicy struct {
 	State       string // "enabled", "disabled", "enabledForReportingButNotEnforced"
 }
 
-// GetConditionalAccessPoliciesForPrincipal retrieves CA policies that apply to a principal
-func GetConditionalAccessPoliciesForPrincipal(ctx context.Context, session *SafeSession, principalObjectID string) ([]ConditionalAccessPolicy, error) {
-	logger := internal.NewLogger()
-	var policies []ConditionalAccessPolicy
+// cachedCAPolicy holds a CA policy with its targeting conditions for client-side filtering.
+type cachedCAPolicy struct {
+	ID            string
+	DisplayName   string
+	State         string
+	IncludeUsers  []string
+	IncludeGroups []string
+}
 
+// PreFetchConditionalAccessPolicies fetches all CA policies once and caches them.
+// Call this before the per-principal enrichment loop.
+// Results are persisted to disk so subsequent runs (or other modules) can reuse them.
+// Stores two caches: minimal (for per-principal matching) and full details (for the CA module).
+func PreFetchConditionalAccessPolicies(ctx context.Context, session *SafeSession, baseDir, tenantID string) error {
+	SetBulkCacheContext(baseDir, tenantID)
+	cacheKey := AzCacheKey("ca-policies-all", "tenant")
+	fullCacheKey := AzCacheKey("ca-policies-full", "tenant")
+	if _, found := AzureDataCache.Get(cacheKey); found {
+		return nil // Already in memory
+	}
+
+	// Check disk cache (minimal)
+	var diskCache CAPoliciesCache
+	if loadPrefetchCache(baseDir, tenantID, "ca-policies.gob", DefaultAzureCacheExpiration, &diskCache) {
+		AzureDataCache.Set(cacheKey, diskCache.Policies, 0)
+		// Also try to load the full details cache
+		var fullDiskCache CAPoliciesFullCache
+		if loadPrefetchCache(baseDir, tenantID, "ca-policies-full.gob", DefaultAzureCacheExpiration, &fullDiskCache) {
+			AzureDataCache.Set(fullCacheKey, fullDiskCache.Policies, 0)
+		}
+		return nil
+	}
+
+	logger := internal.NewLogger()
+	token, err := session.GetTokenForResource(globals.CommonScopes[1])
+	if err != nil {
+		return fmt.Errorf("failed to get Graph token for CA policies: %w", err)
+	}
+
+	var allPolicies []cachedCAPolicy
+	var allFullPolicies []ConditionalAccessPolicyDetails
+	initialURL := "https://graph.microsoft.com/v1.0/identity/conditionalAccess/policies"
+
+	err = GraphAPIPagedRequest(ctx, initialURL, token, func(body []byte) (bool, string, error) {
+		var data struct {
+			Value []struct {
+				ID               string `json:"id"`
+				DisplayName      string `json:"displayName"`
+				State            string `json:"state"`
+				CreatedDateTime  string `json:"createdDateTime"`
+				ModifiedDateTime string `json:"modifiedDateTime"`
+				Conditions       struct {
+					Users struct {
+						IncludeUsers  []string `json:"includeUsers"`
+						ExcludeUsers  []string `json:"excludeUsers"`
+						IncludeGroups []string `json:"includeGroups"`
+						ExcludeGroups []string `json:"excludeGroups"`
+						IncludeRoles  []string `json:"includeRoles"`
+						ExcludeRoles  []string `json:"excludeRoles"`
+					} `json:"users"`
+					Applications struct {
+						IncludeApplications []string `json:"includeApplications"`
+						ExcludeApplications []string `json:"excludeApplications"`
+					} `json:"applications"`
+					Locations struct {
+						IncludeLocations []string `json:"includeLocations"`
+						ExcludeLocations []string `json:"excludeLocations"`
+					} `json:"locations"`
+					Platforms struct {
+						IncludePlatforms []string `json:"includePlatforms"`
+						ExcludePlatforms []string `json:"excludePlatforms"`
+					} `json:"platforms"`
+					ClientAppTypes   []string `json:"clientAppTypes"`
+					UserRiskLevels   []string `json:"userRiskLevels"`
+					SignInRiskLevels []string `json:"signInRiskLevels"`
+					DeviceStates     struct {
+						IncludeStates []string `json:"includeStates"`
+						ExcludeStates []string `json:"excludeStates"`
+					} `json:"deviceStates"`
+				} `json:"conditions"`
+				GrantControls struct {
+					Operator        string   `json:"operator"`
+					BuiltInControls []string `json:"builtInControls"`
+				} `json:"grantControls"`
+				SessionControls struct {
+					ApplicationEnforcedRestrictions struct {
+						IsEnabled bool `json:"isEnabled"`
+					} `json:"applicationEnforcedRestrictions"`
+					CloudAppSecurity struct {
+						IsEnabled            bool   `json:"isEnabled"`
+						CloudAppSecurityType string `json:"cloudAppSecurityType"`
+					} `json:"cloudAppSecurity"`
+					SignInFrequency struct {
+						IsEnabled bool   `json:"isEnabled"`
+						Type      string `json:"type"`
+						Value     int    `json:"value"`
+					} `json:"signInFrequency"`
+					PersistentBrowser struct {
+						IsEnabled bool   `json:"isEnabled"`
+						Mode      string `json:"mode"`
+					} `json:"persistentBrowser"`
+				} `json:"sessionControls"`
+			} `json:"value"`
+			NextLink string `json:"@odata.nextLink"`
+		}
+
+		if err := json.Unmarshal(body, &data); err != nil {
+			return false, "", fmt.Errorf("failed to decode CA policies: %v", err)
+		}
+
+		for _, p := range data.Value {
+			// Minimal cache for per-principal matching
+			allPolicies = append(allPolicies, cachedCAPolicy{
+				ID:            p.ID,
+				DisplayName:   p.DisplayName,
+				State:         p.State,
+				IncludeUsers:  p.Conditions.Users.IncludeUsers,
+				IncludeGroups: p.Conditions.Users.IncludeGroups,
+			})
+
+			// Full details for the conditional-access module
+			details := ConditionalAccessPolicyDetails{
+				ID:               p.ID,
+				DisplayName:      p.DisplayName,
+				State:            p.State,
+				CreatedDateTime:  p.CreatedDateTime,
+				ModifiedDateTime: p.ModifiedDateTime,
+				IncludedUsers:    p.Conditions.Users.IncludeUsers,
+				ExcludedUsers:    p.Conditions.Users.ExcludeUsers,
+				IncludedGroups:   p.Conditions.Users.IncludeGroups,
+				ExcludedGroups:   p.Conditions.Users.ExcludeGroups,
+				IncludedRoles:    p.Conditions.Users.IncludeRoles,
+				ExcludedRoles:    p.Conditions.Users.ExcludeRoles,
+				IncludedApps:     p.Conditions.Applications.IncludeApplications,
+				ExcludedApps:     p.Conditions.Applications.ExcludeApplications,
+				IncludedLocations: p.Conditions.Locations.IncludeLocations,
+				ExcludedLocations: p.Conditions.Locations.ExcludeLocations,
+				IncludedPlatforms: p.Conditions.Platforms.IncludePlatforms,
+				ExcludedPlatforms: p.Conditions.Platforms.ExcludePlatforms,
+				ClientAppTypes:    p.Conditions.ClientAppTypes,
+				UserRiskLevels:    p.Conditions.UserRiskLevels,
+				SignInRiskLevels:  p.Conditions.SignInRiskLevels,
+				DeviceStates:      p.Conditions.DeviceStates.IncludeStates,
+				GrantOperator:     p.GrantControls.Operator,
+				GrantControls:     p.GrantControls.BuiltInControls,
+			}
+			if p.SessionControls.ApplicationEnforcedRestrictions.IsEnabled {
+				details.ApplicationEnforcedRestrictions = true
+			}
+			if p.SessionControls.CloudAppSecurity.IsEnabled {
+				details.CloudAppSecurity = p.SessionControls.CloudAppSecurity.CloudAppSecurityType
+			}
+			if p.SessionControls.SignInFrequency.IsEnabled {
+				details.SignInFrequency = fmt.Sprintf("%d %s", p.SessionControls.SignInFrequency.Value, p.SessionControls.SignInFrequency.Type)
+			}
+			if p.SessionControls.PersistentBrowser.IsEnabled {
+				details.PersistentBrowser = p.SessionControls.PersistentBrowser.Mode
+			}
+			allFullPolicies = append(allFullPolicies, details)
+		}
+
+		return data.NextLink != "", data.NextLink, nil
+	})
+
+	if err != nil {
+		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+			logger.ErrorM(fmt.Sprintf("Failed to pre-fetch CA policies: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
+		}
+		return err
+	}
+
+	AzureDataCache.Set(cacheKey, allPolicies, 0)
+	AzureDataCache.Set(fullCacheKey, allFullPolicies, 0)
+	savePrefetchCache(baseDir, tenantID, "ca-policies.gob", CAPoliciesCache{Policies: allPolicies})
+	savePrefetchCache(baseDir, tenantID, "ca-policies-full.gob", CAPoliciesFullCache{Policies: allFullPolicies})
+	if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+		logger.InfoM(fmt.Sprintf("Pre-fetched %d conditional access policies", len(allPolicies)), globals.AZ_PRINCIPALS_MODULE_NAME)
+	}
+	return nil
+}
+
+// PreFetchPIMDirectoryRoles fetches ALL PIM eligible and active directory role assignments
+// at the tenant level (no per-principal filter) and caches them as map[principalID][]DirectoryRole.
+// This replaces per-principal Graph calls for PIM directory roles.
+func PreFetchPIMDirectoryRoles(ctx context.Context, session *SafeSession, baseDir, tenantID string) {
+	SetBulkCacheContext(baseDir, tenantID)
+	eligibleKey := AzCacheKey("pim-dir-eligible-all", "tenant")
+	activeKey := AzCacheKey("pim-dir-active-all", "tenant")
+
+	// 1. Check in-memory cache
+	_, eligibleFound := AzureDataCache.Get(eligibleKey)
+	_, activeFound := AzureDataCache.Get(activeKey)
+	if eligibleFound && activeFound {
+		return
+	}
+
+	// 2. Check disk cache
+	var diskCache PIMDirectoryCache
+	if loadPrefetchCache(baseDir, tenantID, "pim-directory.gob", DefaultAzureCacheExpiration, &diskCache) {
+		if diskCache.Eligible != nil {
+			AzureDataCache.Set(eligibleKey, diskCache.Eligible, 0)
+		}
+		if diskCache.Active != nil {
+			AzureDataCache.Set(activeKey, diskCache.Active, 0)
+		}
+		return
+	}
+
+	// 3. Fetch from API
+	logger := internal.NewLogger()
 	token, err := session.GetTokenForResource(globals.CommonScopes[1]) // Graph scope
 	if err != nil {
 		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
-			logger.ErrorM(fmt.Sprintf("Failed to get Graph token for CA policies: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
+			logger.ErrorM(fmt.Sprintf("Failed to get Graph token for PIM directory roles pre-fetch: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
 		}
+		return
+	}
+
+	var eligibleMap map[string][]DirectoryRole
+	var activeMap map[string][]DirectoryRole
+
+	// Eligible directory roles
+	eligibleMap = make(map[string][]DirectoryRole)
+	eligibleURL := "https://graph.microsoft.com/v1.0/roleManagement/directory/roleEligibilityScheduleInstances?$expand=roleDefinition"
+	_ = GraphAPIPagedRequest(ctx, eligibleURL, token, func(body []byte) (bool, string, error) {
+		var data struct {
+			Value []struct {
+				PrincipalID    string `json:"principalId"`
+				RoleDefinition struct {
+					ID          string `json:"id"`
+					DisplayName string `json:"displayName"`
+					Description string `json:"description"`
+					TemplateID  string `json:"templateId"`
+				} `json:"roleDefinition"`
+			} `json:"value"`
+			NextLink string `json:"@odata.nextLink"`
+		}
+		if err := json.Unmarshal(body, &data); err != nil {
+			return false, "", err
+		}
+		for _, a := range data.Value {
+			eligibleMap[a.PrincipalID] = append(eligibleMap[a.PrincipalID], DirectoryRole{
+				RoleID:         a.RoleDefinition.ID,
+				RoleTemplateID: a.RoleDefinition.TemplateID,
+				DisplayName:    a.RoleDefinition.DisplayName,
+				Description:    a.RoleDefinition.Description,
+				AssignedVia:    "Direct",
+				PIMStatus:      "PIM Eligible",
+			})
+		}
+		return data.NextLink != "", data.NextLink, nil
+	})
+	AzureDataCache.Set(eligibleKey, eligibleMap, 0)
+
+	// Active directory roles
+	activeMap = make(map[string][]DirectoryRole)
+	activeURL := "https://graph.microsoft.com/v1.0/roleManagement/directory/roleAssignmentScheduleInstances?$expand=roleDefinition"
+	_ = GraphAPIPagedRequest(ctx, activeURL, token, func(body []byte) (bool, string, error) {
+		var data struct {
+			Value []struct {
+				PrincipalID    string `json:"principalId"`
+				AssignmentType string `json:"assignmentType"`
+				MemberType     string `json:"memberType"`
+				RoleDefinition struct {
+					ID          string `json:"id"`
+					DisplayName string `json:"displayName"`
+					Description string `json:"description"`
+					TemplateID  string `json:"templateId"`
+				} `json:"roleDefinition"`
+			} `json:"value"`
+			NextLink string `json:"@odata.nextLink"`
+		}
+		if err := json.Unmarshal(body, &data); err != nil {
+			return false, "", err
+		}
+		for _, a := range data.Value {
+			pimStatus := ""
+			if a.AssignmentType == "Activated" {
+				pimStatus = "PIM Active"
+			}
+			assignedVia := "Direct"
+			if a.MemberType == "Group" {
+				assignedVia = "Group"
+				if pimStatus != "" {
+					pimStatus = "PIM Active (via Group)"
+				}
+			}
+			activeMap[a.PrincipalID] = append(activeMap[a.PrincipalID], DirectoryRole{
+				RoleID:         a.RoleDefinition.ID,
+				RoleTemplateID: a.RoleDefinition.TemplateID,
+				DisplayName:    a.RoleDefinition.DisplayName,
+				Description:    a.RoleDefinition.Description,
+				AssignedVia:    assignedVia,
+				PIMStatus:      pimStatus,
+			})
+		}
+		return data.NextLink != "", data.NextLink, nil
+	})
+	AzureDataCache.Set(activeKey, activeMap, 0)
+
+	// Save to disk
+	savePrefetchCache(baseDir, tenantID, "pim-directory.gob", PIMDirectoryCache{Eligible: eligibleMap, Active: activeMap})
+
+	if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+		totalEligible, totalActive := 0, 0
+		for _, v := range eligibleMap {
+			totalEligible += len(v)
+		}
+		for _, v := range activeMap {
+			totalActive += len(v)
+		}
+		logger.InfoM(fmt.Sprintf("Pre-fetched PIM directory roles: %d eligible, %d active", totalEligible, totalActive), globals.AZ_PRINCIPALS_MODULE_NAME)
+	}
+}
+
+// GetConditionalAccessPoliciesForPrincipal retrieves CA policies that apply to a principal.
+// Uses cached tenant-level CA policies if available (from PreFetchConditionalAccessPolicies),
+// otherwise falls back to fetching from API.
+func GetConditionalAccessPoliciesForPrincipal(ctx context.Context, session *SafeSession, principalObjectID string) ([]ConditionalAccessPolicy, error) {
+	var policies []ConditionalAccessPolicy
+
+	// Try cached path first
+	cacheKey := AzCacheKey("ca-policies-all", "tenant")
+	if cached, found := AzureDataCache.Get(cacheKey); found {
+		allPolicies := cached.([]cachedCAPolicy)
+		groupIDs := GetUserGroupMemberships(ctx, session, principalObjectID)
+		groupSet := make(map[string]bool, len(groupIDs))
+		for _, gid := range groupIDs {
+			groupSet[gid] = true
+		}
+
+		for _, p := range allPolicies {
+			included := false
+			for _, uid := range p.IncludeUsers {
+				if uid == principalObjectID || uid == "All" {
+					included = true
+					break
+				}
+			}
+			if !included {
+				for _, gid := range p.IncludeGroups {
+					if groupSet[gid] {
+						included = true
+						break
+					}
+				}
+			}
+			if included {
+				policies = append(policies, ConditionalAccessPolicy{
+					ID:          p.ID,
+					DisplayName: p.DisplayName,
+					State:       p.State,
+				})
+			}
+		}
+		return policies, nil
+	}
+
+	// Fallback: fetch from API (pre-fetch not called)
+	logger := internal.NewLogger()
+	token, err := session.GetTokenForResource(globals.CommonScopes[1])
+	if err != nil {
 		return policies, err
 	}
 
-	// Get all conditional access policies
 	initialURL := "https://graph.microsoft.com/v1.0/identity/conditionalAccess/policies"
 
 	err = GraphAPIPagedRequest(ctx, initialURL, token, func(body []byte) (bool, string, error) {
@@ -2823,18 +3566,13 @@ func GetConditionalAccessPoliciesForPrincipal(ctx context.Context, session *Safe
 		}
 
 		for _, policy := range data.Value {
-			// Check if the principal is included in this policy
 			isPrincipalIncluded := false
-
-			// Check if principal is directly included
 			for _, userID := range policy.Conditions.Users.IncludeUsers {
 				if userID == principalObjectID || userID == "All" {
 					isPrincipalIncluded = true
 					break
 				}
 			}
-
-			// Check if any of principal's groups are included
 			if !isPrincipalIncluded {
 				groupIDs := GetUserGroupMemberships(ctx, session, principalObjectID)
 				for _, groupID := range groupIDs {
@@ -2849,7 +3587,6 @@ func GetConditionalAccessPoliciesForPrincipal(ctx context.Context, session *Safe
 					}
 				}
 			}
-
 			if isPrincipalIncluded {
 				policies = append(policies, ConditionalAccessPolicy{
 					ID:          policy.ID,
@@ -2859,9 +3596,7 @@ func GetConditionalAccessPoliciesForPrincipal(ctx context.Context, session *Safe
 			}
 		}
 
-		hasMore := data.NextLink != ""
-		nextURL := data.NextLink
-		return hasMore, nextURL, nil
+		return data.NextLink != "", data.NextLink, nil
 	})
 
 	if err != nil {
@@ -3024,21 +3759,746 @@ type RBACAssignmentWithInheritance struct {
 	PrincipalID      string
 }
 
-// GetEnhancedRBACAssignments retrieves RBAC assignments with full scope hierarchy and inheritance tracking
-func GetEnhancedRBACAssignments(ctx context.Context, session *SafeSession, principalObjectID string, subscriptionID string) ([]RBACAssignmentWithInheritance, error) {
-	logger := internal.NewLogger()
-	var assignments []RBACAssignmentWithInheritance
+// cachedRBACRawAssignment holds a raw role assignment from the ARM API,
+// stored per-scope in the cache for client-side principal filtering.
+type cachedRBACRawAssignment struct {
+	PrincipalID                        string
+	RoleDefinitionID                   string
+	RoleName                           string
+	Scope                              string // actual assignment scope (may differ from query scope if inherited)
+	PrincipalType                      string // e.g. "User", "Group", "ServicePrincipal"
+	Condition                          string // ABAC condition expression
+	DelegatedManagedIdentityResourceID string // cross-tenant delegated MI
+}
 
-	token, err := session.GetTokenForResource(globals.CommonScopes[0]) // ARM scope
+// PreFetchRBACAssignmentsForSubscription fetches ALL role assignments at the tenant root,
+// management group hierarchy, and subscription scope. Results are cached per scope path
+// as map[principalID][]cachedRBACRawAssignment for O(1) per-principal lookups.
+// Also pre-resolves all role definition IDs to names.
+// Results are persisted to disk so subsequent runs (or other modules) can reuse them.
+func PreFetchRBACAssignmentsForSubscription(ctx context.Context, session *SafeSession, subscriptionID, baseDir, tenantID string) {
+	SetBulkCacheContext(baseDir, tenantID)
+	logger := internal.NewLogger()
+
+	// Check disk cache first
+	diskFile := fmt.Sprintf("rbac-sub-%s.gob", subscriptionID)
+	var diskCache RBACSubCache
+	if loadPrefetchCache(baseDir, tenantID, diskFile, DefaultAzureCacheExpiration, &diskCache) {
+		// Load all scopes into in-memory cache
+		for scopePath, scopeMap := range diskCache.Scopes {
+			cacheKey := AzCacheKey("rbac-scope-all", scopePath)
+			AzureDataCache.Set(cacheKey, scopeMap, 0)
+		}
+		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+			logger.InfoM(fmt.Sprintf("Loaded RBAC cache from disk for subscription %s (%d scopes)", subscriptionID, len(diskCache.Scopes)), globals.AZ_PRINCIPALS_MODULE_NAME)
+		}
+		return
+	}
+
+	// Build scope list (same hierarchy as GetEnhancedRBACAssignments)
+	type scopeInfo struct {
+		Path        string
+		Type        string
+		DisplayName string
+	}
+	scopes := []scopeInfo{
+		{"/", "TenantRoot", "Tenant Root"},
+	}
+
+	mgHierarchy := GetManagementGroupHierarchy(ctx, session, subscriptionID)
+	for _, mgID := range mgHierarchy {
+		scopes = append(scopes, scopeInfo{
+			fmt.Sprintf("/providers/Microsoft.Management/managementGroups/%s", mgID),
+			"ManagementGroup",
+			mgID,
+		})
+	}
+	scopes = append(scopes, scopeInfo{
+		fmt.Sprintf("/subscriptions/%s", subscriptionID),
+		"Subscription",
+		subscriptionID,
+	})
+
+	token, err := session.GetTokenForResource(globals.CommonScopes[0])
 	if err != nil {
-		return assignments, err
+		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+			logger.ErrorM(fmt.Sprintf("Failed to get ARM token for RBAC pre-fetch: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
+		}
+		return
 	}
 
 	cred := &StaticTokenCredential{Token: token}
-	raClient, err := armauthorizationv2.NewRoleAssignmentsClient(subscriptionID, cred, nil)
+	raClient, err := armauthorizationv2.NewRoleAssignmentsClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
-		return assignments, err
+		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+			logger.ErrorM(fmt.Sprintf("Failed to create role assignments client for RBAC pre-fetch: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
+		}
+		return
 	}
+
+	totalAssignments := 0
+	roleDefIDs := make(map[string]bool) // collect unique role def IDs for batch name resolution
+	allScopeData := make(map[string]map[string][]cachedRBACRawAssignment) // for disk save
+
+	for _, scope := range scopes {
+		cacheKey := AzCacheKey("rbac-scope-all", scope.Path)
+		if _, found := AzureDataCache.Get(cacheKey); found {
+			continue // already cached
+		}
+
+		scopeMap := make(map[string][]cachedRBACRawAssignment) // principalID -> assignments
+		scopeFailed := false
+		pagesReceived := 0
+
+		pager := raClient.NewListForScopePager(scope.Path, &armauthorizationv2.RoleAssignmentsClientListForScopeOptions{
+			Filter: to.Ptr("atScope()"),
+		})
+
+		for pager.More() {
+			page, err := pager.NextPage(ctx)
+			if err != nil {
+				if IsAccessDenied(err) {
+					// 403 on first page = no permission at this scope (expected for tenant root / MG scopes).
+					// Cache empty map so we don't retry, and only log at verbose level.
+					if pagesReceived == 0 {
+						if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+							logger.InfoM(fmt.Sprintf("No access to RBAC at %s scope %s (need Microsoft.Authorization/roleAssignments/read)", scope.Type, scope.DisplayName), globals.AZ_PRINCIPALS_MODULE_NAME)
+						}
+						AzureDataCache.Set(cacheKey, scopeMap, 0)
+					} else {
+						// 403 mid-pagination is unexpected; don't cache partial data
+						logger.ErrorM(fmt.Sprintf("Access denied mid-pagination at scope %s after %d pages (partial data NOT cached)", scope.Path, pagesReceived), globals.AZ_PRINCIPALS_MODULE_NAME)
+						scopeFailed = true
+					}
+				} else {
+					if pagesReceived == 0 {
+						logger.ErrorM(fmt.Sprintf("Failed to pre-fetch RBAC at scope %s: %s", scope.Path, AzureAPIErrorSummary(err)), globals.AZ_PRINCIPALS_MODULE_NAME)
+					} else {
+						logger.ErrorM(fmt.Sprintf("Failed to pre-fetch RBAC at scope %s after %d pages: %s (partial data NOT cached)", scope.Path, pagesReceived, AzureAPIErrorSummary(err)), globals.AZ_PRINCIPALS_MODULE_NAME)
+						scopeFailed = true
+					}
+				}
+				break
+			}
+			pagesReceived++
+
+			for _, ra := range page.Value {
+				if ra.Properties == nil || ra.Properties.RoleDefinitionID == nil || ra.Properties.PrincipalID == nil {
+					continue
+				}
+				pid := *ra.Properties.PrincipalID
+				roleDefID := *ra.Properties.RoleDefinitionID
+				assignmentScope := SafeStringPtr(ra.Properties.Scope)
+
+				principalType := ""
+				if ra.Properties.PrincipalType != nil {
+					principalType = string(*ra.Properties.PrincipalType)
+				}
+				condition := SafeStringPtr(ra.Properties.Condition)
+				delegatedMI := SafeStringPtr(ra.Properties.DelegatedManagedIdentityResourceID)
+
+				roleDefIDs[roleDefID] = true
+
+				scopeMap[pid] = append(scopeMap[pid], cachedRBACRawAssignment{
+					PrincipalID:                        pid,
+					RoleDefinitionID:                   roleDefID,
+					Scope:                              assignmentScope,
+					PrincipalType:                      principalType,
+					Condition:                          condition,
+					DelegatedManagedIdentityResourceID: delegatedMI,
+				})
+			}
+		}
+
+		// Don't cache partial data from interrupted pagination (would mask missing assignments)
+		if scopeFailed {
+			continue
+		}
+
+		count := 0
+		for _, v := range scopeMap {
+			count += len(v)
+		}
+		totalAssignments += count
+
+		AzureDataCache.Set(cacheKey, scopeMap, 0)
+		allScopeData[scope.Path] = scopeMap
+	}
+
+	// Pre-resolve all role definition IDs to names (populates individual cache entries)
+	for roleDefID := range roleDefIDs {
+		GetRoleNameFromDefinitionID(ctx, session, subscriptionID, roleDefID)
+	}
+
+	// Save to disk
+	if len(allScopeData) > 0 {
+		savePrefetchCache(baseDir, tenantID, diskFile, RBACSubCache{Scopes: allScopeData})
+	}
+
+	if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+		logger.InfoM(fmt.Sprintf("Pre-fetched %d RBAC assignments across %d scopes for subscription %s", totalAssignments, len(scopes), subscriptionID), globals.AZ_PRINCIPALS_MODULE_NAME)
+	}
+}
+
+// PreFetchRBACAssignmentsForResourceGroups fetches role assignments at all resource group
+// scopes within a subscription and caches them using the same rbac-scope-all/{path} keys.
+// This extends the pre-fetch to cover RG-level scopes so checkPrincipalAtScopes gets cache hits.
+// Results are NOT saved to the per-subscription disk cache (RG data can be large and changes frequently).
+func PreFetchRBACAssignmentsForResourceGroups(ctx context.Context, session *SafeSession, subscriptionID string) {
+	logger := internal.NewLogger()
+
+	token, err := session.GetTokenForResource(globals.CommonScopes[0])
+	if err != nil {
+		return
+	}
+
+	cred := &StaticTokenCredential{Token: token}
+
+	// List all resource groups
+	rgClient, err := armresources.NewResourceGroupsClient(subscriptionID, cred, DefaultARMClientOptions())
+	if err != nil {
+		return
+	}
+
+	var rgScopes []string
+	pager := rgClient.NewListPager(nil)
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			break
+		}
+		for _, rg := range page.Value {
+			if rg.ID != nil {
+				rgScopes = append(rgScopes, *rg.ID)
+			}
+		}
+	}
+
+	if len(rgScopes) == 0 {
+		return
+	}
+
+	raClient, err := armauthorizationv2.NewRoleAssignmentsClient(subscriptionID, cred, DefaultARMClientOptions())
+	if err != nil {
+		return
+	}
+
+	// Fetch RBAC assignments for each RG scope concurrently
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 10)
+	totalAssignments := int64(0)
+
+	for _, rgScope := range rgScopes {
+		cacheKey := AzCacheKey("rbac-scope-all", rgScope)
+		if _, found := AzureDataCache.Get(cacheKey); found {
+			continue
+		}
+
+		wg.Add(1)
+		go func(scope string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			scopeMap := make(map[string][]cachedRBACRawAssignment)
+			scopeFailed := false
+			pagesReceived := 0
+			p := raClient.NewListForScopePager(scope, &armauthorizationv2.RoleAssignmentsClientListForScopeOptions{
+				Filter: to.Ptr("atScope()"),
+			})
+
+			for p.More() {
+				page, err := p.NextPage(ctx)
+				if err != nil {
+					if IsAccessDenied(err) {
+						if pagesReceived == 0 {
+							if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+								logger.InfoM(fmt.Sprintf("No access to RBAC at RG scope %s", scope), globals.AZ_PERMISSIONS_MODULE_NAME)
+							}
+							// Cache empty map so we don't retry
+							AzureDataCache.Set(AzCacheKey("rbac-scope-all", scope), scopeMap, 0)
+						} else {
+							scopeFailed = true
+						}
+					} else {
+						if pagesReceived > 0 {
+							logger.ErrorM(fmt.Sprintf("Failed to pre-fetch RBAC at RG scope %s after %d pages: %s (partial data NOT cached)", scope, pagesReceived, AzureAPIErrorSummary(err)), globals.AZ_PERMISSIONS_MODULE_NAME)
+							scopeFailed = true
+						} else {
+							logger.ErrorM(fmt.Sprintf("Failed to pre-fetch RBAC at RG scope %s: %s", scope, AzureAPIErrorSummary(err)), globals.AZ_PERMISSIONS_MODULE_NAME)
+						}
+					}
+					break
+				}
+				pagesReceived++
+				for _, ra := range page.Value {
+					if ra.Properties == nil || ra.Properties.RoleDefinitionID == nil || ra.Properties.PrincipalID == nil {
+						continue
+					}
+					pid := *ra.Properties.PrincipalID
+					roleDefID := *ra.Properties.RoleDefinitionID
+					assignmentScope := SafeStringPtr(ra.Properties.Scope)
+
+					principalType := ""
+					if ra.Properties.PrincipalType != nil {
+						principalType = string(*ra.Properties.PrincipalType)
+					}
+					condition := SafeStringPtr(ra.Properties.Condition)
+					delegatedMI := SafeStringPtr(ra.Properties.DelegatedManagedIdentityResourceID)
+
+					scopeMap[pid] = append(scopeMap[pid], cachedRBACRawAssignment{
+						PrincipalID:                        pid,
+						RoleDefinitionID:                   roleDefID,
+						RoleName:                           GetRoleNameFromDefinitionID(ctx, session, subscriptionID, roleDefID),
+						Scope:                              assignmentScope,
+						PrincipalType:                      principalType,
+						Condition:                          condition,
+						DelegatedManagedIdentityResourceID: delegatedMI,
+					})
+				}
+			}
+
+			// Don't cache partial data from interrupted pagination
+			if scopeFailed {
+				return
+			}
+
+			count := 0
+			for _, v := range scopeMap {
+				count += len(v)
+			}
+			atomic.AddInt64(&totalAssignments, int64(count))
+			AzureDataCache.Set(AzCacheKey("rbac-scope-all", scope), scopeMap, 0)
+		}(rgScope)
+	}
+	wg.Wait()
+
+	if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+		logger.InfoM(fmt.Sprintf("Pre-fetched %d RBAC assignments across %d resource groups for subscription %s", totalAssignments, len(rgScopes), subscriptionID), globals.AZ_PERMISSIONS_MODULE_NAME)
+	}
+}
+
+// CachedRBACEntry is the exported view of a cached RBAC role assignment for external callers.
+type CachedRBACEntry struct {
+	PrincipalID                        string
+	RoleDefinitionID                   string
+	RoleName                           string
+	Scope                              string
+	PrincipalType                      string
+	Condition                          string
+	DelegatedManagedIdentityResourceID string
+}
+
+// LookupRBACCacheForScope checks the in-memory RBAC cache for a specific scope path
+// and returns any cached assignments for the given principal IDs.
+// Returns nil if the scope is not cached (caller should fall back to API).
+func LookupRBACCacheForScope(scopePath string, principalIDs []string) []CachedRBACEntry {
+	cacheKey := AzCacheKey("rbac-scope-all", scopePath)
+	cached, found := AzureDataCache.Get(cacheKey)
+	if !found {
+		return nil
+	}
+	scopeMap := cached.(map[string][]cachedRBACRawAssignment)
+
+	var results []CachedRBACEntry
+	for _, pid := range principalIDs {
+		for _, raw := range scopeMap[pid] {
+			results = append(results, CachedRBACEntry{
+				PrincipalID:                        raw.PrincipalID,
+				RoleDefinitionID:                   raw.RoleDefinitionID,
+				RoleName:                           raw.RoleName,
+				Scope:                              raw.Scope,
+				PrincipalType:                      raw.PrincipalType,
+				Condition:                          raw.Condition,
+				DelegatedManagedIdentityResourceID: raw.DelegatedManagedIdentityResourceID,
+			})
+		}
+	}
+	return results
+}
+
+// ListRBACPrincipalIDsForScope returns all principal IDs that have RBAC assignments
+// at the given scope, from the in-memory cache. Returns nil if the scope is not cached.
+func ListRBACPrincipalIDsForScope(scopePath string) []string {
+	cacheKey := AzCacheKey("rbac-scope-all", scopePath)
+	cached, found := AzureDataCache.Get(cacheKey)
+	if !found {
+		return nil
+	}
+	scopeMap := cached.(map[string][]cachedRBACRawAssignment)
+	ids := make([]string, 0, len(scopeMap))
+	for pid, assignments := range scopeMap {
+		if len(assignments) > 0 {
+			ids = append(ids, pid)
+		}
+	}
+	return ids
+}
+
+// ListAllRBACForScope returns ALL cached RBAC assignments at the given scope
+// (not filtered by principal ID). Returns nil if the scope is not cached.
+// Used by the RBAC module's scope-based enumeration.
+func ListAllRBACForScope(scopePath string) []CachedRBACEntry {
+	cacheKey := AzCacheKey("rbac-scope-all", scopePath)
+	cached, found := AzureDataCache.Get(cacheKey)
+	if !found {
+		return nil
+	}
+	scopeMap := cached.(map[string][]cachedRBACRawAssignment)
+	var results []CachedRBACEntry
+	for _, assignments := range scopeMap {
+		for _, raw := range assignments {
+			results = append(results, CachedRBACEntry{
+				PrincipalID:                        raw.PrincipalID,
+				RoleDefinitionID:                   raw.RoleDefinitionID,
+				RoleName:                           raw.RoleName,
+				Scope:                              raw.Scope,
+				PrincipalType:                      raw.PrincipalType,
+				Condition:                          raw.Condition,
+				DelegatedManagedIdentityResourceID: raw.DelegatedManagedIdentityResourceID,
+			})
+		}
+	}
+	return results
+}
+
+// ListAllPIMForSubscription returns ALL PIM eligible and active assignments
+// for a subscription from the in-memory cache. The cached return value is true
+// if the PIM cache was populated for this subscription (even if zero assignments exist).
+// Used by the RBAC module's scope-based enumeration.
+func ListAllPIMForSubscription(subscriptionID string) (eligible []PIMRoleAssignment, active []PIMRoleAssignment, cached bool) {
+	eligibleKey := AzCacheKey("pim-eligible-all", subscriptionID)
+	if c, found := AzureDataCache.Get(eligibleKey); found {
+		cached = true
+		for _, assignments := range c.(map[string][]PIMRoleAssignment) {
+			eligible = append(eligible, assignments...)
+		}
+	}
+
+	activeKey := AzCacheKey("pim-active-all", subscriptionID)
+	if c, found := AzureDataCache.Get(activeKey); found {
+		cached = true
+		for _, assignments := range c.(map[string][]PIMRoleAssignment) {
+			active = append(active, assignments...)
+		}
+	}
+	return
+}
+
+// ListPIMPrincipalIDsForSubscription returns all principal IDs that have PIM
+// eligible or active role assignments for the given subscription, from the in-memory cache.
+// Returns nil if the PIM cache is not populated for this subscription.
+func ListPIMPrincipalIDsForSubscription(subscriptionID string) []string {
+	seen := make(map[string]bool)
+
+	eligibleKey := AzCacheKey("pim-eligible-all", subscriptionID)
+	if cached, found := AzureDataCache.Get(eligibleKey); found {
+		for pid := range cached.(map[string][]PIMRoleAssignment) {
+			seen[pid] = true
+		}
+	}
+
+	activeKey := AzCacheKey("pim-active-all", subscriptionID)
+	if cached, found := AzureDataCache.Get(activeKey); found {
+		for pid := range cached.(map[string][]PIMRoleAssignment) {
+			seen[pid] = true
+		}
+	}
+
+	if len(seen) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(seen))
+	for pid := range seen {
+		ids = append(ids, pid)
+	}
+	return ids
+}
+
+// ---------------------------------------------------------------------------
+// Bulk RBAC index builder (zero API calls, pure cache iteration)
+// ---------------------------------------------------------------------------
+
+// BuildRBACIndexFromCaches pre-computes RBAC assignments for ALL principals across
+// all subscriptions using only the in-memory scope caches. Returns four indexes:
+//   - rbacIndex: principalID -> formatted RBAC display strings
+//   - inheritedIndex: principalID -> formatted inherited assignment strings
+//   - pimSubEligibleIndex: principalID -> formatted PIM eligible strings
+//   - pimSubActiveIndex: principalID -> formatted PIM active strings
+//
+// This replaces per-principal GetEnhancedRBACAssignments calls which could trigger
+// API calls via GetUserGroupMemberships. Instead, group expansion uses the pre-fetched
+// groupCache directly.
+func BuildRBACIndexFromCaches(
+	subscriptions []string,
+	subNameMap map[string]string,
+	groupCache map[string]CachedGroupMembership,
+	principalIDs []string,
+) (rbacIndex, inheritedIndex, pimSubEligibleIndex, pimSubActiveIndex map[string][]string) {
+
+	rbacIndex = make(map[string][]string)
+	inheritedIndex = make(map[string][]string)
+	pimSubEligibleIndex = make(map[string][]string)
+	pimSubActiveIndex = make(map[string][]string)
+
+	// Build a set of all principal IDs for fast lookup
+	principalSet := make(map[string]bool, len(principalIDs))
+	for _, pid := range principalIDs {
+		principalSet[pid] = true
+	}
+
+	// Pre-compute: principalID -> all group IDs (from bulk cache)
+	// This is the key optimization: we use the groupCache directly instead of
+	// calling GetUserGroupMemberships which falls through to per-principal API.
+	groupIDsFor := make(map[string][]string, len(principalIDs))
+	if groupCache != nil {
+		for _, pid := range principalIDs {
+			if gm, ok := groupCache[pid]; ok {
+				groupIDsFor[pid] = gm.AllGroupIDs
+			}
+		}
+	}
+
+	for _, sub := range subscriptions {
+		subDisplayName := subNameMap[sub]
+		if subDisplayName == "" {
+			subDisplayName = sub
+		}
+
+		// Build scope list from cached management group hierarchy
+		type scopeInfo struct {
+			Path        string
+			Type        string
+			DisplayName string
+		}
+		scopes := []scopeInfo{
+			{"/", "TenantRoot", "Tenant Root"},
+		}
+
+		// Get MG hierarchy from cache (GetManagementGroupHierarchy caches per-sub)
+		mgKey := AzCacheKey("mg-hierarchy", sub)
+		if cached, found := AzureDataCache.Get(mgKey); found {
+			for _, mgID := range cached.([]string) {
+				scopes = append(scopes, scopeInfo{
+					fmt.Sprintf("/providers/Microsoft.Management/managementGroups/%s", mgID),
+					"ManagementGroup",
+					mgID,
+				})
+			}
+		}
+		scopes = append(scopes, scopeInfo{
+			fmt.Sprintf("/subscriptions/%s", sub),
+			"Subscription",
+			sub,
+		})
+
+		// For each scope, iterate all assignments in the cache and match to our principals
+		for _, scope := range scopes {
+			cacheKey := AzCacheKey("rbac-scope-all", scope.Path)
+			cached, found := AzureDataCache.Get(cacheKey)
+			if !found {
+				continue
+			}
+			scopeMap := cached.(map[string][]cachedRBACRawAssignment)
+
+			// For each principal, check direct + group-based assignments
+			for _, pid := range principalIDs {
+				// Direct assignments
+				for _, rawRA := range scopeMap[pid] {
+					roleName := rawRA.RoleName
+					if roleName == "" {
+						// Try in-memory role name cache
+						roleKey := AzCacheKey("role-name", rawRA.RoleDefinitionID)
+						if rn, found := AzureDataCache.Get(roleKey); found {
+							roleName = rn.(string)
+						} else {
+							roleName = "Unknown"
+						}
+					}
+
+					rbacDisplay := fmt.Sprintf("%s: %s", subDisplayName, roleName)
+					if scope.Type == "TenantRoot" {
+						rbacDisplay += " [Tenant Root]"
+					} else if scope.Type == "ManagementGroup" {
+						rbacDisplay += fmt.Sprintf(" [MG: %s]", scope.DisplayName)
+					}
+					rbacIndex[pid] = append(rbacIndex[pid], rbacDisplay)
+
+					if rawRA.Scope != scope.Path {
+						inheritedIndex[pid] = append(inheritedIndex[pid],
+							fmt.Sprintf("%s: %s (inherited from %s)", subDisplayName, roleName, scope.Type))
+					}
+				}
+
+				// Group-based assignments
+				for _, gid := range groupIDsFor[pid] {
+					for _, rawRA := range scopeMap[gid] {
+						roleName := rawRA.RoleName
+						if roleName == "" {
+							roleKey := AzCacheKey("role-name", rawRA.RoleDefinitionID)
+							if rn, found := AzureDataCache.Get(roleKey); found {
+								roleName = rn.(string)
+							} else {
+								roleName = "Unknown"
+							}
+						}
+
+						rbacDisplay := fmt.Sprintf("%s: %s (via Group)", subDisplayName, roleName)
+						if scope.Type == "TenantRoot" {
+							rbacDisplay += " [Tenant Root]"
+						} else if scope.Type == "ManagementGroup" {
+							rbacDisplay += fmt.Sprintf(" [MG: %s]", scope.DisplayName)
+						}
+						rbacIndex[pid] = append(rbacIndex[pid], rbacDisplay)
+
+						if rawRA.Scope != scope.Path {
+							inheritedIndex[pid] = append(inheritedIndex[pid],
+								fmt.Sprintf("%s: %s (inherited from %s)", subDisplayName, roleName, scope.Type))
+						}
+					}
+				}
+			}
+		}
+
+		// PIM: subscription-scoped, also uses groupIDsFor instead of GetUserGroupMemberships
+		eligibleKey := AzCacheKey("pim-eligible-all", sub)
+		if cached, found := AzureDataCache.Get(eligibleKey); found {
+			eligibleMap := cached.(map[string][]PIMRoleAssignment)
+			for _, pid := range principalIDs {
+				// Direct PIM
+				for _, pa := range eligibleMap[pid] {
+					pimSubEligibleIndex[pid] = append(pimSubEligibleIndex[pid],
+						fmt.Sprintf("%s: %s (%s)", subDisplayName, pa.RoleName, pa.AssignedVia))
+				}
+				// Group-based PIM
+				for _, gid := range groupIDsFor[pid] {
+					for _, pa := range eligibleMap[gid] {
+						pimSubEligibleIndex[pid] = append(pimSubEligibleIndex[pid],
+							fmt.Sprintf("%s: %s (via Group)", subDisplayName, pa.RoleName))
+					}
+				}
+			}
+		}
+
+		activeKey := AzCacheKey("pim-active-all", sub)
+		if cached, found := AzureDataCache.Get(activeKey); found {
+			activeMap := cached.(map[string][]PIMRoleAssignment)
+			for _, pid := range principalIDs {
+				// Direct PIM
+				for _, pa := range activeMap[pid] {
+					pimSubActiveIndex[pid] = append(pimSubActiveIndex[pid],
+						fmt.Sprintf("%s: %s (%s)", subDisplayName, pa.RoleName, pa.AssignedVia))
+				}
+				// Group-based PIM
+				for _, gid := range groupIDsFor[pid] {
+					for _, pa := range activeMap[gid] {
+						pimSubActiveIndex[pid] = append(pimSubActiveIndex[pid],
+							fmt.Sprintf("%s: %s (via Group)", subDisplayName, pa.RoleName))
+					}
+				}
+			}
+		}
+	}
+
+	return
+}
+
+// ---------------------------------------------------------------------------
+// Bulk CA policy index builder (zero API calls, pure cache iteration)
+// ---------------------------------------------------------------------------
+
+// BuildCAPolicyIndex pre-computes conditional access policy matches for all principals
+// using only the in-memory CA policy cache and group cache. Returns a map of
+// principalID -> formatted CA policy strings.
+func BuildCAPolicyIndex(
+	groupCache map[string]CachedGroupMembership,
+	principalIDs []string,
+) map[string]string {
+	caIndex := make(map[string]string)
+
+	cacheKey := AzCacheKey("ca-policies-all", "tenant")
+	cached, found := AzureDataCache.Get(cacheKey)
+	if !found {
+		return caIndex
+	}
+	allPolicies := cached.([]cachedCAPolicy)
+	if len(allPolicies) == 0 {
+		return caIndex
+	}
+
+	// For policies that target "All" users, pre-compute the list
+	var allUserPolicies []ConditionalAccessPolicy
+	// For group-targeted policies, build groupID -> []policy index
+	groupPolicyIndex := make(map[string][]ConditionalAccessPolicy)
+	// For user-targeted policies, build userID -> []policy index
+	userPolicyIndex := make(map[string][]ConditionalAccessPolicy)
+
+	for _, p := range allPolicies {
+		cap := ConditionalAccessPolicy{ID: p.ID, DisplayName: p.DisplayName, State: p.State}
+		isAllUsers := false
+		for _, uid := range p.IncludeUsers {
+			if uid == "All" {
+				isAllUsers = true
+				allUserPolicies = append(allUserPolicies, cap)
+				break
+			}
+			userPolicyIndex[uid] = append(userPolicyIndex[uid], cap)
+		}
+		if !isAllUsers {
+			for _, gid := range p.IncludeGroups {
+				groupPolicyIndex[gid] = append(groupPolicyIndex[gid], cap)
+			}
+		}
+	}
+
+	// For each principal, collect matching policies via direct + group memberships
+	for _, pid := range principalIDs {
+		seen := make(map[string]bool)
+		var matched []ConditionalAccessPolicy
+
+		// All-user policies
+		for _, p := range allUserPolicies {
+			if !seen[p.ID] {
+				seen[p.ID] = true
+				matched = append(matched, p)
+			}
+		}
+
+		// User-targeted policies
+		for _, p := range userPolicyIndex[pid] {
+			if !seen[p.ID] {
+				seen[p.ID] = true
+				matched = append(matched, p)
+			}
+		}
+
+		// Group-targeted policies (via group memberships from bulk cache)
+		if groupCache != nil {
+			if gm, ok := groupCache[pid]; ok {
+				for _, gid := range gm.AllGroupIDs {
+					for _, p := range groupPolicyIndex[gid] {
+						if !seen[p.ID] {
+							seen[p.ID] = true
+							matched = append(matched, p)
+						}
+					}
+				}
+			}
+		}
+
+		if len(matched) > 0 {
+			caIndex[pid] = FormatConditionalAccessPolicies(matched)
+		}
+	}
+
+	return caIndex
+}
+
+// GetEnhancedRBACAssignments retrieves RBAC assignments with full scope hierarchy and inheritance tracking.
+// Uses cached data if available (from PreFetchRBACAssignmentsForSubscription).
+func GetEnhancedRBACAssignments(ctx context.Context, session *SafeSession, principalObjectID string, subscriptionID string) ([]RBACAssignmentWithInheritance, error) {
+	logger := internal.NewLogger()
+	var assignments []RBACAssignmentWithInheritance
 
 	// Get user's group memberships for group-based assignment tracking
 	groupIDs := GetUserGroupMemberships(ctx, session, principalObjectID)
@@ -3046,43 +4506,102 @@ func GetEnhancedRBACAssignments(ctx context.Context, session *SafeSession, princ
 	principalIDs = append(principalIDs, groupIDs...)
 
 	// Define scopes to check in order of hierarchy (top to bottom)
-	scopes := []struct {
+	type scopeInfo struct {
 		Path        string
 		Type        string
 		DisplayName string
-	}{
+	}
+	scopes := []scopeInfo{
 		{"/", "TenantRoot", "Tenant Root"},
 	}
 
-	// Add management group hierarchy
 	mgHierarchy := GetManagementGroupHierarchy(ctx, session, subscriptionID)
 	for _, mgID := range mgHierarchy {
-		scopes = append(scopes, struct {
-			Path        string
-			Type        string
-			DisplayName string
-		}{
+		scopes = append(scopes, scopeInfo{
 			fmt.Sprintf("/providers/Microsoft.Management/managementGroups/%s", mgID),
 			"ManagementGroup",
 			mgID,
 		})
 	}
-
-	// Add subscription scope
-	scopes = append(scopes, struct {
-		Path        string
-		Type        string
-		DisplayName string
-	}{
+	scopes = append(scopes, scopeInfo{
 		fmt.Sprintf("/subscriptions/%s", subscriptionID),
 		"Subscription",
 		subscriptionID,
 	})
 
-	// Track assignments by role+scope to detect inheritance
+	// Track assignments by role+scope to avoid duplicates
 	assignmentMap := make(map[string]RBACAssignmentWithInheritance)
 
-	// Check each scope
+	// Try cached path: check if ALL scopes are cached
+	allCached := true
+	for _, scope := range scopes {
+		cacheKey := AzCacheKey("rbac-scope-all", scope.Path)
+		if _, found := AzureDataCache.Get(cacheKey); !found {
+			allCached = false
+			break
+		}
+	}
+
+	if allCached {
+		// Use cached data: filter client-side by principalIDs
+		principalSet := make(map[string]bool, len(principalIDs))
+		for _, pid := range principalIDs {
+			principalSet[pid] = true
+		}
+
+		for _, scope := range scopes {
+			cacheKey := AzCacheKey("rbac-scope-all", scope.Path)
+			cached, _ := AzureDataCache.Get(cacheKey)
+			scopeMap := cached.(map[string][]cachedRBACRawAssignment)
+
+			for _, pid := range principalIDs {
+				for _, rawRA := range scopeMap[pid] {
+					roleName := GetRoleNameFromDefinitionID(ctx, session, subscriptionID, rawRA.RoleDefinitionID)
+
+					assignedVia := "Direct"
+					if pid != principalObjectID {
+						assignedVia = "Group"
+					}
+
+					inheritedFrom := ""
+					if rawRA.Scope != scope.Path {
+						inheritedFrom = rawRA.Scope
+					}
+
+					assignment := RBACAssignmentWithInheritance{
+						RoleName:         roleName,
+						Scope:            rawRA.Scope,
+						ScopeType:        scope.Type,
+						ScopeDisplayName: scope.DisplayName,
+						AssignedVia:      assignedVia,
+						InheritedFrom:    inheritedFrom,
+						PrincipalID:      pid,
+					}
+
+					key := fmt.Sprintf("%s|%s|%s", roleName, rawRA.Scope, pid)
+					if _, exists := assignmentMap[key]; !exists {
+						assignmentMap[key] = assignment
+						assignments = append(assignments, assignment)
+					}
+				}
+			}
+		}
+
+		return assignments, nil
+	}
+
+	// Fallback: fetch from API per-principal per-scope (original path)
+	token, err := session.GetTokenForResource(globals.CommonScopes[0]) // ARM scope
+	if err != nil {
+		return assignments, err
+	}
+
+	cred := &StaticTokenCredential{Token: token}
+	raClient, err := armauthorizationv2.NewRoleAssignmentsClient(subscriptionID, cred, DefaultARMClientOptions())
+	if err != nil {
+		return assignments, err
+	}
+
 	for _, scope := range scopes {
 		for _, principalID := range principalIDs {
 			pager := raClient.NewListForScopePager(scope.Path, &armauthorizationv2.RoleAssignmentsClientListForScopeOptions{
@@ -3092,8 +4611,8 @@ func GetEnhancedRBACAssignments(ctx context.Context, session *SafeSession, princ
 			for pager.More() {
 				page, err := pager.NextPage(ctx)
 				if err != nil {
-					if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
-						logger.ErrorM(fmt.Sprintf("Failed to get role assignments at scope %s for principal %s: %v (partial results may be returned)", scope.Path, principalID, err), globals.AZ_PRINCIPALS_MODULE_NAME)
+					if !IsAccessDenied(err) && globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+						logger.ErrorM(fmt.Sprintf("Failed to get role assignments at scope %s for principal %s: %s", scope.Path, principalID, AzureAPIErrorSummary(err)), globals.AZ_PRINCIPALS_MODULE_NAME)
 					}
 					break
 				}
@@ -3112,11 +4631,8 @@ func GetEnhancedRBACAssignments(ctx context.Context, session *SafeSession, princ
 						assignedVia = "Group"
 					}
 
-					// Determine if this is an inherited assignment
 					inheritedFrom := ""
 					if assignmentScope != scope.Path {
-						// Assignment is at a different scope than what we're checking
-						// This means it's inherited from a parent scope
 						inheritedFrom = assignmentScope
 					}
 
@@ -3130,7 +4646,6 @@ func GetEnhancedRBACAssignments(ctx context.Context, session *SafeSession, princ
 						PrincipalID:      principalID,
 					}
 
-					// Use role+scope as key to avoid duplicates
 					key := fmt.Sprintf("%s|%s|%s", roleName, assignmentScope, principalID)
 					if _, exists := assignmentMap[key]; !exists {
 						assignmentMap[key] = assignment
@@ -3165,6 +4680,17 @@ type DirectoryRole struct {
 // GetDirectoryRolesForPrincipal retrieves Entra ID directory roles (Global Admin, User Admin, etc.)
 // These are different from Azure RBAC roles - they control access to Entra ID itself
 func GetDirectoryRolesForPrincipal(ctx context.Context, session *SafeSession, principalObjectID string) ([]DirectoryRole, error) {
+	// Check bulk directory role members cache first
+	bulkKey := AzCacheKey("directory-role-members-all", "tenant")
+	if cached, found := AzureDataCache.Get(bulkKey); found {
+		bulkData := cached.(map[string][]DirectoryRole)
+		if roles, ok := bulkData[principalObjectID]; ok {
+			return roles, nil
+		}
+		// Principal not in bulk cache - fall through to per-principal API
+	}
+
+	// Fall back to per-principal API
 	logger := internal.NewLogger()
 	var roles []DirectoryRole
 
@@ -3226,11 +4752,24 @@ func GetDirectoryRolesForPrincipal(ctx context.Context, session *SafeSession, pr
 		logger.InfoM(fmt.Sprintf("Found %d directory role(s) for principal %s", len(roles), principalObjectID), globals.AZ_PRINCIPALS_MODULE_NAME)
 	}
 
+	// Backfill bulk cache so other callers benefit
+	BackfillBulkCache(bulkKey, principalObjectID, roles)
+
 	return roles, nil
 }
 
 // GetPIMEligibleDirectoryRoles retrieves PIM-eligible Entra ID directory role assignments
 func GetPIMEligibleDirectoryRoles(ctx context.Context, session *SafeSession, principalObjectID string) ([]DirectoryRole, error) {
+	// Check pre-fetched tenant-level cache first
+	bulkKey := AzCacheKey("pim-dir-eligible-all", "tenant")
+	if cached, found := AzureDataCache.Get(bulkKey); found {
+		eligibleMap := cached.(map[string][]DirectoryRole)
+		if roles, ok := eligibleMap[principalObjectID]; ok {
+			return roles, nil
+		}
+		// Principal not in bulk cache, fall through to per-principal API
+	}
+
 	logger := internal.NewLogger()
 	var roles []DirectoryRole
 
@@ -3295,11 +4834,24 @@ func GetPIMEligibleDirectoryRoles(ctx context.Context, session *SafeSession, pri
 		logger.InfoM(fmt.Sprintf("Found %d PIM-eligible directory role(s) for principal %s", len(roles), principalObjectID), globals.AZ_PRINCIPALS_MODULE_NAME)
 	}
 
+	// Backfill bulk cache so other callers benefit
+	BackfillBulkCache(bulkKey, principalObjectID, roles)
+
 	return roles, nil
 }
 
 // GetPIMActiveDirectoryRoles retrieves currently active PIM directory role assignments
 func GetPIMActiveDirectoryRoles(ctx context.Context, session *SafeSession, principalObjectID string) ([]DirectoryRole, error) {
+	// Check pre-fetched tenant-level cache first
+	bulkKey := AzCacheKey("pim-dir-active-all", "tenant")
+	if cached, found := AzureDataCache.Get(bulkKey); found {
+		activeMap := cached.(map[string][]DirectoryRole)
+		if roles, ok := activeMap[principalObjectID]; ok {
+			return roles, nil
+		}
+		// Principal not in bulk cache, fall through to per-principal API
+	}
+
 	logger := internal.NewLogger()
 	var roles []DirectoryRole
 
@@ -3380,6 +4932,9 @@ func GetPIMActiveDirectoryRoles(ctx context.Context, session *SafeSession, princ
 		logger.InfoM(fmt.Sprintf("Found %d active PIM directory role(s) for principal %s", len(roles), principalObjectID), globals.AZ_PRINCIPALS_MODULE_NAME)
 	}
 
+	// Backfill bulk cache so other callers benefit
+	BackfillBulkCache(bulkKey, principalObjectID, roles)
+
 	return roles, nil
 }
 
@@ -3411,6 +4966,24 @@ func FormatDirectoryRoles(roles []DirectoryRole) string {
 // GetNestedGroupMemberships retrieves all group memberships including nested groups
 // Returns both direct and transitive (nested) group memberships
 func GetNestedGroupMemberships(ctx context.Context, session *SafeSession, principalObjectID string) (directGroups []string, allGroups []string, err error) {
+	// Check bulk group memberships cache first
+	bulkKey := AzCacheKey("group-memberships-all", "tenant")
+	if cached, found := AzureDataCache.Get(bulkKey); found {
+		bulkData := cached.(map[string]CachedGroupMembership)
+		if membership, ok := bulkData[principalObjectID]; ok {
+			return membership.DirectGroupNames, membership.AllGroupNames, nil
+		}
+		// Principal not in bulk cache - fall through to per-principal API
+	}
+
+	// Fall back to per-principal cache / API
+	directKey := AzCacheKey("nested-direct-groups", principalObjectID)
+	allKey := AzCacheKey("nested-all-groups", principalObjectID)
+	if cachedDirect, found := AzureDataCache.Get(directKey); found {
+		cachedAll, _ := AzureDataCache.Get(allKey)
+		return cachedDirect.([]string), cachedAll.([]string), nil
+	}
+
 	logger := internal.NewLogger()
 
 	token, err := session.GetTokenForResource(globals.CommonScopes[1]) // Graph scope
@@ -3507,6 +5080,20 @@ func GetNestedGroupMemberships(ctx context.Context, session *SafeSession, princi
 			logger.InfoM(fmt.Sprintf("Principal %s: %d direct group(s), %d total group(s) including nested", principalObjectID, len(directGroups), len(allGroups)), globals.AZ_PRINCIPALS_MODULE_NAME)
 		}
 	}
+
+	AzureDataCache.Set(directKey, directGroups, 0)
+	AzureDataCache.Set(allKey, allGroups, 0)
+
+	// Backfill bulk cache so other callers benefit
+	var allGroupIDs []string
+	for id := range allGroupsMap {
+		allGroupIDs = append(allGroupIDs, id)
+	}
+	BackfillBulkCache(bulkKey, principalObjectID, CachedGroupMembership{
+		DirectGroupNames: directGroups,
+		AllGroupNames:    allGroups,
+		AllGroupIDs:      allGroupIDs,
+	})
 
 	return directGroups, allGroups, nil
 }
@@ -3655,6 +5242,191 @@ func GetUserMFAAuthenticationMethods(ctx context.Context, session *SafeSession, 
 	return result, nil
 }
 
+// PreFetchMFABulk uses the Graph $batch API to fetch MFA authentication methods
+// for all users in parallel batches of 20. This is ~60x faster than per-user calls.
+// Results are stored in the bulk MFA cache (az-mfa-all-tenant).
+func PreFetchMFABulk(ctx context.Context, session *SafeSession, baseDir, tenantID string, userIDs []string) {
+	SetBulkCacheContext(baseDir, tenantID)
+	cacheKey := AzCacheKey("mfa-all", "tenant")
+
+	// 1. Check in-memory cache
+	if _, found := AzureDataCache.Get(cacheKey); found {
+		return
+	}
+
+	// 2. Check disk cache
+	var diskCache MFABulkCache
+	if loadPrefetchCache(baseDir, tenantID, "mfa-bulk.gob", DefaultAzureCacheExpiration, &diskCache) && diskCache.Data != nil {
+		AzureDataCache.Set(cacheKey, diskCache.Data, 0)
+		return
+	}
+
+	logger := internal.NewLogger()
+
+	if len(userIDs) == 0 {
+		AzureDataCache.Set(cacheKey, map[string]MFAAuthenticationMethods{}, 0)
+		savePrefetchCache(baseDir, tenantID, "mfa-bulk.gob", MFABulkCache{Data: map[string]MFAAuthenticationMethods{}})
+		return
+	}
+
+	token, err := session.GetTokenForResource(globals.CommonScopes[1]) // Graph scope
+	if err != nil {
+		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+			logger.ErrorM(fmt.Sprintf("Failed to get Graph token for MFA bulk pre-fetch: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
+		}
+		return
+	}
+
+	mfaMap := make(map[string]MFAAuthenticationMethods, len(userIDs))
+	var mu sync.Mutex
+
+	// Chunk userIDs into batches of 20 (Graph $batch limit)
+	const batchSize = 20
+	sem := make(chan struct{}, 5) // limit concurrent batch requests
+	var wg sync.WaitGroup
+
+	for i := 0; i < len(userIDs); i += batchSize {
+		end := i + batchSize
+		if end > len(userIDs) {
+			end = len(userIDs)
+		}
+		chunk := userIDs[i:end]
+
+		wg.Add(1)
+		go func(chunk []string, batchNum int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			// Build sub-requests
+			subReqs := make([]GraphBatchSubRequest, len(chunk))
+			for j, uid := range chunk {
+				subReqs[j] = GraphBatchSubRequest{
+					ID:     uid,
+					Method: "GET",
+					URL:    fmt.Sprintf("/users/%s/authentication/methods", uid),
+				}
+			}
+
+			responses, err := GraphBatchRequest(ctx, token, subReqs)
+			if err != nil {
+				if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+					logger.ErrorM(fmt.Sprintf("MFA batch request failed (batch %d): %v", batchNum, err), globals.AZ_PRINCIPALS_MODULE_NAME)
+				}
+				return
+			}
+
+			// Parse each sub-response
+			for _, resp := range responses {
+				userID := resp.ID
+				mfa := MFAAuthenticationMethods{
+					MFAEnabled: false,
+					Methods:    []string{},
+				}
+
+				if resp.Status != 200 {
+					// User might lack permissions or MFA not configured
+					mu.Lock()
+					mfaMap[userID] = mfa
+					mu.Unlock()
+					continue
+				}
+
+				var data struct {
+					Value []map[string]interface{} `json:"value"`
+				}
+				if err := json.Unmarshal(resp.Body, &data); err != nil {
+					mu.Lock()
+					mfaMap[userID] = mfa
+					mu.Unlock()
+					continue
+				}
+
+				// Parse authentication methods (same logic as GetUserMFAAuthenticationMethods)
+				defaultMethodID := ""
+				for _, method := range data.Value {
+					odataType, ok := method["@odata.type"].(string)
+					if !ok {
+						continue
+					}
+
+					switch odataType {
+					case "#microsoft.graph.phoneAuthenticationMethod":
+						mfa.Methods = append(mfa.Methods, "Phone")
+						mfa.HasPhoneAuth = true
+						if defaultMethodID == "" {
+							defaultMethodID = "Phone"
+						}
+					case "#microsoft.graph.microsoftAuthenticatorAuthenticationMethod":
+						mfa.Methods = append(mfa.Methods, "Authenticator")
+						mfa.HasAuthenticator = true
+						if defaultMethodID == "" {
+							defaultMethodID = "Authenticator"
+						}
+					case "#microsoft.graph.fido2AuthenticationMethod":
+						mfa.Methods = append(mfa.Methods, "FIDO2")
+						mfa.HasFIDO2 = true
+						if defaultMethodID == "" {
+							defaultMethodID = "FIDO2"
+						}
+					case "#microsoft.graph.emailAuthenticationMethod":
+						mfa.Methods = append(mfa.Methods, "Email")
+						mfa.HasEmail = true
+					case "#microsoft.graph.temporaryAccessPassAuthenticationMethod":
+						mfa.Methods = append(mfa.Methods, "TemporaryAccessPass")
+						mfa.HasTemporaryPass = true
+					case "#microsoft.graph.passwordAuthenticationMethod":
+						continue // Password is always present, don't count as MFA
+					default:
+						methodID, _ := method["id"].(string)
+						if methodID != "" {
+							methodType := strings.TrimPrefix(odataType, "#microsoft.graph.")
+							methodType = strings.TrimSuffix(methodType, "AuthenticationMethod")
+							mfa.Methods = append(mfa.Methods, methodType)
+						}
+					}
+				}
+
+				if len(mfa.Methods) > 0 {
+					mfa.MFAEnabled = true
+				}
+				if defaultMethodID != "" {
+					mfa.DefaultMethod = defaultMethodID
+				} else if len(mfa.Methods) > 0 {
+					mfa.DefaultMethod = mfa.Methods[0]
+				}
+
+				mu.Lock()
+				mfaMap[userID] = mfa
+				mu.Unlock()
+			}
+
+			// Incremental disk save every 500 users processed
+			mu.Lock()
+			processed := len(mfaMap)
+			mu.Unlock()
+			if processed%500 < batchSize {
+				mu.Lock()
+				partial := make(map[string]MFAAuthenticationMethods, len(mfaMap))
+				for k, v := range mfaMap {
+					partial[k] = v
+				}
+				mu.Unlock()
+				savePrefetchCache(baseDir, tenantID, "mfa-bulk.gob", MFABulkCache{Data: partial})
+			}
+		}(chunk, i/batchSize)
+	}
+
+	wg.Wait()
+
+	AzureDataCache.Set(cacheKey, mfaMap, 0)
+	savePrefetchCache(baseDir, tenantID, "mfa-bulk.gob", MFABulkCache{Data: mfaMap})
+
+	if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+		logger.InfoM(fmt.Sprintf("Pre-fetched MFA methods for %d users via batch API", len(mfaMap)), globals.AZ_PRINCIPALS_MODULE_NAME)
+	}
+}
+
 // ------------------------------
 // Enhanced Conditional Access Policy (for policy-centric module)
 // ------------------------------
@@ -3699,8 +5471,16 @@ type ConditionalAccessPolicyDetails struct {
 	Description string
 }
 
-// GetAllConditionalAccessPolicies retrieves all CA policies in the tenant with full details
+// GetAllConditionalAccessPolicies retrieves all CA policies in the tenant with full details.
+// Checks the bulk pre-fetch cache first, falls back to API if not cached.
 func GetAllConditionalAccessPolicies(ctx context.Context, session *SafeSession) ([]ConditionalAccessPolicyDetails, error) {
+	// Check bulk cache first (populated by PreFetchConditionalAccessPolicies)
+	fullCacheKey := AzCacheKey("ca-policies-full", "tenant")
+	if cached, found := AzureDataCache.Get(fullCacheKey); found {
+		return cached.([]ConditionalAccessPolicyDetails), nil
+	}
+
+	// Fall back to API
 	logger := internal.NewLogger()
 	var policies []ConditionalAccessPolicyDetails
 
@@ -3712,7 +5492,6 @@ func GetAllConditionalAccessPolicies(ctx context.Context, session *SafeSession) 
 		return policies, err
 	}
 
-	// Get all conditional access policies
 	initialURL := "https://graph.microsoft.com/v1.0/identity/conditionalAccess/policies"
 
 	err = GraphAPIPagedRequest(ctx, initialURL, token, func(body []byte) (bool, string, error) {
@@ -3789,41 +5568,25 @@ func GetAllConditionalAccessPolicies(ctx context.Context, session *SafeSession) 
 				State:            policy.State,
 				CreatedDateTime:  policy.CreatedDateTime,
 				ModifiedDateTime: policy.ModifiedDateTime,
-
-				// Conditions - Users
-				IncludedUsers:  policy.Conditions.Users.IncludeUsers,
-				ExcludedUsers:  policy.Conditions.Users.ExcludeUsers,
-				IncludedGroups: policy.Conditions.Users.IncludeGroups,
-				ExcludedGroups: policy.Conditions.Users.ExcludeGroups,
-				IncludedRoles:  policy.Conditions.Users.IncludeRoles,
-				ExcludedRoles:  policy.Conditions.Users.ExcludeRoles,
-
-				// Conditions - Applications
-				IncludedApps: policy.Conditions.Applications.IncludeApplications,
-				ExcludedApps: policy.Conditions.Applications.ExcludeApplications,
-
-				// Conditions - Locations
+				IncludedUsers:    policy.Conditions.Users.IncludeUsers,
+				ExcludedUsers:    policy.Conditions.Users.ExcludeUsers,
+				IncludedGroups:   policy.Conditions.Users.IncludeGroups,
+				ExcludedGroups:   policy.Conditions.Users.ExcludeGroups,
+				IncludedRoles:    policy.Conditions.Users.IncludeRoles,
+				ExcludedRoles:    policy.Conditions.Users.ExcludeRoles,
+				IncludedApps:     policy.Conditions.Applications.IncludeApplications,
+				ExcludedApps:     policy.Conditions.Applications.ExcludeApplications,
 				IncludedLocations: policy.Conditions.Locations.IncludeLocations,
 				ExcludedLocations: policy.Conditions.Locations.ExcludeLocations,
-
-				// Conditions - Platforms
 				IncludedPlatforms: policy.Conditions.Platforms.IncludePlatforms,
 				ExcludedPlatforms: policy.Conditions.Platforms.ExcludePlatforms,
-
-				// Conditions - Client App Types
-				ClientAppTypes:   policy.Conditions.ClientAppTypes,
-				UserRiskLevels:   policy.Conditions.UserRiskLevels,
-				SignInRiskLevels: policy.Conditions.SignInRiskLevels,
-
-				// Conditions - Device States
-				DeviceStates: policy.Conditions.DeviceStates.IncludeStates,
-
-				// Grant Controls
-				GrantOperator: policy.GrantControls.Operator,
-				GrantControls: policy.GrantControls.BuiltInControls,
+				ClientAppTypes:    policy.Conditions.ClientAppTypes,
+				UserRiskLevels:    policy.Conditions.UserRiskLevels,
+				SignInRiskLevels:  policy.Conditions.SignInRiskLevels,
+				DeviceStates:      policy.Conditions.DeviceStates.IncludeStates,
+				GrantOperator:     policy.GrantControls.Operator,
+				GrantControls:     policy.GrantControls.BuiltInControls,
 			}
-
-			// Session Controls
 			if policy.SessionControls.ApplicationEnforcedRestrictions.IsEnabled {
 				details.ApplicationEnforcedRestrictions = true
 			}
@@ -3836,13 +5599,10 @@ func GetAllConditionalAccessPolicies(ctx context.Context, session *SafeSession) 
 			if policy.SessionControls.PersistentBrowser.IsEnabled {
 				details.PersistentBrowser = policy.SessionControls.PersistentBrowser.Mode
 			}
-
 			policies = append(policies, details)
 		}
 
-		hasMore := data.NextLink != ""
-		nextURL := data.NextLink
-		return hasMore, nextURL, nil
+		return data.NextLink != "", data.NextLink, nil
 	})
 
 	if err != nil {
@@ -3900,4 +5660,934 @@ func FormatConditionalAccessPolicyDetails(details ConditionalAccessPolicyDetails
 	}
 
 	return result
+}
+
+// ========================================
+// Bulk Tenant-Level Pre-Fetch Functions
+// ========================================
+
+// PreFetchGroupMemberships fetches ALL group memberships at the tenant level by iterating
+// all groups and fetching their members + transitiveMembers. Builds an inverted index:
+// principalID -> CachedGroupMembership for O(1) lookup per principal.
+func PreFetchGroupMemberships(ctx context.Context, session *SafeSession, baseDir, tenantID string) {
+	SetBulkCacheContext(baseDir, tenantID)
+	cacheKey := AzCacheKey("group-memberships-all", "tenant")
+
+	// 1. Check in-memory cache
+	if _, found := AzureDataCache.Get(cacheKey); found {
+		return
+	}
+
+	// 2. Check disk cache
+	var diskCache GroupMembershipsCache
+	if loadPrefetchCache(baseDir, tenantID, "group-memberships.gob", DefaultAzureCacheExpiration, &diskCache) {
+		AzureDataCache.Set(cacheKey, diskCache.Data, 0)
+		// Rebuild group name map from membership data for GetGroupDisplayName lookups
+		nameMap := make(map[string]string)
+		for _, membership := range diskCache.Data {
+			for i, gid := range membership.AllGroupIDs {
+				if i < len(membership.AllGroupNames) {
+					nameMap[gid] = membership.AllGroupNames[i]
+				}
+			}
+		}
+		AzureDataCache.Set(AzCacheKey("group-names-all", "tenant"), nameMap, 0)
+		return
+	}
+
+	// 3. Fetch from API
+	logger := internal.NewLogger()
+	token, err := session.GetTokenForResource(globals.CommonScopes[1]) // Graph scope
+	if err != nil {
+		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+			logger.ErrorM(fmt.Sprintf("Failed to get Graph token for group memberships pre-fetch: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
+		}
+		return
+	}
+
+	// Get ALL groups (not just security-enabled) with displayName for name resolution
+	type groupInfo struct {
+		ID          string
+		DisplayName string
+	}
+	var allGroups []groupInfo
+	groupsURL := "https://graph.microsoft.com/v1.0/groups?$select=id,displayName"
+	err = GraphAPIPagedRequest(ctx, groupsURL, token, func(body []byte) (bool, string, error) {
+		var data struct {
+			Value []struct {
+				ID          string `json:"id"`
+				DisplayName string `json:"displayName"`
+			} `json:"value"`
+			NextLink string `json:"@odata.nextLink"`
+		}
+		if err := json.Unmarshal(body, &data); err != nil {
+			return false, "", err
+		}
+		for _, g := range data.Value {
+			allGroups = append(allGroups, groupInfo{ID: g.ID, DisplayName: g.DisplayName})
+		}
+		return data.NextLink != "", data.NextLink, nil
+	})
+	if err != nil {
+		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+			logger.ErrorM(fmt.Sprintf("Failed to list groups for membership pre-fetch: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
+		}
+		return
+	}
+
+	if len(allGroups) == 0 {
+		AzureDataCache.Set(cacheKey, map[string]CachedGroupMembership{}, 0)
+		savePrefetchCache(baseDir, tenantID, "group-memberships.gob", GroupMembershipsCache{Data: map[string]CachedGroupMembership{}})
+		return
+	}
+
+	// Build group ID -> displayName map
+	groupNameMap := make(map[string]string, len(allGroups))
+	for _, g := range allGroups {
+		groupNameMap[g.ID] = g.DisplayName
+	}
+
+	// For each group, fetch direct members and transitive members concurrently.
+	// Results are collected via a channel for incremental progress saving.
+	type groupMemberResult struct {
+		GroupID         string
+		DirectMemberIDs []string
+		TransMemberIDs  []string
+	}
+
+	// Load partial cache from a previous interrupted run (if any).
+	// The partial GOB uses the same GroupMembershipsPartialCache struct.
+	type partialCacheOnDisk struct {
+		ProcessedGroupIDs []string
+		Data              map[string]CachedGroupMembership
+	}
+	processedGroupSet := make(map[string]bool)
+	var partialDisk partialCacheOnDisk
+	if loadPrefetchCache(baseDir, tenantID, "group-memberships-partial.gob", DefaultAzureCacheExpiration, &partialDisk) && partialDisk.Data != nil {
+		for _, gid := range partialDisk.ProcessedGroupIDs {
+			processedGroupSet[gid] = true
+		}
+		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+			logger.InfoM(fmt.Sprintf("Resuming group membership pre-fetch: %d/%d groups already processed", len(processedGroupSet), len(allGroups)), globals.AZ_PRINCIPALS_MODULE_NAME)
+		}
+	}
+
+	// Filter out already-processed groups
+	var pendingGroups []groupInfo
+	for _, g := range allGroups {
+		if !processedGroupSet[g.ID] {
+			pendingGroups = append(pendingGroups, g)
+		}
+	}
+
+	// Collect results via channel for incremental saving
+	resultsCh := make(chan groupMemberResult, len(pendingGroups))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 30) // concurrency limit (raised from 10; AIMD rate limiter is the real gate)
+
+	for _, g := range pendingGroups {
+		wg.Add(1)
+		go func(grp groupInfo) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			var directIDs, transIDs []string
+
+			// Direct members
+			directURL := fmt.Sprintf("https://graph.microsoft.com/v1.0/groups/%s/members?$select=id", grp.ID)
+			_ = GraphAPIPagedRequest(ctx, directURL, token, func(body []byte) (bool, string, error) {
+				var data struct {
+					Value    []struct{ ID string `json:"id"` } `json:"value"`
+					NextLink string                            `json:"@odata.nextLink"`
+				}
+				if err := json.Unmarshal(body, &data); err != nil {
+					return false, "", err
+				}
+				for _, m := range data.Value {
+					directIDs = append(directIDs, m.ID)
+				}
+				return data.NextLink != "", data.NextLink, nil
+			})
+
+			// Transitive members
+			transURL := fmt.Sprintf("https://graph.microsoft.com/v1.0/groups/%s/transitiveMembers?$select=id", grp.ID)
+			_ = GraphAPIPagedRequest(ctx, transURL, token, func(body []byte) (bool, string, error) {
+				var data struct {
+					Value    []struct{ ID string `json:"id"` } `json:"value"`
+					NextLink string                            `json:"@odata.nextLink"`
+				}
+				if err := json.Unmarshal(body, &data); err != nil {
+					return false, "", err
+				}
+				for _, m := range data.Value {
+					transIDs = append(transIDs, m.ID)
+				}
+				return data.NextLink != "", data.NextLink, nil
+			})
+
+			resultsCh <- groupMemberResult{
+				GroupID:         grp.ID,
+				DirectMemberIDs: directIDs,
+				TransMemberIDs:  transIDs,
+			}
+		}(g)
+	}
+
+	// Close channel when all goroutines complete
+	go func() {
+		wg.Wait()
+		close(resultsCh)
+	}()
+
+	// Build inverted index: principalID -> CachedGroupMembership
+	// Track: for each principal, which groups they are direct members of vs transitive
+	accumMap := make(map[string]*groupMembershipAccum)
+
+	// Seed from partial cache
+	if partialDisk.Data != nil {
+		for pid, cached := range partialDisk.Data {
+			a := &groupMembershipAccum{
+				DirectGroupIDs: make(map[string]bool),
+				AllGroupIDs:    make(map[string]bool),
+			}
+			for _, name := range cached.DirectGroupNames {
+				// Reverse-lookup group ID from name (best-effort)
+				for gid, gname := range groupNameMap {
+					if gname == name {
+						a.DirectGroupIDs[gid] = true
+						break
+					}
+				}
+			}
+			for _, gid := range cached.AllGroupIDs {
+				a.AllGroupIDs[gid] = true
+			}
+			accumMap[pid] = a
+		}
+	}
+
+	getOrCreate := func(pid string) *groupMembershipAccum {
+		if a, ok := accumMap[pid]; ok {
+			return a
+		}
+		a := &groupMembershipAccum{
+			DirectGroupIDs: make(map[string]bool),
+			AllGroupIDs:    make(map[string]bool),
+		}
+		accumMap[pid] = a
+		return a
+	}
+
+	// Collect results and save incrementally every 200 groups
+	groupsProcessed := len(processedGroupSet)
+	for r := range resultsCh {
+		for _, memberID := range r.DirectMemberIDs {
+			a := getOrCreate(memberID)
+			a.DirectGroupIDs[r.GroupID] = true
+			a.AllGroupIDs[r.GroupID] = true
+		}
+		for _, memberID := range r.TransMemberIDs {
+			a := getOrCreate(memberID)
+			a.AllGroupIDs[r.GroupID] = true
+		}
+		processedGroupSet[r.GroupID] = true
+		groupsProcessed++
+
+		// Incremental save every 200 groups
+		if groupsProcessed%200 == 0 {
+			partialData := buildGroupMembershipCache(accumMap, groupNameMap)
+			processedIDs := make([]string, 0, len(processedGroupSet))
+			for gid := range processedGroupSet {
+				processedIDs = append(processedIDs, gid)
+			}
+			savePrefetchCache(baseDir, tenantID, "group-memberships-partial.gob", partialCacheOnDisk{
+				ProcessedGroupIDs: processedIDs,
+				Data:              partialData,
+			})
+			if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+				logger.InfoM(fmt.Sprintf("Group membership progress: %d/%d groups processed", groupsProcessed, len(allGroups)), globals.AZ_PRINCIPALS_MODULE_NAME)
+			}
+		}
+	}
+
+	// Convert to final cache structure
+	cacheData := buildGroupMembershipCache(accumMap, groupNameMap)
+
+	AzureDataCache.Set(cacheKey, cacheData, 0)
+	AzureDataCache.Set(AzCacheKey("group-names-all", "tenant"), groupNameMap, 0)
+	savePrefetchCache(baseDir, tenantID, "group-memberships.gob", GroupMembershipsCache{Data: cacheData})
+
+	// Clean up partial cache now that full cache is saved
+	deletePrefetchCache(baseDir, tenantID, "group-memberships-partial.gob")
+
+	if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+		logger.InfoM(fmt.Sprintf("Pre-fetched group memberships: %d groups, %d principals with memberships", len(allGroups), len(cacheData)), globals.AZ_PRINCIPALS_MODULE_NAME)
+	}
+}
+
+// groupMembershipAccum tracks group membership accumulation for a single principal.
+type groupMembershipAccum struct {
+	DirectGroupIDs map[string]bool
+	AllGroupIDs    map[string]bool
+}
+
+// buildGroupMembershipCache converts the accumulator map to the final cache structure.
+func buildGroupMembershipCache(accumMap map[string]*groupMembershipAccum, groupNameMap map[string]string) map[string]CachedGroupMembership {
+	cacheData := make(map[string]CachedGroupMembership, len(accumMap))
+	for pid, a := range accumMap {
+		var directNames, allNames, allIDs []string
+		for gid := range a.DirectGroupIDs {
+			directNames = append(directNames, groupNameMap[gid])
+		}
+		for gid := range a.AllGroupIDs {
+			allNames = append(allNames, groupNameMap[gid])
+			allIDs = append(allIDs, gid)
+		}
+		cacheData[pid] = CachedGroupMembership{
+			DirectGroupNames: directNames,
+			AllGroupNames:    allNames,
+			AllGroupIDs:      allIDs,
+		}
+	}
+	return cacheData
+}
+
+// GetGroupDisplayName returns a group's display name from the bulk group names cache.
+// Returns (name, true) on cache hit, ("", false) if the bulk cache is not populated.
+func GetGroupDisplayName(groupID string) (string, bool) {
+	if cached, found := AzureDataCache.Get(AzCacheKey("group-names-all", "tenant")); found {
+		nameMap := cached.(map[string]string)
+		name, ok := nameMap[groupID]
+		return name, ok
+	}
+	return "", false
+}
+
+// PreFetchDirectoryRoleMembers fetches ALL activated directory roles and their members,
+// building an inverted index: principalID -> []DirectoryRole for O(1) lookup.
+func PreFetchDirectoryRoleMembers(ctx context.Context, session *SafeSession, baseDir, tenantID string) {
+	SetBulkCacheContext(baseDir, tenantID)
+	cacheKey := AzCacheKey("directory-role-members-all", "tenant")
+
+	// 1. Check in-memory cache
+	if _, found := AzureDataCache.Get(cacheKey); found {
+		return
+	}
+
+	// 2. Check disk cache
+	var diskCache DirectoryRoleMembersCache
+	if loadPrefetchCache(baseDir, tenantID, "directory-role-members.gob", DefaultAzureCacheExpiration, &diskCache) {
+		AzureDataCache.Set(cacheKey, diskCache.Data, 0)
+		return
+	}
+
+	// 3. Fetch from API
+	logger := internal.NewLogger()
+	token, err := session.GetTokenForResource(globals.CommonScopes[1]) // Graph scope
+	if err != nil {
+		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+			logger.ErrorM(fmt.Sprintf("Failed to get Graph token for directory roles pre-fetch: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
+		}
+		return
+	}
+
+	// List all activated directory roles
+	type roleInfo struct {
+		ID             string
+		DisplayName    string
+		Description    string
+		RoleTemplateID string
+	}
+	var roles []roleInfo
+
+	rolesURL := "https://graph.microsoft.com/v1.0/directoryRoles?$select=id,displayName,description,roleTemplateId"
+	err = GraphAPIPagedRequest(ctx, rolesURL, token, func(body []byte) (bool, string, error) {
+		var data struct {
+			Value []struct {
+				ID             string `json:"id"`
+				DisplayName    string `json:"displayName"`
+				Description    string `json:"description"`
+				RoleTemplateID string `json:"roleTemplateId"`
+			} `json:"value"`
+			NextLink string `json:"@odata.nextLink"`
+		}
+		if err := json.Unmarshal(body, &data); err != nil {
+			return false, "", err
+		}
+		for _, r := range data.Value {
+			roles = append(roles, roleInfo{
+				ID:             r.ID,
+				DisplayName:    r.DisplayName,
+				Description:    r.Description,
+				RoleTemplateID: r.RoleTemplateID,
+			})
+		}
+		return data.NextLink != "", data.NextLink, nil
+	})
+	if err != nil {
+		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+			logger.ErrorM(fmt.Sprintf("Failed to list directory roles: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
+		}
+		return
+	}
+
+	// For each role, fetch members
+	invertedMap := make(map[string][]DirectoryRole) // principalID -> roles
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	sem := make(chan struct{}, 10)
+
+	for _, role := range roles {
+		wg.Add(1)
+		go func(r roleInfo) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			membersURL := fmt.Sprintf("https://graph.microsoft.com/v1.0/directoryRoles/%s/members?$select=id", r.ID)
+			_ = GraphAPIPagedRequest(ctx, membersURL, token, func(body []byte) (bool, string, error) {
+				var data struct {
+					Value    []struct{ ID string `json:"id"` } `json:"value"`
+					NextLink string                            `json:"@odata.nextLink"`
+				}
+				if err := json.Unmarshal(body, &data); err != nil {
+					return false, "", err
+				}
+
+				mu.Lock()
+				for _, m := range data.Value {
+					invertedMap[m.ID] = append(invertedMap[m.ID], DirectoryRole{
+						RoleID:         r.ID,
+						RoleTemplateID: r.RoleTemplateID,
+						DisplayName:    r.DisplayName,
+						Description:    r.Description,
+						AssignedVia:    "Direct",
+						PIMStatus:      "",
+					})
+				}
+				mu.Unlock()
+
+				return data.NextLink != "", data.NextLink, nil
+			})
+		}(role)
+	}
+	wg.Wait()
+
+	AzureDataCache.Set(cacheKey, invertedMap, 0)
+	savePrefetchCache(baseDir, tenantID, "directory-role-members.gob", DirectoryRoleMembersCache{Data: invertedMap})
+
+	if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+		totalMembers := 0
+		for _, v := range invertedMap {
+			totalMembers += len(v)
+		}
+		logger.InfoM(fmt.Sprintf("Pre-fetched directory role members: %d roles, %d total assignments", len(roles), totalMembers), globals.AZ_PRINCIPALS_MODULE_NAME)
+	}
+}
+
+// PreFetchSignInActivity fetches sign-in activity for ALL users in one paged request.
+// Requires AuditLog.Read.All permission; logs a warning and skips on 403.
+func PreFetchSignInActivity(ctx context.Context, session *SafeSession, baseDir, tenantID string) {
+	SetBulkCacheContext(baseDir, tenantID)
+	cacheKey := AzCacheKey("sign-in-activity-all", "tenant")
+
+	// 1. Check in-memory cache
+	if _, found := AzureDataCache.Get(cacheKey); found {
+		return
+	}
+
+	// 2. Check disk cache
+	var diskCache SignInActivityCache
+	if loadPrefetchCache(baseDir, tenantID, "sign-in-activity.gob", DefaultAzureCacheExpiration, &diskCache) {
+		AzureDataCache.Set(cacheKey, diskCache.Data, 0)
+		return
+	}
+
+	// 3. Fetch from API
+	logger := internal.NewLogger()
+	token, err := session.GetTokenForResource(globals.CommonScopes[1]) // Graph scope
+	if err != nil {
+		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+			logger.ErrorM(fmt.Sprintf("Failed to get Graph token for sign-in activity pre-fetch: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
+		}
+		return
+	}
+
+	activityMap := make(map[string]SignInActivity)
+	initialURL := "https://graph.microsoft.com/v1.0/users?$select=id,signInActivity"
+
+	err = GraphAPIPagedRequest(ctx, initialURL, token, func(body []byte) (bool, string, error) {
+		var data struct {
+			Value []struct {
+				ID            string `json:"id"`
+				SignInActivity struct {
+					LastSignInDateTime               string `json:"lastSignInDateTime"`
+					LastNonInteractiveSignInDateTime string `json:"lastNonInteractiveSignInDateTime"`
+					LastSuccessfulSignInDateTime     string `json:"lastSuccessfulSignInDateTime"`
+				} `json:"signInActivity"`
+			} `json:"value"`
+			NextLink string `json:"@odata.nextLink"`
+		}
+
+		if err := json.Unmarshal(body, &data); err != nil {
+			return false, "", err
+		}
+
+		for _, u := range data.Value {
+			activity := SignInActivity{
+				LastSignInDateTime:               "Never",
+				LastNonInteractiveSignInDateTime: "Never",
+				LastSuccessfulSignInDateTime:     "Never",
+				DaysSinceLastSignIn:              -1,
+			}
+
+			if u.SignInActivity.LastSignInDateTime != "" {
+				activity.LastSignInDateTime = u.SignInActivity.LastSignInDateTime
+				if t, err := time.Parse(time.RFC3339, u.SignInActivity.LastSignInDateTime); err == nil {
+					daysSince := int(time.Since(t).Hours() / 24)
+					activity.DaysSinceLastSignIn = daysSince
+					if daysSince > 90 {
+						activity.IsStale = true
+						activity.StaleReason = fmt.Sprintf("Last sign-in %d days ago", daysSince)
+					}
+				}
+			} else {
+				activity.IsStale = true
+				activity.StaleReason = "Never signed in"
+			}
+
+			if u.SignInActivity.LastNonInteractiveSignInDateTime != "" {
+				activity.LastNonInteractiveSignInDateTime = u.SignInActivity.LastNonInteractiveSignInDateTime
+			}
+			if u.SignInActivity.LastSuccessfulSignInDateTime != "" {
+				activity.LastSuccessfulSignInDateTime = u.SignInActivity.LastSuccessfulSignInDateTime
+			}
+
+			activityMap[u.ID] = activity
+		}
+
+		return data.NextLink != "", data.NextLink, nil
+	})
+
+	if err != nil {
+		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+			logger.ErrorM(fmt.Sprintf("Sign-in activity pre-fetch failed (requires AuditLog.Read.All): %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
+		}
+		// Still cache empty map so we don't retry and fall through to per-principal
+		if len(activityMap) == 0 {
+			return
+		}
+	}
+
+	AzureDataCache.Set(cacheKey, activityMap, 0)
+	savePrefetchCache(baseDir, tenantID, "sign-in-activity.gob", SignInActivityCache{Data: activityMap})
+
+	if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+		logger.InfoM(fmt.Sprintf("Pre-fetched sign-in activity for %d users", len(activityMap)), globals.AZ_PRINCIPALS_MODULE_NAME)
+	}
+}
+
+// PreFetchOAuth2Grants fetches ALL OAuth2 permission grants in the tenant with one paged
+// request, resolves resource display names, and builds a map: clientID -> []CachedOAuth2Grant.
+func PreFetchOAuth2Grants(ctx context.Context, session *SafeSession, baseDir, tenantID string) {
+	SetBulkCacheContext(baseDir, tenantID)
+	cacheKey := AzCacheKey("oauth2-grants-all", "tenant")
+
+	// 1. Check in-memory cache
+	if _, found := AzureDataCache.Get(cacheKey); found {
+		return
+	}
+
+	// 2. Check disk cache
+	var diskCache OAuth2GrantsCache
+	if loadPrefetchCache(baseDir, tenantID, "oauth2-grants.gob", DefaultAzureCacheExpiration, &diskCache) {
+		AzureDataCache.Set(cacheKey, diskCache.Data, 0)
+		return
+	}
+
+	// 3. Fetch from API
+	logger := internal.NewLogger()
+	token, err := session.GetTokenForResource(globals.CommonScopes[1]) // Graph scope
+	if err != nil {
+		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+			logger.ErrorM(fmt.Sprintf("Failed to get Graph token for OAuth2 grants pre-fetch: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
+		}
+		return
+	}
+
+	// Collect all grants and unique resourceIds
+	type rawGrant struct {
+		ClientID    string
+		ConsentType string
+		ResourceID  string
+		Scopes      []string
+	}
+	var allGrants []rawGrant
+	resourceIDs := make(map[string]bool)
+
+	initialURL := "https://graph.microsoft.com/v1.0/oauth2PermissionGrants"
+	err = GraphAPIPagedRequest(ctx, initialURL, token, func(body []byte) (bool, string, error) {
+		var data struct {
+			Value []struct {
+				ClientID    *string `json:"clientId"`
+				ConsentType *string `json:"consentType"`
+				ResourceID  *string `json:"resourceId"`
+				Scope       *string `json:"scope"`
+			} `json:"value"`
+			NextLink string `json:"@odata.nextLink"`
+		}
+		if err := json.Unmarshal(body, &data); err != nil {
+			return false, "", err
+		}
+		for _, g := range data.Value {
+			if g.ClientID == nil || g.Scope == nil {
+				continue
+			}
+			consentType := "Unknown"
+			if g.ConsentType != nil {
+				consentType = *g.ConsentType
+			}
+			var scopes []string
+			for _, s := range strings.Split(*g.Scope, " ") {
+				if s != "" {
+					scopes = append(scopes, s)
+				}
+			}
+			resourceID := ""
+			if g.ResourceID != nil {
+				resourceID = *g.ResourceID
+				resourceIDs[resourceID] = true
+			}
+			allGrants = append(allGrants, rawGrant{
+				ClientID:    *g.ClientID,
+				ConsentType: consentType,
+				ResourceID:  resourceID,
+				Scopes:      scopes,
+			})
+		}
+		return data.NextLink != "", data.NextLink, nil
+	})
+
+	if err != nil {
+		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+			logger.ErrorM(fmt.Sprintf("Failed to pre-fetch OAuth2 grants: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
+		}
+		if len(allGrants) == 0 {
+			return
+		}
+	}
+
+	// Resolve resource IDs to display names (batch with concurrency)
+	resourceNameMap := make(map[string]string)
+	var rnWg sync.WaitGroup
+	var rnMu sync.Mutex
+	rnSem := make(chan struct{}, 10)
+
+	for rid := range resourceIDs {
+		rnWg.Add(1)
+		go func(resourceID string) {
+			defer rnWg.Done()
+			rnSem <- struct{}{}
+			defer func() { <-rnSem }()
+
+			spURL := fmt.Sprintf("https://graph.microsoft.com/v1.0/servicePrincipals/%s?$select=displayName", resourceID)
+			spBody, err := GraphAPIRequestWithRetry(ctx, "GET", spURL, token)
+			if err == nil {
+				var spData struct {
+					DisplayName string `json:"displayName"`
+				}
+				if json.Unmarshal(spBody, &spData) == nil && spData.DisplayName != "" {
+					rnMu.Lock()
+					resourceNameMap[resourceID] = spData.DisplayName
+					rnMu.Unlock()
+				}
+			}
+		}(rid)
+	}
+	rnWg.Wait()
+
+	// Build clientID -> []CachedOAuth2Grant map
+	grantsMap := make(map[string][]CachedOAuth2Grant)
+	for _, g := range allGrants {
+		resourceName := resourceNameMap[g.ResourceID]
+		if resourceName == "" {
+			resourceName = "Unknown Resource"
+		}
+		grantsMap[g.ClientID] = append(grantsMap[g.ClientID], CachedOAuth2Grant{
+			ClientID:     g.ClientID,
+			ConsentType:  g.ConsentType,
+			ResourceName: resourceName,
+			Scopes:       g.Scopes,
+		})
+	}
+
+	AzureDataCache.Set(cacheKey, grantsMap, 0)
+	savePrefetchCache(baseDir, tenantID, "oauth2-grants.gob", OAuth2GrantsCache{Data: grantsMap})
+
+	if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+		logger.InfoM(fmt.Sprintf("Pre-fetched %d OAuth2 grants for %d service principals (%d unique resources)", len(allGrants), len(grantsMap), len(resourceIDs)), globals.AZ_PRINCIPALS_MODULE_NAME)
+	}
+}
+
+// PreFetchSPAppRoleAssignments pre-fetches all service principal appRoleAssignments
+// at the tenant level using $expand=appRoleAssignments on the servicePrincipals endpoint.
+// This replaces N per-SP API calls with a single paged tenant-level fetch.
+func PreFetchSPAppRoleAssignments(ctx context.Context, session *SafeSession, baseDir, tenantID string) {
+	SetBulkCacheContext(baseDir, tenantID)
+	cacheKey := AzCacheKey("sp-approle-assignments-all", "tenant")
+
+	// 1. Check in-memory cache
+	if _, found := AzureDataCache.Get(cacheKey); found {
+		return
+	}
+
+	// 2. Check disk cache
+	var diskCache SPAppRoleAssignmentsCache
+	if loadPrefetchCache(baseDir, tenantID, "sp-approle-assignments.gob", DefaultAzureCacheExpiration, &diskCache) {
+		AzureDataCache.Set(cacheKey, diskCache.Data, 0)
+		return
+	}
+
+	// 3. Fetch from API
+	logger := internal.NewLogger()
+	token, err := session.GetTokenForResource(globals.CommonScopes[1]) // Graph scope
+	if err != nil {
+		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+			logger.ErrorM(fmt.Sprintf("Failed to get Graph token for SP appRoleAssignments pre-fetch: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
+		}
+		return
+	}
+
+	// Collect raw assignments and unique resource IDs for appRole name resolution
+	type rawAssignment struct {
+		SPID                string
+		ResourceID          string
+		ResourceDisplayName string
+		AppRoleID           string
+	}
+	var allAssignments []rawAssignment
+	resourceIDs := make(map[string]string) // resourceID -> displayName (from expand)
+
+	initialURL := "https://graph.microsoft.com/v1.0/servicePrincipals?$select=id&$expand=appRoleAssignments"
+	err = GraphAPIPagedRequest(ctx, initialURL, token, func(body []byte) (bool, string, error) {
+		var data struct {
+			Value []struct {
+				ID                 string `json:"id"`
+				AppRoleAssignments []struct {
+					ResourceDisplayName string  `json:"resourceDisplayName"`
+					ResourceId          string  `json:"resourceId"`
+					AppRoleId           *string `json:"appRoleId"`
+				} `json:"appRoleAssignments"`
+			} `json:"value"`
+			NextLink string `json:"@odata.nextLink"`
+		}
+		if err := json.Unmarshal(body, &data); err != nil {
+			return false, "", err
+		}
+		for _, sp := range data.Value {
+			for _, a := range sp.AppRoleAssignments {
+				if a.AppRoleId == nil || a.ResourceId == "" {
+					continue
+				}
+				allAssignments = append(allAssignments, rawAssignment{
+					SPID:                sp.ID,
+					ResourceID:          a.ResourceId,
+					ResourceDisplayName: a.ResourceDisplayName,
+					AppRoleID:           *a.AppRoleId,
+				})
+				if _, seen := resourceIDs[a.ResourceId]; !seen {
+					resourceIDs[a.ResourceId] = a.ResourceDisplayName
+				}
+			}
+		}
+		return data.NextLink != "", data.NextLink, nil
+	})
+
+	if err != nil {
+		if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+			logger.ErrorM(fmt.Sprintf("Failed to pre-fetch SP appRoleAssignments: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
+		}
+		if len(allAssignments) == 0 {
+			return
+		}
+	}
+
+	// Resolve appRole names for all unique resources (concurrent, semaphore 10)
+	// This populates the per-resource appRoles cache used by resolveAppRoleName
+	var arWg sync.WaitGroup
+	arSem := make(chan struct{}, 10)
+
+	for rid, displayName := range resourceIDs {
+		arWg.Add(1)
+		go func(resourceID, resourceDisplayName string) {
+			defer arWg.Done()
+			arSem <- struct{}{}
+			defer func() { <-arSem }()
+			// resolveAppRoleName populates the per-resource appRoles cache on first call.
+			// Use a dummy appRoleID; we just need the cache to be warm.
+			resolveAppRoleName(ctx, token, resourceID, resourceDisplayName, "00000000-0000-0000-0000-000000000000", logger)
+		}(rid, displayName)
+	}
+	arWg.Wait()
+
+	// Build spObjectID -> []CachedSPAppRoleAssignment using the now-warm appRoles cache
+	assignmentsMap := make(map[string][]CachedSPAppRoleAssignment)
+	for _, a := range allAssignments {
+		roleName := resolveAppRoleName(ctx, token, a.ResourceID, a.ResourceDisplayName, a.AppRoleID, logger)
+		assignmentsMap[a.SPID] = append(assignmentsMap[a.SPID], CachedSPAppRoleAssignment{
+			ResourceDisplayName: a.ResourceDisplayName,
+			AppRoleName:         roleName,
+		})
+	}
+
+	AzureDataCache.Set(cacheKey, assignmentsMap, 0)
+	savePrefetchCache(baseDir, tenantID, "sp-approle-assignments.gob", SPAppRoleAssignmentsCache{Data: assignmentsMap})
+
+	if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+		logger.InfoM(fmt.Sprintf("Pre-fetched %d appRoleAssignments for %d service principals (%d unique resources)", len(allAssignments), len(assignmentsMap), len(resourceIDs)), globals.AZ_PRINCIPALS_MODULE_NAME)
+	}
+}
+
+// PreFetchTenantGraphData runs all tenant-level bulk pre-fetches in parallel.
+// This is idempotent: each sub-function checks in-memory cache first, so calling
+// this multiple times (e.g., from both principals and permissions modules) is free.
+// Modules should call this before any per-principal enrichment that uses
+// GetUserGroupMemberships, GetNestedGroupMemberships, GetDirectoryRolesForPrincipal,
+// GetUserSignInActivity, or GetDelegatedOAuth2Grants.
+func PreFetchTenantGraphData(ctx context.Context, session *SafeSession, baseDir, tenantID string) {
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		PreFetchGroupMemberships(ctx, session, baseDir, tenantID)
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		PreFetchDirectoryRoleMembers(ctx, session, baseDir, tenantID)
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		PreFetchSignInActivity(ctx, session, baseDir, tenantID)
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		PreFetchOAuth2Grants(ctx, session, baseDir, tenantID)
+	}()
+
+	wg.Wait()
+}
+
+// ---------------------------------------------------------------------------
+// BuildPermissionIndex: assignment-first bulk architecture for permissions module
+// ---------------------------------------------------------------------------
+
+// PermAssignment is a flattened, cache-derived role assignment (RBAC or PIM).
+type PermAssignment struct {
+	RoleDefinitionID string
+	RoleName         string
+	Scope            string
+	SubID            string
+	SubName          string
+	PrincipalID      string // The actual assignee (could be principal or group)
+	Condition        string
+	Source           string // "RBAC", "PIM-Eligible", "PIM-Active"
+}
+
+// BuildPermissionIndex iterates the pre-fetched RBAC and PIM caches for the given
+// subscriptions and returns a principalID -> []PermAssignment index with zero API calls.
+// The caller controls which scope levels to include via tenantLevel, subLevel, rgLevel.
+func BuildPermissionIndex(
+	ctx context.Context,
+	session *SafeSession,
+	subscriptions []string,
+	tenantLevel, subLevel, rgLevel bool,
+) map[string][]PermAssignment {
+	index := make(map[string][]PermAssignment)
+
+	for _, subID := range subscriptions {
+		subName := GetSubscriptionNameFromID(ctx, session, subID)
+
+		// --- RBAC: iterate scope caches ---
+		var scopes []string
+
+		if tenantLevel {
+			scopes = append(scopes, "/")
+		}
+
+		// Management group hierarchy (already cached by PreFetchRBACAssignmentsForSubscription)
+		mgKey := AzCacheKey("mg-hierarchy", subID)
+		if cached, found := AzureDataCache.Get(mgKey); found {
+			for _, mgID := range cached.([]string) {
+				scopes = append(scopes, fmt.Sprintf("/providers/Microsoft.Management/managementGroups/%s", mgID))
+			}
+		}
+
+		if subLevel {
+			scopes = append(scopes, fmt.Sprintf("/subscriptions/%s", subID))
+		}
+
+		if rgLevel {
+			// Discover RG scopes from cache: iterate AzureDataCache items matching this subscription
+			prefix := AzCacheKey("rbac-scope-all", fmt.Sprintf("/subscriptions/%s/resourceGroups/", subID))
+			for key := range AzureDataCache.Items() {
+				if strings.HasPrefix(key, prefix) {
+					// Extract the scope path from the cache key: "az-rbac-scope-all-<scopePath>"
+					scopePath := strings.TrimPrefix(key, "az-rbac-scope-all-")
+					scopes = append(scopes, scopePath)
+				}
+			}
+		}
+
+		for _, scope := range scopes {
+			entries := ListAllRBACForScope(scope)
+			for _, e := range entries {
+				index[e.PrincipalID] = append(index[e.PrincipalID], PermAssignment{
+					RoleDefinitionID: e.RoleDefinitionID,
+					RoleName:         e.RoleName,
+					Scope:            e.Scope,
+					SubID:            subID,
+					SubName:          subName,
+					PrincipalID:      e.PrincipalID,
+					Condition:        e.Condition,
+					Source:           "RBAC",
+				})
+			}
+		}
+
+		// --- PIM: iterate subscription PIM caches ---
+		eligible, active, _ := ListAllPIMForSubscription(subID)
+		for _, pa := range eligible {
+			index[pa.PrincipalID] = append(index[pa.PrincipalID], PermAssignment{
+				RoleDefinitionID: pa.RoleDefinitionID,
+				RoleName:         pa.RoleName,
+				Scope:            pa.Scope,
+				SubID:            subID,
+				SubName:          subName,
+				PrincipalID:      pa.PrincipalID,
+				Source:           "PIM-Eligible",
+			})
+		}
+		for _, pa := range active {
+			index[pa.PrincipalID] = append(index[pa.PrincipalID], PermAssignment{
+				RoleDefinitionID: pa.RoleDefinitionID,
+				RoleName:         pa.RoleName,
+				Scope:            pa.Scope,
+				SubID:            subID,
+				SubName:          subName,
+				PrincipalID:      pa.PrincipalID,
+				Source:           "PIM-Active",
+			})
+		}
+	}
+
+	return index
 }

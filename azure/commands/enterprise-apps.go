@@ -70,7 +70,7 @@ func ListEnterpriseApps(cmd *cobra.Command, args []string) {
 
 	// -------------------- Initialize module --------------------
 	module := &EnterpriseAppsModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		AppRows:         [][]string{},
 		LootMap: map[string]*internal.LootFile{
@@ -86,6 +86,10 @@ func ListEnterpriseApps(cmd *cobra.Command, args []string) {
 // Main module method (AWS-style)
 // ------------------------------
 func (m *EnterpriseAppsModule) PrintEnterpriseApps(ctx context.Context, logger internal.Logger) {
+	// Load OAuth2 grants from disk cache if available (benefits standalone runs)
+	azinternal.EnsureBulkCacheLoaded(m.OutputDirectory, m.TenantID,
+		azinternal.AzCacheKey("oauth2-grants-all", "tenant"))
+
 	if m.IsMultiTenant {
 		for _, tenantCtx := range m.Tenants {
 			savedTenantID := m.TenantID

@@ -79,7 +79,7 @@ func ListBastion(cmd *cobra.Command, args []string) {
 
 	// -------------------- Initialize module --------------------
 	module := &BastionModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		BastionRows:     [][]string{},
 		VNetCoverageMap: make(map[string]bool),

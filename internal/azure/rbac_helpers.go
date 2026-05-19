@@ -555,7 +555,7 @@ func GetRoleAssignmentsForSubscription(ctx context.Context, session *SafeSession
 	cred := NewStaticTokenCredential(token)
 
 	// Create role assignments client
-	client, err := armauthorizationv2.NewRoleAssignmentsClient(subscriptionID, cred, nil)
+	client, err := armauthorizationv2.NewRoleAssignmentsClient(subscriptionID, cred, DefaultARMClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create role assignments client: %v", err)
 	}

@@ -1,8 +1,12 @@
 package commands
 
 import (
+	"bufio"
 	"context"
+	"encoding/csv"
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -36,11 +40,15 @@ type PrincipalsModule struct {
 	azinternal.BaseAzureModule // Embed common fields (15 fields)
 
 	// Module-specific fields
-	Subscriptions []string
-	PrincipalRows [][]string
-	LootMap       map[string]*internal.LootFile
-	collectedMIs  []azinternal.ManagedIdentity // For callback access during MI enumeration
-	mu            sync.Mutex
+	Subscriptions    []string
+	LootMap          map[string]*internal.LootFile
+	collectedMIs     []azinternal.ManagedIdentity     // For callback access during MI enumeration
+	enrichmentWriter *azinternal.EnrichmentCacheWriter // Per-principal JSONL cache writer
+	mu               sync.Mutex
+
+	// Disk-backed row storage (avoids OOM on large tenants)
+	principalRowFile  *os.File
+	principalRowCount int
 }
 
 // ------------------------------
@@ -69,6 +77,112 @@ type PrincipalsOutput struct {
 func (o PrincipalsOutput) TableFiles() []internal.TableFile { return o.Table }
 func (o PrincipalsOutput) LootFiles() []internal.LootFile   { return o.Loot }
 
+// openPrincipalRowFile creates a temp CSV file for streaming principal rows to disk.
+func (m *PrincipalsModule) openPrincipalRowFile() error {
+	f, err := os.CreateTemp("", "cloudfox-principals-*.csv")
+	if err != nil {
+		return fmt.Errorf("failed to create temp row file: %w", err)
+	}
+	m.principalRowFile = f
+	m.principalRowCount = 0
+	return nil
+}
+
+// writePrincipalRow writes a single row to the temp CSV file.
+func (m *PrincipalsModule) writePrincipalRow(row []string) {
+	if m.principalRowFile == nil {
+		return
+	}
+	w := csv.NewWriter(m.principalRowFile)
+	_ = w.Write(row)
+	w.Flush()
+	m.principalRowCount++
+}
+
+// closePrincipalRowFile closes the temp CSV file.
+func (m *PrincipalsModule) closePrincipalRowFile() {
+	if m.principalRowFile != nil {
+		m.principalRowFile.Close()
+	}
+}
+
+// removePrincipalRowFile deletes the temp CSV file.
+func (m *PrincipalsModule) removePrincipalRowFile() {
+	if m.principalRowFile != nil {
+		os.Remove(m.principalRowFile.Name())
+	}
+}
+
+// iteratePrincipalRows streams through all rows in the temp file, calling fn for each row.
+func (m *PrincipalsModule) iteratePrincipalRows(fn func(row []string)) error {
+	if m.principalRowFile == nil {
+		return nil
+	}
+	if _, err := m.principalRowFile.Seek(0, 0); err != nil {
+		return fmt.Errorf("failed to seek temp row file: %w", err)
+	}
+	r := csv.NewReader(bufio.NewReaderSize(m.principalRowFile, 256*1024))
+	for {
+		row, err := r.Read()
+		if err != nil {
+			break
+		}
+		fn(row)
+	}
+	return nil
+}
+
+// loadPrincipalEnrichmentCacheToDisk streams the enrichment cache JSONL file directly to the
+// temp CSV file on disk, returning only the skip set in memory.
+func (m *PrincipalsModule) loadPrincipalEnrichmentCacheToDisk(baseDir, tenantID string) (skipSet map[string]bool, count int, loot string, err error) {
+	cachePath := azinternal.EnrichmentCacheFilePath(baseDir, tenantID)
+	file, err := os.Open(cachePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, 0, "", nil
+		}
+		return nil, 0, "", err
+	}
+	defer file.Close()
+
+	skipSet = make(map[string]bool)
+	w := csv.NewWriter(m.principalRowFile)
+	var lootBuilder strings.Builder
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var entry azinternal.EnrichmentCacheEntry
+		if err := json.Unmarshal(line, &entry); err != nil {
+			continue
+		}
+		if entry.PrincipalID == "" {
+			continue
+		}
+		if skipSet[entry.PrincipalID] {
+			continue // dedup: skip earlier entries
+		}
+		skipSet[entry.PrincipalID] = true
+		if len(entry.Row) > 0 {
+			_ = w.Write(entry.Row)
+			m.principalRowCount++
+		}
+		lootBuilder.WriteString(entry.Loot)
+	}
+	w.Flush()
+	count = len(skipSet)
+
+	if count == 0 {
+		return nil, 0, "", nil
+	}
+	return skipSet, count, lootBuilder.String(), nil
+}
+
 // ------------------------------
 // Cobra command entry point (thin wrapper)
 // ------------------------------
@@ -90,9 +204,8 @@ func ListPrincipals(cmd *cobra.Command, args []string) {
 
 	// -------------------- Initialize module --------------------
 	module := &PrincipalsModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 30),
 		Subscriptions:   cmdCtx.Subscriptions,
-		PrincipalRows:   [][]string{},
 		LootMap: map[string]*internal.LootFile{
 			"principal-commands": {Name: "principal-commands", Contents: ""},
 		},
@@ -106,6 +219,14 @@ func ListPrincipals(cmd *cobra.Command, args []string) {
 // Main module method (tenant-level)
 // ------------------------------
 func (m *PrincipalsModule) PrintPrincipals(ctx context.Context, logger internal.Logger) {
+	// Open temp file for streaming rows to disk
+	if err := m.openPrincipalRowFile(); err != nil {
+		logger.ErrorM(fmt.Sprintf("Failed to open temp row file: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
+		return
+	}
+	defer m.removePrincipalRowFile()
+	defer m.closePrincipalRowFile()
+
 	// Multi-tenant processing
 	if m.IsMultiTenant {
 		logger.InfoM(fmt.Sprintf("Multi-tenant mode: Enumerating principals for %d tenants", len(m.Tenants)), globals.AZ_PRINCIPALS_MODULE_NAME)
@@ -276,18 +397,176 @@ func (m *PrincipalsModule) processTenantPrincipals(ctx context.Context, logger i
 		subNameMap[s.ID] = s.Name
 	}
 
-	// Process principals with centralized progress tracking
-	m.CommandCounter = internal.CommandCounter{}
-	principalIDs := make([]string, len(principals))
-	principalMap := make(map[string]Principal, len(principals))
-	for i, p := range principals {
-		principalIDs[i] = p.PrincipalID
-		principalMap[p.PrincipalID] = p
+	// --- Enrichment cache: load previously enriched principals for resume ---
+	// Note: --refresh-cache deletes the enrichment file in PersistentPreRun,
+	// so this naturally finds nothing when refreshing.
+	var skipSet map[string]bool
+	totalPrincipals := len(principals)
+
+	if azinternal.EnrichmentCacheExists(m.OutputDirectory, m.TenantID) {
+		if azinternal.IsEnrichmentCacheStale(m.OutputDirectory, m.TenantID, azinternal.DefaultAzureCacheExpiration) {
+			age, _ := azinternal.GetEnrichmentCacheAge(m.OutputDirectory, m.TenantID)
+			logger.InfoM(fmt.Sprintf("Enrichment cache is stale (age: %s). Use --refresh-cache to force update.", azinternal.FormatCacheAge(age)), globals.AZ_PRINCIPALS_MODULE_NAME)
+		}
+		// Stream cached rows directly to disk temp file (avoids loading into memory)
+		ss, count, loot, err := m.loadPrincipalEnrichmentCacheToDisk(m.OutputDirectory, m.TenantID)
+		if err != nil {
+			logger.ErrorM(fmt.Sprintf("Failed to load enrichment cache, re-enriching all: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
+		} else if ss != nil {
+			skipSet = ss
+			m.LootMap["principal-commands"].Contents += loot
+			logger.InfoM(fmt.Sprintf("Resuming: loaded %d cached enrichments", count), globals.AZ_PRINCIPALS_MODULE_NAME)
+		}
 	}
-	m.RunEntityEnumeration(ctx, logger, principalIDs, globals.AZ_PRINCIPALS_MODULE_NAME, "principals",
-		func(ctx context.Context, entityID string, logger internal.Logger) {
-			m.processPrincipal(ctx, principalMap[entityID], contextLabel, subNameMap)
-		})
+
+	// Open enrichment cache writer
+	writer, err := azinternal.NewEnrichmentCacheWriter(m.OutputDirectory, m.TenantID)
+	if err != nil {
+		logger.ErrorM(fmt.Sprintf("Failed to open enrichment cache writer: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
+	} else {
+		m.enrichmentWriter = writer
+		defer func() {
+			m.enrichmentWriter.Close()
+			m.enrichmentWriter = nil
+		}()
+	}
+
+	// Process principals with centralized progress tracking, skipping cached ones
+	m.CommandCounter = internal.CommandCounter{}
+	principalMap := make(map[string]Principal, len(principals))
+	var principalIDs []string
+	for _, p := range principals {
+		principalMap[p.PrincipalID] = p
+		if skipSet != nil && skipSet[p.PrincipalID] {
+			continue
+		}
+		principalIDs = append(principalIDs, p.PrincipalID)
+	}
+
+	if len(skipSet) > 0 {
+		logger.InfoM(fmt.Sprintf("Enriching %d principals (%d already cached, %d total)", len(principalIDs), len(skipSet), totalPrincipals), globals.AZ_PRINCIPALS_MODULE_NAME)
+	}
+
+	if len(principalIDs) == 0 {
+		logger.InfoM("All principals already cached, skipping enrichment", globals.AZ_PRINCIPALS_MODULE_NAME)
+		return
+	}
+
+	// ========================================================================
+	// PHASE 1: DOWNLOAD (all API calls)
+	// ========================================================================
+	spinner := internal.NewPhaseSpinner(globals.AZ_PRINCIPALS_MODULE_NAME)
+
+	var preFetchWg sync.WaitGroup
+
+	// Collect user IDs for MFA bulk pre-fetch
+	var userIDs []string
+	for _, p := range principals {
+		if p.Type == "User" || p.Type == "Guest" {
+			userIDs = append(userIDs, p.PrincipalID)
+		}
+	}
+
+	// Tenant-level bulk pre-fetches
+	spinner.Add("CA policies")
+	preFetchWg.Add(1)
+	go func() {
+		defer preFetchWg.Done()
+		defer spinner.Done("CA policies")
+		if err := azinternal.PreFetchConditionalAccessPolicies(ctx, m.Session, m.OutputDirectory, m.TenantID); err != nil {
+			if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
+				logger.ErrorM(fmt.Sprintf("CA policy pre-fetch failed (will fall back to per-principal): %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
+			}
+		}
+	}()
+
+	spinner.Add("PIM directory roles")
+	preFetchWg.Add(1)
+	go func() {
+		defer preFetchWg.Done()
+		defer spinner.Done("PIM directory roles")
+		azinternal.PreFetchPIMDirectoryRoles(ctx, m.Session, m.OutputDirectory, m.TenantID)
+	}()
+
+	spinner.Add("group memberships")
+	preFetchWg.Add(1)
+	go func() {
+		defer preFetchWg.Done()
+		defer spinner.Done("group memberships")
+		azinternal.PreFetchGroupMemberships(ctx, m.Session, m.OutputDirectory, m.TenantID)
+	}()
+
+	spinner.Add("directory roles")
+	preFetchWg.Add(1)
+	go func() {
+		defer preFetchWg.Done()
+		defer spinner.Done("directory roles")
+		azinternal.PreFetchDirectoryRoleMembers(ctx, m.Session, m.OutputDirectory, m.TenantID)
+	}()
+
+	spinner.Add("sign-in activity")
+	preFetchWg.Add(1)
+	go func() {
+		defer preFetchWg.Done()
+		defer spinner.Done("sign-in activity")
+		azinternal.PreFetchSignInActivity(ctx, m.Session, m.OutputDirectory, m.TenantID)
+	}()
+
+	spinner.Add("OAuth2 grants")
+	preFetchWg.Add(1)
+	go func() {
+		defer preFetchWg.Done()
+		defer spinner.Done("OAuth2 grants")
+		azinternal.PreFetchOAuth2Grants(ctx, m.Session, m.OutputDirectory, m.TenantID)
+	}()
+
+	spinner.Add("SP permissions")
+	preFetchWg.Add(1)
+	go func() {
+		defer preFetchWg.Done()
+		defer spinner.Done("SP permissions")
+		azinternal.PreFetchSPAppRoleAssignments(ctx, m.Session, m.OutputDirectory, m.TenantID)
+	}()
+
+	// MFA: bulk pre-fetch via Graph $batch API (unless --skip-mfa)
+	if !globals.AZ_SKIP_MFA && len(userIDs) > 0 {
+		spinner.Add("MFA methods")
+		preFetchWg.Add(1)
+		go func() {
+			defer preFetchWg.Done()
+			defer spinner.Done("MFA methods")
+			azinternal.PreFetchMFABulk(ctx, m.Session, m.OutputDirectory, m.TenantID, userIDs)
+		}()
+	}
+
+	// PIM + RBAC: per-subscription with concurrency limit to avoid thundering herd
+	subSem := make(chan struct{}, 5)
+	for _, sub := range m.Subscriptions {
+		spinner.Add("PIM roles")
+		spinner.Add("RBAC assignments")
+		preFetchWg.Add(1)
+		go func(subID string) {
+			defer preFetchWg.Done()
+			subSem <- struct{}{}
+			defer func() { <-subSem }()
+			azinternal.PreFetchPIMRolesForSubscription(ctx, m.Session, subID, m.OutputDirectory, m.TenantID)
+			spinner.Done("PIM roles")
+			azinternal.PreFetchRBACAssignmentsForSubscription(ctx, m.Session, subID, m.OutputDirectory, m.TenantID)
+			spinner.Done("RBAC assignments")
+		}(sub)
+	}
+
+	preFetchWg.Wait()
+	spinner.Stop("Pre-fetching tenant data: done")
+
+	// ========================================================================
+	// PHASE 2: ENRICH (zero API calls, pure computation from bulk caches)
+	// ========================================================================
+	internal.PrintPhaseStatus(globals.AZ_PRINCIPALS_MODULE_NAME, fmt.Sprintf("Building rows for %d principals...", len(principalIDs)))
+
+	m.buildAllRows(ctx, logger, principalIDs, principalMap, contextLabel, subNameMap)
+
+	internal.PrintPhaseDone(globals.AZ_PRINCIPALS_MODULE_NAME, fmt.Sprintf("Built %d principal rows", m.principalRowCount))
 }
 
 // processSubscriptionForMIs processes a single subscription for managed identity collection
@@ -304,289 +583,311 @@ func (m *PrincipalsModule) processSubscriptionForMIs(ctx context.Context, subID 
 	}
 }
 
-// ------------------------------
-// Process single principal
-// ------------------------------
-func (m *PrincipalsModule) processPrincipal(ctx context.Context, p Principal, contextLabel string, subNameMap map[string]string) {
-	// Normalize fields
-	upn := p.UPN
-	if upn == "" {
-		upn = "N/A"
-	}
-	dname := p.DisplayName
-	if dname == "" {
-		dname = "N/A"
-	}
-	pid := p.PrincipalID
-	if pid == "" {
-		pid = "N/A"
-	}
+// buildAllRows performs Phase 2 enrichment: pure computation from bulk caches,
+// zero API calls. Replaces the per-principal goroutine fan-out with a single
+// sequential pass over all principals using pre-computed indexes.
+func (m *PrincipalsModule) buildAllRows(_ context.Context, logger internal.Logger, principalIDs []string, principalMap map[string]Principal, contextLabel string, subNameMap map[string]string) {
+	// Load all bulk caches from in-memory AzureDataCache (populated by Phase 1 pre-fetch)
+	groupCacheKey := azinternal.AzCacheKey("group-memberships-all", "tenant")
+	dirRoleCacheKey := azinternal.AzCacheKey("directory-role-members-all", "tenant")
+	pimDirEligibleKey := azinternal.AzCacheKey("pim-dir-eligible-all", "tenant")
+	pimDirActiveKey := azinternal.AzCacheKey("pim-dir-active-all", "tenant")
+	signInCacheKey := azinternal.AzCacheKey("sign-in-activity-all", "tenant")
+	oauth2CacheKey := azinternal.AzCacheKey("oauth2-grants-all", "tenant")
+	spAppRoleCacheKey := azinternal.AzCacheKey("sp-approle-assignments-all", "tenant")
+	mfaCacheKey := azinternal.AzCacheKey("mfa-all", "tenant")
 
-	logger := internal.NewLogger()
-
-	// Get nested group memberships (for display) - works for all principal types
-	// Groups can also be members of other groups (nested hierarchy)
-	groupMemberships := ""
-	directGroups, allGroups, err := azinternal.GetNestedGroupMemberships(ctx, m.Session, p.PrincipalID)
-	if err == nil {
-		groupMemberships = azinternal.FormatNestedGroupMemberships(directGroups, allGroups)
+	// Type-assert each cache (nil-safe: if cache not populated, use empty maps)
+	var groupCache map[string]azinternal.CachedGroupMembership
+	if cached, found := azinternal.AzureDataCache.Get(groupCacheKey); found {
+		groupCache = cached.(map[string]azinternal.CachedGroupMembership)
 	}
 
-	// Get Enhanced RBAC assignments with inheritance tracking from all scopes
-	// This includes: Tenant Root (/), Management Groups, Subscription, Resource Groups, Resources
-	var allRBACWithInheritance []string
-	var allPIMEligible []string
-	var allPIMActive []string
-	inheritedPermissions := []string{}
+	var dirRoleCache map[string][]azinternal.DirectoryRole
+	if cached, found := azinternal.AzureDataCache.Get(dirRoleCacheKey); found {
+		dirRoleCache = cached.(map[string][]azinternal.DirectoryRole)
+	}
 
-	for _, sub := range m.Subscriptions {
-		subDisplayName := subNameMap[sub]
-		if subDisplayName == "" {
-			subDisplayName = sub
+	var pimDirEligible map[string][]azinternal.DirectoryRole
+	if cached, found := azinternal.AzureDataCache.Get(pimDirEligibleKey); found {
+		pimDirEligible = cached.(map[string][]azinternal.DirectoryRole)
+	}
+
+	var pimDirActive map[string][]azinternal.DirectoryRole
+	if cached, found := azinternal.AzureDataCache.Get(pimDirActiveKey); found {
+		pimDirActive = cached.(map[string][]azinternal.DirectoryRole)
+	}
+
+	var signInCache map[string]azinternal.SignInActivity
+	if cached, found := azinternal.AzureDataCache.Get(signInCacheKey); found {
+		signInCache = cached.(map[string]azinternal.SignInActivity)
+	}
+
+	var oauth2Cache map[string][]azinternal.CachedOAuth2Grant
+	if cached, found := azinternal.AzureDataCache.Get(oauth2CacheKey); found {
+		oauth2Cache = cached.(map[string][]azinternal.CachedOAuth2Grant)
+	}
+
+	var spAppRoleCache map[string][]azinternal.CachedSPAppRoleAssignment
+	if cached, found := azinternal.AzureDataCache.Get(spAppRoleCacheKey); found {
+		spAppRoleCache = cached.(map[string][]azinternal.CachedSPAppRoleAssignment)
+	}
+
+	var mfaCache map[string]azinternal.MFAAuthenticationMethods
+	if cached, found := azinternal.AzureDataCache.Get(mfaCacheKey); found {
+		mfaCache = cached.(map[string]azinternal.MFAAuthenticationMethods)
+	}
+
+	// Pre-compute per-subscription RBAC + PIM indexes using bulk caches only (zero API calls).
+	// This replaces per-principal GetEnhancedRBACAssignments calls which could trigger
+	// GetUserGroupMemberships API fallbacks for principals not in the bulk group cache.
+	rbacIndex, inheritedIndex, pimSubEligibleIndex, pimSubActiveIndex := azinternal.BuildRBACIndexFromCaches(
+		m.Subscriptions, subNameMap, groupCache, principalIDs,
+	)
+
+	// Pre-compute CA policy index (zero API calls, pure cache iteration)
+	caIndex := azinternal.BuildCAPolicyIndex(groupCache, principalIDs)
+
+	// Batch buffer for enrichment cache writes
+	var rowBatch []azinternal.EnrichmentCacheEntry
+
+	// Single-pass row building: iterate all principals sequentially
+	for _, pid := range principalIDs {
+		p := principalMap[pid]
+
+		// Normalize fields
+		upn := p.UPN
+		if upn == "" {
+			upn = "N/A"
+		}
+		dname := p.DisplayName
+		if dname == "" {
+			dname = "N/A"
+		}
+		objID := p.PrincipalID
+		if objID == "" {
+			objID = "N/A"
 		}
 
-		// Get enhanced RBAC with full scope hierarchy and inheritance tracking
-		rbacAssignments, err := azinternal.GetEnhancedRBACAssignments(ctx, m.Session, p.PrincipalID, sub)
-		if err != nil {
-			if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
-				logger.ErrorM(fmt.Sprintf("Failed to get enhanced RBAC for principal %s in subscription %s: %v", p.PrincipalID, sub, err), globals.AZ_PRINCIPALS_MODULE_NAME)
+		// Group memberships: pure map lookup
+		groupMemberships := ""
+		if groupCache != nil {
+			if gm, ok := groupCache[p.PrincipalID]; ok {
+				groupMemberships = azinternal.FormatNestedGroupMemberships(gm.DirectGroupNames, gm.AllGroupNames)
 			}
+		}
+
+		// Directory roles: pure map lookup
+		directoryRolesStr := ""
+		if dirRoleCache != nil {
+			if roles, ok := dirRoleCache[p.PrincipalID]; ok {
+				directoryRolesStr = azinternal.FormatDirectoryRoles(roles)
+			}
+		}
+
+		// MFA: from bulk cache or skip
+		mfaEnabled := "N/A"
+		mfaMethods := "N/A"
+		mfaDefaultMethod := "N/A"
+		if globals.AZ_SKIP_MFA {
+			mfaEnabled = "N/A (skipped)"
+			mfaMethods = "N/A (skipped)"
+			mfaDefaultMethod = "N/A (skipped)"
+		} else if (p.Type == "User" || p.Type == "Guest") && mfaCache != nil {
+			if mfa, ok := mfaCache[p.PrincipalID]; ok {
+				if mfa.MFAEnabled {
+					mfaEnabled = "Yes"
+					mfaMethods = strings.Join(mfa.Methods, ", ")
+					if mfa.DefaultMethod != "" {
+						mfaDefaultMethod = mfa.DefaultMethod
+					}
+				} else {
+					mfaEnabled = "No"
+					mfaMethods = "None"
+					mfaDefaultMethod = "None"
+				}
+			}
+		}
+
+		// Sign-in activity: pure map lookup
+		lastSignIn := "N/A"
+		lastNonInteractiveSignIn := "N/A"
+		daysSinceSignIn := "N/A"
+		staleAccount := "No"
+		if (p.Type == "User" || p.Type == "Guest") && signInCache != nil {
+			if si, ok := signInCache[p.PrincipalID]; ok {
+				m.applySignInData(si, &lastSignIn, &lastNonInteractiveSignIn, &daysSinceSignIn, &staleAccount)
+			}
+		}
+
+		// Graph permissions: pure map lookup from SP appRole cache
+		graphPerms := ""
+		if p.Type == "ServicePrincipal" && spAppRoleCache != nil {
+			if assignments, ok := spAppRoleCache[p.PrincipalID]; ok {
+				var perms []string
+				for _, a := range assignments {
+					perms = append(perms, fmt.Sprintf("%s: %s", a.ResourceDisplayName, a.AppRoleName))
+				}
+				graphPerms = strings.Join(perms, "\n")
+			}
+		}
+
+		// Delegated OAuth2 grants: pure map lookup
+		delegatedStr := ""
+		if oauth2Cache != nil {
+			if grants, ok := oauth2Cache[p.PrincipalID]; ok {
+				var parts []string
+				for _, g := range grants {
+					for _, scope := range g.Scopes {
+						parts = append(parts, fmt.Sprintf("%s: %s (%s)", g.ResourceName, scope, g.ConsentType))
+					}
+				}
+				delegatedStr = strings.Join(parts, ", ")
+			}
+		}
+
+		// RBAC: from pre-computed index
+		rbacStr := ""
+		if roles, ok := rbacIndex[p.PrincipalID]; ok && len(roles) > 0 {
+			rbacStr = strings.Join(roles, "\n")
+		}
+
+		// Inherited permissions: from pre-computed index
+		inheritedStr := ""
+		if inh, ok := inheritedIndex[p.PrincipalID]; ok && len(inh) > 0 {
+			inheritedStr = strings.Join(inh, "\n")
+		}
+
+		// PIM: directory roles + subscription roles
+		pimStr := ""
+
+		// Subscription PIM
+		if eligible, ok := pimSubEligibleIndex[p.PrincipalID]; ok && len(eligible) > 0 {
+			pimStr = "Eligible: " + strings.Join(eligible, ", ")
+		}
+		if active, ok := pimSubActiveIndex[p.PrincipalID]; ok && len(active) > 0 {
+			if pimStr != "" {
+				pimStr += "\n"
+			}
+			pimStr += "Active: " + strings.Join(active, ", ")
+		}
+
+		// Directory PIM (tenant-scoped)
+		if pimDirEligible != nil {
+			if roles, ok := pimDirEligible[p.PrincipalID]; ok && len(roles) > 0 {
+				if pimStr != "" {
+					pimStr += "\n"
+				}
+				var eligibleDirRoles []string
+				for _, role := range roles {
+					eligibleDirRoles = append(eligibleDirRoles, fmt.Sprintf("%s (Entra ID)", role.DisplayName))
+				}
+				pimStr += "Eligible Directory: " + strings.Join(eligibleDirRoles, ", ")
+			}
+		}
+		if pimDirActive != nil {
+			if roles, ok := pimDirActive[p.PrincipalID]; ok && len(roles) > 0 {
+				if pimStr != "" {
+					pimStr += "\n"
+				}
+				var activeDirRoles []string
+				for _, role := range roles {
+					activeDirRoles = append(activeDirRoles, fmt.Sprintf("%s (Entra ID)", role.DisplayName))
+				}
+				pimStr += "Active Directory: " + strings.Join(activeDirRoles, ", ")
+			}
+		}
+
+		// Conditional Access: from pre-computed index (zero API calls)
+		caStr := caIndex[p.PrincipalID]
+
+		// Build row
+		row := []string{
+			m.TenantName,
+			m.TenantID,
+			contextLabel,
+			p.Service,
+			p.Type,
+			upn,
+			dname,
+			objID,
+			mfaEnabled,
+			mfaMethods,
+			mfaDefaultMethod,
+			lastSignIn,
+			lastNonInteractiveSignIn,
+			daysSinceSignIn,
+			staleAccount,
+			groupMemberships,
+			rbacStr,
+			directoryRolesStr,
+			pimStr,
+			inheritedStr,
+			caStr,
+			graphPerms,
+			delegatedStr,
+		}
+		loot := m.generateLootForPrincipal(p)
+
+		m.writePrincipalRow(row)
+		m.LootMap["principal-commands"].Contents += loot
+
+		// Buffer enrichment cache writes (batch of 1000)
+		if m.enrichmentWriter != nil {
+			rowBatch = append(rowBatch, azinternal.EnrichmentCacheEntry{
+				PrincipalID: p.PrincipalID,
+				Row:         row,
+				Loot:        loot,
+				Timestamp:   time.Now().Unix(),
+			})
+			if len(rowBatch) >= 1000 {
+				for _, entry := range rowBatch {
+					m.enrichmentWriter.Append(entry)
+				}
+				rowBatch = rowBatch[:0]
+			}
+		}
+	}
+
+	// Flush remaining buffered enrichment cache entries
+	if m.enrichmentWriter != nil && len(rowBatch) > 0 {
+		for _, entry := range rowBatch {
+			m.enrichmentWriter.Append(entry)
+		}
+	}
+}
+
+// applySignInData formats sign-in activity fields from a SignInActivity struct.
+func (m *PrincipalsModule) applySignInData(si azinternal.SignInActivity, lastSignIn, lastNonInteractive, daysSince, stale *string) {
+	if si.LastSignInDateTime != "Never" {
+		if t, err := time.Parse(time.RFC3339, si.LastSignInDateTime); err == nil {
+			*lastSignIn = t.Format("2006-01-02 15:04")
 		} else {
-			for _, assignment := range rbacAssignments {
-				// Build RBAC display string
-				rbacDisplay := fmt.Sprintf("%s: %s", subDisplayName, assignment.RoleName)
-				if assignment.AssignedVia == "Group" {
-					rbacDisplay += " (via Group)"
-				}
-				// Add scope type for clarity
-				if assignment.ScopeType == "TenantRoot" {
-					rbacDisplay += " [Tenant Root]"
-				} else if assignment.ScopeType == "ManagementGroup" {
-					rbacDisplay += fmt.Sprintf(" [MG: %s]", assignment.ScopeDisplayName)
-				}
-				allRBACWithInheritance = append(allRBACWithInheritance, rbacDisplay)
-
-				// Track inherited permissions
-				if assignment.InheritedFrom != "" {
-					inheritedPermissions = append(inheritedPermissions,
-						fmt.Sprintf("%s: %s (inherited from %s)",
-							subDisplayName, assignment.RoleName, assignment.ScopeType))
-				}
-			}
+			*lastSignIn = si.LastSignInDateTime
 		}
+	} else {
+		*lastSignIn = "Never"
+	}
 
-		// Get PIM Eligible roles
-		principalIDs := []string{p.PrincipalID}
-		// For users, also check their group memberships for PIM assignments
-		if p.Type == "User" || p.Type == "Guest" {
-			groupIDs := azinternal.GetUserGroupMemberships(ctx, m.Session, p.PrincipalID)
-			principalIDs = append(principalIDs, groupIDs...)
+	if si.LastNonInteractiveSignInDateTime != "Never" {
+		if t, err := time.Parse(time.RFC3339, si.LastNonInteractiveSignInDateTime); err == nil {
+			*lastNonInteractive = t.Format("2006-01-02 15:04")
+		} else {
+			*lastNonInteractive = si.LastNonInteractiveSignInDateTime
 		}
-
-		pimEligible, err := azinternal.GetPIMEligibleRoles(ctx, m.Session, sub, principalIDs)
-		if err == nil {
-			for _, pimRole := range pimEligible {
-				pimDisplay := fmt.Sprintf("%s: %s (%s)", subDisplayName, pimRole.RoleName, pimRole.AssignedVia)
-				allPIMEligible = append(allPIMEligible, pimDisplay)
-			}
-		}
-
-		// Get PIM Active roles
-		pimActive, err := azinternal.GetPIMActiveRoles(ctx, m.Session, sub, principalIDs)
-		if err == nil {
-			for _, pimRole := range pimActive {
-				pimDisplay := fmt.Sprintf("%s: %s (%s)", subDisplayName, pimRole.RoleName, pimRole.AssignedVia)
-				allPIMActive = append(allPIMActive, pimDisplay)
-			}
-		}
+	} else {
+		*lastNonInteractive = "Never"
 	}
 
-	// Format RBAC roles with PIM status inline
-	rbacStr := ""
-	if len(allRBACWithInheritance) > 0 {
-		rbacStr = strings.Join(allRBACWithInheritance, "\n")
+	if si.DaysSinceLastSignIn >= 0 {
+		*daysSince = fmt.Sprintf("%d days", si.DaysSinceLastSignIn)
+	} else {
+		*daysSince = "Never"
 	}
 
-	// Format PIM information
-	pimStr := ""
-	if len(allPIMEligible) > 0 {
-		pimStr = "Eligible: " + strings.Join(allPIMEligible, ", ")
+	if si.IsStale {
+		*stale = fmt.Sprintf("⚠ Yes (%s)", si.StaleReason)
 	}
-	if len(allPIMActive) > 0 {
-		if pimStr != "" {
-			pimStr += "\n"
-		}
-		pimStr += "Active: " + strings.Join(allPIMActive, ", ")
-	}
-
-	// Format inherited permissions
-	inheritedStr := ""
-	if len(inheritedPermissions) > 0 {
-		inheritedStr = strings.Join(inheritedPermissions, "\n")
-	}
-
-	// Get Entra ID Directory Roles (Global Admin, User Admin, etc.)
-	var allDirectoryRoles []azinternal.DirectoryRole
-	var allPIMEligibleDirectoryRoles []azinternal.DirectoryRole
-	var allPIMActiveDirectoryRoles []azinternal.DirectoryRole
-
-	// Get permanent directory role assignments
-	directoryRoles, err := azinternal.GetDirectoryRolesForPrincipal(ctx, m.Session, p.PrincipalID)
-	if err == nil {
-		allDirectoryRoles = append(allDirectoryRoles, directoryRoles...)
-	}
-
-	// Get PIM-eligible directory roles
-	pimEligibleDirRoles, err := azinternal.GetPIMEligibleDirectoryRoles(ctx, m.Session, p.PrincipalID)
-	if err == nil {
-		allPIMEligibleDirectoryRoles = append(allPIMEligibleDirectoryRoles, pimEligibleDirRoles...)
-	}
-
-	// Get PIM-active directory roles
-	pimActiveDirRoles, err := azinternal.GetPIMActiveDirectoryRoles(ctx, m.Session, p.PrincipalID)
-	if err == nil {
-		allPIMActiveDirectoryRoles = append(allPIMActiveDirectoryRoles, pimActiveDirRoles...)
-	}
-
-	// Format directory roles
-	directoryRolesStr := azinternal.FormatDirectoryRoles(allDirectoryRoles)
-
-	// Enhance PIM string to include directory roles
-	if len(allPIMEligibleDirectoryRoles) > 0 {
-		if pimStr != "" {
-			pimStr += "\n"
-		}
-		eligibleDirRoles := []string{}
-		for _, role := range allPIMEligibleDirectoryRoles {
-			eligibleDirRoles = append(eligibleDirRoles, fmt.Sprintf("%s (Entra ID)", role.DisplayName))
-		}
-		pimStr += "Eligible Directory: " + strings.Join(eligibleDirRoles, ", ")
-	}
-	if len(allPIMActiveDirectoryRoles) > 0 {
-		if pimStr != "" {
-			pimStr += "\n"
-		}
-		activeDirRoles := []string{}
-		for _, role := range allPIMActiveDirectoryRoles {
-			activeDirRoles = append(activeDirRoles, fmt.Sprintf("%s (Entra ID)", role.DisplayName))
-		}
-		pimStr += "Active Directory: " + strings.Join(activeDirRoles, ", ")
-	}
-
-	// Get Conditional Access Policies
-	caPolicies, err := azinternal.GetConditionalAccessPoliciesForPrincipal(ctx, m.Session, p.PrincipalID)
-	caStr := ""
-	if err == nil && len(caPolicies) > 0 {
-		caStr = azinternal.FormatConditionalAccessPolicies(caPolicies)
-	}
-
-	// Get Graph API permissions
-	permissions := azinternal.GetPrincipalPermissions(ctx, m.Session, p.PrincipalID)
-	graphPerms := permissions.Graph
-
-	// Get OAuth2 delegated grants
-	delegatedPerms := azinternal.GetDelegatedOAuth2Grants(ctx, m.Session, p.PrincipalID)
-	delegatedStr := ""
-	if len(delegatedPerms) > 0 {
-		delegatedStr = strings.Join(delegatedPerms, ", ")
-	}
-
-	// Get MFA authentication methods (only for User and Guest types)
-	mfaEnabled := "N/A"
-	mfaMethods := "N/A"
-	mfaDefaultMethod := "N/A"
-	if p.Type == "User" || p.Type == "Guest" {
-		mfaInfo, err := azinternal.GetUserMFAAuthenticationMethods(ctx, m.Session, p.PrincipalID)
-		if err == nil {
-			if mfaInfo.MFAEnabled {
-				mfaEnabled = "Yes"
-				mfaMethods = strings.Join(mfaInfo.Methods, ", ")
-				if mfaInfo.DefaultMethod != "" {
-					mfaDefaultMethod = mfaInfo.DefaultMethod
-				}
-			} else {
-				mfaEnabled = "No"
-				mfaMethods = "None"
-				mfaDefaultMethod = "None"
-			}
-		}
-	}
-
-	// Get sign-in activity (only for User and Guest types)
-	lastSignIn := "N/A"
-	lastNonInteractiveSignIn := "N/A"
-	daysSinceSignIn := "N/A"
-	staleAccount := "No"
-	if p.Type == "User" || p.Type == "Guest" {
-		signInActivity, err := azinternal.GetUserSignInActivity(ctx, m.Session, p.PrincipalID)
-		if err == nil {
-			// Format last sign-in datetime
-			if signInActivity.LastSignInDateTime != "Never" {
-				if t, parseErr := time.Parse(time.RFC3339, signInActivity.LastSignInDateTime); parseErr == nil {
-					lastSignIn = t.Format("2006-01-02 15:04")
-				} else {
-					lastSignIn = signInActivity.LastSignInDateTime
-				}
-			} else {
-				lastSignIn = "Never"
-			}
-
-			// Format last non-interactive sign-in
-			if signInActivity.LastNonInteractiveSignInDateTime != "Never" {
-				if t, parseErr := time.Parse(time.RFC3339, signInActivity.LastNonInteractiveSignInDateTime); parseErr == nil {
-					lastNonInteractiveSignIn = t.Format("2006-01-02 15:04")
-				} else {
-					lastNonInteractiveSignIn = signInActivity.LastNonInteractiveSignInDateTime
-				}
-			} else {
-				lastNonInteractiveSignIn = "Never"
-			}
-
-			// Days since last sign-in
-			if signInActivity.DaysSinceLastSignIn >= 0 {
-				daysSinceSignIn = fmt.Sprintf("%d days", signInActivity.DaysSinceLastSignIn)
-			} else {
-				daysSinceSignIn = "Never"
-			}
-
-			// Stale account flag
-			if signInActivity.IsStale {
-				staleAccount = fmt.Sprintf("⚠ Yes (%s)", signInActivity.StaleReason)
-			}
-		}
-	}
-
-	// Thread-safe append - table row with new columns including tenant info
-	m.mu.Lock()
-	m.PrincipalRows = append(m.PrincipalRows, []string{
-		m.TenantName, // NEW: Tenant Name (for multi-tenant support)
-		m.TenantID,   // NEW: Tenant ID (for multi-tenant support)
-		contextLabel,
-		p.Service,
-		p.Type,
-		upn,
-		dname,
-		pid,
-		mfaEnabled,               // MFA Enabled (Yes/No/N/A)
-		mfaMethods,               // MFA Methods (Phone, Authenticator, FIDO2, etc.)
-		mfaDefaultMethod,         // Default MFA Method
-		lastSignIn,               // Last Sign-In (Interactive)
-		lastNonInteractiveSignIn, // Last Sign-In (Non-Interactive)
-		daysSinceSignIn,          // Days Since Last Sign-In
-		staleAccount,             // Stale Account (>90 days or never)
-		groupMemberships,         // Group memberships (with nested)
-		rbacStr,                  // Enhanced with scope hierarchy
-		directoryRolesStr,        // Entra ID Directory Roles
-		pimStr,                   // PIM Eligible/Active (Azure RBAC + Directory Roles)
-		inheritedStr,             // Inherited permissions
-		caStr,                    // Conditional Access Policies
-		graphPerms,               // Graph API Permissions
-		delegatedStr,             // OAuth2 Delegated Grants
-	})
-
-	// Loot: generate az & PowerShell commands
-	m.LootMap["principal-commands"].Contents += m.generateLootForPrincipal(p)
-	m.mu.Unlock()
 }
 
 // ------------------------------
@@ -642,116 +943,148 @@ func (m *PrincipalsModule) generateLootForPrincipal(pr Principal) string {
 // Write output
 // ------------------------------
 func (m *PrincipalsModule) writeOutput(ctx context.Context, logger internal.Logger) {
-	if len(m.PrincipalRows) == 0 {
+	if m.principalRowCount == 0 {
 		logger.InfoM("No Principals found", globals.AZ_PRINCIPALS_MODULE_NAME)
 		return
 	}
 
 	// Build headers with new columns
 	headers := []string{
-		"Tenant Name", // NEW: for multi-tenant support
-		"Tenant ID",   // NEW: for multi-tenant support
+		"Tenant Name",
+		"Tenant ID",
 		"Tenant/Subscription Context",
 		"Source Service",
 		"Principal Type",
 		"User Principal Name / App ID",
 		"Display Name",
 		"Object ID",
-		"MFA Enabled",                       // MFA status (Yes/No/N/A)
-		"MFA Methods",                       // MFA methods (Phone, Authenticator, FIDO2, etc.)
-		"Default MFA Method",                // Default MFA method
-		"Last Sign-In (Interactive)",        // Last interactive sign-in
-		"Last Sign-In (Non-Interactive)",    // Last non-interactive sign-in
-		"Days Since Last Sign-In",           // Days since last sign-in
-		"Stale Account (>90 days)",          // Stale account flag
-		"Group Memberships (incl. Nested)",  // With nested groups
-		"RBAC Roles (with Scope Hierarchy)", // Enhanced
-		"Entra ID Directory Roles",          // Directory roles (Global Admin, etc.)
-		"PIM Status (Eligible/Active)",      // Azure RBAC + Directory Roles PIM
+		"MFA Enabled",
+		"MFA Methods",
+		"Default MFA Method",
+		"Last Sign-In (Interactive)",
+		"Last Sign-In (Non-Interactive)",
+		"Days Since Last Sign-In",
+		"Stale Account (>90 days)",
+		"Group Memberships (incl. Nested)",
+		"RBAC Roles (with Scope Hierarchy)",
+		"Entra ID Directory Roles",
+		"PIM Status (Eligible/Active)",
 		"Inherited Permissions",
 		"Conditional Access Policies",
 		"Graph API Permissions",
 		"Delegated OAuth2 Grants",
 	}
 
-	// Check if we should split output by tenant (multi-tenant mode)
-	if azinternal.ShouldSplitByTenant(m.IsMultiTenant, m.Tenants) {
-		if err := m.FilterAndWritePerTenantAuto(
-			ctx,
-			logger,
-			m.Tenants,
-			m.PrincipalRows,
-			headers,
-			"principals",
-			globals.AZ_PRINCIPALS_MODULE_NAME,
-		); err != nil {
-			return
-		}
-		return
-	}
-
-	// Check if we should split output by subscription
-	if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
-		if err := m.FilterAndWritePerSubscriptionAuto(
-			ctx, logger, m.Subscriptions, m.PrincipalRows, headers,
-			"principals", globals.AZ_PRINCIPALS_MODULE_NAME,
-		); err != nil {
-			return
-		}
-		return
-	}
+	// Determine output scope
+	scopeType := "tenant"
+	scopeIDs := []string{m.TenantID}
+	var scopeNames []string
 
 	// Build loot array
-	loot := []internal.LootFile{}
+	var loot []internal.LootFile
 	for _, lf := range m.LootMap {
 		if lf.Contents != "" {
 			loot = append(loot, *lf)
 		}
 	}
 
-	// Create output
-	output := PrincipalsOutput{
-		Table: []internal.TableFile{{
-			Name:   "principals",
-			Header: headers,
-			Body:   m.PrincipalRows,
-		}},
-		Loot: loot,
+	// Build output directory path
+	resultsIdentifier := internal.BuildResultsIdentifier(scopeType, scopeIDs, scopeNames)
+	outDirectoryPath := internal.BuildOutputPath(m.OutputDirectory, "Azure", m.UserUPN, resultsIdentifier)
+
+	if err := os.MkdirAll(outDirectoryPath, 0o755); err != nil {
+		logger.ErrorM(fmt.Sprintf("Error creating output directory: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
+		m.CommandCounter.Error++
+		return
 	}
 
-	// Tenant-level module - determine scope based on multi-tenant mode
-	var scopeType string
-	var scopeIDs []string
-	var scopeNames []string
-
-	if m.IsMultiTenant {
-		// Multi-tenant: use first tenant for consolidated output (tenant splitting handled above)
-		scopeType = "tenant"
-		scopeIDs = []string{m.TenantID}
-		scopeNames = []string(nil)
-	} else {
-		// Single tenant
-		scopeType = "tenant"
-		scopeIDs = []string{m.TenantID}
-		scopeNames = []string(nil)
-	}
-
-	// Write output using HandleOutputSmart (automatic streaming for large datasets)
-	if err := internal.HandleOutputSmart(
-		"Azure",
-		m.Format,
-		m.OutputDirectory,
-		m.Verbosity,
-		m.WrapTable,
-		scopeType,
-		scopeIDs,
-		scopeNames,
-		m.UserUPN,
-		output,
-	); err != nil {
+	// Stream rows from temp file directly to final output files
+	if err := m.streamPrincipalRowsToOutput(outDirectoryPath, headers, logger); err != nil {
 		logger.ErrorM(fmt.Sprintf("Error writing output: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
 		m.CommandCounter.Error++
+		return
 	}
 
-	logger.SuccessM(fmt.Sprintf("Found %d Principal(s) for tenant: %s", len(m.PrincipalRows), m.TenantName), globals.AZ_PRINCIPALS_MODULE_NAME)
+	// Write loot files
+	for _, l := range loot {
+		lootDir := internal.BuildLootDir(outDirectoryPath)
+		if err := os.MkdirAll(lootDir, 0o755); err != nil {
+			logger.ErrorM(fmt.Sprintf("Error creating loot directory: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
+			continue
+		}
+		lootPath := internal.BuildLootPath(outDirectoryPath, l.Name)
+		if err := os.WriteFile(lootPath, []byte(l.Contents), 0644); err != nil {
+			logger.ErrorM(fmt.Sprintf("Error writing loot file: %v", err), globals.AZ_PRINCIPALS_MODULE_NAME)
+		} else {
+			logger.InfoM(fmt.Sprintf("Output written to %s", lootPath), globals.AZ_PRINCIPALS_MODULE_NAME)
+		}
+	}
+
+	logger.SuccessM(fmt.Sprintf("Found %d Principal(s) for tenant: %s", m.principalRowCount, m.TenantName), globals.AZ_PRINCIPALS_MODULE_NAME)
+}
+
+// streamPrincipalRowsToOutput streams all rows from the temp CSV file to final output files.
+func (m *PrincipalsModule) streamPrincipalRowsToOutput(outDir string, headers []string, logger internal.Logger) error {
+	safeName := "principals"
+
+	// CSV
+	csvDir := internal.BuildCSVDir(outDir)
+	if err := os.MkdirAll(csvDir, 0o755); err != nil {
+		return err
+	}
+	csvPath := internal.BuildCSVPath(outDir, safeName)
+	csvFile, err := os.Create(csvPath)
+	if err != nil {
+		return fmt.Errorf("failed to create csv file: %w", err)
+	}
+	defer csvFile.Close()
+	csvWriter := csv.NewWriter(csvFile)
+	_ = csvWriter.Write(headers)
+
+	// JSONL
+	jsonDir := internal.BuildJSONDir(outDir)
+	if err := os.MkdirAll(jsonDir, 0o755); err != nil {
+		return err
+	}
+	jsonlPath := internal.BuildJSONLPath(outDir, safeName)
+	jsonlFile, err := os.Create(jsonlPath)
+	if err != nil {
+		return fmt.Errorf("failed to create jsonl file: %w", err)
+	}
+	defer jsonlFile.Close()
+
+	// Table
+	tableDir := internal.BuildTableDir(outDir)
+	if err := os.MkdirAll(tableDir, 0o755); err != nil {
+		return err
+	}
+	tablePath := internal.BuildTablePath(outDir, safeName)
+	tableFile, err := os.Create(tablePath)
+	if err != nil {
+		return fmt.Errorf("failed to create table file: %w", err)
+	}
+	defer tableFile.Close()
+	_, _ = tableFile.WriteString(strings.Join(headers, "\t") + "\n")
+
+	jsonEncoder := json.NewEncoder(jsonlFile)
+	err = m.iteratePrincipalRows(func(row []string) {
+		_ = csvWriter.Write(row)
+
+		rowMap := make(map[string]string, len(headers))
+		for i, col := range row {
+			if i < len(headers) {
+				rowMap[headers[i]] = col
+			}
+		}
+		_ = jsonEncoder.Encode(rowMap)
+
+		_, _ = tableFile.WriteString(strings.Join(row, "\t") + "\n")
+	})
+	csvWriter.Flush()
+
+	logger.InfoM(fmt.Sprintf("Output written to %s", csvPath), globals.AZ_PRINCIPALS_MODULE_NAME)
+	logger.InfoM(fmt.Sprintf("Output written to %s", jsonlPath), globals.AZ_PRINCIPALS_MODULE_NAME)
+	logger.InfoM(fmt.Sprintf("Output written to %s", tablePath), globals.AZ_PRINCIPALS_MODULE_NAME)
+
+	return err
 }

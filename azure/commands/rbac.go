@@ -1,9 +1,12 @@
 package commands
 
 import (
+	"bufio"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -56,12 +59,19 @@ type RBACOutput struct {
 	Loot  []internal.LootFile
 }
 
-// rbacAssignmentWithMeta wraps a role assignment with additional metadata for tracking
-type rbacAssignmentWithMeta struct {
-	Assignment  *armauthorization.RoleAssignment
-	AssignedVia string
-	IsPIM       bool
-	IsPIMActive bool
+// rbacRowInput holds cache-native fields for building table rows directly,
+// avoiding round-trip conversion through *armauthorization.RoleAssignment.
+type rbacRowInput struct {
+	PrincipalID      string
+	PrincipalType    string
+	RoleDefinitionID string
+	RoleName         string // pre-resolved from cache (or role defs map for resource-level)
+	Scope            string
+	Condition        string
+	DelegatedMI      string
+	AssignedVia      string
+	IsPIM            bool
+	IsPIMActive      bool
 }
 
 // RBACModule implements RBAC enumeration using BaseAzureModule pattern
@@ -70,14 +80,15 @@ type RBACModule struct {
 
 	// Module-specific fields
 	Subscriptions []string
-	RBACRows      [][]string // All RBAC assignments collected (as table rows)
 	TenantLevel   bool
 	SubLevel      bool
 	RGLevel       bool
 	NoDedupe      bool
-	Workers       int
-	Channels      int
-	mu            sync.Mutex // Protects RBACRows
+	roleDefs      map[string]*armauthorization.RoleDefinition // Populated once in prefetch
+
+	// Disk-backed row storage (avoids OOM on large tenants)
+	rbacRowFile  *os.File // temp CSV file holding all RBAC rows
+	rbacRowCount int      // number of rows written
 }
 
 var (
@@ -85,8 +96,6 @@ var (
 	runTenantLevel bool
 	runSubLevel    bool
 	runRGLevel     bool
-	workers        int
-	channels       int
 )
 
 var RBACHeader = []string{
@@ -111,6 +120,63 @@ var RBACHeader = []string{
 func (o RBACOutput) TableFiles() []internal.TableFile { return o.Table }
 func (o RBACOutput) LootFiles() []internal.LootFile   { return o.Loot }
 
+// openRBACRowFile creates a temp CSV file for streaming RBAC rows to disk.
+func (m *RBACModule) openRBACRowFile() error {
+	f, err := os.CreateTemp("", "cloudfox-rbac-*.csv")
+	if err != nil {
+		return fmt.Errorf("failed to create temp row file: %w", err)
+	}
+	m.rbacRowFile = f
+	m.rbacRowCount = 0
+	return nil
+}
+
+// writeRBACRows writes a batch of rows to the temp CSV file.
+func (m *RBACModule) writeRBACRows(rows [][]string) {
+	if m.rbacRowFile == nil || len(rows) == 0 {
+		return
+	}
+	w := csv.NewWriter(m.rbacRowFile)
+	for _, row := range rows {
+		_ = w.Write(row)
+	}
+	w.Flush()
+	m.rbacRowCount += len(rows)
+}
+
+// closeRBACRowFile closes the temp CSV file.
+func (m *RBACModule) closeRBACRowFile() {
+	if m.rbacRowFile != nil {
+		m.rbacRowFile.Close()
+	}
+}
+
+// removeRBACRowFile deletes the temp CSV file.
+func (m *RBACModule) removeRBACRowFile() {
+	if m.rbacRowFile != nil {
+		os.Remove(m.rbacRowFile.Name())
+	}
+}
+
+// iterateRBACRows streams through all rows in the temp file, calling fn for each row.
+func (m *RBACModule) iterateRBACRows(fn func(row []string)) error {
+	if m.rbacRowFile == nil {
+		return nil
+	}
+	if _, err := m.rbacRowFile.Seek(0, 0); err != nil {
+		return fmt.Errorf("failed to seek temp row file: %w", err)
+	}
+	r := csv.NewReader(bufio.NewReaderSize(m.rbacRowFile, 256*1024))
+	for {
+		row, err := r.Read()
+		if err != nil {
+			break
+		}
+		fn(row)
+	}
+	return nil
+}
+
 // ======================
 // Init flags
 // ======================
@@ -122,8 +188,6 @@ func init() {
 	AzRBACCommand.Flags().BoolVar(&runSubLevel, "subscription-level", false, "Run subscription-level RBAC enumeration")
 	AzRBACCommand.Flags().BoolVar(&runRGLevel, "resource-group-level", false, "Run resource group-level RBAC enumeration")
 	AzRBACCommand.Flags().BoolVar(&noDedupe, "no-dedupe", false, "Disable deduplication and return every permission")
-	AzRBACCommand.Flags().IntVar(&channels, "channels", 100, "Number of streaming channels to spawn concurrently")
-	AzRBACCommand.Flags().IntVar(&workers, "workers", 10, "Number of workers to spawn concurrently")
 }
 
 // ======================
@@ -141,8 +205,6 @@ func ListRBAC(cmd *cobra.Command, args []string) {
 	subLevel, _ := cmd.Flags().GetBool("subscription-level")
 	rgLevel, _ := cmd.Flags().GetBool("resource-group-level")
 	noDedupe, _ := cmd.Flags().GetBool("no-dedupe")
-	workers, _ := cmd.Flags().GetInt("workers")
-	channels, _ := cmd.Flags().GetInt("channels")
 
 	// Default: if no levels specified, run all levels
 	if !tenantLevel && !subLevel && !rgLevel {
@@ -156,15 +218,12 @@ func ListRBAC(cmd *cobra.Command, args []string) {
 
 	// Initialize module
 	module := &RBACModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 13), // 13 columns in header
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
-		RBACRows:        [][]string{},
 		TenantLevel:     tenantLevel,
 		SubLevel:        subLevel,
 		RGLevel:         rgLevel,
 		NoDedupe:        noDedupe,
-		Workers:         workers,
-		Channels:        channels,
 	}
 
 	// Execute module
@@ -187,47 +246,43 @@ func (m *RBACModule) PrintRBAC(ctx context.Context, logger internal.Logger) {
 			m.TenantLevel, m.SubLevel, m.RGLevel), globals.AZ_RBAC_MODULE_NAME)
 	}
 
-	// Multi-tenant processing
+	// Open temp file for streaming rows to disk
+	if err := m.openRBACRowFile(); err != nil {
+		logger.ErrorM(fmt.Sprintf("Failed to open temp row file: %v", err), globals.AZ_RBAC_MODULE_NAME)
+		return
+	}
+	defer m.removeRBACRowFile()
+	defer m.closeRBACRowFile()
+
+	// ── Phase 1: DOWNLOAD (bulk pre-fetch all data into caches) ──
+	m.prefetchAllData(ctx, logger)
+
+	// ── Phase 2: BUILD ROWS (pure cache reads, zero API calls except resource-level) ──
 	if m.IsMultiTenant {
-		// Process each tenant independently
 		for _, tenantCtx := range m.Tenants {
-			// Temporarily set module tenant context for row creation
 			savedTenantID := m.TenantID
 			savedTenantName := m.TenantName
 			savedTenantInfo := m.TenantInfo
+			savedSubs := m.Subscriptions
 
 			m.TenantID = tenantCtx.TenantID
 			m.TenantName = tenantCtx.TenantName
 			m.TenantInfo = tenantCtx.TenantInfo
+			m.Subscriptions = tenantCtx.Subscriptions
 
 			if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
 				logger.InfoM(fmt.Sprintf("Processing tenant: %s (%s)", m.TenantName, m.TenantID), globals.AZ_RBAC_MODULE_NAME)
 			}
 
-			// Enumerate tenant-level RBAC if requested
-			if m.TenantLevel && len(tenantCtx.Subscriptions) > 0 {
-				m.processTenantLevel(ctx, logger)
-			}
+			m.buildAllRBACRows(ctx, logger)
 
-			// Process subscriptions for this tenant
-			m.RunSubscriptionEnumeration(ctx, logger, tenantCtx.Subscriptions,
-				globals.AZ_RBAC_MODULE_NAME, m.processSubscription)
-
-			// Restore tenant context
 			m.TenantID = savedTenantID
 			m.TenantName = savedTenantName
 			m.TenantInfo = savedTenantInfo
+			m.Subscriptions = savedSubs
 		}
 	} else {
-		// Single tenant processing (existing logic)
-		// Enumerate tenant-level RBAC first (if requested) using a tenant-scoped client
-		if m.TenantLevel && len(m.Subscriptions) > 0 {
-			m.processTenantLevel(ctx, logger)
-		}
-
-		// Use RunSubscriptionEnumeration to process all subscriptions with automatic goroutine management
-		m.RunSubscriptionEnumeration(ctx, logger, m.Subscriptions,
-			globals.AZ_RBAC_MODULE_NAME, m.processSubscription)
+		m.buildAllRBACRows(ctx, logger)
 	}
 
 	// Show completion status
@@ -241,445 +296,324 @@ func (m *RBACModule) PrintRBAC(ctx context.Context, logger internal.Logger) {
 }
 
 // ======================
-// processSubscription - Process a single subscription with full coverage
+// prefetchAllData - Phase 1: Bulk pre-fetch all data into caches
 // ======================
-func (m *RBACModule) processSubscription(ctx context.Context, subID string, logger internal.Logger) {
-	if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
-		logger.InfoM(fmt.Sprintf("Processing subscription: %s", subID), globals.AZ_RBAC_MODULE_NAME)
+func (m *RBACModule) prefetchAllData(ctx context.Context, logger internal.Logger) {
+	spinner := internal.NewPhaseSpinner(globals.AZ_RBAC_MODULE_NAME)
+
+	// Limit concurrent subscription prefetches to avoid thundering herd against ARM API.
+	// The AIMD rate limiter gates individual requests, but unbounded goroutines still
+	// cause excessive token refreshes, connection churn, and memory pressure.
+	subSem := make(chan struct{}, 5)
+
+	// Load group memberships (API + disk cache, needed for nested group chain resolution)
+	spinner.Add("group memberships")
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer spinner.Done("group memberships")
+		azinternal.PreFetchGroupMemberships(ctx, m.Session, m.OutputDirectory, m.TenantID)
+	}()
+
+	// Pre-fetch RBAC assignments per subscription (populates scope-level caches)
+	for _, subID := range m.Subscriptions {
+		spinner.Add("RBAC assignments")
+		wg.Add(1)
+		go func(sid string) {
+			defer wg.Done()
+			subSem <- struct{}{}
+			defer func() { <-subSem }()
+			defer spinner.Done("RBAC assignments")
+			azinternal.PreFetchRBACAssignmentsForSubscription(ctx, m.Session, sid, m.OutputDirectory, m.TenantID)
+		}(subID)
+
+		spinner.Add("PIM roles")
+		wg.Add(1)
+		go func(sid string) {
+			defer wg.Done()
+			subSem <- struct{}{}
+			defer func() { <-subSem }()
+			defer spinner.Done("PIM roles")
+			azinternal.PreFetchPIMRolesForSubscription(ctx, m.Session, sid, m.OutputDirectory, m.TenantID)
+		}(subID)
 	}
 
-	// Get subscription name
-	subName := ""
-	for _, s := range m.TenantInfo.Subscriptions {
-		if s.ID == subID {
-			subName = s.Name
-			break
-		}
-	}
-
-	// Get token for ARM scope
-	token, err := m.Session.GetTokenForResource(globals.CommonScopes[0])
-	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Failed to get token for subscription %s: %v", subID, err), globals.AZ_RBAC_MODULE_NAME)
-		m.CommandCounter.Error++
-		return
-	}
-
-	cred := &azinternal.StaticTokenCredential{Token: token}
-
-	// Create authorization client factory for this subscription
-	clientFactory, err := armauthorization.NewClientFactory(subID, cred, azinternal.DefaultARMClientOptions())
-	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Failed to create authorization client factory for %s: %v", subID, err), globals.AZ_RBAC_MODULE_NAME)
-		m.CommandCounter.Error++
-		return
-	}
-
-	authClient := clientFactory.NewRoleAssignmentsClient()
-	roleDefClient := clientFactory.NewRoleDefinitionsClient()
-
-	// Cache role definitions for this subscription
-	subScope := fmt.Sprintf("/subscriptions/%s", subID)
-	roleDefs := m.cacheRoleDefinitions(ctx, roleDefClient, subScope, logger)
-
-	// Collect ALL role assignments based on scope levels
-	var allAssignments []rbacAssignmentWithMeta
-
-	// 1. Check management group hierarchy for ALL assignments
-	mgHierarchy := azinternal.GetManagementGroupHierarchy(ctx, m.Session, subID)
-	if len(mgHierarchy) > 0 && m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
-		logger.InfoM(fmt.Sprintf("Found %d management groups in hierarchy", len(mgHierarchy)), globals.AZ_RBAC_MODULE_NAME)
-	}
-
-	for _, mgID := range mgHierarchy {
-		mgScope := fmt.Sprintf("/providers/Microsoft.Management/managementGroups/%s", mgID)
-		assignments := m.listRoleAssignments(ctx, authClient, mgScope, logger)
-		for _, ra := range assignments {
-			allAssignments = append(allAssignments, rbacAssignmentWithMeta{
-				Assignment:  ra,
-				AssignedVia: m.determineAssignedViaFromProperties(ra, false, false),
-			})
-		}
-	}
-
-	// 2. Subscription-level assignments (includes inherited assignments from parent scopes)
-	if m.SubLevel {
-		subAssignments := m.listRoleAssignmentsForSubscription(ctx, authClient, logger)
-		for _, ra := range subAssignments {
-			allAssignments = append(allAssignments, rbacAssignmentWithMeta{
-				Assignment:  ra,
-				AssignedVia: m.determineAssignedViaFromProperties(ra, false, false),
-			})
-		}
-	}
-
-	// 3. Resource-group-level assignments
+	// Pre-fetch RBAC at resource group scopes (only if RG-level enabled)
 	if m.RGLevel {
-		rgAssignments := m.listResourceGroupAssignments(ctx, subID, authClient, cred, logger)
-		for _, ra := range rgAssignments {
-			allAssignments = append(allAssignments, rbacAssignmentWithMeta{
-				Assignment:  ra,
-				AssignedVia: m.determineAssignedViaFromProperties(ra, false, false),
-			})
-		}
-
-		// Also enumerate individual resource-level assignments
-		resourceAssignments := m.listResourceLevelAssignments(ctx, subID, authClient, cred, logger)
-		for _, ra := range resourceAssignments {
-			allAssignments = append(allAssignments, rbacAssignmentWithMeta{
-				Assignment:  ra,
-				AssignedVia: m.determineAssignedViaFromProperties(ra, false, false),
-			})
+		for _, subID := range m.Subscriptions {
+			spinner.Add("RG RBAC assignments")
+			wg.Add(1)
+			go func(sid string) {
+				defer wg.Done()
+				subSem <- struct{}{}
+				defer func() { <-subSem }()
+				defer spinner.Done("RG RBAC assignments")
+				azinternal.PreFetchRBACAssignmentsForResourceGroups(ctx, m.Session, sid)
+			}(subID)
 		}
 	}
 
-	// 4. Check PIM Eligibility Schedules for ALL principals
-	pimEligible := m.getAllPIMEligibilitySchedules(ctx, subID, logger)
-	for _, pim := range pimEligible {
-		allAssignments = append(allAssignments, rbacAssignmentWithMeta{
-			Assignment:  pim,
-			AssignedVia: m.determineAssignedViaFromProperties(pim, true, false),
-			IsPIM:       true,
-			IsPIMActive: false,
-		})
-	}
+	wg.Wait()
+	spinner.Stop("Pre-fetching RBAC data: done")
 
-	// 5. Check PIM Active Schedules for ALL principals
-	pimActive := m.getAllPIMActiveSchedules(ctx, subID, logger)
-	for _, pim := range pimActive {
-		allAssignments = append(allAssignments, rbacAssignmentWithMeta{
-			Assignment:  pim,
-			AssignedVia: m.determineAssignedViaFromProperties(pim, false, true),
-			IsPIM:       true,
-			IsPIMActive: true,
-		})
-	}
-
-	// Deduplicate if needed
-	if !m.NoDedupe {
-		allAssignments = m.deduplicateAssignmentsWithMeta(allAssignments)
-	}
-
-	// Convert to rows and store (creates multiple rows per assignment, one per provider)
-	for _, meta := range allAssignments {
-		rows := m.buildRBACTableRowsWithMeta(ctx, meta, subID, subName, roleDefs, logger)
-		m.mu.Lock()
-		m.RBACRows = append(m.RBACRows, rows...)
-		m.mu.Unlock()
-	}
-
-	if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
-		logger.InfoM(fmt.Sprintf("Collected %d total RBAC assignments from %s", len(allAssignments), subID), globals.AZ_RBAC_MODULE_NAME)
+	// Collect role definitions once (needed only for resource-level API assignments).
+	// Cached RBAC entries already have RoleName pre-resolved.
+	if m.RGLevel && len(m.Subscriptions) > 0 {
+		m.collectRoleDefinitions(ctx, logger)
 	}
 }
 
-// ======================
-// processTenantLevel - Process tenant-level RBAC with tenant-scoped client
-// ======================
-func (m *RBACModule) processTenantLevel(ctx context.Context, logger internal.Logger) {
-	if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
-		logger.InfoM(fmt.Sprintf("Processing tenant-level RBAC: %s", m.TenantName), globals.AZ_RBAC_MODULE_NAME)
-	}
+// collectRoleDefinitions fetches role definitions from the first subscription and
+// caches them in m.roleDefs. Called once before any row building.
+func (m *RBACModule) collectRoleDefinitions(ctx context.Context, logger internal.Logger) {
+	m.roleDefs = make(map[string]*armauthorization.RoleDefinition)
 
-	// Get token for ARM scope
 	token, err := m.Session.GetTokenForResource(globals.CommonScopes[0])
 	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Failed to get token for tenant-level query: %v", err), globals.AZ_RBAC_MODULE_NAME)
-		m.CommandCounter.Error++
+		logger.ErrorM(fmt.Sprintf("Failed to get token for role definitions: %v", err), globals.AZ_RBAC_MODULE_NAME)
 		return
 	}
 
 	cred := &azinternal.StaticTokenCredential{Token: token}
+	subScope := fmt.Sprintf("/subscriptions/%s", m.Subscriptions[0])
 
-	// Use tenant ID to create client factory for tenant-level queries
-	clientFactory, err := armauthorization.NewClientFactory(m.TenantID, cred, azinternal.DefaultARMClientOptions())
+	clientFactory, err := armauthorization.NewClientFactory(m.Subscriptions[0], cred, azinternal.DefaultARMClientOptions())
 	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Failed to create authorization client factory for tenant-level query: %v", err), globals.AZ_RBAC_MODULE_NAME)
-		m.CommandCounter.Error++
+		logger.ErrorM(fmt.Sprintf("Failed to create client factory for role definitions: %v", err), globals.AZ_RBAC_MODULE_NAME)
 		return
 	}
 
-	authClient := clientFactory.NewRoleAssignmentsClient()
 	roleDefClient := clientFactory.NewRoleDefinitionsClient()
-
-	// Query tenant-level assignments using root scope "/"
-	tenantScope := "/"
-
-	// Cache role definitions for tenant scope
-	roleDefs := m.cacheRoleDefinitions(ctx, roleDefClient, tenantScope, logger)
-
-	tenantAssignments := m.listRoleAssignments(ctx, authClient, tenantScope, logger)
-
-	// Deduplicate if needed
-	if !m.NoDedupe {
-		tenantAssignments = m.deduplicateAssignments(tenantAssignments)
-	}
-
-	// Convert to rows and store (creates multiple rows per assignment, one per provider)
-	for _, ra := range tenantAssignments {
-		rows := m.buildRBACTableRows(ra, "", m.TenantName, roleDefs) // No subID for tenant-level
-		m.mu.Lock()
-		m.RBACRows = append(m.RBACRows, rows...)
-		m.mu.Unlock()
-	}
-
-	if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
-		logger.InfoM(fmt.Sprintf("Collected %d tenant-level RBAC assignments", len(tenantAssignments)), globals.AZ_RBAC_MODULE_NAME)
-	}
-}
-
-// ======================
-// Helper Methods
-// ======================
-
-// listRoleAssignments lists role assignments for a given scope
-func (m *RBACModule) listRoleAssignments(ctx context.Context, client *armauthorization.RoleAssignmentsClient,
-	scope string, logger internal.Logger) []*armauthorization.RoleAssignment {
-
-	var assignments []*armauthorization.RoleAssignment
-
-	pager := client.NewListForScopePager(scope, &armauthorization.RoleAssignmentsClientListForScopeOptions{
-		Filter: nil,
-	})
-
+	pager := roleDefClient.NewListPager(subScope, nil)
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			// Always log errors to file, regardless of verbosity
-			logger.ErrorM(fmt.Sprintf("Failed to list role assignments for scope %s: %v", scope, err), globals.AZ_RBAC_MODULE_NAME)
-			m.CommandCounter.Error++
-			break
-		}
-		assignments = append(assignments, page.Value...)
-	}
-
-	return assignments
-}
-
-// listRoleAssignmentsForSubscription lists ALL role assignments for a subscription including inherited ones
-// This uses NewListForSubscriptionPager which returns assignments at the subscription level AND
-// inherited assignments from parent scopes (management groups, tenant root, etc.)
-func (m *RBACModule) listRoleAssignmentsForSubscription(ctx context.Context, client *armauthorization.RoleAssignmentsClient,
-	logger internal.Logger) []*armauthorization.RoleAssignment {
-
-	var assignments []*armauthorization.RoleAssignment
-
-	pager := client.NewListForSubscriptionPager(&armauthorization.RoleAssignmentsClientListForSubscriptionOptions{
-		Filter: nil,
-	})
-
-	for pager.More() {
-		page, err := pager.NextPage(ctx)
-		if err != nil {
-			// Always log errors to file, regardless of verbosity
-			logger.ErrorM(fmt.Sprintf("Failed to list subscription role assignments: %v", err), globals.AZ_RBAC_MODULE_NAME)
-			m.CommandCounter.Error++
-			break
-		}
-		assignments = append(assignments, page.Value...)
-	}
-
-	return assignments
-}
-
-// listResourceGroupAssignments lists role assignments for all resource groups in a subscription
-func (m *RBACModule) listResourceGroupAssignments(ctx context.Context, subID string,
-	authClient *armauthorization.RoleAssignmentsClient, cred *azinternal.StaticTokenCredential, logger internal.Logger) []*armauthorization.RoleAssignment {
-
-	var assignments []*armauthorization.RoleAssignment
-
-	// Get resource groups using the provided credential
-	rgClient, err := armresources.NewResourceGroupsClient(subID, cred, azinternal.DefaultARMClientOptions())
-	if err != nil {
-		return assignments
-	}
-
-	pager := rgClient.NewListPager(nil)
-	for pager.More() {
-		page, err := pager.NextPage(ctx)
-		if err != nil {
-			break
-		}
-
-		for _, rg := range page.Value {
-			if rg.ID != nil {
-				rgAssignments := m.listRoleAssignments(ctx, authClient, *rg.ID, logger)
-				assignments = append(assignments, rgAssignments...)
-			}
-		}
-	}
-
-	return assignments
-}
-
-// listResourceLevelAssignments lists role assignments for all individual resources in a subscription
-func (m *RBACModule) listResourceLevelAssignments(ctx context.Context, subID string,
-	authClient *armauthorization.RoleAssignmentsClient, cred *azinternal.StaticTokenCredential, logger internal.Logger) []*armauthorization.RoleAssignment {
-
-	var assignments []*armauthorization.RoleAssignment
-
-	// Get all resources in the subscription
-	resourcesClient, err := armresources.NewClient(subID, cred, azinternal.DefaultARMClientOptions())
-	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Failed to create resources client for subscription %s: %v", subID, err), globals.AZ_RBAC_MODULE_NAME)
-		return assignments
-	}
-
-	if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
-		logger.InfoM(fmt.Sprintf("Enumerating individual resource-level RBAC assignments for subscription %s", subID), globals.AZ_RBAC_MODULE_NAME)
-	}
-
-	// List all resources - this can be a large list
-	pager := resourcesClient.NewListPager(nil)
-	resourceCount := 0
-
-	for pager.More() {
-		page, err := pager.NextPage(ctx)
-		if err != nil {
-			logger.ErrorM(fmt.Sprintf("Failed to list resources in subscription %s: %v", subID, err), globals.AZ_RBAC_MODULE_NAME)
-			break
-		}
-
-		for _, resource := range page.Value {
-			if resource.ID != nil {
-				resourceCount++
-				// Query role assignments for this specific resource
-				resourceAssignments := m.listRoleAssignments(ctx, authClient, *resource.ID, logger)
-				if len(resourceAssignments) > 0 {
-					assignments = append(assignments, resourceAssignments...)
-					if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
-						logger.InfoM(fmt.Sprintf("Found %d role assignments on resource: %s", len(resourceAssignments), *resource.ID), globals.AZ_RBAC_MODULE_NAME)
-					}
-				}
-			}
-		}
-	}
-
-	if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
-		logger.InfoM(fmt.Sprintf("Scanned %d resources, found %d resource-level role assignments", resourceCount, len(assignments)), globals.AZ_RBAC_MODULE_NAME)
-	}
-
-	return assignments
-}
-
-// deduplicateAssignments removes duplicate role assignments
-func (m *RBACModule) deduplicateAssignments(assignments []*armauthorization.RoleAssignment) []*armauthorization.RoleAssignment {
-	seen := make(map[string]bool)
-	var unique []*armauthorization.RoleAssignment
-
-	for _, ra := range assignments {
-		if ra.ID == nil {
-			continue
-		}
-
-		key := *ra.ID
-		if !seen[key] {
-			seen[key] = true
-			unique = append(unique, ra)
-		}
-	}
-
-	return unique
-}
-
-// cacheRoleDefinitions retrieves and caches all role definitions for a given scope
-func (m *RBACModule) cacheRoleDefinitions(ctx context.Context, roleDefClient *armauthorization.RoleDefinitionsClient,
-	scope string, logger internal.Logger) map[string]*armauthorization.RoleDefinition {
-
-	cache := make(map[string]*armauthorization.RoleDefinition)
-
-	pager := roleDefClient.NewListPager(scope, nil)
-	for pager.More() {
-		page, err := pager.NextPage(ctx)
-		if err != nil {
-			logger.ErrorM(fmt.Sprintf("Failed to list role definitions for scope %s: %v", scope, err), globals.AZ_RBAC_MODULE_NAME)
+			logger.ErrorM(fmt.Sprintf("Failed to list role definitions: %v", err), globals.AZ_RBAC_MODULE_NAME)
 			break
 		}
 		for _, rd := range page.Value {
 			if rd != nil && rd.ID != nil {
-				cache[*rd.ID] = rd
+				m.roleDefs[*rd.ID] = rd
 			}
 		}
 	}
 
 	if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
-		logger.InfoM(fmt.Sprintf("Cached %d role definitions for scope %s", len(cache), scope), globals.AZ_RBAC_MODULE_NAME)
+		logger.InfoM(fmt.Sprintf("Cached %d role definitions", len(m.roleDefs)), globals.AZ_RBAC_MODULE_NAME)
 	}
-
-	return cache
 }
 
-// buildRBACTableRows converts a role assignment to multiple table rows (one per provider) matching RBACHeader
-// Returns a slice of rows, with one row per provider that the role has permissions for
-func (m *RBACModule) buildRBACTableRows(ra *armauthorization.RoleAssignment, subID, subName string,
-	roleDefs map[string]*armauthorization.RoleDefinition) [][]string {
-
-	var rows [][]string
-
-	principalID := ""
-	principalType := ""
-	roleName := ""
-	roleDefID := ""
-	scope := ""
-	condition := ""
-	delegatedResource := ""
-
-	if ra.Properties != nil {
-		if ra.Properties.PrincipalID != nil {
-			principalID = *ra.Properties.PrincipalID
-		}
-		if ra.Properties.PrincipalType != nil {
-			principalType = string(*ra.Properties.PrincipalType)
-		}
-		if ra.Properties.RoleDefinitionID != nil {
-			roleDefID = *ra.Properties.RoleDefinitionID
-		}
-		if ra.Properties.Scope != nil {
-			scope = *ra.Properties.Scope
-		}
-		if ra.Properties.Condition != nil {
-			condition = *ra.Properties.Condition
-		}
-		if ra.Properties.DelegatedManagedIdentityResourceID != nil {
-			delegatedResource = *ra.Properties.DelegatedManagedIdentityResourceID
-		}
-	}
-
-	// Lookup role name and build provider list from role definition
-	providerList := []string{}
-	if roleDefID != "" {
-		if rd, ok := roleDefs[roleDefID]; ok {
-			if rd.Properties != nil && rd.Properties.RoleName != nil {
-				roleName = *rd.Properties.RoleName
+// ======================
+// buildAllRBACRows - Phase 2: Build rows from caches (zero API calls except resource-level)
+// ======================
+func (m *RBACModule) buildAllRBACRows(ctx context.Context, logger internal.Logger) {
+	for _, subID := range m.Subscriptions {
+		subName := ""
+		for _, s := range m.TenantInfo.Subscriptions {
+			if s.ID == subID {
+				subName = s.Name
+				break
 			}
+		}
 
-			// Extract unique providers from role permissions
-			providersSet := make(map[string]struct{})
-			if rd.Properties != nil && rd.Properties.Permissions != nil {
-				for _, perm := range rd.Properties.Permissions {
-					if perm.Actions != nil {
-						for _, actionPtr := range perm.Actions {
-							if actionPtr != nil {
-								action := *actionPtr
-								if idx := strings.Index(action, "/"); idx != -1 {
-									provider := action[:idx]
-									providersSet[provider] = struct{}{}
-								}
-							}
-						}
-					}
+		var allInputs []rbacRowInput
+
+		// --- Build scope list from caches ---
+		var scopes []string
+
+		// 1. Tenant root "/" (if tenant-level requested)
+		if m.TenantLevel {
+			scopes = append(scopes, "/")
+		}
+
+		// 2. Management group hierarchy (already cached by PreFetchRBACAssignmentsForSubscription)
+		mgHierarchy := azinternal.GetManagementGroupHierarchy(ctx, m.Session, subID)
+		if m.TenantLevel {
+			for _, mgID := range mgHierarchy {
+				scopes = append(scopes, fmt.Sprintf("/providers/Microsoft.Management/managementGroups/%s", mgID))
+			}
+		}
+
+		// 3. Subscription scope
+		if m.SubLevel {
+			scopes = append(scopes, fmt.Sprintf("/subscriptions/%s", subID))
+		}
+
+		// 4. Resource group scopes (discovered from cache keys, not API)
+		if m.RGLevel {
+			prefix := azinternal.AzCacheKey("rbac-scope-all", fmt.Sprintf("/subscriptions/%s/resourceGroups/", subID))
+			for key := range azinternal.AzureDataCache.Items() {
+				if strings.HasPrefix(key, prefix) {
+					scopePath := strings.TrimPrefix(key, "az-rbac-scope-all-")
+					scopes = append(scopes, scopePath)
 				}
 			}
+		}
 
-			// Convert set to sorted slice
-			for p := range providersSet {
-				providerList = append(providerList, p)
+		// --- Iterate scopes and build inputs from cache ---
+		for _, scope := range scopes {
+			entries := azinternal.ListAllRBACForScope(scope)
+			for _, e := range entries {
+				allInputs = append(allInputs, rbacRowInput{
+					PrincipalID:      e.PrincipalID,
+					PrincipalType:    e.PrincipalType,
+					RoleDefinitionID: e.RoleDefinitionID,
+					RoleName:         e.RoleName,
+					Scope:            e.Scope,
+					Condition:        e.Condition,
+					DelegatedMI:      e.DelegatedManagedIdentityResourceID,
+					AssignedVia:      assignedViaFromType(e.PrincipalType, false, false),
+				})
 			}
-			sort.Strings(providerList)
+		}
+
+		// --- PIM from cache ---
+		pimEligible, pimActive, _ := azinternal.ListAllPIMForSubscription(subID)
+		for _, pa := range pimEligible {
+			allInputs = append(allInputs, rbacRowInput{
+				PrincipalID:      pa.PrincipalID,
+				PrincipalType:    pa.PrincipalType,
+				RoleDefinitionID: pa.RoleDefinitionID,
+				RoleName:         pa.RoleName,
+				Scope:            pa.Scope,
+				AssignedVia:      assignedViaFromType(pa.PrincipalType, true, false),
+				IsPIM:            true,
+			})
+		}
+		for _, pa := range pimActive {
+			allInputs = append(allInputs, rbacRowInput{
+				PrincipalID:      pa.PrincipalID,
+				PrincipalType:    pa.PrincipalType,
+				RoleDefinitionID: pa.RoleDefinitionID,
+				RoleName:         pa.RoleName,
+				Scope:            pa.Scope,
+				AssignedVia:      assignedViaFromType(pa.PrincipalType, false, true),
+				IsPIM:            true,
+				IsPIMActive:      true,
+			})
+		}
+
+		// --- Resource-level assignments (API, unavoidable) ---
+		if m.RGLevel {
+			resourceInputs := m.fetchResourceLevelInputs(ctx, subID, logger)
+			allInputs = append(allInputs, resourceInputs...)
+		}
+
+		// Deduplicate
+		if !m.NoDedupe {
+			allInputs = deduplicateInputs(allInputs)
+		}
+
+		// Build rows and stream to disk
+		for _, input := range allInputs {
+			rows := m.buildRowsFromInput(ctx, input, subID, subName, logger)
+			m.writeRBACRows(rows)
+		}
+
+		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
+			logger.InfoM(fmt.Sprintf("Collected %d RBAC assignments from %s", len(allInputs), subID), globals.AZ_RBAC_MODULE_NAME)
 		}
 	}
+}
 
-	// If no providers found, create one row with empty provider
+// assignedViaFromType determines the "Assigned Via" value from principal type and PIM flags.
+func assignedViaFromType(principalType string, isPIMEligible, isPIMActive bool) string {
+	isGroup := strings.EqualFold(principalType, "Group")
+	if isPIMActive {
+		if isGroup {
+			return "Group (PIM Active)"
+		}
+		return "Direct (PIM Active)"
+	}
+	if isPIMEligible {
+		if isGroup {
+			return "Group (PIM Eligible)"
+		}
+		return "Direct (PIM Eligible)"
+	}
+	if isGroup {
+		return "Group"
+	}
+	return "Direct"
+}
+
+// fetchResourceLevelInputs queries resource-level RBAC via API and converts to rbacRowInput.
+// This is the one remaining API path that cannot be cached.
+func (m *RBACModule) fetchResourceLevelInputs(ctx context.Context, subID string, logger internal.Logger) []rbacRowInput {
+	token, err := m.Session.GetTokenForResource(globals.CommonScopes[0])
+	if err != nil {
+		logger.ErrorM(fmt.Sprintf("Failed to get token for resource-level RBAC in %s: %v", subID, err), globals.AZ_RBAC_MODULE_NAME)
+		return nil
+	}
+
+	cred := &azinternal.StaticTokenCredential{Token: token}
+
+	clientFactory, err := armauthorization.NewClientFactory(subID, cred, azinternal.DefaultARMClientOptions())
+	if err != nil {
+		logger.ErrorM(fmt.Sprintf("Failed to create auth client for resource-level RBAC in %s: %v", subID, err), globals.AZ_RBAC_MODULE_NAME)
+		return nil
+	}
+
+	authClient := clientFactory.NewRoleAssignmentsClient()
+	apiAssignments := m.listResourceLevelAssignments(ctx, subID, authClient, cred, logger)
+
+	var inputs []rbacRowInput
+	for _, ra := range apiAssignments {
+		if ra.Properties == nil {
+			continue
+		}
+		input := rbacRowInput{}
+		if ra.Properties.PrincipalID != nil {
+			input.PrincipalID = *ra.Properties.PrincipalID
+		}
+		if ra.Properties.PrincipalType != nil {
+			input.PrincipalType = string(*ra.Properties.PrincipalType)
+		}
+		if ra.Properties.RoleDefinitionID != nil {
+			input.RoleDefinitionID = *ra.Properties.RoleDefinitionID
+			// Resolve role name from pre-fetched role definitions
+			if m.roleDefs != nil {
+				if rd, ok := m.roleDefs[*ra.Properties.RoleDefinitionID]; ok && rd.Properties != nil && rd.Properties.RoleName != nil {
+					input.RoleName = *rd.Properties.RoleName
+				}
+			}
+		}
+		if ra.Properties.Scope != nil {
+			input.Scope = *ra.Properties.Scope
+		}
+		if ra.Properties.Condition != nil {
+			input.Condition = *ra.Properties.Condition
+		}
+		if ra.Properties.DelegatedManagedIdentityResourceID != nil {
+			input.DelegatedMI = *ra.Properties.DelegatedManagedIdentityResourceID
+		}
+		input.AssignedVia = assignedViaFromType(input.PrincipalType, false, false)
+		inputs = append(inputs, input)
+	}
+	return inputs
+}
+
+// deduplicateInputs removes duplicate rbacRowInput entries based on a composite key.
+func deduplicateInputs(inputs []rbacRowInput) []rbacRowInput {
+	seen := make(map[string]bool)
+	var unique []rbacRowInput
+	for _, input := range inputs {
+		key := fmt.Sprintf("%s|%s|%s|%s", input.PrincipalID, input.RoleDefinitionID, input.Scope, input.AssignedVia)
+		if !seen[key] {
+			seen[key] = true
+			unique = append(unique, input)
+		}
+	}
+	return unique
+}
+
+// buildRowsFromInput builds table rows directly from an rbacRowInput (no intermediate API types).
+func (m *RBACModule) buildRowsFromInput(ctx context.Context, input rbacRowInput, subID, subName string, logger internal.Logger) [][]string {
+	var rows [][]string
+
+	// Build provider list from role definition (if we have it cached)
+	providerList := m.extractProviders(input.RoleDefinitionID)
 	if len(providerList) == 0 {
 		providerList = []string{""}
 	}
@@ -689,138 +623,18 @@ func (m *RBACModule) buildRBACTableRows(ra *armauthorization.RoleAssignment, sub
 	subscriptionScope := ""
 	resourceGroupScope := ""
 
-	if strings.HasPrefix(scope, "/subscriptions/") {
+	if strings.HasPrefix(input.Scope, "/subscriptions/") {
 		subscriptionScope = subName
-		parts := strings.Split(scope, "/")
+		parts := strings.Split(input.Scope, "/")
 		for i, part := range parts {
 			if part == "resourceGroups" && i+1 < len(parts) {
 				resourceGroupScope = parts[i+1]
 				break
 			}
 		}
-	} else if scope == "/" || strings.Contains(scope, "managementGroups") {
+	} else if input.Scope == "/" || strings.Contains(input.Scope, "managementGroups") {
 		tenantScope = m.TenantName
-		if scope == "/" {
-			subscriptionScope = "*"
-			resourceGroupScope = "*"
-		}
-	}
-
-	// Create one row per provider
-	for _, provider := range providerList {
-		row := []string{
-			principalID,        // Principal GUID
-			"",                 // Principal Name (would need lookup)
-			"",                 // Principal UPN (would need lookup)
-			principalType,      // Principal Type
-			roleName,           // Role Name
-			provider,           // Providers/Resources (one per row)
-			"Direct",           // Assigned Via (default for backward compatibility)
-			tenantScope,        // Tenant Scope
-			subscriptionScope,  // Subscription Scope
-			resourceGroupScope, // Resource Group Scope
-			scope,              // Full Scope
-			condition,          // Condition
-			delegatedResource,  // Delegated Managed Identity Resource
-		}
-		rows = append(rows, row)
-	}
-
-	return rows
-}
-
-// buildRBACTableRowsWithMeta builds table rows with metadata including "Assigned Via" tracking and nested group resolution
-func (m *RBACModule) buildRBACTableRowsWithMeta(ctx context.Context, meta rbacAssignmentWithMeta, subID, subName string,
-	roleDefs map[string]*armauthorization.RoleDefinition, logger internal.Logger) [][]string {
-
-	var rows [][]string
-	ra := meta.Assignment
-
-	principalID := ""
-	principalType := ""
-	roleName := ""
-	roleDefID := ""
-	scope := ""
-	condition := ""
-	delegatedResource := ""
-
-	if ra.Properties != nil {
-		if ra.Properties.PrincipalID != nil {
-			principalID = *ra.Properties.PrincipalID
-		}
-		if ra.Properties.PrincipalType != nil {
-			principalType = string(*ra.Properties.PrincipalType)
-		}
-		if ra.Properties.RoleDefinitionID != nil {
-			roleDefID = *ra.Properties.RoleDefinitionID
-		}
-		if ra.Properties.Scope != nil {
-			scope = *ra.Properties.Scope
-		}
-		if ra.Properties.Condition != nil {
-			condition = *ra.Properties.Condition
-		}
-		if ra.Properties.DelegatedManagedIdentityResourceID != nil {
-			delegatedResource = *ra.Properties.DelegatedManagedIdentityResourceID
-		}
-	}
-
-	// Lookup role name and build provider list from role definition
-	providerList := []string{}
-	if roleDefID != "" {
-		if rd, ok := roleDefs[roleDefID]; ok {
-			if rd.Properties != nil && rd.Properties.RoleName != nil {
-				roleName = *rd.Properties.RoleName
-			}
-
-			// Extract unique providers from role permissions
-			providersSet := make(map[string]struct{})
-			if rd.Properties != nil && rd.Properties.Permissions != nil {
-				for _, perm := range rd.Properties.Permissions {
-					if perm.Actions != nil {
-						for _, actionPtr := range perm.Actions {
-							if actionPtr != nil {
-								action := *actionPtr
-								if idx := strings.Index(action, "/"); idx != -1 {
-									provider := action[:idx]
-									providersSet[provider] = struct{}{}
-								}
-							}
-						}
-					}
-				}
-			}
-
-			// Convert set to sorted slice
-			for p := range providersSet {
-				providerList = append(providerList, p)
-			}
-			sort.Strings(providerList)
-		}
-	}
-
-	// If no providers found, create one row with empty provider
-	if len(providerList) == 0 {
-		providerList = []string{""}
-	}
-
-	// Parse scope to extract tenant/subscription/RG
-	tenantScope := ""
-	subscriptionScope := ""
-	resourceGroupScope := ""
-
-	if strings.HasPrefix(scope, "/subscriptions/") {
-		subscriptionScope = subName
-		parts := strings.Split(scope, "/")
-		for i, part := range parts {
-			if part == "resourceGroups" && i+1 < len(parts) {
-				resourceGroupScope = parts[i+1]
-				break
-			}
-		}
-	} else if scope == "/" || strings.Contains(scope, "managementGroups") {
-		tenantScope = m.TenantName
-		if scope == "/" {
+		if input.Scope == "/" {
 			subscriptionScope = "*"
 			resourceGroupScope = "*"
 		}
@@ -828,29 +642,29 @@ func (m *RBACModule) buildRBACTableRowsWithMeta(ctx context.Context, meta rbacAs
 
 	// Resolve nested groups if the principal is a Group
 	nestedGroups := ""
-	if principalType == "Group" && principalID != "" {
-		nestedGroups = m.resolveNestedGroupChain(ctx, principalID, logger)
+	if input.PrincipalType == "Group" && input.PrincipalID != "" {
+		nestedGroups = m.resolveNestedGroupChain(ctx, input.PrincipalID, logger)
 	}
 
 	// Create one row per provider
 	for _, provider := range providerList {
 		row := []string{
-			principalID,        // Principal GUID
-			"",                 // Principal Name (would need lookup)
-			"",                 // Principal UPN (would need lookup)
-			principalType,      // Principal Type
-			roleName,           // Role Name
-			provider,           // Providers/Resources (one per row)
-			meta.AssignedVia,   // Assigned Via (Direct/Group/PIM status)
-			nestedGroups,       // Nested Groups (parent groups this group belongs to)
-			m.TenantName,       // Tenant Name (always populated for multi-tenant support)
-			m.TenantID,         // Tenant ID (always populated for multi-tenant support)
-			tenantScope,        // Tenant Scope (specific to assignment scope, e.g., "/" or mgmt group)
-			subscriptionScope,  // Subscription Scope
-			resourceGroupScope, // Resource Group Scope
-			scope,              // Full Scope
-			condition,          // Condition
-			delegatedResource,  // Delegated Managed Identity Resource
+			input.PrincipalID,   // Principal GUID
+			"",                  // Principal Name (would need lookup)
+			"",                  // Principal UPN (would need lookup)
+			input.PrincipalType, // Principal Type
+			input.RoleName,      // Role Name
+			provider,            // Providers/Resources (one per row)
+			input.AssignedVia,   // Assigned Via
+			nestedGroups,        // Nested Groups
+			m.TenantName,        // Tenant Name
+			m.TenantID,          // Tenant ID
+			tenantScope,         // Tenant Scope
+			subscriptionScope,   // Subscription Scope
+			resourceGroupScope,  // Resource Group Scope
+			input.Scope,         // Full Scope
+			input.Condition,     // Condition
+			input.DelegatedMI,   // Delegated Managed Identity Resource
 		}
 		rows = append(rows, row)
 	}
@@ -858,400 +672,254 @@ func (m *RBACModule) buildRBACTableRowsWithMeta(ctx context.Context, meta rbacAs
 	return rows
 }
 
-// determineAssignedViaFromProperties determines the "Assigned Via" value based on assignment properties
-func (m *RBACModule) determineAssignedViaFromProperties(ra *armauthorization.RoleAssignment, isPIMEligible, isPIMActive bool) string {
-	// Check if principal is a group from PrincipalType
-	isGroup := false
-	if ra.Properties != nil && ra.Properties.PrincipalType != nil {
-		principalType := string(*ra.Properties.PrincipalType)
-		isGroup = (principalType == "Group")
+// extractProviders extracts unique provider names from a role definition.
+// Uses the pre-fetched roleDefs map (for resource-level) or returns empty for cached entries
+// where the role name is already resolved.
+func (m *RBACModule) extractProviders(roleDefID string) []string {
+	if roleDefID == "" || m.roleDefs == nil {
+		return nil
+	}
+	rd, ok := m.roleDefs[roleDefID]
+	if !ok || rd.Properties == nil || rd.Properties.Permissions == nil {
+		return nil
 	}
 
-	if isPIMActive {
-		if isGroup {
-			return "Group (PIM Active)"
+	providersSet := make(map[string]struct{})
+	for _, perm := range rd.Properties.Permissions {
+		if perm.Actions != nil {
+			for _, actionPtr := range perm.Actions {
+				if actionPtr != nil {
+					action := *actionPtr
+					if idx := strings.Index(action, "/"); idx != -1 {
+						providersSet[action[:idx]] = struct{}{}
+					}
+				}
+			}
 		}
-		return "Direct (PIM Active)"
 	}
 
-	if isPIMEligible {
-		if isGroup {
-			return "Group (PIM Eligible)"
-		}
-		return "Direct (PIM Eligible)"
+	var providerList []string
+	for p := range providersSet {
+		providerList = append(providerList, p)
 	}
-
-	if isGroup {
-		return "Group"
-	}
-
-	return "Direct"
+	sort.Strings(providerList)
+	return providerList
 }
 
-// resolveNestedGroupChain resolves the nested group membership chain for a given group
-// Returns a formatted string like "ParentGroup1, ParentGroup2, ParentGroup3 (nested)"
-func (m *RBACModule) resolveNestedGroupChain(ctx context.Context, groupID string, logger internal.Logger) string {
+// ======================
+// Helper Methods
+// ======================
+
+// listResourceLevelAssignments lists role assignments for all individual resources in a subscription
+func (m *RBACModule) listResourceLevelAssignments(ctx context.Context, subID string,
+	authClient *armauthorization.RoleAssignmentsClient, cred *azinternal.StaticTokenCredential, logger internal.Logger) []*armauthorization.RoleAssignment {
+
+	// Get all resources in the subscription
+	resourcesClient, err := armresources.NewClient(subID, cred, azinternal.DefaultARMClientOptions())
+	if err != nil {
+		logger.ErrorM(fmt.Sprintf("Failed to create resources client for subscription %s: %v", subID, err), globals.AZ_RBAC_MODULE_NAME)
+		return nil
+	}
+
+	if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
+		logger.InfoM(fmt.Sprintf("Enumerating individual resource-level RBAC assignments for subscription %s", subID), globals.AZ_RBAC_MODULE_NAME)
+	}
+
+	// Collect all resource IDs first, then query in parallel
+	var resourceIDs []string
+	pager := resourcesClient.NewListPager(nil)
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			logger.ErrorM(fmt.Sprintf("Failed to list resources in subscription %s: %v", subID, err), globals.AZ_RBAC_MODULE_NAME)
+			break
+		}
+		for _, resource := range page.Value {
+			if resource.ID != nil {
+				resourceIDs = append(resourceIDs, *resource.ID)
+			}
+		}
+	}
+
+	if len(resourceIDs) == 0 {
+		return nil
+	}
+
+	// Query role assignments in parallel with semaphore
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	var assignments []*armauthorization.RoleAssignment
+	sem := make(chan struct{}, 20) // 20 concurrent resource-level queries
+
+	for _, rid := range resourceIDs {
+		wg.Add(1)
+		go func(resourceID string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			var resourceAssignments []*armauthorization.RoleAssignment
+			scopePager := authClient.NewListForScopePager(resourceID, nil)
+			for scopePager.More() {
+				page, err := scopePager.NextPage(ctx)
+				if err != nil {
+					logger.ErrorM(fmt.Sprintf("Failed to list role assignments for resource %s: %v", resourceID, err), globals.AZ_RBAC_MODULE_NAME)
+					break
+				}
+				resourceAssignments = append(resourceAssignments, page.Value...)
+			}
+			if len(resourceAssignments) > 0 {
+				mu.Lock()
+				assignments = append(assignments, resourceAssignments...)
+				mu.Unlock()
+			}
+		}(rid)
+	}
+	wg.Wait()
+
+	if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
+		logger.InfoM(fmt.Sprintf("Scanned %d resources, found %d resource-level role assignments", len(resourceIDs), len(assignments)), globals.AZ_RBAC_MODULE_NAME)
+	}
+
+	return assignments
+}
+
+// resolveNestedGroupChain resolves the nested group membership chain for a given group.
+// Returns a formatted string like "ParentGroup1, ParentGroup2, ParentGroup3 (nested)".
+// Uses the bulk group memberships cache exclusively (no API fallback) since the pre-fetch
+// phase should have populated all group memberships.
+func (m *RBACModule) resolveNestedGroupChain(_ context.Context, groupID string, _ internal.Logger) string {
 	if groupID == "" {
 		return ""
 	}
 
-	// Get Graph token
-	token, err := m.Session.GetTokenForResource(globals.CommonScopes[1]) // Microsoft Graph
-	if err != nil {
-		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
-			logger.ErrorM(fmt.Sprintf("Failed to get Graph token for nested group resolution: %v", err), globals.AZ_RBAC_MODULE_NAME)
-		}
-		return ""
-	}
-
-	// Collect parent group display names
-	var parentGroupNames []string
-	visitedGroups := make(map[string]bool) // Prevent infinite loops
-
-	// Use a queue to traverse parent groups (breadth-first)
-	queue := []string{groupID}
-	visitedGroups[groupID] = true
-
-	for len(queue) > 0 {
-		currentGroupID := queue[0]
-		queue = queue[1:]
-
-		// Get parent groups (memberOf) for current group
-		memberOfURL := fmt.Sprintf("https://graph.microsoft.com/v1.0/groups/%s/memberOf?$select=id,displayName", currentGroupID)
-
-		err := azinternal.GraphAPIPagedRequest(ctx, memberOfURL, token, func(body []byte) (bool, string, error) {
-			var data struct {
-				Value []struct {
-					ID          string `json:"id"`
-					DisplayName string `json:"displayName"`
-				} `json:"value"`
-				NextLink string `json:"@odata.nextLink"`
-			}
-
-			if err := json.Unmarshal(body, &data); err != nil {
-				return false, "", fmt.Errorf("failed to decode memberOf response: %v", err)
-			}
-
-			for _, parentGroup := range data.Value {
-				if parentGroup.ID != "" && !visitedGroups[parentGroup.ID] {
-					visitedGroups[parentGroup.ID] = true
-
-					// Add display name to the list
-					displayName := parentGroup.DisplayName
-					if displayName == "" {
-						displayName = parentGroup.ID
-					}
-					parentGroupNames = append(parentGroupNames, displayName)
-
-					// Add to queue to check its parents too
-					queue = append(queue, parentGroup.ID)
-				}
-			}
-
-			hasMore := data.NextLink != ""
-			nextURL := data.NextLink
-			return hasMore, nextURL, nil
-		})
-
-		if err != nil {
-			if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
-				logger.ErrorM(fmt.Sprintf("Failed to resolve nested groups for %s: %v", currentGroupID, err), globals.AZ_RBAC_MODULE_NAME)
-			}
-			break
+	bulkKey := azinternal.AzCacheKey("group-memberships-all", "tenant")
+	if cached, found := azinternal.AzureDataCache.Get(bulkKey); found {
+		bulkData := cached.(map[string]azinternal.CachedGroupMembership)
+		if membership, ok := bulkData[groupID]; ok && len(membership.AllGroupNames) > 0 {
+			return fmt.Sprintf("%s (nested)", strings.Join(membership.AllGroupNames, ", "))
 		}
 	}
-
-	// Format the result
-	if len(parentGroupNames) == 0 {
-		return ""
-	}
-
-	return fmt.Sprintf("%s (nested)", strings.Join(parentGroupNames, ", "))
-}
-
-// deduplicateAssignmentsWithMeta removes duplicate assignments based on assignment ID and type
-func (m *RBACModule) deduplicateAssignmentsWithMeta(assignments []rbacAssignmentWithMeta) []rbacAssignmentWithMeta {
-	seen := make(map[string]bool)
-	var unique []rbacAssignmentWithMeta
-
-	for _, meta := range assignments {
-		if meta.Assignment.ID == nil {
-			continue
-		}
-
-		// Create unique key combining assignment ID and assigned via (to distinguish PIM from regular)
-		key := fmt.Sprintf("%s|%s", *meta.Assignment.ID, meta.AssignedVia)
-		if !seen[key] {
-			seen[key] = true
-			unique = append(unique, meta)
-		}
-	}
-
-	return unique
-}
-
-// getAllPIMEligibilitySchedules retrieves ALL PIM eligible role assignments
-func (m *RBACModule) getAllPIMEligibilitySchedules(ctx context.Context, subID string, logger internal.Logger) []*armauthorization.RoleAssignment {
-	var results []*armauthorization.RoleAssignment
-
-	// Get token for ARM scope
-	token, err := m.Session.GetTokenForResource(globals.CommonScopes[0])
-	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Failed to get token for PIM eligibility: %v", err), globals.AZ_RBAC_MODULE_NAME)
-		return results
-	}
-
-	// Build PIM eligibility URL - NO FILTER to get ALL PIM assignments
-	pimURL := fmt.Sprintf("https://management.azure.com/subscriptions/%s/providers/Microsoft.Authorization/roleEligibilityScheduleInstances?api-version=2020-10-01", subID)
-
-	// Fetch PIM eligibility schedules
-	respBody, err := azinternal.HTTPRequestWithRetry(ctx, "GET", pimURL, token, nil, azinternal.DefaultRateLimitConfig())
-	if err != nil {
-		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
-			logger.ErrorM(fmt.Sprintf("Failed to fetch PIM eligibility schedules: %v", err), globals.AZ_RBAC_MODULE_NAME)
-		}
-		return results
-	}
-
-	// Parse response
-	var pimResp struct {
-		Value []struct {
-			Properties struct {
-				PrincipalID        *string `json:"principalId"`
-				RoleDefinitionID   *string `json:"roleDefinitionId"`
-				Scope              *string `json:"scope"`
-				MemberType         *string `json:"memberType"`
-				PrincipalType      *string `json:"principalType"`
-				Status             *string `json:"status"`
-				ExpandedProperties *struct {
-					Principal *struct {
-						ID   *string `json:"id"`
-						Type *string `json:"type"`
-					} `json:"principal"`
-					RoleDefinition *struct {
-						ID          *string `json:"id"`
-						DisplayName *string `json:"displayName"`
-					} `json:"roleDefinition"`
-					Scope *struct {
-						ID          *string `json:"id"`
-						DisplayName *string `json:"displayName"`
-						Type        *string `json:"type"`
-					} `json:"scope"`
-				} `json:"expandedProperties"`
-			} `json:"properties"`
-			ID *string `json:"id"`
-		} `json:"value"`
-	}
-
-	if err := json.Unmarshal(respBody, &pimResp); err != nil {
-		logger.ErrorM(fmt.Sprintf("Failed to parse PIM eligibility response: %v", err), globals.AZ_RBAC_MODULE_NAME)
-		return results
-	}
-
-	// Convert all PIM eligibility schedule instances to RoleAssignment format
-	for _, item := range pimResp.Value {
-		if item.Properties.PrincipalID != nil {
-			ra := &armauthorization.RoleAssignment{
-				ID: item.ID,
-				Properties: &armauthorization.RoleAssignmentProperties{
-					PrincipalID:      item.Properties.PrincipalID,
-					RoleDefinitionID: item.Properties.RoleDefinitionID,
-					Scope:            item.Properties.Scope,
-					PrincipalType:    (*armauthorization.PrincipalType)(item.Properties.PrincipalType),
-				},
-			}
-			results = append(results, ra)
-		}
-	}
-
-	if m.Verbosity >= globals.AZ_VERBOSE_ERRORS && len(results) > 0 {
-		logger.InfoM(fmt.Sprintf("Found %d PIM eligible assignments", len(results)), globals.AZ_RBAC_MODULE_NAME)
-	}
-
-	return results
-}
-
-// getAllPIMActiveSchedules retrieves ALL PIM active role assignments
-func (m *RBACModule) getAllPIMActiveSchedules(ctx context.Context, subID string, logger internal.Logger) []*armauthorization.RoleAssignment {
-	var results []*armauthorization.RoleAssignment
-
-	// Get token for ARM scope
-	token, err := m.Session.GetTokenForResource(globals.CommonScopes[0])
-	if err != nil {
-		logger.ErrorM(fmt.Sprintf("Failed to get token for PIM active: %v", err), globals.AZ_RBAC_MODULE_NAME)
-		return results
-	}
-
-	// Build PIM active URL - NO FILTER to get ALL PIM assignments
-	pimURL := fmt.Sprintf("https://management.azure.com/subscriptions/%s/providers/Microsoft.Authorization/roleAssignmentScheduleInstances?api-version=2020-10-01", subID)
-
-	// Fetch PIM active schedules
-	respBody, err := azinternal.HTTPRequestWithRetry(ctx, "GET", pimURL, token, nil, azinternal.DefaultRateLimitConfig())
-	if err != nil {
-		if m.Verbosity >= globals.AZ_VERBOSE_ERRORS {
-			logger.ErrorM(fmt.Sprintf("Failed to fetch PIM active schedules: %v", err), globals.AZ_RBAC_MODULE_NAME)
-		}
-		return results
-	}
-
-	// Parse response
-	var pimResp struct {
-		Value []struct {
-			Properties struct {
-				PrincipalID        *string `json:"principalId"`
-				RoleDefinitionID   *string `json:"roleDefinitionId"`
-				Scope              *string `json:"scope"`
-				MemberType         *string `json:"memberType"`
-				PrincipalType      *string `json:"principalType"`
-				Status             *string `json:"status"`
-				ExpandedProperties *struct {
-					Principal *struct {
-						ID   *string `json:"id"`
-						Type *string `json:"type"`
-					} `json:"principal"`
-					RoleDefinition *struct {
-						ID          *string `json:"id"`
-						DisplayName *string `json:"displayName"`
-					} `json:"roleDefinition"`
-					Scope *struct {
-						ID          *string `json:"id"`
-						DisplayName *string `json:"displayName"`
-						Type        *string `json:"type"`
-					} `json:"scope"`
-				} `json:"expandedProperties"`
-			} `json:"properties"`
-			ID *string `json:"id"`
-		} `json:"value"`
-	}
-
-	if err := json.Unmarshal(respBody, &pimResp); err != nil {
-		logger.ErrorM(fmt.Sprintf("Failed to parse PIM active response: %v", err), globals.AZ_RBAC_MODULE_NAME)
-		return results
-	}
-
-	// Convert all PIM active schedule instances to RoleAssignment format
-	for _, item := range pimResp.Value {
-		if item.Properties.PrincipalID != nil {
-			ra := &armauthorization.RoleAssignment{
-				ID: item.ID,
-				Properties: &armauthorization.RoleAssignmentProperties{
-					PrincipalID:      item.Properties.PrincipalID,
-					RoleDefinitionID: item.Properties.RoleDefinitionID,
-					Scope:            item.Properties.Scope,
-					PrincipalType:    (*armauthorization.PrincipalType)(item.Properties.PrincipalType),
-				},
-			}
-			results = append(results, ra)
-		}
-	}
-
-	if m.Verbosity >= globals.AZ_VERBOSE_ERRORS && len(results) > 0 {
-		logger.InfoM(fmt.Sprintf("Found %d PIM active assignments", len(results)), globals.AZ_RBAC_MODULE_NAME)
-	}
-
-	return results
+	return ""
 }
 
 // ======================
-// writeOutput - Write all collected RBAC data using HandleOutputSmart
+// writeOutput - Stream all collected RBAC data from disk to final output files
 // ======================
 func (m *RBACModule) writeOutput(ctx context.Context, logger internal.Logger) {
-	if len(m.RBACRows) == 0 {
+	if m.rbacRowCount == 0 {
 		logger.InfoM("No RBAC assignments found", globals.AZ_RBAC_MODULE_NAME)
 		return
 	}
 
-	logger.InfoM(fmt.Sprintf("Dataset size: %d rows", len(m.RBACRows)), "output")
+	logger.InfoM(fmt.Sprintf("Dataset size: %d rows (disk-backed)", m.rbacRowCount), "output")
 
-	// Sort by tenant, then subscription, then principal ID
-	sort.Slice(m.RBACRows, func(i, j int) bool {
-		// Column 8: Tenant Name
-		if m.RBACRows[i][8] != m.RBACRows[j][8] {
-			return m.RBACRows[i][8] < m.RBACRows[j][8]
-		}
-		// Column 11: Subscription Scope
-		if m.RBACRows[i][11] != m.RBACRows[j][11] {
-			return m.RBACRows[i][11] < m.RBACRows[j][11]
-		}
-		// Column 0: Principal GUID
-		return m.RBACRows[i][0] < m.RBACRows[j][0]
-	})
-
-	// Check if we should split output by tenant (multi-tenant mode)
-	if azinternal.ShouldSplitByTenant(m.IsMultiTenant, m.Tenants) {
-		// Split into separate tenant directories
-		// Column 8 contains tenant name
-		if err := m.FilterAndWritePerTenantAuto(
-			ctx,
-			logger,
-			m.Tenants,
-			m.RBACRows,
-			RBACHeader,
-			"rbac",
-			globals.AZ_RBAC_MODULE_NAME,
-		); err != nil {
-			// Error already logged in helper
-			return
-		}
-		return
-	}
-
-	// Check if we should split output by subscription (multiple subs WITHOUT --tenant flag, single tenant)
-	if azinternal.ShouldSplitBySubscription(m.Subscriptions, m.TenantFlagPresent) {
-		// Split into separate subscription directories
-		// Column 11 contains subscription name (updated from 7 due to new tenant columns)
-		if err := m.FilterAndWritePerSubscription(
-			ctx,
-			logger,
-			m.Subscriptions,
-			m.RBACRows,
-			11, // Column index for "Subscription Scope" (was 7, now 11 after adding tenant columns)
-			RBACHeader,
-			"rbac",
-			globals.AZ_RBAC_MODULE_NAME,
-		); err != nil {
-			// Error already logged in helper
-			return
-		}
-		return
-	}
-
-	// Otherwise: consolidated output (single subscription OR multiple with --tenant flag)
+	// Determine output scope
 	scopeType, scopeIDs, scopeNames := azinternal.DetermineScopeForOutput(
 		m.Subscriptions, m.TenantID, m.TenantName, m.TenantFlagPresent)
 	scopeNames = azinternal.GetSubscriptionNamesForOutput(ctx, m.Session, scopeType, scopeIDs)
 
-	// Generate loot files
+	// Generate loot files by streaming through the temp file
 	lootFiles := m.generateRBACLootFiles()
 
-	// Prepare output (single file with all data, matching enterprise-apps pattern)
-	output := RBACOutput{
-		Table: []internal.TableFile{
-			{
-				Name:   "rbac",
-				Header: RBACHeader,
-				Body:   m.RBACRows,
-			},
-		},
-		Loot: lootFiles,
+	// Build output directory path
+	resultsIdentifier := internal.BuildResultsIdentifier(scopeType, scopeIDs, scopeNames)
+	outDirectoryPath := internal.BuildOutputPath(m.OutputDirectory, "Azure", m.UserUPN, resultsIdentifier)
+
+	if err := os.MkdirAll(outDirectoryPath, 0o755); err != nil {
+		logger.ErrorM(fmt.Sprintf("Error creating output directory: %v", err), globals.AZ_RBAC_MODULE_NAME)
+		m.CommandCounter.Error++
+		return
 	}
 
-	// Write output using HandleOutputSmart (auto-streaming for large datasets)
-	if err := internal.HandleOutputSmart(
-		"Azure",
-		m.Format,
-		m.OutputDirectory,
-		m.Verbosity,
-		m.WrapTable,
-		scopeType,
-		scopeIDs,
-		scopeNames,
-		m.UserUPN,
-		output,
-	); err != nil {
+	// Stream rows from temp file directly to final output files
+	if err := m.streamRBACRowsToOutput(outDirectoryPath, logger); err != nil {
 		logger.ErrorM(fmt.Sprintf("Error writing output: %v", err), globals.AZ_RBAC_MODULE_NAME)
 		m.CommandCounter.Error++
+		return
 	}
+
+	// Write loot files
+	for _, l := range lootFiles {
+		lootDir := internal.BuildLootDir(outDirectoryPath)
+		if err := os.MkdirAll(lootDir, 0o755); err != nil {
+			logger.ErrorM(fmt.Sprintf("Error creating loot directory: %v", err), globals.AZ_RBAC_MODULE_NAME)
+			continue
+		}
+		lootPath := internal.BuildLootPath(outDirectoryPath, l.Name)
+		if err := os.WriteFile(lootPath, []byte(l.Contents), 0644); err != nil {
+			logger.ErrorM(fmt.Sprintf("Error writing loot file: %v", err), globals.AZ_RBAC_MODULE_NAME)
+		} else {
+			logger.InfoM(fmt.Sprintf("Output written to %s", lootPath), globals.AZ_RBAC_MODULE_NAME)
+		}
+	}
+}
+
+// streamRBACRowsToOutput streams all rows from the temp CSV file to final CSV, JSONL, and table files.
+func (m *RBACModule) streamRBACRowsToOutput(outDir string, logger internal.Logger) error {
+	safeName := "rbac"
+
+	// CSV
+	csvDir := internal.BuildCSVDir(outDir)
+	if err := os.MkdirAll(csvDir, 0o755); err != nil {
+		return err
+	}
+	csvPath := internal.BuildCSVPath(outDir, safeName)
+	csvFile, err := os.Create(csvPath)
+	if err != nil {
+		return fmt.Errorf("failed to create csv file: %w", err)
+	}
+	defer csvFile.Close()
+	csvWriter := csv.NewWriter(csvFile)
+	_ = csvWriter.Write(RBACHeader)
+
+	// JSONL
+	jsonDir := internal.BuildJSONDir(outDir)
+	if err := os.MkdirAll(jsonDir, 0o755); err != nil {
+		return err
+	}
+	jsonlPath := internal.BuildJSONLPath(outDir, safeName)
+	jsonlFile, err := os.Create(jsonlPath)
+	if err != nil {
+		return fmt.Errorf("failed to create jsonl file: %w", err)
+	}
+	defer jsonlFile.Close()
+
+	// Table
+	tableDir := internal.BuildTableDir(outDir)
+	if err := os.MkdirAll(tableDir, 0o755); err != nil {
+		return err
+	}
+	tablePath := internal.BuildTablePath(outDir, safeName)
+	tableFile, err := os.Create(tablePath)
+	if err != nil {
+		return fmt.Errorf("failed to create table file: %w", err)
+	}
+	defer tableFile.Close()
+	_, _ = tableFile.WriteString(strings.Join(RBACHeader, "\t") + "\n")
+
+	// Stream all rows
+	jsonEncoder := json.NewEncoder(jsonlFile)
+	err = m.iterateRBACRows(func(row []string) {
+		_ = csvWriter.Write(row)
+
+		rowMap := make(map[string]string, len(RBACHeader))
+		for i, col := range row {
+			if i < len(RBACHeader) {
+				rowMap[RBACHeader[i]] = col
+			}
+		}
+		_ = jsonEncoder.Encode(rowMap)
+
+		_, _ = tableFile.WriteString(strings.Join(row, "\t") + "\n")
+	})
+	csvWriter.Flush()
+
+	logger.InfoM(fmt.Sprintf("Output written to %s", csvPath), globals.AZ_RBAC_MODULE_NAME)
+	logger.InfoM(fmt.Sprintf("Output written to %s", jsonlPath), globals.AZ_RBAC_MODULE_NAME)
+	logger.InfoM(fmt.Sprintf("Output written to %s", tablePath), globals.AZ_RBAC_MODULE_NAME)
+
+	return err
 }
 
 // ------------------------------
@@ -1316,11 +984,13 @@ func (m *RBACModule) generateHighPrivilegeRolesLoot() string {
 	loot.WriteString("# These principals have elevated permissions that could be abused for privilege escalation\n\n")
 
 	foundHighPriv := false
-	for _, row := range m.RBACRows {
-		roleName := row[4]  // Column 4: Role Name
-		principalType := row[3]  // Column 3: Principal Type
+	_ = m.iterateRBACRows(func(row []string) {
+		if len(row) < 16 {
+			return
+		}
+		roleName := row[4]
+		principalType := row[3]
 
-		// Check if this is a high-privilege role
 		if risk, isHighPriv := highPrivRoles[roleName]; isHighPriv {
 			foundHighPriv = true
 
@@ -1349,7 +1019,7 @@ func (m *RBACModule) generateHighPrivilegeRolesLoot() string {
 			loot.WriteString(fmt.Sprintf("az ad sp show --id %s   # If service principal\n", principalGUID))
 			loot.WriteString("\n---\n\n")
 		}
-	}
+	})
 
 	if !foundHighPriv {
 		return ""
@@ -1367,56 +1037,55 @@ func (m *RBACModule) generateServicePrincipalsLoot() string {
 	loot.WriteString("# Focus on: secrets/certificates, federated credentials, and managed identities\n\n")
 
 	foundSP := false
-	spMap := make(map[string][]string) // Map of SP GUID to roles
 
-	for _, row := range m.RBACRows {
-		principalType := row[3]  // Column 3: Principal Type
-
-		if principalType == "ServicePrincipal" || principalType == "Application" {
-			foundSP = true
-			principalGUID := row[0]
-			roleName := row[4]
-
-			spMap[principalGUID] = append(spMap[principalGUID], roleName)
-		}
+	// Single pass: collect SP data
+	type spEntry struct {
+		Name, AppID, GUID, Tenant, Role, Scope string
 	}
+	var spEntries []spEntry
+	seenSPs := make(map[string]bool)
+
+	_ = m.iterateRBACRows(func(row []string) {
+		if len(row) < 16 {
+			return
+		}
+		principalType := row[3]
+		if principalType != "ServicePrincipal" && principalType != "Application" {
+			return
+		}
+		foundSP = true
+		principalGUID := row[0]
+		if seenSPs[principalGUID] {
+			return
+		}
+		seenSPs[principalGUID] = true
+		spEntries = append(spEntries, spEntry{
+			Name: row[1], AppID: row[2], GUID: principalGUID,
+			Tenant: row[8], Role: row[4], Scope: row[13],
+		})
+	})
 
 	if !foundSP {
 		return ""
 	}
 
-	// Generate loot for each SP
-	for _, row := range m.RBACRows {
-		principalType := row[3]
-
-		if principalType == "ServicePrincipal" || principalType == "Application" {
-			principalGUID := row[0]
-			principalName := row[1]
-			principalAppID := row[2]
-			roleName := row[4]
-			fullScope := row[13]
-			tenantName := row[8]
-
-			loot.WriteString(fmt.Sprintf("## Service Principal: %s\n", principalName))
-			loot.WriteString(fmt.Sprintf("Application ID: %s\n", principalAppID))
-			loot.WriteString(fmt.Sprintf("Object ID: %s\n", principalGUID))
-			loot.WriteString(fmt.Sprintf("Tenant: %s\n", tenantName))
-			loot.WriteString(fmt.Sprintf("Role: %s\n", roleName))
-			loot.WriteString(fmt.Sprintf("Scope: %s\n", fullScope))
-			loot.WriteString("\nEnumeration commands:\n")
-			loot.WriteString(fmt.Sprintf("# Get service principal details\n"))
-			loot.WriteString(fmt.Sprintf("az ad sp show --id %s\n\n", principalGUID))
-			loot.WriteString(fmt.Sprintf("# Check for credentials (secrets/certificates)\n"))
-			loot.WriteString(fmt.Sprintf("az ad app credential list --id %s\n\n", principalAppID))
-			loot.WriteString(fmt.Sprintf("# Check for federated credentials (OIDC/GitHub Actions)\n"))
-			loot.WriteString(fmt.Sprintf("az ad app federated-credential list --id %s\n\n", principalAppID))
-			loot.WriteString(fmt.Sprintf("# List all roles for this service principal\n"))
-			loot.WriteString(fmt.Sprintf("az role assignment list --assignee %s --all\n", principalGUID))
-			loot.WriteString("\n---\n\n")
-
-			// Only output once per SP
-			break
-		}
+	for _, sp := range spEntries {
+		loot.WriteString(fmt.Sprintf("## Service Principal: %s\n", sp.Name))
+		loot.WriteString(fmt.Sprintf("Application ID: %s\n", sp.AppID))
+		loot.WriteString(fmt.Sprintf("Object ID: %s\n", sp.GUID))
+		loot.WriteString(fmt.Sprintf("Tenant: %s\n", sp.Tenant))
+		loot.WriteString(fmt.Sprintf("Role: %s\n", sp.Role))
+		loot.WriteString(fmt.Sprintf("Scope: %s\n", sp.Scope))
+		loot.WriteString("\nEnumeration commands:\n")
+		loot.WriteString(fmt.Sprintf("# Get service principal details\n"))
+		loot.WriteString(fmt.Sprintf("az ad sp show --id %s\n\n", sp.GUID))
+		loot.WriteString(fmt.Sprintf("# Check for credentials (secrets/certificates)\n"))
+		loot.WriteString(fmt.Sprintf("az ad app credential list --id %s\n\n", sp.AppID))
+		loot.WriteString(fmt.Sprintf("# Check for federated credentials (OIDC/GitHub Actions)\n"))
+		loot.WriteString(fmt.Sprintf("az ad app federated-credential list --id %s\n\n", sp.AppID))
+		loot.WriteString(fmt.Sprintf("# List all roles for this service principal\n"))
+		loot.WriteString(fmt.Sprintf("az role assignment list --assignee %s --all\n", sp.GUID))
+		loot.WriteString("\n---\n\n")
 	}
 
 	return loot.String()
@@ -1429,11 +1098,14 @@ func (m *RBACModule) generateRBACCommandsLoot() string {
 	loot.WriteString("# RBAC Enumeration Commands\n")
 	loot.WriteString("# Use these commands to enumerate RBAC permissions and identify privilege escalation opportunities\n\n")
 
-	// Collect unique tenants and subscriptions
+	// Collect unique tenants and subscriptions (streaming from disk)
 	tenantsMap := make(map[string]string)
 	subscriptionsMap := make(map[string]bool)
 
-	for _, row := range m.RBACRows {
+	_ = m.iterateRBACRows(func(row []string) {
+		if len(row) < 16 {
+			return
+		}
 		tenantID := row[9]
 		tenantName := row[8]
 		subscriptionScope := row[11]
@@ -1444,7 +1116,7 @@ func (m *RBACModule) generateRBACCommandsLoot() string {
 		if subscriptionScope != "N/A" {
 			subscriptionsMap[subscriptionScope] = true
 		}
-	}
+	})
 
 	// Generate commands for each tenant
 	for tenantID, tenantName := range tenantsMap {
@@ -1495,12 +1167,13 @@ func (m *RBACModule) generatePrivilegeEscalationLoot() string {
 	loot.WriteString("# RBAC Privilege Escalation Paths\n")
 	loot.WriteString("# Common privilege escalation techniques using RBAC permissions\n\n")
 
-	// Track which escalation paths are relevant based on roles found
+	// Track which escalation paths are relevant based on roles found (streaming from disk)
 	foundRoles := make(map[string]bool)
-	for _, row := range m.RBACRows {
-		roleName := row[4]
-		foundRoles[roleName] = true
-	}
+	_ = m.iterateRBACRows(func(row []string) {
+		if len(row) > 4 {
+			foundRoles[row[4]] = true
+		}
+	})
 
 	// Contributor escalation
 	if foundRoles["Contributor"] {

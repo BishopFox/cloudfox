@@ -66,7 +66,7 @@ func ListAutomation(cmd *cobra.Command, args []string) {
 
 	// -------------------- Initialize module --------------------
 	module := &AutomationModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		AutomationRows:  [][]string{},
 		LootMap: map[string]*internal.LootFile{
@@ -435,19 +435,19 @@ func (m *AutomationModule) generateLoot(ctx context.Context, subID, subName, rgN
 
 	// -------------------- Runbooks --------------------
 	if lf, ok := m.LootMap["automation-runbooks"]; ok && runbooks != nil {
-		lf.Contents += fmt.Sprintf("\n" + strings.Repeat("=", 80) + "\n")
+		lf.Contents += "\n" + strings.Repeat("=", 80) + "\n"
 		lf.Contents += fmt.Sprintf("AUTOMATION ACCOUNT: %s\n", accName)
 		lf.Contents += fmt.Sprintf("RESOURCE GROUP: %s\n", rgName)
 		lf.Contents += fmt.Sprintf("SUBSCRIPTION: %s (%s)\n", subName, subID)
-		lf.Contents += fmt.Sprintf(strings.Repeat("=", 80) + "\n\n")
+		lf.Contents += strings.Repeat("=", 80) + "\n\n"
 
 		for _, rb := range runbooks {
 			rbName := azinternal.SafeString(rb.Name)
 
 			// Header for this runbook
-			lf.Contents += fmt.Sprintf("\n" + strings.Repeat("-", 80) + "\n")
+			lf.Contents += "\n" + strings.Repeat("-", 80) + "\n"
 			lf.Contents += fmt.Sprintf("RUNBOOK: %s\n", rbName)
-			lf.Contents += fmt.Sprintf(strings.Repeat("-", 80) + "\n\n")
+			lf.Contents += strings.Repeat("-", 80) + "\n\n"
 
 			// 1) Serialize metadata as JSON (your local Runbook struct)
 			lf.Contents += fmt.Sprintf("### Runbook Metadata ###\n")
@@ -477,9 +477,9 @@ func (m *AutomationModule) generateLoot(ctx context.Context, subID, subName, rgN
 			}
 		}
 
-		lf.Contents += fmt.Sprintf("\n" + strings.Repeat("=", 80) + "\n")
+		lf.Contents += "\n" + strings.Repeat("=", 80) + "\n"
 		lf.Contents += fmt.Sprintf("END OF AUTOMATION ACCOUNT: %s\n", accName)
-		lf.Contents += fmt.Sprintf(strings.Repeat("=", 80) + "\n\n")
+		lf.Contents += strings.Repeat("=", 80) + "\n\n"
 	}
 
 	// -------------------- Schedules --------------------
@@ -504,11 +504,11 @@ func (m *AutomationModule) generateLoot(ctx context.Context, subID, subName, rgN
 
 	// ==================== AUTOMATION CONNECTIONS (GET-AZAUTOMATIONCONNECTIONSCOPE) ====================
 	if lf, ok := m.LootMap["automation-connections"]; ok && connections != nil && len(connections) > 0 {
-		lf.Contents += fmt.Sprintf("\n" + strings.Repeat("=", 80) + "\n")
+		lf.Contents += "\n" + strings.Repeat("=", 80) + "\n"
 		lf.Contents += fmt.Sprintf("AUTOMATION ACCOUNT: %s\n", accName)
 		lf.Contents += fmt.Sprintf("RESOURCE GROUP: %s\n", rgName)
 		lf.Contents += fmt.Sprintf("SUBSCRIPTION: %s (%s)\n", subName, subID)
-		lf.Contents += fmt.Sprintf(strings.Repeat("=", 80) + "\n\n")
+		lf.Contents += strings.Repeat("=", 80) + "\n\n"
 
 		for _, conn := range connections {
 			lf.Contents += fmt.Sprintf("## Connection: %s\n", conn.Name)
@@ -552,11 +552,11 @@ func (m *AutomationModule) generateLoot(ctx context.Context, subID, subName, rgN
 
 	// ==================== SCOPE ENUMERATION RUNBOOKS ====================
 	if lf, ok := m.LootMap["automation-scope-runbooks"]; ok && scopeRunbookScript != "" {
-		lf.Contents += fmt.Sprintf("\n" + strings.Repeat("=", 80) + "\n")
+		lf.Contents += "\n" + strings.Repeat("=", 80) + "\n"
 		lf.Contents += fmt.Sprintf("SCOPE ENUMERATION RUNBOOK FOR: %s\n", accName)
 		lf.Contents += fmt.Sprintf("RESOURCE GROUP: %s\n", rgName)
 		lf.Contents += fmt.Sprintf("SUBSCRIPTION: %s (%s)\n", subName, subID)
-		lf.Contents += fmt.Sprintf(strings.Repeat("=", 80) + "\n\n")
+		lf.Contents += strings.Repeat("=", 80) + "\n\n"
 		lf.Contents += "# This runbook tests what subscriptions and Key Vaults are accessible\n"
 		lf.Contents += "# to the automation account's connections and managed identities.\n"
 		lf.Contents += "#\n"
@@ -591,9 +591,9 @@ func (m *AutomationModule) generateHybridWorkerLoot(subID, subName string, hybri
 
 	// ==================== HYBRID WORKERS ====================
 	if lf, ok := m.LootMap["automation-hybrid-workers"]; ok && len(hybridWorkers) > 0 {
-		lf.Contents += fmt.Sprintf("\n" + strings.Repeat("=", 80) + "\n")
+		lf.Contents += "\n" + strings.Repeat("=", 80) + "\n"
 		lf.Contents += fmt.Sprintf("HYBRID WORKER VMS FOR SUBSCRIPTION: %s (%s)\n", subName, subID)
-		lf.Contents += fmt.Sprintf(strings.Repeat("=", 80) + "\n\n")
+		lf.Contents += strings.Repeat("=", 80) + "\n\n"
 
 		for _, vm := range hybridWorkers {
 			lf.Contents += fmt.Sprintf("## VM: %s\n", vm.VMName)

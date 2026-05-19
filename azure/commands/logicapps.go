@@ -63,7 +63,7 @@ func ListLogicApps(cmd *cobra.Command, args []string) {
 
 	// -------------------- Initialize module --------------------
 	module := &LogicAppsModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		LogicAppRows:    [][]string{},
 		LootMap: map[string]*internal.LootFile{

@@ -78,7 +78,7 @@ func ListIoTHub(cmd *cobra.Command, args []string) {
 	}
 
 	module := &IoTHubModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		IoTHubRows:      [][]string{},
 		LootMap: map[string]*internal.LootFile{

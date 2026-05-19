@@ -66,7 +66,7 @@ func ListDeployments(cmd *cobra.Command, args []string) {
 
 	// -------------------- Initialize module --------------------
 	module := &DeploymentsModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		DeploymentRows:  [][]string{},
 		LootMap: map[string]*internal.LootFile{

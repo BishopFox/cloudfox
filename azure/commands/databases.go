@@ -63,7 +63,7 @@ func ListDatabases(cmd *cobra.Command, args []string) {
 
 	// -------------------- Initialize module --------------------
 	module := &DatabasesModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		DatabaseRows:    [][]string{},
 		LootMap: map[string]*internal.LootFile{

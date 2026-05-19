@@ -197,10 +197,13 @@ type BaseAzureModule struct {
 // Usage (AFTER - 4 lines):
 //
 //	module := &StorageModule{
-//	    BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+//	    BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0), // 0 = use AZ_DEFAULT_GOROUTINES
 //	    StorageAccounts: []StorageAccountInfo{},
 //	}
 func NewBaseAzureModule(cmdCtx *CommandContext, goroutines int) BaseAzureModule {
+	if goroutines <= 0 {
+		goroutines = globals.AZ_DEFAULT_GOROUTINES
+	}
 	return BaseAzureModule{
 		Session:           cmdCtx.Session,
 		TenantID:          cmdCtx.TenantID,
@@ -352,8 +355,12 @@ func (b *BaseAzureModule) RunSubscriptionEnumeration(
 				wg.Done()
 			}()
 
-			// Acquire semaphore
-			semaphore <- struct{}{}
+			// Check for cancellation before starting work
+			select {
+			case <-ctx.Done():
+				return
+			case semaphore <- struct{}{}:
+			}
 			defer func() { <-semaphore }()
 
 			b.CommandCounter.Pending--
@@ -420,8 +427,12 @@ func (b *BaseAzureModule) RunEntityEnumeration(
 				wg.Done()
 			}()
 
-			// Acquire semaphore
-			semaphore <- struct{}{}
+			// Check for cancellation before starting work
+			select {
+			case <-ctx.Done():
+				return
+			case semaphore <- struct{}{}:
+			}
 			defer func() { <-semaphore }()
 
 			b.CommandCounter.Pending--
@@ -504,8 +515,12 @@ func (b *BaseAzureModule) RunTenantEnumeration(
 				wg.Done()
 			}()
 
-			// Acquire semaphore
-			semaphore <- struct{}{}
+			// Check for cancellation before starting work
+			select {
+			case <-ctx.Done():
+				return
+			case semaphore <- struct{}{}:
+			}
 			defer func() { <-semaphore }()
 
 			b.CommandCounter.Pending--
@@ -582,8 +597,12 @@ func (b *BaseAzureModule) RunTenantSubscriptionEnumeration(
 					wg.Done()
 				}()
 
-				// Acquire semaphore
-				semaphore <- struct{}{}
+				// Check for cancellation before starting work
+				select {
+				case <-ctx.Done():
+					return
+				case semaphore <- struct{}{}:
+				}
 				defer func() { <-semaphore }()
 
 				b.CommandCounter.Pending--
@@ -616,7 +635,7 @@ func (b *BaseAzureModule) RunTenantSubscriptionEnumeration(
 //	    return // error already logged
 //	}
 func InitializeCommandContext(cmd *cobra.Command, moduleName string) (*CommandContext, error) {
-	ctx := context.Background()
+	ctx := internal.SetupSignalHandler()
 	logger := internal.NewLogger()
 
 	// -------------------- Extract flags --------------------

@@ -74,7 +74,7 @@ func ListKeyVaults(cmd *cobra.Command, args []string) {
 
 	// -------------------- Initialize module --------------------
 	module := &KeyVaultsModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		VaultRows:       [][]string{},
 		HsmRows:         [][]string{},

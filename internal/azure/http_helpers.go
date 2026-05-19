@@ -3,6 +3,7 @@ package azure
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 )
@@ -108,11 +110,12 @@ func HTTPRequestWithRetry(ctx context.Context, method, url, token string, body i
 		if resp.StatusCode == 429 {
 			retryAfter := extractRetryAfter(resp, config)
 
-			// Adaptive: reduce rate on throttle, restore after cooldown
-			if strings.Contains(url, "graph.microsoft.com") {
-				AdaptiveSlowdown(GetGraphLimiter(), retryAfter)
+			// Signal AIMD controller to halve the rate
+			isGraph := strings.Contains(url, "graph.microsoft.com")
+			if isGraph {
+				OnThrottleGraph()
 			} else {
-				AdaptiveSlowdown(GetARMLimiter(), retryAfter)
+				OnThrottleARM()
 			}
 
 			if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
@@ -134,9 +137,10 @@ func HTTPRequestWithRetry(ctx context.Context, method, url, token string, body i
 				return nil, fmt.Errorf("rate limited after %d retries (last delay: %v): %s", config.MaxRetries, retryAfter, string(responseBody))
 			}
 
-			// Wait for the specified retry-after duration before next attempt
+			// Wait for retry-after + jitter to avoid thundering herd
+			wait := retryAfter + jitter(2*time.Second)
 			select {
-			case <-time.After(retryAfter):
+			case <-time.After(wait):
 				continue
 			case <-ctx.Done():
 				return nil, fmt.Errorf("request cancelled while waiting for rate limit: %v", ctx.Err())
@@ -159,8 +163,13 @@ func HTTPRequestWithRetry(ctx context.Context, method, url, token string, body i
 			return nil, fmt.Errorf("client error: status %d: %s", resp.StatusCode, string(responseBody))
 		}
 
-		// Success (2xx)
+		// Success (2xx) - signal AIMD controller so it can ramp up
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			if strings.Contains(url, "graph.microsoft.com") {
+				OnSuccessGraph()
+			} else if strings.Contains(url, "management.azure.com") {
+				OnSuccessARM()
+			}
 			return responseBody, nil
 		}
 
@@ -283,23 +292,74 @@ func GraphAPIPagedRequest(ctx context.Context, initialURL, token string, process
 		}
 
 		url = nextURL
-
-		// Add delay between pages to avoid rapid-fire requests
-		if url != "" {
-			delay := 1 * time.Second
-			if globals.AZ_VERBOSITY >= globals.AZ_VERBOSE_ERRORS {
-				logger.InfoM(fmt.Sprintf("Pausing %v before next page", delay), "graph-paged")
-			}
-			select {
-			case <-time.After(delay):
-				// Continue
-			case <-ctx.Done():
-				return fmt.Errorf("request cancelled: %v", ctx.Err())
-			}
-		}
+		// No inter-page delay: the AIMD rate limiter in HTTPRequestWithRetry
+		// already paces requests. Adding a fixed delay here would undercount
+		// actual throughput capacity.
 	}
 
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Graph Batch API ($batch endpoint)
+// ---------------------------------------------------------------------------
+
+// GraphBatchSubRequest is a single sub-request in a Graph $batch call.
+type GraphBatchSubRequest struct {
+	ID     string `json:"id"`
+	Method string `json:"method"`
+	URL    string `json:"url"`
+}
+
+// GraphBatchSubResponse is a single sub-response from a Graph $batch call.
+type GraphBatchSubResponse struct {
+	ID     string          `json:"id"`
+	Status int             `json:"status"`
+	Body   json.RawMessage `json:"body"`
+}
+
+// GraphBatchRequest sends up to 20 sub-requests to the Graph $batch endpoint
+// and returns the sub-responses. The caller is responsible for chunking
+// requests into batches of <= 20 (the Graph API maximum).
+func GraphBatchRequest(ctx context.Context, token string, requests []GraphBatchSubRequest) ([]GraphBatchSubResponse, error) {
+	if len(requests) == 0 {
+		return nil, nil
+	}
+	if len(requests) > 20 {
+		return nil, fmt.Errorf("Graph $batch limit is 20 sub-requests, got %d", len(requests))
+	}
+
+	payload := struct {
+		Requests []GraphBatchSubRequest `json:"requests"`
+	}{Requests: requests}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal batch request: %w", err)
+	}
+
+	config := RateLimitConfig{
+		MaxRetries:        8,
+		InitialDelay:      5 * time.Second,
+		MaxDelay:          5 * time.Minute,
+		EnableBackoff:     true,
+		RespectRetryAfter: true,
+	}
+
+	body, err := HTTPRequestWithRetry(ctx, "POST", "https://graph.microsoft.com/v1.0/$batch", token,
+		strings.NewReader(string(payloadBytes)), config)
+	if err != nil {
+		return nil, fmt.Errorf("batch request failed: %w", err)
+	}
+
+	var result struct {
+		Responses []GraphBatchSubResponse `json:"responses"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse batch response: %w", err)
+	}
+
+	return result.Responses, nil
 }
 
 // ParseGraphError attempts to parse a Graph API error response
@@ -375,4 +435,32 @@ func UnmarshalResponseBody(resp *http.Response, v interface{}) error {
 	}
 
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Azure SDK error helpers
+// ---------------------------------------------------------------------------
+
+// IsAccessDenied returns true if the error is an Azure 403 AuthorizationFailed response.
+func IsAccessDenied(err error) bool {
+	var respErr *azcore.ResponseError
+	if errors.As(err, &respErr) {
+		return respErr.StatusCode == 403
+	}
+	return false
+}
+
+// AzureAPIErrorSummary returns a short, human-readable summary of an Azure SDK error.
+// For ResponseError it extracts the status code and error code; for other errors it
+// returns the error message directly (no multi-line HTTP response dump).
+func AzureAPIErrorSummary(err error) string {
+	var respErr *azcore.ResponseError
+	if errors.As(err, &respErr) {
+		code := respErr.ErrorCode
+		if code == "" {
+			code = "Unknown"
+		}
+		return fmt.Sprintf("HTTP %d (%s)", respErr.StatusCode, code)
+	}
+	return err.Error()
 }

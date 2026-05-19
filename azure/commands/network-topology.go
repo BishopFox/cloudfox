@@ -109,7 +109,7 @@ func AnalyzeNetworkTopology(cmd *cobra.Command, args []string) {
 
 	// -------------------- Initialize module --------------------
 	module := &NetworkTopologyModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		VNetMap:         make(map[string]*VNetTopology),
 		HubRows:         [][]string{},

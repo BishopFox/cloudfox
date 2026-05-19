@@ -75,7 +75,7 @@ func AnalyzeLateralMovement(cmd *cobra.Command, args []string) {
 	}
 
 	module := &LateralMovementModule{
-		BaseAzureModule:     azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule:     azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:       cmdCtx.Subscriptions,
 		LateralMovementRows: [][]string{},
 		vnetCache:           make(map[string]*armnetwork.VirtualNetwork),

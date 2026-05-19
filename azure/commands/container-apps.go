@@ -73,7 +73,7 @@ func ListContainerJobs(cmd *cobra.Command, args []string) {
 
 	// -------------------- Initialize module --------------------
 	module := &ContainerJobsModule{
-		BaseAzureModule:  azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule:  azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:    cmdCtx.Subscriptions,
 		ContainerJobRows: [][]string{},
 		LootMap: map[string]*internal.LootFile{

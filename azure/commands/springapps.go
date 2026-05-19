@@ -63,7 +63,7 @@ func ListSpringApps(cmd *cobra.Command, args []string) {
 	}
 
 	module := &SpringAppsModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		ServiceRows:     [][]string{},
 		AppRows:         [][]string{},

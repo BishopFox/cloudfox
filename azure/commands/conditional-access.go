@@ -65,7 +65,7 @@ func ListConditionalAccessPolicies(cmd *cobra.Command, args []string) {
 
 	// Initialize module
 	module := &ConditionalAccessModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		PolicyRows:      [][]string{},
 	}
 
@@ -105,6 +105,10 @@ func (m *ConditionalAccessModule) PrintConditionalAccessPolicies(ctx context.Con
 // Process single tenant
 // ------------------------------
 func (m *ConditionalAccessModule) processTenant(ctx context.Context, logger internal.Logger) {
+	// Load CA policies from disk cache if available (benefits standalone runs)
+	azinternal.EnsureBulkCacheLoaded(m.OutputDirectory, m.TenantID,
+		azinternal.AzCacheKey("ca-policies-full", "tenant"))
+
 	logger.InfoM(fmt.Sprintf("Enumerating Conditional Access Policies for tenant: %s", m.TenantName), globals.AZ_CONDITIONAL_ACCESS_MODULE_NAME)
 
 	// Get all CA policies

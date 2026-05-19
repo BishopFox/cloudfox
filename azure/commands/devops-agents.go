@@ -43,27 +43,28 @@ Generates table output and five loot files:
 	Run: ListDevOpsAgents,
 }
 
-var (
-	azDevOpsAgentsOrg string
-)
-
 func init() {
-	AzDevOpsAgentsCommand.Flags().StringVarP(&azDevOpsAgentsOrg, "org", "o", "", "Azure DevOps organization name")
+	AzDevOpsAgentsCommand.Flags().StringVar(&azinternal.OrgFlag, "org", "", "Azure DevOps organization name (required)")
+	AzDevOpsAgentsCommand.Flags().StringVar(&azinternal.PatFlag, "pat", "", "Azure DevOps Personal Access Token (optional; falls back to $AZDO_PAT)")
 }
 
 var logger = internal.NewLogger()
 
 // ListDevOpsAgents is the main entry point for the devops-agents command
 func ListDevOpsAgents(cmd *cobra.Command, args []string) {
-	var err error
+	// -------------------- Extract flags --------------------
+	parentCmd := cmd.Parent()
+	verbosity, _ := parentCmd.PersistentFlags().GetInt("verbosity")
+	wrap, _ := parentCmd.PersistentFlags().GetBool("wrap")
+	outputDirectory, _ := parentCmd.PersistentFlags().GetString("outdir")
+	format, _ := parentCmd.PersistentFlags().GetString("output")
 
 	// Get organization from flag or environment variable
-	organization := azDevOpsAgentsOrg
-	if organization == "" {
-		organization = os.Getenv("AZURE_DEVOPS_ORGANIZATION")
+	if azinternal.OrgFlag == "" {
+		azinternal.OrgFlag = os.Getenv("AZURE_DEVOPS_ORGANIZATION")
 	}
 
-	if organization == "" {
+	if azinternal.OrgFlag == "" {
 		logger.ErrorM("Organization is required. Use --org flag or set AZURE_DEVOPS_ORGANIZATION environment variable.", globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
 		return
 	}
@@ -83,17 +84,8 @@ func ListDevOpsAgents(cmd *cobra.Command, args []string) {
 		logger.InfoM("Using Personal Access Token (AZDO_PAT)", globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
 	}
 
-	// Get output directory
-	outputDirectory := "./cloudfox-output/azure-" + organization
-	if err = os.MkdirAll(outputDirectory, 0755); err != nil {
-		logger.ErrorM(fmt.Sprintf("Error creating output directory: %s", err), globals.AZ_DEVOPS_AGENTS_MODULE_NAME)
-		return
-	}
-
-	verbosity := globals.AZ_VERBOSITY
-
 	// Run the command
-	RunDevOpsAgentsCommand(organization, pat, verbosity, outputDirectory)
+	RunDevOpsAgentsCommand(azinternal.OrgFlag, pat, verbosity, outputDirectory, format, wrap)
 }
 
 // DevOpsAgentsModule handles enumeration of Azure DevOps Agents (pipeline runners)
@@ -158,18 +150,18 @@ func (m *DevOpsAgentsModule) PrintHelp() {
 }
 
 // RunDevOpsAgentsCommand executes the devops-agents command
-func RunDevOpsAgentsCommand(organization, pat string, verbosity int, outputDirectory string) {
+func RunDevOpsAgentsCommand(organization, pat string, verbosity int, outputDirectory, format string, wrap bool) {
 	// Initialize module
 	logger := internal.NewLogger()
 	module := &DevOpsAgentsModule{
 		Organization:    organization,
 		PAT:             pat,
 		Verbosity:       verbosity,
-		WrapTable:       false, // DevOps tables typically not wrapped
+		WrapTable:       wrap,
 		OutputDirectory: outputDirectory,
-		Format:          "all", // Default format
+		Format:          format,
 		DisplayName:     organization,
-		Email:           "", // DevOps doesn't use email typically
+		Email:           "",
 		LootMap:         make(map[string]*internal.LootFile),
 	}
 

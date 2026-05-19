@@ -71,7 +71,7 @@ func ListExpressRouteCircuits(cmd *cobra.Command, args []string) {
 	}
 
 	module := &ExpressRouteModule{
-		BaseAzureModule:  azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule:  azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:    cmdCtx.Subscriptions,
 		ExpressRouteRows: [][]string{},
 		PeeringRows:      [][]string{},

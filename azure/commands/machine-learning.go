@@ -65,7 +65,7 @@ func ListMachineLearning(cmd *cobra.Command, args []string) {
 
 	// -------------------- Initialize module --------------------
 	module := &MachineLearningModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		MLRows:          [][]string{},
 		WorkspaceRows:   [][]string{},

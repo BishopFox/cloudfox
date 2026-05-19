@@ -73,7 +73,7 @@ func ListVPNGateways(cmd *cobra.Command, args []string) {
 	}
 
 	module := &VPNGatewayModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		VPNGatewayRows:  [][]string{},
 		P2SConfigRows:   [][]string{},

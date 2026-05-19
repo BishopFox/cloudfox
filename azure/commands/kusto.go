@@ -62,7 +62,7 @@ func ListKusto(cmd *cobra.Command, args []string) {
 	}
 
 	module := &KustoModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		KustoRows:       [][]string{},
 		LootMap: map[string]*internal.LootFile{

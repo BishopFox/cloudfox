@@ -87,7 +87,7 @@ func ListWhoami(cmd *cobra.Command, args []string) {
 
 	// -------------------- Initialize module --------------------
 	module := &WhoamiModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		UserType:        userType,
 		ListRGs:         listRGs,
@@ -169,6 +169,10 @@ func (m *WhoamiModule) processSubscription(ctx context.Context, subscriptionID s
 	// Use API filter to automatically resolve group memberships and inherited assignments
 	// Check management group hierarchy first (role assignments can be inherited from parent scopes)
 	mgHierarchy := azinternal.GetManagementGroupHierarchy(ctx, m.Session, subscriptionID)
+
+	// Ensure group membership cache is loaded from disk (benefits standalone runs)
+	azinternal.EnsureBulkCacheLoaded(m.OutputDirectory, m.TenantID,
+		azinternal.AzCacheKey("group-memberships-all", "tenant"))
 
 	// Get user's group memberships to check for group-based role assignments
 	// The principalId filter does NOT expand group memberships - we must check them explicitly

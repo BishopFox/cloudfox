@@ -73,7 +73,7 @@ func ListAPIManagement(cmd *cobra.Command, args []string) {
 	}
 
 	module := &APIManagementModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		APIMRows:        [][]string{},
 		APIRows:         [][]string{},

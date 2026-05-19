@@ -96,7 +96,7 @@ func ListResourceGraph(cmd *cobra.Command, args []string) {
 	}
 
 	module := &ResourceGraphModule{
-		BaseAzureModule:           azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule:           azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:             cmdCtx.Subscriptions,
 		InternetFacingRows:        [][]string{},
 		UnencryptedRows:           [][]string{},

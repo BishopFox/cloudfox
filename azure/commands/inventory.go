@@ -64,7 +64,7 @@ func ListInventory(cmd *cobra.Command, args []string) {
 
 	// -------------------- Initialize module --------------------
 	module := &InventoryModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		InventoryRows:   [][]string{},
 		LootMap: map[string]*internal.LootFile{

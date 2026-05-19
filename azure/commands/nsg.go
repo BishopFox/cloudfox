@@ -63,7 +63,7 @@ func ListNSG(cmd *cobra.Command, args []string) {
 	}
 
 	module := &NSGModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		NSGRows:         [][]string{},
 		NSGSummaryRows:  [][]string{}, // NEW: Effective rules summary

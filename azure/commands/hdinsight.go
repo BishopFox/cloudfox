@@ -78,7 +78,7 @@ func ListHDInsight(cmd *cobra.Command, args []string) {
 	}
 
 	module := &HDInsightModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		HDIRows:         [][]string{},
 		LootMap: map[string]*internal.LootFile{

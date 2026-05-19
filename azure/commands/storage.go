@@ -103,7 +103,7 @@ func ListStorageAccounts(cmd *cobra.Command, args []string) {
 
 	// -------------------- Initialize module --------------------
 	module := &StorageModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		StorageAccounts: []StorageAccountInfo{},
 		StorageSvc:      storageservice.New(cmdCtx.Session),

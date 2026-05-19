@@ -433,9 +433,9 @@ func (m *DevOpsReposModule) generateSecuritySummary(projName, repoName, repoID, 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.LootMap["repo-security-summary"].Contents += fmt.Sprintf("\n" + strings.Repeat("=", 80) + "\n")
+	m.LootMap["repo-security-summary"].Contents += "\n" + strings.Repeat("=", 80) + "\n"
 	m.LootMap["repo-security-summary"].Contents += fmt.Sprintf("REPOSITORY SECURITY SUMMARY: %s/%s\n", projName, repoName)
-	m.LootMap["repo-security-summary"].Contents += fmt.Sprintf(strings.Repeat("=", 80) + "\n\n")
+	m.LootMap["repo-security-summary"].Contents += strings.Repeat("=", 80) + "\n\n"
 
 	m.LootMap["repo-security-summary"].Contents += fmt.Sprintf("Repository ID: %s\n", repoID)
 	m.LootMap["repo-security-summary"].Contents += fmt.Sprintf("Visibility: %s\n", visibility)

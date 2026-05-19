@@ -75,7 +75,7 @@ func ListTrafficManager(cmd *cobra.Command, args []string) {
 
 	// -------------------- Initialize module --------------------
 	module := &TrafficManagerModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		ProfileRows:     [][]string{},
 		EndpointRows:    [][]string{},

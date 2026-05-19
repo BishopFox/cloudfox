@@ -83,7 +83,7 @@ func ListComplianceDashboard(cmd *cobra.Command, args []string) {
 	}
 
 	module := &ComplianceDashboardModule{
-		BaseAzureModule:          azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule:          azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:            cmdCtx.Subscriptions,
 		PolicyComplianceRows:     [][]string{},
 		RegulatoryComplianceRows: [][]string{},

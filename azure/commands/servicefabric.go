@@ -61,7 +61,7 @@ func ListServiceFabric(cmd *cobra.Command, args []string) {
 	}
 
 	module := &ServiceFabricModule{
-		BaseAzureModule:   azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule:   azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:     cmdCtx.Subscriptions,
 		ServiceFabricRows: [][]string{},
 		LootMap: map[string]*internal.LootFile{

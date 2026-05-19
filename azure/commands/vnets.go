@@ -64,7 +64,7 @@ func ListVNets(cmd *cobra.Command, args []string) {
 	}
 
 	module := &VNetsModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		VNetRows:        [][]string{},
 		SubnetRows:      [][]string{},

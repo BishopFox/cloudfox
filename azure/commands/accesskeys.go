@@ -65,7 +65,7 @@ func ListAccessKeys(cmd *cobra.Command, args []string) {
 
 	// -------------------- Initialize module --------------------
 	module := &AccessKeysModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		AccessKeysRows:  [][]string{},
 		LootMap: map[string]*internal.LootFile{

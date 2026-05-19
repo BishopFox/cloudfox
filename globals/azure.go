@@ -5,6 +5,11 @@ const AZ_DIR_BASE = "azure"
 const AZ_DIR_TEN = "tenants"
 const AZ_DIR_SUB = "subscriptions"
 
+// Default goroutine concurrency for module entity/subscription enumeration.
+// The AIMD rate limiter is the real throughput gate, so this can be set high.
+// Modules can override by passing a non-zero value to NewBaseAzureModule.
+const AZ_DEFAULT_GOROUTINES = 20
+
 // Test file full names and paths
 var (
 	STORAGE_ACCOUNTS_TEST_FILE string
@@ -18,6 +23,8 @@ var (
 	ACR_REGISTRIES_TEST_FILE   string
 	AZ_VERBOSITY               int
 	AZ_REFRESH_CACHE           bool
+	AZ_SKIP_MFA                bool // --skip-mfa: skip MFA enumeration (saves ~1hr on large tenants)
+	AZ_GRAPH_RPS               int  // --graph-rps: override Graph API rate limit ceiling (0 = auto-tuning)
 
 	// Token-based authentication
 	// Separate tokens for ARM and Graph APIs

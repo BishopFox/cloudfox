@@ -72,7 +72,7 @@ func ListFederatedCredentials(cmd *cobra.Command, args []string) {
 
 	// Initialize module
 	module := &FederatedCredentialsModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		TableData:       []map[string]interface{}{},
 		LootMap:         make(map[string]*internal.LootFile),

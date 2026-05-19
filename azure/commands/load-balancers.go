@@ -71,7 +71,7 @@ func ListLoadBalancers(cmd *cobra.Command, args []string) {
 	}
 
 	module := &LoadBalancersModule{
-		BaseAzureModule:  azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule:  azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:    cmdCtx.Subscriptions,
 		LoadBalancerRows: [][]string{},
 		LootMap: map[string]*internal.LootFile{

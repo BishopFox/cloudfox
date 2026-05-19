@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -490,6 +491,91 @@ func PrintPhaseStatus(callingModuleName string, message string) {
 // PrintPhaseDone prints a status message and advances to a new line.
 func PrintPhaseDone(callingModuleName string, message string) {
 	fmt.Printf(clearln+"[%s] %s\n", cyan(callingModuleName), message)
+}
+
+// PhaseSpinner displays an animated spinner that tracks concurrent tasks.
+// Call Add() before launching a goroutine to register a task label, and
+// Done() when the task completes. The spinner displays the unique set of
+// currently active tasks (deduplicated) and updates as they complete.
+//
+//	spinner := internal.NewPhaseSpinner("mymodule")
+//	spinner.Add("groups")
+//	go func() { fetchGroups(); spinner.Done("groups") }()
+//	spinner.Add("roles")
+//	go func() { fetchRoles(); spinner.Done("roles") }()
+//	wg.Wait()
+//	spinner.Stop("Pre-fetch complete")
+type PhaseSpinner struct {
+	module   string
+	mu       sync.Mutex
+	counts   map[string]int // label -> active count (supports multiple subs with same label)
+	order    []string       // insertion order for stable display
+	stopCh   chan struct{}
+	finished chan struct{}
+}
+
+// NewPhaseSpinner creates and starts an animated spinner.
+func NewPhaseSpinner(callingModuleName string) *PhaseSpinner {
+	s := &PhaseSpinner{
+		module:   callingModuleName,
+		counts:   make(map[string]int),
+		stopCh:   make(chan struct{}),
+		finished: make(chan struct{}),
+	}
+
+	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	go func() {
+		defer close(s.finished)
+		i := 0
+		for {
+			select {
+			case <-s.stopCh:
+				return
+			case <-time.After(100 * time.Millisecond):
+				s.mu.Lock()
+				var labels []string
+				for _, label := range s.order {
+					if s.counts[label] > 0 {
+						labels = append(labels, label)
+					}
+				}
+				s.mu.Unlock()
+				if len(labels) > 0 {
+					fmt.Printf(clearln+"[%s] %s Pre-fetching: %s", cyan(s.module), frames[i%len(frames)], strings.Join(labels, ", "))
+				}
+				i++
+			}
+		}
+	}()
+	return s
+}
+
+// Add registers a task label as active. Safe to call multiple times for the
+// same label (e.g., one per subscription); the display deduplicates.
+func (s *PhaseSpinner) Add(label string) {
+	s.mu.Lock()
+	if s.counts[label] == 0 {
+		s.order = append(s.order, label)
+	}
+	s.counts[label]++
+	s.mu.Unlock()
+}
+
+// Done decrements the active count for a label. When the count reaches zero
+// the label is removed from the display. Safe to call from any goroutine.
+func (s *PhaseSpinner) Done(label string) {
+	s.mu.Lock()
+	if s.counts[label] > 0 {
+		s.counts[label]--
+	}
+	s.mu.Unlock()
+}
+
+// Stop terminates the spinner and prints the done message on a new line.
+func (s *PhaseSpinner) Stop(doneMessage string) {
+	close(s.stopCh)
+	<-s.finished
+	fmt.Printf(clearln+"[%s] %s\n", cyan(s.module), doneMessage)
 }
 
 func ReorganizeAWSProfiles(allProfiles []string, mgmtProfile string) []string {

@@ -421,9 +421,9 @@ func (m *DevOpsArtifactsModule) generateFeedSecuritySummary(feedName, feedID, fe
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.LootMap["artifacts-security-summary"].Contents += fmt.Sprintf("\n" + strings.Repeat("=", 80) + "\n")
+	m.LootMap["artifacts-security-summary"].Contents += "\n" + strings.Repeat("=", 80) + "\n"
 	m.LootMap["artifacts-security-summary"].Contents += fmt.Sprintf("FEED SECURITY SUMMARY: %s\n", feedName)
-	m.LootMap["artifacts-security-summary"].Contents += fmt.Sprintf(strings.Repeat("=", 80) + "\n\n")
+	m.LootMap["artifacts-security-summary"].Contents += strings.Repeat("=", 80) + "\n\n"
 
 	m.LootMap["artifacts-security-summary"].Contents += fmt.Sprintf("Feed ID: %s\n", feedID)
 	m.LootMap["artifacts-security-summary"].Contents += fmt.Sprintf("Visibility: %s\n", feedVisibility)

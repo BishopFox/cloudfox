@@ -82,7 +82,7 @@ func ListAks(cmd *cobra.Command, args []string) {
 
 	// -------------------- Initialize module --------------------
 	module := &AksModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		Clusters:        []AksCluster{},
 	}

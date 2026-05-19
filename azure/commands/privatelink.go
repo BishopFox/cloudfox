@@ -77,7 +77,7 @@ func ListPrivateEndpoints(cmd *cobra.Command, args []string) {
 	}
 
 	module := &PrivateLinkModule{
-		BaseAzureModule:     azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule:     azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:       cmdCtx.Subscriptions,
 		PrivateEndpointRows: [][]string{},
 		LootMap: map[string]*internal.LootFile{

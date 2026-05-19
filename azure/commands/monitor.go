@@ -82,7 +82,7 @@ func ListMonitor(cmd *cobra.Command, args []string) {
 
 	// -------------------- Initialize module --------------------
 	module := &MonitorModule{
-		BaseAzureModule:    azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule:    azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:      cmdCtx.Subscriptions,
 		WorkspaceRows:      [][]string{},
 		DiagnosticRows:     [][]string{},

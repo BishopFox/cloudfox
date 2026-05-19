@@ -83,7 +83,7 @@ func ListAcr(cmd *cobra.Command, args []string) {
 
 	// -------------------- Initialize module --------------------
 	module := &AcrModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		AcrRows:         [][]string{},
 		LootMap: map[string]*internal.LootFile{

@@ -1980,3 +1980,41 @@ func (w *teeStreamWriter) closeAll() {
 		}
 	}
 }
+
+// ============================================================================
+// EXPORTED PATH BUILDERS - For modules that stream directly to disk
+// ============================================================================
+
+// BuildResultsIdentifier creates a results identifier from scope information (exported wrapper).
+func BuildResultsIdentifier(scopeType string, identifiers, names []string) string {
+	return buildResultsIdentifier(scopeType, identifiers, names)
+}
+
+// BuildOutputPath constructs the standard output directory path.
+func BuildOutputPath(outputDirectory, cloudProvider, principal, resultsIdentifier string) string {
+	return filepath.Join(outputDirectory, "cloudfox-output", cloudProvider, principal, resultsIdentifier)
+}
+
+// BuildCSVDir returns the CSV subdirectory path.
+func BuildCSVDir(outDir string) string { return filepath.Join(outDir, "csv") }
+
+// BuildCSVPath returns the full path for a CSV file.
+func BuildCSVPath(outDir, name string) string { return filepath.Join(outDir, "csv", name+".csv") }
+
+// BuildJSONDir returns the JSON subdirectory path.
+func BuildJSONDir(outDir string) string { return filepath.Join(outDir, "json") }
+
+// BuildJSONLPath returns the full path for a JSONL file.
+func BuildJSONLPath(outDir, name string) string { return filepath.Join(outDir, "json", name+".jsonl") }
+
+// BuildTableDir returns the table subdirectory path.
+func BuildTableDir(outDir string) string { return filepath.Join(outDir, "table") }
+
+// BuildTablePath returns the full path for a table file.
+func BuildTablePath(outDir, name string) string { return filepath.Join(outDir, "table", name+".txt") }
+
+// BuildLootDir returns the loot subdirectory path.
+func BuildLootDir(outDir string) string { return filepath.Join(outDir, "loot") }
+
+// BuildLootPath returns the full path for a loot file.
+func BuildLootPath(outDir, name string) string { return filepath.Join(outDir, "loot", name+".txt") }

@@ -87,7 +87,7 @@ func ListEndpoints(cmd *cobra.Command, args []string) {
 
 	// -------------------- Initialize module --------------------
 	module := &EndpointsModule{
-		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 5),
+		BaseAzureModule: azinternal.NewBaseAzureModule(cmdCtx, 0),
 		Subscriptions:   cmdCtx.Subscriptions,
 		PublicRows:      [][]string{},
 		PrivateRows:     [][]string{},
