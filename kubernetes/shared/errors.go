@@ -11,17 +11,31 @@ import (
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
-// Context returns a background context for API operations.
-// We do NOT use timeouts because arbitrary timeouts cause silent data loss.
-// Instead, we detect session/auth errors and exit with clear messages.
-func Context() context.Context {
-	return context.Background()
+// signalCtx is the process-wide signal-aware context for K8s commands.
+// Initialized lazily on first call to Context() or ContextWithCancel().
+var signalCtx context.Context
+
+// getSignalCtx returns the signal-aware context, initializing it on first use.
+func getSignalCtx() context.Context {
+	if signalCtx == nil {
+		signalCtx = internal.SetupSignalHandler()
+	}
+	return signalCtx
 }
 
-// ContextWithCancel returns a cancellable context for operations that need cleanup.
+// Context returns a signal-aware context for API operations.
+// We do NOT use timeouts because arbitrary timeouts cause silent data loss.
+// Instead, we detect session/auth errors and exit with clear messages.
+// The returned context is cancelled on confirmed Ctrl+C (double-press).
+func Context() context.Context {
+	return getSignalCtx()
+}
+
+// ContextWithCancel returns a cancellable child of the signal-aware context.
 // Use this when you need to cancel operations on shutdown/interrupt.
+// The returned context is cancelled on confirmed Ctrl+C or when cancel is called.
 func ContextWithCancel() (context.Context, context.CancelFunc) {
-	return context.WithCancel(context.Background())
+	return context.WithCancel(getSignalCtx())
 }
 
 // DEPRECATED: These functions exist only for backward compatibility during migration.
@@ -32,19 +46,19 @@ func ContextWithCancel() (context.Context, context.CancelFunc) {
 func ContextWithTimeout() (context.Context, context.CancelFunc) {
 	// Return a cancellable context instead of a timeout context
 	// This maintains the same function signature for backward compatibility
-	return context.WithCancel(context.Background())
+	return context.WithCancel(getSignalCtx())
 }
 
 // ContextWithCustomTimeout is DEPRECATED - returns context without timeout.
 // Arbitrary timeouts cause silent data loss. Use Context() instead.
 func ContextWithCustomTimeout(_ interface{}) (context.Context, context.CancelFunc) {
-	return context.WithCancel(context.Background())
+	return context.WithCancel(getSignalCtx())
 }
 
 // ContextWithLongTimeout is DEPRECATED - returns context without timeout.
 // Arbitrary timeouts cause silent data loss. Use Context() instead.
 func ContextWithLongTimeout() (context.Context, context.CancelFunc) {
-	return context.WithCancel(context.Background())
+	return context.WithCancel(getSignalCtx())
 }
 
 // IsTimeoutError checks if the error is a context deadline exceeded error
