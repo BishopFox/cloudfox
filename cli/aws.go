@@ -2009,7 +2009,6 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 		apiGatewayClient := apigateway.NewFromConfig(AWSConfig)
 		apiGatewayv2Client := apigatewayv2.NewFromConfig(AWSConfig)
 		appRunnerClient := apprunner.NewFromConfig(AWSConfig)
-		bedrockAgentClient := bedrockagent.NewFromConfig(AWSConfig)
 		athenaClient := athena.NewFromConfig(AWSConfig)
 		cloud9Client := cloud9.NewFromConfig(AWSConfig)
 		cloudFormationClient := cloudformation.NewFromConfig(AWSConfig)
@@ -2344,18 +2343,6 @@ func runAllChecksCommand(cmd *cobra.Command, args []string) {
 			AWSTableCols:  AWSTableCols,
 		}
 		buckets.PrintBuckets(AWSOutputDirectory, Verbosity)
-
-		bedrockAgents := aws.BedrockAgentsModule{
-			BedrockAgentClient: bedrockAgentClient,
-			Caller:             *caller,
-			AWSRegions:         internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
-			AWSProfile:         profile,
-			Goroutines:         Goroutines,
-			WrapTable:          AWSWrapTable,
-			AWSOutputType:      AWSOutputType,
-			AWSTableCols:       AWSTableCols,
-		}
-		bedrockAgents.PrintBedrockAgents(AWSOutputDirectory, Verbosity)
 
 		ecr := aws.ECRModule{
 			ECRClient:     ecrClient,
