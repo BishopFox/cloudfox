@@ -92,8 +92,9 @@ var (
 	AWSUseCache        bool
 	AWSMFAToken        string
 
-	Goroutines int
-	Verbosity  int
+	Goroutines    int
+	Verbosity     int
+	AWSMaxRetries int
 
 	AWSCommands = &cobra.Command{
 		Use:   "aws",
@@ -545,6 +546,9 @@ type OrgAccounts struct {
 
 func awsPreRun(cmd *cobra.Command, args []string) {
 	gob.Register(&types.Organization{})
+
+	// Set the max retries before any AWS config loading happens
+	internal.MaxRetries = AWSMaxRetries
 
 	// if multiple profiles were used, ensure the management account is first
 	// if AWSProfilesList != "" || AWSAllProfiles {
@@ -2553,6 +2557,7 @@ func init() {
 	AWSCommands.PersistentFlags().BoolVarP(&AWSUseCache, "cached", "c", false, "Load cached data from disk. Faster, but if changes have been recently made you'll miss them")
 	AWSCommands.PersistentFlags().StringVarP(&AWSTableCols, "cols", "t", "", "Comma separated list of columns to display in table output")
 	AWSCommands.PersistentFlags().StringVar(&AWSMFAToken, "mfa-token", "", "MFA Token")
+	AWSCommands.PersistentFlags().IntVar(&AWSMaxRetries, "max-retries", 3, "Maximum number of AWS API retry attempts. Set to 0 for no retries (faster for black-box/limited-permission enumeration)")
 	AWSCommands.PersistentFlags().StringVar(&PmapperDataBasePath, "pmapper-data-basepath", "", "Supply the base path for the pmapper data files (useful if you have copied them from another machine)\nPoint to the parent directory that contains all of the pmapper data by account numbers. \n\tExample: /path/to/com.nccgroup.principalmapper/\n\tExample: ./pmapperdata/")
 
 	AWSCommands.AddCommand(

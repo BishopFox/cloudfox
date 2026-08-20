@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -34,6 +36,23 @@ var (
 	UtilsFs       = afero.NewOsFs()
 	credsMap      = map[string]aws.Credentials{}
 	ConfigMap     = map[string]aws.Config{}
+
+	// MaxRetries controls the maximum number of retry attempts for AWS API calls.
+	// The default AWS SDK behavior is 3 attempts. Set to 0 for no retries, which
+	// is useful when running with limited-permission credentials to avoid slow
+	// timeouts on access-denied errors.
+	MaxRetries = 3
+
+	// unreachableRegions tracks regions that failed a TCP connectivity check so
+	// they can be skipped for the remainder of the run. Protected by a mutex
+	// since multiple goroutines may probe regions concurrently.
+	unreachableRegions   = make(map[string]bool)
+	unreachableRegionsMu sync.RWMutex
+
+	// RegionReachabilityTimeout controls how long the TCP probe waits before
+	// declaring a region unreachable. Default 3 seconds is enough for any
+	// healthy AWS endpoint.
+	RegionReachabilityTimeout = 3 * time.Second
 )
 
 type CloudFoxRunData struct {
@@ -132,7 +151,7 @@ func AWSConfigFileLoader(AWSProfile string, version string, AwsMfaToken string) 
 		if AwsMfaToken != "" {
 			cfg, err = config.LoadDefaultConfig(context.TODO(), config.WithSharedConfigProfile(AWSProfile), config.WithDefaultRegion("us-east-1"), config.WithRetryer(
 				func() aws.Retryer {
-					return retry.AddWithMaxAttempts(retry.NewStandard(), 3)
+					return retry.AddWithMaxAttempts(retry.NewStandard(), MaxRetries)
 				}), config.WithAssumeRoleCredentialOptions(func(options *stscreds.AssumeRoleOptions) {
 				options.TokenProvider = func() (string, error) {
 					return AwsMfaToken, nil
@@ -142,7 +161,7 @@ func AWSConfigFileLoader(AWSProfile string, version string, AwsMfaToken string) 
 		} else {
 			cfg, err = config.LoadDefaultConfig(context.TODO(), config.WithSharedConfigProfile(AWSProfile), config.WithDefaultRegion("us-east-1"), config.WithRetryer(
 				func() aws.Retryer {
-					return retry.AddWithMaxAttempts(retry.NewStandard(), 3)
+					return retry.AddWithMaxAttempts(retry.NewStandard(), MaxRetries)
 				}), config.WithAssumeRoleCredentialOptions(func(options *stscreds.AssumeRoleOptions) {
 				options.TokenProvider = stscreds.StdinTokenProvider
 			}),
@@ -210,6 +229,58 @@ func AWSWhoami(awsProfile string, version string, AwsMfaToken string) (*sts.GetC
 	return CallerIdentity, err
 }
 
+// isRegionReachable does a fast TCP dial to the STS endpoint in the given region.
+// STS is available in every region and is a lightweight endpoint to probe. If the
+// connection succeeds, the region is reachable. Results are cached so each region
+// is only probed once per run.
+func isRegionReachable(region string) bool {
+	unreachableRegionsMu.RLock()
+	alreadyUnreachable := unreachableRegions[region]
+	unreachableRegionsMu.RUnlock()
+	if alreadyUnreachable {
+		return false
+	}
+
+	endpoint := fmt.Sprintf("sts.%s.amazonaws.com:443", region)
+	conn, err := net.DialTimeout("tcp", endpoint, RegionReachabilityTimeout)
+	if err != nil {
+		unreachableRegionsMu.Lock()
+		unreachableRegions[region] = true
+		unreachableRegionsMu.Unlock()
+		TxtLog.Warnf("Region %s is unreachable (probe to %s failed: %v) - skipping for this run", region, endpoint, err)
+		return false
+	}
+	conn.Close()
+	return true
+}
+
+// FilterReachableRegions takes a list of regions and returns only the ones that
+// pass a TCP connectivity probe. Unreachable regions are probed in parallel and
+// cached so subsequent calls return immediately.
+func FilterReachableRegions(regions []string) []string {
+	// Probe all regions concurrently for speed
+	type probeResult struct {
+		region    string
+		reachable bool
+	}
+	resultsChan := make(chan probeResult, len(regions))
+
+	for _, region := range regions {
+		go func(r string) {
+			resultsChan <- probeResult{region: r, reachable: isRegionReachable(r)}
+		}(region)
+	}
+
+	var reachableRegions []string
+	for range regions {
+		result := <-resultsChan
+		if result.reachable {
+			reachableRegions = append(reachableRegions, result.region)
+		}
+	}
+	return reachableRegions
+}
+
 func GetEnabledRegions(awsProfile string, version string, AwsMfaToken string) []string {
 	cacheKey := fmt.Sprintf("GetEnabledRegions-%s", awsProfile)
 	cached, found := Cache.Get(cacheKey)
@@ -234,12 +305,15 @@ func GetEnabledRegions(awsProfile string, version string, AwsMfaToken string) []
 		if err != nil {
 			TxtLog.Println(err)
 		}
-		return AWSRegions
+		reachableRegions := FilterReachableRegions(AWSRegions)
+		Cache.Set(cacheKey, reachableRegions, cache.DefaultExpiration)
+		return reachableRegions
 	}
 
 	for _, region := range regions.Regions {
 		enabledRegions = append(enabledRegions, *region.RegionName)
 	}
+	enabledRegions = FilterReachableRegions(enabledRegions)
 	Cache.Set(cacheKey, enabledRegions, cache.DefaultExpiration)
 	return enabledRegions
 
