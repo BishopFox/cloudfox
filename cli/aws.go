@@ -13,6 +13,7 @@ import (
 	"github.com/BishopFox/cloudfox/aws/sdk"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/BishopFox/cloudfox/internal/common"
+	"github.com/aws/aws-sdk-go-v2/service/bedrockagent"
 	"github.com/aws/aws-sdk-go-v2/service/apigateway"
 	"github.com/aws/aws-sdk-go-v2/service/apigatewayv2"
 	"github.com/aws/aws-sdk-go-v2/service/apprunner"
@@ -102,6 +103,17 @@ var (
 		Run: func(cmd *cobra.Command, args []string) {
 			cmd.Help()
 		},
+	}
+
+	BedrockAgentsCommand = &cobra.Command{
+		Use:     "bedrock-agents",
+		Aliases: []string{"bedrock-agent", "agents"},
+		Short:   "Enumerate Bedrock agents, action groups, collaborators, and aliases",
+		Long: "\nUse case examples:\n" +
+			os.Args[0] + " aws bedrock-agents --profile readonly_profile",
+		PreRun:  awsPreRun,
+		Run:     runBedrockAgentsCommand,
+		PostRun: awsPostRun,
 	}
 
 	AccessKeysFilter  string
@@ -1800,6 +1812,32 @@ func runSecretsCommand(cmd *cobra.Command, args []string) {
 	}
 }
 
+func runBedrockAgentsCommand(cmd *cobra.Command, args []string) {
+	for _, profile := range AWSProfiles {
+		sharedServiceMap := &awsservicemap.AwsServiceMap{
+			JsonFileSource: "DOWNLOAD_FROM_AWS",
+		}
+		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
+		caller, err := internal.AWSWhoami(profile, cmd.Root().Version, AWSMFAToken)
+		if err != nil {
+			continue
+		}
+		m := aws.BedrockAgentsModule{
+			BedrockAgentClient: bedrockagent.NewFromConfig(AWSConfig),
+
+			Caller:        *caller,
+			AWSRegions:    internal.GetEnabledRegions(profile, cmd.Root().Version, AWSMFAToken),
+			AWSProfile:    profile,
+			Goroutines:    Goroutines,
+			WrapTable:     AWSWrapTable,
+			AWSOutputType: AWSOutputType,
+			AWSTableCols:  AWSTableCols,
+			ServiceMap:    sharedServiceMap,
+		}
+		m.PrintBedrockAgents(AWSOutputDirectory, Verbosity)
+	}
+}
+
 func runTagsCommand(cmd *cobra.Command, args []string) {
 	for _, profile := range AWSProfiles {
 		var AWSConfig = internal.AWSConfigFileLoader(profile, cmd.Root().Version, AWSMFAToken)
@@ -2563,6 +2601,7 @@ func init() {
 	AWSCommands.AddCommand(
 		AccessKeysCommand,
 		AllChecksCommand,
+		BedrockAgentsCommand,
 		ApiGwCommand,
 		BucketsCommand,
 		CapeCommand,

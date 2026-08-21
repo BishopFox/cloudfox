@@ -52,7 +52,7 @@ For the full documentation please refer to our [wiki](https://github.com/BishopF
 
 | Provider| CloudFox Commands |
 | - | - |
-| AWS | 34 |
+| AWS | 35 |
 | Azure | 4 |
 | GCP | 60 |
 | Kubernetes | Support Planned | 
@@ -160,6 +160,7 @@ For detailed setup instructions, see the [GCP Setup Guide](https://github.com/Bi
 | AWS | [all-checks](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#all-checks) | Run all of the other commands using reasonable defaults. You'll  still want to check out the non-default options of each command, but this is a great place to start.  |
 | AWS | [access-keys](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#access-keys) | Lists active access keys for all users. Useful for cross referencing a key you found with which in-scope account it belongs to.  |
 | AWS | [api-gw](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#api-gw) | Lists API gateway endpoints and gives you custom curl commands including API tokens if they are stored in metadata. |
+| AWS | [bedrock-agents](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#bedrock-agents) | Enumerate Bedrock agents, action groups, collaborators, and aliases. Extracts system prompts, Lambda integrations, and API schemas. |
 | AWS | [buckets](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#filesystems)  | Lists the buckets in the account and gives you handy commands for inspecting them further.  |
 | AWS | [cape](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#cape)  |  Enumerates cross-account privilege escalation paths. Requires `pmapper` to be run first |
 | AWS | [cloudformation](https://github.com/BishopFox/cloudfox/wiki/AWS-Commands#cloudformation)  | Lists the cloudformation stacks in the account. Generates loot file with stack details, stack parameters, and stack output - look for secrets. |
