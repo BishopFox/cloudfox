@@ -307,9 +307,9 @@ func (m *OutboundAssumedRolesModule) executeChecks(r string, wg *sync.WaitGroup,
 		m.modLog.Error(err)
 	}
 	if res {
-		// wg.Add(1)
-		// m.CommandCounter.IncrTotal()
-		// m.getAssumeRoleLogEntriesPerRegion(r, wg, semaphore, dataReceiver)
+		wg.Add(1)
+		m.CommandCounter.IncrTotal()
+		m.getAssumeRoleLogEntriesPerRegion(r, wg, semaphore, dataReceiver)
 		wg.Add(1)
 		m.CommandCounter.IncrTotal()
 		m.getCrossAccountBatchGetImageEntriesPerRegion(r, wg, semaphore, dataReceiver)
@@ -334,9 +334,13 @@ func (m *OutboundAssumedRolesModule) getAssumeRoleLogEntriesPerRegion(r string, 
 	//var LookupAttribute types.LookupAttribute
 	var pages int
 
-	days := 0 - m.Days
+	// Ensure input days is absolute value for lookback calculation. 
+	days := m.Days
+	if (days < 0) {
+		days = -days
+	}
 	endTime := aws.Time(time.Now())
-	startTime := endTime.AddDate(0, 0, days)
+	startTime := endTime.AddDate(0, 0, -days)
 	for {
 		LookupEvents, err := m.CloudTrailClient.LookupEvents(
 			context.TODO(),
@@ -427,21 +431,25 @@ func (m *OutboundAssumedRolesModule) getCrossAccountBatchGetImageEntriesPerRegio
 	//var LookupAttribute types.LookupAttribute
 	var pages int
 
-	days := 0 - m.Days
+	// Ensure input days is absolute value for lookback calculation. 
+	days := m.Days
+	if (days < 0) {
+		days = -days
+	}
 	endTime := aws.Time(time.Now())
-	startTime := endTime.AddDate(0, 0, days)
+	startTime := endTime.AddDate(0, 0, -days)
 	for {
 		LookupEvents, err := m.CloudTrailClient.LookupEvents(
 			context.TODO(),
 			&cloudtrail.LookupEventsInput{
 				EndTime:   endTime,
 				StartTime: &startTime,
-				// LookupAttributes: []cloudtrailTypes.LookupAttribute{
-				// 	{
-				// 		AttributeKey:   cloudtrailTypes.LookupAttributeKeyEventName,
-				// 		AttributeValue: aws.String("BatchGetImage"),
-				// 	},
-				// },
+				LookupAttributes: []cloudtrailTypes.LookupAttribute{
+					{
+				 		AttributeKey:   cloudtrailTypes.LookupAttributeKeyEventName,
+				 		AttributeValue: aws.String("BatchGetImage"),
+					},
+				},
 				NextToken: PaginationControl,
 			},
 
