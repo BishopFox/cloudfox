@@ -113,6 +113,24 @@ Enumerate storage accounts for a specific subscription:
 			}
 		},
 	}
+	AzACRCommand = &cobra.Command{
+		Use:     "acr",
+		Aliases: []string{"container-registries"},
+		Short:   "Enumerates Azure Container Registries",
+		Long: `
+Enumerate container registries for a specific tenant:
+./cloudfox az acr --tenant TENANT_ID
+
+Enumerate container registries for a specific subscription:
+./cloudfox az acr --subscription SUBSCRIPTION_ID
+`,
+		Run: func(cmd *cobra.Command, args []string) {
+			err := azure.AzACRCommand(AzTenantID, AzSubscription, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
+			if err != nil {
+				log.Fatal(err)
+			}
+		},
+	}
 )
 
 func init() {
@@ -134,6 +152,7 @@ func init() {
 		AzRBACCommand,
 		AzVMsCommand,
 		AzStorageCommand,
+		AzACRCommand,
 		AzInventoryCommand)
 
 }
