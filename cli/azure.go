@@ -1,11 +1,12 @@
 package cli
 
 import (
-	"log"
-
 	"github.com/BishopFox/cloudfox/azure"
+	"github.com/BishopFox/cloudfox/internal"
 	"github.com/spf13/cobra"
 )
+
+var azureLogger = internal.NewLogger()
 
 var (
 	AzTenantID        string
@@ -37,7 +38,7 @@ Display Available Azure CLI Sessions:
 		Run: func(cmd *cobra.Command, args []string) {
 			err := azure.AzWhoamiCommand(AzOutputDirectory, cmd.Root().Version, AzWrapTable, AzVerbosity, AzWhoamiListRGsAlso)
 			if err != nil {
-				log.Fatal(err)
+				azureLogger.FatalM(err.Error(), "whoami")
 			}
 		},
 	}
@@ -55,7 +56,7 @@ Enumerate inventory for a specific subscription:
 		Run: func(cmd *cobra.Command, args []string) {
 			err := azure.AzInventoryCommand(AzTenantID, AzSubscription, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
 			if err != nil {
-				log.Fatal(err)
+				azureLogger.FatalM(err.Error(), "inventory")
 			}
 		},
 	}
@@ -74,7 +75,7 @@ Enumerate role assignments for a specific subscription:
 
 			err := azure.AzRBACCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
 			if err != nil {
-				log.Fatal(err)
+				azureLogger.FatalM(err.Error(), "rbac")
 			}
 		},
 	}
@@ -91,7 +92,7 @@ Enumerate VMs for a specific subscription:
 		Run: func(cmd *cobra.Command, args []string) {
 			err := azure.AzVMsCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
 			if err != nil {
-				log.Fatal(err)
+				azureLogger.FatalM(err.Error(), "vms")
 			}
 		},
 	}
@@ -109,7 +110,7 @@ Enumerate storage accounts for a specific subscription:
 		Run: func(cmd *cobra.Command, args []string) {
 			err := azure.AzStorageCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
 			if err != nil {
-				log.Fatal(err)
+				azureLogger.FatalM(err.Error(), "storage")
 			}
 		},
 	}
@@ -127,7 +128,7 @@ Enumerate container registries for a specific subscription:
 		Run: func(cmd *cobra.Command, args []string) {
 			err := azure.AzACRCommand(AzTenantID, AzSubscription, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable)
 			if err != nil {
-				log.Fatal(err)
+				azureLogger.FatalM(err.Error(), "acr")
 			}
 		},
 	}
@@ -137,7 +138,7 @@ Enumerate container registries for a specific subscription:
 		Short:   "Enumerates Azure Function Apps and their configuration",
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := azure.AzFuncCommand(AzTenantID, AzSubscription, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable); err != nil {
-				log.Fatal(err)
+				azureLogger.FatalM(err.Error(), "func")
 			}
 		},
 	}
@@ -147,7 +148,7 @@ Enumerate container registries for a specific subscription:
 		Short:   "Enumerates Azure Automation Accounts and their assets",
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := azure.AzAutomationCommand(AzTenantID, AzSubscription, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable); err != nil {
-				log.Fatal(err)
+				azureLogger.FatalM(err.Error(), "automation")
 			}
 		},
 	}

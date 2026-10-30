@@ -16,8 +16,6 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/smithy-go/ptr"
-	"github.com/fatih/color"
-	"github.com/kyokomi/emoji"
 )
 
 func AzVMsCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, Version string, AzVerbosity int, AzWrapTable bool, AzMergedTable bool) error {
@@ -39,9 +37,7 @@ func AzVMsCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory,
 					Wrap: AzWrapTable,
 				},
 			}
-			fmt.Printf("[%s][%s] Enumerating VMs for tenant %s\n",
-				color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_VMS_MODULE_NAME),
-				fmt.Sprintf("%s (%s)", ptr.ToString(tenantInfo.DefaultDomain), ptr.ToString(tenantInfo.ID)))
+			azureLogger.InfoM(fmt.Sprintf("Enumerating VMs for tenant %s (%s)", ptr.ToString(tenantInfo.DefaultDomain), ptr.ToString(tenantInfo.ID)), globals.AZ_VMS_MODULE_NAME)
 
 			o.PrefixIdentifier = ptr.ToString(tenantInfo.DefaultDomain)
 			o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), "1-tenant-level")
@@ -84,7 +80,7 @@ func AzVMsCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory,
 
 	} else {
 		// Error: please make a valid flag selection
-		fmt.Println("Please enter a valid input with a valid flag. Use --help for info.")
+		azureLogger.ErrorM("Please enter a valid input with a valid flag. Use --help for info.", globals.AZ_VMS_MODULE_NAME)
 	}
 
 	return nil
@@ -110,9 +106,7 @@ func runVMsCommandForSingleSubscription(AzSubscription string, AzOutputDirectory
 	o.PrefixIdentifier = AzSubscriptionInfo.Name
 	o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), AzSubscriptionInfo.Name)
 
-	fmt.Printf("[%s][%s] Enumerating VMs for subscription %s\n",
-		color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_VMS_MODULE_NAME),
-		fmt.Sprintf("%s (%s)", AzSubscriptionInfo.Name, AzSubscriptionInfo.ID))
+	azureLogger.InfoM(fmt.Sprintf("Enumerating VMs for subscription %s (%s)", AzSubscriptionInfo.Name, AzSubscriptionInfo.ID), globals.AZ_VMS_MODULE_NAME)
 
 	// populate the table data
 	header, body, userData = getVMsPerSubscriptionID(AzSubscriptionInfo.ID)
@@ -153,7 +147,7 @@ func getVMsPerTenantID(AzTenantID string) ([]string, [][]string, string) {
 		for _, rg := range getResourceGroups(ptr.ToString(s.SubscriptionID)) {
 			resultsHeader, b, userData, err = getComputeRelevantData(s, rg)
 			if err != nil {
-				fmt.Printf("[%s] Could not enumerate VMs for resource group %s in subscription %s\n", color.CyanString(globals.AZ_VMS_MODULE_NAME), ptr.ToString(rg.Name), ptr.ToString(s.SubscriptionID))
+				azureLogger.WarnM(fmt.Sprintf("Could not enumerate VMs for resource group %s in subscription %s: %s", ptr.ToString(rg.Name), ptr.ToString(s.SubscriptionID), err), globals.AZ_VMS_MODULE_NAME)
 			} else {
 				resultsBody = append(resultsBody, b...)
 				userDataCombined += userData
@@ -175,7 +169,7 @@ func getVMsPerSubscriptionID(AzSubscriptionID string) ([]string, [][]string, str
 			for _, rg := range getResourceGroups(ptr.ToString(s.SubscriptionID)) {
 				resultsHeader, b, userData, err = getComputeRelevantData(s, rg)
 				if err != nil {
-					fmt.Printf("[%s] Could not enumerate VMs for resource group %s in subscription %s\n", color.CyanString(globals.AZ_VMS_MODULE_NAME), ptr.ToString(rg.Name), ptr.ToString(s.SubscriptionID))
+					azureLogger.WarnM(fmt.Sprintf("Could not enumerate VMs for resource group %s in subscription %s: %s", ptr.ToString(rg.Name), ptr.ToString(s.SubscriptionID), err), globals.AZ_VMS_MODULE_NAME)
 				} else {
 					resultsBody = append(resultsBody, b...)
 					userDataCombined += userData
@@ -209,13 +203,13 @@ func getComputeRelevantData(sub subscriptions.Subscription, rg resources.Group) 
 		// get userdata
 		vmDetails, err := getComputeVmInfo(subscriptionID, resourceGroupName, ptr.ToString(vm.Name))
 		if err != nil {
-			fmt.Println("error fetching vm details for vm: ", ptr.ToString(vm.Name))
+			azureLogger.WarnM(fmt.Sprintf("Error fetching VM details for %s: %s", ptr.ToString(vm.Name), err), globals.AZ_VMS_MODULE_NAME)
 		}
 
 		if vmDetails.VirtualMachineProperties != nil && vmDetails.VirtualMachineProperties.UserData != nil {
 			userData, err := base64.StdEncoding.DecodeString(ptr.ToString(vmDetails.VirtualMachineProperties.UserData))
 			if err != nil {
-				fmt.Println("error decoding userdata for vm: ", ptr.ToString(vm.Name))
+				azureLogger.WarnM(fmt.Sprintf("Error decoding user data for VM %s: %s", ptr.ToString(vm.Name), err), globals.AZ_VMS_MODULE_NAME)
 			}
 			//append userdata from this vm to the string with headers and newlines for VM name, location, and resource group name
 			userDataString += fmt.Sprintf(

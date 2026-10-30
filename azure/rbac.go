@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,7 +15,6 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/smithy-go/ptr"
 	"github.com/fatih/color"
-	"github.com/kyokomi/emoji"
 )
 
 func AzRBACCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory, Version string, AzVerbosity int, AzWrapTable bool, AzMergedTable bool) error {
@@ -39,19 +37,13 @@ func AzRBACCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory
 	if AzTenantID != "" && AzSubscription == "" {
 		// cloudfox azure rbac --tenant [TENANT_ID | PRIMARY_DOMAIN]
 
-		var err error
 		tenantInfo := populateTenant(AzTenantID)
-		if err != nil {
-			return err
-		}
 		o.PrefixIdentifier = ptr.ToString(tenantInfo.DefaultDomain)
 		o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), "1-tenant-level")
 
-		fmt.Printf("[%s][%s] Enumerating RBAC permissions for tenant %s\n",
-			color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_RBAC_MODULE_NAME),
-			fmt.Sprintf("%s (%s)", ptr.ToString(tenantInfo.DefaultDomain), ptr.ToString(tenantInfo.ID)))
+		azureLogger.InfoM(fmt.Sprintf("Enumerating RBAC permissions for tenant %s (%s)", ptr.ToString(tenantInfo.DefaultDomain), ptr.ToString(tenantInfo.ID)), globals.AZ_RBAC_MODULE_NAME)
 
-		header, body, err = getRBACperTenant(ptr.ToString(tenantInfo.ID), c)
+		header, body, err := getRBACperTenant(ptr.ToString(tenantInfo.ID), c)
 		if err != nil {
 			return err
 		}
@@ -69,8 +61,7 @@ func AzRBACCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory
 		o.PrefixIdentifier = AzSubscriptionInfo.Name
 		o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), AzSubscriptionInfo.Name)
 
-		fmt.Printf("[%s][%s] Enumerating RBAC permissions for subscription %s\n", color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_RBAC_MODULE_NAME),
-			fmt.Sprintf("%s (%s)", AzSubscriptionInfo.Name, AzSubscriptionInfo.ID))
+		azureLogger.InfoM(fmt.Sprintf("Enumerating RBAC permissions for subscription %s (%s)", AzSubscriptionInfo.Name, AzSubscriptionInfo.ID), globals.AZ_RBAC_MODULE_NAME)
 		header, body = getRBACperSubscription(ptr.ToString(tenantInfo.ID), AzSubscriptionInfo.ID, c)
 		o.Table.TableFiles = append(o.Table.TableFiles,
 			internal.TableFile{
@@ -80,7 +71,7 @@ func AzRBACCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirectory
 
 	} else {
 		// Error: please make a valid flag selection
-		fmt.Println("Please enter a valid input with a valid flag. Use --help for info.")
+		azureLogger.ErrorM("Please enter a valid input with a valid flag. Use --help for info.", globals.AZ_RBAC_MODULE_NAME)
 	}
 
 	if body != nil {
@@ -142,13 +133,13 @@ func (c *CloudFoxRBACclient) initialize(tenantID string, subscriptionIDs []strin
 	for _, subID := range subscriptionIDs {
 		rd, err := getRoleDefinitions(subID)
 		if err != nil {
-			fmt.Printf("[%s] failed to get role definitions for subscription %s: %s. Skipping it.\n", color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME), subID, err)
+			azureLogger.WarnM(fmt.Sprintf("Failed to get role definitions for subscription %s: %s. Skipping it.", subID, err), globals.AZ_RBAC_MODULE_NAME)
 		}
 		c.roleDefinitions = append(c.roleDefinitions, rd...)
 
 		ra, err := getRoleAssignments(subID)
 		if err != nil {
-			fmt.Printf("[%s] failed to get role assignments for subscription %s: %s. Skipping it.\n", color.New(color.FgCyan).Sprint(globals.AZ_RBAC_MODULE_NAME), subID, err)
+			azureLogger.WarnM(fmt.Sprintf("Failed to get role assignments for subscription %s: %s. Skipping it.", subID, err), globals.AZ_RBAC_MODULE_NAME)
 		}
 		c.roleAssignments = append(c.roleAssignments, ra...)
 	}
@@ -239,11 +230,11 @@ func mockedGetAzureADUsers(tenantID string) ([]graphrbac.User, error) {
 
 	file, err := os.ReadFile(globals.AAD_USERS_TEST_FILE)
 	if err != nil {
-		log.Fatalf("could not read file %s", globals.AAD_USERS_TEST_FILE)
+		azureLogger.FatalM(fmt.Sprintf("Could not read file %s", globals.AAD_USERS_TEST_FILE), globals.AZ_RBAC_MODULE_NAME)
 	}
 	err = json.Unmarshal(file, &users)
 	if err != nil {
-		log.Fatalf("could not unmarshall file %s", globals.AAD_USERS_TEST_FILE)
+		azureLogger.FatalM(fmt.Sprintf("Could not unmarshal file %s", globals.AAD_USERS_TEST_FILE), globals.AZ_RBAC_MODULE_NAME)
 	}
 	return users.AzureADUsers, nil
 }
@@ -253,15 +244,15 @@ func generateAzureADUsersTestFIle(tenantID string) {
 	// ObjectID *string `json:"objectId,omitempty"`
 	users, err := getAzureADUsers(tenantID)
 	if err != nil {
-		log.Fatalf("could not enumerate users for tenant %s", tenantID)
+		azureLogger.FatalM(fmt.Sprintf("Could not enumerate users for tenant %s", tenantID), globals.AZ_RBAC_MODULE_NAME)
 	}
 	usersJSON, err := json.Marshal(AzureADUsersTestFile{AzureADUsers: users})
 	if err != nil {
-		log.Fatalf("could not marshall json for azure ad users in tenant %s", tenantID)
+		azureLogger.FatalM(fmt.Sprintf("Could not marshal JSON for Azure AD users in tenant %s", tenantID), globals.AZ_RBAC_MODULE_NAME)
 	}
 	err = os.WriteFile(globals.AAD_USERS_TEST_FILE, usersJSON, os.ModeAppend)
 	if err != nil {
-		log.Fatalf("could not write to azure ad users test file %s", globals.AAD_USERS_TEST_FILE)
+		azureLogger.FatalM(fmt.Sprintf("Could not write to Azure AD users test file %s", globals.AAD_USERS_TEST_FILE), globals.AZ_RBAC_MODULE_NAME)
 	}
 }
 
@@ -291,11 +282,11 @@ func mockedGetRoleDefinitions(subscriptionID string) ([]authorization.RoleDefini
 	var roleDefinitions RoleDefinitionTestFile
 	file, err := os.ReadFile(globals.ROLE_DEFINITIONS_TEST_FILE)
 	if err != nil {
-		log.Fatalf("could not read file %s", globals.ROLE_DEFINITIONS_TEST_FILE)
+		azureLogger.FatalM(fmt.Sprintf("Could not read file %s", globals.ROLE_DEFINITIONS_TEST_FILE), globals.AZ_RBAC_MODULE_NAME)
 	}
 	err = json.Unmarshal(file, &roleDefinitions)
 	if err != nil {
-		log.Fatalf("could not unmarshall file %s", globals.ROLE_DEFINITIONS_TEST_FILE)
+		azureLogger.FatalM(fmt.Sprintf("Could not unmarshal file %s", globals.ROLE_DEFINITIONS_TEST_FILE), globals.AZ_RBAC_MODULE_NAME)
 	}
 	return roleDefinitions.RoleDefinitions, nil
 }
@@ -307,11 +298,11 @@ func generateRoleDefinitionsTestFile(subscriptionID string) {
 
 	roleDefinitions, err := getRoleDefinitions(subscriptionID)
 	if err != nil {
-		log.Fatal(err)
+		azureLogger.FatalM(err.Error(), globals.AZ_RBAC_MODULE_NAME)
 	}
 	roleAssignments, err := getRoleAssignments(subscriptionID)
 	if err != nil {
-		log.Fatal(err)
+		azureLogger.FatalM(err.Error(), globals.AZ_RBAC_MODULE_NAME)
 	}
 	var roleDefinitionsResults []authorization.RoleDefinition
 
@@ -333,12 +324,12 @@ func generateRoleDefinitionsTestFile(subscriptionID string) {
 
 	rolesjson, err := json.Marshal(tf)
 	if err != nil {
-		log.Fatalf("could not marshall json for role definitions in subscription %s", subscriptionID)
+		azureLogger.FatalM(fmt.Sprintf("Could not marshal JSON for role definitions in subscription %s", subscriptionID), globals.AZ_RBAC_MODULE_NAME)
 	}
 
 	err = os.WriteFile(globals.ROLE_DEFINITIONS_TEST_FILE, rolesjson, os.ModeAppend)
 	if err != nil {
-		log.Fatalf("could not write to role definitions test file %s", globals.ROLE_DEFINITIONS_TEST_FILE)
+		azureLogger.FatalM(fmt.Sprintf("Could not write to role definitions test file %s", globals.ROLE_DEFINITIONS_TEST_FILE), globals.AZ_RBAC_MODULE_NAME)
 	}
 }
 
@@ -367,11 +358,11 @@ func mockedGetRoleAssignments(subscriptionID string) ([]authorization.RoleAssign
 	var allRoleAssignments, roleAssignmentsResults []authorization.RoleAssignment
 	file, err := os.ReadFile(globals.ROLE_ASSIGNMENTS_TEST_FILE)
 	if err != nil {
-		log.Fatalf("could not read file %s", globals.ROLE_ASSIGNMENTS_TEST_FILE)
+		azureLogger.FatalM(fmt.Sprintf("Could not read file %s", globals.ROLE_ASSIGNMENTS_TEST_FILE), globals.AZ_RBAC_MODULE_NAME)
 	}
 	err = json.Unmarshal(file, &allRoleAssignments)
 	if err != nil {
-		log.Fatalf("could not unmarshall file %s", globals.ROLE_ASSIGNMENTS_TEST_FILE)
+		azureLogger.FatalM(fmt.Sprintf("Could not unmarshal file %s", globals.ROLE_ASSIGNMENTS_TEST_FILE), globals.AZ_RBAC_MODULE_NAME)
 	}
 	for _, ra := range allRoleAssignments {
 		roleAssignmentSubscriptionID := strings.Split(ptr.ToString(ra.Properties.RoleDefinitionID), "/")[2]
@@ -385,15 +376,15 @@ func mockedGetRoleAssignments(subscriptionID string) ([]authorization.RoleAssign
 func generateRoleAssignmentsTestFile(subscriptionID string) {
 	ra, err := getRoleAssignments(subscriptionID)
 	if err != nil {
-		log.Fatalf("could not generate role assignments for subscription %s", subscriptionID)
+		azureLogger.FatalM(fmt.Sprintf("Could not generate role assignments for subscription %s", subscriptionID), globals.AZ_RBAC_MODULE_NAME)
 	}
 	roleAssginments, err := json.Marshal(RoleAssignmentsTestFile{RoleAssignments: ra})
 	if err != nil {
-		log.Fatalf("could not marshall json for role assignments in subscription %s", subscriptionID)
+		azureLogger.FatalM(fmt.Sprintf("Could not marshal JSON for role assignments in subscription %s", subscriptionID), globals.AZ_RBAC_MODULE_NAME)
 	}
 	err = os.WriteFile(globals.ROLE_ASSIGNMENTS_TEST_FILE, roleAssginments, os.ModeAppend)
 	if err != nil {
-		log.Fatalf("could not write to azure ad users test file %s", globals.ROLE_ASSIGNMENTS_TEST_FILE)
+		azureLogger.FatalM(fmt.Sprintf("Could not write to role assignments test file %s", globals.ROLE_ASSIGNMENTS_TEST_FILE), globals.AZ_RBAC_MODULE_NAME)
 	}
 }
 

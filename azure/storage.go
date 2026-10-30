@@ -16,7 +16,6 @@ import (
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/smithy-go/ptr"
 	"github.com/fatih/color"
-	"github.com/kyokomi/emoji"
 )
 
 // Color functions
@@ -46,9 +45,7 @@ func AzStorageCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirect
 
 			var err error
 
-			fmt.Printf("[%s][%s] Enumerating storage accounts for tenant %s\n",
-				color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_RBAC_MODULE_NAME),
-				fmt.Sprintf("%s (%s)", ptr.ToString(tenantInfo.DefaultDomain), ptr.ToString(tenantInfo.ID)))
+			azureLogger.InfoM(fmt.Sprintf("Enumerating storage accounts for tenant %s (%s)", ptr.ToString(tenantInfo.DefaultDomain), ptr.ToString(tenantInfo.ID)), globals.AZ_STORAGE_MODULE_NAME)
 
 			o.PrefixIdentifier = ptr.ToString(tenantInfo.DefaultDomain)
 			o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), "1-tenant-level")
@@ -87,7 +84,7 @@ func AzStorageCommand(AzTenantID, AzSubscription, AzOutputFormat, AzOutputDirect
 
 	} else {
 		// Error: please make a valid flag selection
-		fmt.Println("Please enter a valid input with a valid flag. Use --help for info.")
+		azureLogger.ErrorM("Please enter a valid input with a valid flag. Use --help for info.", globals.AZ_STORAGE_MODULE_NAME)
 	}
 
 	return nil
@@ -115,11 +112,7 @@ func runStorageCommandForSingleSubcription(AzSubscription string, AzOutputDirect
 	o.PrefixIdentifier = AzSubscriptionInfo.Name
 	o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), AzSubscriptionInfo.Name)
 
-	fmt.Printf(
-		"[%s][%s] Enumerating storage accounts for subscription %s\n",
-		color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)),
-		color.CyanString(globals.AZ_STORAGE_MODULE_NAME),
-		fmt.Sprintf("%s (%s)", AzSubscriptionInfo.Name, AzSubscriptionInfo.ID))
+	azureLogger.InfoM(fmt.Sprintf("Enumerating storage accounts for subscription %s (%s)", AzSubscriptionInfo.Name, AzSubscriptionInfo.ID), globals.AZ_STORAGE_MODULE_NAME)
 	//AzTenantID := ptr.ToString(GetTenantIDPerSubscription(AzSubscription))
 	header, body, publicBlobURLs, err = getStorageInfoPerSubscription(ptr.ToString(tenantInfo.ID), AzSubscriptionInfo.ID)
 	if err != nil {
@@ -167,7 +160,7 @@ func writeBlobURLslootFile(callingModule, controlMessagePrefix, outputDirectory 
 		}
 	}
 
-	fmt.Printf("[%s][%s] Loot file written to [%s]\n", cyan(callingModule), cyan(controlMessagePrefix), file.Name())
+	azureLogger.SuccessM(fmt.Sprintf("Loot file written to [%s]", file.Name()), callingModule)
 	return nil
 }
 

@@ -10,8 +10,6 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/smithy-go/ptr"
-	"github.com/fatih/color"
-	"github.com/kyokomi/emoji"
 )
 
 func AzInventoryCommand(AzTenantID, AzSubscriptionID, AzOutputDirectory, Version string, AzVerbosity int, AzWrapTable bool, AzMergedTable bool) error {
@@ -40,10 +38,7 @@ func AzInventoryCommand(AzTenantID, AzSubscriptionID, AzOutputDirectory, Version
 				},
 			}
 
-			fmt.Printf(
-				"[%s][%s] Gathering inventory for subscription %s\n",
-				color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(o.CallingModule),
-				fmt.Sprintf("%s (%s)", ptr.ToString(tenantInfo.DefaultDomain), ptr.ToString(tenantInfo.ID)))
+			azureLogger.InfoM(fmt.Sprintf("Gathering inventory for tenant %s (%s)", ptr.ToString(tenantInfo.DefaultDomain), ptr.ToString(tenantInfo.ID)), o.CallingModule)
 
 			o.PrefixIdentifier = ptr.ToString(tenantInfo.DefaultDomain)
 			o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), "1-tenant-level")
@@ -57,7 +52,7 @@ func AzInventoryCommand(AzTenantID, AzSubscriptionID, AzOutputDirectory, Version
 				internal.TableFile{
 					Header: header,
 					Body:   body,
-					Name:   fmt.Sprintf(o.CallingModule)})
+					Name:   o.CallingModule})
 
 			if body != nil {
 				o.WriteFullOutput(o.Table.TableFiles, nil)
@@ -76,7 +71,7 @@ func AzInventoryCommand(AzTenantID, AzSubscriptionID, AzOutputDirectory, Version
 
 	} else {
 		// Error: please make a valid flag selection
-		fmt.Println("Please enter a valid input with a valid flag. Use --help for info.")
+		azureLogger.ErrorM("Please enter a valid input with a valid flag. Use --help for info.", globals.AZ_INVENTORY_MODULE_NAME)
 	}
 	o.WriteFullOutput(o.Table.TableFiles, nil)
 	return nil
@@ -101,10 +96,7 @@ func runInventoryCommandForSingleSubscription(AzSubscription string, AzOutputDir
 	o.PrefixIdentifier = AzSubscriptionInfo.Name
 	o.Table.DirectoryName = filepath.Join(AzOutputDirectory, globals.CLOUDFOX_BASE_DIRECTORY, globals.AZ_DIR_BASE, ptr.ToString(tenantInfo.DefaultDomain), AzSubscriptionInfo.Name)
 
-	fmt.Printf(
-		"[%s][%s] Gathering inventory for subscription %s\n",
-		color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(o.CallingModule),
-		fmt.Sprintf("%s (%s)", AzSubscriptionInfo.Name, AzSubscriptionInfo.ID))
+	azureLogger.InfoM(fmt.Sprintf("Gathering inventory for subscription %s (%s)", AzSubscriptionInfo.Name, AzSubscriptionInfo.ID), o.CallingModule)
 
 	// populate the table data
 	header, body, err = getInventoryInfoPerSubscription(ptr.ToString(tenantInfo.ID), AzSubscriptionInfo.ID)

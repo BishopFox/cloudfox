@@ -9,6 +9,8 @@ import (
 	"github.com/aws/smithy-go/ptr"
 )
 
+var azureLogger = internal.NewLogger()
+
 type TenantInfo struct {
 	ID            *string
 	DefaultDomain *string

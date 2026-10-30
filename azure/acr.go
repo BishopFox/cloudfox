@@ -12,8 +12,6 @@ import (
 	"github.com/BishopFox/cloudfox/globals"
 	"github.com/BishopFox/cloudfox/internal"
 	"github.com/aws/smithy-go/ptr"
-	"github.com/fatih/color"
-	"github.com/kyokomi/emoji"
 )
 
 const acrDockerTokenUsername = "00000000-0000-0000-0000-000000000000"
@@ -35,9 +33,7 @@ func AzACRCommand(AzTenantID, AzSubscription, AzOutputDirectory, Version string,
 			return nil
 		}
 
-		fmt.Printf("[%s][%s] Enumerating container registries for tenant %s\n",
-			color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_ACR_MODULE_NAME),
-			fmt.Sprintf("%s (%s)", ptr.ToString(tenantInfo.DefaultDomain), ptr.ToString(tenantInfo.ID)))
+		azureLogger.InfoM(fmt.Sprintf("Enumerating container registries for tenant %s (%s)", ptr.ToString(tenantInfo.DefaultDomain), ptr.ToString(tenantInfo.ID)), globals.AZ_ACR_MODULE_NAME)
 
 		var body [][]string
 		var loot strings.Builder
@@ -68,9 +64,7 @@ func runACRCommandForSingleSubscription(AzSubscription, AzOutputDirectory string
 	tenantID := ptr.ToString(GetTenantIDPerSubscription(subscriptionInfo.ID))
 	tenantInfo := populateTenant(tenantID)
 
-	fmt.Printf("[%s][%s] Enumerating container registries for subscription %s\n",
-		color.CyanString(emoji.Sprintf(":fox:cloudfox %s :fox:", Version)), color.CyanString(globals.AZ_ACR_MODULE_NAME),
-		fmt.Sprintf("%s (%s)", subscriptionInfo.Name, subscriptionInfo.ID))
+	azureLogger.InfoM(fmt.Sprintf("Enumerating container registries for subscription %s (%s)", subscriptionInfo.Name, subscriptionInfo.ID), globals.AZ_ACR_MODULE_NAME)
 
 	var selectedSubscription subscriptions.Subscription
 	for _, subscription := range GetSubscriptions() {
