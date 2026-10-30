@@ -10,6 +10,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/resources"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/subscriptions"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/storage/mgmt/storage"
+	"github.com/Azure/azure-sdk-for-go/profiles/latest/web/mgmt/web"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
@@ -142,6 +143,28 @@ func GetStorageClient(subscriptionID string) storage.AccountsClient {
 	a, err := getAuthorizer(globals.AZ_RESOURCE_MANAGER_ENDPOINT)
 	if err != nil {
 		log.Fatalf("failed to get storage client: %s", err)
+	}
+	client.Authorizer = a
+	client.AddToUserAgent(globals.CLOUDFOX_USER_AGENT)
+	return client
+}
+
+func GetContainerRegistriesClient(subscriptionID string) containerregistry.RegistriesClient {
+	client := containerregistry.NewRegistriesClient(subscriptionID)
+	a, err := getAuthorizer(globals.AZ_RESOURCE_MANAGER_ENDPOINT)
+	if err != nil {
+		log.Fatalf("failed to get container registries client: %s", err)
+	}
+	client.Authorizer = a
+	client.AddToUserAgent(globals.CLOUDFOX_USER_AGENT)
+	return client
+}
+
+func GetWebAppsClient(subscriptionID string) web.AppsClient {
+	client := web.NewAppsClient(subscriptionID)
+	a, err := getAuthorizer(globals.AZ_RESOURCE_MANAGER_ENDPOINT)
+	if err != nil {
+		log.Fatalf("failed to get web apps client: %s", err)
 	}
 	client.Authorizer = a
 	client.AddToUserAgent(globals.CLOUDFOX_USER_AGENT)

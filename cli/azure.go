@@ -131,6 +131,16 @@ Enumerate container registries for a specific subscription:
 			}
 		},
 	}
+	AzFuncCommand = &cobra.Command{
+		Use:     "func",
+		Aliases: []string{"functions"},
+		Short:   "Enumerates Azure Function Apps and their configuration",
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := azure.AzFuncCommand(AzTenantID, AzSubscription, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable); err != nil {
+				log.Fatal(err)
+			}
+		},
+	}
 )
 
 func init() {
@@ -153,6 +163,7 @@ func init() {
 		AzVMsCommand,
 		AzStorageCommand,
 		AzACRCommand,
+		AzFuncCommand,
 		AzInventoryCommand)
 
 }

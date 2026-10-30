@@ -22,6 +22,7 @@ const AZ_VMS_MODULE_NAME = "vms"
 const AZ_RBAC_MODULE_NAME = "rbac"
 const AZ_STORAGE_MODULE_NAME = "storage"
 const AZ_ACR_MODULE_NAME = "acr"
+const AZ_FUNC_MODULE_NAME = "func"
 
 // Microsoft endpoints
 const AZ_RESOURCE_MANAGER_ENDPOINT = "https://management.azure.com/"
