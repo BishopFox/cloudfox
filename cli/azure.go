@@ -141,6 +141,16 @@ Enumerate container registries for a specific subscription:
 			}
 		},
 	}
+	AzAutomationCommand = &cobra.Command{
+		Use:     "automation",
+		Aliases: []string{"automations"},
+		Short:   "Enumerates Azure Automation Accounts and their assets",
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := azure.AzAutomationCommand(AzTenantID, AzSubscription, AzOutputDirectory, cmd.Root().Version, AzVerbosity, AzWrapTable, AzMergedTable); err != nil {
+				log.Fatal(err)
+			}
+		},
+	}
 )
 
 func init() {
@@ -164,6 +174,7 @@ func init() {
 		AzStorageCommand,
 		AzACRCommand,
 		AzFuncCommand,
+		AzAutomationCommand,
 		AzInventoryCommand)
 
 }

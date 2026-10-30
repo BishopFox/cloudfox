@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/authorization/mgmt/authorization"
+	"github.com/Azure/azure-sdk-for-go/profiles/latest/automation/mgmt/automation"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/compute/mgmt/compute"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/network/mgmt/network"
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/resources/mgmt/resources"
@@ -169,6 +170,26 @@ func GetWebAppsClient(subscriptionID string) web.AppsClient {
 	client.Authorizer = a
 	client.AddToUserAgent(globals.CLOUDFOX_USER_AGENT)
 	return client
+}
+
+func GetAutomationClients(subscriptionID string) (automation.AccountClient, automation.RunbookClient, automation.CredentialClient, automation.WebhookClient) {
+	authorizer, err := getAuthorizer(globals.AZ_RESOURCE_MANAGER_ENDPOINT)
+	if err != nil {
+		log.Fatalf("failed to get automation clients: %s", err)
+	}
+	accounts := automation.NewAccountClient(subscriptionID)
+	runbooks := automation.NewRunbookClient(subscriptionID)
+	credentials := automation.NewCredentialClient(subscriptionID)
+	webhooks := automation.NewWebhookClient(subscriptionID)
+	accounts.Authorizer = authorizer
+	runbooks.Authorizer = authorizer
+	credentials.Authorizer = authorizer
+	webhooks.Authorizer = authorizer
+	accounts.AddToUserAgent(globals.CLOUDFOX_USER_AGENT)
+	runbooks.AddToUserAgent(globals.CLOUDFOX_USER_AGENT)
+	credentials.AddToUserAgent(globals.CLOUDFOX_USER_AGENT)
+	webhooks.AddToUserAgent(globals.CLOUDFOX_USER_AGENT)
+	return accounts, runbooks, credentials, webhooks
 }
 
 func GetStorageAccountBlobClient(tenantID, storageAccountName string) (*azblob.Client, error) {
