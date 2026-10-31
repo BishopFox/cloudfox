@@ -92,7 +92,7 @@ func TestAzVMsCommand(t *testing.T) {
 
 		err := AzVMsCommand(s.azTenantID, s.azSubscriptionID, s.azOutputFormat, s.azOutputDirectory, s.version, 2, s.wrapTableOutput, s.azMergedTable)
 		if err != nil {
-			log.Fatalf(err.Error())
+			log.Fatal(err)
 		}
 	}
 }
