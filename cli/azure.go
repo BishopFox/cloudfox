@@ -27,18 +27,34 @@ var (
 			cmd.Help()
 		},
 	}
-	AzWhoamiListRGsAlso bool
+	AzTokenCacheListRGs bool
 	AzWhoamiCommand     = &cobra.Command{
 		Use:     "whoami",
 		Aliases: []string{},
-		Short:   "Display available Azure CLI sessions",
+		Short:   "Display the caller's Entra ID memberships and Azure RBAC assignments",
 		Long: `
-Display Available Azure CLI Sessions:
+Display the caller's Entra ID memberships and Azure RBAC assignments:
 ./cloudfox az whoami`,
 		Run: func(cmd *cobra.Command, args []string) {
-			err := azure.AzWhoamiCommand(AzOutputDirectory, cmd.Root().Version, AzWrapTable, AzVerbosity, AzWhoamiListRGsAlso)
+			err := azure.AzWhoamiCommand(AzOutputDirectory, cmd.Root().Version, AzWrapTable, AzVerbosity)
 			if err != nil {
 				azureLogger.FatalM(err.Error(), "whoami")
+			}
+		},
+	}
+	AzTokenCacheCommand = &cobra.Command{
+		Use:     "tokencache",
+		Aliases: []string{"token-cache"},
+		Short:   "Display available Azure CLI sessions",
+		Long: `
+Display available Azure CLI tenants and subscriptions:
+./cloudfox az tokencache
+
+Include resource groups:
+./cloudfox az tokencache --list-rgs`,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := azure.AzTokenCacheCommand(AzOutputDirectory, cmd.Root().Version, AzWrapTable, AzVerbosity, AzTokenCacheListRGs); err != nil {
+				azureLogger.FatalM(err.Error(), "tokencache")
 			}
 		},
 	}
@@ -156,7 +172,7 @@ Enumerate container registries for a specific subscription:
 
 func init() {
 
-	AzWhoamiCommand.Flags().BoolVarP(&AzWhoamiListRGsAlso, "list-rgs", "l", false, "Drill down to the resource group level")
+	AzTokenCacheCommand.Flags().BoolVarP(&AzTokenCacheListRGs, "list-rgs", "l", false, "Drill down to the resource group level")
 
 	// Global flags
 	AzCommands.PersistentFlags().StringVarP(&AzOutputFormat, "output", "o", "all", "[\"table\" | \"csv\" | \"all\" ]")
@@ -170,6 +186,7 @@ func init() {
 
 	AzCommands.AddCommand(
 		AzWhoamiCommand,
+		AzTokenCacheCommand,
 		AzRBACCommand,
 		AzVMsCommand,
 		AzStorageCommand,

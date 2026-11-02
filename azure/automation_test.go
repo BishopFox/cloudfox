@@ -19,7 +19,7 @@ func TestGetAutomationDataCountsAndLoot(t *testing.T) {
 		if resourceGroup != "ops" || account != "operations" {
 			t.Fatalf("unexpected automation target %s/%s", resourceGroup, account)
 		}
-		return automationAssets{Runbooks: []automation.Runbook{{Name: ptr.String("daily")}, {Name: ptr.String("weekly")}}, Credentials: []automation.Credential{{Name: ptr.String("service-account")}}, Webhooks: []automation.Webhook{{Name: ptr.String("deploy")}}}, nil
+		return automationAssets{Runbooks: []automation.Runbook{{Name: ptr.String("daily")}, {Name: ptr.String("weekly")}}, RunbookSources: map[string]string{"daily": "Write-Output 'daily'", "weekly": "print('weekly')"}, Credentials: []automation.Credential{{Name: ptr.String("service-account")}}, Webhooks: []automation.Webhook{{Name: ptr.String("deploy")}}}, nil
 	}
 	sub := subscriptions.Subscription{SubscriptionID: ptr.String("sub"), DisplayName: ptr.String("Production")}
 	rows, loot, warnings, err := getAutomationData(sub)
@@ -29,9 +29,17 @@ func TestGetAutomationDataCountsAndLoot(t *testing.T) {
 	if len(rows) != 1 || rows[0][4] != "2" || rows[0][5] != "1" || rows[0][6] != "1" {
 		t.Fatalf("unexpected automation rows: %+v", rows)
 	}
-	for _, value := range []string{"daily", "service-account", "deploy"} {
-		if !strings.Contains(loot, value) {
-			t.Errorf("loot missing %q: %s", value, loot)
+	if !strings.Contains(loot.Runbooks, "Runbook: daily") || !strings.Contains(loot.Runbooks, "Write-Output 'daily'") {
+		t.Errorf("runbook loot is incomplete: %s", loot.Runbooks)
+	}
+	for _, value := range []string{"az automation credential show", "service-account", `"name": "service-account"`} {
+		if !strings.Contains(loot.Credentials, value) {
+			t.Errorf("credential loot missing %q: %s", value, loot.Credentials)
+		}
+	}
+	for _, value := range []string{"az automation webhook show", "deploy", `"name": "deploy"`} {
+		if !strings.Contains(loot.Webhooks, value) {
+			t.Errorf("webhook loot missing %q: %s", value, loot.Webhooks)
 		}
 	}
 }

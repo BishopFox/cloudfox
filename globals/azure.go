@@ -17,6 +17,7 @@ var AAD_USERS_TEST_FILE string
 
 // Module names
 const AZ_WHOAMI_MODULE_NAME = "whoami"
+const AZ_TOKENCACHE_MODULE_NAME = "tokencache"
 const AZ_INVENTORY_MODULE_NAME = "inventory"
 const AZ_VMS_MODULE_NAME = "vms"
 const AZ_RBAC_MODULE_NAME = "rbac"
